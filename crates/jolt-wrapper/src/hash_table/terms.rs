@@ -5,20 +5,23 @@
 //!
 //! Local column ids: `0..227` committed bits (`163..227` the canonicality
 //! witness), `227..291` wired bits (`din`, `bin`), `291..307` wired words
-//! (`WiredWord::ALL`), `307..313` verifier-key columns (`VkColumn::ALL`).
+//! (`WiredWord::ALL`), `307..313` verifier-key columns (`VkColumn::ALL`,
+//! committed once in the key — `adapter::HashTableKey`).
 //! `adapter::StreamTermExporter` maps them to the stream's physical ids.
 
 use jolt_field::{CanonicalEncoding, Fr, One, Ring, Zero};
-use jolt_poly::{EqPlusOnePolynomial, EqPolynomial};
 
+use super::eq::{
+    eq_evals_with, eq_plus_one_with, eq_points_with, eq_zero_with, plain, pow2, powers_with, Mul,
+};
 use super::layout::{
-    eq_rounds, wired_columns, Relation, WiredWord, WordColumn, B_XOR, CANON, CANON_BITS, COMMITTED,
+    wired_columns, Relation, WiredWord, WordColumn, B_XOR, CANON, CANON_BITS, COMMITTED,
     CONSTRAINTS, D_XOR, LOG_COLUMNS, MESSAGE, WIRED_BITS, WIRED_WORDS, WORD_BITS,
 };
 use super::schedule::{ByteSource, Squeeze, SymbolicSchedule};
 use super::wiring::{
-    canonicality, eq_points, source, PublicInputs, Source, VkColumn, Weights, WiringStatement,
-    WordSlot, LOG_CELL, MODULUS_HI, WIRING_TERMS,
+    canonicality, source, PublicInputs, Source, VkColumn, Weights, WiringStatement, WordSlot,
+    LOG_CELL, MODULUS_HI, WIRING_TERMS,
 };
 
 pub type ColumnId = usize;
@@ -56,12 +59,6 @@ pub struct T1Challenges {
     pub wiring_gammas: Vec<Fr>,
 }
 
-fn powers(base: Fr, count: usize) -> Vec<Fr> {
-    std::iter::successors(Some(Fr::one()), |g| Some(*g * base))
-        .take(count)
-        .collect()
-}
-
 impl T1Challenges {
     pub const fn count(log_rows: usize) -> usize {
         2 * log_rows + 2
@@ -71,6 +68,15 @@ impl T1Challenges {
     ///
     /// Panics unless `challenges.len() == Self::count(log_rows)`.
     pub fn from_challenges(challenges: &[Fr], log_rows: usize) -> Self {
+        Self::from_challenges_with(challenges, log_rows, &mut plain)
+    }
+
+    /// `from_challenges` with the coefficient powers routed through `mul`.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `challenges.len() == Self::count(log_rows)`.
+    pub fn from_challenges_with(challenges: &[Fr], log_rows: usize, mul: Mul<'_>) -> Self {
         assert_eq!(
             challenges.len(),
             Self::count(log_rows),
@@ -81,8 +87,8 @@ impl T1Challenges {
         Self {
             tau_rows: tau_rows.to_vec(),
             tau_wiring: tau_wiring.to_vec(),
-            relation_gammas: powers(rest[0], CONSTRAINTS),
-            wiring_gammas: powers(rest[1], WIRING_TERMS),
+            relation_gammas: powers_with(rest[0], CONSTRAINTS, mul),
+            wiring_gammas: powers_with(rest[1], WIRING_TERMS, mul),
         }
     }
 
@@ -100,9 +106,15 @@ impl T1Challenges {
     /// The members' input claims for the stage statement: the row relation
     /// sums to zero, the wiring zero-check to its public constant.
     pub fn input_claims(&self, public: &PublicInputs) -> [Fr; 2] {
+        self.input_claims_with(public, &mut plain)
+    }
+
+    /// `input_claims` with the verifier's multiplications routed through `mul`.
+    pub fn input_claims_with(&self, public: &PublicInputs, mul: Mul<'_>) -> [Fr; 2] {
         [
             Fr::zero(),
-            self.wiring().input_claim(&self.tau_wiring, public),
+            self.wiring()
+                .input_claim_with(&self.tau_wiring, public, mul),
         ]
     }
 }
@@ -170,29 +182,34 @@ pub struct FinalContext<'a> {
 /// The batched final claim of T1's two members as terms, every field
 /// multiplication routed through `mul` (the verifier's operation counter):
 /// `ρ_rows · eq(τ₁, r) · Q(v) + ρ_wiring · (eq(τ₂, r) · [wired + pins](v) − Σ_κ K_κ · V_κ(v))`.
-/// Degree ≤ 2: one linear term, 227 booleanity squares, 64 XOR cross terms,
-/// two half-word pin products, two canonicality products.
-pub fn terms(ctx: &FinalContext<'_>, mul: &mut dyn FnMut(Fr, Fr) -> Fr) -> Vec<Term> {
+/// Degree ≤ 2: one linear term, 163 booleanity squares, 64 XOR operand terms
+/// `v_j · (γ_sq v_j + γ_cross w_j)` (booleanity and cross term merged), two
+/// half-word pin products, two canonicality products.
+pub fn terms(ctx: &FinalContext<'_>, mul: Mul<'_>) -> Vec<Term> {
     let mut linear = AffineForm::default();
-    let mut terms = Vec::with_capacity(COMMITTED + WIRED_BITS + 5);
+    let mut terms = Vec::with_capacity(COMMITTED + 5);
 
     // Row relation.
-    let relation = ctx.challenges.relation();
-    let e = mul(
-        ctx.rho_rows,
-        eq_rounds(&ctx.challenges.tau_rows, ctx.row_point),
-    );
+    let relation = Relation::new_with(&ctx.challenges.relation_gammas, mul);
+    let eq_rows = eq_points_with(&ctx.challenges.tau_rows, ctx.row_point, mul);
+    let e = mul(ctx.rho_rows, eq_rows);
     for j in 0..1 << LOG_COLUMNS {
-        if !relation.gamma_sq[j].is_zero() {
+        let (square, cross) = (relation.gamma_sq[j], relation.gamma_cross[j]);
+        if !cross.is_zero() {
             terms.push(Term {
-                coefficient: mul(e, relation.gamma_sq[j]),
-                factors: vec![AffineForm::column(j), AffineForm::column(j)],
+                coefficient: e,
+                factors: vec![
+                    AffineForm::column(j),
+                    AffineForm {
+                        constant: Fr::zero(),
+                        weights: vec![(j, square), (wired_id(j), cross)],
+                    },
+                ],
             });
-        }
-        if !relation.gamma_cross[j].is_zero() {
+        } else if !square.is_zero() {
             terms.push(Term {
-                coefficient: mul(e, relation.gamma_cross[j]),
-                factors: vec![AffineForm::column(j), AffineForm::column(wired_id(j))],
+                coefficient: mul(e, square),
+                factors: vec![AffineForm::column(j), AffineForm::column(j)],
             });
         }
         if !relation.l1[j].is_zero() {
@@ -209,17 +226,17 @@ pub fn terms(ctx: &FinalContext<'_>, mul: &mut dyn FnMut(Fr, Fr) -> Fr) -> Vec<T
     let n = wiring.log_rows;
     let (tau_hi, tau_lo) = ctx.challenges.tau_wiring.split_at(n - LOG_CELL);
     let (r_hi, r_lo) = ctx.row_point.split_at(n - LOG_CELL);
-    let eq_tau_lo = EqPolynomial::<Fr>::evals(tau_lo, None);
-    let eq_r_lo = EqPolynomial::<Fr>::evals(r_lo, None);
-    let same_cell = eq_points(tau_hi, r_hi);
-    let previous_cell = EqPlusOnePolynomial::new(r_hi.to_vec()).evaluate(tau_hi);
-    let next_cell = EqPlusOnePolynomial::new(tau_hi.to_vec()).evaluate(r_hi);
+    let eq_tau_lo = eq_evals_with(tau_lo, mul);
+    let eq_r_lo = eq_evals_with(r_lo, mul);
+    let same_cell = eq_points_with(tau_hi, r_hi, mul);
+    let previous_cell = eq_plus_one_with(r_hi, tau_hi, mul);
+    let next_cell = eq_plus_one_with(tau_hi, r_hi, mul);
     let eq_lo = eq_tau_lo
         .iter()
         .zip(&eq_r_lo)
         .fold(Fr::zero(), |acc, (a, b)| acc + mul(*a, *b));
     let eq_full = mul(same_cell, eq_lo);
-    let r_first_cell = r_hi.iter().fold(Fr::one(), |acc, a| acc * (Fr::one() - *a));
+    let r_first_cell = eq_zero_with(r_hi, mul);
     let scale = mul(ctx.rho_wiring, eq_full);
     for (k, gamma) in gammas.iter().enumerate().take(WIRED_BITS) {
         linear.add(WIRED_BIT_BASE + k, mul(scale, *gamma));
@@ -245,12 +262,13 @@ pub fn terms(ctx: &FinalContext<'_>, mul: &mut dyn FnMut(Fr, Fr) -> Fr) -> Vec<T
         };
         is.constant += weight;
         let scaled = mul(scale, gamma);
-        linear.constant -= mul(scaled, weight) * Fr::from_u64(u64::from(value));
+        let scaled_weight = mul(scaled, weight);
+        linear.constant -= mul(scaled_weight, Fr::from_u64(u64::from(value)));
     }
     let half = |from: usize| {
         let mut form = AffineForm::default();
         for k in 0..WORD_BITS / 2 {
-            form.add(MESSAGE + from + k, Fr::one().mul_pow_2(k));
+            form.add(MESSAGE + from + k, pow2(k));
         }
         form
     };
@@ -271,7 +289,7 @@ pub fn terms(ctx: &FinalContext<'_>, mul: &mut dyn FnMut(Fr, Fr) -> Fr) -> Vec<T
         let gamma = gammas[WIRED_BITS + WIRED_WORDS + 2 + usize::from(shifted)];
         let mut value = AffineForm::default();
         for k in 0..CANON_BITS {
-            value.add(CANON + k, Fr::one().mul_pow_2(k));
+            value.add(CANON + k, pow2(k));
         }
         for (column, weight) in canonicality(shifted) {
             let id = if column < COMMITTED {
@@ -289,46 +307,66 @@ pub fn terms(ctx: &FinalContext<'_>, mul: &mut dyn FnMut(Fr, Fr) -> Fr) -> Vec<T
         });
     }
     // Sources: kernel weights summed per (slot, group, weights), then expanded
-    // once per distinct triple.
+    // once per distinct triple. `cell_position[kind][p] = cell factor · eqτ[p]`
+    // is shared by every slot read at position `p`.
+    let cell_position: Vec<[Fr; 3]> = eq_tau_lo
+        .iter()
+        .map(|e| {
+            [
+                mul(same_cell, *e),
+                mul(previous_cell, *e),
+                mul(next_cell, *e),
+            ]
+        })
+        .collect();
     let mut kernels: Vec<((WordSlot, WordColumn, Weights), Fr)> = Vec::new();
-    for (p, eq_tau_p) in eq_tau_lo.iter().enumerate() {
+    for (p, cell_position) in cell_position.iter().enumerate() {
         for slot in WordSlot::all() {
-            let (key, cell_weight, from) = match source(p, slot) {
+            let (key, kind, from) = match source(p, slot) {
                 Source::Cell {
                     group,
                     weights,
                     delta,
                 } => (
                     (slot, group, weights),
-                    same_cell,
+                    0,
                     (p as isize - isize::from(delta)) as usize,
                 ),
                 Source::Previous {
                     group,
                     weights,
                     position,
-                } => ((slot, group, weights), previous_cell, usize::from(position)),
+                } => ((slot, group, weights), 1, usize::from(position)),
                 Source::Next {
                     group,
                     weights,
                     position,
-                } => ((slot, group, weights), next_cell, usize::from(position)),
+                } => ((slot, group, weights), 2, usize::from(position)),
                 Source::Zero | Source::Const(_) => continue,
             };
-            let cell_position = mul(cell_weight, *eq_tau_p);
-            let weight = mul(cell_position, eq_r_lo[from]);
+            let weight = mul(cell_position[kind], eq_r_lo[from]);
             match kernels.iter_mut().find(|(k, _)| *k == key) {
                 Some((_, acc)) => *acc += weight,
                 None => kernels.push((key, weight)),
             }
         }
     }
+    // `γ_slot · 2^k` once per (word slot, bit).
+    let mut slot_weights: Vec<((WordSlot, usize), Fr)> = Vec::new();
     for ((slot, group, weights), kernel) in kernels {
         let base = group.base();
         let scaled = mul(ctx.rho_wiring, kernel);
         for j in 0..WORD_BITS {
             if let Some(k) = weights.coefficient(j) {
-                linear.add(base + j, -mul(scaled, wiring.slot_weight(slot, k)));
+                let known = slot_weights.iter().find(|(key, _)| *key == (slot, k));
+                let slot_weight = if let Some((_, weight)) = known {
+                    *weight
+                } else {
+                    let weight = wiring.slot_weight_with(slot, k, mul);
+                    slot_weights.push(((slot, k), weight));
+                    weight
+                };
+                linear.add(base + j, -mul(scaled, slot_weight));
             }
         }
     }
@@ -389,15 +427,12 @@ pub fn challenge_scalar128() -> AffineForm {
 pub fn fr_word() -> AffineForm {
     let mut form = AffineForm::default();
     for j in 0..WORD_BITS {
-        form.add(
-            MESSAGE + j,
-            Fr::one().mul_pow_2(224 + 8 * (3 - j / 8) + j % 8),
-        );
+        form.add(MESSAGE + j, pow2(224 + 8 * (3 - j / 8) + j % 8));
     }
     for i in 1..8u8 {
         form.add(
             wired_word_id(WiredWord::FrNext(i)),
-            Fr::one().mul_pow_2(8 * (28 - 4 * usize::from(i))),
+            pow2(8 * (28 - 4 * usize::from(i))),
         );
     }
     form
@@ -410,15 +445,12 @@ pub fn fr_word() -> AffineForm {
 pub fn fr_word_shifted() -> AffineForm {
     let mut form = AffineForm::default();
     for j in 16..WORD_BITS {
-        form.add(
-            MESSAGE + j,
-            Fr::one().mul_pow_2(240 + 8 * (3 - j / 8) + j % 8),
-        );
+        form.add(MESSAGE + j, pow2(240 + 8 * (3 - j / 8) + j % 8));
     }
     for i in 1..8u8 {
         form.add(
             wired_word_id(WiredWord::FrNext(i)),
-            Fr::one().mul_pow_2(8 * (30 - 4 * usize::from(i))),
+            pow2(8 * (30 - 4 * usize::from(i))),
         );
     }
     form.add(wired_word_id(WiredWord::FrTail), Fr::one());

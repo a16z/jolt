@@ -1,8 +1,10 @@
 //! The Jolt verifier's transcript as a table segment, and the symbolic
 //! schedule the verifier key is built from.
 //!
-//! [`JoltSchedule::new`] replays a recorded `jolt_verifier::verify` run
-//! through the [`Chain`] (byte-exact, fail-closed) and classifies every item
+//! [`SymbolicSchedule::from_reference`] (key generation) and
+//! [`JoltSchedule::witness`] (a proof's run, checked against the key) replay a
+//! recorded `jolt_verifier::verify` run
+//! through the [`Chain`] (byte-exact, fail-closed) and classify every item
 //! structurally: the preamble is public input, labeled words are protocol
 //! constants, raw 32-byte appends before the Dory segment are field elements
 //! (relation wires), raw appends of the commitment and Dory segments are

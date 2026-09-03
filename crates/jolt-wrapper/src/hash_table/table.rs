@@ -28,7 +28,7 @@ use super::wiring::{
 /// public inputs, all over `2^log_rows` rows.
 #[derive(Clone, Debug)]
 pub struct HashTable {
-    /// 163 committed columns.
+    /// `COMMITTED` bit columns (state, carries, message, canonicality witness).
     pub bits: Vec<Vec<u8>>,
     /// 64 wired bit columns (`din`, then `bin`).
     pub wired_bits: Vec<Vec<u8>>,

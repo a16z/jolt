@@ -17,6 +17,7 @@
 //! quadratic form a column sumcheck can reduce (lane N3). Degree 2 in the
 //! columns; 3 with the row `eq` factor.
 
+use super::eq::{eq_points_with, plain, pow2, Mul};
 use jolt_field::{Fr, Ring, Zero};
 
 pub const WORD_BITS: usize = 32;
@@ -94,7 +95,8 @@ pub enum WiredWord {
     FrTail,
     /// Shifted wire rows: `bswap16` of the high half-word of `m` two rows
     /// later (bytes 6–7 of the field element).
-    FrHi2,
+    /// Bytes 6–7 of a shifted wire: the low half of the word two positions on.
+    FrLo2,
 }
 
 impl WiredWord {
@@ -114,7 +116,7 @@ impl WiredWord {
         Self::FrNext(6),
         Self::FrNext(7),
         Self::FrTail,
-        Self::FrHi2,
+        Self::FrLo2,
     ];
 
     /// Index among the wired words (and offset from `WIRED_WORD_BASE`).
@@ -129,7 +131,7 @@ impl WiredWord {
             Self::ZIn => 6,
             Self::FrNext(i) => 6 + usize::from(i),
             Self::FrTail => 14,
-            Self::FrHi2 => 15,
+            Self::FrLo2 => 15,
         }
     }
 
@@ -189,7 +191,7 @@ impl ColumnEvals {
 }
 
 /// The row relation's coefficient vectors over the column space, for one
-/// choice of the 229 batching coefficients.
+/// choice of the `CONSTRAINTS` batching coefficients.
 #[derive(Clone, Debug)]
 pub struct Relation {
     pub gamma_sq: Vec<Fr>,
@@ -203,6 +205,16 @@ impl Relation {
     ///
     /// Panics unless `gammas.len() == CONSTRAINTS`.
     pub fn new(gammas: &[Fr]) -> Self {
+        Self::new_with(gammas, &mut plain)
+    }
+
+    /// `new` with every field multiplication (the shifted coefficients of the
+    /// adds) routed through `mul`, the verifier's operation counter.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `gammas.len() == CONSTRAINTS`.
+    pub fn new_with(gammas: &[Fr], mul: Mul<'_>) -> Self {
         assert_eq!(gammas.len(), CONSTRAINTS, "one coefficient per constraint");
         let n = 1 << LOG_COLUMNS;
         let mut rel = Self {
@@ -227,19 +239,20 @@ impl Relation {
         // Ternary add: Σ A'_k 2^k + 2^32 κ0 + 2^33 κ1 − a_in − Σ bin_k 2^k − m_in.
         let gamma = rest[0];
         for k in 0..WORD_BITS {
-            rel.l1[A_OUT + k] += gamma.mul_pow_2(k);
-            rel.l2[C_OUT + k] -= gamma.mul_pow_2(k);
+            let shifted = mul(gamma, pow2(k));
+            rel.l1[A_OUT + k] += shifted;
+            rel.l2[C_OUT + k] -= shifted;
         }
-        rel.l1[CARRY_A_LO] += gamma.mul_pow_2(32);
-        rel.l1[CARRY_A_HI] += gamma.mul_pow_2(33);
+        rel.l1[CARRY_A_LO] += mul(gamma, pow2(32));
+        rel.l1[CARRY_A_HI] += mul(gamma, pow2(33));
         rel.l2[WiredWord::AIn.column()] -= gamma;
         rel.l2[WiredWord::MIn.column()] -= gamma;
         // Binary add: Σ C'_k 2^k + 2^32 κ2 − c_in − rot_d.
         let gamma = rest[1];
         for k in 0..WORD_BITS {
-            rel.l1[C_OUT + k] += gamma.mul_pow_2(k);
+            rel.l1[C_OUT + k] += mul(gamma, pow2(k));
         }
-        rel.l1[CARRY_C] += gamma.mul_pow_2(32);
+        rel.l1[CARRY_C] += mul(gamma, pow2(32));
         rel.l2[WiredWord::CIn.column()] -= gamma;
         rel.l2[WiredWord::RotD.column()] -= gamma;
         rel
@@ -265,28 +278,10 @@ impl Relation {
     }
 
     /// The verifier's expected final sumcheck claim: `eq(τ, r) · Q(v(r), w(r))`
-    /// for the row point `r` bound from `challenges` (round order; round `i`
-    /// binds row-index bit `i`, i.e. `τ[n − 1 − i]`).
+    /// for the row point `r` bound from `challenges` (round order = big-endian:
+    /// round `i` binds the top remaining row-index bit against `τ[i]`).
     pub fn final_check(&self, tau: &[Fr], challenges: &[Fr], evals: &ColumnEvals) -> Fr {
         let (v, w) = evals.column_space();
-        eq_rounds(tau, challenges) * self.evaluate(&v, &w)
+        eq_points_with(tau, challenges, &mut plain) * self.evaluate(&v, &w)
     }
-}
-
-/// `eq(τ, r)` for a point bound in round order (round `i` binds `τ[n − 1 − i]`).
-///
-/// # Panics
-///
-/// Panics unless `tau.len() == challenges.len()`.
-pub fn eq_rounds(tau: &[Fr], challenges: &[Fr]) -> Fr {
-    assert_eq!(
-        tau.len(),
-        challenges.len(),
-        "one challenge per row variable"
-    );
-    let one = Fr::from_u64(1);
-    tau.iter().zip(challenges).fold(one, |acc, (t, r)| {
-        let tr = *t * *r;
-        acc * (one - *t - *r + tr + tr)
-    })
 }

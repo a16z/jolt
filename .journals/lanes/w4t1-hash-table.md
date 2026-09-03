@@ -330,3 +330,83 @@ provers = a self-consistent adversary; `verify_assembly_with_cost` with the key'
   this lane's files. Pre-existing at HEAD: `relation_table/mod.rs` `identity_mle_observed` /
   `eq_mle_observed` are dead code → `cargo clippy -p jolt-wrapper --lib -- -D warnings` fails on
   main before this lane's changes (W4-R; scratch build carried a local `#[expect]`).
+
+## Fix #3 (review #3: B1 shifted top-64 extraction, B2 key-committed VK groups, MAJOR observer-complete count, minors), 2026-09-03
+
+### B1 — shifted canonicality read bytes 8–9
+
+- A shifted wire starts at byte 2 of row `p`: bytes 0–1 = high half of `m(p)`, bytes 2–5 =
+  `fr_next(1)` (word `p + 1`), bytes 6–7 = the **low** half of word `p + 2`. `FrHi2` read
+  `BswapHi16` (bytes 8–9); renamed `WiredWord::FrLo2`, sourced with `BswapLo16` at position
+  `p + 2`; `Weights::BswapHi16` deleted. `wiring::canonicality(true)` = `2^48 · bswap16(hi m) +
+  2^16 · fr_next1 + fr_lo2`.
+- Negatives (`noncanonical_{shifted,aligned}_wires_are_rejected`): `1 + r`, `1 + 2r`, the
+  reviewer's carry-wrapping `x` (`x[8..10] = 0x47b0`, `x + r` prefix `…a02a0000`) and
+  `carry_case(b)` for `b = 1..=8` (`x = 2^{8(32−b)} − (r mod 2^{8(32−b)})`: `x + r` clears bytes
+  `b..32` and carries into byte `b − 1`, i.e. into every byte of the top-64 window) — all rejected
+  through the verify path at both alignments; the value column aliases `x` in every case.
+
+### B2 — the six verifier-key columns are key data
+
+- `adapter::HashTableKey::new(schedule, packing, setup)` commits the VK groups (4 bit selectors
+  `lo/hi_is_const`, `wire_aligned/shifted` + 2 u16 constants `lo/hi_const`, padded to `k`) ONCE
+  from `SymbolicSchedule::vk_columns()`; `HashTableKey::pinned_commitments(group_offset)` =
+  `(group index, commitment)` for `AssemblyStatement::pinned_commitments` (W5's stream mechanism,
+  `517bf384d`): proofs omit those groups, `verify_assembly` splices the key's commitments, a proof
+  carrying its own copies fails `StageCount`. `vk_group_range(packing, offset)` /
+  `prover_group_count(packing)` own the group geometry; `StreamColumns { vk_groups }` reports it.
+- Real 2^18 layout: **20 prover-sent groups** (19 bit groups + 1 u32 group) + **2 verifier-key
+  groups** = 22 packed groups, 352 columns (k = 16). Proof bytes: −2 commitments (−64 B).
+- Negatives (`prover_owned_vk_columns_are_rejected`): zeroed `wire_shifted` / `wire_aligned`
+  with a `1 + r` wire, and a run of another profile (3 commitments, same rows and public inputs):
+  proof with its own VK groups → `StageCount`; VK groups omitted → opened against the key's
+  commitments → rejected. Positive: the key's pins equal the honest table's packed VK groups.
+
+### MAJOR — execution-derived Fr count
+
+- New `hash_table/eq.rs`: `eq_evals_with`, `eq_points_with`, `eq_zero_with`, `eq_plus_one_with`,
+  `powers_with`, `pow2` (constants), `plain`; `Relation::new_with`, `WiringStatement::{slot_weight_with,
+  input_claim_with}`, `T1Challenges::{from_challenges_with, input_claims_with}`; `terms(ctx, mul)`
+  routes every multiplication (eq tables, eq+1, `eq(τ_hi, r_hi)`, `eq(r_hi, 0)`, tail products,
+  shifted coefficients `γ · 2^k`, challenge powers) through `mul`. `eq_helpers_match_jolt_poly`
+  pins the helpers to `jolt_poly` (independent oracle). Kernel cell factors (`cell · eqτ[p]`) and
+  `γ_slot · 2^k` are computed once each.
+- Counts (real 2^18, pinned exactly in `hash_table_fixture`): exporter (`terms_observed`)
+  **4,206**, statement construction (challenge powers + wiring input claim)
+  **705**, total **4,911** (review #3's estimate ≈ 4.6k before the levers). The
+  earlier 3,278 omitted eq tables, eq+1, `powers`, shifts and the statement.
+
+### Minors
+
+- Terms: `v_j · (γ_sq v_j + γ_cross w_j)` for the 64 XOR operand columns — **T = 232** (was
+  296), d = 2, term stage 9 → 8 rounds (−64 B); `members_hold_and_terms_match…` and the fixture
+  keep the native `final_check` oracle equality.
+- Docs: `HashTable::bits` = `COMMITTED` columns, `Relation` = `CONSTRAINTS` coefficients,
+  high-to-low binding (`τ[i]` at round `i`), `SymbolicSchedule::from_reference` /
+  `JoltSchedule::witness` in the schedule module doc.
+
+### W5 hand-off (B3/B4 are W5's)
+
+Key objects to store (all derived at key generation from one trusted reference run):
+`SymbolicSchedule` (`from_reference`), `HashTableKey` (schedule + `vk: VkColumns` +
+`commitments: Vec<Commitment>` of the 2 VK groups; `pinned_commitments(t1_group_offset)` into
+`AssemblyStatement::pinned_commitments`), `PublicInputs::from_preamble(preamble, &schedule)`
+per proof (public data), `LinkMap::new(&schedule)`, `StreamColumns::vk_group_range(k, offset)`,
+`T1Challenges::count(log_rows) = 38` @2^18 as the T1 phase's `challenge_count`, member slots
+(row, wiring; degree 5 stage envelope, offset 0), `challenge_offset`. Assembly order: pack T1's 20
+prover groups + 2 VK groups (`StreamColumns::new(&table, k, offset)`; `table.vk` = the key's) →
+`commit_packed` → phase challenges (`commitment_prefix_challenges` over the FULL commitment list,
+key pins included) → `T1Challenges::from_challenges(&challenges[offset..offset + 38], log_rows)`
+→ `Members::new(&table, &relation, &challenges)` → `prove_assembly` (proof omits the pinned
+groups). Verifier: `full_commitments` (key pins spliced) → same challenges →
+`T1Challenges::input_claims(&public)` as the two member claims → `StreamTermExporter` from
+`TermContext::challenges`.
+
+### Tests / gates
+
+- `hash_table_relation` (11): + `noncanonical_{shifted,aligned}_wires_are_rejected`,
+  `prover_owned_vk_columns_are_rejected`, complete own-randomizer proof (reviewer's
+  `OwnChallengeExporter`) rejected, `eq_helpers_match_jolt_poly`.
+- `hash_table_fixture`: T = 232, d = 2, 20 + 2 groups, exact Fr counts.
+- clippy (`--lib --test hash_table_relation --test hash_table_fixture --test perf1_profile
+  [--test wrap_real_t1_r]`, both feature sets), rustfmt, style checker clean on this lane's files.

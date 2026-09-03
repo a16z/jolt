@@ -20,10 +20,13 @@
 //!   members.
 //! - [`terms`]: the Fiat–Shamir randomizers, the batched final relation as
 //!   affine-form terms, virtual value columns, link row maps.
-//! - [`adapter`]: T1 on the wrapper stream (columns, members, `TermExporter`).
+//! - [`eq`]: `eq`-family evaluations with observer-routed multiplications.
+//! - [`adapter`]: T1 on the wrapper stream (verifier key with the committed
+//!   verifier-key groups, columns, members, `TermExporter`).
 
 pub mod adapter;
 pub mod blake3;
+pub mod eq;
 pub mod layout;
 pub mod prover;
 pub mod recorder;
@@ -33,7 +36,10 @@ pub mod terms;
 pub mod wiring;
 pub mod wiring_prover;
 
-pub use adapter::{Members, StreamColumns, StreamTermExporter};
+pub use adapter::{
+    prover_group_count, vk_group_range, HashTableKey, Members, StreamColumns, StreamTermExporter,
+};
+pub use eq::Mul;
 pub use layout::{
     ColumnEvals, Relation, WiredWord, WordColumn, COMMITTED, CONSTRAINTS, DEGREE, WIRED_BITS,
     WIRED_WORDS,

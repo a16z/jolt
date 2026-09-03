@@ -23,6 +23,7 @@ use jolt_field::{Fr, One, Ring, Zero};
 use jolt_poly::{EqPlusOnePolynomial, EqPolynomial};
 
 use super::blake3::{last_writer, schedule, Chain, G_INDICES, HALF_STEPS, IV, ROTATIONS, ROUNDS};
+use super::eq::{eq_evals_with, eq_points_with, eq_zero_with, plain, pow2, Mul};
 use super::layout::{
     ColumnEvals, WiredWord, WordColumn, CANON, CANON_BITS, COMMITTED, MESSAGE, WIRED_BITS,
     WIRED_WORDS, WORD_BITS,
@@ -88,8 +89,6 @@ pub enum Weights {
     Mask(u8),
     /// Byte swap of the low half-word (`bytes[0] · 2^8 + bytes[1]`).
     BswapLo16,
-    /// Byte swap of the high half-word (`bytes[2] · 2^8 + bytes[3]`).
-    BswapHi16,
 }
 
 impl Weights {
@@ -99,7 +98,6 @@ impl Weights {
             Self::Bswap => word.swap_bytes(),
             Self::Mask(n) => word & ((1u32 << n) - 1),
             Self::BswapLo16 => (word & 0xffff).swap_bytes() >> 16,
-            Self::BswapHi16 => (word >> 16).swap_bytes() >> 16,
         }
     }
 
@@ -110,7 +108,6 @@ impl Weights {
             Self::Bswap => Some(8 * (3 - j / 8) + j % 8),
             Self::Mask(n) => (j < usize::from(n)).then_some(j),
             Self::BswapLo16 => (j < 16).then(|| 8 * (1 - j / 8) + j % 8),
-            Self::BswapHi16 => (j >= 16).then(|| 8 * (3 - j / 8) + j % 8),
         }
     }
 }
@@ -370,8 +367,8 @@ pub fn source(p: usize, slot: WordSlot) -> Source {
             WordSlot::Word(WiredWord::FrTail) if SHIFTED_WIRE_START_POSITIONS.contains(&p) => {
                 wire_word(p, 8, Weights::BswapLo16)
             }
-            WordSlot::Word(WiredWord::FrHi2) if SHIFTED_WIRE_START_POSITIONS.contains(&p) => {
-                wire_word(p, 2, Weights::BswapHi16)
+            WordSlot::Word(WiredWord::FrLo2) if SHIFTED_WIRE_START_POSITIONS.contains(&p) => {
+                wire_word(p, 2, Weights::BswapLo16)
             }
             WordSlot::Word(_)
                 if !matches!(slot, WordSlot::Word(WiredWord::AIn | WiredWord::CIn)) =>
@@ -526,19 +523,6 @@ pub struct VkEvals {
     pub wire_shifted: Fr,
 }
 
-/// `eq(x, y)` for two big-endian points of equal length.
-pub fn eq_points(x: &[Fr], y: &[Fr]) -> Fr {
-    x.iter().zip(y).fold(Fr::one(), |acc, (a, b)| {
-        let ab = *a * *b;
-        acc * (Fr::one() - *a - *b + ab + ab)
-    })
-}
-
-/// `eq(x, 0)`.
-fn eq_zero(x: &[Fr]) -> Fr {
-    x.iter().fold(Fr::one(), |acc, a| acc * (Fr::one() - *a))
-}
-
 /// The verifier side of the wiring zero-check.
 pub struct WiringStatement<'a> {
     /// `WIRING_TERMS` batching coefficients: wired slots, then the low / high
@@ -564,17 +548,24 @@ impl WiringStatement<'_> {
     /// coefficients for the XOR operands, the slot coefficient times `2^k`
     /// for words.
     pub fn slot_weight(&self, slot: WordSlot, k: usize) -> Fr {
+        self.slot_weight_with(slot, k, &mut plain)
+    }
+
+    /// `slot_weight` with the shift routed through `mul`.
+    pub fn slot_weight_with(&self, slot: WordSlot, k: usize, mul: Mul<'_>) -> Fr {
         match slot {
             WordSlot::Din | WordSlot::Bin => self.gammas[slot.gamma_index() + k],
-            WordSlot::Word(_) => self.gammas[slot.gamma_index()].mul_pow_2(k),
+            WordSlot::Word(_) => mul(self.gammas[slot.gamma_index()], pow2(k)),
         }
     }
 
     /// `Σ_k weight(slot, k) · bit_k(value)`.
-    fn weighted_constant(&self, slot: WordSlot, value: u32) -> Fr {
+    fn weighted_constant_with(&self, slot: WordSlot, value: u32, mul: Mul<'_>) -> Fr {
         (0..WORD_BITS)
             .filter(|k| (value >> k) & 1 == 1)
-            .fold(Fr::zero(), |acc, k| acc + self.slot_weight(slot, k))
+            .fold(Fr::zero(), |acc, k| {
+                acc + self.slot_weight_with(slot, k, mul)
+            })
     }
 
     /// `Σ_j weight(slot, coefficient(j)) · bit_j(r)` of a source word group.
@@ -596,21 +587,29 @@ impl WiringStatement<'_> {
     /// The public part of the batched sum: constants and the first cell's
     /// previous-cell reads (`Σ eq(τ, row) · Σ_s weight(source constant)`).
     pub fn input_claim(&self, tau: &[Fr], public: &PublicInputs) -> Fr {
+        self.input_claim_with(tau, public, &mut plain)
+    }
+
+    /// `input_claim` with every field multiplication routed through `mul`.
+    pub fn input_claim_with(&self, tau: &[Fr], public: &PublicInputs, mul: Mul<'_>) -> Fr {
         let (tau_hi, tau_lo) = tau.split_at(self.log_rows - LOG_CELL);
-        let eq_tau_lo = EqPolynomial::<Fr>::evals(tau_lo, None);
-        let first_cell = eq_zero(tau_hi);
+        let eq_tau_lo = eq_evals_with(tau_lo, mul);
+        let first_cell = eq_zero_with(tau_hi, mul);
         let mut claim = Fr::zero();
         for (p, eq_tau_p) in eq_tau_lo.iter().enumerate() {
             for slot in WordSlot::all() {
                 match source(p, slot) {
                     Source::Const(value) => {
-                        claim += *eq_tau_p * self.weighted_constant(slot, value);
+                        let weighted = self.weighted_constant_with(slot, value, mul);
+                        claim += mul(*eq_tau_p, weighted);
                     }
                     Source::Previous {
                         weights, position, ..
                     } => {
                         let value = weights.apply(public.previous_word(usize::from(position)));
-                        claim += first_cell * *eq_tau_p * self.weighted_constant(slot, value);
+                        let weighted = self.weighted_constant_with(slot, value, mul);
+                        let cell_position = mul(first_cell, *eq_tau_p);
+                        claim += mul(cell_position, weighted);
                     }
                     Source::Zero | Source::Cell { .. } | Source::Next { .. } => {}
                 }
@@ -658,7 +657,7 @@ impl WiringStatement<'_> {
         let (r_hi, r_lo) = r.split_at(split);
         let eq_tau_lo = EqPolynomial::<Fr>::evals(tau_lo, None);
         let eq_r_lo = EqPolynomial::<Fr>::evals(r_lo, None);
-        let same_cell = eq_points(tau_hi, r_hi);
+        let same_cell = eq_points_with(tau_hi, r_hi, &mut plain);
         let previous_cell = EqPlusOnePolynomial::new(r_hi.to_vec()).evaluate(tau_hi);
         let next_cell = EqPlusOnePolynomial::new(tau_hi.to_vec()).evaluate(r_hi);
         let eq_full = same_cell
@@ -666,7 +665,7 @@ impl WiringStatement<'_> {
                 .iter()
                 .zip(&eq_r_lo)
                 .fold(Fr::zero(), |acc, (a, b)| acc + *a * *b);
-        let r_first_cell = eq_zero(r_hi);
+        let r_first_cell = eq_zero_with(r_hi, &mut plain);
 
         // Wired side: Σ_s γ_s · w_s(r).
         let mut wired = Fr::zero();
@@ -764,7 +763,9 @@ impl WiringStatement<'_> {
 /// The top 64 bits `w_hi` of a wire's big-endian encoding as a linear form
 /// over local column ids (committed bits `< COMMITTED`, wired words at
 /// `COMMITTED + index`): aligned wires read `2^32 · bswap(m) + fr_next(1)`,
-/// shifted wires `2^48 · bswap16(hi(m)) + 2^16 · fr_next(1) + fr_hi2`. A wire
+/// shifted wires `2^48 · bswap16(hi(m)) + 2^16 · fr_next(1) + fr_lo2` (bytes
+/// 0–1, 2–5, 6–7 of the encoding: the high half of `m`, the next word, the
+/// low half of the word after it). A wire
 /// is accepted iff `(r_hi − 1) − w_hi` has a 64-bit witness, i.e. `w_hi < r_hi`
 /// — sound for every non-canonical encoding (`x + r ≥ r` has `w_hi ≥ r_hi`);
 /// incomplete for the canonical values whose top 64 bits equal `r_hi`, a
@@ -782,7 +783,7 @@ pub fn canonicality(shifted: bool) -> Vec<(usize, Fr)> {
             COMMITTED + WiredWord::FrNext(1).index(),
             Fr::one().mul_pow_2(16),
         ));
-        form.push((COMMITTED + WiredWord::FrHi2.index(), Fr::one()));
+        form.push((COMMITTED + WiredWord::FrLo2.index(), Fr::one()));
     } else {
         for j in 0..WORD_BITS {
             form.push((

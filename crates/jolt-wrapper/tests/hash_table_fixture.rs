@@ -570,9 +570,18 @@ fn fibonacci_2_18_table() {
         &mut counter,
     );
     assert_eq!(observed.len(), exported.len());
+    let term_mults = counter.0;
+    let mut statement_counter = MulCounter(0);
+    let statement_challenges = T1Challenges::from_challenges_with(&raw, log_rows, &mut |a, b| {
+        statement_counter.fr_mul(a, b)
+    });
+    let statement_claims = statement_challenges
+        .input_claims_with(&table.public, &mut |a, b| statement_counter.fr_mul(a, b));
+    assert_eq!(statement_claims, challenges.input_claims(&table.public));
+    let statement_mults = statement_counter.0;
     let (kernels, entries, forms) = kernel_counts();
     println!(
-        "stage A (2 members, {} rounds, degree {}): {:.3} s (members setup {:.3} s); terms: T = {} (max degree d = {}), built in {:.3} s, verifier Fr multiplications {}; kernels: {} distinct, {} entries, {} value forms; stream columns {} ({} groups of 16)",
+        "stage A (2 members, {} rounds, degree {}): {:.3} s (members setup {:.3} s); terms: T = {} (max degree d = {}), built in {:.3} s; verifier Fr multiplications: terms {} + statement (challenge powers, wiring constant) {} = {}; kernels: {} distinct, {} entries, {} value forms; stream columns {} = {} prover groups + {} verifier-key groups of 16",
         log_rows,
         DEGREE,
         stage_secs,
@@ -580,15 +589,20 @@ fn fibonacci_2_18_table() {
         exported.len(),
         exported.iter().map(|t| t.factors.len()).max().unwrap_or(0),
         terms_secs,
-        counter.0,
+        term_mults,
+        statement_mults,
+        term_mults + statement_mults,
         kernels,
         entries,
         forms,
         columns.columns.len(),
-        columns.group_count
+        columns.vk_groups.start,
+        columns.vk_groups.len()
     );
-    assert_eq!(exported.len(), COMMITTED + WIRED_BITS + 4 + 1);
-    assert!(counter.0 <= 5_000, "Fr multiplication budget");
+    assert_eq!(exported.len(), COMMITTED + 4 + 1);
+    assert_eq!(columns.group_count, 22);
+    assert_eq!(columns.vk_groups, 20..22);
+    assert_eq!((term_mults, statement_mults), (4_206, 705));
 
     // Any single committed bit flipped breaks a member.
     for (column, row) in [
