@@ -18,6 +18,8 @@ use super::{
     WeightedColumnReduction, WrapperProof, STREAM_LABEL,
 };
 
+const MIN_COMMITTED_DEGREE: usize = 5;
+
 const TERM_EVALUATION_LABEL: &[u8] = b"term_evaluation";
 
 pub(crate) struct CountingKeccakTranscript {
@@ -93,8 +95,9 @@ pub fn prove_assembly(
         .map(|exporter| exporter.max_factors())
         .max()
         .ok_or(StreamError::EmptyTensor)?
-        + 1;
-    if term_prover.degree() != term_degree {
+        .saturating_add(1)
+        .max(MIN_COMMITTED_DEGREE);
+    if term_prover.degree() > term_degree {
         return Err(StreamError::StageEncoding);
     }
     if term_prover.input_claim() != row_result.final_claim {
@@ -270,7 +273,8 @@ where
         .map(|exporter| exporter.max_factors())
         .max()
         .ok_or(StreamError::EmptyTensor)?
-        + 1;
+        .saturating_add(1)
+        .max(MIN_COMMITTED_DEGREE);
     let term_rounds = terms.len().next_power_of_two().max(2).trailing_zeros() as usize;
     let term_proof = proof.stages.get(1).ok_or(StreamError::StageCount)?;
     let (term_result, term_rounds) = verify_rounds(

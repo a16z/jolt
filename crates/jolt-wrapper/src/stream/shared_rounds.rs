@@ -16,6 +16,8 @@ use super::{
     KZG_STAGE_SUM_ZERO_LABEL,
 };
 
+const MIN_SHARED_DEGREE: usize = 5;
+
 pub(crate) struct PendingRoundStage {
     polynomials: Vec<Vec<Fr>>,
     commitments: Vec<Bn254G1>,
@@ -183,7 +185,8 @@ pub(crate) fn prove_shared_opening<T: Transcript<Challenge = Fr>>(
         .iter()
         .map(|stage| stage.degree)
         .max()
-        .ok_or(StreamError::EmptyStage)?;
+        .ok_or(StreamError::EmptyStage)?
+        .max(MIN_SHARED_DEGREE);
     if degree > 6 {
         return Err(StreamError::StageEncoding);
     }
@@ -382,7 +385,8 @@ where
         .iter()
         .map(|stage| stage.degree)
         .max()
-        .ok_or(StreamError::EmptyStage)?;
+        .ok_or(StreamError::EmptyStage)?
+        .max(MIN_SHARED_DEGREE);
     if degree > 6 {
         return Err(StreamError::StageEncoding);
     }
