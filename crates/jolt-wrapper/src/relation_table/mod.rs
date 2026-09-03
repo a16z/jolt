@@ -508,6 +508,7 @@ impl RelationTable {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn final_value(
         rows: usize,
         tau: &[Fr],
@@ -529,6 +530,7 @@ impl RelationTable {
         )
     }
 
+    #[cfg(test)]
     #[expect(
         clippy::too_many_arguments,
         reason = "mirrors the transcript challenges and stage-B claim inputs"

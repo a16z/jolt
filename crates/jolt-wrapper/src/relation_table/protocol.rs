@@ -1,5 +1,5 @@
 use jolt_crypto::Bn254;
-use jolt_field::{Fr, Ring, Zero};
+use jolt_field::{Fr, One, Ring, Zero};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup, VerifierObserver};
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_poly::MultilinearPoly;
@@ -8,8 +8,9 @@ use jolt_transcript::{AppendToTranscript, Keccak256Transcript, Transcript};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    RelationTable, RelationTableError, RelationTableProver, WitnessPart, DEGREE, FIXED_COLUMNS,
-    TOTAL_COLUMNS, WIRES, WITNESS_COLUMNS,
+    evaluate_terms, evaluate_terms_observed, ColumnId, RelationTable, RelationTableError,
+    RelationTableProver, RelationTermsContext, WitnessPart, DEGREE, FIXED_COLUMNS, TOTAL_COLUMNS,
+    WIRES, WITNESS_COLUMNS,
 };
 use crate::stream::{
     commit_packed, prove_kzg_stage, prove_stage, verify_kzg_stage_observed,
@@ -181,15 +182,25 @@ pub fn prove(
         .iter()
         .map(|&column| column_claims[column])
         .collect::<Vec<_>>();
-    let expected = RelationTable::final_value(
-        key.table.rows(),
-        &tau,
+    let term_context = RelationTermsContext {
+        columns: std::array::from_fn(|slot| ColumnId { group: 0, slot }),
+        tau: &tau,
+        point: &row_result.point,
         beta,
         gamma,
         relation_weights,
-        &row_result.point,
-        &actual_claims,
-    )?;
+        stage_coefficient: Fr::one(),
+    };
+    let terms = key.table.terms(&term_context)?;
+    let expected = evaluate_terms(&terms, &|column| {
+        if column.group != 0 {
+            return Err(RelationTableError::Claims);
+        }
+        actual_claims
+            .get(column.slot)
+            .copied()
+            .ok_or(RelationTableError::Claims)
+    })?;
     if row_result.final_claim != expected {
         return Err(RelationTableError::Claims);
     }
@@ -286,14 +297,28 @@ pub fn verify(
         &mut transcript,
         &mut cost,
     )?;
-    let expected = RelationTable::final_value_observed(
-        key.layout.rows,
-        &tau,
+    let term_context = RelationTermsContext {
+        columns: std::array::from_fn(|slot| ColumnId { group: 0, slot }),
+        tau: &tau,
+        point: &row_result.point,
         beta,
         gamma,
         relation_weights,
-        &row_result.point,
-        &proof.column_claims,
+        stage_coefficient: Fr::one(),
+    };
+    let terms = super::terms::relation_terms_observed(key.layout.rows, &term_context, &mut cost)?;
+    let expected = evaluate_terms_observed(
+        &terms,
+        &|column| {
+            if column.group != 0 {
+                return Err(RelationTableError::Claims);
+            }
+            proof
+                .column_claims
+                .get(column.slot)
+                .copied()
+                .ok_or(RelationTableError::Claims)
+        },
         &mut cost,
     )?;
     if row_result.final_claim != expected {

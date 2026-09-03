@@ -290,17 +290,17 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
     let bincode_bytes = encode_to_vec(&table_proof, standard())
         .expect("serialize relation table proof")
         .len();
-    assert_eq!(table_proof.payload_bytes(), 4_896);
-    assert_eq!(bincode_bytes, 4_959);
+    assert_eq!(table_proof.payload_bytes(), 4_352);
+    assert_eq!(bincode_bytes, 4_415);
     assert_eq!(
         cost,
         VerifierCost {
-            ec_mul: 87,
-            ec_add: 86,
+            ec_mul: 108,
+            ec_add: 107,
             pairing_pairs: 8,
-            fr_mul: 7_364,
-            fr_inv: 58,
-            keccak: 326,
+            fr_mul: 8_847,
+            fr_inv: 6,
+            keccak: 310,
         }
     );
 
