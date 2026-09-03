@@ -2,7 +2,8 @@
 
 Lane journal. Code: `crates/jolt-wrapper/src/limb_table/`, tests `crates/jolt-wrapper/tests/limb_table_*.rs`
 (+ `tests/common/mod.rs`). Checkpoint commits: `eea2a0d27` (fixed layout), `a6e09751d` (relation v2 + terms export),
-`93f166b80` (style: `Col`/`Cells` associated constants, zero style-checker findings).
+`93f166b80` (style pass), `ffd8cfb2a` (milestone 2 + review #1 fixes), then this checkpoint (decision (A) offsets,
+ψ-chains, sign flags, stream adapter, execution-derived budget, σ = 11 fixture, module split).
 
 ## What the table proves
 
@@ -13,143 +14,176 @@ regrouped so that every scalar is a named `DoryScalar` wire or the constant one;
 per cell, Miller steps use 32 rows. The Straus schedule (radix-16 signed digits, 64 windows, tables `X^1..X^8` /
 `(j−8)·P + Z0`) is laid out so that every operand relation is a bit-field kernel of the row index (`layout.rs`).
 
-## Protocol (post 00:42 steer: terms, zero-round wiring, phase-separated columns)
+Beyond the pairing equation the table pins, for every proof-derived input: canonical integer encoding of each
+byte-linked `Fq` coordinate (review B3), on-curve membership of every G1/G2 point, norm one `x·conj(x) = 1` of every
+raw GT input (B4), G2 subgroup membership of the two pairing inputs `E2_fin`, `B2` (ψ-chains), and the compressed-point
+sign flag of every G1/G2 proof point (arkworks canonical `y > −y`).
 
-Committed columns (`relation::Col`, packing order = index order; `export::columns()` carries the phase per column):
+## Decision (A): transcript-derived Straus offsets (`schedule/ec/mod.rs` module doc has the full argument)
 
-| phase | columns | count | col range |
-|---|---|---|---|
-| 1 | `z` chunks 16, `k' = k + 2^267` chunks 17, carry chunks 4×7 (`c_i + 2^111`) | 61 | 0..61 |
-| 1 | digit bits `zero, neg, e0, e1, e2`, digit value `D`, lookup multiplicities `m_pos, m_neg`, range multiplicity | 9 | 61..70 |
-| 2 (after `ξ, α, β, γ, φ, fp, …`) | operands `X_0..X_21` (= `κ·Z_ξ(src)`), `Y_0..Y_21` (= `±Z_ξ(src)`) | 44 | 70..114 |
-| 2 | LogUp range helpers (22 groups of 3 over the 61 chunks + 5 digit bits), range inverse table `1/(α−x)` | 23 | 114..137 |
-| 2 | lookup read helper `h`, table helpers `g_pos, g_neg`, fingerprints `f_pos, f_neg` | 5 | 137..142 |
-| VK | `pin`, `pin_limb_0..2`, `free` | 5 | 142..147 |
+Every Straus chain over a proof point needs a non-degenerate accumulator start `R` and table offset `Z0`. Both are
+now derived from one wrapper Fiat–Shamir challenge `θ` drawn after phase 1a (no W4-R wire): per group one
+fixed-base Straus chain computes `R = [θ]G` with constant offsets `R'' = G`, `Z'' = 9G` (`FIXED_TABLE_OFFSET`),
+`Z0 = φ(R)` by the GLV endomorphism (`G1Config::ENDO_COEFFS`, `endomorphism_affine`; G2 alike), and every main chain
+carries one extra base `Operand::Constant(−K)` with `Wire::Offset` whose digits are θ's, `K = offset_correction(g,
+g_endo, n')` = `−(16^64·R'' + n'(16^64−1)/15·Z'')` so the θ-dependent correction is a fixed-base multiple of θ.
 
-Phase 1 = 70 columns, phase 2 = 72, VK = 5 (`Col::PHASE1_END`, `Col::PHASE2_END`, `Col::VK_END`). The prover also
-carries 11 public columns (`eq_tau`, copy kernel, `sel/is_gt/is_g1/is_g2`, `S0`, `coord`, constancy, `small`, `id`)
-that the verifier recomputes in closed form (`PublicEvals`).
+Soundness of the `+`-only (unguarded) adds in the θ chains: an exceptional add in window `w` of a chain over `n`
+bases means `θ·(16^{w+1} + λ(nw + k ∓ 1))·G` equals a fixed point — a single root in `θ`; a doubling of the identity
+means `16^w + λnw ≡ 0 (mod r)`; both are swept for `n ≤ 64`, `w < 64` by the unit test `offsets_are_nondegenerate`.
+The R-chain itself runs in the integer regime: its multipliers stay in `(16^{w+1}, 2.07·16^{w+1}) < r` for `w ≤ 62`
+(`fixed_base_multipliers_stay_below_the_modulus`). θ's digits are prover-committed and bound by the digit link with
+verifier-known right-hand side (`ρ^{K+1}·θ`, below). Negatives: `point_crafted_for_fixed_offsets_is_rejected`
+(a point `P = −(d−8)^{-1}·G` crafted against the old constant offsets no longer degenerates the chain — the crafted
+add is now guarded by θ), `twist_point_outside_g2_is_rejected` (order-10069 / twist-torsion pairing input).
 
-`Z_ξ(v) = Σ_a ξ^a·limb_a(v)` (96-bit limbs recomposed from the chunks, affine in the chunk columns).
+Add sites (B5) — enumerated in the `ec` module doc: (1) θ chains: exceptional ⟹ one root in θ; (2) main chains:
+`acc + T[d]` with `acc = 16·acc_prev + …` starting from `R = [θ]G`: exceptional ⟹ `θ`-linear relation, one root;
+(3) table `(j−8)·P + Z0` with `Z0 = φ([θ]G)`: exceptional ⟹ `(j−8)·P = ±φ([θ]G)`, one root per `j`; (4) ψ-chain
+adds are the only ones over prover-chosen operands without θ — they use guarded 10-row adds
+(`g2_add_guarded`: the row set is complete for `P = ±Q` and `P = O`), see below; (5) Miller-loop adds use the
+constant `Q` bases and `E2_fin`/`B2` after subgroup membership — degenerate only if `[x]P = ±Q`, excluded by `P` and
+`Q` being independent random points of a prime-order group (a fixed-`Q` collision has probability `2/r` over the
+proof's `P`).
 
-Row member (`relation.rs`, 18 rounds, degree 5, one member, input 0), per row `x` with `eq(τ,x)`:
-- limb identity on non-free rows: `Σ_s X_s·Y_s − z(ξ) − k(ξ)·q(ξ) − (B − ξ)·C(ξ) = 0` (`B = 2^96`, `C` the carry
-  polynomial of degree 3; exact over the integers by the chunk range checks: `Σ|κ| ≤ 2^7` (measured max 102) keeps
-  every coefficient below `2^201` and every carry below `2^105`);
-- pins `pin·(z(ξ) − pin(ξ)) = 0`; LogUp range groups `h_g·Π(α − c_i) = 1`; digit booleanity, `(1−neg)e0e1e2 = 0`,
-  `D = sel·(1−zero)(1−2neg)(1+e)`;
-- operand lookup, reading side: `h·(β + key + φ·F) = sel` with `F = Σ_{s<n} fp^s·Y_s` (`n = 22` GT, `2` G1, `4` G2),
-  GT key `(1−zero)(S0 + 16e) + zero·(one_row + c) + 2^18·neg`, EC key `S0 + stride·D` (`16` G1 cells, `8` G2 half cells);
-  table side `g_±·(β + row + [2^18] + φ·f_±) = m_±`; `f_pos/f_neg` are the ±-signed slot fingerprints of every table
-  entry row (copied from the entry's coordinates by public kernels; the `f_neg` sign is GT conjugation, EC rows never
-  read `f_neg`);
-- `Σ_x`-only identities (no `eq`): range LogUp `Σ h_g·e_{2,g} = Σ mult·inv`, lookup LogUp `Σ h = Σ g_pos + Σ g_neg`,
-  copies `Σ_x eq(τ,x)·Σ_i β_i·C_i(x) = Σ_v B(v)·Z_ξ(v)` with `B(v) = Σ_i β_i·K_i(τ, v)` (every fixed operand and the
-  fingerprint columns; looked-up `Y_s` masked out by `1 − is_gt − is_g1·[s<2] − is_g2·[s<4]`), digit constancy
-  `Σ_x W(x)·Σ_b β'_b·bit_b(x) = 0` with `W(x) = eq(τ,x)cst(x) − eq(τ,x+1)cst(x+1)`.
+## G2 subgroup checks (`schedule/ec/psi.rs`, `Cells::PSI_CHAIN = 15872 + 256·chain + local`)
 
-Digit-link member (`digit_link.rs`, 18 rounds, degree 2): `Σ_x ω(x)·D(x)` with `ω = ρ^{kd}/mult(kd)·16^{63−w}` on
-each op's first slotted row; input claim `Σ_{kd<K} ρ^{kd}·s_kd + ρ^K` (`K` named wires in the published order,
-`ρ^K` for the constant-one bases). W5 compares against R's `Σ_s ρ^s·scalar_s`. Its final relation is the single
-linear term `ω̃(r)·D(r)` (`digit_link::link_term`).
+For each of `E2_fin`, `B2`: `ψ²(P) + ψ([6x+3]P) + [6x+1]P = 0` (equivalent to `[6x²]P = ψ(P)`, checked numerically in
+`psi_identity_holds_on_g2_only`). NAF of `6x+1` (top digit `2^64`, `naf(u128)`): doublings `2^i·P` at half cells
+`start+i`, guarded adds from the midpoint cell on (reading the previous partial sum from the previous cell's first
+half and the power through `Factor::table(PSI_CL, PSI_LH, pairs) + same(CH)`), final `+2P` gives `B = [6x+3]P`; tail
+cells: `t0` = `ψ²(P)` (rows 0–3, `g2_psi(false, false)`) and `ψ(B)` (rows 4–7), `t1` = guarded sum `S`, `t2` pins
+`S + A = 0` (`g2_negation_pins`). 256 cells per chain (4,096 rows), 2 chains = 8,192 rows. Negative: an order-10069
+twist point (outside `G2`) as pairing input is rejected by the pins.
 
-Verifier (`lookup::public_evals`, `wiring::copy_kernel_eval`, `verifier::Evaluator`): every public multilinear at
-the stage point in closed form — `eq(τ,r)`, kernels `Σ_i β_i K_i(τ,r)` (one memoized evaluation per distinct row
-field group; eq tables per block `[0,6) [6,12) [12,18)` of the row index shared by every field; kernel values summed
-per weight index and multiplied once), `sel/is_*` (family indicators), `S0` and `c` (field moments), constancy
-kernels, `small`, `id`; then `relation::terms()` — the whole final relation as
-`Term { coefficient, factors: Vec<AffineForm> }` over the claimed column evaluations (`terms.rs`).
+## Sign flags (`schedule/ec/sign.rs`, `Cells::G1_SIGN = 15168 + b` row 0, `Cells::G2_SIGN = 14912 + b` rows 0–5)
 
-### Terms export (W5 interface)
+`Source::Exact` rows (k = 0 enforced by `exact·k(ξ) = 0`, VK column `exact`) and `Source::Sign{of}` rows: exact
+`Σκxy + (1−flag)·2^256 = z` with the committed `flag` column (phase 1b, boolean-checked); the limb identity gains
+`+ exact·(1−flag)·2^64·ξ²` (`flag_xi`). G1: one sign row `y − (q+1)/2`. G2 (Fq2 lexicographic `(c1, c0)`): rows
+`inv = InverseOrZero(y1)`, `z = y1·inv`, exact pins `y1(1−z) = 0`, `z(z−1) = 0`, exact `v = z·y1 + (1−z)·y0`, sign row
+of `v`. `Layout.sign_rows: Vec<(InputElement, RowId)>` is the T1 link list. Flag semantics = arkworks canonical
+`y > −y` (`sign_flags_match_arkworks_and_flips_are_rejected`). Uncovered points: only the VK constants `H1, H2, Γ1_0,
+Γ2_0` (trusted); GT inputs are absorbed raw (no compression). 34 G2 + 4 G1 points → 38 cells (608 rows).
 
-`terms.rs`: `ColumnId(u32)` (index into `export::columns()`, i.e. `relation::Col`), `AffineForm { constant, weights }`,
-`Term { coefficient, factors }` — the same shape as W5's `stream::types` (`ColumnId { group, slot }` there; the
-adapter maps my column index to the packed `(group, slot)` through the export list). `RowRelation::terms(&PublicEvals)`
-returns **131 terms, max degree 4** (fibonacci profile and every profile: the count depends only on the relation):
-1 linear term (all linear constraints incl. `eq·` limb-identity linear part, pins, booleanity linear parts, LogUp
-sums), 22 operand products `X_s·Y_s`, 22 range groups × (1 + 3) factors-as-affine-forms `γ + x_i`, digit
-booleanity/value products, lookup read/table products, inverse-table term. `eq(τ,r)` and every public evaluation are
-folded into the coefficients. Every term's factors are affine in the *claimed* columns only (virtual operand limbs
-are affine forms over the chunk columns), so the batched stage-A final claim equals `Σ_t coeff_t·Π_j L_{t,j}(v)` —
-tested against the prover's native row-relation evaluation (`limb_table_e2e`).
+## Protocol (phases, columns, members)
 
-`export.rs`: `columns()` (147 committed/VK columns with `Phase::{One, Two, Vk}`), `members()` (row 18 rounds degree
-5; digit link 18 rounds degree 2), `ClaimedColumns::assemble(...)` with `phase_one()/phase_two()/vk()` slices.
+Committed columns (`relation::Col`, packing order = index order; `export::phases()` carries `challenges_before`):
 
-## Digit-base order (for W6-RT / W5)
+| phase | after | columns | count | col range |
+|---|---|---|---|---|
+| 1b | `θ` (after 1a) | `z`/`k'`/carry chunks (16-bit) 61, digit bits `zero, neg, e0, e1, e2`, digit value `D`, `m_pos, m_neg`, range mult, sign flag | 71 | 0..71 |
+| 2a | `ξ, α` | operands `X_0..X_21`, `Y_0..Y_21`, range helpers 22, range inverse | 67 | 71..138 |
+| 2b | `fp_root` | fingerprints `f_pos, f_neg` | 2 | 138..140 |
+| 2c | `β, fp_combine, copy_root` | lookup read `h`, table helpers `g_pos, g_neg` | 3 | 140..143 |
+| VK | — | `pin`, `pin_limb_0..2`, `free`, `exact` | 6 | 143..149 |
 
-`kd` = index of the wire in the order passed to `schedule::build` (the adapter passes `DoryLinks.scalars` order and
-checks it equals the set `FlattenedCheck::wires()`), `kd = K` for the constant one. A wire used by several MSMs
-(e.g. `Alpha(j)` in `C+`, `E1+`, `E2+`) has `mult(kd)` digit sets; `ω` divides by it. Window `w` holds digit index
-`63 − w` (weight `16^{63−w}`), digits are centered radix-16 (`d = j − 8 ∈ [−8, 7]`) with `Σ_i 16^i d_i = s` exactly.
-Digit columns: `zero, neg, e0, e1, e2` (`d = (1−zero)(1−2·neg)(1+e)`, `e = e0 + 2e1 + 4e2`), constant across an op's
-slotted rows (constancy identity), `D` committed as the product.
+Stage A challenges: `τ` (18), `γ, λ, λ_lookup, constancy_root`. `Col::CLAIMED = 149`. Commit-before-challenge is
+tested by `phases_commit_values_before_their_challenges` and the collision negative
+`selected_operand_collision_for_a_guessed_fingerprint_root_is_rejected` (B2).
 
-## Numbers (fibonacci profile σ = 11, N = 42; `random_values`)
+Row member (`relation.rs`, 18 rounds, degree 5, input 0) and digit-link member (`digit_link.rs`, 18 rounds, degree
+2) are unchanged in shape from `a6e09751d` (see the git history of this file for the identity list); the digit-link
+input claim is now `Σ_{kd<K} ρ^{kd}·s_kd + ρ^K + ρ^{K+1}·θ` (`Wire::One = K`, `Wire::Offset = K+1`,
+`Layout.digit_bases = K + 2`; `stream::link_input_claim`).
+
+## Stream adapter (W5 interface, `limb_table/stream.rs`, pattern `hash_table/adapter.rs`)
+
+- `PHASE_CHALLENGES = [2, 1, 3, LOG_ROWS + 4]` (1b→2a: `ξ, α`; 2a→2b: `fp_root`; 2b→2c: `β, fp_combine, copy_root`;
+  stage A: `τ`×18, `γ, λ, λ_lookup, constancy_root`); `T2Challenges { theta, row, rho }::from_challenges(theta,
+  phase_slice, rho)` — `θ` is the wrapper challenge after phase 1a, `ρ` is R's link challenge.
+- `commitment_phases(packing)`, `prover_group_count`, `vk_group_range`; `LimbTableKey::new(layout, packing, setup)`
+  commits the VK columns once (`pinned_commitments(group_offset)`).
+- `StreamColumns::new(&ClaimedColumns, &Columns, &Layout, packing, group_offset)` → `{columns, ids, group_count,
+  vk_groups}`: phase column lists in packing order with kinds (`Column::{U16, Bit, Fr}`), members with degree/offset.
+- `Members::new(relation, matrix, layout, digit_values, rho)` → `{rows: RowSumcheck, link: LinkMember}`.
+- `StreamTermExporter { layout, challenge_offset, theta_offset, rho_offset, columns, row_member, link_member }`
+  implements `TermExporter`: relation via `RowRelation::new_with(observer)`, `public_evals`, `omega_eval`,
+  `terms_with(observer)`, batching coefficients applied, link term appended. Digit link pairs with W6-RT's
+  `DoryScalarLink` (R scalar cells `ρ^s`-weighted) through `link_input_claim(r_link_claim, ρ, θ, K)`.
+- Verified against the members: `stream_exporter_terms_match_the_members` (175 terms incl. the link term).
+
+## Verifier budget (execution-derived, review MAJOR)
+
+`Evaluator<'o, O: TermObserver + ?Sized>` counts every `Fr` multiplication of the real verifier path (relation
+construction incl. challenge powers, public evals, `terms_with`, link) —
+`verifier_arithmetic_within_budget_at_fibonacci_profile` asserts `≤ 10,000` on the σ = 11, n = 42 layout through
+`StreamTermExporter`: **9,930 Fr mults, 175 terms, max degree 4**. Levers that got there from 11,271: unrestricted
+`same` factors as per-bit products; ranged shift/identity groups through an 8-state automaton (`shift_automaton`,
+≤ 17 mults per bit) when `3·values > 17·width`; `field_sum` factored by 6-bit block; no linear folding in
+`terms_with` (the fold cost more than it saved).
+
+## Numbers (fibonacci profile σ = 11, n = 42, real 2^22 opening, `limb_table_e2e`)
 
 | item | value |
 |---|---|
-| rows used | 189,586 of 262,144 (families 186,502; inputs/constants 3,084) |
-| GT online ops | 9,216 `gt_mult` + 192 `gt_sq` + 64 `gt_mult0` + 63 `gt_sq0` (+ 1,015 table ops) |
-| digit ops (`DigitOp`) | 14,208 (GT 9,280; G1 2,624; G2 2,304) |
-| max slots / max Σ\|κ\| | 22 / 102 |
-| pins / input rows | 12,668 / 1,526 |
-| fixed copy pieces (kernels) | 2,490 (+ fingerprint kernels), 117 families |
-| terms / max degree | 131 / 4 |
-| verifier `Fr` mults (`VerifierObserver::fr_mul`) | **9,511** = public evals 8,884 + digit link 627 (budget 10,000) |
-| largest kernel family | `gt_table` ≈ 800 (44 pieces), then `gt_mult` ≈ 450, `g2_table_up` ≈ 300 |
+| rows used | 199,783 of 262,144 |
+| θ-offset chains | G1: 64 windows in the G1 lane + one 16-cell table (≈ 1,280 rows); G2: `Cells::G2_OFFSET_*` region 10048..10240 = 192 cells (3,072 rows) |
+| ψ-chains | 2 × 256 cells (8,192 rows) |
+| canonicality | 0 extra rows: 4 extra 16-bit chunk columns (`CANON_CHUNKS`) on the 1,526 data rows |
+| sign flags | 38 cells (608 rows); GT norm-one 110 cells (1,760 rows) |
+| terms / max degree | 174 row + 1 link / 4 |
+| verifier `Fr` mults | 9,930 execution-derived (stream exporter); e2e path 9,007 + 541 link |
+| layout + witness / columns / row member (debug) | 6.6 s / — / 2.8 s |
+| σ = 8, n = 5 fixture | 174 terms, 8,614 + 365 `Fr` mults |
 
-Verifier cost anatomy (before/after this checkpoint): 13,526 → 9,511. Eq tables 5,232 → 801 (block-aligned
-pieces instead of per-field tables), per-map weight multiplications 2,610 → 88 (bucket per weight index), digit-link
-`Σ_w eq(r_w,w)16^{63−w}` in closed form `16^{63}·Π_i(1 − r_i + r_i·16^{−2^i})` (1,123 → 627). Remaining: 2,492
-distinct `eq(τ_u,c)·eq(r_v,t)` pairs, 1,592 wide-field piece products, 712 field-group products.
+### PERF-4 — committed column widths and density (σ = 11, n = 42 witness, 2^18 rows)
 
-σ = 8, n = 5 real opening (`limb_table_e2e`, synthetic Dory opening through the adapter): layout + witness 0.7 s,
-columns 0.4 s, row member 2.8 s (debug build, 2^18 rows × 158 columns), verifier 8,047 + 368 `Fr` mults.
+| phase | column | cols | max bits (signed) | nonzero fraction |
+|---|---|---|---|---|
+| 1b | chunk | 61 | 16 | 0.34–1.00 |
+| 1b | digit_bit | 5 | 1 | 0.09–0.23 |
+| 1b | digit_value `D` | 1 | 4 signed (`[−8, 7]`) | 0.43 |
+| 1b | lookup_mult_pos / neg | 2 | 11 / 4 | 0.065 / 0.051 |
+| 1b | range_mult | 1 | 23 | 0.25 |
+| 1b | sign_flag | 1 | 1 | 0.0005 |
+| 2a | operand_x / operand_y | 44 | 254 (full `Fr`) | x 0.08–0.70, y 0.43–0.69 |
+| 2a | range_helper | 22 | 254 | 1.00 |
+| 2a | range_inverse | 1 | 254 | 0.25 |
+| 2b | fingerprint_pos / neg | 2 | 254 | 0.076 |
+| 2c | lookup_read / table_pos / table_neg | 3 | 254 | 0.52 / 0.065 / 0.051 |
+| VK | pin, free, exact | 3 | 1 | 0.063 / 0.012 / 0.0006 |
+| VK | pin_limb | 3 | 96 | 0.006 |
 
-## Tests (all green at `a6e09751d`, `cargo nextest run -p jolt-wrapper --test limb_table_*`)
+Dense full-width `Fr` columns: **72** (2a 67, 2b 2, 2c 3), of which `range_helper` (22) is fully dense and the rest
+8–70 % nonzero. ≤ 16-bit candidates: 61 chunk + 5 digit-bit + `D` (offset by 8) + `m_neg` + sign flag + the three
+VK bits = 72 columns; `m_pos` (11 bits) fits too; `range_mult` needs 23 bits (multiplicity of chunk value 0 over
+61·2^18 lookups) — split it into two 16-bit halves if a 16-bit commitment tier is wanted.
 
-- `limb_table_program`: program reproduces the deferred check bit for bit on a real opening; fibonacci profile fits
-  2^18 rows; `evaluator_matches_kernel_mles` (2,610 kernels: Evaluator = factored MLE = Σ edges, grouped evaluation =
-  Σ kernels); `kernels_match_program_rows` (every copy-kernel edge ↔ program slot, fingerprint edges ↔ table reads,
-  no duplicate edges, attributed by family); `verifier_arithmetic_within_budget_at_fibonacci_profile` (≤ 10k).
+## Tests (all green at this checkpoint; `cargo nextest run -p jolt-wrapper --lib --test limb_table_e2e --test limb_table_program --test limb_table_miller`, 39 tests, 60 s)
+
+- `limb_table_program`: program reproduces the deferred check bit for bit on a real opening (`NativeCheck` as the
+  intermediate-value oracle); fibonacci profile fits 2^18 rows; evaluator/kernel/program cross-checks;
+  `verifier_arithmetic_within_budget_at_fibonacci_profile` (execution-derived ≤ 10k).
 - `limb_table_miller`: Miller cells vs arkworks step by step.
-- `limb_table_e2e`: every constraint vanishes on the honest witness; both members driven with random challenges,
-  round checks, verifier closed forms == prover public columns at `r`, `Σ_t coeff·Π L(v) == final claim`, digit-link
-  input `Σ ρ^k s_k + ρ^K`, `ω̃(r)` closed form; tamper suite (flipped chunk, chunk `+2^16` past the range table, wrong digit bit, broken copy,
-  replaced looked-up operand) rejected by the term check.
+- `limb_table_e2e`: every constraint vanishes on the honest witness; both members at σ = 8 and at the real σ = 11,
+  n = 42 opening (`members_verify_and_tampers_are_rejected_at_the_fibonacci_profile`); verifier closed forms ==
+  prover public columns at `r`; `Σ_t coeff·Π L(v) == final claim`; digit-link input `Σ ρ^k s_k + ρ^K + ρ^{K+1}θ`;
+  tamper suite (chunk flip, chunk past the range table, wrong digit bit, broken copy, replaced looked-up operand,
+  `x+q`/`x+2q` aliases, out-of-range multiplicity forgery, non-norm-one GT input, twist point, crafted point, sign-flag
+  flips, fingerprint-root collision) rejected by the term check via the test-side `Cheating` prover wrapper (round
+  checks forced, so rejection is the verifier's final relation); `stream_exporter_terms_match_the_members`;
+  independent oracle `production_verifier_and_pins_agree_on_tampered_proofs` — the production `DoryScheme::verify`
+  and the table's pins both reject a proof with a replaced G1 (`vmv.e1`) or GT (`d1_left`) message.
+- Fixture (`tests/common`): `synthetic_opening(num_vars, n, seed)` runs the production Dory verifier on the honest
+  proof and exposes it (`ProductionVerifier::accepts`) for tampered proofs. Evaluations are `u64`-valued: full-width
+  row scalars send every row MSM of a 2^22 commitment through the arkworks fork's `msm_bigint_wnaf`, which builds a
+  fresh 2-thread rayon pool per chunk (`variable_base/mod.rs:856`) — at 2^11 rows that spawns thousands of short-lived
+  pools and dies with `EAGAIN` (8 MiB stacks) or a stack overflow (default stacks) on macOS. Worth a look upstream.
 
-## Bugs fixed this checkpoint (for reviewers)
+## Module map (all ≤ 1,000 lines; `schedule/` split this checkpoint)
 
-- Families whose row set was only implied by a `Table` elem factor (`glue`, `frobenius`, `ml_psi*`,
-  `ml_dbl_after_add`, `mg_sq_after_*`, `mg_ell_dbl*`, `ma_ell*`, `fe_sq`, `fe_mul_*`) leaked their constant/`ONE`
-  operand kernels onto every other cell: `place()` now restricts scattered families to the placed cells
-  (`Factor::weight(CELL, mask)`), and the Miller/final-exponentiation domains carry explicit step/slot restricts.
-- `TableRead.conjugated` was computed from the absolute coordinate (`≥ 6`), flagging G1/G2 `x, y` (coords 14, 15) as
-  conjugated while the kernel used the template coordinate; the fingerprint map's conjugated weight is now the one
-  owner of the sign.
-
-## Item 4 (steer): in-table G2 subgroup and compressed-point sign checks — costed, not implemented
-
-- Subgroup membership of the 3σ+1 = 34 committed G2 points (fibonacci profile): the one-x-multiplication test
-  `ψ²(P) + ψ([6x+3]P) + [6x+1]P = 0` (equivalent to arkworks' `[6x²]P = ψ(P)` on `E'(Fq2)` since
-  `gcd(3x²+3x+2, h2·r) = 1`, checked numerically). Cost per point: NAF(x) has 63 digits / 24 nonzero → ≈ 98
-  half-cells (dbl + add ops) + ψ/ψ² (2 cells) ≈ 49 cells; 34 points ≈ 1,666 cells ≈ 26.7k rows. With the dyadic
-  packing the layout uses (`p: 6 bits`, `t: 7 bits`) it needs 64 cells/point = 2,176 cells; free full cells ≈
-  1,660, fragmented (largest contiguous block 640 cells) → **does not fit at 2^18 without layout compaction**
-  (or 3-NAF ladders sharing the doubling chain across points). Uncovered today: all 34 proof G2 points (`E2`
-  chains, `B2` halves); the VK G2 constants are trusted.
-- Compressed-point sign flags: `y > −y` in `Fq` (G1) / lexicographic `(c1, c0)` in `Fq2` (G2) via 16-bit-chunk
-  comparison rows: ≈ 6 chunk-comparison rows + 1 borrow row per Fq coordinate → G1 points 4 (A1, A3, A4 + H1
-  pinned) ≈ 28 rows, G2 34 points × 2 coords ≈ 476 rows, ≈ 32k rows including the LogUp range helpers on the
-  comparison chunks — fits in the spare rows. Not implemented; the compressed-flag columns would join phase 1.
+`schedule/mod.rs` (Cells, Layout, Builder core, `build`) · `gt.rs` (GT leaves, tables, norm-one, online) · `miller.rs`
+(ate schedule, Miller loop) · `final_exp.rs` · `ec/mod.rs` (θ-offset argument, `Chain`/`Lane`/templates, math tests) ·
+`ec/g1.rs`, `ec/g2.rs` (Straus lanes, tables, on-curve) · `ec/psi.rs` (subgroup chains) · `ec/sign.rs`. `relation.rs`
+is 1,082 lines (soft blocker; `RowSumcheck` is the natural next cut).
 
 ## Open for the parent
 
-- `tests/perf1_profile.rs` (W5, `a346cf32e`) imports the removed `limb_table::wiring::Wiring` and the old
+- `tests/perf1_profile.rs` (W5) still imports the removed `limb_table::wiring::Wiring` and the old
   `RowSumcheck::new`/`Slot` shape; `cargo clippy -p jolt-wrapper --all-targets` fails on it. Not mine to edit; the
-  replacements are `RowSumcheck::new(&relation, &columns)` over `col::WIDTH` columns (see `limb_table_e2e::matrix`)
-  and `Slot { x, y, kappa, y_sign }`.
-- The fibonacci 2^18 fixture and the 2^22 synthetic opening still run only the native-check path
-  (`program_reproduces_the_deferred_check_on_a_real_opening`); the member e2e runs at σ = 8, n = 5 (same code path,
-  fixed 2^18 rows — the row count does not depend on σ).
+  replacements are `RowSumcheck::new(&relation, &columns)` over the export columns and `Slot { x, y, kappa, y_sign }`.
+- `tests/relation_fixture.rs` carries another lane's uncommitted change that breaks `--features prover-fixtures`.
+- The `Cargo.lock` diff in the worktree is not mine (left unstaged).
+- The arkworks-fork MSM pool storm above: any dense full-width polynomial committed through `commit_rows_dense` at
+  2^22 hits it on macOS; production polynomials are small-valued or one-hot, which is why nobody sees it.
