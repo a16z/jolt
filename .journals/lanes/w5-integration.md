@@ -443,3 +443,37 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
   wrong key commitment fails. The real gate rejects a mismatched proof shape and all existing wire,
   stage, factor, reduced-claim, and opening tampers. T2 still supplies one zero stand-in column;
   its phase columns, members, exporter, VK pins, and T2↔R link remain pending.
+
+## Real T2 assembly and k=16/32 gates (03:26)
+
+- T1 now delegates schedule/VK ownership to `hash_table::HashTableKey`; its two VK groups enter the
+  stored wrapper key through `pinned_commitments(0)`. `PublicInputs` are derived from each proof's
+  public preamble against the stored schedule. The wrapper no longer has a parallel T1 pin builder.
+- The real T2 checkpoint contributes 70 phase-1 columns, 72 phase-2 columns, five VK columns, its
+  degree-five row member (131 terms), and the digit-to-R scalar difference member. T1 contributes
+  232 terms; R 15; T1↔R CopyLink 10; the linked T2/R pair 132: **T=390**, nine term rounds, four
+  factor evaluations. T2's low-to-high members use bit-reversed stream columns so every final
+  evaluation is opened at the shared high-to-low point.
+- k=16 groups: T1 20 sent + 2 VK, R 2 (one VK), T1↔R CopyLink 1 VK, T2 phase 1 5 + 1 VK, R helpers
+  1, T2 phase 2 5 = 31 phase-1 groups (26 wire) + 6 phase-2 groups. Mixed T2 groups keep the five
+  digit bits and four field columns in the final phase-1 groups. Payload: phase 1 832; phase 2 192;
+  stage A 1,184; term 608; shared BDFG 96; factors 128; stage B 640; reduced 32; HyperKZG 2,144 =
+  **5,856 B** / bincode **5,972 B**. Challenge IO is 0; seven known public fields are 224 external
+  bytes, making 6,080 B with that calldata.
+- k=32 groups: T1 11 sent + 2 VK, R 2 (one VK), CopyLink 1 VK, T2 phase 1 3 + 1 VK, R helpers 1,
+  T2 phase 2 3 = 20 phase-1 groups (15 wire) + 4 phase-2 groups. Payload: phase 1 480; phase 2 128;
+  stage A 1,184; term 608; shared BDFG 96; factors 128; stage B 640; reduced 32; HyperKZG 2,240 =
+  **5,536 B** / bincode **5,640 B**; 5,760 B with the seven known public fields.
+- k=16 at load 10.35/7.02/6.49: key 88 ms, prepare 553, SRS 3,982, adapters 1,807, offline key
+  commits 1,287, phase 1 commit 7,217, helpers 3,465, phase 2 commit 132,364, proof 14,042,
+  verify 15. Cost: 181 ecMul, 180 ecAdd, 8 pairs, 27,659 Fr mul, 8 inversions, 478 Keccak;
+  **2,570,537 gas**. k=32 at load 9.96/11.07/9.28: key 90, prepare 498, SRS 6,560,
+  adapters 1,472, key commits 1,557, phase 1 commit 3,409, helpers 1,489, phase 2 commit 66,350,
+  proof 14,854, verify 15. Cost: 169 ecMul, 168 ecAdd, 8 pairs, 27,639 Fr mul, 8 inversions,
+  468 Keccak; **2,465,473 gas**.
+- Checkpoint adapter gaps: R names `Delta{1,2}R(1..=sigma)` while T2 names
+  `Delta{1,2}R(0..sigma)`; the integration maps the indices and drops R-only `Chi(sigma)`,
+  `S1Acc`, `S2Acc`. T2 has no stored-key/stream constructor or pre-challenge multiplicity export,
+  so those two assembly steps remain in test support. T1's published k=32 layout keeps its u32
+  words separate and sends 11 groups; mixing its final bit/u32 group would save one commitment but
+  would fork the T1-owned ID/key geometry.
