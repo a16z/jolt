@@ -47,7 +47,16 @@ rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 tracing.workspace = true
+ark-bn254 = { workspace = true, features = ["curve"] }
+ark-ec = { workspace = true }
+ark-ff = { workspace = true }
+dory = { workspace = true }
+num-bigint = { workspace = true, features = ["std"] }
+num-integer = { workspace = true }
+num-traits = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
 rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
