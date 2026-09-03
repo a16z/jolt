@@ -323,3 +323,75 @@ StreamTermExporter { layout, challenge_offset, theta_offset, rho_offset, columns
   unguarded_add` scratch test is not landed: it documents the accepted `entry = acc` case of the
   unguarded proof-base add, which the per-occurrence binding makes θ-dependent again per the
   module-doc argument; the guards stay on the correction-base adds only.
+
+## Fix #4 (review #4, `8ec8ea0f0` base)
+
+### Blocker — unique recoding per occurrence (window check)
+
+- Every signed radix-16 string `t` with `Σ 16^i·d_i ≡ s (mod r)` was a valid recoding of `s`; the
+  link only proved the congruence. Now each occurrence `o` also proves `V_hi(o) ∈ 0..=WINDOW_BOUND`
+  for `V_hi = Σ_{i=48}^{63} 16^{i−48}·d_i` (its top 16 digits), `WINDOW_BOUND = R_HI − 2`,
+  `R_HI = r >> 192 = 0x30644e72e131a029` (`digits.rs`). With `|Σ_{i<48} 16^i·d_i| ≤ L = 8·(16^48 −
+  1)/15 < 2^192·8/15`, an admitted `t` lies in `[−L, (R_HI − 2)·2^192 + L]`, an interval of length
+  `< (R_HI − 2 + 16/15)·2^192 < R_HI·2^192 ≤ r`: at most one admitted recoding per residue class,
+  so the digits of every occurrence are a function of its scalar (zero and small scalars included:
+  `V_hi = 0` is admitted). **Completeness:** the canonical recoding of `s < r` has `V_hi ∈ {s_hi,
+  s_hi + 1}`; it is rejected only when `s > (R_HI − 2)·2^192 + 2^192·7/15`, fewer than `3/R_HI ≈
+  2^−60` of the scalars per occurrence (no witness; the prover's saturated window row fails the
+  link). One rule for every scalar — no classification of 125-bit challenges needed.
+- **Rows:** `Cells::WINDOW = 9616` (a free, `256`-row-aligned block; `WINDOW_ROW_BASE = 153,856`):
+  row `o` is a `Source::Window` free row (limb identity off, canonicality witness as for inputs)
+  holding `V_hi(o) + 2^64·(WINDOW_BOUND − V_hi(o))`, i.e. chunks `0..4` = `V(o)` and `4..8` =
+  `V'(o)`, both range-checked by the existing u16 LogUp. Rows `M..256` (no occurrence) hold
+  `V_hi = 0`. `used_rows` 201,319 → **201,575**; no new column (`Col::CLAIMED` 149).
+- **Member:** the digit link's summand is `ω·D + κ·V + κ'·V'` (degree 2, `LOG_ROWS` rounds):
+  `ω(x) = ρ^o·16^{63−w}` (+ `ρ^{M+o}·16^{15−w}` on windows `w < 16`), `κ(row_o) = ρ^o·(ρ^{M+256} −
+  ρ^M)`, `κ'(row_o) = ρ^{M+256+o}`, `V/V' = Σ_{j<4} 2^{16j}·chunk_{j}/chunk_{4+j}`. The batched
+  identity `Σ_o ρ^o·(t_o − s_{b(o)}) + Σ_o ρ^{M+o}·(V_hi(o) − V(o)) + Σ_{o<256} ρ^{M+256+o}·(V(o) +
+  V'(o) − WINDOW_BOUND) = 0` has distinct `ρ` powers (`< M + 512`), so each equation holds on its
+  own (`(M + 512)/r`). Verifier: `ω̃` per family reuses the `Σ_k eq·ρ^{link}` sum (`W64 +
+  ρ^M·W16`, `W16` = high-2-bits-zero × geometric over 4 bits, memoized per lane); `κ̃, κ̃'` =
+  `eq(r_{8..18}, 601)·Σ_{o<256} ρ^o·eq(r_{0..8}, o)` (one geometric) × constants;
+  `Σ_{o<256} ρ^o = Π_{i<8}(1 + ρ^{2^i})`. Terms: `link_terms(&LinkEvals) = [ω̃·D, κ̃·V, κ̃'·V']`
+  → **T = 177**, `d = 4` unchanged.
+- **R-side contract unchanged:** R still publishes `Σ_{k<173} link_weights(&layout, ρ)[k]·s_k`
+  (`W_k = Σ_{o of k} ρ^o`, occurrence exponents `[0, M)`; the window exponents `[M, M + 512)` touch
+  no scalar). T2's `link_input_claim(r_claim, ρ, θ, &layout)` (same signature) now adds the window
+  constant `WINDOW_BOUND·ρ^{M+256}·Σ_{o<256} ρ^o` besides `W_K + W_{K+1}·θ`.
+- **EC argument:** `H` and the correction prefixes `P_w` are functions of the pre-`θ` transcript and
+  of `θ` respectively (no digit is chosen after `θ`), so the per-site `2^129/r` bound and its union
+  over the 4,928 unguarded proof-base adds (`≈ 2^−112`) follow; module doc updated.
+- **Negatives (permanent, `limb_table_e2e`):** `modulus_alias_recodings_are_rejected` — the
+  constant-one occurrence recoded as `1 + r` and as `1 − r`: with honest window rows the link's
+  claim differs from the verifier's `link_input_claim` (a); with window rows matching the alias
+  (`V = V_hi(alias)` as one field element) the link accepts but the row member's range LogUp
+  rejects (b). `shared_scalar_recoded_differently_per_chain_is_rejected` kept.
+
+### Major — fixed powers and inversions out of the verifier path
+
+- `Fr::pow2` loops and `16⁻¹` moved to process-wide constants: `Constants::get()`
+  (`LazyLock`, plus `pow_64`), `lookup::SIXTEEN` (`16^k`, `k < 64`, and `16⁻¹`). The exporter's
+  derivation now performs no exponentiation and **no inversion** (`fr_inv` = 0; `TermObserver`
+  has only `fr_mul`, so nothing is left uncounted). `Fr::from_u64/from_i64` constructors of small
+  constants are not counted (constructors, not arithmetic).
+- Measured at σ = 11 / N = 42: **9,973 Fr** = relation 162 + public evaluations and link weights
+  9,669 + terms 139 + link batching 3 (component sum asserted; cap stays 10,000, margin 27).
+
+### Minors
+
+- `StreamBuilder::end(phase)` asserts in release builds that the phase emitted exactly
+  `phases()[phase].columns` (the range `commitment_phases` publishes); the reviewer's slice test
+  `stream_builder_phase_slices_match_declared_geometry` is permanent (`[3, 3, 1, 2]` at k = 32).
+- `FlattenedCheck::wire_multiplicity` deleted; `digit_link.rs` documents the occurrence-weight
+  equations (no averaging).
+
+### API delta for W5 (`StreamBuilder`/`Members::new`/exporter unchanged)
+
+- `LinkMember::new(&layout, rho, digit_values, &matrix[Col::CHUNKS..Col::CHUNKS + 8])`;
+  `LinkMember::final_values() -> LinkFinals { digit, v, v_prime, evals: LinkEvals }`.
+- `lookup::{link_evals, public_and_link_evals} -> LinkEvals { omega, kappa, kappa_prime }`
+  (replace `omega_eval`/`public_and_omega_evals`); `digit_link::link_terms(&LinkEvals)` (replaces
+  `link_term`); `lookup::LinkPowers` (occurrence powers, window bases, `base_weights`,
+  `window_constant`); `link_weights(_with)` unchanged.
+- `program::Source::Window(Fq)`, `schedule::{Cells::WINDOW, WINDOW_ROW_BASE}`,
+  `digits::{WINDOW_TOP_DIGITS, R_HI, WINDOW_BOUND, WINDOW_ROWS, window_value, window_row_value}`.
