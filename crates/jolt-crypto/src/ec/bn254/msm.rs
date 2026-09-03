@@ -31,16 +31,39 @@ fn pippenger(bases: &[G1Affine], scalars: &[JoltFr]) -> G1Projective {
         .par_iter()
         .map(|scalar| Fr::from(*scalar).into_bigint())
         .collect::<Vec<_>>();
+    // (window × point-chunk) tasks keep every core busy on the tail; the
+    // chunk bucket arrays of one window are merged before its running sum.
+    let point_chunks = if bases.len() < 1 << 16 {
+        1
+    } else {
+        (4 * rayon::current_num_threads())
+            .div_ceil(window_count)
+            .max(1)
+    };
+    let chunk_len = bases.len().div_ceil(point_chunks);
     let window_sums = (0..window_count)
         .into_par_iter()
         .map(|window| {
-            let mut buckets = vec![Bucket::<G1Config>::ZERO; 1 << (window_bits - 1)];
-            for (base, scalar) in bases.iter().zip(&scalars) {
-                let digit = booth_digit(scalar, window, window_bits);
-                if digit > 0 {
-                    buckets[digit as usize - 1] += base;
-                } else if digit < 0 {
-                    buckets[(-digit) as usize - 1] -= base;
+            let mut partials: Vec<Vec<Bucket<G1Config>>> = bases
+                .par_chunks(chunk_len)
+                .zip(scalars.par_chunks(chunk_len))
+                .map(|(bases, scalars)| {
+                    let mut buckets = vec![Bucket::<G1Config>::ZERO; 1 << (window_bits - 1)];
+                    for (base, scalar) in bases.iter().zip(scalars) {
+                        let digit = booth_digit(scalar, window, window_bits);
+                        if digit > 0 {
+                            buckets[digit as usize - 1] += base;
+                        } else if digit < 0 {
+                            buckets[(-digit) as usize - 1] -= base;
+                        }
+                    }
+                    buckets
+                })
+                .collect();
+            let mut buckets = partials.pop().unwrap_or_default();
+            for partial in &partials {
+                for (bucket, other) in buckets.iter_mut().zip(partial) {
+                    *bucket += other;
                 }
             }
 
