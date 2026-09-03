@@ -1,8 +1,25 @@
 # Wrapper draft PR — final measured tables
 
-Source: `wrap_real_t1_r::real_t1_relation_table_round_trip_and_tampers`, cached fibonacci
-`2^18` proof, code `c41d96826` on the T2 fix-3 stack through `1ffd0088c`. Machine:
-Mac mini M4, 10 Rayon threads. Default `k=32`; `WRAP_K=16` selects the retained comparison.
+Source: non-ignored `wrap_real_t1_r::real_t1_relation_table_round_trip_and_tampers`, cached
+fibonacci `2^18` proof, code through `10cde06ff`. Mac mini M4, 10 Rayon threads. Default
+`k=32`; `WRAP_K=16` selects the comparison.
+
+## Link coverage
+
+| source | destination | count | binding |
+|---|---|---:|---|
+| T1 squeeze outputs | R challenge cells | 376 | CopyLink |
+| T1 pre-final-squeeze Fr words | R proof-value cells | 1,199 | CopyLink |
+| T1 element bytes | T2 input chunks/flags | 45,152 B / 1,526 rows | CopyLink |
+| statement fields | R public cells | 7 Fr | public CopyLink |
+| T1 state/tail | key-checked statement suffix | 54 B / 4 Fr | verifier-key check |
+| R Dory wires | T2 scalar input | 173 scalars | occurrence-weighted link |
+| program/profile digest | wrapper key | 32 B | verifier-key check |
+
+The final 23 R proof-value occurrences are the opening point and evaluation absorbed after the
+last native squeeze; no Fiat–Shamir value depends on those bytes. Eleven CopyLinks contribute 110
+terms, 132 key columns, and 22 sparse helper columns. The element links include compressed G1/G2
+sign flags, zero high bits, GT limb order, and the commitment permutation between T1 and T2.
 
 ## Proof bytes
 
@@ -12,126 +29,93 @@ Mac mini M4, 10 Rayon threads. Default `k=32`; `WRAP_K=16` selects the retained 
 | T2 phase 1b wire commitments | 96 | 160 |
 | T2 phase 2a wire commitments | 96 | 160 |
 | T2 phase 2b wire commitments | 32 | 32 |
-| T2 phase 2c + R/Copy helper wire commitments | 64 | 64 |
+| T2 phase 2c + R/Copy helpers | 64 | 96 |
 | stage A, 18 committed rounds | 1,184 | 1,184 |
-| term stage, 9 committed rounds | 608 | 608 |
+| term stage, 10 committed rounds | 672 | 672 |
 | shared BDFG/degree-shift proof | 96 | 96 |
 | four factor evaluations | 128 | 128 |
-| stage B, 10 clear degree-2 rounds | 640 | 640 |
+| stage B clear rounds | 704 | 640 |
 | reduced claim | 32 | 32 |
 | HyperKZG opening | 2,240 | 2,144 |
-| **proof payload** | **5,600** | **5,920** |
-| **bincode** | **5,706** | **6,038** |
+| **proof payload** | **5,728** | **6,016** |
+| **bincode proof** | **5,836** | **6,136** |
+| statement, 11 Fr | 352 | 352 |
+| **payload + statement** | **6,080** | **6,368** |
+| **bincode + statement** | **6,188** | **6,488** |
 
-Statement bytes are separate: 0 B challenge words (CopyLink-bound), 224 B for seven known
-field elements. Payload plus statement: **5,824 B at k=32**, **6,144 B at k=16**. Five VK
-commitments are key data and absent from the proof wire.
+The soundness links add 128 proof bytes at k=32 and 96 at k=16 versus the fix-3 baseline. Ten new
+CopyLink VK groups are key data and add no proof bytes.
 
-## Commitment groups
+## Geometry and phases
 
-| table / phase | k=32 wire | k=32 VK | k=16 wire | k=16 VK |
-|---|---:|---:|---:|---:|
-| T1 phase 1a | 11 | 2 | 20 | 2 |
-| R fixed + wires, phase 1a | 1 | 1 | 1 | 1 |
-| T1↔R CopyLink fixed, phase 1a | 0 | 1 | 0 | 1 |
-| T2 phase 1b | 3 | 0 | 5 | 0 |
-| T2 phase 2a | 3 | 0 | 5 | 0 |
-| T2 phase 2b | 1 | 0 | 1 | 0 |
-| T2 phase 2c | 1 | 1 | 1 | 1 |
-| R + CopyLink helpers, final phase | 1 | 0 | 1 | 0 |
-| **total** | **21** | **5** | **34** | **5** |
+| item | k=32 | k=16 |
+|---|---:|---:|
+| proof wire groups | 21 | 35 |
+| key groups | 15 | 15 |
+| full groups | 36 | 50 |
+| T1 sent / VK groups | 11 / 2 | 20 / 2 |
+| CopyLink VK groups | 11 | 11 |
+| T2 phases 1b / 2a / 2b / 2c | 3 / 3 / 1 / 2 | 5 / 5 / 1 / 2 |
+| final R/Copy helper groups | 1 | 2 |
+| stage B rounds | 11 | 10 |
 
-T1: 227 committed bits, 64 wired bits, 16 u32 words, six VK columns. T2: phase 1b
-71 columns, phase 2a 67, phase 2b two, phase 2c three, VK six. R: nine fixed, three wire,
-two helper. CopyLink: 12 fixed, two helper. T2's VK suffix is physically part of phase 2c and
-included in `commitment_phases`: k=32 `[3, 3, 1, 2]`, k=16 `[5, 5, 1, 2]`.
+All members use the `2^18` row domain. T1 contributes 232 terms; R 15; eleven CopyLinks 110; T2
+177; the R→T2 scalar input one: **T=535**, ten term rounds. T2 uses 201,575 rows with N=42 and
+the 256 unique-recoding window rows. The T2 verifier path performs **9,973 Fr multiplications**;
+T1 statement evaluation adds **705**. The term stage has actual degree 6: a coefficient MLE times
+T2's five-factor term. Forcing degree 5 fails `StageOutputClaim`; stage A remains degree 5.
 
-## Relations and stages
-
-All members use the common `2^18 = 262,144` row domain.
-
-| table | used rows / items | logical columns | members | degree | terms |
-|---|---:|---:|---:|---:|---:|
-| T1 | 219,784 active rows | 313 | 2 | 3, 3 | 232 |
-| T2 | 201,319 used rows at N=42 | 149 | row + digit side | 5, 2 | 175 |
-| R | 40,960 allocated rows | 14 | row + scalar side | 5, 2 | 15 + 1 |
-| T1↔R CopyLink | 376 links | 14 | 1 | 5 | 10 |
-| **batched total** |  | **490** | **6** | max 5 | **433** |
-
-The linked member proves T2's occurrence-weighted digit claim minus R's scalar claim, with
-public input `W[K] + W[K+1]·theta`; the 173 named scalars use `FlattenedCheck::wires()` order.
-
-| stage | rounds | degree | wire |
-|---|---:|---:|---:|
-| ordered commitments: 1a → 1b → 2a → 2b → 2c | 0 | — | group rows above |
-| A: six members | 18 | 5 | `18 × (G1 + Fr) + S_A(0)` |
-| term compression, T=433 | 9 | 6 | `9 × (G1 + Fr) + S_T(0)` |
-| shared committed-round opening | 0 | — | 3 G1 |
-| factor evaluations | 0 | — | 4 Fr |
-| B: weighted packed-column reduction | 10 | 2 | 20 Fr |
-| reduced claim | 0 | — | 1 Fr |
-| HyperKZG | 23 vars (k=32), 22 vars (k=16) | — | rows above |
-
-## Timing and verifier cost
+## Timing
 
 | phase (ms) | k=32 | k=16 |
 |---|---:|---:|
-| deterministic SRS setup | 8,044 | 38,781 |
-| trusted T1 key | 189 | 1,577 |
-| wrapper preparation | 649 | 6,383 |
-| T1/R/Copy adaptation | 458 | 4,690 |
-| T2 adaptation | 1,429 | 6,325 |
-| offline VK commitments | 1,129 | 6,457 |
-| phase 1a commitments | 2,180 | 9,312 |
-| T2 phase 1b commitments | 1,846 | 5,792 |
-| T2 phase 2a commitments | 57,954 | 133,419 |
-| T2 phase 2b commitments | 92 | 138 |
-| R/Copy helpers | 281 | 501 |
-| T2 phase 2c + VK + R helpers | 400 | 537 |
-| stage A + term + B + opening | 15,399 | 22,559 |
-| verifier | 24 | 73 |
+| deterministic SRS setup | 7,845 | 3,658 |
+| key/profile | 309 | 291 |
+| wrapper preparation | 592 | 600 |
+| R adaptation | 3,513 | 3,518 |
+| T2 adaptation | 1,211 | 1,331 |
+| offline key commitments | 2,208 | 1,562 |
+| phase 1a commitments | 2,235 | 930 |
+| T2 phase 1b commitments | 989 | 973 |
+| T2 phase 2a commitments | 7,284 | 7,402 |
+| T2 phase 2b commitments | 97 | 88 |
+| R/Copy helpers | 3,199 | 3,104 |
+| T2 phase 2c + helpers | 429 | 400 |
+| proof stages/opening | 19,711 | 13,921 |
+| verifier | 22 | 20 |
 
-k=32 load average at start: 8.76 / 7.98 / 7.27. k=16: 26.01 / 12.18 / 8.89.
+Start load averages: k=32 4.89 / 5.06 / 8.56; k=16 7.54 / 5.05 / 8.91. PERF-4 reduced
+phase 2a from roughly 58 s to 7.3 s at k=32.
 
-| verifier operation | k=32 | k=16 |
+## Verifier cost
+
+| operation | k=32 | k=16 |
 |---|---:|---:|
-| ecMul | 171 | 183 |
-| ecAdd | 170 | 182 |
+| ecMul | 185 | 198 |
+| ecAdd | 184 | 197 |
 | pairing pairs | 8 | 8 |
-| Fr multiplications | 29,491 | 29,511 |
+| Fr multiplications | 40,722 | 33,539 |
+| of which T1 statement / T2 | 705 / 9,973 | 705 / 9,973 |
+| remaining R + CopyLink + stream + opening | 30,044 | 22,861 |
 | Fr inversions | 8 | 8 |
-| Keccak | 471 | 481 |
-| **N4 gas model** | **2,520,261** | **2,625,325** |
+| Keccak | 755 | 762 |
+| **N4 gas model** | **2,883,641** | **2,852,045** |
 
-Observed Fr work includes T1 statement claims, T2's 9,875-term exporter path,
-occurrence-weighted R scalar evaluation, and stream reductions. N4 units: transaction 21,000;
-nonzero calldata 16 gas/B; BN254 ecMul 7,700; Fr multiplication 20; Keccak 100; batched
-inversions use one EIP-2565 modexp plus `3(n-1)` Fr multiplications; fixed pairing charges are
-two 2-pair checks at 114,700 and one 4-pair HyperKZG check at 183,400.
+The same counting transcript executes key/statement replay and proof verification. No detached
+Keccak adjustment remains.
 
 ## Tamper matrix
 
-| mutation | result |
-|---|---|
-| proof shape differs from stored key | reject |
-| T1 phase-1a commitment | reject |
-| theta-dependent T2 phase-1b commitment | reject |
-| T2 phase-2b fingerprint commitment | reject |
-| T2 phase-2c helper commitment | reject |
-| T2 VK pin in verifier key | reject |
-| sign-flag row | reject |
-| psi-chain input row | reject |
-| digit-link occurrence row | reject |
-| stage-A `S(0)` | reject |
-| term-round commitment | reject |
-| factor evaluation | reject |
-| reduced claim | reject |
-| HyperKZG value | reject |
-| R/T2 scalar order or membership differs | contract assertion |
+The real gate mutates every serialized field independently and requires rejection:
 
-The permanent scalar contract pins all 173 names in order and excludes `Chi(sigma)`, `S1Acc`,
-and `S2Acc`.
+- every phase/key/helper commitment, including theta, fingerprint, window, sign, psi, digit-link,
+  T2 input-chunk, T2 VK-pin, and R absorbed-word cases;
+- every clear and committed sumcheck round coefficient, commitment, claim, and `S(0)`;
+- every shared/stage BDFG shifted commitment, quotient, and evaluation witness;
+- every stage claim, term evaluation, and reduced claim;
+- every HyperKZG fold commitment, both evaluation rows, witness, and `P0(r^2)`;
+- public-field mismatch and program/profile-digest mismatch.
 
-Full crate gate: `cargo nextest run -p jolt-wrapper --features prover-fixtures --cargo-quiet` —
-73/73 passed, 8 skipped; nextest 250.365 s, wall 270.55 s. Crate-wide all-target clippy with
-warnings denied passed.
+The 173-scalar contract test pins wire order and excludes internal `Chi(sigma)`, `S1Acc`, and
+`S2Acc`. Full crate gate: 68/68 passed, one ignored, nextest/wall **191.688/192.17 s**. All-target
+clippy with warnings denied passed.

@@ -515,3 +515,28 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
 - R publishes `DoryScalar::link_order(sigma, N)` exactly: K=173 at sigma=11/N=42, with `Chi(sigma)`, `S1Acc`, and `S2Acc` internal. `DoryScalarLink` uses T2 `link_weights(_with)` occurrence weights; the verifier observes all products.
 - k=32: 5,600 B payload / 5,706 B bincode / 224 B statement, T=433, 9 term rounds, 2,520,261 gas. k=16: 5,920 / 6,038 / 224 B, T=433, 9 rounds, 2,625,325 gas.
 - Extended tampers pass: theta-dependent 1b, fingerprint 2b, helper 2c, T2 VK pin, sign row, psi input row, digit occurrence, stage/term/factor/reduced/opening sections.
+
+## 2026-09-03 09:20 — assembly review fixes and final gates
+
+- T2 fix #4 and PERF-4 are integrated. Unique recoding adds 256 window rows, taking T2 to 201,575
+  rows and T=177. The phase-2a MSM path fell from roughly 58 s to 7.3 s at k=32.
+- The key now owns the full exporter plan. `verify_wrapped_with_key` accepts only the key, proof,
+  and HyperKZG setup; its one counting transcript performs both key/statement replay and proof
+  verification.
+- Eleven CopyLinks bind 376 challenge outputs, 1,199 challenge-effective Fr absorbs, 45,152
+  element bytes across 1,526 T2 input rows, and seven public R cells. The 54-byte T1 state/tail is
+  packed into four statement fields and checked at key construction. Program/profile digest
+  mismatch is rejected before verification.
+- R publishes exactly the 173 `FlattenedCheck::wires()` values with occurrence weights. Internal
+  `Chi(sigma)`, `S1Acc`, and `S2Acc` never enter the link.
+- The final term count is 535 with ten term rounds. Stage A is degree 5. The term stage is degree 6:
+  its coefficient MLE multiplies a five-factor T2 term. Forcing degree 5 produces
+  `Stream(StageOutputClaim)`, so the review's degree-5 premise does not match the current protocol.
+- The tamper gate now visits every serialized proof field, plus direct T2 window/sign/psi/digit and
+  R/T2-link witness mutations. Every mutation rejects.
+- Removed the old carry, Spark, Spartan, native-R, tensor-stream, and manual timing paths; removed
+  `NativeParity`, duplicate final evaluators, and superseded tests. `stream/protocol.rs` is 638
+  lines after tensor removal.
+- Final numbers live in `.journals/pr-tables.md`: k=32 5,728 B payload / 5,836 B bincode / 352 B
+  statement; k=16 6,016 / 6,136 / 352 B. Full feature suite: 68/68 in 191.688 s nextest,
+  192.17 s wall. All-target clippy with warnings denied passed.

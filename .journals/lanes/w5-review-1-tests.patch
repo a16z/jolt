@@ -1,0 +1,145 @@
+diff --git a/crates/jolt-wrapper/tests/wrap_real_t1_r.rs b/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
+index 9326172b4..05ff8d3eb 100644
+--- a/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
++++ b/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
+@@ -17,6 +17,7 @@ use common::jolt_device::JoltDevice;
+ use jolt_crypto::Bn254;
+ use jolt_field::{Fr, One, Ring, Zero};
+ use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
++use jolt_poly::CompressedPoly;
+ use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
+ use jolt_wrapper::hash_table::terms::{
+     challenge125, challenge_scalar128, AffineForm as HashAffineForm, LinkMap, WIRED_BIT_BASE,
+@@ -172,9 +173,14 @@ fn real_t1_relation_table_round_trip_and_tampers() {
+         .iter()
+         .map(|phase| phase.group_count)
+         .sum::<usize>();
++    let mut public_inputs = preparation.public_known.clone();
++    let public_mismatch = std::env::var_os("WRAP_PUBLIC_MISMATCH").is_some();
++    if public_mismatch {
++        public_inputs[0] += Fr::one();
++    }
+     let statement = AssemblyStatement {
+         key_digest: preparation.profile_digest,
+-        public_inputs: preparation.public_known.clone(),
++        public_inputs,
+         rows: ROWS,
+         column_count: total_groups * k,
+         k,
+@@ -550,9 +556,16 @@ fn real_t1_relation_table_round_trip_and_tampers() {
+     let prove_ms = started.elapsed().as_millis();
+     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
+     let started = Instant::now();
+-    let (results, cost) =
+-        verify_wrapped_with_key(&verifier_key, &wrapped, &exporters, &verifier_setup)
+-            .expect("verify real T1/T2/R wrapper");
++    let verification =
++        verify_wrapped_with_key(&verifier_key, &wrapped, &exporters, &verifier_setup);
++    if public_mismatch {
++        assert!(
++            verification.is_err(),
++            "the verifier accepted R values that differ from its public statement"
++        );
++        return;
++    }
++    let (results, cost) = verification.expect("verify real T1/T2/R wrapper");
+     let verify_ms = started.elapsed().as_millis();
+     let term_context = TermContext {
+         row_point: &results[0].point,
+@@ -802,12 +815,19 @@ fn tamper_suite(
+     tamper(&|candidate| {
+         candidate.commitments[psi_group] = Commitment::new(original.opening.com[0]);
+     });
++    tamper(&|candidate| {
++        candidate.commitments[phase_2a] = Commitment::new(original.opening.com[0]);
++    });
+     tamper(&|candidate| {
+         candidate.commitments[phase_2b] = Commitment::new(original.opening.com[0]);
+     });
+     tamper(&|candidate| {
+         candidate.commitments[phase_2c] = Commitment::new(original.opening.com[0]);
+     });
++    tamper(&|candidate| {
++        let helper = candidate.commitments.len() - 1;
++        candidate.commitments[helper] = Commitment::new(original.opening.com[0]);
++    });
+     tamper(&|candidate| {
+         candidate.stages[0]
+             .committed_rounds
+@@ -815,6 +835,20 @@ fn tamper_suite(
+             .expect("stage A")
+             .sum_at_zero += Fr::one();
+     });
++    tamper(&|candidate| {
++        candidate.stages[0]
++            .committed_rounds
++            .as_mut()
++            .expect("stage A")
++            .round_commitments[0] += Bn254::g1_generator();
++    });
++    tamper(&|candidate| {
++        candidate.stages[0]
++            .committed_rounds
++            .as_mut()
++            .expect("stage A")
++            .round_claims[0] += Fr::one();
++    });
+     tamper(&|candidate| {
+         candidate.stages[1]
+             .committed_rounds
+@@ -822,9 +856,52 @@ fn tamper_suite(
+             .expect("term stage")
+             .round_commitments[0] = Bn254::g1_generator();
+     });
++    tamper(&|candidate| {
++        candidate.stages[1]
++            .committed_rounds
++            .as_mut()
++            .expect("term stage")
++            .round_claims[0] += Fr::one();
++    });
++    tamper(&|candidate| {
++        candidate.stages[1]
++            .committed_rounds
++            .as_mut()
++            .expect("term stage")
++            .sum_at_zero += Fr::one();
++    });
++    tamper(&|candidate| {
++        candidate
++            .round_opening
++            .as_mut()
++            .expect("shared round opening")
++            .shifted_commitment += Bn254::g1_generator();
++    });
++    tamper(&|candidate| {
++        candidate
++            .round_opening
++            .as_mut()
++            .expect("shared round opening")
++            .quotient_commitment += Bn254::g1_generator();
++    });
++    tamper(&|candidate| {
++        candidate
++            .round_opening
++            .as_mut()
++            .expect("shared round opening")
++            .evaluation_witness += Bn254::g1_generator();
++    });
+     tamper(&|candidate| candidate.term_evaluations[0] += Fr::one());
++    tamper(&|candidate| {
++        let round = &mut candidate.stages[2].round_polynomials.round_polynomials[0];
++        let mut coefficients = round.coeffs_except_linear_term().to_vec();
++        coefficients[0] += Fr::one();
++        *round = CompressedPoly::new(coefficients);
++    });
+     tamper(&|candidate| candidate.reduced_claims[0] += Fr::one());
+-    let mut opening = original;
+-    opening.opening.v[0][0] += Fr::one();
+-    assert!(rejected(&opening));
++    tamper(&|candidate| candidate.opening.com[0] += Bn254::g1_generator());
++    tamper(&|candidate| candidate.opening.w += Bn254::g1_generator());
++    tamper(&|candidate| candidate.opening.v[0][0] += Fr::one());
++    tamper(&|candidate| candidate.opening.v[1][0] += Fr::one());
++    tamper(&|candidate| candidate.opening.p0_at_r_squared += Fr::one());
+ }
