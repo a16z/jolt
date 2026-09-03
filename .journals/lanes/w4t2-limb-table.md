@@ -395,3 +395,37 @@ StreamTermExporter { layout, challenge_offset, theta_offset, rho_offset, columns
   `window_constant`); `link_weights(_with)` unchanged.
 - `program::Source::Window(Fq)`, `schedule::{Cells::WINDOW, WINDOW_ROW_BASE}`,
   `digits::{WINDOW_TOP_DIGITS, R_HI, WINDOW_BOUND, WINDOW_ROWS, window_value, window_row_value}`.
+
+## Fix #5 (review #5, `03f69782e` base)
+
+### Major — no runtime fixed-power arithmetic, cold or warm
+
+- The `LazyLock`s are gone. Every fixed field value is a compile-time Montgomery literal in
+  `limb_table/literals.rs` (`MontFp!`; `ark_bn254::Fr` consts wrapped by the zero-cost
+  `Fr::from` newtype move): `2^{16j}` (`j < 17`), `2^96`, `2^111`, `2^75`, `2^64`, the three 96-bit
+  limbs of `q`, `16^k` (`k < 64`), `16^{−1}`, `8`, `q_hi − 1`, `2^18` (`NEG_KEY_OFFSET`) and
+  `R_HI − 2` (`WINDOW_BOUND`). `Constants::get()` and the link weights read them; the exporter's
+  derivation performs no `Fr::pow2` loop and no inversion at any time (`fr_inv` = 0 on a cold
+  process). Regeneration: `literals::tests::literals_match_their_derivations` recomputes each
+  literal from its definition (`Fr::pow2`, `q` limbs, `16⁻¹`, `from_u64`) and prints the decimal to
+  paste on a mismatch.
+- The fixed small constants the term construction used through `Fr::from_u64` (`16`, `8`,
+  `2^18`, `q_hi − 1`, `2^{16i}`) are literals too. Remaining `Fr::from_u64/from_i64` calls convert
+  profile constants (`one_row`, the families' key coefficients, `2^{bits.lo}`): constructors of
+  the Montgomery representation (a table lookup below `2^14`, one `mul_u64(R, n)` above), not
+  verifier arithmetic; they are stated here rather than counted.
+- **Counts:** cold = warm = **9,973 Fr** (relation 162 + public evaluations and link weights
+  9,669 + terms 139 + link batching 3), `fr_inv` 0; the budget test now pins `9,973` exactly (each
+  nextest process is cold). Before this fix a cold process additionally executed 751 hidden
+  multiplications and one inversion in the initializers (`≥ 10,724 + 1 inv`, the reviewer's figure).
+
+### Reviewer scratch checks landed
+
+- `fibonacci_profile_binds_every_link_occurrence_to_one_window_row` (program tests): 173 named
+  wires / 175 digit bases / 230 occurrences, every occurrence owns each of the 64 windows exactly
+  once, all 256 window rows are `Source::Window`.
+- `one_window_row_cannot_be_reused_for_two_occurrences` (e2e): a valid `(V, V')` row copied onto
+  another occurrence keeps every chunk in range and `V + V' = WINDOW_BOUND`, yet the link rejects.
+
+Unchanged: rows 201,575, `Col::CLAIMED` 149, T = 177, d = 4, groups 39/13/9, all member/builder/
+exporter signatures, the R-side contract.
