@@ -16,7 +16,7 @@ use crate::relation::{
 use crate::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn, SpartanError};
 use crate::stream::{
     commit_packed, prove_assembly, verify_assembly_with_cost, AssemblyStatement, Column,
-    StageMember, StageResult, StreamError, VerifierCost, WrapperProof,
+    StageMember, StageResult, StreamError, TermExporter, VerifierCost, WrapperProof,
 };
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
@@ -65,42 +65,29 @@ pub enum WrapError {
 
 /// Commits the adapters' common-domain columns and proves their stage-A
 /// members, stage-B reductions, and one final HyperKZG opening.
-pub fn wrap<F>(
+pub fn wrap(
     columns: &[Column],
     statement: &AssemblyStatement,
     members: &mut [StageMember<'_>],
+    exporters: &[&dyn TermExporter],
     setup: &HyperKZGProverSetup<Bn254>,
-    final_claims: F,
-) -> Result<WrapperProof, WrapError>
-where
-    F: FnOnce(&StageResult, &[Fr]) -> Result<Vec<Fr>, StreamError>,
-{
+) -> Result<WrapperProof, WrapError> {
     let packed = commit_packed(columns, statement.k, setup)?;
     Ok(prove_assembly(
-        &packed,
-        statement,
-        members,
-        setup,
-        final_claims,
+        &packed, statement, members, exporters, setup,
     )?)
 }
 
 /// Verifies the generic member list and returns execution-derived EVM
 /// operation counts with the stage results.
-pub fn verify_wrapped<F>(
+pub fn verify_wrapped(
     statement: &AssemblyStatement,
     proof: &WrapperProof,
+    exporters: &[&dyn TermExporter],
     setup: &HyperKZGVerifierSetup<Bn254>,
-    final_claims: F,
-) -> Result<(Vec<StageResult>, VerifierCost), WrapError>
-where
-    F: Fn(&StageResult, &[Fr], &mut VerifierCost) -> Result<Vec<Fr>, StreamError>,
-{
+) -> Result<(Vec<StageResult>, VerifierCost), WrapError> {
     Ok(verify_assembly_with_cost(
-        proof,
-        statement,
-        setup,
-        final_claims,
+        proof, statement, exporters, setup,
     )?)
 }
 

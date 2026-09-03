@@ -64,6 +64,7 @@ pub struct WrapperProof {
     pub commitments: Vec<Commitment>,
     pub stages: Vec<StageProof>,
     pub stage_claims: Vec<Vec<Fr>>,
+    pub term_evaluations: Vec<Fr>,
     pub reduced_claims: Vec<Fr>,
     pub opening: OpeningProof,
 }
@@ -97,6 +98,7 @@ impl WrapperProof {
                 + committed_groups
                 + committed_scalars
                 + stage_claims
+                + self.term_evaluations.len()
                 + self.reduced_claims.len()
                 + self.opening.com.len()
                 + 1
@@ -145,6 +147,7 @@ impl WrapperProof {
                 .iter()
                 .map(|claims| varint_bytes(claims.len()))
                 .sum::<usize>()
+            + varint_bytes(self.term_evaluations.len())
             + varint_bytes(self.reduced_claims.len())
             + varint_bytes(self.opening.com.len())
             + self
@@ -277,9 +280,13 @@ pub struct AssemblyStatement {
     pub column_count: usize,
     pub k: usize,
     pub members: Vec<AssemblyMemberStatement>,
-    /// Column evaluations at stage A's row point needed by the member-final
-    /// checks and reduced by stage B into the final packed opening.
-    pub factor_columns: Vec<usize>,
+    pub commitment_phases: Vec<CommitmentPhase>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommitmentPhase {
+    pub group_count: usize,
+    pub challenge_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

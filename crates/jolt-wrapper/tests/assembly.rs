@@ -5,14 +5,34 @@
 )]
 
 use jolt_crypto::Bn254;
-use jolt_field::{Fr, Ring};
+use jolt_field::{Fr, One, Ring, Zero};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_poly::{CompressedPoly, MultilinearPoly};
-use jolt_wrapper::carry::{carried_final, CarryProver};
+use jolt_poly::{CompressedPoly, EqPolynomial, MultilinearPoly};
+use jolt_wrapper::carry::CarryProver;
 use jolt_wrapper::stream::{
-    AssemblyMemberStatement, AssemblyStatement, Column, Commitment, StageMember, StageMemberSpec,
+    AffineForm, AssemblyMemberStatement, AssemblyStatement, Column, ColumnId, Commitment,
+    CommitmentPhase, StageMember, StageMemberSpec, Term, TermContext, TermExporter,
 };
 use jolt_wrapper::wrap::{verify_wrapped, wrap};
+
+struct CarryTerms {
+    member: usize,
+    column: ColumnId,
+    source_point: Vec<Fr>,
+}
+
+impl TermExporter for CarryTerms {
+    fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
+        vec![Term {
+            coefficient: context.batching_coefficients[self.member]
+                * EqPolynomial::<Fr>::mle(&self.source_point, context.row_point),
+            factors: vec![AffineForm {
+                constant: Fr::zero(),
+                weights: vec![(self.column, Fr::one())],
+            }],
+        }]
+    }
+}
 
 #[test]
 fn generic_assembly_round_trip_and_section_tampers() {
@@ -39,7 +59,7 @@ fn generic_assembly_round_trip_and_section_tampers() {
     ];
     let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
         Fr::from_u64(79),
-        rows * 2,
+        rows,
         Bn254::g1_generator(),
         Bn254::g2_generator(),
     );
@@ -54,7 +74,7 @@ fn generic_assembly_round_trip_and_section_tampers() {
         public_inputs: vec![Fr::from_u64(89)],
         rows,
         column_count: 2,
-        k: 2,
+        k: 1,
         members: vec![
             AssemblyMemberStatement {
                 input_claim: input_claims[0],
@@ -73,8 +93,33 @@ fn generic_assembly_round_trip_and_section_tampers() {
                 },
             },
         ],
-        factor_columns: vec![0, 1],
+        commitment_phases: vec![
+            CommitmentPhase {
+                group_count: 1,
+                challenge_count: 2,
+            },
+            CommitmentPhase {
+                group_count: 1,
+                challenge_count: 0,
+            },
+        ],
     };
+    let term_exporters = [
+        CarryTerms {
+            member: 0,
+            column: ColumnId { group: 0, slot: 0 },
+            source_point: source_points[0].clone(),
+        },
+        CarryTerms {
+            member: 1,
+            column: ColumnId { group: 1, slot: 0 },
+            source_point: source_points[1].clone(),
+        },
+    ];
+    let exporters = [
+        &term_exporters[0] as &dyn TermExporter,
+        &term_exporters[1] as &dyn TermExporter,
+    ];
     let proof = {
         let [carry_0, carry_1] = &mut carries;
         let mut members = [
@@ -95,28 +140,14 @@ fn generic_assembly_round_trip_and_section_tampers() {
             &packed_columns,
             &statement,
             &mut members,
+            &exporters,
             &setup,
-            |stage, claims| {
-                Ok(vec![
-                    carried_final(&source_points[0], &stage.point, claims[0])
-                        .expect("carry 0 final"),
-                    carried_final(&source_points[1], &stage.point, claims[1])
-                        .expect("carry 1 final"),
-                ])
-            },
         )
         .expect("prove assembly")
     };
-    let verify = |proof| {
-        verify_wrapped(&statement, proof, &verifier_setup, |stage, claims, _| {
-            Ok(vec![
-                carried_final(&source_points[0], &stage.point, claims[0]).expect("carry 0 final"),
-                carried_final(&source_points[1], &stage.point, claims[1]).expect("carry 1 final"),
-            ])
-        })
-    };
+    let verify = |proof| verify_wrapped(&statement, proof, &exporters, &verifier_setup);
     let (results, cost) = verify(&proof).expect("verify assembly");
-    assert_eq!(results.len(), 2);
+    assert_eq!(results.len(), 3);
     assert!(cost.pairing_pairs > 0);
 
     let mut commitment = proof.clone();
@@ -131,12 +162,32 @@ fn generic_assembly_round_trip_and_section_tampers() {
         .sum_at_zero += Fr::from_u64(1);
     assert!(verify(&stage_a).is_err());
 
-    let mut factor_claim = proof.clone();
-    factor_claim.stage_claims[0][0] += Fr::from_u64(1);
-    assert!(verify(&factor_claim).is_err());
+    let mut phase_2 = proof.clone();
+    phase_2.commitments[1] = Commitment::new(proof.opening.com[0]);
+    assert!(verify(&phase_2).is_err());
+
+    let mut term_evaluation = proof.clone();
+    term_evaluation.term_evaluations[0] += Fr::from_u64(1);
+    assert!(verify(&term_evaluation).is_err());
+
+    let mut term_commitment = proof.clone();
+    term_commitment.stages[1]
+        .committed_rounds
+        .as_mut()
+        .expect("term KZG stage")
+        .round_commitments[0] = Bn254::g1_generator();
+    assert!(verify(&term_commitment).is_err());
+
+    let mut term_sum = proof.clone();
+    term_sum.stages[1]
+        .committed_rounds
+        .as_mut()
+        .expect("term KZG stage")
+        .sum_at_zero += Fr::from_u64(1);
+    assert!(verify(&term_sum).is_err());
 
     let mut stage_b = proof.clone();
-    let round = &mut stage_b.stages[1].round_polynomials.round_polynomials[0];
+    let round = &mut stage_b.stages[2].round_polynomials.round_polynomials[0];
     let mut coefficients = round.coeffs_except_linear_term().to_vec();
     coefficients[0] += Fr::from_u64(1);
     *round = CompressedPoly::new(coefficients);

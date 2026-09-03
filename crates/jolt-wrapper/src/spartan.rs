@@ -254,6 +254,7 @@ pub fn prove_spartan(
         commitments: packed.commitments,
         stages: vec![outer_proof, inner_proof],
         stage_claims: vec![outer_result.output_claims, inner_result.output_claims],
+        term_evaluations: Vec::new(),
         reduced_claims: vec![az, bz, cz, witness_eval],
         opening,
     })

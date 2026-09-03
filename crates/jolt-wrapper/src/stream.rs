@@ -21,6 +21,12 @@ use rayon::prelude::*;
 
 mod types;
 pub use types::*;
+mod term_stage;
+pub(crate) use term_stage::multilinear_evaluation_observed;
+pub use term_stage::{
+    coefficient_evaluation, coefficient_evaluation_observed, term_reduction,
+    term_reduction_observed, TermReduction, TermStageProver, WeightedColumnReduction,
+};
 mod protocol;
 pub use protocol::{
     new_stream_transcript, prove_assembly, prove_stream, verify_assembly,
@@ -843,6 +849,23 @@ pub fn prove_kzg_batch_stage<T: Transcript<Challenge = Fr>>(
     setup: &HyperKZGProverSetup<Bn254>,
     transcript: &mut T,
 ) -> Result<(StageProof, StageResult), StreamError> {
+    prove_kzg_batch_stage_inner(members, setup, transcript, true)
+}
+
+pub fn prove_kzg_batch_stage_deferred<T: Transcript<Challenge = Fr>>(
+    members: &mut [StageMember<'_>],
+    setup: &HyperKZGProverSetup<Bn254>,
+    transcript: &mut T,
+) -> Result<(StageProof, StageResult), StreamError> {
+    prove_kzg_batch_stage_inner(members, setup, transcript, false)
+}
+
+fn prove_kzg_batch_stage_inner<T: Transcript<Challenge = Fr>>(
+    members: &mut [StageMember<'_>],
+    setup: &HyperKZGProverSetup<Bn254>,
+    transcript: &mut T,
+    absorb_member_claims: bool,
+) -> Result<(StageProof, StageResult), StreamError> {
     let max_rounds = members
         .iter()
         .map(|member| member.offset + member.prover.num_rounds())
@@ -894,8 +917,10 @@ pub fn prove_kzg_batch_stage<T: Transcript<Challenge = Fr>>(
         &mut recorder,
         transcript,
     )?;
-    for output_claim in &proved.member_claims {
-        transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, output_claim);
+    if absorb_member_claims {
+        for output_claim in &proved.member_claims {
+            transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, output_claim);
+        }
     }
     let (sum_at_zero, opening) = prove_aggregated_round_opening(
         &recorder.polynomials,
@@ -964,6 +989,54 @@ where
     F: FnOnce(&StageResult, &mut O) -> Result<Vec<Fr>, StreamError>,
     O: VerifierObserver,
 {
+    verify_kzg_batch_stage_inner(
+        proof,
+        members,
+        input_claims,
+        setup,
+        transcript,
+        observer,
+        |result, observer| output_claims(result, observer).map(Some),
+    )
+}
+
+pub fn verify_kzg_batch_stage_deferred_observed<T, O>(
+    proof: &StageProof,
+    members: &[StageMemberSpec],
+    input_claims: &[Fr],
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    transcript: &mut T,
+    observer: &mut O,
+) -> Result<StageResult, StreamError>
+where
+    T: Transcript<Challenge = Fr>,
+    O: VerifierObserver,
+{
+    verify_kzg_batch_stage_inner(
+        proof,
+        members,
+        input_claims,
+        setup,
+        transcript,
+        observer,
+        |_, _| Ok(None),
+    )
+}
+
+fn verify_kzg_batch_stage_inner<T, F, O>(
+    proof: &StageProof,
+    members: &[StageMemberSpec],
+    input_claims: &[Fr],
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    transcript: &mut T,
+    observer: &mut O,
+    output_claims: F,
+) -> Result<StageResult, StreamError>
+where
+    T: Transcript<Challenge = Fr>,
+    F: FnOnce(&StageResult, &mut O) -> Result<Option<Vec<Fr>>, StreamError>,
+    O: VerifierObserver,
+{
     if proof.committed_rounds.is_none() || !proof.round_polynomials.round_polynomials.is_empty() {
         return Err(StreamError::StageEncoding);
     }
@@ -1029,18 +1102,20 @@ where
         final_claim: claim,
     };
     let output_claims = output_claims(&result, observer)?;
-    if output_claims.len() != members.len() {
-        return Err(StreamError::StageMemberCount);
-    }
-    let mut expected = Fr::zero();
-    for (&coefficient, &output_claim) in result.coefficients.iter().zip(&output_claims) {
-        expected += observer.fr_mul(coefficient, output_claim);
-    }
-    if expected != result.final_claim {
-        return Err(StreamError::StageOutputClaim);
-    }
-    for output_claim in &output_claims {
-        transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, output_claim);
+    if let Some(output_claims) = &output_claims {
+        if output_claims.len() != members.len() {
+            return Err(StreamError::StageMemberCount);
+        }
+        let mut expected = Fr::zero();
+        for (&coefficient, &output_claim) in result.coefficients.iter().zip(output_claims) {
+            expected += observer.fr_mul(coefficient, output_claim);
+        }
+        if expected != result.final_claim {
+            return Err(StreamError::StageOutputClaim);
+        }
+        for output_claim in output_claims {
+            transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, output_claim);
+        }
     }
     verify_aggregated_round_opening(
         &committed.round_commitments,
@@ -1054,7 +1129,7 @@ where
         transcript,
         observer,
     )?;
-    result.output_claims = output_claims;
+    result.output_claims = output_claims.unwrap_or_default();
     Ok(result)
 }
 
