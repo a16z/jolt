@@ -1,17 +1,58 @@
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
+use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup, VerifierObserver};
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_poly::MultilinearPoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_transcript::{AppendToTranscript, Keccak256Transcript, Transcript};
 
 use super::{
-    combine_evaluations, prove_kzg_stage, prove_stage, verify_kzg_stage, verify_stage_with,
-    ColumnReduction, Commitment, PackedColumns, PackingLayout, ReductionClaim, StageAEncoding,
-    StageMember, StageMemberSpec, StageProof, StageResult, StreamError, TensorStreamStatement,
-    TensorTerm, WrapperProof, STREAM_LABEL,
+    combine_evaluations, prove_kzg_stage, prove_stage, verify_kzg_stage_observed,
+    verify_stage_with, ColumnReduction, Commitment, PackedColumns, PackingLayout, ReductionClaim,
+    StageAEncoding, StageMember, StageMemberSpec, StageProof, StageResult, StreamError,
+    TensorStreamStatement, TensorTerm, VerifierCost, WrapperProof, STREAM_LABEL,
 };
+
+struct CountingKeccakTranscript {
+    inner: Keccak256Transcript<Fr>,
+    hashes: usize,
+}
+
+impl Default for CountingKeccakTranscript {
+    fn default() -> Self {
+        Self::new(b"")
+    }
+}
+
+impl Transcript for CountingKeccakTranscript {
+    type Challenge = Fr;
+
+    fn new(label: &'static [u8]) -> Self {
+        Self {
+            inner: Keccak256Transcript::new(label),
+            hashes: 1,
+        }
+    }
+
+    fn append_bytes(&mut self, bytes: &[u8]) {
+        self.hashes += 1;
+        self.inner.append_bytes(bytes);
+    }
+
+    fn challenge(&mut self) -> Fr {
+        self.hashes += 1;
+        self.inner.challenge()
+    }
+
+    fn challenge_scalar(&mut self) -> Fr {
+        self.hashes += 1;
+        self.inner.challenge_scalar()
+    }
+
+    fn state(&self) -> [u8; 32] {
+        self.inner.state()
+    }
+}
 
 pub fn prove_stream(
     packed: &PackedColumns,
@@ -155,6 +196,43 @@ pub fn verify_stream(
     statement: &TensorStreamStatement,
     setup: &HyperKZGVerifierSetup<Bn254>,
 ) -> Result<Vec<StageResult>, StreamError> {
+    let mut transcript = new_stream_transcript(
+        &statement.key_digest,
+        &[statement.row_input_claim],
+        &proof.commitments,
+    );
+    verify_stream_observed(
+        proof,
+        statement,
+        setup,
+        &mut transcript,
+        &mut VerifierCost::default(),
+    )
+}
+
+pub fn verify_stream_with_cost(
+    proof: &WrapperProof,
+    statement: &TensorStreamStatement,
+    setup: &HyperKZGVerifierSetup<Bn254>,
+) -> Result<(Vec<StageResult>, VerifierCost), StreamError> {
+    let mut transcript = seed_stream_transcript::<CountingKeccakTranscript>(
+        &statement.key_digest,
+        &[statement.row_input_claim],
+        &proof.commitments,
+    );
+    let mut cost = VerifierCost::default();
+    let result = verify_stream_observed(proof, statement, setup, &mut transcript, &mut cost)?;
+    cost.keccak = transcript.hashes;
+    Ok((result, cost))
+}
+
+fn verify_stream_observed<T: Transcript<Challenge = Fr>>(
+    proof: &WrapperProof,
+    statement: &TensorStreamStatement,
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    transcript: &mut T,
+    observer: &mut VerifierCost,
+) -> Result<Vec<StageResult>, StreamError> {
     let layout = PackingLayout::new(statement.rows, statement.column_count, statement.k)?;
     validate_statement(layout, statement)?;
     let factor_columns = tensor_factor_columns(&statement.terms);
@@ -168,12 +246,7 @@ pub fn verify_stream(
     {
         return Err(StreamError::StageCount);
     }
-    let mut transcript = new_stream_transcript(
-        &statement.key_digest,
-        &[statement.row_input_claim],
-        &proof.commitments,
-    );
-    absorb_stage_a_encoding(statement.stage_a_encoding, &mut transcript);
+    absorb_stage_a_encoding(statement.stage_a_encoding, transcript);
     let row_stage = proof.stages.first().ok_or(StreamError::StageCount)?;
     let row_shape = [StageMemberSpec {
         rounds: layout.row_vars(),
@@ -185,16 +258,17 @@ pub fn verify_stream(
             row_stage,
             &row_shape,
             &[statement.row_input_claim],
-            &mut transcript,
+            transcript,
             |result| Ok(vec![single_member_output(result)?]),
         )?,
-        StageAEncoding::KzgCommitted => verify_kzg_stage(
+        StageAEncoding::KzgCommitted => verify_kzg_stage_observed(
             row_stage,
             statement.row_input_claim,
             layout.row_vars(),
             statement.row_degree,
             setup,
-            &mut transcript,
+            transcript,
+            observer,
         )?,
     };
     let row_output = single_member_output(&row_result)?;
@@ -220,7 +294,7 @@ pub fn verify_stream(
         column_stage,
         &column_shape,
         factor_claims,
-        &mut transcript,
+        transcript,
         |result| {
             factor_columns
                 .iter()
@@ -241,26 +315,34 @@ pub fn verify_stream(
         &column_result.point,
         reduced_claim,
     )?;
-    verify_direct_opening(proof, &claim, setup, &mut transcript)?;
+    observe_clear_stage(observer, column_stage, factor_columns.len());
+    observer.fr_mul(statement.terms.len() * tensor_arity(&statement.terms)?);
+    observer.fr_mul(factor_columns.len() * (3 * layout.column_vars() + 1));
+    observer.fr_mul(layout.padded_group_count - 1);
+    verify_direct_opening(proof, &claim, setup, transcript, observer)?;
     Ok(vec![row_result, column_result])
 }
 
-fn verify_direct_opening(
+fn verify_direct_opening<T: Transcript<Challenge = Fr>>(
     proof: &WrapperProof,
     claim: &ReductionClaim,
     setup: &HyperKZGVerifierSetup<Bn254>,
-    transcript: &mut Keccak256Transcript<Fr>,
+    transcript: &mut T,
+    observer: &mut VerifierCost,
 ) -> Result<(), StreamError> {
     transcript.append(&claim.value);
     let commitment =
         HyperKZGScheme::<Bn254>::combine(&proof.commitments, &claim.polynomial_weights);
-    HyperKZGScheme::<Bn254>::verify(
+    observer.ec_mul(proof.commitments.len());
+    observer.ec_add(proof.commitments.len());
+    HyperKZGScheme::<Bn254>::verify_observed(
         setup,
         &commitment,
         &claim.point,
         &claim.value,
         &proof.opening,
         transcript,
+        observer,
     )
     .map_err(StreamError::HyperKzg)?;
     Ok(())
@@ -271,13 +353,31 @@ pub fn new_stream_transcript(
     public_statement: &[Fr],
     commitments: &[Commitment],
 ) -> Keccak256Transcript<Fr> {
-    let mut transcript = Keccak256Transcript::<Fr>::new(STREAM_LABEL);
+    seed_stream_transcript::<Keccak256Transcript<Fr>>(key_digest, public_statement, commitments)
+}
+
+fn seed_stream_transcript<T: Transcript<Challenge = Fr>>(
+    key_digest: &[u8; 32],
+    public_statement: &[Fr],
+    commitments: &[Commitment],
+) -> T {
+    let mut transcript = T::new(STREAM_LABEL);
     transcript.append_bytes(key_digest);
     for value in public_statement {
         transcript.append(value);
     }
     absorb_commitments(commitments, &mut transcript);
     transcript
+}
+
+fn observe_clear_stage(observer: &mut VerifierCost, proof: &StageProof, members: usize) {
+    let round_multiplications: usize = proof
+        .round_polynomials
+        .round_polynomials
+        .iter()
+        .map(|round| 2 * round.coeffs_except_linear_term().len() - 1)
+        .sum();
+    observer.fr_mul(2 * members + round_multiplications);
 }
 
 pub fn absorb_commitments<T: Transcript<Challenge = Fr>>(

@@ -55,7 +55,51 @@ pub enum SpartanError {
 #[derive(Clone, Copy, Debug)]
 pub struct SpartanPublicInputs<'a> {
     pub known: &'a [Fr],
-    pub challenges: &'a [Fr],
+    pub challenges: &'a [PublicChallenge],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SpartanPublicInputStatement<'a> {
+    pub known: &'a [Fr],
+    pub challenge_decoders: &'a [ChallengeDecoder],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PublicChallenge {
+    pub value: Fr,
+    pub decoder: ChallengeDecoder,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChallengeDecoder {
+    Challenge125,
+    Scalar128,
+}
+
+impl ChallengeDecoder {
+    pub fn pack(self, value: Fr) -> Result<[u8; 16], SpartanError> {
+        let unshifted = match self {
+            Self::Challenge125 => value * Fr::one().mul_pow_2(128),
+            Self::Scalar128 => value,
+        };
+        let scalar = unshifted
+            .to_u128_checked()
+            .ok_or(SpartanError::ChallengeOutOfRange)?;
+        let bytes = match self {
+            Self::Challenge125 => scalar.to_le_bytes(),
+            Self::Scalar128 => scalar.to_be_bytes(),
+        };
+        (self.decode(bytes) == value)
+            .then_some(bytes)
+            .ok_or(SpartanError::ChallengeOutOfRange)
+    }
+
+    pub fn decode(self, bytes: [u8; 16]) -> Fr {
+        match self {
+            Self::Challenge125 => Fr::from_challenge_bytes(&bytes),
+            Self::Scalar128 => Fr::from_scalar_challenge_bytes(&bytes),
+        }
+    }
 }
 
 pub fn prove_spartan(
@@ -65,7 +109,12 @@ pub fn prove_spartan(
     witness: &[Fr],
     setup: &HyperKZGProverSetup<Bn254>,
 ) -> Result<WrapperProof, SpartanError> {
-    let public_inputs = materialize_public_inputs(public.known, public.challenges);
+    let challenge_values: Vec<Fr> = public
+        .challenges
+        .iter()
+        .map(|challenge| challenge.value)
+        .collect();
+    let public_inputs = materialize_public_inputs(public.known, &challenge_values);
     validate_dimensions(r1cs, public_inputs.len(), witness.len())?;
     let z = assignment(&public_inputs, witness);
     r1cs.check_witness(&z).map_err(SpartanError::Unsatisfied)?;
@@ -136,12 +185,12 @@ pub fn prove_spartan(
 pub fn verify_spartan(
     key_digest: &[u8; 32],
     r1cs: &ConstraintMatrices<Fr>,
-    known_public_inputs: &[Fr],
+    public: SpartanPublicInputStatement<'_>,
     proof: &WrapperProof,
     setup: &HyperKZGVerifierSetup<Bn254>,
 ) -> Result<(), SpartanError> {
-    let challenges = unpack_challenges(&proof.public_challenges);
-    let public_inputs = materialize_public_inputs(known_public_inputs, &challenges);
+    let challenges = unpack_challenges(&proof.public_challenges, public.challenge_decoders)?;
+    let public_inputs = materialize_public_inputs(public.known, &challenges);
     let public_columns = 1 + public_inputs.len();
     if public_columns > r1cs.num_vars {
         return Err(SpartanError::PublicInputRange {
@@ -253,23 +302,25 @@ fn checked_stage_claim(
     Ok(vec![expected])
 }
 
-fn pack_challenges(challenges: &[Fr]) -> Result<Vec<[u8; 16]>, SpartanError> {
+fn pack_challenges(challenges: &[PublicChallenge]) -> Result<Vec<[u8; 16]>, SpartanError> {
     challenges
         .iter()
-        .map(|challenge| {
-            challenge
-                .to_u128_checked()
-                .map(u128::to_be_bytes)
-                .ok_or(SpartanError::ChallengeOutOfRange)
-        })
+        .map(|challenge| challenge.decoder.pack(challenge.value))
         .collect()
 }
 
-fn unpack_challenges(challenges: &[[u8; 16]]) -> Vec<Fr> {
-    challenges
+fn unpack_challenges(
+    challenges: &[[u8; 16]],
+    decoders: &[ChallengeDecoder],
+) -> Result<Vec<Fr>, SpartanError> {
+    if challenges.len() != decoders.len() {
+        return Err(SpartanError::MalformedProof);
+    }
+    Ok(challenges
         .iter()
-        .map(|bytes| Fr::from_u128(u128::from_be_bytes(*bytes)))
-        .collect()
+        .zip(decoders)
+        .map(|(&bytes, &decoder)| decoder.decode(bytes))
+        .collect())
 }
 
 fn materialize_public_inputs(known: &[Fr], challenges: &[Fr]) -> Vec<Fr> {

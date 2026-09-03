@@ -91,10 +91,10 @@ HyperKZG expands its cubic divisor into
 `e(B-R-z0W,[1]_2)e(-z1W,[beta]_2)e(-z2W,[beta^2]_2)e(-W,[beta^3]_2)=1`.
 All divisor scalar multiplication is on G1.
 
-`HyperKZGProof::v[2]` remains on the wire. The fold equations derive its entries for `P_1...`, but
-not `P_0(r^2)`. Removing the whole vector soundly needs a second KZG witness for `P_0`'s two-point
-opening, saving `32*ell-32` bytes and adding a half-size prover MSM; that is not the plan's claimed
-free `32*ell` deletion.
+`HyperKZGProof` sends the two full evaluation rows at `r` and `-r`, plus only `P_0(r^2)`. Starting
+from that scalar, the verifier applies the same Gemini fold identity to reconstruct
+`P_1(r^2)..P_{ell-1}(r^2)`, appends the claimed terminal evaluation, and runs the existing fold
+checks and cubic KZG pairing. This removes `ell-1` Fr values without a new witness.
 
 ### Co-pointing inventory
 
@@ -119,21 +119,23 @@ Spartan retains compressed stages:
 3. Matrix weights; public-column subtraction; inner input/coefficient; degree-two rounds; `W(ry)`.
 4. HyperKZG opening of `W` at `ry`.
 
-Spartan splits public inputs into verifier-known values and 128-bit transcript challenges. The
-latter serialize as 16-byte big-endian words inside `WrapperProof` and are expanded to Fr before
-transcript replay/R1CS evaluation. The 28-challenge fixture occupies 448 B instead of 896 B.
+Spartan splits public inputs into verifier-known values and raw 16-byte transcript squeezes. Each
+statement slot carries `Challenge125` or `Scalar128`; verification calls the production
+`Fr::from_challenge_bytes` or `Fr::from_scalar_challenge_bytes` decoder before transcript replay
+and R1CS evaluation. Packing inverts the selected decoder and requires an exact round-trip. The
+28-challenge fixture occupies 448 B instead of 896 B.
 
 ## Exact G-shape bytes and timing
 
 See `w4s-byte-audit.md` for line items.
 
 ```text
-k=8:  payload 5,952 B; bincode 6,046 B
-      setup 14.779 s; commit 1.533 s; proof 2.213 s; verify 0.008 s
-      109 ecMul; 108 ecAdd; 8 pairing pairs; 1,112 modeled Fr ops; 301 Keccaks
-k=16: payload 5,600 B; bincode 5,680 B
-      setup 17.374 s; commit 1.434 s; proof 2.890 s; verify 0.006 s
-      95 ecMul; 94 ecAdd; 8 pairing pairs; 1,079 modeled Fr ops; 290 Keccaks
+k=8:  payload 5,344 B; bincode 5,437 B
+      setup 7.398 s; commit 1.182 s; proof 1.588 s; verify 0.007 s
+      109 ecMul; 108 ecAdd; 8 pairing pairs; 6,142 Fr mul; 282 Keccaks; 1,545,484 gas
+k=16: payload 4,960 B; bincode 5,039 B
+      setup 15.779 s; commit 1.444 s; proof 2.837 s; verify 0.006 s
+      95 ecMul; 94 ecAdd; 8 pairing pairs; 6,139 Fr mul; 270 Keccaks; 1,423,112 gas
 ```
 
 ## Verification
@@ -144,11 +146,17 @@ cargo clippy -p jolt-transcript --all-targets -q --message-format=short -- -D wa
 cargo clippy -p jolt-hyperkzg --all-targets -q --message-format=short -- -D warnings
 cargo clippy -p jolt-wrapper --all-targets -q --message-format=short -- -D warnings
 cargo nextest run -p jolt-wrapper --cargo-quiet
+cargo nextest run -p jolt-wrapper --features prover-fixtures --cargo-quiet \
+  -E 'test(fibonacci_2_18_relation)' --no-capture
 cargo nextest run -p jolt-wrapper --release n3_g_shape_timing \
   --run-ignored ignored-only --cargo-quiet
 ```
 
-Isolated scratch result: both clippy gates clean; wrapper suite 10 passed / 1 ignored; release gate
-passed for both packing factors. Tamper tests reject changed round commitments, next claims,
-BDFG witnesses, factor/RLC inputs, both stage streams, packed commitments, and final opening
-components.
+`VerifierCost` is produced by an observer in the executed verification path, including the counting
+Keccak transcript and the observed HyperKZG pairing/MSM calls. The isolated scratch gates cover
+both packing factors and the real recorded Fibonacci challenges. Tamper tests reject changed packed
+challenge bytes, round commitments, next claims, BDFG witnesses, factor/RLC inputs, both stage
+streams, packed commitments, and final opening components.
+
+Standalone Spartan still opens `W(ry)` separately. The combined wrapper will index `W` over T1's
+row domain and head-align the inner sumcheck in A; that integration belongs to its owning lane.

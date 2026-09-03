@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::HyperKZGError;
 use crate::kzg::{challenge_powers, eval_univariate, kzg_commit};
-use crate::{HyperKZGProverSetup, HyperKZGVerifierSetup};
+use crate::{HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver, VerifierObserver};
 
 const SUPPORTED_DEGREE: usize = 5;
 
@@ -146,11 +146,47 @@ where
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
+    verify_variable_batch_observed(
+        commitments,
+        points,
+        evaluations,
+        degree,
+        proof,
+        setup,
+        transcript,
+        &mut NoopVerifierObserver,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the observer extends the existing PCS verification request without changing its protocol inputs"
+)]
+pub fn verify_variable_batch_observed<P, T, O>(
+    commitments: &[P::G1],
+    points: &[[P::ScalarField; 3]],
+    evaluations: &[[P::ScalarField; 3]],
+    degree: usize,
+    proof: &VariableBatchKzgProof<P>,
+    setup: &HyperKZGVerifierSetup<P>,
+    transcript: &mut T,
+    observer: &mut O,
+) -> Result<(), HyperKZGError>
+where
+    P: PairingGroup,
+    T: Transcript<Challenge = P::ScalarField>,
+    O: VerifierObserver,
+    P::ScalarField: AppendToTranscript,
+    P::G1: AppendToTranscript,
+{
     validate_batch(commitments, points, evaluations, degree)?;
     let rho = transcript.challenge();
     let rho_powers = challenge_powers(rho, commitments.len());
     transcript.append(&proof.shifted_commitment);
     let combined_commitment = P::g1_msm(commitments, &rho_powers);
+    observer.ec_mul(commitments.len());
+    observer.ec_add(commitments.len());
+    observer.pairing_pairs(2);
     let degree_check = P::multi_pairing(
         &[proof.shifted_commitment, -combined_commitment],
         &[setup.g2, setup.degree_five_shift_g2],
@@ -165,6 +201,21 @@ where
     let gamma_powers = challenge_powers(gamma, commitments.len());
     transcript.append(&proof.quotient_commitment);
     let z = transcript.challenge();
+    let complement_cost: usize = points
+        .iter()
+        .map(|point_set| {
+            let terms = union
+                .iter()
+                .filter(|point| !point_set.contains(point))
+                .count();
+            (terms + 1) * (terms + 1) + 4
+        })
+        .sum();
+    observer
+        .fr_mul(17 * commitments.len() + complement_cost + (union.len() + 1) * (union.len() + 1));
+    observer.ec_mul(2 * commitments.len() + 2);
+    observer.ec_add(2 * commitments.len() + 2);
+    observer.pairing_pairs(2);
     let mut folded_commitment = P::G1::identity();
     for (((&commitment, point_set), remainder), &coefficient) in commitments
         .iter()

@@ -11,14 +11,17 @@ use jolt_field::{Fr, Ring};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_poly::CompressedPoly;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_wrapper::spartan::{prove_spartan, verify_spartan, SpartanPublicInputs};
+use jolt_transcript::{Blake3Transcript, Transcript};
+use jolt_wrapper::hash_table::{Decoder, Event, RecordingTranscript};
+use jolt_wrapper::spartan::{
+    prove_spartan, verify_spartan, ChallengeDecoder, PublicChallenge, SpartanPublicInputStatement,
+    SpartanPublicInputs,
+};
 use jolt_wrapper::stream::Commitment;
 
-fn instance(log_size: usize, public_count: usize) -> (ConstraintMatrices<Fr>, Vec<Fr>, Vec<Fr>) {
+fn instance(log_size: usize, public: Vec<Fr>) -> (ConstraintMatrices<Fr>, Vec<Fr>, Vec<Fr>) {
     let size = 1usize << log_size;
-    let public: Vec<Fr> = (0..public_count)
-        .map(|index| Fr::from_u64(index as u64 + 3))
-        .collect();
+    let public_count = public.len();
     let quarter = size / 4;
     let mut witness = vec![Fr::from_u64(0); size];
     for index in 0..quarter {
@@ -54,10 +57,42 @@ fn instance(log_size: usize, public_count: usize) -> (ConstraintMatrices<Fr>, Ve
     )
 }
 
+fn recorded_challenges() -> Vec<PublicChallenge> {
+    drop(RecordingTranscript::<Blake3Transcript>::take_log());
+    let mut transcript = RecordingTranscript::<Blake3Transcript>::new(b"spartan-public-inputs");
+    for index in 0..28 {
+        transcript.append_bytes(&(index as u64).to_be_bytes());
+        if index < 16 {
+            let _challenge = transcript.challenge();
+        } else {
+            let _challenge = transcript.challenge_scalar();
+        }
+    }
+    RecordingTranscript::<Blake3Transcript>::take_log()
+        .into_iter()
+        .filter_map(|record| match record.event {
+            Event::Squeeze { decoder, value } => Some(PublicChallenge {
+                value,
+                decoder: match decoder {
+                    Decoder::Challenge125 => ChallengeDecoder::Challenge125,
+                    Decoder::Scalar128 => ChallengeDecoder::Scalar128,
+                },
+            }),
+            Event::Start { .. } | Event::Append { .. } => None,
+        })
+        .collect()
+}
+
 #[test]
 fn spartan_round_trip_and_tampers() {
     let key_digest = [42; 32];
-    let (r1cs, public, witness) = instance(12, 50);
+    let challenges = recorded_challenges();
+    assert_eq!(challenges.len(), 28);
+    let mut public: Vec<Fr> = (0..22)
+        .map(|index| Fr::from_u64(index as u64 + 3))
+        .collect();
+    public.extend(challenges.iter().map(|challenge| challenge.value));
+    let (r1cs, public, witness) = instance(12, public);
     let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
         Fr::from_u64(7),
         witness.len(),
@@ -66,14 +101,38 @@ fn spartan_round_trip_and_tampers() {
     );
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
     let known = &public[..22];
-    let challenges = &public[22..];
-    let public_request = SpartanPublicInputs { known, challenges };
+    let decoders: Vec<ChallengeDecoder> = challenges
+        .iter()
+        .map(|challenge| challenge.decoder)
+        .collect();
+    let public_request = SpartanPublicInputs {
+        known,
+        challenges: &challenges,
+    };
+    let public_statement = SpartanPublicInputStatement {
+        known,
+        challenge_decoders: &decoders,
+    };
     let proof = prove_spartan(&key_digest, &r1cs, public_request, &witness, &setup).expect("prove");
     assert_eq!(proof.public_challenges.len(), 28);
-    verify_spartan(&key_digest, &r1cs, known, &proof, &verifier_setup).expect("verify");
+    verify_spartan(
+        &key_digest,
+        &r1cs,
+        public_statement,
+        &proof,
+        &verifier_setup,
+    )
+    .expect("verify");
 
     let wrong_key_digest = [43; 32];
-    assert!(verify_spartan(&wrong_key_digest, &r1cs, known, &proof, &verifier_setup).is_err());
+    assert!(verify_spartan(
+        &wrong_key_digest,
+        &r1cs,
+        public_statement,
+        &proof,
+        &verifier_setup
+    )
+    .is_err());
     let mut other_r1cs = r1cs.clone();
     for row in other_r1cs.a.iter_mut().chain(&mut other_r1cs.c) {
         for (_, coefficient) in row {
@@ -82,7 +141,14 @@ fn spartan_round_trip_and_tampers() {
     }
     let other_proof = prove_spartan(&key_digest, &other_r1cs, public_request, &witness, &setup)
         .expect("prove other key");
-    assert!(verify_spartan(&key_digest, &r1cs, known, &other_proof, &verifier_setup).is_err());
+    assert!(verify_spartan(
+        &key_digest,
+        &r1cs,
+        public_statement,
+        &other_proof,
+        &verifier_setup
+    )
+    .is_err());
 
     let mut unsatisfied = witness.clone();
     unsatisfied[0] += Fr::from_u64(1);
@@ -90,7 +156,18 @@ fn spartan_round_trip_and_tampers() {
 
     let mut wrong_public = known.to_vec();
     wrong_public[0] += Fr::from_u64(1);
-    assert!(verify_spartan(&key_digest, &r1cs, &wrong_public, &proof, &verifier_setup).is_err());
+    let wrong_public_statement = SpartanPublicInputStatement {
+        known: &wrong_public,
+        challenge_decoders: &decoders,
+    };
+    assert!(verify_spartan(
+        &key_digest,
+        &r1cs,
+        wrong_public_statement,
+        &proof,
+        &verifier_setup
+    )
+    .is_err());
 
     let mut inner_round_tamper = proof.clone();
     let round = &mut inner_round_tamper.stages[1]
@@ -102,7 +179,7 @@ fn spartan_round_trip_and_tampers() {
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        known,
+        public_statement,
         &inner_round_tamper,
         &verifier_setup
     )
@@ -113,14 +190,21 @@ fn spartan_round_trip_and_tampers() {
     let mut coefficients = round.coeffs_except_linear_term().to_vec();
     coefficients[0] += Fr::from_u64(1);
     *round = CompressedPoly::new(coefficients);
-    assert!(verify_spartan(&key_digest, &r1cs, known, &round_tamper, &verifier_setup).is_err());
+    assert!(verify_spartan(
+        &key_digest,
+        &r1cs,
+        public_statement,
+        &round_tamper,
+        &verifier_setup
+    )
+    .is_err());
 
     let mut witness_eval_tamper = proof.clone();
     witness_eval_tamper.reduced_claims[3] += Fr::from_u64(1);
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        known,
+        public_statement,
         &witness_eval_tamper,
         &verifier_setup
     )
@@ -131,7 +215,7 @@ fn spartan_round_trip_and_tampers() {
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        known,
+        public_statement,
         &commitment_tamper,
         &verifier_setup
     )
@@ -139,14 +223,21 @@ fn spartan_round_trip_and_tampers() {
 
     let mut claim_tamper = proof.clone();
     claim_tamper.reduced_claims[0] += Fr::from_u64(1);
-    assert!(verify_spartan(&key_digest, &r1cs, known, &claim_tamper, &verifier_setup).is_err());
+    assert!(verify_spartan(
+        &key_digest,
+        &r1cs,
+        public_statement,
+        &claim_tamper,
+        &verifier_setup
+    )
+    .is_err());
 
     let mut stage_claim_tamper = proof.clone();
     stage_claim_tamper.stage_claims[1][0] += Fr::from_u64(1);
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        known,
+        public_statement,
         &stage_claim_tamper,
         &verifier_setup
     )
@@ -154,21 +245,28 @@ fn spartan_round_trip_and_tampers() {
 
     let mut opening_tamper = proof.clone();
     opening_tamper.opening.v[0][0] += Fr::from_u64(1);
-    assert!(verify_spartan(&key_digest, &r1cs, known, &opening_tamper, &verifier_setup).is_err());
+    assert!(verify_spartan(
+        &key_digest,
+        &r1cs,
+        public_statement,
+        &opening_tamper,
+        &verifier_setup
+    )
+    .is_err());
 
     let mut packed_challenge_tamper = proof.clone();
     packed_challenge_tamper.public_challenges[0][0] ^= 1;
     assert!(verify_spartan(
         &key_digest,
         &r1cs,
-        known,
+        public_statement,
         &packed_challenge_tamper,
         &verifier_setup
     )
     .is_err());
 
     let encoded = encode_to_vec(&proof, standard()).expect("serialize proof");
-    assert_eq!(proof.payload_bytes(), 4_128);
-    assert_eq!(encoded.len(), 4_180);
+    assert_eq!(proof.payload_bytes(), 3_776);
+    assert_eq!(encoded.len(), 3_827);
     assert_eq!(encoded.len(), proof.bincode_bytes());
 }

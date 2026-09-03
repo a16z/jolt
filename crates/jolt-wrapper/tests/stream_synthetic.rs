@@ -286,6 +286,10 @@ fn synthetic_stream_round_trip_and_tampers() {
     let mut opening_w = proof.clone();
     opening_w.opening.w = opening_w.opening.com[0];
     assert!(verify_stream(&opening_w, &statement, &verifier_setup).is_err());
+
+    let mut opening_r_squared = proof.clone();
+    opening_r_squared.opening.p0_at_r_squared += Fr::from_u64(1);
+    assert!(verify_stream(&opening_r_squared, &statement, &verifier_setup).is_err());
 }
 
 #[test]

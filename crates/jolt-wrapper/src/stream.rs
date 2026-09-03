@@ -4,8 +4,8 @@ use jolt_crypto::ec::bn254::bit_columns::g1_bit_columns_msm;
 use jolt_crypto::{Bn254, PairingGroup};
 use jolt_field::{Field, Fr, One, Ring, Zero};
 use jolt_hyperkzg::{
-    open_variable_batch, verify_variable_batch, HyperKZGProverSetup, HyperKZGScheme,
-    HyperKZGVerifierSetup,
+    open_variable_batch, verify_variable_batch_observed, HyperKZGProverSetup, HyperKZGScheme,
+    HyperKZGVerifierSetup, NoopVerifierObserver, VerifierObserver,
 };
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
@@ -22,7 +22,7 @@ use rayon::prelude::*;
 mod types;
 pub use types::*;
 mod protocol;
-pub use protocol::{new_stream_transcript, prove_stream, verify_stream};
+pub use protocol::{new_stream_transcript, prove_stream, verify_stream, verify_stream_with_cost};
 
 const STREAM_LABEL: &[u8] = b"jolt-wrapper-v1";
 const KZG_ROUND_COMMITMENT_LABEL: &[u8] = b"sumcheck_kzg_commitment";
@@ -530,6 +530,30 @@ pub fn verify_kzg_stage<T: Transcript<Challenge = Fr>>(
     setup: &HyperKZGVerifierSetup<Bn254>,
     transcript: &mut T,
 ) -> Result<StageResult, StreamError> {
+    verify_kzg_stage_observed(
+        proof,
+        input_claim,
+        rounds,
+        degree,
+        setup,
+        transcript,
+        &mut NoopVerifierObserver,
+    )
+}
+
+pub fn verify_kzg_stage_observed<T, O>(
+    proof: &StageProof,
+    input_claim: Fr,
+    rounds: usize,
+    degree: usize,
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    transcript: &mut T,
+    observer: &mut O,
+) -> Result<StageResult, StreamError>
+where
+    T: Transcript<Challenge = Fr>,
+    O: VerifierObserver,
+{
     if degree != 5 || !proof.round_polynomials.round_polynomials.is_empty() {
         return Err(StreamError::StageEncoding);
     }
@@ -557,7 +581,7 @@ pub fn verify_kzg_stage<T: Transcript<Challenge = Fr>>(
         evaluations.push([at_zero, claim - at_zero, next_claim]);
         claim = next_claim;
     }
-    verify_variable_batch(
+    verify_variable_batch_observed(
         &committed.round_commitments,
         &points,
         &evaluations,
@@ -565,6 +589,7 @@ pub fn verify_kzg_stage<T: Transcript<Challenge = Fr>>(
         &committed.opening,
         setup,
         transcript,
+        observer,
     )?;
     Ok(StageResult {
         point: points.iter().map(|&[_, _, challenge]| challenge).collect(),

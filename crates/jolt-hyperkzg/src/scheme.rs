@@ -16,7 +16,10 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::HyperKZGError;
 use crate::kzg::{self, kzg_open_batch, kzg_verify_batch};
-use crate::types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup};
+use crate::types::{
+    HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup,
+    NoopVerifierObserver, VerifierObserver,
+};
 
 /// HyperKZG multilinear polynomial commitment scheme.
 ///
@@ -167,9 +170,14 @@ where
         let u = [r, -r, r * r];
 
         // Phase 3: batch open all polynomials at the three points
-        let (w, v) = kzg_open_batch::<P, T>(&polys, &u, setup, transcript);
+        let (w, v, p0_at_r_squared) = kzg_open_batch::<P, T>(&polys, &u, setup, transcript);
 
-        Ok(HyperKZGProof { com, w, v })
+        Ok(HyperKZGProof {
+            com,
+            w,
+            v,
+            p0_at_r_squared,
+        })
     }
 
     /// HyperKZG verification.
@@ -182,6 +190,30 @@ where
         proof: &HyperKZGProof<P>,
         transcript: &mut T,
     ) -> Result<(), HyperKZGError> {
+        Self::verify_observed(
+            vk,
+            commitment,
+            point,
+            claimed_eval,
+            proof,
+            transcript,
+            &mut NoopVerifierObserver,
+        )
+    }
+
+    pub fn verify_observed<T, O>(
+        vk: &HyperKZGVerifierSetup<P>,
+        commitment: &HyperKZGCommitment<P>,
+        point: &[P::ScalarField],
+        claimed_eval: &P::ScalarField,
+        proof: &HyperKZGProof<P>,
+        transcript: &mut T,
+        observer: &mut O,
+    ) -> Result<(), HyperKZGError>
+    where
+        T: Transcript<Challenge = P::ScalarField>,
+        O: VerifierObserver,
+    {
         let ell = point.len();
         if ell == 0 {
             return Err(HyperKZGError::EmptyPoint);
@@ -196,7 +228,7 @@ where
 
         // Validate inner evaluation widths before mutating the transcript.
         let v = &proof.v;
-        if v[0].len() != ell || v[1].len() != ell || v[2].len() != ell {
+        if v[0].len() != ell || v[1].len() != ell {
             return Err(HyperKZGError::WrongEvaluationWidth { expected: ell });
         }
 
@@ -219,7 +251,15 @@ where
 
         let ypos = &v[0]; // evaluations at r
         let yneg = &v[1]; // evaluations at -r
-        let mut y_sq = v[2].clone(); // evaluations at r^2
+        let two_r_inverse = (P::ScalarField::from_u64(2) * r)
+            .inverse()
+            .ok_or(HyperKZGError::DegenerateChallenge)?;
+        let mut y_sq = Vec::with_capacity(ell + 1);
+        y_sq.push(proof.p0_at_r_squared);
+        for ((&y_pos, &y_neg), &x) in ypos.iter().zip(yneg).zip(point.iter().rev()).take(ell - 1) {
+            let numerator = r * (P::ScalarField::one() - x) * (y_pos + y_neg) + x * (y_pos - y_neg);
+            y_sq.push(numerator * two_r_inverse);
+        }
         y_sq.push(*claimed_eval);
 
         // Consistency check: the folding relation must hold across evaluations
@@ -247,9 +287,23 @@ where
                 return Err(HyperKZGError::FoldingConsistencyFailed { level });
             }
         }
+        observer.fr_mul(9 * ell - 3);
 
         // Batch KZG pairing check
-        if !kzg_verify_batch::<P, T>(vk, &com, proof.w, &u, &proof.v, transcript) {
+        let full_evaluations = [
+            v[0].clone(),
+            v[1].clone(),
+            y_sq.iter().take(ell).copied().collect(),
+        ];
+        if !kzg_verify_batch::<P, T, O>(
+            vk,
+            &com,
+            proof.w,
+            &u,
+            &full_evaluations,
+            transcript,
+            observer,
+        ) {
             return Err(HyperKZGError::PairingCheckFailed);
         }
 

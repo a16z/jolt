@@ -1,7 +1,7 @@
 use jolt_crypto::{Bn254, Bn254G1};
 use jolt_field::Fr;
 use jolt_hyperkzg::error::HyperKZGError;
-use jolt_hyperkzg::{HyperKZGCommitment, HyperKZGProof, VariableBatchKzgProof};
+use jolt_hyperkzg::{HyperKZGCommitment, HyperKZGProof, VariableBatchKzgProof, VerifierObserver};
 use jolt_openings::OpeningsError;
 use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::prover::ProveRounds;
@@ -11,6 +11,33 @@ use thiserror::Error;
 
 pub type Commitment = HyperKZGCommitment<Bn254>;
 pub type OpeningProof = HyperKZGProof<Bn254>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VerifierCost {
+    pub ec_mul: usize,
+    pub ec_add: usize,
+    pub pairing_pairs: usize,
+    pub fr_mul: usize,
+    pub keccak: usize,
+}
+
+impl VerifierObserver for VerifierCost {
+    fn ec_mul(&mut self, count: usize) {
+        self.ec_mul += count;
+    }
+
+    fn ec_add(&mut self, count: usize) {
+        self.ec_add += count;
+    }
+
+    fn pairing_pairs(&mut self, count: usize) {
+        self.pairing_pairs += count;
+    }
+
+    fn fr_mul(&mut self, count: usize) {
+        self.fr_mul += count;
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StageProof {
@@ -56,7 +83,7 @@ impl WrapperProof {
             .filter_map(|stage| stage.committed_rounds.as_ref())
             .map(|stage| 2 * stage.round_evaluations.len())
             .sum::<usize>();
-        let opening_scalars = self.opening.v.iter().map(Vec::len).sum::<usize>();
+        let opening_scalars = self.opening.v.iter().map(Vec::len).sum::<usize>() + 1;
         let stage_claims = self.stage_claims.iter().map(Vec::len).sum::<usize>();
         16 * self.public_challenges.len()
             + 32 * (self.commitments.len()

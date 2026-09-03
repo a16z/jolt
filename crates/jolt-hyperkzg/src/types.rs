@@ -6,6 +6,22 @@ use jolt_crypto::{HomomorphicCommitment, JoltGroup, PairingGroup};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
 
+pub trait VerifierObserver {
+    fn ec_mul(&mut self, count: usize);
+    fn ec_add(&mut self, count: usize);
+    fn pairing_pairs(&mut self, count: usize);
+    fn fr_mul(&mut self, count: usize);
+}
+
+pub struct NoopVerifierObserver;
+
+impl VerifierObserver for NoopVerifierObserver {
+    fn ec_mul(&mut self, _count: usize) {}
+    fn ec_add(&mut self, _count: usize) {}
+    fn pairing_pairs(&mut self, _count: usize) {}
+    fn fr_mul(&mut self, _count: usize) {}
+}
+
 /// Commitment to a multilinear polynomial: a single G1 element.
 #[derive(Serialize, Deserialize)]
 #[serde(bound(
@@ -95,8 +111,8 @@ impl<P: PairingGroup> HyperKZGCommitment<P> {
 ///
 /// - `com`: intermediate polynomial commitments from the Gemini folding (ell - 1 elements)
 /// - `w`: KZG witness commitment for the three evaluation points `[r, -r, r^2]`
-/// - `v`: evaluations of all intermediate polynomials at the three points
-///   (`v[t][k]` = polynomial k evaluated at point t)
+/// - `v`: evaluations of every polynomial at `r` and `-r`
+/// - `p0_at_r_squared`: `P_0(r^2)`; fold identities reconstruct the remaining `r^2` row
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "P::G1: Serialize, P::ScalarField: Serialize",
@@ -105,7 +121,8 @@ impl<P: PairingGroup> HyperKZGCommitment<P> {
 pub struct HyperKZGProof<P: PairingGroup> {
     pub com: Vec<P::G1>,
     pub w: P::G1,
-    pub v: [Vec<P::ScalarField>; 3],
+    pub v: [Vec<P::ScalarField>; 2],
+    pub p0_at_r_squared: P::ScalarField,
 }
 
 /// Prover setup: SRS G1 and G2 powers.

@@ -13,13 +13,13 @@ and `k = 16`. Payload counts BN254 G1 and Fr values as 32 B and exclude serde fr
 | stage C opening reduction | deleted | 0 | deleted | 0 |
 | A→B factor claims | 5 Fr | 160 | 5 Fr | 160 |
 | reduced packed claim | 1 Fr | 32 | 1 Fr | 32 |
-| multilinear HyperKZG | 20 G1 + 60 Fr | 2,560 | 21 G1 + 63 Fr | 2,688 |
-| **payload** | | **5,952** | | **5,600** |
-| standard-bincode framing | | 94 | | 80 |
-| **standard bincode** | | **6,046** | | **5,680** |
+| multilinear HyperKZG | 20 G1 + 41 Fr | 1,952 | 21 G1 + 43 Fr | 2,048 |
+| **payload** | | **5,344** | | **4,960** |
+| standard-bincode framing | | 93 | | 79 |
+| **standard bincode** | | **5,437** | | **5,039** |
 
 The original `k = 8` proof was 10,304 B payload / 10,445 B bincode. Implemented payload saving:
-**4,352 B**. `k = 16` saves another **352 B**.
+**4,960 B**. `k = 16` saves another **384 B**.
 
 ## Packed commitments
 
@@ -109,12 +109,14 @@ T(s) = sum_g eq(s_group,g) P_g(r_A,s_slot).
 
 The verifier directly forms that eq-weighted commitment RLC and HyperKZG opens it at
 `(r_A,s_slot)`. The former C sumcheck changed one point into another point and cost 1,280 B at
-`k=8` / 1,344 B at `k=16`; it is deleted. HyperKZG remains:
+`k=8` / 1,344 B at `k=16`; it is deleted. HyperKZG transmits both `P_i(r)`/`P_i(-r)`
+rows and only `P_0(r^2)`. The verifier reconstructs `P_1(r^2)..P_{ell-1}(r^2)` from the Gemini
+fold identities before the unchanged cubic KZG check:
 
 ```text
-ell G1 + 3*ell Fr = 4*ell*32
-ell=20: 2,560 B
-ell=21: 2,688 B
+ell G1 + (2*ell+1) Fr
+ell=20: 1,952 B
+ell=21: 2,048 B
 ```
 
 Lane Z's single-point Zeromorph target is `ell+2` G1: 704 B at `ell=20`, 736 B at `ell=21`.
@@ -123,18 +125,35 @@ A three-point Zeromorph opening adds `3(ell+1)+1` G1 and is larger than the dele
 
 ## EVM verifier operations
 
-The ignored gate's `VerifierCost` follows the current EVM-form verifier: two two-pair checks for
-the committed rounds, one four-pair HyperKZG check, G1-side divisor arithmetic, one Keccak per
-chained-digest append/squeeze, and a formula-level Fr count.
+The ignored gate calls `verify_stream_with_cost`. Its observer sits on the executed verifier
+operations: the two two-pair committed-round checks, the four-pair HyperKZG check, every G1-side
+MSM/divisor operation, every chained-digest append/squeeze, and each verifier Fr multiplication.
+The counter therefore shares the verification branch and proof dimensions instead of replaying a
+separate size formula.
 
-| `k` | ecMul | ecAdd | pairing pairs | modeled Fr ops | Keccak | N4 gas estimate |
+| `k` | ecMul | ecAdd | pairing pairs | Fr mul | Keccak | N4 gas estimate |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8 | 109 | 108 | 8 | 1,112 | 301 | 1,456,512 |
-| 16 | 95 | 94 | 8 | 1,079 | 290 | 1,334,152 |
+| 8 | 109 | 108 | 8 | 6,142 | 282 | 1,545,484 |
+| 16 | 95 | 94 | 8 | 6,139 | 270 | 1,423,112 |
 
 Gas applies the N4 constants: 21k base, 16 gas/calldata byte after expanding each G1 to 64 bytes,
-7.7k per paired ecMul+ecAdd MSM term, 114.7k per two-pair call, 183.4k for four pairs, 20 gas/modeled Fr op,
+7.7k per paired ecMul+ecAdd MSM term, 114.7k per two-pair call, 183.4k for four pairs, 20 gas/Fr multiplication,
 and 100 gas per chained Keccak event. It excludes contract-code/data access and G1 decompression.
+
+## Packed public challenges
+
+Spartan proof bytes contain the raw 16-byte transcript squeeze, not a canonical field integer.
+The statement records a decoder for each slot:
+
+```text
+Challenge125: Fr::from_challenge_bytes(raw)        # v * 2^-128, 125-bit squeeze
+Scalar128:    Fr::from_scalar_challenge_bytes(raw) # 128-bit big-endian scalar
+```
+
+Packing recovers the raw word using the inverse of that production decoder and rejects any value
+that does not round-trip. Verification calls the same `jolt-field` decoder selected by the
+statement. The 28 challenge slots remain 448 B. A real `RecordingTranscript` fixture covers both
+decoder kinds; flipping one packed bit changes the reconstructed public input and is rejected.
 
 ## Measured release gate
 
@@ -142,9 +161,8 @@ and 100 gas per chained Keccak event. It excludes contract-code/data access and 
 
 | `k` | setup | commit | proof after commit | commit + proof | verify | payload |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8 | 14.779 s | 1.533 s | 2.213 s | 3.746 s | 0.008 s | 5,952 B |
-| 16 | 17.374 s | 1.434 s | 2.890 s | 4.324 s | 0.006 s | 5,600 B |
+| 8 | 7.398 s | 1.182 s | 1.588 s | 2.770 s | 0.007 s | 5,344 B |
+| 16 | 15.779 s | 1.444 s | 2.837 s | 4.281 s | 0.006 s | 4,960 B |
 
-The same run built both SRS sizes sequentially. Prior runs varied from 3.963–8.220 s for the
-pre-deletion `k=8` proof, while SRS generation varied from 6.600–14.779 s; the spread is host
-contention, not a protocol delta.
+The same run built both SRS sizes sequentially. The setup/prove spread across runs tracks concurrent
+host load; the byte and verifier-operation counts are deterministic.

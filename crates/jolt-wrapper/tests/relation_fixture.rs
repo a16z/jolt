@@ -39,6 +39,7 @@ use jolt_wrapper::relation::{
     build_relation, generate_witness, outsourced_inputs, Relation, ScheduleEntry, SqueezeKind,
     StageValueInputs, Witness,
 };
+use jolt_wrapper::spartan::{ChallengeDecoder, PublicChallenge};
 use tracer::execution_backend::TracerBackend;
 
 type Pcs = DoryScheme;
@@ -300,6 +301,31 @@ fn fibonacci_2_18_relation() {
     let bytecode_address: Vec<Fr> = outputs.bytecode_address.iter().map(read).collect();
     let register_address: Vec<Fr> = outputs.register_address.iter().map(read).collect();
     let gammas: Vec<Fr> = outputs.bytecode_gammas.iter().map(read).collect();
+    let recorded_challenges = ram_address
+        .iter()
+        .chain(&bytecode_address)
+        .chain(&register_address)
+        .copied()
+        .map(|value| PublicChallenge {
+            value,
+            decoder: ChallengeDecoder::Challenge125,
+        })
+        .chain(gammas.iter().copied().map(|value| PublicChallenge {
+            value,
+            decoder: ChallengeDecoder::Scalar128,
+        }))
+        .collect::<Vec<_>>();
+    for challenge in &recorded_challenges {
+        let packed = challenge
+            .decoder
+            .pack(challenge.value)
+            .expect("pack recorded challenge");
+        assert_eq!(challenge.decoder.decode(packed), challenge.value);
+    }
+    let first = recorded_challenges.first().expect("recorded challenge");
+    let mut tampered = first.decoder.pack(first.value).expect("pack challenge");
+    tampered[0] ^= 1;
+    assert_ne!(first.decoder.decode(tampered), first.value);
     let recomputed = outsourced_inputs(
         &preprocessing,
         &public_io,

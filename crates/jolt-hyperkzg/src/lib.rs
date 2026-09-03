@@ -41,6 +41,12 @@ pub mod multi_open;
 pub mod scheme;
 pub mod types;
 
-pub use multi_open::{open_variable_batch, verify_variable_batch, VariableBatchKzgProof};
+pub use multi_open::{
+    open_variable_batch, verify_variable_batch, verify_variable_batch_observed,
+    VariableBatchKzgProof,
+};
 pub use scheme::HyperKZGScheme;
-pub use types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup};
+pub use types::{
+    HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup,
+    NoopVerifierObserver, VerifierObserver,
+};

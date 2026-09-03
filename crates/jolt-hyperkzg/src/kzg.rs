@@ -10,7 +10,7 @@ use num_traits::Zero;
 use rayon::prelude::*;
 
 use crate::error::HyperKZGError;
-use crate::types::{HyperKZGProverSetup, HyperKZGVerifierSetup};
+use crate::types::{HyperKZGProverSetup, HyperKZGVerifierSetup, VerifierObserver};
 
 /// Commits to a polynomial (given as evaluation/coefficient vector) using MSM against SRS G1 powers.
 pub(crate) fn kzg_commit<P: PairingGroup>(
@@ -54,7 +54,7 @@ pub(crate) fn kzg_open_batch<P, T>(
     u: &[P::ScalarField; 3],
     setup: &HyperKZGProverSetup<P>,
     transcript: &mut T,
-) -> (P::G1, [Vec<P::ScalarField>; 3])
+) -> (P::G1, [Vec<P::ScalarField>; 2], P::ScalarField)
 where
     P: PairingGroup,
     T: Transcript<Challenge = P::ScalarField>,
@@ -68,14 +68,17 @@ where
         .par_iter()
         .map(|fj| (*u).map(|ui| eval_univariate(fj, ui)))
         .collect::<Vec<_>>();
-    let v = std::array::from_fn(|i| evaluations.iter().map(|row| row[i]).collect());
+    let v: [Vec<P::ScalarField>; 3] =
+        std::array::from_fn(|i| evaluations.iter().map(|row| row[i]).collect());
 
-    // Absorb all evaluations into transcript
-    for row in &v {
+    // P_1(r^2)..P_{ell-1}(r^2) follow from the Gemini fold identities.
+    for row in v.iter().take(2) {
         for val in row {
             transcript.append(val);
         }
     }
+    let p0_at_r_squared = v[2].first().copied().unwrap_or_default();
+    transcript.append(&p0_at_r_squared);
 
     // Derive batching challenge and compute powers q, q^2, ..., q^{k-1}
     let q: P::ScalarField = transcript.challenge();
@@ -101,24 +104,26 @@ where
 
     transcript.append(&w);
 
-    (w, v)
+    (w, [v[0].clone(), v[1].clone()], p0_at_r_squared)
 }
 
 /// Batch KZG verification: checks that commitments open correctly at all points.
 ///
 /// Optimized for the t=3 case used by HyperKZG. Divisor coefficients multiply
 /// G1 arguments so verification needs only the four fixed G2 SRS powers.
-pub(crate) fn kzg_verify_batch<P, T>(
+pub(crate) fn kzg_verify_batch<P, T, O>(
     vk: &HyperKZGVerifierSetup<P>,
     com: &[P::G1],
     wit: P::G1,
     u: &[P::ScalarField; 3],
     v: &[Vec<P::ScalarField>; 3],
     transcript: &mut T,
+    observer: &mut O,
 ) -> bool
 where
     P: PairingGroup,
     T: Transcript<Challenge = P::ScalarField>,
+    O: VerifierObserver,
     P::ScalarField: AppendToTranscript,
     P::G1: AppendToTranscript,
 {
@@ -128,12 +133,15 @@ where
         return false;
     }
 
-    // Absorb evaluations
-    for row in v {
+    for row in v.iter().take(2) {
         for val in row {
             transcript.append(val);
         }
     }
+    let Some(&p0_at_r_squared) = v[2].first() else {
+        return false;
+    };
+    transcript.append(&p0_at_r_squared);
 
     let q: P::ScalarField = transcript.challenge();
     let q_powers = challenge_powers(q, k);
@@ -155,6 +163,10 @@ where
     let remainder_commitment = P::g1_msm(&[vk.g1, vk.beta_g1, vk.beta_sq_g1], &remainder);
     let divisor = vanishing_polynomial(u);
     let [z0, z1, z2, _] = divisor;
+    observer.fr_mul(4 * k + 20);
+    observer.ec_mul(k + 6);
+    observer.ec_add(k + 5);
+    observer.pairing_pairs(4);
     let result = P::multi_pairing(
         &[
             b_commitment - remainder_commitment - wit.scalar_mul(&z0),
