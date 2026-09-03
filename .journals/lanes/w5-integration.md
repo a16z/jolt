@@ -7,26 +7,26 @@ Date: 2026-09-02. Target: one T1 + T2 + Spartan/SPARK stream and one HyperKZG op
 `WrapPreparation::new` now performs the proof-independent front half against committed APIs:
 
 1. derive and hash `WrapperProfile`;
-2. build the 5,253-row verifier relation and generate its satisfying 6,760-variable assignment;
+2. build the 5,254-row verifier relation and generate its satisfying 6,760-variable assignment;
 3. replay the real Jolt proof through `RecordingTranscript<Blake3Transcript>`;
 4. build and verify the T1 schedule/table in the configured common row domain;
 5. extract the relation's public column with the production challenge decoders;
 6. embed the 6,714 private Spartan coordinates as the 13-round shared W column over `2^18` rows.
 
 Cached fibonacci `2^18` measurement: 889 ms preparation, T1 219,784 used rows / `2^18`
-padded rows, R1CS 5,253 constraints / 6,760 variables, public column 7 verifier-computed values +
+padded rows, R1CS 5,254 constraints / 6,760 variables, public column 7 verifier-computed values +
 38 canonical challenge preimages.
 
-The committed relation exports 45 public entries, but they split 7+38 for this profile:
+The committed relation exports 45 public entries, split 7+38 for this profile:
 `log_k_ram=13`, `log_k_bytecode=12`, six bytecode gammas, and seven register coordinates.
-The requested 7+28 split is not representable by the committed `PublicLayout`; ten coordinates
-must be derived or removed before the proof-size target can use 28 words.
+The proof wire transmits the 38 canonical 16-byte challenge preimages: **608 B**. The seven known
+field elements are supplied by the external statement and are not serialized in `WrapperProof`.
 
 ## Interfaces still blocking `wrap` / `verify_wrapped`
 
 ### Fiat–Shamir dependency
 
-The requested member list is not a sound single batch:
+The requested stage order has two Fiat–Shamir dependencies:
 
 ```text
 commitments
@@ -38,30 +38,35 @@ commitments
   -> SPARK matrix-memory members
 ```
 
-The inner prover cannot be constructed until the outer batch ends. Reusing that batch's already
-known challenges for inner round polynomials would let the prover choose each polynomial after its
-evaluation point. SPARK likewise cannot be a stage-A member because its tables use `rx` and `ry`.
+Spartan outer can share stage A with T1/T2 because it has no dependency on their final point. The
+inner prover can only start after A fixes `rx`, so it starts stage S and fixes `ry` after 13 fresh
+degree-2 rounds. A SPARK matrix member contains `eq(ry, col(k))`; it cannot emit any round
+polynomial until all of `ry` is known. Starting it in the same 13-round batch lets the prover choose
+its round polynomial after seeing the matching evaluation point. Offsetting SPARK after the inner
+member is sound, but is 13 + 16 sequential rounds rather than a 16-round batch.
 
-The sound one-opening order is: (0) Spartan outer as its own 13-round degree-3 stage; (A) T1/T2 row
-members plus the now-constructible 13-round Spartan inner, head-aligned under the fresh 18-round
-row point; (B) packed-column and link reductions; (C) SPARK after `rx,ry`. Splitting outer costs
-`13 * 3 * 32 = 1,248 B`; sharing W removes 1,312 B, so W co-pointing nets only **64 B** before the
-new SPARK stage. Keeping outer in A forces inner to a later point and requires either a second PCS
-opening or a point-reduction stage.
+The sound order supported by the current sumcheck API is therefore: (A) T1/T2 + Spartan outer;
+(S) Spartan inner; (P) SPARK after `ry`; (R) point reduction; (B) column batching; one opening.
+Stages A, S, and P end at different points (`r_A`, `ry`, and `r_P`). Packing T1/T2, W, and SPARK
+columns into one polynomial does not make these points equal. A single final opening needs an
+explicit eq-weighted point-reduction member for each earlier claim; no such reduction was specified
+or implemented. Without R, the protocol needs separate openings.
 
 ### Stream assembly
 
-`stream::prove_stream` accepts one row prover plus a fixed equal-arity tensor over committed column
-indices. The full relation needs heterogeneous row members and virtual-column links:
+The stage primitive itself is already generic: `prove_stage(&mut [StageMember], transcript)` accepts
+heterogeneous member counts, degrees, round counts, and offsets; `verify_stage_with` runs a
+verifier-owned final-claim callback. No new stage-builder type is needed. `stream::prove_stream`
+remains a two-stage synthetic driver. The full orchestration still needs to construct these members
+at their dependency boundaries:
 
 - T1: degree-3 row relation plus 64 wired bits / 3 wired words;
 - T2: degree-5 row relation plus operand limbs and its degree-2 wiring member;
 - Spartan outer, then its data-dependent inner member;
 - SPARK row/column/value and LogUp members.
 
-Needed committed interface: a stage builder accepting arbitrary `StageMember`s, verifier-owned final
-claim callbacks, and column-opening claims that may come from virtual link members. Reusing the
-current tensor-only `TensorStreamStatement` would omit T1/T2 wiring claims.
+Reusing the current tensor-only `TensorStreamStatement` would omit T1/T2 wiring and point-reduction
+claims.
 
 ### T1 links
 
@@ -97,17 +102,35 @@ non-reproducible.
 No committed key-time row/column/value/multiplicity tables or LogUp prover/verifier exist. The
 current Spartan verifier can evaluate matrix MLEs in `O(nnz)` and remains the named native fallback,
 but it is a standalone transcript with a standalone W opening. Treating that component proof as the
-full wrapper would leave T1/T2 and their links unbound, so no such proof is emitted.
+full wrapper would leave T1/T2 and their links unbound, so it is measured only as an R component.
 
 The native fallback can replace SPARK's matrix-memory argument only after stages 0/A/B exist: it
 computes the same matrix MLEs from the verifier key in `O(nnz)` and adds no proof bytes, but it does
 not remove the outer→inner dependency above.
 
+## Size projection before SPARK implementation
+
+The measured synthetic k=16 stream is 4,960 B. With the requested stages added literally:
+
+| item | bytes |
+|---|---:|
+| current k=16 stream | 4,960 |
+| Spartan inner stage S, 13 degree-2 rounds | 832 |
+| SPARK stage P, 16 degree-3 rounds | 1,536 |
+| one new packed commitment + two residual claims | 96 |
+| 38 canonical challenge words | 608 |
+| **projected proof payload** | **8,032** |
+
+This is **2,032 B over the 6,000 B target** (1,888 B over 6 KiB) before the missing point-reduction
+proof and T1/T2 link claims. The
+failing item is the sequential `rx -> ry -> SPARK` round-polynomial block: SPARK cannot consume the
+same challenges as the inner sumcheck under the current protocol.
+
 ## Current result
 
 - Real proof preparation: **passes**.
 - Full wrapped proof / verification: **blocked before stage assembly**; no unsound partial proof.
-- Payload/bincode/prover phase/gas: not measurable until the stream/T1/T2/SPARK interfaces above
-  exist.
-- W itself adds 0 rounds inside the fresh row stage and removes 1,312 B, but the required outer
-  pre-stage adds 1,248 B; net **−64 B** before SPARK.
+- Full payload/prover/gas: not measurable until the T1/T2 adapters, SPARK protocol, and point
+  reduction exist.
+- The exact stage primitive needed for heterogeneous batching already exists; no duplicate builder
+  was added.
