@@ -588,3 +588,25 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
   statement mismatch, and program/profile mismatch.
 - `cargo clippy -p jolt-wrapper --all-targets -- -D warnings` passed. The full
   `prover-fixtures` nextest suite passed 67/67 in 193.100 s, 193.88 s wall.
+
+## Review #3 fixes
+
+- Phase 1a now commits T1 and W before drawing 38 T1 randomizers and `theta` (39
+  challenges). T2 phase 1b commits its chunks, signs, and digits before drawing `xi`,
+  `alpha`, ten CopyLink `(beta, gamma)` pairs, and scalar-link `rho` (23 challenges).
+  The remaining commitment phases draw 1, 3, and 232 challenges. Proof bytes remain
+  7,488 payload / 7,628 bincode / 352 statement at k=32.
+- The shared BDFG opening's common degree-5 bound covers the declared-degree-3 Spartan
+  outer rounds, with `5/|Fr|` soundness per round and no second shift check.
+- Native matrix evaluation derives each eq sibling as parent minus the first child,
+  accumulates A/B/C with two multiplications per nonzero, and applies the three matrix
+  weights once. The observed block is 87,081 Fr multiplications over 35,346 nonzeros;
+  the main-branch `VirtualXORROTL1` arm accounts for the increase from review #3's
+  34,945-nonzero estimate. Total verifier cost fell from 179,547 to 127,884 Fr
+  multiplications and 6,082,065 to 5,048,805 gas.
+- `carry` and `spartan` are private; dead carry/shared-witness/matrix helpers are gone;
+  `SpartanAssembly` and `prove_spartan_assembly` are crate-private. The real gate rejects
+  a key with one `hash_public.state_in` word changed.
+- Gates: fmt and feature-enabled all-target clippy passed; the unit suite passed 64/64;
+  the feature-enabled real gate passed 1/1, including every tamper negative. At load
+  12.67/22.99/16.05, proof stages/opening took 26.835 s and verification took 35 ms.

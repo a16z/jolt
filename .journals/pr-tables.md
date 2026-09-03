@@ -4,12 +4,15 @@ Source: non-ignored `wrap_real_t1_r::real_wrapper_round_trip_and_tampers`, cache
 fibonacci `2^18` proof, Mac mini M4, 10 Rayon threads. Default `k=32`;
 `WRAP_K=16` selects the comparison.
 
+The k=32 column was rerun after review #3. The k=16 timing and verifier-cost columns
+remain the pre-review-3 measurements; its commitment geometry and proof bytes are unchanged.
+
 ## Link coverage
 
 | source | destination | count | binding |
 |---|---|---:|---|
 | T1 squeeze outputs | Spartan W challenge cells | 376 | CopyLink |
-| T1 pre-final-squeeze Fr words | Spartan W proof-value cells | 1,199 | CopyLink |
+| T1 pre-final-squeeze Fr words | Spartan W proof-value cells | 1,200 | CopyLink |
 | T1 element bytes | T2 input chunks/flags | 45,152 B / 1,526 rows | CopyLink |
 | seven statement fields + one | R1CS public segment | 8 Fr | Spartan `z` assignment |
 | T1 state/tail | wrapper statement suffix | 54 B / 4 Fr | transcript input |
@@ -21,6 +24,16 @@ element links include compressed G1/G2 sign flags, zero high bits, GT limb order
 profile-derived commitment permutation. The last 23 absorbed Fr values follow the final native
 squeeze and do not affect a Fiat-Shamir challenge. `Chi(sigma)`, `S1Acc`, and `S2Acc` stay internal
 to R and do not enter the 173-scalar link.
+
+## Fiat-Shamir challenge schedule
+
+| committed phase | challenges drawn after commitment | count |
+|---|---|---:|
+| phase 1a: T1 + W | 38 T1 randomizers, `theta` | 39 |
+| T2 phase 1b | `xi`, `alpha`, ten CopyLink `(beta, gamma)` pairs, scalar-link `rho` | 23 |
+| T2 phase 2a | `fp_root` | 1 |
+| T2 phase 2b | `beta`, `fp_combine`, `copy_root` | 3 |
+| T2 phase 2c + CopyLink helpers | T2 row/member challenges; ten CopyLink points and weights | 232 |
 
 ## Proof bytes
 
@@ -50,12 +63,12 @@ to R and do not enter the 173-scalar link.
 
 | item | value |
 |---|---:|
-| R1CS constraints / variables | 5,254 / 6,761 |
-| public / private variables | 7 / 6,753 |
+| R1CS constraints / variables | 5,323 / 6,831 |
+| public / private variables | 7 / 6,823 |
 | outer / inner rounds | 13 / 13 |
 | common row rounds | 18 |
-| matrix nonzeros | 34,945 |
-| native matrix-evaluation Fr multiplications | 136,946 |
+| matrix nonzeros | 35,346 |
+| native matrix-evaluation Fr multiplications | 87,081 |
 | T2 rows | 201,575 |
 | total terms / term rounds | 510 / 9 |
 | T1 / CopyLink / T2 / scalar / carry terms | 232 / 100 / 176 / 1 / 1 |
@@ -73,22 +86,22 @@ to R and do not enter the 173-scalar link.
 
 | phase (ms) | k=32 | k=16 |
 |---|---:|---:|
-| deterministic SRS setup | 9,202 | 3,773 |
-| key/profile | 448 | 355 |
-| wrapper preparation | 867 | 602 |
-| R adaptation | 3,068 | 2,080 |
-| T2 adaptation | 1,416 | 1,432 |
-| offline key commitments | 960 | 517 |
-| phase 1a commitment | 1,547 | 790 |
-| T2 phase 1b commitment | 1,070 | 979 |
-| T2 phase 2a commitment | 7,491 | 7,481 |
-| T2 phase 2b commitment | 109 | 78 |
-| CopyLink helpers | 2,842 | 2,709 |
-| T2 phase 2c + helpers | 269 | 206 |
-| proof stages/opening | 19,427 | 13,428 |
-| verifier | 28 | 27 |
+| deterministic SRS setup | 9,246 | 3,773 |
+| key/profile | 441 | 355 |
+| wrapper preparation | 748 | 602 |
+| R adaptation | 3,080 | 2,080 |
+| T2 adaptation | 1,728 | 1,432 |
+| offline key commitments | 1,074 | 517 |
+| phase 1a commitment | 2,375 | 790 |
+| T2 phase 1b commitment | 1,347 | 979 |
+| T2 phase 2a commitment | 9,204 | 7,481 |
+| T2 phase 2b commitment | 329 | 78 |
+| CopyLink helpers | 3,391 | 2,709 |
+| T2 phase 2c + helpers | 578 | 206 |
+| proof stages/opening | 26,835 | 13,428 |
+| verifier | 35 | 27 |
 
-Start loads: k=32 `11.20 / 10.32 / 8.30`; k=16 `8.80 / 9.87 / 8.27`.
+Start loads: k=32 `12.67 / 22.99 / 16.05`; k=16 `8.80 / 9.87 / 8.27`.
 
 ## Verifier cost
 
@@ -97,14 +110,15 @@ Start loads: k=32 `11.20 / 10.32 / 8.30`; k=16 `8.80 / 9.87 / 8.27`.
 | ecMul | 234 | 247 |
 | ecAdd | 233 | 246 |
 | pairing pairs | 8 | 8 |
-| Fr multiplications | 179,547 | 172,364 |
+| Fr multiplications | 127,884 | 172,364 |
 | Fr inversions | 10 | 10 |
 | Keccak | 857 | 864 |
-| **N4 gas model** | **6,082,065** | **6,050,469** |
+| **N4 gas model** | **5,048,805** | **6,050,469** |
 
 The same observer counts transcript replay, native sparse-matrix evaluation, sumchecks, links,
-term reduction, and the final opening. Native sparse-matrix evaluation accounts for 136,946 Fr
-multiplications over 34,945 nonzeros.
+term reduction, and the final opening. The k=32 native sparse-matrix block accounts for 87,081
+Fr multiplications over 35,346 nonzeros, down from the prior 136,946 test formula. Total k=32
+cost moved from 179,547 to 127,884 Fr multiplications and 6,082,065 to 5,048,805 gas.
 
 ## Tamper matrix
 
@@ -116,7 +130,8 @@ The real gate mutates every serialized field independently and requires rejectio
 - shared BDFG shifted commitment, quotient, and evaluation witness;
 - every factor evaluation and final HyperKZG fold commitment/evaluation/quotient field;
 - direct T2 window/sign/psi/digit/input-row mutations, an absorbed-Fr W row, T2 VK pin,
-  statement mismatch, and program/profile mismatch.
+  statement mismatch, a changed T1 public-preamble word, and program/profile mismatch.
 
-The permanent scalar contract pins the 173-wire order and occurrence-weight formula. All-target
-clippy with warnings denied passed. Full feature nextest: 67/67 in 193.100 s, 193.88 s wall.
+The permanent scalar contract pins the 173-wire order and occurrence-weight formula. Feature-enabled
+all-target clippy passed with warnings denied. The unit suite passed 64/64; the feature-enabled real
+gate passed 1/1 in 74.691 s.
