@@ -36,6 +36,7 @@ impl Builder {
             init: [self.fq2_constant(g.x), self.fq2_constant(g.y)].concat(),
             z0: [self.fq2_constant(z_fixed.x), self.fq2_constant(z_fixed.y)].concat(),
             correction: Some(offset_correction(g, z_fixed, 1)),
+            guard: false,
         };
         assert!(r_chain.kbase + r_chain.slots() <= 64);
         let r_half = self.g2_chain(
@@ -68,6 +69,7 @@ impl Builder {
                 init: r_rows.clone(),
                 z0: z0_rows.to_vec(),
                 correction: None,
+                guard: true,
             };
             kbase += chain.slots();
             assert!(kbase <= 64, "G2 chains exceed the online region");
@@ -143,6 +145,7 @@ impl Builder {
             copy_neg,
             add,
             dbl,
+            guard,
             ..
         } = templates;
         let hi_t = hi(Cells::G2_TABLE_HALF / 2, HI2T);
@@ -150,6 +153,7 @@ impl Builder {
         let region_half = hi_o << 12;
         let table_base = lane.table_base;
         let n = chain.bases.len() as u32;
+        let link_base = self.link_base(n);
         let kb = chain.kbase;
         let half = |k: u32, w: u32| region_half + 64 * (kb + k) + w;
         let digit_table: Vec<[u8; WINDOWS]> = chain
@@ -339,6 +343,7 @@ impl Builder {
                     family: self.selected.len() as u8,
                     j,
                     kd: self.digit_index(&chain.bases[k as usize].1),
+                    link: link_base + k,
                     w,
                 });
                 if k == 0 {
@@ -390,6 +395,33 @@ impl Builder {
             corr.emit(&mut self.program, half_row(output), None);
             self.record(&corr, 1, false);
         }
+        if chain.guard {
+            // Slot `n + 4`: the guard of the last base's add (slot `n − 1`),
+            // reading its `λ`/`x3` rows and the accumulator it added to.
+            let guarded = |delta: i64, offset: u32| {
+                ElemRel::structured(
+                    vec![
+                        Factor::shift(K2, K2, delta).with_range(kb + n + 4..kb + n + 5),
+                        Factor::same(W2, W2),
+                        Factor::constant(HI2, hi_o),
+                    ],
+                    C3,
+                    offset,
+                )
+            };
+            let guards = Family {
+                name: "g2_guard",
+                template: guard,
+                elems: vec![guarded(-5, 0), guarded(-6, 4), self.ones()],
+                own_bits: C3,
+                own_offset: 0,
+                domain: vec![restrict(n + 4, n + 5), region.clone()],
+            };
+            for w in 0..WINDOWS as u32 {
+                guards.emit(&mut self.program, half_row(half(n + 4, w)), None);
+            }
+            self.record(&guards, WINDOWS, false);
+        }
         // Reference entry `j = 8` of base `b = table_base + k`: row
         // `8·(G2_TABLE_HALF + 16b + 8) + c` from op row
         // `8·(region_half + 64·k2 + w) + c`, `k2 = kb + k` the `K2` field.
@@ -408,9 +440,7 @@ impl Builder {
                 k_coeff: -(8 * 64 - 8 * 16),
                 w_coeff: -8,
             },
-            digit_base: (0..n)
-                .map(|k| (kb + k, self.digit_index(&chain.bases[k as usize].1)))
-                .collect(),
+            digit_base: (0..n).map(|k| (kb + k, link_base + k)).collect(),
         });
         lane.table_base += n;
         output

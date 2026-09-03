@@ -735,3 +735,59 @@ pub fn psi_coefficients(power: usize) -> (Fq2, Fq2) {
     }
     (cx, cy)
 }
+
+/// The completeness guard of an affine G1 add (element 1 = the add's own
+/// rows, element 2 = its first operand `p`, element 3 = `(1,)`):
+/// `t = λ² − 2·x1 − x3 = x2 − x1` (row 0), `inv = t⁻¹` (witness, row 1) and
+/// the pin `inv·t = 1` (row 2), so the add has a witness only in the generic
+/// case `x2 ≠ x1` (the `x2 = x1` cases: `q = p` leaves the slope pin vacuous,
+/// `q = −p` has no witness).
+pub fn g1_add_guard() -> Template {
+    let (lambda, x3) = (at(1, 0), at(1, 2));
+    let x1 = at(2, 0);
+    let one = at(3, 0);
+    let (t, inv) = (own(0), own(1));
+    Template::new(vec![
+        TemplateRow::compute(vec![(lambda, lambda, 1), (x1, one, -2), (x3, one, -1)]),
+        TemplateRow::witness(RowKind::Quotient {
+            num: vec![(one, one, 1)],
+            den: vec![(t, one, 1)],
+        }),
+        TemplateRow::pinned(vec![(inv, t, 1)], Fq::ONE),
+    ])
+}
+
+/// [`g1_add_guard`] over `Fq2` (a G2 add: `λ` rows 0–1, `x3` rows 4–5 of
+/// element 1): `t` rows 0–1, `inv` rows 2–3, pin rows 4–5.
+pub fn g2_add_guard() -> Template {
+    let lambda = [at(1, 0), at(1, 1)];
+    let x3 = [at(1, 4), at(1, 5)];
+    let x1 = [at(2, 0), at(2, 1)];
+    let one = at(3, 0);
+    let t = [own(0), own(1)];
+    let inv = [own(2), own(3)];
+    let mut t_rows = fq2_mul(lambda, lambda, 1);
+    extend2(
+        &mut t_rows,
+        [vec![(x1[0], one, -2)], vec![(x1[1], one, -2)]],
+    );
+    extend2(
+        &mut t_rows,
+        [vec![(x3[0], one, -1)], vec![(x3[1], one, -1)]],
+    );
+    let num: [Slots; 2] = [vec![(one, one, 1)], vec![]];
+    let den: [Slots; 2] = [vec![(t[0], one, 1)], vec![(t[1], one, 1)]];
+    let pin = fq2_mul(inv, t, 1);
+    Template::new(vec![
+        TemplateRow::compute(t_rows[0].clone()),
+        TemplateRow::compute(t_rows[1].clone()),
+        TemplateRow::witness(RowKind::QuotientFq2 {
+            num: num.clone(),
+            den: den.clone(),
+            coord: 0,
+        }),
+        TemplateRow::witness(RowKind::QuotientFq2 { num, den, coord: 1 }),
+        TemplateRow::pinned(pin[0].clone(), Fq::ONE),
+        TemplateRow::pinned(pin[1].clone(), Fq::ZERO),
+    ])
+}

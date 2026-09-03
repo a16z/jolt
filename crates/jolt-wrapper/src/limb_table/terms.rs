@@ -3,6 +3,8 @@
 //! affine `L`. Prover and verifier build the same list from the transcript
 //! challenges; the stream's term stage compresses it to one claim.
 
+use std::ops::Neg;
+
 use jolt_field::{Fr, Ring, Zero};
 
 /// A (possibly observed) field multiplication the verifier-side derivations
@@ -76,10 +78,6 @@ impl AffineForm {
         }
     }
 
-    pub fn scale(self, factor: Fr) -> Self {
-        self.scale_with(factor, &mut plain)
-    }
-
     pub fn scale_with(mut self, factor: Fr, mul: Mul<'_>) -> Self {
         self.constant = mul(self.constant, factor);
         for (_, weight) in &mut self.weights {
@@ -94,6 +92,19 @@ impl AffineForm {
             .fold(self.constant, |acc, (id, weight)| {
                 acc + *weight * values[id.0 as usize]
             })
+    }
+}
+
+/// `−form`, no field multiplication.
+impl Neg for AffineForm {
+    type Output = Self;
+
+    fn neg(mut self) -> Self {
+        self.constant = -self.constant;
+        for (_, weight) in &mut self.weights {
+            *weight = -*weight;
+        }
+        self
     }
 }
 

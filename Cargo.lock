@@ -4077,9 +4077,13 @@ dependencies = [
 name = "jolt-wrapper"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ec 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
+ "ark-ff 0.5.0 (git+https://github.com/a16z/arkworks-algebra?branch=dev%2Ftwist-shout)",
  "bincode 2.0.1",
  "blake3",
  "common",
+ "dory-pcs",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
@@ -4096,8 +4100,14 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "libc",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
  "postcard",
  "rand 0.8.7",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "thiserror 2.0.18",

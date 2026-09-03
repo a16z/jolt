@@ -318,19 +318,34 @@ impl Columns {
         self.limbs.par_iter().map(|l| xi_form(l, &powers)).collect()
     }
 
-    /// LogUp witness for challenge `alpha` over the range-checked columns
-    /// (chunks then digit bits): helper columns `h_g = 1/Π_{i∈g}(α − c_i)`
-    /// and the multiplicity of every 16-bit value (as a `rows`-long column).
-    pub fn logup_columns(&self, alpha: Fr, digit_bits: &[Vec<u8>]) -> (Vec<Vec<Fr>>, Vec<u32>) {
+    /// Range-checked value `i` (chunks then digit bits) of `row`.
+    fn range_value(&self, digit_bits: &[Vec<u8>], row: usize, i: usize) -> u64 {
+        if i < CHUNK_COLUMNS {
+            u64::from(self.chunks[row][i])
+        } else {
+            u64::from(digit_bits[i - CHUNK_COLUMNS][row])
+        }
+    }
+
+    /// The LogUp multiplicity of every 16-bit value over the range-checked
+    /// columns (as a `rows`-long column; challenge-free, committed in phase 1b).
+    pub fn range_multiplicities(&self, digit_bits: &[Vec<u8>]) -> Vec<u32> {
         assert_eq!(digit_bits.len(), DIGIT_COLUMNS);
-        let value = |row: usize, i: usize| -> u64 {
-            if i < CHUNK_COLUMNS {
-                u64::from(self.chunks[row][i])
-            } else {
-                u64::from(digit_bits[i - CHUNK_COLUMNS][row])
+        let mut multiplicities = vec![0u32; self.rows()];
+        for row in 0..self.rows() {
+            for i in 0..RANGE_COLUMNS {
+                multiplicities[self.range_value(digit_bits, row, i) as usize] += 1;
             }
-        };
-        let helpers: Vec<Vec<Fr>> = (0..HELPER_COLUMNS)
+        }
+        multiplicities
+    }
+
+    /// The LogUp helper columns `h_g = 1/Π_{i∈g}(α − c_i)` over the
+    /// range-checked columns for challenge `alpha` (phase 2a).
+    pub fn range_helpers(&self, alpha: Fr, digit_bits: &[Vec<u8>]) -> Vec<Vec<Fr>> {
+        assert_eq!(digit_bits.len(), DIGIT_COLUMNS);
+        let value = |row, i| self.range_value(digit_bits, row, i);
+        (0..HELPER_COLUMNS)
             .into_par_iter()
             .map(|g| {
                 let mut products: Vec<ArkFr> = (0..self.rows())
@@ -344,14 +359,7 @@ impl Columns {
                 ark_ff::batch_inversion(&mut products);
                 products.into_iter().map(Fr::from).collect()
             })
-            .collect();
-        let mut multiplicities = vec![0u32; self.rows()];
-        for row in 0..self.rows() {
-            for i in 0..RANGE_COLUMNS {
-                multiplicities[value(row, i) as usize] += 1;
-            }
-        }
-        (helpers, multiplicities)
+            .collect()
     }
 }
 

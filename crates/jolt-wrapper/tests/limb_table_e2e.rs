@@ -19,31 +19,28 @@ use std::time::Instant;
 use common::Opening;
 
 use ark_bn254::{Fq, Fq12, Fr as ArkFr, G1Affine, G1Projective};
-use ark_ec::AffineRepr;
-use ark_ff::{PrimeField, UniformRand};
+use ark_ec::{AffineRepr, CurveGroup};
+use ark_ff::{BigInteger, PrimeField, UniformRand};
 use jolt_dory::DoryProof;
 use jolt_field::{Field, Fr, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
-use jolt_wrapper::limb_table::columns::{
-    operand_columns, q_biguint, Columns, CANON_CHUNKS, GROUP_SIZE, Z_CHUNKS,
-};
+use jolt_wrapper::limb_table::columns::{q_biguint, Columns, CANON_CHUNKS, GROUP_SIZE, Z_CHUNKS};
 use jolt_wrapper::limb_table::digit_link::{link_term, LinkMember};
 use jolt_wrapper::limb_table::dory::{
     DoryWitnessInputs, ElementKind, FlattenedCheck, Wire, WireValues,
 };
-use jolt_wrapper::limb_table::export::{exact_column, free_column, pin_columns, ClaimedColumns};
 use jolt_wrapper::limb_table::layout::LOG_ROWS;
 use jolt_wrapper::limb_table::lookup::{
-    omega_column, omega_eval, public_evals, LookupColumns, PublicColumns,
+    link_weights, omega_column, omega_eval, public_evals, PublicColumns,
 };
 use jolt_wrapper::limb_table::relation::{
-    eq_tau_column, Challenges, Col, LookupConstants, RowRelation, RowSumcheck, SLOTS,
+    Challenges, Col, LookupConstants, RowRelation, RowSumcheck,
 };
 use jolt_wrapper::limb_table::schedule::{build, Layout};
+use jolt_wrapper::limb_table::stream::{link_input_claim, StreamBuilder, StreamWitness};
 use jolt_wrapper::limb_table::terms::evaluate_terms;
-use jolt_wrapper::limb_table::wiring::{copy_kernel_table, fingerprint_columns};
 use jolt_wrapper::stream::VerifierCost;
 use num_bigint::BigUint;
 use rand_chacha::ChaCha20Rng;
@@ -69,8 +66,9 @@ fn challenges(rng: &mut ChaCha20Rng) -> Challenges {
     }
 }
 
-/// Drives a member with the challenges of `rng`: returns the little-endian
-/// point and the final claim; every round check `s(0) + s(1) = claim` must hold.
+/// Drives a member with the challenges of `rng`: returns the point in binding
+/// order (big-endian: the members bind the most significant row bit first)
+/// and the final claim; every round check `s(0) + s(1) = claim` must hold.
 fn drive(member: &mut dyn ProveRounds<Fr>, input: Fr, rng: &mut ChaCha20Rng) -> (Vec<Fr>, Fr) {
     let mut claim = input;
     let mut point = Vec::with_capacity(LOG_ROWS);
@@ -139,66 +137,43 @@ fn witness_at(
     }
 }
 
+/// The stage point in little-endian order (the verifier's kernels).
+fn little_endian(point: &[Fr]) -> Vec<Fr> {
+    point.iter().rev().copied().collect()
+}
+
+/// The prover's witness for `ch` through the staged stream builder (the
+/// production path: every phase fed exactly the challenges drawn before it).
+fn staged(w: &Witness, ch: &Challenges, packing: usize, group_offset: usize) -> StreamWitness {
+    let mut builder = StreamBuilder::new(&w.layout, &w.columns, packing);
+    let _ = builder.phase_1b();
+    let _ = builder.phase_2a(ch.xi, ch.alpha);
+    let _ = builder.phase_2b(ch.fp_root);
+    let _ = builder.phase_2c(ch.beta, ch.fp_combine, ch.copy_root);
+    builder.finish(
+        ch.tau.clone(),
+        ch.gamma,
+        ch.lambda,
+        ch.lambda_lookup,
+        ch.constancy_root,
+        group_offset,
+    )
+}
+
 /// Every prover column (claimed then public) for the row member.
-fn matrix(
-    w: &Witness,
-    relation: &RowRelation,
-    public: &PublicColumns,
-    digits: &[Vec<u8>; 5],
-) -> Vec<Vec<Fr>> {
-    let ch = &relation.challenges;
-    let z_xi = w.columns.xi_values(ch.xi);
-    let operands = operand_columns(&w.layout.program, &z_xi, SLOTS);
-    let fingerprints = fingerprint_columns(&w.layout.table_reads, &z_xi, relation);
-    let lookup = LookupColumns::new(
-        public,
-        &operands,
-        &fingerprints.0,
-        &fingerprints.1,
-        relation,
-    );
-    let (helpers, mult) = w.columns.logup_columns(ch.alpha, digits);
-    let claimed = ClaimedColumns::assemble(
-        &w.columns,
-        public,
-        operands,
-        helpers,
-        mult.into_iter()
-            .map(|m| Fr::from_u64(u64::from(m)))
-            .collect(),
-        PublicColumns::inverse_table(ch.alpha),
-        lookup,
-        fingerprints,
-        pin_columns(&w.layout),
-        free_column(&w.layout),
-        exact_column(&w.layout),
-    );
-    let eq_tau = eq_tau_column(&ch.tau);
-    let copy = copy_kernel_table(
-        &w.layout.program,
-        &public.kinds,
-        &w.layout.table_reads,
-        &eq_tau,
-        relation,
-    );
-    let constancy = public.constancy_weights(&eq_tau);
-    let (small, id) = PublicColumns::small_and_id();
-    let mut columns = claimed.columns;
-    columns.extend([
-        eq_tau,
-        copy,
-        public.sel.clone(),
-        public.is_gt.clone(),
-        public.is_g1.clone(),
-        public.is_g2.clone(),
-        public.s0.clone(),
-        public.coord.clone(),
-        constancy,
-        small,
-        id,
-    ]);
-    assert_eq!(columns.len(), Col::WIDTH);
-    columns
+fn matrix(w: &Witness, relation: &RowRelation) -> Vec<Vec<Fr>> {
+    staged(w, &relation.challenges, 4, 0).matrix
+}
+
+/// R's scalar-link claim `Σ_k W_k(ρ)·s_k` over the named wires of `w`.
+fn r_link_claim(w: &Witness, rho: Fr) -> Fr {
+    let weights = link_weights(&w.layout, rho);
+    w.check
+        .wires()
+        .iter()
+        .zip(&weights)
+        .map(|(wire, weight)| *weight * Fr::from(w.values.get(&Wire::Named(wire.clone()))))
+        .sum()
 }
 
 /// A small field element as an integer (chunk values).
@@ -223,8 +198,7 @@ fn every_constraint_vanishes_on_an_honest_witness() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
     let rows = 1usize << LOG_ROWS;
     let mut row_values = vec![Fr::zero(); Col::WIDTH];
     let mut sums: Vec<(&str, Fr)> = Vec::new();
@@ -305,8 +279,7 @@ fn members_verify_and_tampers_are_rejected_at_the_fibonacci_profile() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
     let row = w.layout.digit_ops[100].first_row as usize;
     rejects(columns.clone(), &relation, &w.layout, |c| {
         c[Col::CHUNKS + 3][row] += Fr::from_u64(1);
@@ -353,9 +326,8 @@ fn members_accept(w: &Witness) {
         },
     );
     let public = PublicColumns::new(&w.layout);
-    let digits = public.digits.clone();
     let start = Instant::now();
-    let columns = matrix(w, &relation, &public, &digits);
+    let columns = matrix(w, &relation);
     println!("columns {:?}", start.elapsed());
 
     // Row member.
@@ -363,7 +335,8 @@ fn members_accept(w: &Witness) {
     let mut row = RowSumcheck::new(&relation, &columns);
     assert_eq!(row.input_claim(), Fr::zero(), "honest witness sums to zero");
     let mut driver = ChaCha20Rng::seed_from_u64(99);
-    let (r_le, final_claim) = drive(&mut row, Fr::zero(), &mut driver);
+    let (point, final_claim) = drive(&mut row, Fr::zero(), &mut driver);
+    let r_le = little_endian(&point);
     println!("row member {:?}", start.elapsed());
     let claims = row.claims();
     let prover_public = row.public_evals();
@@ -390,22 +363,15 @@ fn members_accept(w: &Witness) {
     // Digit link at the same point.
     let mut link = LinkMember::new(omega_column(&w.layout, rho), &public.digit_values);
     let input = link.input_claim();
-    let mut expected = Fr::zero();
-    let mut power = Fr::from_u64(1);
-    for wire in w.check.wires() {
-        expected += power * Fr::from(w.values.get(&Wire::Named(wire)));
-        power *= rho;
-    }
-    expected += power;
-    power *= rho;
-    expected += power * Fr::from(w.values.get(&Wire::Offset));
+    let theta = Fr::from(w.values.get(&Wire::Offset));
     assert_eq!(
-        input, expected,
-        "digit link input = Σ ρ^k s_k + ρ^K + ρ^(K+1)·θ"
+        input,
+        link_input_claim(r_link_claim(w, rho), rho, theta, &w.layout),
+        "digit link input = Σ_k W_k(ρ)·s_k + W_K(ρ) + W_(K+1)(ρ)·θ"
     );
     let mut driver = ChaCha20Rng::seed_from_u64(99);
     let (r_link, link_claim) = drive(&mut link, input, &mut driver);
-    assert_eq!(r_link, r_le);
+    assert_eq!(r_link, point);
     let (digit, omega_final) = link.final_values();
     assert_eq!(digit, claims[Col::D], "digit value claim");
     let mut link_cost = VerifierCost::default();
@@ -441,8 +407,7 @@ fn non_norm_one_gt_input_is_rejected() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
     rejects(columns, &relation, &w.layout, |_| {});
 }
 
@@ -486,14 +451,14 @@ fn rejects(
     tamper(&mut columns);
     let mut row = RowSumcheck::new(relation, &columns);
     let mut driver = ChaCha20Rng::seed_from_u64(5);
-    let (r_le, final_claim) = drive(&mut Cheating(&mut row), Fr::zero(), &mut driver);
+    let (point, final_claim) = drive(&mut Cheating(&mut row), Fr::zero(), &mut driver);
     let claims = row.claims();
     let mut cost = VerifierCost::default();
     let evals = public_evals(
         layout,
         relation,
         &tau_le(&relation.challenges),
-        &r_le,
+        &little_endian(&point),
         &mut cost,
     );
     let terms = relation.terms(&evals);
@@ -515,8 +480,7 @@ fn tampered_witnesses_are_rejected() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
     let op = w.layout.digit_ops[100];
     let row = op.first_row as usize;
     // A chunk of a compute row (breaks the limb identity and the copies).
@@ -630,8 +594,92 @@ fn twist_point_outside_g2_is_rejected() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
+    rejects(columns, &relation, &w.layout, |_| {});
+}
+
+/// The two small prime factors called out in the BN254 twist cofactor cannot
+/// ride into the proof-derived Miller input.
+#[test]
+fn exact_small_torsion_pairing_inputs_are_rejected() {
+    use ark_bn254::{g2::Config as G2Config, Fq2, G2Affine};
+    use ark_ec::CurveConfig;
+    use jolt_wrapper::limb_table::dory::InputElement;
+
+    let cofactor = G2Config::COFACTOR
+        .iter()
+        .rev()
+        .fold(BigUint::zero(), |acc, limb| (acc << 64) + limb);
+    let subgroup_order = BigUint::from_bytes_le(&ArkFr::MODULUS.to_bytes_le());
+    for factor in [10_069u64, 5_864_401] {
+        let mut rng = ChaCha20Rng::seed_from_u64(factor);
+        let quotient = &subgroup_order * (&cofactor / factor);
+        let torsion = loop {
+            let x = Fq2::rand(&mut rng);
+            let Some(point) = G2Affine::get_point_from_x_unchecked(x, true) else {
+                continue;
+            };
+            let point = point.mul_bigint(quotient.to_u64_digits()).into_affine();
+            if !point.is_zero() {
+                assert!(point.mul_bigint([factor]).is_zero());
+                break point;
+            }
+        };
+
+        let opening = common::synthetic_opening(8, 5, 0xE2E);
+        let sigma = opening.statement.challenges.beta.len();
+        let n = opening.witness.commitments.len();
+        let check = FlattenedCheck::derive(sigma, n);
+        let values = WireValues::derive(&opening.statement, sigma, n, common::offset_challenge());
+        let layout = build(&check, &values, &opening.setup, &check.wires());
+        let mut coords = opening.witness.coordinates_in(&layout.input_order);
+        let mut offset = 0;
+        for element in &layout.input_order {
+            if *element == InputElement::FinalE2 {
+                coords[offset..offset + 4].copy_from_slice(&[
+                    torsion.x.c0,
+                    torsion.x.c1,
+                    torsion.y.c0,
+                    torsion.y.c1,
+                ]);
+                break;
+            }
+            offset += element.kind().coords();
+        }
+        rejected(&witness_of(opening, check, values, layout, &coords));
+    }
+}
+
+/// The witness of `coords` for `layout` (pins unchecked: a dishonest input
+/// reaches the verifier's checks).
+fn witness_of(
+    opening: Opening,
+    check: FlattenedCheck,
+    values: WireValues,
+    layout: Layout,
+    coords: &[Fq],
+) -> Witness {
+    let v = layout.program.evaluate(coords).expect("evaluate");
+    let columns = Columns::generate(&layout.program, &v, LOG_ROWS);
+    Witness {
+        layout,
+        check,
+        values,
+        columns,
+        opening,
+    }
+}
+
+/// The term check rejects `w` as committed.
+fn rejected(w: &Witness) {
+    let mut rng = ChaCha20Rng::seed_from_u64(11);
+    let relation = RowRelation::new(
+        challenges(&mut rng),
+        LookupConstants {
+            one_row: w.layout.one_cell * 16,
+        },
+    );
+    let columns = matrix(w, &relation);
     rejects(columns, &relation, &w.layout, |_| {});
 }
 
@@ -668,9 +716,38 @@ fn point_crafted_for_fixed_offsets_is_rejected() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
     rejects(columns, &relation, &w.layout, |_| {});
+}
+
+/// A zero MSM (`A1 = FinalE1 + d·Γ1_0 = 0`, `FinalE1` prover-chosen) makes the
+/// chain's last add `acc + entry = 0` for every `θ`: the slope pin has no
+/// witness and the verifier rejects, for `θ = 1, 2` as for any other.
+#[test]
+fn zero_msm_output_is_rejected_for_every_offset_challenge() {
+    use jolt_wrapper::limb_table::dory::InputElement;
+
+    for theta in [ArkFr::from(1u64), ArkFr::from(2u64)] {
+        let opening = common::synthetic_opening(8, 5, 0xE2E);
+        let sigma = opening.statement.challenges.beta.len();
+        let n = opening.witness.commitments.len();
+        let check = FlattenedCheck::derive(sigma, n);
+        let values = WireValues::derive(&opening.statement, sigma, n, theta);
+        let layout = build(&check, &values, &opening.setup, &check.wires());
+        let mut coords = opening.witness.coordinates_in(&layout.input_order);
+        let mut offset = 0;
+        for element in &layout.input_order {
+            if *element == InputElement::FinalE1 {
+                let d = values.get(&check.g1_a1.bases[1].1);
+                let zero_sum = (-opening.setup.g1_0.mul_bigint(d.into_bigint())).into_affine();
+                coords[offset] = zero_sum.x;
+                coords[offset + 1] = zero_sum.y;
+                break;
+            }
+            offset += element.kind().coords();
+        }
+        rejected(&witness_of(opening, check, values, layout, &coords));
+    }
 }
 
 /// The scalar of `wire` in the fixture (the digits the layout committed).
@@ -715,8 +792,7 @@ fn sign_flags_match_arkworks_and_flips_are_rejected() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
     for row in [g1_row.unwrap(), g2_row.unwrap()] {
         rejects(columns.clone(), &relation, &w.layout, |c| {
             c[Col::FLAG][row as usize] = Fr::from_u64(1) - c[Col::FLAG][row as usize];
@@ -768,8 +844,7 @@ fn selected_operand_collision_for_a_guessed_fingerprint_root_is_rejected() {
             one_row: w.layout.one_cell * 16,
         },
     );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
+    let columns = matrix(&w, &relation);
     let guess = fr(&mut ChaCha20Rng::seed_from_u64(0x6E55));
     let weight = |s: usize| (0..s).fold(Fr::from_u64(1), |acc, _| acc * guess);
     let op = w
@@ -799,50 +874,53 @@ fn selected_operand_collision_for_a_guessed_fingerprint_root_is_rejected() {
     });
 }
 
-/// Milestone 2: through the stream interface — phase groups, physical ids,
-/// the two members and the `TermExporter` — the exported terms at the
-/// members' claims equal the batched final claim, and the digit link's
-/// input claim is R's link claim plus `ρ^K + ρ^{K+1}·θ`.
+/// Milestone 2: through the stream interface — phase groups built in
+/// protocol order, physical ids, the two members and the `TermExporter` —
+/// the exported terms at the members' claims equal the batched final claim,
+/// every member final equals the packed columns' evaluation at the stage
+/// point, and the digit link's input claim is R's weighted scalar claim plus
+/// the constant-one and offset terms.
 #[test]
 fn stream_exporter_terms_match_the_members() {
+    use jolt_crypto::Bn254;
+    use jolt_hyperkzg::HyperKZGScheme;
     use jolt_wrapper::limb_table::export::phases;
     use jolt_wrapper::limb_table::stream::{
-        commitment_phases, link_input_claim, Members, StreamColumns, StreamTermExporter,
-        T2Challenges,
+        commitment_phases, prover_group_count, Members, StreamTermExporter, T2Challenges,
     };
-    use jolt_wrapper::stream::{Column, TermContext, TermExporter, VerifierCost};
+    use jolt_wrapper::stream::{commit_packed, Column, TermContext, TermExporter};
     let w = witness(0xE2E);
     let mut rng = ChaCha20Rng::seed_from_u64(0x57E4);
     let theta = Fr::from(w.values.get(&Wire::Offset));
     let phase_challenges: Vec<Fr> = (0..T2Challenges::count()).map(|_| fr(&mut rng)).collect();
     let rho = fr(&mut rng);
     let challenges = T2Challenges::from_challenges(theta, &phase_challenges, rho);
-    let relation = RowRelation::new(
-        challenges.row.clone(),
-        LookupConstants {
-            one_row: w.layout.one_cell * 16,
-        },
-    );
-    let public = PublicColumns::new(&w.layout);
-    let columns = matrix(&w, &relation, &public, &public.digits.clone());
 
     // Columns: kinds and ids in phase order, group counts as declared.
     let packing = 4;
-    let claimed = ClaimedColumns {
-        columns: columns[..Col::CLAIMED].to_vec(),
-    };
-    let stream = StreamColumns::new(&claimed, &w.columns, &w.layout, packing, 3);
+    let StreamWitness {
+        relation,
+        matrix: columns,
+        stream,
+    } = staged(&w, &challenges.row, packing, 3);
     let declared: usize = commitment_phases(packing)
         .iter()
         .map(|p| p.group_count)
         .sum();
-    assert_eq!(stream.vk_groups.start, 3 + declared);
+    assert_eq!(
+        stream.vk_groups.end,
+        3 + declared,
+        "phases cover every group"
+    );
+    assert_eq!(stream.vk_groups.start, 3 + prover_group_count(4));
     assert_eq!(stream.vk_groups.end, 3 + stream.group_count);
+    let physical = |local: usize| {
+        let id = stream.ids[local];
+        (id.group - 3) * packing + id.slot
+    };
     for spec in phases() {
         for local in spec.columns {
-            let id = stream.ids[local];
-            let physical = (id.group - 3) * packing + id.slot;
-            match (&stream.columns[physical], local) {
+            match (&stream.columns[physical(local)], local) {
                 (Column::U16(values), l) if l < Col::DIGITS => {
                     assert!(values
                         .iter()
@@ -874,30 +952,22 @@ fn stream_exporter_terms_match_the_members() {
     }
 
     // Members driven jointly; the exporter's terms at their claims.
-    let mut members = Members::new(&relation, &columns, &w.layout, &public.digit_values, rho);
-    let r_link_claim = {
-        let mut expected = Fr::zero();
-        let mut power = Fr::from_u64(1);
-        for wire in w.check.wires() {
-            expected += power * Fr::from(w.values.get(&Wire::Named(wire)));
-            power *= rho;
-        }
-        expected
-    };
-    let named = w.check.wires().len();
+    let mut members = Members::new(&relation, &columns, &w.layout, &columns[Col::D], rho);
     assert_eq!(
         members.link.input_claim(),
-        link_input_claim(r_link_claim, rho, theta, named),
+        link_input_claim(r_link_claim(&w, rho), rho, theta, &w.layout),
         "digit link pairs with R's scalar link claim"
     );
     assert_eq!(members.rows.input_claim(), Fr::zero());
     let mut driver = ChaCha20Rng::seed_from_u64(99);
-    let (r_le, row_claim) = drive(&mut members.rows, Fr::zero(), &mut driver);
+    let (point, row_claim) = drive(&mut members.rows, Fr::zero(), &mut driver);
     let link_input = members.link.input_claim();
     let mut driver = ChaCha20Rng::seed_from_u64(99);
     let (r_link, link_claim) = drive(&mut members.link, link_input, &mut driver);
-    assert_eq!(r_le, r_link);
+    assert_eq!(point, r_link);
     let claims = members.rows.claims();
+    let (digit_final, _) = members.link.final_values();
+    drop(members);
     let batching = [fr(&mut rng), fr(&mut rng)];
     let mut all_challenges = vec![theta];
     all_challenges.extend(phase_challenges.iter().copied());
@@ -914,7 +984,7 @@ fn stream_exporter_terms_match_the_members() {
     let mut cost = VerifierCost::default();
     let terms = exporter.terms_observed(
         &TermContext {
-            row_point: &r_le,
+            row_point: &point,
             batching_coefficients: &batching,
             challenges: &all_challenges,
         },
@@ -940,4 +1010,83 @@ fn stream_exporter_terms_match_the_members() {
         })
         .sum();
     assert_eq!(value, batching[0] * row_claim + batching[1] * link_claim);
+
+    // Every member final is the packed columns' evaluation at the stage point
+    // (the stream opens the packed groups there, big-endian).
+    let rows = 1usize << LOG_ROWS;
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(97),
+        rows * packing,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    let packed = commit_packed(&stream.columns, packing, &setup).expect("packed columns");
+    let evaluations = packed.column_evaluations(&point).expect("evaluations");
+    for (local, claim) in claims.iter().enumerate() {
+        assert_eq!(evaluations[physical(local)], *claim, "column {local}");
+    }
+    assert_eq!(
+        evaluations[physical(Col::D)],
+        digit_final,
+        "digit link final"
+    );
+}
+
+/// Review #3 blocker: two chains sharing a scalar (`θ`, read by every
+/// offset chain) cannot recode it differently. The digit link weighs every
+/// chain-base occurrence with its own `ρ` power, so cancelling `±1` digit
+/// shifts in one window of two chains change `Σ ω·D` away from the input
+/// claim the verifier derives from R's scalar claim.
+#[test]
+fn shared_scalar_recoded_differently_per_chain_is_rejected() {
+    let w = witness(0xE2E);
+    let mut rng = ChaCha20Rng::seed_from_u64(0xD1617);
+    let public = PublicColumns::new(&w.layout);
+    let offset_kd = w.layout.digit_bases - 1;
+    let pair = (0..64u32).find_map(|window| {
+        let ops: Vec<_> = w
+            .layout
+            .digit_ops
+            .iter()
+            .filter(|op| op.kd == offset_kd && op.w == window)
+            .collect();
+        let digit = public.digit_values[ops.first()?.first_row as usize];
+        (ops.len() >= 2 && digit != Fr::from_i64(-8) && digit != Fr::from_u64(7))
+            .then(|| (*ops[0], *ops[1]))
+    });
+    let (plus, minus) = pair.expect("an interior offset digit shared by two chains");
+    assert_ne!(plus.link, minus.link, "distinct occurrences");
+    let rho = fr(&mut rng);
+    let theta = Fr::from(w.values.get(&Wire::Offset));
+    let expected = link_input_claim(r_link_claim(&w, rho), rho, theta, &w.layout);
+    let omega = omega_column(&w.layout, rho);
+    assert_eq!(
+        LinkMember::new(omega.clone(), &public.digit_values).input_claim(),
+        expected,
+        "honest recodings"
+    );
+    let mut altered = public.digit_values.clone();
+    altered[plus.first_row as usize] += Fr::from_u64(1);
+    altered[minus.first_row as usize] -= Fr::from_u64(1);
+    assert_ne!(
+        LinkMember::new(omega, &altered).input_claim(),
+        expected,
+        "each occurrence is bound to the scalar on its own"
+    );
+}
+
+/// Every packed group, including the pinned verifier-key suffix, must belong
+/// to a commitment phase or `AssemblyStatement` rejects the table shape.
+#[test]
+fn commitment_phases_cover_verifier_key_groups() {
+    use jolt_wrapper::limb_table::stream::{commitment_phases, prover_group_count, vk_group_range};
+
+    for packing in [4, 16, 32] {
+        let declared: usize = commitment_phases(packing)
+            .iter()
+            .map(|phase| phase.group_count)
+            .sum();
+        let all_groups = prover_group_count(packing) + vk_group_range(packing, 0).len();
+        assert_eq!(declared, all_groups, "packing {packing}");
+    }
 }

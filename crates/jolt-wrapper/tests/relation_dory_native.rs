@@ -87,8 +87,8 @@ fn gt_sum(terms: impl IntoIterator<Item = (ArkFr, ArkGT)>) -> ArkGT {
         })
 }
 
-/// The deferred right-hand side with the setup index `delta_index(k)` applied
-/// to the `Delta1R(k)`/`Delta2R(k)` links (identity for the real equation).
+/// The deferred right-hand side with `delta_index(k)` mapping the folded
+/// coordinate `k` to its setup entry.
 fn deferred_rhs(
     scalars: &Scalars,
     proof: &dory::backends::arkworks::ArkDoryProof,
@@ -117,10 +117,11 @@ fn deferred_rhs(
             (scalars.get(DoryScalar::V(j)), first.d2_right),
         ]);
     }
-    for k in 0..=sigma {
+    for k in 0..sigma {
         terms.push((scalars.get(DoryScalar::Chi(k)), setup.chi[k]));
     }
-    for k in 1..=sigma {
+    terms.push((ArkFr::one(), setup.chi[sigma]));
+    for k in 0..sigma {
         terms.push((
             scalars.get(DoryScalar::Delta1R(k)),
             setup.delta_1r[delta_index(k)],
@@ -221,27 +222,27 @@ fn named_dory_scalars_satisfy_the_native_deferred_check() {
             .collect();
 
     let lhs = pairing_lhs(&scalars, dory_proof, setup);
-    let rhs = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k);
+    let rhs = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k + 1);
     assert_eq!(
         lhs, rhs,
         "named scalars × native bases must reproduce the accepting equation"
     );
 
     // Negative control: pairing the Delta links with the neighbouring setup
-    // constant (the `σ − 1 − j` indexing) breaks the equation.
-    let shifted = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k - 1);
+    // constant breaks the equation.
+    let shifted = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k);
     assert_ne!(lhs, shifted, "a mis-indexed Delta link must be rejected");
     // Negative control: the Delta1R/Delta2R scalars are not interchangeable.
     let swapped_terms = {
         let sigma = dory_proof.sigma;
         let base = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k);
         let mut fix = ArkGT::identity();
-        for k in 1..=sigma {
+        for k in 0..sigma {
             let d1 = scalars.get(DoryScalar::Delta1R(k));
             let d2 = scalars.get(DoryScalar::Delta2R(k));
             fix = fix
-                + setup.delta_1r[k].scale(&ArkFr(d2.0 - d1.0))
-                + setup.delta_2r[k].scale(&ArkFr(d1.0 - d2.0));
+                + setup.delta_1r[k + 1].scale(&ArkFr(d2.0 - d1.0))
+                + setup.delta_2r[k + 1].scale(&ArkFr(d1.0 - d2.0));
         }
         base + fix
     };

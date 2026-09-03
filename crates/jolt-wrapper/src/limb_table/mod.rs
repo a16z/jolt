@@ -15,6 +15,7 @@ pub mod lookup;
 pub mod ops;
 pub mod program;
 pub mod relation;
+pub mod row_sumcheck;
 pub mod schedule;
 pub mod stream;
 pub mod template;

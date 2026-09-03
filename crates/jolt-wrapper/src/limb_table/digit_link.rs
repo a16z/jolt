@@ -53,8 +53,8 @@ impl LinkMember {
             .fold(
                 || [Fr::zero(); 3],
                 |mut acc, i| {
-                    let (o0, o1) = (self.omega[2 * i], self.omega[2 * i + 1]);
-                    let (d0, d1) = (self.digit[2 * i], self.digit[2 * i + 1]);
+                    let (o0, o1) = (self.omega[i], self.omega[i + half]);
+                    let (d0, d1) = (self.digit[i], self.digit[i + half]);
                     acc[0] += o0 * d0;
                     acc[1] += o1 * d1;
                     acc[2] += (o1 + o1 - o0) * (d1 + d1 - d0);
@@ -68,11 +68,13 @@ impl LinkMember {
         UnivariatePoly::from_evals(&evals).into_coefficients()
     }
 
+    /// Most significant remaining row bit first: row `i` pairs with `i + half`.
     fn bind(&mut self, r: Fr) {
         let half = self.size / 2;
         let fold = |column: &mut Vec<Fr>| {
-            for i in 0..half {
-                column[i] = column[2 * i] + r * (column[2 * i + 1] - column[2 * i]);
+            let (lo, hi) = column.split_at_mut(half);
+            for (l, &h) in lo.iter_mut().zip(hi.iter()) {
+                *l += r * (h - *l);
             }
             column.truncate(half);
         };

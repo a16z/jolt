@@ -2,6 +2,8 @@
 //! elements are opaque prover bytes here; every scalar the pairing-side
 //! verifier (T2) multiplies by is an R1CS output named in [`DoryLinks`].
 
+use std::collections::HashMap;
+
 use jolt_r1cs::Variable;
 
 use super::ctx::{Ctx, Lc};
@@ -16,12 +18,9 @@ const G1_BYTES: usize = 32;
 const G2_BYTES: usize = 64;
 
 /// A Dory verifier scalar, indexed by fold round `j` (0 = first fold) where
-/// applicable. The setup-constant scalars carry the setup index instead: round
-/// `j` folds with `Δ1R[k], Δ2R[k]` at `k = σ − j` (the native verifier reads
-/// `setup.delta_*[num_rounds]` while `num_rounds` counts down from `σ`) and
-/// with `Δ1L[k] = Δ2L[k] = χ[k − 1]`, so `Chi(k)` collects the round
-/// `j = σ − 1 − k` products plus the unit contribution of every `χ[k]`
-/// (`Chi(σ)` is the unit alone).
+/// applicable. `Delta1R(k)` / `Delta2R(k)` use the folded coordinate index
+/// `k = σ − 1 − j`; the native setup constant paired with them is
+/// `setup.delta_*[k + 1]`. `Chi(k)` uses that same coordinate index.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DoryScalar {
     /// `y`: the joint evaluation claim (scalar on `Γ2_0`).
@@ -63,6 +62,40 @@ pub enum DoryScalar {
     PairingG2ZeroScalar,
     /// `−γ⁻¹ · d · s2_acc`: the `Γ1_0` coefficient of the `e(·, H2)` pairing input.
     PairingG1ZeroScalar,
+}
+
+impl DoryScalar {
+    pub fn link_order(sigma: usize, commitments: usize) -> Vec<Self> {
+        let mut order = Vec::with_capacity(commitments + 12 * sigma + 9);
+        order.extend((0..commitments).map(Self::CommitmentWeight));
+        order.push(Self::D2Init);
+        for round in 0..sigma {
+            let coordinate = sigma - 1 - round;
+            order.extend([
+                Self::Alpha(round),
+                Self::AlphaInv(round),
+                Self::UAlpha(round),
+                Self::U(round),
+                Self::VAlphaInv(round),
+                Self::V(round),
+                Self::Delta1R(coordinate),
+                Self::Delta2R(coordinate),
+            ]);
+        }
+        order.extend((0..sigma).map(Self::Chi));
+        order.push(Self::Ht);
+        order.extend((0..sigma).map(Self::Beta));
+        order.extend([
+            Self::GammaInv,
+            Self::PairingG1ZeroScalar,
+            Self::D,
+            Self::DSquared,
+            Self::DInv,
+        ]);
+        order.extend((0..sigma).map(Self::BetaInv));
+        order.extend([Self::Evaluation, Self::Gamma, Self::PairingG2ZeroScalar]);
+        order
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,10 +152,10 @@ pub(crate) fn walk(
     opaque(ctx, G2_BYTES)?;
     let d = ctx.squeeze(SqueezeKind::Scalar)?;
 
-    let mut scalars = Vec::new();
+    let mut scalar_variables = HashMap::new();
     let mut emit = |ctx: &mut Ctx, scalar: DoryScalar, lc: &Lc| {
         let variable = ctx.materialize(lc);
-        scalars.push((scalar, variable));
+        assert!(scalar_variables.insert(scalar, variable).is_none());
     };
     emit(ctx, DoryScalar::Evaluation, evaluation);
     let beta_inv: Vec<Lc> = betas.iter().map(|beta| ctx.inverse(beta)).collect();
@@ -151,7 +184,6 @@ pub(crate) fn walk(
         &(betas[0].clone() + d_squared.clone()),
     );
 
-    emit(ctx, DoryScalar::Chi(sigma), &Lc::one());
     let mut s1_acc = Lc::one();
     let mut s2_acc = Lc::one();
     for j in 0..sigma {
@@ -180,9 +212,9 @@ pub(crate) fn walk(
             &(Lc::one() + chi_left + chi_right),
         );
         let delta_1r = ctx.mul(&u, &betas[j]);
-        emit(ctx, DoryScalar::Delta1R(sigma - j), &delta_1r);
+        emit(ctx, DoryScalar::Delta1R(sigma - 1 - j), &delta_1r);
         let delta_2r = ctx.mul(&v, &beta_inv[j]);
-        emit(ctx, DoryScalar::Delta2R(sigma - j), &delta_2r);
+        emit(ctx, DoryScalar::Delta2R(sigma - 1 - j), &delta_2r);
         // Round j folds coordinate index σ − 1 − j.
         let coordinate = sigma - 1 - j;
         let y = &s1_coords[coordinate];
@@ -192,8 +224,6 @@ pub(crate) fn walk(
         let s2_factor = ctx.mul(&alpha_inv[j], &one_minus(x)) + x.clone();
         s2_acc = ctx.mul(&s2_acc, &s2_factor);
     }
-    emit(ctx, DoryScalar::S1Acc, &s1_acc);
-    emit(ctx, DoryScalar::S2Acc, &s2_acc);
     let ht = ctx.mul(&s1_acc, &s2_acc);
     emit(ctx, DoryScalar::Ht, &ht);
     let gamma_d_inv = ctx.mul(&gamma, &d_inv);
@@ -203,6 +233,16 @@ pub(crate) fn walk(
     let e2_scalar = ctx.mul(&gamma_inv_d, &s2_acc);
     emit(ctx, DoryScalar::PairingG1ZeroScalar, &-e2_scalar);
 
+    let scalars = DoryScalar::link_order(sigma, rlc_powers.len())
+        .into_iter()
+        .map(|scalar| {
+            let variable = scalar_variables
+                .remove(&scalar)
+                .unwrap_or_else(|| unreachable!("missing Dory scalar {scalar:?}"));
+            (scalar, variable)
+        })
+        .collect();
+    debug_assert!(scalar_variables.is_empty());
     Ok(DoryLinks {
         num_vars,
         sigma,

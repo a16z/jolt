@@ -332,7 +332,7 @@ pub struct DoryScalarTermsContext<'a> {
 }
 
 pub struct DoryScalarTermExporter<'a> {
-    pub link: &'a DoryScalarLink,
+    pub link: &'a DoryScalarLink<'a>,
     pub wire: ColumnId,
     pub member_index: usize,
 }
@@ -374,7 +374,7 @@ impl TermExporter for DoryScalarTermExporter<'_> {
     }
 }
 
-impl DoryScalarLink {
+impl DoryScalarLink<'_> {
     pub fn terms(&self, ctx: &DoryScalarTermsContext<'_>) -> Result<Vec<Term>, RelationTableError> {
         self.terms_observed(ctx, &mut NoopVerifierObserver)
     }
