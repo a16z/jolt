@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788386060870,
+  "lastUpdate": 1788396449347,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -151330,6 +151330,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 864080,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aec34d10a6b5e96e698ee933d61a7c32a5a9b678",
+          "message": "refactor(akita)!: complete the shared field cutover (#1796)\n\n* feat(field): add the Solinas backend to jolt-field\n\nMove the Solinas field stack from Akita revision\n3b674abb66186037745af256e6a20d60bdcd7e89 into jolt-field behind a new\n`solinas` feature: 32/64/128-bit pseudo-Mersenne prime fields, degree\n2/4/8 extension fields, packed NEON/AVX2/AVX-512 backends, unreduced\naccumulators, smooth-domain FFT helpers, and a `parallel` feature\ngating rayon.\n\nJolt's existing capability traits remain canonical; Solinas-only\noperations live in narrow capability traits in solinas_traits.rs.\nFieldError carries field-layer input and size failures only.\n\nThe temporary `akita` feature, its optional akita-config/akita-field\ngit-pinned dependencies, and src/akita.rs are retained as a bootstrap\nedge so the current jolt-akita revision keeps building; they are\nremoved in the final migration PR.\n\n* test(field): add Solinas benchmark and fuzz target\n\nMove the Criterion field-arithmetic benchmark from Akita as\nbenches/solinas_field_arith (with plonky3 baselines as dev-only\ncomparisons) and add a Solinas arithmetic fuzz target to the field fuzz\nworkspace.\n\n* ci: add shared field feature matrix and package identity check\n\nNew field-stack job checks jolt-field with no backend, BN254, Solinas,\nand combined backends, runs the Solinas test suite, and enforces the\nshared field package identity: exactly one jolt-field in the workspace\ngraph, with the pre-cutover akita-field allowed only from the immutable\nbootstrap Git pin. The final migration PR tightens the check to reject\nevery akita-field identity.\n\n* docs(specs): add consolidate-field-traits spec\n\nPlan to shrink jolt-field from 46 public traits to at most 22: delete\ndead surface, merge single-purpose capability traits, adopt the\narkworks/bn254.rs per-type impl style, and move wire serialization of\nthe Solinas types to serde + bincode. Supersedes the granularity of\nunify-field-hierarchy.md while preserving its layering invariants.\n\n* refactor(field): delete dead trait surface (spec phase 1)\n\nRemove traits with no generic consumer in this workspace or akita:\n\n- SignedScalarAccumulator/WithSmallScalarAccumulator and\n  SignedProductAccumulator/WithSignedProductAccumulator families,\n  including the Fr and Naive implementations and the two bn254_ops\n  kernels only they used; the Field umbrella no longer requires them\n- ExtensionCoeff (single blanket impl; bounds inlined at use sites)\n- BalancedDigitLookup (replaced by the free fn balanced_digit_lut)\n- SmoothFftField and fft.rs (no consumer outside their own tests)\n\nMontgomeryConstants is retained pending confirmation that no\nout-of-tree GPU backend consumes it.\n\n* refactor(field): merge accumulator traits into one Accumulator (spec phase 2)\n\nAdditiveAccumulator and RingAccumulator were only ever implemented and\nconsumed together (WideAccumulator, NaiveAccumulator); merge them into\na single Accumulator trait carrying add/merge/reduce plus the fmadd\nfamily. WithAccumulator moves into accumulator.rs and now supertraits\nRingCore + FromPrimitiveInt, which its associated type already implied.\n\nBecause WithAccumulator now guarantees Accumulator<Element = Self> by\ndeclaration, the 18 'Accumulator: RingAccumulator<Element = F>'\nwhere-clauses across jolt-crypto, jolt-blindfold, and jolt-verifier are\nredundant and removed.\n\n* refactor(field): consolidate root traits, adopt serde+bincode wire format (spec phase 3)\n\nMerge the fine-grained capability traits into cohesive ones:\n\n- FieldCore absorbs Invertible (inverse, inv_or_zero) and RandomSampling\n- FromPrimitiveInt gains a RingCore supertrait and absorbs the MulPow2\n  and MulPrimitiveInt default-method helpers\n- new CanonicalRepr (the Fiat-Shamir transcript surface) replaces\n  CanonicalBytes, ReducingBytes, FixedByteSize, FixedBytes<N>,\n  CanonicalU64, CanonicalBitLength, and TranscriptChallenge; per-type\n  challenge derivations (Fr's masked 125-bit path) move over verbatim\n- the crate root shrinks from 15 one-trait micro-files to algebra.rs,\n  canonical.rs, accumulator.rs, and field.rs\n\nWire serialization of the Solinas types is now serde + bincode,\nmirroring Fr's existing canonical [u8; N] pattern: prime fields encode\nas exactly NUM_BYTES bytes with checked canonical deserialization,\nextension fields as [F; K]. Fiat-Shamir bytes stay on CanonicalRepr's\nexplicit encoding, never bincode. New serde_roundtrip tests pin\nper-element sizes, single length prefixes on vectors, and rejection of\nnon-canonical encodings, so proof size cannot grow.\n\nThe mersenne61_compat and Gf2 compatibility tests keep passing with\nmerged bounds and no arkworks dependency.\n\n* refactor(field): consolidate the extension-field trait cluster (spec phase 4)\n\n- ExtField<F> absorbs LiftBase (lift_base), MulBase (mul_base), and\n  FrobeniusExtField (frobenius_pow / frobenius_inv_pow); one trait now\n  carries the full extension contract. The FpExt2/4/8 impls require a\n  pseudo-Mersenne base, which every current base is.\n- FpExt4MulBackend and FpExt8MulBackend merge into a single\n  ExtMulBackend with the same three implementors; Fp32 keeps its fused\n  delayed-reduction quartic overrides.\n- The degree-4 mul/square schedule now exists once: the packed\n  PackedField defaults call the shared fp_ext4_mul_coeffs /\n  fp_ext4_square_coeffs (previously copy-pasted verbatim), matching how\n  degree-8 already shares its schedule.\n\n* refactor(field): bn254.rs-style layout and shared macros (spec phase 5)\n\nEvery concrete type's trait surface now lives in its own file, with\nthree shared macros carrying the mechanical expansions:\n\n- impl_native_ring_algebra! / impl_native_additive! (new\n  native_algebra.rs) replace the three per-module native_algebra.rs\n  side-files, including the 226 hand-written lines in ext/; invocations\n  sit in each type's file\n- impl_prime_ops! collapses the 30 hand-duplicated operator impl blocks\n  across Fp32/Fp64/Fp128 into 3 invocations; the *_raw reduction\n  kernels stay hand-written per type\n- select_packing! collapses the three near-identical cfg cascades that\n  choose the packed backend per prime width\n- impl_prime_native_capability! invocations move into the per-type\n  files\n\nAlso finishes the disposition table: ScaleI32 merges into ReduceTo,\nPackedValue merges into PackedField, and jolt-field's OptimizedMul is\ndeleted outright (jolt-prover-legacy has its own identical trait; the\njolt-field copy had no consumer).\n\njolt-field is now at 22 public traits. Criterion solinas_field_arith\nbefore/after shows no regression on any of the 20 benchmarks.\n\n* docs(specs): tick verified acceptance criteria in consolidate-field-traits\n\n* chore(field): remove committed fuzz build artifacts\n\nThe fuzz crate's target/ directory (630 generated files) was accidentally\ncommitted in d8b28309f. Remove it from the index and ignore it going forward.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(field): audit remediation for the trait consolidation\n\n- repair the from_bytes fuzz target's duplicate import (the fuzz crate\n  is its own workspace, so workspace clippy never compiles it)\n- dedupe mechanical-rename residue bounds in the solinas benches and\n  jolt-sumcheck's SumcheckScalar\n- move the Solinas prime traits (CanonicalField, HalvingField,\n  PseudoMersenneField, balanced_digit_lut) from the crate root into\n  prime/traits.rs per the spec's layout\n- amend the spec: OptimizedMul was deleted as a duplicate of\n  jolt-prover-legacy's own trait rather than kept; record the actual\n  Solinas-trait location and the montgomery_constants.rs remainder\n\n* docs(specs): record byte-for-byte proof comparison against main\n\nStandard-mode muldiv proofs from this branch and main are identical in\nall 63,371 bytes when both builds share a Dory URS, and the main-built\nverifier accepts the branch-built proof. cfg(test) builds randomize the\nURS per process (DoryGlobals::configure_test_cache_root), so the\ncomparison requires pinning a shared URS cache.\n\nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>\n\n* fix(field): repair Fp64::reduce_u128 truncation and S160 mul overflow\n\nTwo arithmetic bugs found by the jolt-field-two differential harness\n(see PR #1684 review), both predating this PR's refactor:\n\n- Fp64::reduce_u128 cast the fold's high part to u64. For sub-word\n  primes (40/48/56-bit) inputs >= 2^(64+BITS) reduced incorrectly,\n  which includes essentially all 16-byte Fiat-Shamir challenge\n  derivations. The fold multiply now stays in u128 (bounded by 2^127\n  since the registry enforces C(C+1) < P). Fp32's fold was already\n  correct.\n\n- S160::mul_magnitudes fused two (three) full 64x64 products into one\n  u128 cross-term sum, overflowing for large second limbs: debug panic,\n  release wraparound. Word 1 now uses overflow-tracked accumulation\n  (the true carry into word 2 reaches 2^65 and must include the\n  overflow bit at weight 2^64); word 2 uses wrapping adds since only\n  its low 32 bits survive in the 160-bit result. The N=1 arm was safe\n  (32-bit high limb); the general N>=3 path already accumulated safely.\n  The identical S160 kernel exists in the arkworks fork and needs the\n  same fix there (reported separately).\n\nRegression tests: u128-mod oracle over all registered sub-word primes\nincl. the challenge-bytes path, and a 32-bit-digit schoolbook oracle\nfor S160 with boundary limbs. Both tests fail against the unfixed\nkernels.\n\n* docs(field): correct the S160 overflow failure-mode description\n\nAdversarial audit of the fix showed the old fused kernel's release\noutput was correct (wrapped carries cancel modulo 2^64; only the low\n32 bits of word 2 survive), so the pre-fix defect was a debug-only\npanic, not release wraparound. Tighten the carry bound to its exact\nmaximum while here.\n\n* refactor(field): split CanonicalBytes out of CanonicalRepr\n\nTranscript absorption only needs a canonical byte encoding (NUM_BYTES +\nto_bytes_le), but the consolidated CanonicalRepr forced every absorbable\ntype to also claim the field-decode surface (reducing constructor,\ncanonical-integer views, challenge derivation). #1675's NoCommitment\nplaceholder — a commitment, not a field element — exposed the\nover-coupling: it satisfied the old two-method CanonicalBytes and had\nnothing honest to say for the rest.\n\nSplit the absorption surface back out: CanonicalBytes carries the\nencoding and its injectivity invariants; CanonicalRepr: CanonicalBytes\nkeeps decode and challenges; jolt-transcript's AppendToTranscript\nblanket narrows to CanonicalBytes; NoCommitment implements only what it\nis. Byte-only consumers (stage8 immediates, jolt-akita scheme/adapters,\njolt-eval transcript symmetry, blindfold test support) narrow\naccordingly; decode users are unchanged. The consolidation spec's trait\ncount is amended to 23.\n\n* feat(jolt-field-two): first-principles rebuild of jolt-field, checkpoints 1-4\n\nReference implementation of a minimal-LOC jolt-field rebuild, far enough\nalong to show the shape. SPEC.md in the crate is the working spec: counting\nrules, trait system (15 contracts vs 22), backend architecture, per-file\nbudgets, build order, and acceptance criteria for the remaining checkpoints\n(fp128, extensions, unreduced, packed, parallel).\n\nStructure: an unconditional contract layer at the crate root (algebra.rs\nspine + stamping macros + Limbs/signed) and two feature-gated backends that\nimplement it as peers -- bn254/ (arkworks adapter + Barrett/Montgomery\nkernel + WideAccumulator) and solinas/ (one define_solinas_prime! fold\nalgebra stamped at u32/u64, plus the offset registry). 2,050 counted LOC so\nfar against a 2,310 budget; the equivalent baseline surface is ~4,200.\n\nEverything is differential-tested against jolt-field as the oracle (ops,\nserde bytes, transcript bytes, challenge derivation) plus independent\nu128/i128 oracles. That testing found two baseline bugs worth fixing in\njolt-field regardless of this crate's fate:\n\n- S160's unrolled mul kernel overflows u128 in its cross-term sum for\n  large second limbs (panics in debug, wraps in release).\n- Fp64::reduce_u128 truncates the fold's high part to u64, so sub-word\n  u64 primes (40/48/56-bit) reduce inputs >= 2^(64+BITS) incorrectly --\n  including 16-byte challenge derivation, which is essentially always in\n  the broken domain. This crate implements the correct reduction and\n  gates its baseline-parity tests to the baseline's correct domain.\n\nSigned-bigint API is the consumer-audited subset (workspace + akita grep);\nunconsumed constructors and truncating combinators were dropped, and dead\nspecializations (C_SHIFT, Mersenne31 half) were cut with evidence recorded\nin SPEC.md.\n\n* test(jolt-field-two): un-gate baseline-parity tests after upstream fixes\n\nThe Fp64::reduce_u128 truncation and S160 cross-term overflow are fixed\non the PR #1684 branch (79944f2), so the differential tests no longer\nneed to restrict baseline comparisons to the previously-correct domains:\nfull-u128 reduction parity, 16-byte challenge-decode parity on sub-word\nprimes, and full-range S160 multiply parity now run unconditionally.\n\n* test(jolt-field-two): close entry-audit gaps\n\n- differential asserts for from_scalar_challenge_bytes on the Solinas\n  words (all lengths) and on Fq (the Fr side already had one)\n- drop a dead binding left by the un-gating commit\n- SPEC amendments: impl_group_ops! is a third exported stamping macro;\n  the registry has 9 offsets at this baseline, not 12; note that\n  PseudoMersenne is defined unconditionally in algebra.rs per the file\n  table\n\n* test(jolt-field-two): reconcile differentials with the CanonicalBytes split\n\nThe baseline's byte surface (NUM_BYTES, to_bytes_le) moved from\nCanonicalRepr to its new CanonicalBytes supertrait; import both where\nthe oracles compare encodings.\n\n* feat(jolt-field-two): fp128 two-limb Solinas field (checkpoint 5)\n\nOne hand-written module (528 counted LOC vs the 700 budget) porting the\nbaseline prime/fp128/{core,add_sub,mul,reduce,wide,primes,traits}:\n[u64; 2] lo/hi representation, branchless carry-chain add/sub,\nschoolbook 2x2 mul/sqr with the AArch64 inline-asm kernels kept\nverbatim (1.29x on M4 per the baseline's own measurement; an\nAArch64-only unit test cross-checks asm vs portable on all four\noffsets), C = 2^a +/- 1 shift specialization, <=10-limb Solinas fold,\nFermat inversion, rejection-sampling random, and the four registered\n128-bit primes re-exported under their baseline names.\n\nEvery reduction step carries a re-derived bound comment. One sharpening\nover the baseline's argument: fold2_canonicalize is exact and canonical\nfor any u64 third limb given only C < 2^32 (overflow leaves the partial\nsum below 2^96, so the single +C correction cannot re-overflow); the\nC(C+1) < P assert is kept and documented as implied for the fused\npaths.\n\nDropped with evidence recorded in SPEC.md: the add/sub asm kernels\n(~470 lines, no in-tree benchmark, same algorithm as the branchless\nportable path), mul_add and its asm, mul_wide_limbs, from_i64_const\n(akita-only consumers, drop already approved).\n\nDifferential suite: per-offset parity vs the baseline Fp128 (ops\nowned+by-ref, algebra identities, bincode wire bytes, canonical and\nwrong-length rejection, byte/num_bits/u64 views, challenges at\n8/16/32), an independent 4x64-limb schoolbook + long-division oracle,\nboundary sets, and all-max limbs at every fold length 0-10. Also fixes\ntests/solinas_words_differential.rs, which did not compile under\n--all-features since the CanonicalBytes split (the reconcile pass ran\nwithout the solinas feature - the recurring feature-gate lesson).\n\n39/39 tests, clippy all-features clean, no-default-features and\nsolinas-only builds clean.\n\n* feat(jolt-field-two): cyclotomic extensions FpExt2/4/8 (checkpoint 6)\n\nContracts in src/extension.rs (54/60 counted): ExtField (degree, lift,\nmul_base, coefficient access, Frobenius) and Ext2Config with the\nNegOneNr/TwoNr ZSTs. MulBaseUnreduced is deferred to checkpoint 7 with\nits reason recorded: the contract is stated in terms of\nUnreduced::Product, which does not exist yet.\n\nLane-generic deg-4/8 coefficient schedules live in a new unconditional\nsrc/schedules.rs (133/140): the PseudoMersenne kernel-hook defaults in\nalgebra.rs and the packed lanes (checkpoint 8) share the same formulas,\nso they sit in the root layer as backend-neutral algebra; the old\next.rs budget is re-carved 890 -> 750 + 140 with the component total\nunchanged. PseudoMersenne gains the four hooks (ext4/8 mul + square);\nan ext8_square hook is new relative to the baseline (which squared\ndegree 8 via full mul) - value-identical, fewer ops, flagged in SPEC.\n\nHeadline: the baseline's fused-accumulation Fp32 deg-4 override LOST\nthe SPEC's checkpoint-6 bench gate - generic default 12.3 ns/op vs\nfused 31.1 ns/op for mul (2.5x), 15.3 vs 28.3 for square, on\naarch64/M4 with the ported override reproducing the baseline's own\ntiming (31.0) as the sanity anchor. Immediate word-sized reductions\npipeline better than u128 accumulation chains here. The override is\ndropped from src with evidence in SPEC.md; the port (with re-derived\ncolumn-sum bounds) survives in benches/ext4_kernels.rs for x86-64\nre-evaluation, where the verdict could flip.\n\nImpls in src/solinas/ext.rs (617/750): Karatsuba FpExt2 with norm\ninverse, FpExt4 subfield-tower inverse, FpExt8 Gaussian-elimination\ninverse, Frobenius via base-modulus powers, Moore thetas/solve/\nvalidate, serde as [F; K] coefficient arrays byte-identical to the\nbaseline.\n\nDifferential suite (25 new tests, 64/64 all-features total): five base\nfields x {FpExt2 both configs, FpExt4, FpExt8, Moore} against the\nbaseline plus an independent schoolbook oracle (binary-long-division\nmodular arithmetic, phi-rule Chebyshev multiply), boundary coefficient\npatterns, ring-identity spot checks, fixed seeds. Baseline oddities\nrecorded: the fused-square bits!=32 guard has no recorded rationale;\nNegOneNr is a field on no registered prime (all are 1 mod 4); baseline\next types implement no canonical-bytes trait, so ext types here are\ndeliberately not JoltField (parity).\n\n* feat(jolt-field-two): unreduced deferred-reduction surface (checkpoint 7)\n\nContracts (src/unreduced.rs, 18/70): one fused Unreduced companion\nsurface (Product/SmallProduct/Wide, SUM_IS_EXACT, widening muls,\nreduce_product/reduce_small_product/reduce_wide, scale_wide) replacing\nthe baseline's HasUnreducedOps + HasWide + ReduceTo, and Fold\n(precompute/fold_one) replacing HasOptimizedFold, documented as the\nmultilinear bind. The checkpoint-6-deferred MulBaseUnreduced lands in\nextension.rs (60/60 exactly).\n\nImpls (src/solinas/unreduced.rs, 501/530): the i32-lane wide types,\nu128-slot product accumulators, AccumPair, fold matrices, and the fused\nkernels with explicit carry tracking everywhere two full-width products\nmeet (overflowing adds; the P^2-bias branch tracks add-carry and\nsub-borrow jointly, with the impossible underflow guarded by debug\npanic). One wrapping-ops policy across product accumulators (the\nbaseline mixed conventions in Fp128MulU64Accum); FpExt8 gets single\ngeneric impls where the baseline stamped three copies.\n\nBaseline corrections found by re-derivation, recorded in SPEC.md:\n- lane headroom is exactly 32768 additions, not the baseline's\n  \"~32,769\" (32769 * 0xFFFF > 2^31 - 1); tested at the boundary and\n  one-past asserts in debug\n- FpExt4Fp32ProductAccum docs claimed 7*P^2 ~ 2^65 and 2^63 terms;\n  correct is < 2^67 and >= 2^61, re-derived per slot\n- the fused FpExt2<Fp64> path silently assumed NR in {-1, 2} while\n  generic over any config; now debug-asserted\n- Fp128 accumulator headroom sharpened to 2^64 - 1 terms (the reduce\n  carry chain binds)\n\nNEON intrinsics dropped with evidence: LLVM auto-vectorizes the\nportable [i32; N] ops to the identical add.4s/sub.4s/neg.4s on\naarch64 (checked via --emit asm), plus mul.4s for lane scaling which\nthe baseline never vectorized; ~120 unsafe lines gone and debug builds\nnow catch lane overflow.\n\nTests: 38 new (102/102 all-features): per-accumulator exactness vs\nper-term multiplication and an independent limb-schoolbook oracle,\nadversarial all-max batches over every carry corner, wrap-through\nsequences, 18 fold-parity instantiations vs baseline, MulBaseUnreduced\noverride parity, SUM_IS_EXACT flag parity.\n\nBudget flag for review: solinas/mod.rs sits at 108 vs 90 (was 102\nbefore this checkpoint; re-exports and registry accumulate across\ncheckpoints) - needs the budget discussion, not golf.\n\n* feat(jolt-field-two): packed SIMD backends (checkpoint 8)\n\nOne packed-algebra source of truth: the entire Solinas fold/\ncanonicalize algebra (fp32 2-or-3-fold with TWO_FOLD_OK, C = 2^a +/- 1\nshift-add offset multiply, N-ary deferred-reduction dot products with\nthe BITS==32 prefold, fused deg-4 kernels; fp64 dual-path add/sub and\nboth reduce128 variants; fp128 SoA carry-chain add/sub) written once in\nengine.rs/fp128.rs, generic over a SimdWord vocabulary; the genuinely\nalgorithmic per-ISA differences confined to simd.rs (AVX2's missing\n64-bit multiply assembled from 32x32 products, AVX-512 mask-register\nselects and native mullo_epi64, NEON's vqdmulhq_s32 kernel for the\n31-bit prime). Note for review: the SPEC pillar says engine *macro*;\ngeneric types over SimdWord achieve the same single-source outcome with\nless expansion (recorded in SPEC.md). Packed ext consumes the shared\nschedules.rs; select_packing! cfg cascade ported token-identically.\n\nCounted LOC 1,067 vs the 1,600 budget (engine 284/550, fp128 99/350,\next 191/230, simd 352/350). Two overages flagged for review: packed.rs\n105/90 (the ext4/8 kernel hooks on Packed - overridable defaults are\nthe only stable-Rust route for the fp32 engines' fused kernels) and\npacked/mod.rs 36/30 (cfg formatting of the cascade).\n\nImprovements over baseline: packed Fp128 mul calls the scalar kernel\nper lane on all ISAs (on aarch64 that is the inline-asm multiply,\nstrictly better than the baseline NEON backend's duplicated portable\nfold); the baseline's implicit C < 2^(64-BITS) assumption in\nreduce128_small_k is now debug-asserted. Dropped with SPEC evidence:\nMersenne31 C==1 kernels (no registered prime), BITS==31 fold clones,\nNEON per-C shift-add chains, NEON dot-product carry tracking (unified\non prefold), vectorized ext2/4 inverses (inversion is lane-serial in\nevery formulation). Baseline oddity: NEON PackedFp64::fp_ext2_mul\noverride is byte-identical to the trait default (dead specialization).\n\ncfg coverage: every introduced region compiled - native NEON (tests\nRUN), +avx2 and +avx512f,+avx512dq x86_64-apple-darwin checks, plain\nx86 fallback, aarch64 -neon fallback, no-default-features and\nsolinas-only. 14 new differential tests (116/116 all-features):\npacked-vs-scalar for all 12 registered primes across widths, packed\next over fp32/fp64/fp128 bases and both NR configs, lane/slice laws,\nNEON lane-exact differentials vs the baseline packed types.\n\nx86 backends are compile-verified only on this machine; performance\nre-evaluation of dropped specializations is bench-gated per SPEC.\n\n* feat(jolt-field-two): parallel helpers, crate docs, final audit (checkpoint 9)\n\nsrc/solinas/parallel.rs (78/80 counted): the baseline rayon helpers\nported whole, byte-faithful (expansion-site cfg so consumers dispatch\non their own parallel feature). The consumer audit found that none of\nthe seven cfg_*! macros has a single consumer anywhere in the\nworkspace or the rebuild - no crate even enables jolt-field's parallel\nfeature (crates that parallelize carry their own rayon deps) - so the\ncomponent is recorded in SPEC.md as a deletion candidate at the\nreplacement PR; parity scope names it explicitly, hence the whole\nport rather than an unevidenced subset. New tests/parallel_macros.rs\nproves serial/rayon equivalence for every macro (green under both\nconfigurations).\n\nCrate docs on lib.rs (two-layer architecture, backends, features,\nbyte-compatibility invariants); code lines drop to 43/70 since docs\nare free under the counting rules.\n\nFinal audit written into SPEC.md with actuals beside budgets:\n5,103 counted LOC vs the 6,240 budget (18% under; 55% below the\n11,410-LOC baseline). Six files over their file budgets, all in one\nconsolidated budget-trades note: packed.rs 105/90 (ext kernel hooks),\nsolinas/mod.rs 113/90 (re-exports accumulate), limbs.rs 237/220,\nbn254/mont.rs 310/300, packed/mod.rs 36/30, packed/simd.rs 352/350.\n\nFeature matrix all clean (check + clippy -D warnings): no-default,\nsolinas, bn254, solinas+parallel, solinas+allocative, all-features,\nplus both x86_64 target-feature cross-checks in two feature configs.\n121/121 tests. SPEC status: all nine checkpoints built; remaining\nbefore replacement recorded (x86 runtime validation, bench\nre-evaluations, the replacement PR itself).\n\n* docs(specs): move jolt-field-two SPEC.md to specs/jolt-field-rebuild.md\n\n* feat(jolt-field-two): CanonicalBytes supertrait split + akita bootstrap adapter\n\nPre-replacement surface work: split the byte surface out of\nCanonicalEncoding as a bare CanonicalBytes supertrait (same decision as\nthe jolt-field split: transcript absorption must not require the field\ndecode contract, e.g. NoCommitment), and port the temporary akita\nbootstrap adapter to the new spine so the akita lanes survive the\nreplacement. 121/121 tests, clippy clean on all feature lanes.\n\n* test(jolt-field-two): oracle-free test suite (num-bigint oracles + golden byte fixtures)\n\n- tests/bn254_differential.rs: jolt-field oracle replaced with num-bigint\n  arithmetic mod r/q (modpow inverses, exact wide-accumulator sums, and\n  the legacy Fr Montgomery-form / Fq plain challenge models); wire bytes\n  now checked structurally, absolute bytes pinned in golden_bytes.rs.\n- tests/limbs_signed_differential.rs: Limbs/SignedBigInt/SignedBigIntHi32\n  parity vs jolt-field replaced with exact num-bigint integer oracles\n  (wrapping sign-magnitude model); existing u128/i128 oracles kept.\n- tests/solinas_words_differential.rs: baseline arms dropped; u128/bigint\n  oracles extended to half, num_bits, challenge decodes, balanced-digit\n  LUT, and the random-stream spec; registry and PRIME_OFFSET_* constants\n  pinned as fixture data.\n- tests/solinas_fp128_differential.rs: baseline arms dropped; limb oracle\n  extended to wide multiplies, conversions, and decodes; the\n  rejection-sampling stream checked against a test-local reimplementation\n  of its spec.\n- tests/solinas_ext_differential.rs: baseline parity dropped; schoolbook\n  oracle extended to add/sub/neg and integer embeddings; frobenius_pow\n  checked against x^(q^k) computed with the oracle-verified multiply;\n  Moore checks made intrinsic (basis thetas, solution satisfies system,\n  rejections, must-succeed in genuine fields).\n- tests/solinas_unreduced_differential.rs: baseline HasUnreducedOps arms\n  dropped; delayed-sum exactness kept vs the schoolbook oracle and\n  per-term ring ops; SUM_IS_EXACT values pinned; fold_one checked against\n  the field identity e + r(o - e).\n- tests/solinas_packed_differential.rs: aarch64 baseline_diff module\n  removed (packed==scalar plus scalar==oracle in the other suites covers\n  it transitively); expected NEON lane widths pinned.\n- tests/golden_bytes.rs: NEW. Golden fixtures generated from jolt-field at\n  5b3e39ece1c27586a1f7cc77f24e718cb5d73e10 pinning bincode and\n  to_bytes_le encodings for every registered prime field, the ext towers\n  over three base widths, BN254 Fr/Fq, and the legacy Fr/Fq challenge\n  derivations (generator deleted after use; regeneration instructions in\n  the file header).\n- tests/parallel_macros.rs, tests/spine.rs: untouched (no oracle use).\n- benches/ext4_kernels.rs: jolt-field baseline timing columns removed;\n  the generic-vs-fused-port comparison is unchanged.\n- Cargo.toml: jolt-field dev-dependency removed; num-bigint (workspace)\n  added as a dev-dependency.\n\n* refactor(jolt-field): replace the crate with the jolt-field-two rebuild\n\nDelete the baseline crates/jolt-field (11,410 counted LOC) and move the\nrebuild into its place under the package name jolt-field (5,103 counted\nLOC). MontgomeryConstants dies with the old crate: zero consumers in the\nworkspace, closing the spec OPEN item. The old crate's differential\nevidence survives via the oracle-free suites and golden byte fixtures\ngenerated from it before deletion. Consumers rebind in the follow-up\ncommits; the workspace does not build between this commit and the rebind.\n\n125/125 tests and clippy clean on -p jolt-field, all features/targets.\n\n* refactor(workspace): rebind all consumers to the rebuilt jolt-field spine\n\nScripted, import-guided rename over ~400 files: umbrella Field ->\nJoltField, FieldCore -> Field, RingCore/FromPrimitiveInt -> Ring,\nCanonicalRepr -> CanonicalEncoding, from_le_bytes_mod_order ->\nfrom_bytes_le_reduced, to_canonical_u64_checked -> to_u64_checked,\narkworks::bn254 paths -> root exports. Position-aware for Field:\nassociated types named Field (CommitmentScheme<Field = F>, syn::Field)\nand all ::-qualified paths keep their names; ark_ff::Field collision\nfiles and akita-field's shared trait names handled by hand.\n\nTwo surface restorations in jolt-field, recorded as deviations in\nspecs/jolt-field-rebuild.md: bn254 From<primitive> impls (94+ call\nsites relied on the plain arkworks conversions), and JoltField drops\nits serde bounds while the akita bootstrap edge exists (the foreign\npre-cutover type cannot implement serde here; restore at cutover).\nmersenne61_compat reworked against the new spine, proving the slim\nhierarchy remains implementable without arkworks.\n\nGates: clippy --all-targets -D warnings green on host, host+zk,\nakita x3, field-inline, and +avx2/+avx512 cross-checks to\nx86_64-apple-darwin.\n\n* docs(specs): record replacement validation evidence in jolt-field-rebuild\n\nProof bytes verified unchanged: standard-mode muldiv proofs from the\npre-replacement build and the replacement branch are byte-identical in\nall 63,372 bytes under a pinned Dory URS; ZK sizes equal at 65,947.\nTest battery: 3,901 tests green across workspace default, prover-legacy\nhost/zk/akita, verifier akita fixtures, and solinas-only field lanes;\nmuldiv e2e passes both modes. All clippy lanes and x86 target-feature\ncross-checks clean. Remaining-work list updated to post-replacement\nitems (x86 runtime validation, bench re-evals, CI SIMD lane, parallel\nhelpers, akita cutover follow-ups).\n\n* fix(ci): repair the five lanes broken by the replacement\n\n- check-shared-field-identity.sh: pass --color never to cargo tree; CI's\n  colorized (*) dedup marker defeated the sed strip, making one identity\n  count as two. The dependency graph was always correct.\n- typos: exclude the golden byte fixtures (hex substrings false-positive).\n- ext4_kernels bench: compile to a stub without the solinas feature so\n  the bench workflow's --bench '*' succeeds under default features; the\n  print_stdout expectation moves onto the gated module.\n- fuzz: restore the five fuzz targets deleted with the old crate,\n  rebound to the rebuilt trait names (the fuzz workspace is invisible to\n  workspace clippy and the fuzz CI job cd's into it).\n- jolt-verifier: drop an unused import only compiled under the\n  prover-fixtures,zk lane.\n\n* fix(ci): taplo-format the restored fuzz manifest\n\n* fix(ci): feature-gate golden-byte fixtures for the shared-field matrix lanes\n\nThe BN254 fixture constants and shared helpers compiled as dead code\nunder solinas-only and backend-free lanes, which build with -Dwarnings\nin CI.\n\n* fix(ci): gate the golden-bytes fixture file at file level for backend-free builds\n\n* fix(ci): per-backend gates on golden-byte fixtures alongside the file-level gate\n\nThe file-level cfg covers backend-free builds; the BN254 fixture\nconstants additionally need their own gate for the solinas-only lane.\nAll four matrix lanes verified locally with -Dwarnings.\n\n* fix(ci): structural shared-field identity check via cargo metadata\n\nUpgrade from the --color never mitigation to rendering-independent\npackage-ID parsing (requested in Akita #307 review: prefer cargo\nmetadata over cargo tree text). CARGO_TERM_COLOR=always is forced\ninside the script as a permanent regression guard for the colorized\n(*) marker bug.\n\n* refactor(jolt-field)!: delete the akita bootstrap edge, restore JoltField serde bounds\n\nThe temporary bootstrap adapter for the pre-cutover akita-field type\n(src/akita.rs, the `akita` feature, and the optional akita-config/\nakita-field dependencies) existed only so the pre-cutover Akita field\ncould satisfy JoltField before Akita #307 rebound Akita onto the shared\njolt-field landed by Jolt #1684. With Akita #307 the Akita field type IS\njolt_field::Fp128 at Akita's modulus, so the edge is dead: delete it and\nrestore the serde bounds (Serialize + DeserializeOwned) on the JoltField\ntrait and its blanket impl, per the promise recorded in the trait doc and\nin specs/jolt-field-rebuild.md deviation 1.\n\nDownstream manifests drop their references to the deleted feature; the\nlegacy prover's own akita-config/akita-field dependency edges die with\nthe adapter rebind in the next commit.\n\n* refactor(jolt-akita): adopt the post-cutover Akita API (#307 head)\n\nRe-point the akita-* git pins from the pre-cutover revision to the\nAkita #307 head and adapt jolt-akita and the legacy packed prover path:\nthe post-cutover Akita field type IS jolt_field::Fp128, so the legacy\nAkitaFp128 adapter surface shrinks accordingly, and schedule resolution\nis catalog-only (the planner DP became offline-only, and upstream's own\ngenerated tables are gitignored bootstrap artifacts that a\nGit-dependency checkout does not contain).\n\nConsequences carried here:\n- Jolt-owned schedule catalogs regenerated via gen_jolt_schedules over\n  the production grids plus an explicit test-support grid\n  (vars 12..=16, 1..=4 polys) covering the shapes jolt-akita's own\n  harnesses exercise, mirroring the test-scale rows upstream ships in\n  its local catalogs.\n- One production boundary shape, the widest K=16 group at the minimum\n  padded trace (16 vars, 81 polys), is unschedulable by the\n  post-cutover planner although the pre-cutover runtime planner\n  scheduled it; the catalog coverage test pins this as an explicit\n  known exception that fails the moment the planner covers it, and the\n  question is raised on the Akita #307 review thread.\n- Test fixtures moved off shapes that are no longer schedulable\n  (13-var 2-poly dense groups); purely-dense fixtures use dense-only\n  setups and the grouped one-hot test a one-hot-only setup, so neither\n  builds the other flavor's setup at unsupported shapes.\n\njolt-akita suite: 38 passed, 0 failed, 3 skipped.\n\nWARNING: the akita pins reference the stacked-review head on the\ncontributor fork; re-point to the LayerZero-Labs/akita merge revision\nof #307 before landing.\n\n* fix(ci): post-cutover shared-field identity gate\n\nThe structural cargo-metadata check now rejects every akita-field\nidentity (the crate no longer exists; any occurrence means a stale\npre-cutover Akita pin in the graph) and requires exactly one jolt-field\nidentity, the workspace path unified with Akita's Git pin via the root\n[patch] table. Workflow lane renamed to match.\n\n* docs(specs): discharge the akita bootstrap obligations in jolt-field-rebuild\n\nDeviation 1 (JoltField serde bounds) and the akita cutover item move\nfrom open to discharged-by-this-branch; the remaining-work list keeps\nx86 validation, bench re-runs, and the CI SIMD lane.\n\n* fix(jolt-prover-legacy): link jolt-field under the standalone akita feature\n\nThe akita feature now enables dep:jolt-field directly (previously only\nthe prover feature did, so -p jolt-verifier --features akita had no\njolt-field to link for the rewritten adapter), and the packed test\nmodules qualify Ring::from_u64 at the call sites.\n\nKnown-failing on this branch, documented in the draft description:\nzkvm::packed::tests::{muldiv_e2e_akita, muldiv_e2e_akita_forced_k256}\nfail verification with StageClaimOutputMismatch at stage 1 — the\nlegacy packed stage-claim plumbing predates the post-cutover Akita\nclaim layout (per-group opening points, chunk-major witnesses); the\nadaptation is an open item pending Akita-maintainer input. 443/445\nlegacy akita tests pass.\n\n* fix(jolt-prover-legacy): per-field scalar-challenge convention for the packed pipeline\n\nRoot cause of the packed muldiv e2e failures (StageClaimOutputMismatch\nat stage 1): the legacy transcripts hardcode the scalar-challenge\nconvention as digest-bytes-reversed (big-endian) before field decode —\ncorrect for BN254 — while the modular verifier decodes with the field's\nown from_scalar_challenge_bytes, which for the shared Solinas Fp128 is\nunreversed little-endian. Pre-cutover the akita bootstrap adapter\ncarried the reversed convention, so both sides agreed; the cutover made\nAkitaField the shared Fp128 and silently flipped the verifier side.\nBoth decodes consume the same 16 bytes, so the transcript stream stayed\nsynchronized while every challenge_scalar VALUE diverged, surfacing as\na claim/reduction mismatch at the first batched check of the packed\npipeline only.\n\nFix: the legacy JoltField gains from_scalar_challenge_bytes with the\nreversed convention as its default (BN254/Dory byte-identical by\nconstruction); blake2b, keccak, and the prover-native verifier\ntranscripts delegate to it; AkitaFp128 overrides it to the shared\nunreversed convention, matching the modular verifier.\n\nAlso: the K=256 catalog gains the forced-K256 e2e band (20 vars at\nproduction widths) — the forced test deliberately runs the K=256\nregime below its production window, which the offline-only planner\nmust cover explicitly.\n\nBattery: fmt, clippy (host, host+zk, akita x2, -Dwarnings), identity\ngate, muldiv 3/3 host and 3/3 zk, jolt-prover-legacy --features akita\n445/445, jolt-akita 38/38.\n\n* fix(field): exact-uniform canonical rejection sampling\n\nPort the upstream Akita sampling change (LayerZero-Labs/akita@03f29087)\nto the shared Solinas backend: Field::random on Fp32, Fp64, and Fp128\nnow samples through sample_uniform_below, which reads exactly\nceil(modulus_bits / 8) little-endian bytes per attempt, clears unused\nhigh bits, and rejects non-canonical candidates. The byte-consumption\ncontract is deterministic for a fixed RngCore stream and documented on\nField::random; extension fields sample base coefficients independently\nthrough the same contract.\n\nReplaces the previous biased single-reduction paths on the word fields\nand aligns the differential-test oracle with the new contract.\n\n* feat(field): port current Akita capabilities\n\n* feat(field): add wide limb multiplication\n\n* test(verifier): bound FS audit fields for replay\n\n* perf(field): restore x86 fp32 quartic kernel\n\nReuse the exact deferred-reduction accumulator for full-width Fp32 quartic multiplication and squaring on x86_64. Keep the generic schedule on AArch64 and for sub-32-bit moduli, matching the architecture-specific benchmark evidence.\n\n* perf(field): port subword Fp64 kernels\n\n* fix(field): keep fused helpers in packed backend\n\n* chore(akita): remove unused error dependency\n\n* fix(akita): import shared field traits in tests\n\n* fix(field): place wide tests after implementations\n\n* ci(field): run portability tests with nextest\n\n* ci: use nextest for remaining test commands\n\n* feat(field): expose canonical u64 storage slices\n\n* fix(field): preserve const canonical fp128 construction\n\n* chore(akita): pin refreshed shared-field cutover\n\n* fix(akita): refresh final shared-field cutover\n\n* fix(akita): pin proof-shape family hotfix\n\n* ci(akita): split packed prover test lanes\n\n* ci(akita): serialize packed prover tests\n\n* fix(akita): port integration to transcript grinding\n\n* fix(akita): address shared-field cutover review\n\n* refactor(akita): decompose streamed trace one-hot kernels\n\n* refactor(akita): remove obsolete packed witness surface\n\n* style(akita): import nominal trace one-hot types\n\n---------\n\nCo-authored-by: acentelles <centelles.alberto@gmail.com>\nCo-authored-by: Claude Fable 5 <noreply@anthropic.com>\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>",
+          "timestamp": "2026-09-02T16:47:13-07:00",
+          "tree_id": "cdbc6f61ec3571d2e4e40ae216bdaf7d5a37a9f7",
+          "url": "https://github.com/a16z/jolt/commit/aec34d10a6b5e96e698ee933d61a7c32a5a9b678"
+        },
+        "date": 1788396444030,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.2822,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 860020,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.0306,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6534,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 500632,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5033,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.097,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 498212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.2303,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.143,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5233,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 507020,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4331,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 18.6574,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.706,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 507252,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 26.4472,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1085548,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 12.2974,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 638812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 63.6041,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2145148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.1521,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 501396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.3356,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 503348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 13.3145,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 860496,
             "unit": "KB",
             "extra": ""
           }
