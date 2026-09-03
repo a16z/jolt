@@ -236,3 +236,90 @@ Delta1R(σ−1−j), Delta2R(σ−1−j)`; then `Chi(0..σ)`, `Ht`, `Beta(0..σ)
 `DSquared`, `DInv`, `BetaInv(0..σ)`, `Evaluation`, `Gamma`, `PairingG2ZeroScalar`; digit base `K` is the constant one
 (`ρ^K`), `K + 1` the offset challenge (`ρ^{K+1}·θ`). Not consumed (R must not publish them): `Chi(σ)`, `S1Acc`,
 `S2Acc`.
+
+## Fix #3 (07:00 API delta + review #3, `cbd75fffc` base)
+
+### Point order (W5 blocker `Stream(StageLink)`)
+
+- `RowSumcheck` and `LinkMember` bind the most significant row bit first: round `i` pairs row `j`
+  with `j + rows/2` and writes the bound row at `j` (in place; the row member's scratch matrix is
+  gone). The stage point the members return is big-endian, `EqPolynomial::evals(point)` /
+  `PackedColumns::column_evaluations(point)` order. `Challenges::tau` stays big-endian (bound first).
+- The kernels/evaluator keep little-endian points internally: `StreamTermExporter` reverses
+  `TermContext::row_point` itself. Tests pass `little_endian(&point)` to `public_evals`/`omega_eval`.
+- Regression (permanent, in `stream_exporter_terms_match_the_members`): both members driven jointly,
+  `commit_packed(stream.columns, 4)` at `2^20`, and `column_evaluations(&point)[physical(local)] ==
+  claims()[local]` for all 149 claimed columns plus the link's digit final.
+
+### Staged export (the production path; one owner of every column)
+
+```text
+let mut b = StreamBuilder::new(&layout, &columns /* Columns::generate */, packing);
+b.phase_1b()                                  -> &[Column]  // chunks u16, digit bits, D, m_pos/m_neg u32, range_mult u32, sign_flag
+b.phase_2a(xi, alpha)                         -> &[Column]  // X_s, Y_s, range helpers, range inverse
+b.phase_2b(fp_root)                           -> &[Column]  // f_pos, f_neg
+b.phase_2c(beta, fp_combine, copy_root)       -> &[Column]  // h, g_pos, g_neg, then the VK suffix (pin, pin_limb×3, free, exact)
+let w = b.finish(tau /* Vec<Fr>, 18 */, gamma, lambda, lambda_lookup, constancy_root, group_offset);
+// StreamWitness { relation: RowRelation, matrix: Vec<Vec<Fr>> /* Col::WIDTH: claimed in Col order, then public */, stream: StreamColumns { columns, ids, group_count, vk_groups } }
+let members = Members::new(&w.relation, &w.matrix, &layout, &w.matrix[Col::D], rho);
+StreamTermExporter { layout, challenge_offset, theta_offset, rho_offset, columns: &w.stream.ids, row_member, link_member }
+```
+
+- Every phase slice is padded to whole groups; phase 2c's slice includes the six verifier-key
+  columns (`commitment_phases` counts them with it — unchanged: 39 / 13 / 9 groups at k = 4 / 16 / 32).
+  Phases panic when called out of order; nothing is recomputed and no future challenge is used:
+  the lookup multiplicities now live in `PublicColumns::{m_pos, m_neg}` (challenge-free), the range
+  multiplicities in `Columns::range_multiplicities(digit_bits)`, and only `range_helpers(alpha, ..)`,
+  `fingerprint_columns(reads, z_xi, fp_pow)` and `LookupColumns::new(public, y, f_pos, f_neg,
+  fp_pow, beta, fp_combine)` take challenges.
+- `row_challenges(&[Fr]) -> Challenges` is the single owner of the per-phase challenge order
+  (`T2Challenges::from_challenges` and `finish` both use it).
+- Removed: `ClaimedColumns` (+ `assemble`), `StreamColumns::new`, `Columns::logup_columns`,
+  `AffineForm::scale` (unobserved; `-form` via `Neg`, constants via `AffineForm::scaled`).
+- Unchanged: `Col::CLAIMED = 149`, T = 175 terms, d = 4, rows 201,319 / 262,144.
+
+### Review #3 blocker — one digit-link equation per chain occurrence
+
+- Every `(chain, base)` occurrence has its own index `DigitOp::link` (`Layout::link_occurrences`
+  of them; `SelectedFamily::digit_base` maps `k → link`), and the link weighs it `ρ^link`:
+  `ω(x) = ρ^{link(k(x))}·16^{63−w(x)}` on each op's first slotted row; the verifier's `ω̃(r)` keeps
+  the product form per family (`eq(r_c, first_c) · Σ_k eq(r_k, k)·ρ^{link(k)} · 16^{63}·Π(1 − r_i +
+  r_i·16^{−2^i})`, the window factor memoized per lane). No multiplicity division anywhere.
+- **R-side contract (W5, `DoryScalarLink` / `DoryScalarTermExporter`):** publish
+  `Σ_{k<K} W_k(ρ)·s_k` over the `K = layout.digit_bases − 2` named wires in `check.wires()` order
+  (173 at σ = 11 / N = 42) with `W = link_weights(&layout, ρ)` (`link_weights_with(.., mul)` for
+  the observed verifier: `W_kd(ρ) = Σ_{occurrences of kd} ρ^link`, one `ρ` power per occurrence —
+  `layout.link_occurrences` = 230 at the fibonacci profile, i.e. 229 multiplications, R's budget).
+  T2 adds the constant-one and offset bases: `link_input_claim(r_claim, ρ, θ, &layout)` =
+  `r_claim + W[K] + W[K+1]·θ` (`_with(.., mul)` observed). `link_input_claim` no longer takes
+  `named_wires`; the layout carries the occurrence structure (profile-fixed).
+- Soundness: `Σ_occ ρ^{link}·(recoding_occ − s_{kd(occ)}) = 0` is a degree-`< 230` identity in `ρ`,
+  so each occurrence's recoding equals its scalar individually (the θ-prefix premise of the EC
+  module doc holds per chain again). Permanent verifier-path negative
+  `shared_scalar_recoded_differently_per_chain_is_rejected`: the reviewer's `±1` shift of one
+  window digit in two offset chains (honest claim == `link_input_claim(..)`, forged `≠`).
+
+### Review #3 major — every verifier multiplication observed
+
+- Previously unobserved and now routed through the evaluator/observer: `eq(τ, r)`, `small`, `id`,
+  the families' coordinate/`S0` products, the `ω̃` per-field product and `16^63` scaling, the
+  free-field moments, `AffineForm::scale(−1)`/`scale(−2)` (now negation / constant weights).
+- Trims (all exact): `eq(τ, r)` as `Π(1 − t − r + 2tr)` (2 per bit), `small` one product, `id` and
+  field moments recombined by doublings (additions, not multiplications), all-but-one products by
+  prefix/suffix (`3m − 4` per family), the digit link's window factor memoized per lane.
+- Measured at σ = 11 / N = 42 (`verifier_arithmetic_within_budget_at_fibonacci_profile`, which
+  also asserts the component sum equals the exporter's count): **9,875 Fr** = relation 162 +
+  public evaluations and `ω̃` 9,573 + terms 139 + link batching 1. Cap stays 10,000 (margin 125).
+  `link_input_claim_with` (229 powers) is the stream's derivation, outside this count as before.
+
+### Review #3 minor
+
+- `offsets_are_nondegenerate` checks `A_w·16^{64−w} − k_K` for the doublings (the correction prefix
+  is not yet doubled); the EC module doc states both formulas. Still passes for both groups, all `n, w`.
+
+### Not in this fix
+
+- R publishing 176 vs 173 scalars (W5). The reviewer's `equal_point_exception_is_accepted_by_the_
+  unguarded_add` scratch test is not landed: it documents the accepted `entry = acc` case of the
+  unguarded proof-base add, which the per-occurrence binding makes θ-dependent again per the
+  module-doc argument; the guards stay on the correction-base adds only.
