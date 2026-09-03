@@ -264,6 +264,28 @@ mod muldiv {
         };
         verify(&proof).expect("packed verifier should accept the packed proof");
 
+        let encoded = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+            .expect("serialize packed proof");
+        let (decoded, consumed): (AkitaJoltProof, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("deserialize packed proof");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(decoded, proof);
+        let backend_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
+        let unframed_payload_size = proof
+            .joint_opening_proof
+            .unframed_payload_size()
+            .expect("packed proof component sizes should fit in usize");
+        assert!(
+            unframed_payload_size >= backend_proof_body_size,
+            "the unframed Akita opening contains its headerless proof body"
+        );
+        assert!(
+            encoded.len() > unframed_payload_size,
+            "the full Jolt wire proof contains framing beyond the Akita opening"
+        );
+        verify(&decoded).expect("deserialized packed proof should verify");
+
         // Live tampers on the fused-inc pipeline's claim wires: the fused
         // increment's reduced claim and the hamming-reduction digit/carry
         // finals each participate in a batched output fold — an offset on
