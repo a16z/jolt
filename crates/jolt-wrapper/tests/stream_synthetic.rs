@@ -11,9 +11,7 @@ use jolt_poly::{BindingOrder, CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::stream::{
-    commit_packed, new_stream_transcript, prove_reduced_opening, prove_stage, verify_stream,
-    Column, ColumnBatching, ReductionClaim, ReductionClaimRef, StageClaims, StageMember,
-    StageMemberSpec, TensorTerm,
+    commit_packed, prove_stream, verify_stream, Column, TensorStreamStatement, TensorTerm,
 };
 
 struct RowRelation {
@@ -46,13 +44,6 @@ impl RowRelation {
             rounds: rows.trailing_zeros() as usize,
             claim,
         }
-    }
-
-    fn finals(&self) -> Vec<Fr> {
-        self.columns
-            .iter()
-            .map(|column| column.evals()[0])
-            .collect()
     }
 
     fn bind(&mut self, challenge: Fr) {
@@ -170,99 +161,28 @@ fn synthetic_stream_round_trip_and_tampers() {
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
     let packed = commit_packed(&fixture, 8, &setup).expect("commit columns");
     let relation_terms = terms();
-    let mut transcript = new_stream_transcript(&packed.commitments);
-
     let mut row_relation = RowRelation::new(dense_columns(&fixture), relation_terms.clone());
     let row_input = row_relation.claim;
-    let mut row_members = [StageMember {
-        prover: &mut row_relation,
-        input_claim: row_input,
-        degree: 5,
-        offset: 0,
-    }];
-    let (row_proof, row_result) =
-        prove_stage(&mut row_members, &mut transcript).expect("row stage");
-    let mut column_values = row_relation.finals();
-    column_values.resize(64, Fr::zero());
-    let mut column_batch =
-        ColumnBatching::new(column_values, relation_terms.clone()).expect("column stage");
-    let column_input = column_batch.input_claim();
-    assert_eq!(row_result.output_claims, [column_input]);
-    let mut column_members = [StageMember {
-        prover: &mut column_batch,
-        input_claim: column_input,
-        degree: 2,
-        offset: 0,
-    }];
-    let (column_proof, column_result) =
-        prove_stage(&mut column_members, &mut transcript).expect("column stage");
-    let column_expected = ColumnBatching::expected_final(
-        64,
-        &relation_terms,
-        &column_result.point,
-        &column_batch.final_evaluations(),
-    )
-    .expect("column final claim");
-    assert_eq!(column_result.output_claims, [column_expected]);
-
-    let column_vars = 64usize.trailing_zeros() as usize;
-    let group_vars = packed.commitments.len().trailing_zeros() as usize;
-    let slot_vars = packed.k.trailing_zeros() as usize;
-    assert_eq!(column_vars, group_vars + slot_vars);
-    let mut claims = Vec::new();
-    for column_point in column_result.point.chunks_exact(column_vars) {
-        let slot_point = &column_point[group_vars..];
-        let packed_point = packed
-            .point(&row_result.point, slot_point)
-            .expect("packed point");
-        for (polynomial, evaluations) in packed.evaluations.iter().enumerate() {
-            claims.push(ReductionClaim {
-                polynomial,
-                point: packed_point.clone(),
-                value: Polynomial::new(evaluations.clone()).evaluate(&packed_point),
-            });
-        }
-    }
-    let claim_refs: Vec<ReductionClaimRef> = claims
-        .iter()
-        .map(|claim| ReductionClaimRef {
-            polynomial: claim.polynomial,
-            point: claim.point.clone(),
-        })
-        .collect();
-    let proof = prove_reduced_opening(
-        &packed,
-        vec![row_proof, column_proof],
-        claims,
-        &setup,
-        &mut transcript,
-    )
-    .expect("reduction and opening");
-    let shapes = vec![
-        vec![StageMemberSpec {
-            rounds: 12,
-            degree: 5,
-            offset: 0,
-        }],
-        vec![StageMemberSpec {
-            rounds: 5 * column_vars,
-            degree: 2,
-            offset: 0,
-        }],
-    ];
-    let stage_claims = vec![
-        StageClaims {
-            input: vec![row_input],
-            output: row_result.output_claims,
-        },
-        StageClaims {
-            input: vec![column_input],
-            output: column_result.output_claims,
-        },
-    ];
-    let verified = verify_stream(&proof, &shapes, &stage_claims, &claim_refs, &verifier_setup)
-        .expect("verify stream");
+    let statement = TensorStreamStatement {
+        key_digest: [17; 32],
+        rows,
+        column_count: fixture.len(),
+        k: 8,
+        row_input_claim: row_input,
+        row_degree: 5,
+        terms: relation_terms,
+    };
+    let proof = prove_stream(&packed, &statement, &mut row_relation, &setup).expect("prove stream");
+    let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify stream");
     assert_eq!(verified.len(), 3);
+
+    let mut wrong_digest = statement.clone();
+    wrong_digest.key_digest[0] ^= 1;
+    assert!(verify_stream(&proof, &wrong_digest, &verifier_setup).is_err());
+
+    let mut stage_claim_tamper = proof.clone();
+    stage_claim_tamper.stage_claims[0][0] += Fr::from_u64(1);
+    assert!(verify_stream(&stage_claim_tamper, &statement, &verifier_setup).is_err());
 
     let mut changed_fixture = fixture.clone();
     if let Column::Bits(values) = &mut changed_fixture[0] {
@@ -271,37 +191,139 @@ fn synthetic_stream_round_trip_and_tampers() {
     let changed = commit_packed(&changed_fixture, 8, &setup).expect("changed commitment");
     let mut column_tamper = proof.clone();
     column_tamper.commitments[0] = changed.commitments[0];
-    assert!(verify_stream(
-        &column_tamper,
-        &shapes,
-        &stage_claims,
-        &claim_refs,
-        &verifier_setup,
-    )
-    .is_err());
+    assert!(verify_stream(&column_tamper, &statement, &verifier_setup).is_err());
 
-    let mut round_tamper = proof.clone();
-    let round = &mut round_tamper.stages[0].round_polynomials.round_polynomials[0];
+    let mut swapped_fixture = fixture.clone();
+    swapped_fixture.swap(0, 1);
+    let swapped = commit_packed(&swapped_fixture, 8, &setup).expect("swapped commitment");
+    let mut swapped_columns = proof.clone();
+    swapped_columns.commitments = swapped.commitments;
+    assert!(verify_stream(&swapped_columns, &statement, &verifier_setup).is_err());
+
+    let mut output_tamper = proof.clone();
+    let last_row_round = output_tamper.stages[0]
+        .round_polynomials
+        .round_polynomials
+        .last_mut()
+        .expect("row round");
+    let mut coefficients = last_row_round.coeffs_except_linear_term().to_vec();
+    coefficients[0] += Fr::from_u64(1);
+    *last_row_round = CompressedPoly::new(coefficients);
+    assert!(verify_stream(&output_tamper, &statement, &verifier_setup).is_err());
+
+    let mut degree_tamper = proof.clone();
+    let round = &mut degree_tamper.stages[0].round_polynomials.round_polynomials[0];
+    let mut coefficients = round.coeffs_except_linear_term().to_vec();
+    coefficients.push(Fr::from_u64(1));
+    *round = CompressedPoly::new(coefficients);
+    assert!(verify_stream(&degree_tamper, &statement, &verifier_setup).is_err());
+
+    let mut truncated_rounds = proof.clone();
+    let _ = truncated_rounds.stages[0]
+        .round_polynomials
+        .round_polynomials
+        .pop();
+    assert!(verify_stream(&truncated_rounds, &statement, &verifier_setup).is_err());
+
+    let mut extended_rounds = proof.clone();
+    let extra_round = extended_rounds.stages[0]
+        .round_polynomials
+        .round_polynomials[0]
+        .clone();
+    extended_rounds.stages[0]
+        .round_polynomials
+        .round_polynomials
+        .push(extra_round);
+    assert!(verify_stream(&extended_rounds, &statement, &verifier_setup).is_err());
+
+    let mut group_point_tamper = proof.clone();
+    let round = &mut group_point_tamper.stages[1]
+        .round_polynomials
+        .round_polynomials[0];
     let mut coefficients = round.coeffs_except_linear_term().to_vec();
     coefficients[0] += Fr::from_u64(1);
     *round = CompressedPoly::new(coefficients);
-    assert!(verify_stream(
-        &round_tamper,
-        &shapes,
-        &stage_claims,
-        &claim_refs,
-        &verifier_setup,
-    )
-    .is_err());
+    assert!(verify_stream(&group_point_tamper, &statement, &verifier_setup).is_err());
+
+    let mut stage_c_tamper = proof.clone();
+    let round = &mut stage_c_tamper.stages[2].round_polynomials.round_polynomials[0];
+    let mut coefficients = round.coeffs_except_linear_term().to_vec();
+    coefficients[0] += Fr::from_u64(1);
+    *round = CompressedPoly::new(coefficients);
+    assert!(verify_stream(&stage_c_tamper, &statement, &verifier_setup).is_err());
+
+    let mut polynomial_index_tamper = proof.clone();
+    polynomial_index_tamper.commitments.swap(0, 1);
+    assert!(verify_stream(&polynomial_index_tamper, &statement, &verifier_setup).is_err());
+
+    let mut tensor_tamper = statement.clone();
+    tensor_tamper.terms[0].columns[0] = 1;
+    assert!(verify_stream(&proof, &tensor_tamper, &verifier_setup).is_err());
 
     let mut claim_tamper = proof.clone();
     claim_tamper.reduced_claims[0] += Fr::from_u64(1);
-    assert!(verify_stream(
-        &claim_tamper,
-        &shapes,
-        &stage_claims,
-        &claim_refs,
-        &verifier_setup,
-    )
-    .is_err());
+    assert!(verify_stream(&claim_tamper, &statement, &verifier_setup).is_err());
+
+    let mut swapped_claims = proof.clone();
+    swapped_claims.reduced_claims.swap(0, 1);
+    assert!(verify_stream(&swapped_claims, &statement, &verifier_setup).is_err());
+
+    let mut extra_commitment = proof.clone();
+    extra_commitment.commitments.push(proof.commitments[0]);
+    assert!(verify_stream(&extra_commitment, &statement, &verifier_setup).is_err());
+
+    let mut opening_v = proof.clone();
+    opening_v.opening.v[0][0] += Fr::from_u64(1);
+    assert!(verify_stream(&opening_v, &statement, &verifier_setup).is_err());
+
+    let mut opening_com = proof.clone();
+    opening_com.opening.com.swap(0, 1);
+    assert!(verify_stream(&opening_com, &statement, &verifier_setup).is_err());
+
+    let mut opening_w = proof.clone();
+    opening_w.opening.w = opening_w.opening.com[0];
+    assert!(verify_stream(&opening_w, &statement, &verifier_setup).is_err());
+}
+
+#[test]
+fn non_power_of_two_group_padding() {
+    let rows = 8;
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(19),
+        rows * 8,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    for column_count in [33, 237] {
+        let mut fixture: Vec<Column> = (0..column_count - 1)
+            .map(|column| Column::Bits((0..rows).map(|row| ((row + column) & 1) as u8).collect()))
+            .collect();
+        fixture.push(Column::U16((0..rows).map(|row| row as u16 + 1).collect()));
+        let packed = commit_packed(&fixture, 8, &setup).expect("commit padded groups");
+        assert_eq!(packed.layout.group_count, column_count.div_ceil(8));
+        assert!(packed.layout.padded_group_count.is_power_of_two());
+        assert_eq!(
+            packed.layout.padded_column_count,
+            packed.layout.padded_group_count * 8
+        );
+        let values = packed
+            .column_evaluations(&[Fr::zero(); 3])
+            .expect("column evaluations");
+        assert!(values[column_count..].iter().all(Fr::is_zero));
+
+        let missing_group = packed.layout.padded_group_count - 1;
+        let mut column_point = boolean_point(missing_group, packed.layout.group_vars());
+        column_point.extend(boolean_point(0, packed.layout.slot_vars()));
+        let weights = packed
+            .layout
+            .group_weights(&column_point)
+            .expect("group weights");
+        assert!(weights.iter().all(Fr::is_zero));
+    }
+}
+
+fn boolean_point(index: usize, variables: usize) -> Vec<Fr> {
+    (0..variables)
+        .map(|bit| Fr::from_u64(((index >> (variables - bit - 1)) & 1) as u64))
+        .collect()
 }

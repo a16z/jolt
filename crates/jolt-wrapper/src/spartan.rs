@@ -2,6 +2,7 @@
 
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, One, Ring, Zero};
+use jolt_hyperkzg::error::HyperKZGError;
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{
@@ -37,6 +38,8 @@ pub enum SpartanError {
     MalformedProof,
     #[error("outer sumcheck final claim mismatch")]
     OuterFinalClaim,
+    #[error("inner sumcheck input claim mismatch")]
+    InnerInputClaim,
     #[error("inner sumcheck final claim mismatch")]
     InnerFinalClaim,
     #[error("stream: {0}")]
@@ -44,10 +47,11 @@ pub enum SpartanError {
     #[error("matrix evaluation: {0}")]
     Matrix(#[from] ConstraintMatrixEvalError),
     #[error("HyperKZG: {0}")]
-    HyperKzg(String),
+    HyperKzg(#[from] HyperKZGError),
 }
 
 pub fn prove_spartan(
+    key_digest: &[u8; 32],
     r1cs: &ConstraintMatrices<Fr>,
     public_inputs: &[Fr],
     witness: &[Fr],
@@ -58,8 +62,7 @@ pub fn prove_spartan(
     r1cs.check_witness(&z).map_err(SpartanError::Unsatisfied)?;
 
     let packed = commit_packed(&[Column::Fr(witness.to_vec())], 1, setup)?;
-    let mut transcript = new_stream_transcript(&packed.commitments);
-    append_public_inputs(public_inputs, &mut transcript);
+    let mut transcript = new_stream_transcript(key_digest, public_inputs, &packed.commitments);
     let tau = draw_point(
         r1cs.num_constraints.trailing_zeros() as usize,
         &mut transcript,
@@ -109,17 +112,19 @@ pub fn prove_spartan(
     transcript.append(&witness_eval);
     let opening =
         HyperKZGScheme::<Bn254>::open(setup, witness, &inner_result.point, &mut transcript)
-            .map_err(|error| SpartanError::HyperKzg(error.to_string()))?;
+            .map_err(SpartanError::HyperKzg)?;
 
     Ok(WrapperProof {
         commitments: packed.commitments,
         stages: vec![outer_proof, inner_proof],
+        stage_claims: vec![outer_result.output_claims, inner_result.output_claims],
         reduced_claims: vec![az, bz, cz, witness_eval],
         opening,
     })
 }
 
 pub fn verify_spartan(
+    key_digest: &[u8; 32],
     r1cs: &ConstraintMatrices<Fr>,
     public_inputs: &[Fr],
     proof: &WrapperProof,
@@ -134,25 +139,15 @@ pub fn verify_spartan(
     }
     let witness_len = r1cs.num_vars - public_columns;
     validate_dimensions(r1cs, public_inputs.len(), witness_len)?;
-    if proof.commitments.len() != 1 || proof.stages.len() != 2 || proof.reduced_claims.len() != 4 {
+    if proof.commitments.len() != 1
+        || proof.stages.len() != 2
+        || proof.stage_claims.len() != 2
+        || proof.reduced_claims.len() != 4
+    {
         return Err(SpartanError::MalformedProof);
     }
-    let az = *proof
-        .reduced_claims
-        .first()
-        .ok_or(SpartanError::MalformedProof)?;
-    let bz = *proof
-        .reduced_claims
-        .get(1)
-        .ok_or(SpartanError::MalformedProof)?;
-    let cz = *proof
-        .reduced_claims
-        .get(2)
-        .ok_or(SpartanError::MalformedProof)?;
-    let witness_eval = *proof
-        .reduced_claims
-        .get(3)
-        .ok_or(SpartanError::MalformedProof)?;
+    let [az, bz, cz, witness_eval] = <[Fr; 4]>::try_from(proof.reduced_claims.as_slice())
+        .map_err(|_| SpartanError::MalformedProof)?;
     let outer_proof = proof.stages.first().ok_or(SpartanError::MalformedProof)?;
     let inner_proof = proof.stages.get(1).ok_or(SpartanError::MalformedProof)?;
     let commitment = proof
@@ -160,8 +155,7 @@ pub fn verify_spartan(
         .first()
         .ok_or(SpartanError::MalformedProof)?;
 
-    let mut transcript = new_stream_transcript(&proof.commitments);
-    append_public_inputs(public_inputs, &mut transcript);
+    let mut transcript = new_stream_transcript(key_digest, public_inputs, &proof.commitments);
     let tau = draw_point(
         r1cs.num_constraints.trailing_zeros() as usize,
         &mut transcript,
@@ -177,9 +171,11 @@ pub fn verify_spartan(
         &[Fr::zero()],
         &mut transcript,
         |result| {
-            Ok(vec![
+            checked_stage_claim(
+                proof,
+                0,
                 EqPolynomial::<Fr>::mle(&tau, &result.point) * (az * bz - cz),
-            ])
+            )
         },
     )?;
     for value in [az, bz, cz] {
@@ -211,8 +207,8 @@ pub fn verify_spartan(
                     witness_len,
                     matrix_weights,
                 )
-                .map_err(|error| StreamError::Relation(error.to_string()))?;
-            Ok(vec![linear_eval * witness_eval])
+                .map_err(StreamError::Relation)?;
+            checked_stage_claim(proof, 1, linear_eval * witness_eval)
         },
     )?;
     transcript.append(&witness_eval);
@@ -224,8 +220,25 @@ pub fn verify_spartan(
         &proof.opening,
         &mut transcript,
     )
-    .map_err(|error| SpartanError::HyperKzg(error.to_string()))?;
+    .map_err(SpartanError::HyperKzg)?;
     Ok(())
+}
+
+fn checked_stage_claim(
+    proof: &WrapperProof,
+    stage: usize,
+    expected: Fr,
+) -> Result<Vec<Fr>, StreamError> {
+    if proof
+        .stage_claims
+        .get(stage)
+        .and_then(|claims| claims.first())
+        != Some(&expected)
+        || proof.stage_claims.get(stage).map(Vec::len) != Some(1)
+    {
+        return Err(StreamError::StageOutputClaim);
+    }
+    Ok(vec![expected])
 }
 
 fn validate_dimensions(
@@ -264,12 +277,6 @@ fn assignment(public_inputs: &[Fr], witness: &[Fr]) -> Vec<Fr> {
     z
 }
 
-fn append_public_inputs<T: Transcript<Challenge = Fr>>(public_inputs: &[Fr], transcript: &mut T) {
-    for input in public_inputs {
-        transcript.append(input);
-    }
-}
-
 fn draw_point<T: Transcript<Challenge = Fr>>(rounds: usize, transcript: &mut T) -> Vec<Fr> {
     (0..rounds).map(|_| transcript.challenge()).collect()
 }
@@ -290,30 +297,7 @@ fn public_contributions(
     let mut values = Vec::with_capacity(1 + public_inputs.len());
     values.push(Fr::one());
     values.extend_from_slice(public_inputs);
-    let count = values.len();
-    Ok(MatrixColumnContributions {
-        a: r1cs.linear_form_bilinear_eval(
-            row_weights,
-            &values,
-            0,
-            count,
-            [Fr::one(), Fr::zero(), Fr::zero()],
-        )?,
-        b: r1cs.linear_form_bilinear_eval(
-            row_weights,
-            &values,
-            0,
-            count,
-            [Fr::zero(), Fr::one(), Fr::zero()],
-        )?,
-        c: r1cs.linear_form_bilinear_eval(
-            row_weights,
-            &values,
-            0,
-            count,
-            [Fr::zero(), Fr::zero(), Fr::one()],
-        )?,
-    })
+    r1cs.column_range_contributions(row_weights, 0, &values)
 }
 
 fn project_witness_columns(
@@ -426,21 +410,31 @@ impl ProveRounds<Fr> for OuterSumcheck {
             self.bind(challenge);
         }
         let half = self.az.len() / 2;
-        let evaluations: Vec<Fr> = (0..=OUTER_DEGREE)
-            .map(|x| {
-                let x = Fr::from_u64(x as u64);
-                (0..half)
-                    .into_par_iter()
-                    .map(|index| {
+        let evaluations = (0..half)
+            .into_par_iter()
+            .map(|index| {
+                let mut local = [Fr::zero(); OUTER_DEGREE + 1];
+                for (x, evaluation) in local.iter_mut().enumerate() {
+                    let x = Fr::from_u64(x as u64);
+                    *evaluation = {
                         let eq = self.eq_tau.sumcheck_round_eval(index, x);
                         let az = self.az.sumcheck_round_eval(index, x);
                         let bz = self.bz.sumcheck_round_eval(index, x);
                         let cz = self.cz.sumcheck_round_eval(index, x);
                         eq * (az * bz - cz)
-                    })
-                    .sum()
+                    };
+                }
+                local
             })
-            .collect();
+            .reduce(
+                || [Fr::zero(); OUTER_DEGREE + 1],
+                |mut sum, local| {
+                    for (sum, value) in sum.iter_mut().zip(local) {
+                        *sum += value;
+                    }
+                    sum
+                },
+            );
         if evaluations[0] + evaluations[1] != previous_claim {
             return Err(SumcheckError::RoundCheckFailed {
                 round,
@@ -471,7 +465,7 @@ impl InnerSumcheck {
             .map(|(&left, &right)| left * right)
             .sum();
         if actual != claim {
-            return Err(SpartanError::InnerFinalClaim);
+            return Err(SpartanError::InnerInputClaim);
         }
         let rounds = witness.len().trailing_zeros() as usize;
         Ok(Self {
@@ -508,18 +502,26 @@ impl ProveRounds<Fr> for InnerSumcheck {
             self.bind(challenge);
         }
         let half = self.witness.len() / 2;
-        let evaluations: Vec<Fr> = (0..=INNER_DEGREE)
-            .map(|x| {
-                let x = Fr::from_u64(x as u64);
-                (0..half)
-                    .into_par_iter()
-                    .map(|index| {
-                        self.linear_form.sumcheck_round_eval(index, x)
-                            * self.witness.sumcheck_round_eval(index, x)
-                    })
-                    .sum()
+        let evaluations = (0..half)
+            .into_par_iter()
+            .map(|index| {
+                let mut local = [Fr::zero(); INNER_DEGREE + 1];
+                for (x, evaluation) in local.iter_mut().enumerate() {
+                    let x = Fr::from_u64(x as u64);
+                    *evaluation = self.linear_form.sumcheck_round_eval(index, x)
+                        * self.witness.sumcheck_round_eval(index, x);
+                }
+                local
             })
-            .collect();
+            .reduce(
+                || [Fr::zero(); INNER_DEGREE + 1],
+                |mut sum, local| {
+                    for (sum, value) in sum.iter_mut().zip(local) {
+                        *sum += value;
+                    }
+                    sum
+                },
+            );
         if evaluations[0] + evaluations[1] != previous_claim {
             return Err(SumcheckError::RoundCheckFailed {
                 round,

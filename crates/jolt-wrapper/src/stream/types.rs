@@ -1,6 +1,9 @@
 use jolt_crypto::Bn254;
 use jolt_field::Fr;
+use jolt_hyperkzg::error::HyperKZGError;
 use jolt_hyperkzg::{HyperKZGCommitment, HyperKZGProof};
+use jolt_openings::OpeningsError;
+use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::{CompressedSumcheckProof, SumcheckError};
 use serde::{Deserialize, Serialize};
@@ -18,6 +21,7 @@ pub struct StageProof {
 pub struct WrapperProof {
     pub commitments: Vec<Commitment>,
     pub stages: Vec<StageProof>,
+    pub stage_claims: Vec<Vec<Fr>>,
     pub reduced_claims: Vec<Fr>,
     pub opening: OpeningProof,
 }
@@ -32,8 +36,10 @@ impl WrapperProof {
             .map(|round| round.coeffs_except_linear_term().len())
             .sum::<usize>();
         let opening_scalars = self.opening.v.iter().map(Vec::len).sum::<usize>();
+        let stage_claims = self.stage_claims.iter().map(Vec::len).sum::<usize>();
         32 * (self.commitments.len()
             + round_scalars
+            + stage_claims
             + self.reduced_claims.len()
             + self.opening.com.len()
             + 1
@@ -60,6 +66,12 @@ impl WrapperProof {
             + varint_bytes(self.commitments.len())
             + varint_bytes(self.stages.len())
             + stage_prefixes
+            + varint_bytes(self.stage_claims.len())
+            + self
+                .stage_claims
+                .iter()
+                .map(|claims| varint_bytes(claims.len()))
+                .sum::<usize>()
             + varint_bytes(self.reduced_claims.len())
             + varint_bytes(self.opening.com.len())
             + self
@@ -78,12 +90,6 @@ pub struct StageMemberSpec {
     pub offset: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StageClaims {
-    pub input: Vec<Fr>,
-    pub output: Vec<Fr>,
-}
-
 pub struct StageMember<'a> {
     pub prover: &'a mut dyn ProveRounds<Fr>,
     pub input_claim: Fr,
@@ -99,23 +105,45 @@ pub struct StageResult {
     pub final_claim: Fr,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReductionClaim {
-    pub polynomial: usize,
-    pub point: Vec<Fr>,
-    pub value: Fr,
+impl StageResult {
+    pub fn member_point(
+        &self,
+        member: usize,
+        specs: &[StageMemberSpec],
+    ) -> Result<&[Fr], StreamError> {
+        let spec = specs.get(member).ok_or(StreamError::StageMemberCount)?;
+        let end = spec
+            .offset
+            .checked_add(spec.rounds)
+            .ok_or(StreamError::StageMemberCount)?;
+        self.point
+            .get(spec.offset..end)
+            .ok_or(StreamError::StageMemberCount)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReductionClaimRef {
-    pub polynomial: usize,
+pub struct ReductionClaim {
+    pub polynomial_weights: Vec<Fr>,
     pub point: Vec<Fr>,
+    pub value: Fr,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TensorTerm {
     pub coefficient: Fr,
     pub columns: Vec<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TensorStreamStatement {
+    pub key_digest: [u8; 32],
+    pub rows: usize,
+    pub column_count: usize,
+    pub k: usize,
+    pub row_input_claim: Fr,
+    pub row_degree: usize,
+    pub terms: Vec<TensorTerm>,
 }
 
 #[derive(Debug, Error)]
@@ -144,12 +172,12 @@ pub enum StreamError {
     PointDimension { expected: usize, actual: usize },
     #[error("stage must contain at least one member")]
     EmptyStage,
-    #[error("stage member {member} window exceeds {rounds} rounds")]
-    StageWindow { member: usize, rounds: usize },
     #[error("stage proof member count mismatch")]
     StageMemberCount,
     #[error("stage output claim mismatch")]
     StageOutputClaim,
+    #[error("stage padding scale is not invertible")]
+    StageScale,
     #[error("column tensor must contain at least one factor")]
     EmptyTensor,
     #[error("column tensor term {term} has arity {actual}, expected {expected}")]
@@ -160,14 +188,12 @@ pub enum StreamError {
     },
     #[error("column index {column} is out of range for {columns} columns")]
     ColumnOutOfRange { column: usize, columns: usize },
-    #[error("reduction claim {claim} references polynomial {polynomial}, only {count} exist")]
-    PolynomialOutOfRange {
+    #[error("reduction claim {claim} has {actual} polynomial weights, expected {expected}")]
+    PolynomialWeightCount {
         claim: usize,
-        polynomial: usize,
-        count: usize,
+        expected: usize,
+        actual: usize,
     },
-    #[error("reduction claim {claim} value does not match its polynomial")]
-    ReductionValue { claim: usize },
     #[error("polynomial {polynomial} has {actual} evaluations, expected {expected}")]
     PolynomialLength {
         polynomial: usize,
@@ -178,16 +204,18 @@ pub enum StreamError {
     CoefficientCount { claims: usize, coefficients: usize },
     #[error("stream shape/proof stage count mismatch")]
     StageCount,
+    #[error("stage A output does not equal stage B input")]
+    StageLink,
     #[error("opening claim mismatch")]
     OpeningClaim,
     #[error("sumcheck: {0}")]
     Sumcheck(#[from] SumcheckError<Fr>),
     #[error("commitment failed: {0}")]
-    Commitment(String),
+    Commitment(#[from] OpeningsError),
     #[error("relation check failed: {0}")]
-    Relation(String),
+    Relation(#[from] ConstraintMatrixEvalError),
     #[error("HyperKZG: {0}")]
-    HyperKzg(String),
+    HyperKzg(#[from] HyperKZGError),
 }
 
 fn varint_bytes(value: usize) -> usize {

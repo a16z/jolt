@@ -3,8 +3,8 @@
 use jolt_crypto::ec::bn254::bit_columns::g1_bit_columns_msm;
 use jolt_crypto::Bn254;
 use jolt_field::{Field, Fr, One, Ring, Zero};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
+use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme};
+use jolt_openings::CommitmentScheme;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::batch::{BatchMember, BatchPrelude};
 use jolt_sumcheck::prover::{prove_batch, ProveRounds, SequentialRounds};
@@ -13,17 +13,21 @@ use jolt_sumcheck::{
     BooleanHypercube, ClearProof, SumcheckClaim, SumcheckError, OPENING_CLAIM_TRANSCRIPT_LABEL,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_transcript::{AppendToTranscript, Blake3Transcript, Transcript};
+use jolt_transcript::Transcript;
 use rayon::prelude::*;
 
 mod types;
 pub use types::*;
+mod protocol;
+pub use protocol::{new_stream_transcript, prove_stream, verify_stream};
 
 const STREAM_LABEL: &[u8] = b"jolt-wrapper-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Column {
+    /// Values checked as 0/1 before commitment; the proved relation must enforce booleanity.
     Bits(Vec<u8>),
+    /// Small-scalar commitment input; the proved relation must enforce its range requirement.
     U16(Vec<u16>),
     Fr(Vec<Fr>),
 }
@@ -52,53 +56,141 @@ impl Column {
 
 /// `ceil(columns / k)` polynomials with `packed[row * k + slot] = column[g*k+slot][row]`.
 /// Thus the row variables precede the `log2(k)` low column-slot variables in an opening point.
-#[derive(Clone, Debug)]
-pub struct PackedColumns {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PackingLayout {
     pub rows: usize,
     pub column_count: usize,
     pub k: usize,
+    pub group_count: usize,
+    pub padded_group_count: usize,
+    pub padded_column_count: usize,
+}
+
+impl PackingLayout {
+    pub fn new(rows: usize, column_count: usize, k: usize) -> Result<Self, StreamError> {
+        if column_count == 0 {
+            return Err(StreamError::NoColumns);
+        }
+        if !k.is_power_of_two() {
+            return Err(StreamError::InvalidPacking(k));
+        }
+        if rows == 0 || !rows.is_power_of_two() {
+            return Err(StreamError::RowCount {
+                column: 0,
+                expected: rows.next_power_of_two(),
+                actual: rows,
+            });
+        }
+        let group_count = column_count.div_ceil(k);
+        let padded_group_count = group_count.next_power_of_two();
+        let padded_column_count = padded_group_count
+            .checked_mul(k)
+            .ok_or(StreamError::PackedLengthOverflow)?;
+        Ok(Self {
+            rows,
+            column_count,
+            k,
+            group_count,
+            padded_group_count,
+            padded_column_count,
+        })
+    }
+
+    pub fn row_vars(self) -> usize {
+        self.rows.trailing_zeros() as usize
+    }
+
+    pub fn group_vars(self) -> usize {
+        self.padded_group_count.trailing_zeros() as usize
+    }
+
+    pub fn slot_vars(self) -> usize {
+        self.k.trailing_zeros() as usize
+    }
+
+    pub fn column_vars(self) -> usize {
+        self.group_vars() + self.slot_vars()
+    }
+
+    pub fn packed_vars(self) -> usize {
+        self.row_vars() + self.slot_vars()
+    }
+
+    pub fn split_column_point(self, point: &[Fr]) -> Result<(&[Fr], &[Fr]), StreamError> {
+        if point.len() != self.column_vars() {
+            return Err(StreamError::PointDimension {
+                expected: self.column_vars(),
+                actual: point.len(),
+            });
+        }
+        Ok(point.split_at(self.group_vars()))
+    }
+
+    pub fn group_weights(self, column_point: &[Fr]) -> Result<Vec<Fr>, StreamError> {
+        let (group_point, _) = self.split_column_point(column_point)?;
+        Ok(EqPolynomial::<Fr>::evals(group_point, None)
+            .into_iter()
+            .take(self.group_count)
+            .collect())
+    }
+
+    pub fn packed_point(
+        self,
+        row_point: &[Fr],
+        column_point: &[Fr],
+    ) -> Result<Vec<Fr>, StreamError> {
+        if row_point.len() != self.row_vars() {
+            return Err(StreamError::PointDimension {
+                expected: self.row_vars(),
+                actual: row_point.len(),
+            });
+        }
+        let (_, slot_point) = self.split_column_point(column_point)?;
+        let mut point = Vec::with_capacity(self.packed_vars());
+        point.extend_from_slice(row_point);
+        point.extend_from_slice(slot_point);
+        Ok(point)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PackedColumns {
+    pub layout: PackingLayout,
     pub evaluations: Vec<Vec<Fr>>,
     pub commitments: Vec<Commitment>,
 }
 
 impl PackedColumns {
-    pub fn point(&self, row_point: &[Fr], slot_point: &[Fr]) -> Result<Vec<Fr>, StreamError> {
-        let row_vars = self.rows.trailing_zeros() as usize;
-        let slot_vars = self.k.trailing_zeros() as usize;
-        if row_point.len() != row_vars || slot_point.len() != slot_vars {
-            return Err(StreamError::PointDimension {
-                expected: row_vars + slot_vars,
-                actual: row_point.len() + slot_point.len(),
-            });
-        }
-        let mut point = Vec::with_capacity(row_vars + slot_vars);
-        point.extend_from_slice(row_point);
-        point.extend_from_slice(slot_point);
-        Ok(point)
-    }
-
     pub fn column_evaluations(&self, row_point: &[Fr]) -> Result<Vec<Fr>, StreamError> {
-        let expected = self.rows.trailing_zeros() as usize;
+        let expected = self.layout.row_vars();
         if row_point.len() != expected {
             return Err(StreamError::PointDimension {
                 expected,
                 actual: row_point.len(),
             });
         }
+        let row_weights = EqPolynomial::<Fr>::evals(row_point, None);
         let bound_groups: Vec<Vec<Fr>> = self
             .evaluations
             .par_iter()
             .map(|evaluations| {
-                let mut polynomial = Polynomial::new(evaluations.clone());
-                for &coordinate in row_point {
-                    polynomial.bind_with_order(coordinate, BindingOrder::HighToLow);
+                let mut values = vec![Fr::zero(); self.layout.k];
+                for (&row_weight, row) in row_weights
+                    .iter()
+                    .zip(evaluations.chunks_exact(self.layout.k))
+                {
+                    for (value, &entry) in values.iter_mut().zip(row) {
+                        *value += row_weight * entry;
+                    }
                 }
-                polynomial.into_evals()
+                values
             })
             .collect();
-        Ok((0..self.column_count)
-            .map(|column| bound_groups[column / self.k][column % self.k])
-            .collect())
+        let mut values: Vec<Fr> = (0..self.layout.column_count)
+            .map(|column| bound_groups[column / self.layout.k][column % self.layout.k])
+            .collect();
+        values.resize(self.layout.padded_column_count, Fr::zero());
+        Ok(values)
     }
 }
 
@@ -110,17 +202,8 @@ pub fn commit_packed(
     if columns.is_empty() {
         return Err(StreamError::NoColumns);
     }
-    if !k.is_power_of_two() {
-        return Err(StreamError::InvalidPacking(k));
-    }
     let rows = columns[0].len();
-    if rows == 0 || !rows.is_power_of_two() {
-        return Err(StreamError::RowCount {
-            column: 0,
-            expected: rows.next_power_of_two(),
-            actual: rows,
-        });
-    }
+    let layout = PackingLayout::new(rows, columns.len(), k)?;
     for (column, values) in columns.iter().enumerate() {
         if values.len() != rows {
             return Err(StreamError::RowCount {
@@ -135,7 +218,8 @@ pub fn commit_packed(
             }
         }
     }
-    let packed_len = rows
+    let packed_len = layout
+        .rows
         .checked_mul(k)
         .ok_or(StreamError::PackedLengthOverflow)?;
     if setup.g1_powers().len() < packed_len {
@@ -144,7 +228,7 @@ pub fn commit_packed(
             actual: setup.g1_powers().len(),
         });
     }
-    let groups = columns.len().div_ceil(k);
+    let groups = layout.group_count;
     let evaluations: Vec<Vec<Fr>> = (0..groups)
         .into_par_iter()
         .map(|group| {
@@ -222,9 +306,9 @@ pub fn commit_packed(
                     &packed,
                 ))
             } else {
-                HyperKZGScheme::<Bn254>::commit(&Polynomial::new(evaluations[group].clone()), setup)
+                HyperKZGScheme::<Bn254>::commit(evaluations[group].as_slice(), setup)
                     .map(|(commitment, ())| commitment)
-                    .map_err(|error| StreamError::Commitment(error.to_string()))?
+                    .map_err(StreamError::Commitment)?
             };
             Ok((group, commitment))
         })
@@ -237,9 +321,7 @@ pub fn commit_packed(
         .collect();
 
     Ok(PackedColumns {
-        rows,
-        column_count: columns.len(),
-        k,
+        layout,
         evaluations,
         commitments,
     })
@@ -248,6 +330,7 @@ pub fn commit_packed(
 struct ScaledRounds<'a> {
     inner: &'a mut dyn ProveRounds<Fr>,
     scale: Fr,
+    scale_inverse: Fr,
 }
 
 impl ProveRounds<Fr> for ScaledRounds<'_> {
@@ -261,17 +344,9 @@ impl ProveRounds<Fr> for ScaledRounds<'_> {
         round: usize,
         previous_claim: Fr,
     ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
-        let scale_inverse = self
-            .scale
-            .inverse()
-            .ok_or(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: Fr::zero(),
-            })?;
-        let polynomial = self
-            .inner
-            .prove_round(bind, round, previous_claim * scale_inverse)?;
+        let polynomial =
+            self.inner
+                .prove_round(bind, round, previous_claim * self.scale_inverse)?;
         Ok(UnivariatePoly::new(
             polynomial
                 .coefficients()
@@ -314,22 +389,19 @@ pub fn prove_stage<T: Transcript<Challenge = Fr>>(
             offset: member.offset,
         })
         .collect();
-    for (index, member) in descriptions.iter().enumerate() {
-        if member.offset + member.rounds > max_rounds {
-            return Err(StreamError::StageWindow {
-                member: index,
-                rounds: max_rounds,
-            });
-        }
-    }
     let prelude = BatchPrelude::new(descriptions, max_rounds, max_degree);
     let mut scaled: Vec<ScaledRounds<'_>> = members
         .iter_mut()
-        .map(|member| ScaledRounds {
-            scale: Fr::one().mul_pow_2(max_rounds - member.offset - member.prover.num_rounds()),
-            inner: &mut *member.prover,
+        .map(|member| {
+            let scale =
+                Fr::one().mul_pow_2(max_rounds - member.offset - member.prover.num_rounds());
+            Ok(ScaledRounds {
+                scale,
+                scale_inverse: scale.inverse().ok_or(StreamError::StageScale)?,
+                inner: &mut *member.prover,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, StreamError>>()?;
     let mut provers: Vec<&mut dyn ProveRounds<Fr>> = scaled
         .iter_mut()
         .map(|member| member as &mut dyn ProveRounds<Fr>)
@@ -362,20 +434,6 @@ pub fn prove_stage<T: Transcript<Challenge = Fr>>(
     ))
 }
 
-pub fn verify_stage<T: Transcript<Challenge = Fr>>(
-    proof: &StageProof,
-    members: &[StageMemberSpec],
-    claims: &StageClaims,
-    transcript: &mut T,
-) -> Result<StageResult, StreamError> {
-    if claims.input.len() != members.len() || claims.output.len() != members.len() {
-        return Err(StreamError::StageMemberCount);
-    }
-    verify_stage_with(proof, members, &claims.input, transcript, |_| {
-        Ok(claims.output.clone())
-    })
-}
-
 pub fn verify_stage_with<T, F>(
     proof: &StageProof,
     members: &[StageMemberSpec],
@@ -401,10 +459,15 @@ where
     if result.final_claim != expected {
         return Err(StreamError::StageOutputClaim);
     }
-    let recorder = ClearSumcheckRecorder::<Fr, Commitment>::new();
-    let _ = recorder.finish(&output_claims, transcript)?;
+    absorb_output_claims(&output_claims, transcript);
     result.output_claims = output_claims;
     Ok(result)
+}
+
+fn absorb_output_claims<T: Transcript>(claims: &[Fr], transcript: &mut T) {
+    for claim in claims {
+        transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, claim);
+    }
 }
 
 fn verify_stage_without_output<T: Transcript<Challenge = Fr>>(
@@ -708,28 +771,26 @@ impl ClaimReduction {
         let rounds = len.trailing_zeros() as usize;
         let mut weights = vec![vec![Fr::zero(); len]; polynomials.len()];
         for (claim_index, (claim, &coefficient)) in claims.iter().zip(coefficients).enumerate() {
-            let polynomial =
-                polynomials
-                    .get(claim.polynomial)
-                    .ok_or(StreamError::PolynomialOutOfRange {
-                        claim: claim_index,
-                        polynomial: claim.polynomial,
-                        count: polynomials.len(),
-                    })?;
+            if claim.polynomial_weights.len() != polynomials.len() {
+                return Err(StreamError::PolynomialWeightCount {
+                    claim: claim_index,
+                    expected: polynomials.len(),
+                    actual: claim.polynomial_weights.len(),
+                });
+            }
             if claim.point.len() != rounds {
                 return Err(StreamError::PointDimension {
                     expected: rounds,
                     actual: claim.point.len(),
                 });
             }
-            if Polynomial::new(polynomial.clone()).evaluate(&claim.point) != claim.value {
-                return Err(StreamError::ReductionValue { claim: claim_index });
-            }
-            for (weight, eq) in weights[claim.polynomial]
-                .iter_mut()
-                .zip(EqPolynomial::<Fr>::evals(&claim.point, None))
+            let eq = EqPolynomial::<Fr>::evals(&claim.point, None);
+            for (polynomial_weights, &polynomial_coefficient) in
+                weights.iter_mut().zip(&claim.polynomial_weights)
             {
-                *weight += coefficient * eq;
+                for (weight, &eq_value) in polynomial_weights.iter_mut().zip(&eq) {
+                    *weight += coefficient * polynomial_coefficient * eq_value;
+                }
             }
         }
         Ok(Self {
@@ -780,23 +841,33 @@ impl ProveRounds<Fr> for ClaimReduction {
             self.bind_previous(challenge);
         }
         let half = self.polynomials[0].len() / 2;
-        let evaluations: Vec<Fr> = (0..=2)
-            .map(|x| {
-                let x = Fr::from_u64(x);
-                (0..half)
-                    .map(|index| {
-                        self.polynomials
-                            .iter()
-                            .zip(&self.weights)
-                            .map(|(polynomial, weight)| {
-                                polynomial.sumcheck_round_eval(index, x)
-                                    * weight.sumcheck_round_eval(index, x)
-                            })
-                            .sum::<Fr>()
-                    })
-                    .sum()
+        let evaluations = (0..half)
+            .into_par_iter()
+            .map(|index| {
+                let mut local = [Fr::zero(); 3];
+                for (x, evaluation) in local.iter_mut().enumerate() {
+                    let x = Fr::from_u64(x as u64);
+                    *evaluation = self
+                        .polynomials
+                        .iter()
+                        .zip(&self.weights)
+                        .map(|(polynomial, weight)| {
+                            polynomial.sumcheck_round_eval(index, x)
+                                * weight.sumcheck_round_eval(index, x)
+                        })
+                        .sum();
+                }
+                local
             })
-            .collect();
+            .reduce(
+                || [Fr::zero(); 3],
+                |mut sum, local| {
+                    for (sum, value) in sum.iter_mut().zip(local) {
+                        *sum += value;
+                    }
+                    sum
+                },
+            );
         if evaluations[0] + evaluations[1] != previous_claim {
             return Err(SumcheckError::RoundCheckFailed {
                 round,
@@ -813,164 +884,7 @@ impl ProveRounds<Fr> for ClaimReduction {
     }
 }
 
-pub fn prove_reduced_opening(
-    packed: &PackedColumns,
-    mut stages: Vec<StageProof>,
-    claims: Vec<ReductionClaim>,
-    setup: &HyperKZGProverSetup<Bn254>,
-    transcript: &mut Blake3Transcript<Fr>,
-) -> Result<WrapperProof, StreamError> {
-    for claim in &claims {
-        transcript.append(&claim.value);
-    }
-    let coefficients: Vec<Fr> = claims.iter().map(|_| transcript.challenge()).collect();
-    let mut reduction = ClaimReduction::new(&packed.evaluations, &claims, &coefficients)?;
-    let input_claim = reduction.input_claim();
-    let mut members = [StageMember {
-        prover: &mut reduction,
-        input_claim,
-        degree: 2,
-        offset: 0,
-    }];
-    let (stage, result) = prove_stage(&mut members, transcript)?;
-    stages.push(stage);
-    let weights = reduction.final_weights();
-    let combined_evaluations = combine_evaluations(&packed.evaluations, &weights);
-    let claimed_eval = Polynomial::new(combined_evaluations.clone()).evaluate(&result.point);
-    if result.output_claims != [claimed_eval] {
-        return Err(StreamError::OpeningClaim);
-    }
-    let opening =
-        HyperKZGScheme::<Bn254>::open(setup, &combined_evaluations, &result.point, transcript)
-            .map_err(|error| StreamError::HyperKzg(error.to_string()))?;
-    Ok(WrapperProof {
-        commitments: packed.commitments.clone(),
-        stages,
-        reduced_claims: claims.into_iter().map(|claim| claim.value).collect(),
-        opening,
-    })
-}
-
-pub fn verify_stream(
-    proof: &WrapperProof,
-    prior_stage_shapes: &[Vec<StageMemberSpec>],
-    prior_stage_claims: &[StageClaims],
-    claims: &[ReductionClaimRef],
-    setup: &HyperKZGVerifierSetup<Bn254>,
-) -> Result<Vec<StageResult>, StreamError> {
-    if proof.stages.len() != prior_stage_shapes.len() + 1
-        || prior_stage_shapes.len() != prior_stage_claims.len()
-        || proof.reduced_claims.len() != claims.len()
-    {
-        return Err(StreamError::StageCount);
-    }
-    let mut transcript = Blake3Transcript::<Fr>::new(STREAM_LABEL);
-    absorb_commitments(&proof.commitments, &mut transcript);
-    let mut results = Vec::with_capacity(proof.stages.len());
-    for ((stage, shape), stage_claims) in proof
-        .stages
-        .iter()
-        .take(prior_stage_shapes.len())
-        .zip(prior_stage_shapes)
-        .zip(prior_stage_claims)
-    {
-        results.push(verify_stage(stage, shape, stage_claims, &mut transcript)?);
-    }
-    for value in &proof.reduced_claims {
-        transcript.append(value);
-    }
-    let coefficients: Vec<Fr> = claims.iter().map(|_| transcript.challenge()).collect();
-    let final_shape = [StageMemberSpec {
-        rounds: proof
-            .commitments
-            .first()
-            .map(|_| proof.opening.com.len() + 1)
-            .ok_or(StreamError::NoColumns)?,
-        degree: 2,
-        offset: 0,
-    }];
-    let final_stage = proof.stages.last().ok_or(StreamError::StageCount)?;
-    let expected_input: Fr = proof
-        .reduced_claims
-        .iter()
-        .zip(&coefficients)
-        .map(|(&value, &coefficient)| value * coefficient)
-        .sum();
-    let mut final_result = verify_stage_without_output(
-        final_stage,
-        &final_shape,
-        &[expected_input],
-        &mut transcript,
-    )?;
-    let weights = reduction_weights(
-        proof.commitments.len(),
-        claims,
-        &coefficients,
-        &final_result.point,
-    )?;
-    let commitment = HyperKZGScheme::<Bn254>::combine(&proof.commitments, &weights);
-    let coefficient_inverse = final_result.coefficients[0]
-        .inverse()
-        .ok_or(StreamError::StageOutputClaim)?;
-    let claimed_eval = final_result.final_claim * coefficient_inverse;
-    transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &claimed_eval);
-    final_result.output_claims = vec![claimed_eval];
-    HyperKZGScheme::<Bn254>::verify(
-        setup,
-        &commitment,
-        &final_result.point,
-        &claimed_eval,
-        &proof.opening,
-        &mut transcript,
-    )
-    .map_err(|error| StreamError::HyperKzg(error.to_string()))?;
-    results.push(final_result);
-    Ok(results)
-}
-
-pub fn new_stream_transcript(commitments: &[Commitment]) -> Blake3Transcript<Fr> {
-    let mut transcript = Blake3Transcript::<Fr>::new(STREAM_LABEL);
-    absorb_commitments(commitments, &mut transcript);
-    transcript
-}
-
-pub fn absorb_commitments<T: Transcript<Challenge = Fr>>(
-    commitments: &[Commitment],
-    transcript: &mut T,
-) {
-    for commitment in commitments {
-        commitment.append_to_transcript(transcript);
-    }
-}
-
-fn reduction_weights(
-    polynomial_count: usize,
-    claims: &[ReductionClaimRef],
-    coefficients: &[Fr],
-    point: &[Fr],
-) -> Result<Vec<Fr>, StreamError> {
-    let mut weights = vec![Fr::zero(); polynomial_count];
-    for (claim_index, (claim, &coefficient)) in claims.iter().zip(coefficients).enumerate() {
-        let weight =
-            weights
-                .get_mut(claim.polynomial)
-                .ok_or(StreamError::PolynomialOutOfRange {
-                    claim: claim_index,
-                    polynomial: claim.polynomial,
-                    count: polynomial_count,
-                })?;
-        if claim.point.len() != point.len() {
-            return Err(StreamError::PointDimension {
-                expected: point.len(),
-                actual: claim.point.len(),
-            });
-        }
-        *weight += coefficient * EqPolynomial::<Fr>::mle(&claim.point, point);
-    }
-    Ok(weights)
-}
-
-fn combine_evaluations(polynomials: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
+pub(super) fn combine_evaluations(polynomials: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
     (0..polynomials[0].len())
         .into_par_iter()
         .map(|index| {
