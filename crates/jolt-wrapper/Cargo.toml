@@ -25,4 +25,5 @@ thiserror = { workspace = true }
 tracing.workspace = true
 
 [dev-dependencies]
+bincode = { workspace = true }
 rand = { workspace = true }

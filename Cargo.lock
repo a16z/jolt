@@ -4076,6 +4076,7 @@ dependencies = [
 name = "jolt-wrapper"
 version = "0.1.0"
 dependencies = [
+ "bincode 2.0.1",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
