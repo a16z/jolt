@@ -7,14 +7,14 @@ Date: 2026-09-02. Target: one T1 + T2 + Spartan/SPARK stream and one HyperKZG op
 `WrapPreparation::new` now performs the proof-independent front half against committed APIs:
 
 1. derive and hash `WrapperProfile`;
-2. build the 5,254-row verifier relation and generate its satisfying 6,760-variable assignment;
+2. build the 5,254-row verifier relation and generate its satisfying 6,761-variable assignment;
 3. replay the real Jolt proof through `RecordingTranscript<Blake3Transcript>`;
 4. build and verify the T1 schedule/table in the configured common row domain;
 5. extract the relation's public column with the production challenge decoders;
-6. embed the 6,714 private Spartan coordinates as the 13-round shared W column over `2^18` rows.
+6. embed the 6,715 private Spartan coordinates as the 13-round shared W column over `2^18` rows.
 
 Cached fibonacci `2^18` measurement: 889 ms preparation, T1 219,784 used rows / `2^18`
-padded rows, R1CS 5,254 constraints / 6,760 variables, public column 7 verifier-computed values +
+padded rows, R1CS 5,254 constraints / 6,761 variables, public column 7 verifier-computed values +
 38 canonical challenge preimages.
 
 The committed relation exports 45 public entries, split 7+38 for this profile:
@@ -43,7 +43,10 @@ inner prover can only start after A fixes `rx`, so it starts stage S and fixes `
 degree-2 rounds. A SPARK matrix member contains `eq(ry, col(k))`; it cannot emit any round
 polynomial until all of `ry` is known. Starting it in the same 13-round batch lets the prover choose
 its round polynomial after seeing the matching evaluation point. Offsetting SPARK after the inner
-member is sound, but is 13 + 16 sequential rounds rather than a 16-round batch.
+member is sound, but is 13 + 16 sequential rounds rather than a 16-round batch. `prove_stage`
+absorbs every member's input claim and draws every batching coefficient before round zero, while
+`prove_batch` calls `finish_rounds` only after the batch's maximum round. An offset cannot expose
+the inner member's final bind or construct SPARK midway through the batch.
 
 The sound order supported by the current sumcheck API is therefore: (A) T1/T2 + Spartan outer;
 (S) Spartan inner; (P) SPARK after `ry`; (R) point reduction; (B) column batching; one opening.
@@ -108,6 +111,27 @@ The native fallback can replace SPARK's matrix-memory argument only after stages
 computes the same matrix MLEs from the verifier key in `O(nnz)` and adds no proof bytes, but it does
 not remove the outer→inner dependency above.
 
+## Measured native-R component
+
+The cached fibonacci `2^18` relation was padded to 8,192 rows and 8,192 private witness entries,
+proved with the current standalone Spartan/HyperKZG path, and verified:
+
+| item | bytes |
+|---|---:|
+| 38 canonical challenge words | 608 |
+| W commitment | 32 |
+| outer: 13 degree-3 rounds | 1,248 |
+| inner: 13 degree-2 rounds | 832 |
+| two stage claims | 64 |
+| `Az(rx), Bz(rx), Cz(rx), W(ry)` | 128 |
+| standalone HyperKZG opening | 1,280 |
+| **payload** | **4,192** |
+| **bincode** | **4,246** |
+
+Preparation took 559 ms, proving 29 ms, and verification 4 ms. Host load was 9.07 immediately
+before the run after another 167 s ten-thread performance gate, so timings include contention. This
+is an R-only measurement; it does not bind T1, T2, or SPARK and is not a wrapped proof.
+
 ## Size projection before SPARK implementation
 
 The measured synthetic k=16 stream is 4,960 B. With the requested stages added literally:
@@ -119,12 +143,13 @@ The measured synthetic k=16 stream is 4,960 B. With the requested stages added l
 | SPARK stage P, 16 degree-3 rounds | 1,536 |
 | one new packed commitment + two residual claims | 96 |
 | 38 canonical challenge words | 608 |
-| **projected proof payload** | **8,032** |
+| **projection before point reduction** | **8,032** |
 
 This is **2,032 B over the 6,000 B target** (1,888 B over 6 KiB) before the missing point-reduction
-proof and T1/T2 link claims. The
-failing item is the sequential `rx -> ry -> SPARK` round-polynomial block: SPARK cannot consume the
-same challenges as the inner sumcheck under the current protocol.
+proof and T1/T2 link claims. A minimal common-domain point reduction adds another 18 degree-2 rounds
+(1,152 B), so the sound full-statement lower bound is **9,184 B** before its final-value claims and
+the link claims. The failing item is the sequential `rx -> ry -> SPARK` round-polynomial block:
+SPARK cannot consume the same challenges as the inner sumcheck under the current protocol.
 
 ## Current result
 
