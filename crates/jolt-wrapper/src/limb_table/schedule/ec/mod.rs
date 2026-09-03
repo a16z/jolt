@@ -16,13 +16,15 @@
 //! no witness). The correction base's adds carry the completeness guard
 //! ([`super::super::ops::g1_add_guard`]: `inv·(x2 − x1) = 1` from the add's
 //! own rows), so they admit no exceptional witness at all. For a proof-base
-//! add of window `w`, base `k`, and for the doublings, the accumulator is
-//! `θ·A·G − 16·k_K·P_w·G + H` with `A = A_{w,k} = 16^{w+1} + λ·(n·(16^{w+1}
-//! − 16)/15 + k)` (`A_w = 16^w + λ·n·(16^w − 1)/15` before the doublings),
-//! `K = k_K·G`, `P_w` the integer formed by the `w` digits of `θ` the
+//! add of window `w`, base `k`, the accumulator is `θ·A·G − 16·k_K·P_w·G +
+//! H` with `A = A_{w,k} = 16^{w+1} + λ·(n·(16^{w+1} − 16)/15 + k)`; before
+//! the window's doublings it is `θ·A_w·G − k_K·P_w·G + H` with `A_w = 16^w +
+//! λ·n·(16^w − 1)/15` (the consumed correction prefix not yet doubled).
+//! `K = k_K·G`, `P_w` is the integer formed by the `w` digits of `θ` the
 //! correction base has consumed, and `H` the partial MSM, fixed before `θ`.
 //! Writing `θ = 16^{64−w}·P_w + S_w`, `acc = ±entry` (or `acc = 0`) is
-//! `(A ∓ λ)·S_w + ((A ∓ λ)·16^{64−w} − 16·k_K)·P_w ≡ c` with `c` fixed:
+//! `(A ∓ λ)·S_w + ((A ∓ λ)·16^{64−w} − 16·k_K)·P_w ≡ c` for an add and
+//! `A_w·S_w + (A_w·16^{64−w} − k_K)·P_w ≡ c` for a doubling, `c` fixed:
 //! for each of the `≤ 16^w·16/15` prefixes there is at most one `S_w`, and
 //! for each of the `≤ 16^{64−w}·16/15` suffixes at most one prefix, so at
 //! most `2^129` values of `θ` are exceptional at any site, `2^{−125}` of
@@ -223,7 +225,7 @@ mod tests {
     /// No `(window, add, chain size)` of a main chain makes an exceptional
     /// affine case θ-independent (module doc): both `A ∓ λ` and
     /// `(A ∓ λ)·16^{64−w} − 16·k_K` are nonzero for every add, and `A_w`,
-    /// `A_w·16^{64−w} − 16·k_K` for every doubling, `w < 64`, `k < n ≤ 64` —
+    /// `A_w·16^{64−w} − k_K` for every doubling, `w < 64`, `k < n ≤ 64` —
     /// except the last add's `acc = −entry`, the zero MSM.
     #[test]
     #[expect(clippy::unwrap_used, reason = "test")]
@@ -243,7 +245,7 @@ mod tests {
                     let a_dbl = power + lambda * offsets(power);
                     assert_ne!(a_dbl, Fr::zero(), "doubling n={n} w={w}");
                     assert_ne!(
-                        a_dbl * suffix - sixteen * k_k,
+                        a_dbl * suffix - k_k,
                         Fr::zero(),
                         "doubling slope n={n} w={w}"
                     );

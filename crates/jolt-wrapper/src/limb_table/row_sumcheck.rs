@@ -10,21 +10,22 @@ use rayon::prelude::*;
 use super::layout::LOG_ROWS;
 use super::relation::{Col, PublicEvals, RowRelation};
 
-/// Linear extrapolation of a row pair to `X = x`: `even + x·(odd − even)`.
-fn extrapolate(out: &mut [Fr], even: &[Fr], odd: &[Fr], x: Fr) {
-    for ((slot, &e), &o) in out.iter_mut().zip(even).zip(odd) {
-        *slot = e + x * (o - e);
+/// Linear extrapolation of a row pair to `X = x`: `lo + x·(hi − lo)`.
+fn extrapolate(out: &mut [Fr], lo: &[Fr], hi: &[Fr], x: Fr) {
+    for ((slot, &l), &h) in out.iter_mut().zip(lo).zip(hi) {
+        *slot = l + x * (h - l);
     }
 }
 
 /// The row member as a batch member: a row-major matrix of every claimed and
-/// public column, folded round by round (low bit first). The `eq(τ,·)`
+/// public column, folded round by round from the most significant row bit
+/// (round `i` pairs row `j` with `j + rows/2` and writes the bound row at
+/// `j`, so the stage point is big-endian like the stream's). The `eq(τ,·)`
 /// column is part of the matrix, so the round polynomial is the plain
 /// degree-`d+1` evaluation of the summand at `d + 2` points.
 pub struct RowSumcheck<'a> {
     relation: &'a RowRelation,
     matrix: Vec<Fr>,
-    scratch: Vec<Fr>,
     rows: usize,
     round: usize,
     points: Vec<Fr>,
@@ -51,7 +52,6 @@ impl<'a> RowSumcheck<'a> {
         Self {
             relation,
             matrix,
-            scratch: Vec::new(),
             rows,
             round: 0,
             points: (0..=(Self::degree() + 1) as u64)
@@ -76,16 +76,17 @@ impl<'a> RowSumcheck<'a> {
     fn round_poly(&self) -> Vec<Fr> {
         let relation = self.relation;
         let width = Col::WIDTH;
-        let evals: Vec<Fr> = self.matrix[..self.rows * width]
-            .par_chunks(2 * width)
+        let (lo, hi) = self.matrix[..self.rows * width].split_at(self.rows / 2 * width);
+        let evals: Vec<Fr> = lo
+            .par_chunks(width)
+            .zip(hi.par_chunks(width))
             .fold(
                 || (vec![Fr::zero(); self.points.len()], vec![Fr::zero(); width]),
-                |(mut acc, mut scratch), pair| {
-                    let (even, odd) = pair.split_at(width);
-                    acc[0] += relation.summand(even);
-                    acc[1] += relation.summand(odd);
+                |(mut acc, mut scratch), (lo, hi)| {
+                    acc[0] += relation.summand(lo);
+                    acc[1] += relation.summand(hi);
                     for (i, &point) in self.points.iter().enumerate().skip(2) {
-                        extrapolate(&mut scratch, even, odd, point);
+                        extrapolate(&mut scratch, lo, hi, point);
                         acc[i] += relation.summand(&scratch);
                     }
                     (acc, scratch)
@@ -106,17 +107,14 @@ impl<'a> RowSumcheck<'a> {
     fn bind(&mut self, r: Fr) {
         let width = Col::WIDTH;
         let half = self.rows / 2;
-        if self.scratch.len() < half * width {
-            self.scratch.resize(half * width, Fr::zero());
-        }
-        self.scratch[..half * width]
-            .par_chunks_mut(width)
-            .zip(self.matrix[..self.rows * width].par_chunks(2 * width))
-            .for_each(|(out, pair)| {
-                let (even, odd) = pair.split_at(width);
-                extrapolate(out, even, odd, r);
+        let (lo, hi) = self.matrix[..self.rows * width].split_at_mut(half * width);
+        lo.par_chunks_mut(width)
+            .zip(hi.par_chunks(width))
+            .for_each(|(lo, hi)| {
+                for (l, &h) in lo.iter_mut().zip(hi) {
+                    *l += r * (h - *l);
+                }
             });
-        std::mem::swap(&mut self.matrix, &mut self.scratch);
         self.rows = half;
         self.round += 1;
     }

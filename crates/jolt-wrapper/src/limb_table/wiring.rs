@@ -94,16 +94,13 @@ pub fn copy_kernel_table(
     table
 }
 
-/// The fingerprint columns `f_pos`, `f_neg` over the rows.
-pub fn fingerprint_columns(
-    reads: &[TableRead],
-    z_xi: &[Fr],
-    relation: &RowRelation,
-) -> (Vec<Fr>, Vec<Fr>) {
+/// The fingerprint columns `f_pos`, `f_neg` over the rows; `fp_pow[s]` is
+/// the fingerprint weight of slot `s`.
+pub fn fingerprint_columns(reads: &[TableRead], z_xi: &[Fr], fp_pow: &[Fr]) -> (Vec<Fr>, Vec<Fr>) {
     let mut pos = vec![Fr::zero(); z_xi.len()];
     let mut neg = vec![Fr::zero(); z_xi.len()];
     for read in reads {
-        let term = relation.fingerprint_weight(usize::from(read.slot)) * z_xi[read.src as usize];
+        let term = fp_pow[usize::from(read.slot)] * z_xi[read.src as usize];
         pos[read.row as usize] += term;
         if read.conjugated {
             neg[read.row as usize] -= term;

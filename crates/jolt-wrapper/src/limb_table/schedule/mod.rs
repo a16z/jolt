@@ -199,6 +199,10 @@ pub struct DigitOp {
     pub family: u8,
     pub j: u8,
     pub kd: u32,
+    /// Index of this `(chain, base)` occurrence among every chain's bases:
+    /// the digit link weighs the op `ρ^link`, binding each occurrence's
+    /// recoding to its scalar on its own.
+    pub link: u32,
     pub w: u32,
 }
 
@@ -225,7 +229,7 @@ pub struct SelectedFamily {
     pub k_bits: Bits,
     pub w_bits: Bits,
     pub key: KeyBase,
-    /// `(k field value, digit-base index)`.
+    /// `(k field value, link occurrence index)` of every admitted `k`.
     pub digit_base: Vec<(u32, u32)>,
 }
 
@@ -247,6 +251,8 @@ pub struct Layout {
     /// Digit bases: the named wires in the published order, the constant one,
     /// then the offset challenge `θ`.
     pub digit_bases: u32,
+    /// Chain-base occurrences: the digit link's `ρ` powers (`DigitOp::link`).
+    pub link_occurrences: u32,
     /// Committed input elements in the order of the `Input` rows (the T1 link order).
     pub input_order: Vec<InputElement>,
     /// The sign row of every byte-linked G1/G2 point: its `flag` column entry
@@ -288,6 +294,7 @@ struct Builder {
     table_reads: Vec<TableRead>,
     selected: Vec<SelectedFamily>,
     digit_ops: Vec<DigitOp>,
+    link_occurrences: u32,
     families: Vec<FamilyStats>,
     input_order: Vec<InputElement>,
     sign_rows: Vec<(InputElement, RowId)>,
@@ -339,6 +346,7 @@ impl Builder {
             table_reads: Vec::new(),
             selected: Vec::new(),
             digit_ops: Vec::new(),
+            link_occurrences: 0,
             families: Vec::new(),
             input_order: Vec::new(),
             sign_rows: Vec::new(),
@@ -356,6 +364,13 @@ impl Builder {
             Wire::One => self.wire_index.len() as u32,
             Wire::Offset => self.wire_index.len() as u32 + 1,
         }
+    }
+
+    /// Reserves the link occurrence indices of a chain's `n` bases.
+    fn link_base(&mut self, n: u32) -> u32 {
+        let base = self.link_occurrences;
+        self.link_occurrences += n;
+        base
     }
 
     /// Registers a table region: its fingerprint kernels (rows read their
@@ -594,6 +609,7 @@ pub fn build(
         families: b.families,
         one_cell: b.one_cell,
         digit_bases: b.wire_index.len() as u32 + 2,
+        link_occurrences: b.link_occurrences,
         input_order: b.input_order,
         sign_rows: b.sign_rows,
         pairing_points: p_cells,

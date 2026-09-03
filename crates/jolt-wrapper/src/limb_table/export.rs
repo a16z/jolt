@@ -6,10 +6,10 @@ use std::ops::Range;
 
 use jolt_field::{Fr, Ring};
 
-use super::columns::{Columns, CHUNK_COLUMNS, HELPER_COLUMNS, LIMBS};
+use super::columns::{CHUNK_COLUMNS, HELPER_COLUMNS, LIMBS};
 use super::digit_link::LinkMember;
 use super::layout::LOG_ROWS;
-use super::lookup::{LookupColumns, PublicColumns, DIGIT_BITS};
+use super::lookup::DIGIT_BITS;
 use super::relation::{Col, RowSumcheck, SLOTS};
 use super::schedule::Layout;
 
@@ -141,76 +141,6 @@ pub fn members() -> [MemberSpec; 2] {
             offset: 0,
         },
     ]
-}
-
-/// The claimed columns as `Col::CLAIMED` vectors in index order.
-pub struct ClaimedColumns {
-    pub columns: Vec<Vec<Fr>>,
-}
-
-impl ClaimedColumns {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one assembly of every column source"
-    )]
-    pub fn assemble(
-        chunks: &Columns,
-        public: &PublicColumns,
-        operands: Vec<Vec<Fr>>,
-        helpers: Vec<Vec<Fr>>,
-        range_mult: Vec<Fr>,
-        inverse_table: Vec<Fr>,
-        lookup: LookupColumns,
-        fingerprints: (Vec<Fr>, Vec<Fr>),
-        pins: (Vec<Fr>, [Vec<Fr>; LIMBS]),
-        free: Vec<Fr>,
-        exact: Vec<Fr>,
-    ) -> Self {
-        let rows = chunks.rows();
-        let mut columns: Vec<Vec<Fr>> = Vec::with_capacity(Col::CLAIMED);
-        for j in 0..CHUNK_COLUMNS {
-            columns.push((0..rows).map(|r| chunks.chunk(r, j)).collect());
-        }
-        for bits in &public.digits {
-            columns.push(bits.iter().map(|b| Fr::from_u64(u64::from(*b))).collect());
-        }
-        columns.push(public.digit_values.clone());
-        columns.push(lookup.m_pos);
-        columns.push(lookup.m_neg);
-        columns.push(range_mult);
-        columns.push(
-            chunks
-                .flags
-                .iter()
-                .map(|f| Fr::from_u64(u64::from(*f)))
-                .collect(),
-        );
-        assert_eq!(operands.len(), 2 * SLOTS);
-        columns.extend(operands);
-        assert_eq!(helpers.len(), HELPER_COLUMNS);
-        columns.extend(helpers);
-        columns.push(inverse_table);
-        columns.push(fingerprints.0);
-        columns.push(fingerprints.1);
-        columns.push(lookup.h);
-        columns.push(lookup.g_pos);
-        columns.push(lookup.g_neg);
-        columns.push(pins.0);
-        columns.extend(pins.1);
-        columns.push(free);
-        columns.push(exact);
-        assert_eq!(columns.len(), Col::CLAIMED);
-        Self { columns }
-    }
-
-    /// The columns of one committed phase.
-    pub fn phase(&self, spec: &PhaseSpec) -> &[Vec<Fr>] {
-        &self.columns[spec.columns.clone()]
-    }
-
-    pub fn vk(&self) -> &[Vec<Fr>] {
-        &self.columns[Col::COMMITTED..Col::CLAIMED]
-    }
 }
 
 /// The VK `free` column: inputs and public constants.

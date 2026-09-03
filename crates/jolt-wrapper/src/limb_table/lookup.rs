@@ -62,6 +62,9 @@ pub struct PublicColumns {
     pub digit_values: Vec<Fr>,
     /// `(key row, conjugated)` per reading row.
     pub keys: Vec<Option<(u32, bool)>>,
+    /// Lookup multiplicities: reads of every key row, plain and conjugated.
+    pub m_pos: Vec<u32>,
+    pub m_neg: Vec<u32>,
 }
 
 impl SelectedFamily {
@@ -141,6 +144,15 @@ impl PublicColumns {
                 ));
             }
         }
+        let mut m_pos = vec![0u32; ROWS];
+        let mut m_neg = vec![0u32; ROWS];
+        for (row, conjugated) in keys.iter().flatten() {
+            if *conjugated {
+                m_neg[*row as usize] += 1;
+            } else {
+                m_pos[*row as usize] += 1;
+            }
+        }
         Self {
             kinds,
             sel,
@@ -153,6 +165,8 @@ impl PublicColumns {
             digits,
             digit_values,
             keys,
+            m_pos,
+            m_neg,
         }
     }
 
@@ -197,10 +211,8 @@ impl PublicColumns {
     }
 }
 
-/// The prover's lookup columns.
+/// The prover's phase-2c lookup columns.
 pub struct LookupColumns {
-    pub m_pos: Vec<Fr>,
-    pub m_neg: Vec<Fr>,
     pub h: Vec<Fr>,
     pub g_pos: Vec<Fr>,
     pub g_neg: Vec<Fr>,
@@ -215,39 +227,31 @@ fn batch_invert(values: &mut [Fr]) {
 }
 
 impl LookupColumns {
-    /// `operands[SLOTS + s]` is `Y_s`; `f_pos`, `f_neg` the fingerprint columns.
+    /// `y[s]` is the operand column `Y_s`; `f_pos`, `f_neg` the fingerprint
+    /// columns; `fp_pow[s]` the fingerprint weight of slot `s`.
     pub fn new(
         public: &PublicColumns,
-        operands: &[Vec<Fr>],
+        y: &[&[Fr]],
         f_pos: &[Fr],
         f_neg: &[Fr],
-        relation: &RowRelation,
+        fp_pow: &[Fr],
+        beta: Fr,
+        fp_combine: Fr,
     ) -> Self {
-        let ch = &relation.challenges;
-        let slots = operands.len() / 2;
-        let mut m_pos = vec![0u32; ROWS];
-        let mut m_neg = vec![0u32; ROWS];
         let mut h = vec![Fr::zero(); ROWS];
         let mut h_rows = Vec::new();
         for (x, key) in public.keys.iter().enumerate() {
             let Some((row, conjugated)) = key else {
                 continue;
             };
-            if *conjugated {
-                m_neg[*row as usize] += 1;
-            } else {
-                m_pos[*row as usize] += 1;
-            }
             let n = public.kinds[x].fp_slots();
-            let fingerprint = (0..n).fold(Fr::zero(), |acc, s| {
-                acc + relation.fingerprint_weight(s) * operands[slots + s][x]
-            });
+            let fingerprint = (0..n).fold(Fr::zero(), |acc, s| acc + fp_pow[s] * y[s][x]);
             let offset = if *conjugated {
                 Fr::from_u64(NEG_KEY_OFFSET)
             } else {
                 Fr::zero()
             };
-            h[x] = ch.beta + Fr::from_u64(u64::from(*row)) + offset + ch.fp_combine * fingerprint;
+            h[x] = beta + Fr::from_u64(u64::from(*row)) + offset + fp_combine * fingerprint;
             h_rows.push(x);
         }
         let mut h_values: Vec<Fr> = h_rows.iter().map(|&x| h[x]).collect();
@@ -259,7 +263,7 @@ impl LookupColumns {
             let rows: Vec<usize> = (0..ROWS).filter(|&x| m[x] > 0).collect();
             let mut dens: Vec<Fr> = rows
                 .iter()
-                .map(|&x| ch.beta + Fr::from_u64(x as u64) + offset + ch.fp_combine * f[x])
+                .map(|&x| beta + Fr::from_u64(x as u64) + offset + fp_combine * f[x])
                 .collect();
             batch_invert(&mut dens);
             let mut g = vec![Fr::zero(); ROWS];
@@ -268,21 +272,9 @@ impl LookupColumns {
             }
             g
         };
-        let g_pos = table(&m_pos, f_pos, Fr::zero());
-        let g_neg = table(&m_neg, f_neg, Fr::from_u64(NEG_KEY_OFFSET));
-        Self {
-            m_pos: m_pos
-                .into_iter()
-                .map(|m| Fr::from_u64(u64::from(m)))
-                .collect(),
-            m_neg: m_neg
-                .into_iter()
-                .map(|m| Fr::from_u64(u64::from(m)))
-                .collect(),
-            h,
-            g_pos,
-            g_neg,
-        }
+        let g_pos = table(&public.m_pos, f_pos, Fr::zero());
+        let g_neg = table(&public.m_neg, f_neg, Fr::from_u64(NEG_KEY_OFFSET));
+        Self { h, g_pos, g_neg }
     }
 }
 
@@ -337,37 +329,27 @@ impl SelectedFamily {
             .collect()
     }
 
-    /// `Σ_{x ∈ family} eq(r, x)`.
-    pub fn indicator<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
-        ev.kernel(&self.domain)
-    }
-
-    /// `Σ_{x ∈ family} eq(r, x)·c(x)`.
-    pub fn coord_eval<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
+    /// The family's public multilinears at the evaluator's row point:
+    /// `(Σ_x eq(r, x), Σ_x eq(r, x)·S0(x), Σ_x eq(r, x)·c(x))` over its rows,
+    /// the per-field sums and moments combined through the all-but-one
+    /// products the three share.
+    pub fn public_evals<O: TermObserver + ?Sized>(
+        &self,
+        ev: &mut Evaluator<'_, O>,
+    ) -> (Fr, Fr, Fr) {
         let moments = self.moments(ev);
-        let mut total = Fr::zero();
+        let sums: Vec<Fr> = moments.iter().map(|(_, sum, _)| *sum).collect();
+        let (indicator, others) = ev.all_but_one_products(&sums);
+        let mut s0 = if self.key.constant == 0 {
+            Fr::zero()
+        } else {
+            ev.mul(indicator, Fr::from_i64(self.key.constant))
+        };
+        let mut coord = Fr::zero();
         for (i, (bits, _, moment)) in moments.iter().enumerate() {
-            if *bits != self.c_bits {
+            if moment.is_zero() {
                 continue;
             }
-            let others = moments
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .fold(Fr::one(), |acc, (_, (_, sum, _))| acc * *sum);
-            total += *moment * others;
-        }
-        total
-    }
-
-    /// `Σ_{x ∈ family} eq(r, x)·S0(x)`.
-    pub fn s0_eval<O: TermObserver + ?Sized>(&self, ev: &mut Evaluator<'_, O>) -> Fr {
-        let moments = self.moments(ev);
-        let indicator = moments
-            .iter()
-            .fold(Fr::one(), |acc, (_, sum, _)| acc * *sum);
-        let mut total = indicator * Fr::from_i64(self.key.constant);
-        for (i, (bits, _, moment)) in moments.iter().enumerate() {
             let mut coefficient = Fr::from_u64(1u64 << bits.lo);
             if *bits == self.k_bits {
                 coefficient += Fr::from_i64(self.key.k_coeff);
@@ -375,35 +357,35 @@ impl SelectedFamily {
             if *bits == self.w_bits {
                 coefficient += Fr::from_i64(self.key.w_coeff);
             }
-            let others = moments
-                .iter()
-                .enumerate()
-                .filter(|(j, _)| *j != i)
-                .fold(Fr::one(), |acc, (_, (_, sum, _))| acc * *sum);
-            total += coefficient * *moment * others;
+            let weighted = ev.mul(coefficient, *moment);
+            s0 += ev.mul(weighted, others[i]);
+            if *bits == self.c_bits {
+                coord = ev.mul(*moment, others[i]);
+            }
         }
-        total
+        (indicator, s0, coord)
     }
 
-    /// `Σ_{x ∈ family, c(x) = first_c} eq(r, x)·ρ^{kd(k(x))}/mult(kd)·16^{63 − w(x)}`.
+    /// `Σ_{x ∈ family, c(x) = first_c} eq(r, x)·ρ^{link(k(x))}·16^{63 − w(x)}`,
+    /// `powers[link]` the digit link's occurrence weights.
     pub fn omega_eval<O: TermObserver + ?Sized>(
         &self,
         ev: &mut Evaluator<'_, O>,
-        rho_weights: &[Fr],
+        powers: &[Fr],
     ) -> Fr {
-        let mut product = Fr::one();
+        let mut product: Option<Fr> = None;
         for (bits, range, factor) in field_partition(&self.domain) {
             let part = if bits == self.c_bits {
                 ev.eq_const(Point::Row, bits, self.first_c)
             } else if bits == self.k_bits {
-                let weights = &self.digit_base;
+                let bases = &self.digit_base;
                 let f = |k: u32| -> Fr {
-                    weights
+                    bases
                         .iter()
                         .find(|(kk, _)| *kk == k)
-                        .map_or(Fr::zero(), |(_, kd)| rho_weights[*kd as usize])
+                        .map_or(Fr::zero(), |(_, link)| powers[*link as usize])
                 };
-                let admitted: Vec<u32> = weights.iter().map(|(k, _)| *k).collect();
+                let admitted: Vec<u32> = bases.iter().map(|(k, _)| *k).collect();
                 let (lo, hi) = (
                     *admitted.iter().min().unwrap_or(&0),
                     *admitted.iter().max().unwrap_or(&0) + 1,
@@ -415,20 +397,22 @@ impl SelectedFamily {
                     let sixteen_inverse = Fr::pow2(4)
                         .inverse()
                         .unwrap_or_else(|| unreachable!("16 is invertible"));
-                    ev.geometric(Point::Row, bits, sixteen_inverse) * Fr::pow2(4 * 63)
+                    let geometric = ev.geometric(Point::Row, bits, sixteen_inverse);
+                    ev.mul(geometric, Fr::pow2(4 * 63))
                 } else {
                     let f = |w: u32| -> Fr { Fr::pow2(4 * (63 - w as usize)) };
                     ev.field_sum(Point::Row, bits, range, &f)
                 }
             } else {
-                match factor {
-                    Some(f) => ev.field(std::slice::from_ref(&f)),
-                    None => Fr::one(),
-                }
+                let Some(f) = factor else { continue };
+                ev.field(std::slice::from_ref(&f))
             };
-            product *= part;
+            product = Some(match product {
+                Some(p) => ev.mul(p, part),
+                None => part,
+            });
         }
-        product
+        product.unwrap_or(Fr::one())
     }
 
     /// The two constancy kernels at (`τ`, `r`): rows `c ∈ first_c+1..first_c+rows`
@@ -451,50 +435,38 @@ impl SelectedFamily {
     }
 }
 
-/// `ρ^{kd}/mult(kd)` per digit base (the digit link's per-base weight).
-pub fn rho_weights(layout: &Layout, rho: Fr) -> Vec<Fr> {
-    rho_weights_with(layout, rho, &mut plain)
+/// `ρ^link` for every chain-base occurrence of the layout.
+fn link_powers_with(layout: &Layout, rho: Fr, mul: Mul<'_>) -> Vec<Fr> {
+    powers_with(rho, layout.link_occurrences as usize, mul)
 }
 
-/// [`rho_weights`] with every product observed by `mul` (the verifier's
-/// derivation): the `ρ` powers, plus one scaling per base several MSMs share.
-pub fn rho_weights_with(layout: &Layout, rho: Fr, mul: Mul<'_>) -> Vec<Fr> {
-    let mut multiplicity = vec![0u64; layout.digit_bases as usize];
-    for op in &layout.digit_ops {
-        if op.w == 0 {
-            multiplicity[op.kd as usize] += 1;
-        }
+/// The digit link's weight of every digit base (the named wires in the
+/// published order, the constant one, then `θ`): `W_kd(ρ) = Σ ρ^link` over
+/// the chain-base occurrences of `kd`. R's scalar link publishes
+/// `Σ_k W_k(ρ)·s_k` over the named wires while T2 sums `ρ^link` per
+/// occurrence, so every chain's recoding is bound to its scalar on its own
+/// (no averaging across the chains sharing a scalar).
+pub fn link_weights(layout: &Layout, rho: Fr) -> Vec<Fr> {
+    link_weights_with(layout, rho, &mut plain)
+}
+
+/// [`link_weights`] with every product observed by `mul`.
+pub fn link_weights_with(layout: &Layout, rho: Fr, mul: Mul<'_>) -> Vec<Fr> {
+    let powers = link_powers_with(layout, rho, mul);
+    let mut weights = vec![Fr::zero(); layout.digit_bases as usize];
+    for op in layout.digit_ops.iter().filter(|op| op.w == 0) {
+        weights[op.kd as usize] += powers[op.link as usize];
     }
-    let powers = powers_with(rho, layout.digit_bases as usize, mul);
-    let mut inverses: Vec<(u64, Fr)> = Vec::new();
-    powers
-        .iter()
-        .zip(&multiplicity)
-        .map(|(power, &m)| match m {
-            0 => Fr::zero(),
-            1 => *power,
-            _ => {
-                let inverse = if let Some((_, v)) = inverses.iter().find(|(k, _)| *k == m) {
-                    *v
-                } else {
-                    let v = Fr::from_u64(m)
-                        .inverse()
-                        .unwrap_or_else(|| unreachable!("nonzero multiplicity"));
-                    inverses.push((m, v));
-                    v
-                };
-                mul(*power, inverse)
-            }
-        })
-        .collect()
+    weights
 }
 
-/// The prover's `ω(x)` table: `ρ^{kd}/mult · 16^{63−w}` on every op's first slotted row.
+/// The prover's `ω(x)` table: `ρ^link·16^{63−w}` on every op's first slotted row.
 pub fn omega_column(layout: &Layout, rho: Fr) -> Vec<Fr> {
-    let weights = rho_weights(layout, rho);
+    let powers = link_powers_with(layout, rho, &mut plain);
     let mut omega = vec![Fr::zero(); ROWS];
     for op in &layout.digit_ops {
-        omega[op.first_row as usize] = weights[op.kd as usize] * Fr::pow2(4 * (63 - op.w as usize));
+        omega[op.first_row as usize] =
+            powers[op.link as usize] * Fr::pow2(4 * (63 - op.w as usize));
     }
     omega
 }
@@ -515,9 +487,9 @@ fn omega_eval_in<O: TermObserver + ?Sized>(
     rho: Fr,
     ev: &mut Evaluator<'_, O>,
 ) -> Fr {
-    let weights = rho_weights_with(layout, rho, &mut |a, b| ev.mul(a, b));
+    let powers = link_powers_with(layout, rho, &mut |a, b| ev.mul(a, b));
     layout.selected.iter().fold(Fr::zero(), |acc, family| {
-        acc + family.omega_eval(ev, &weights)
+        acc + family.omega_eval(ev, &powers)
     })
 }
 
@@ -555,10 +527,8 @@ fn public_evals_with<'o, O: TermObserver + ?Sized>(
     r_le: &[Fr],
     observer: &'o mut O,
 ) -> (PublicEvals, Evaluator<'o, O>) {
-    let eq_tau = tau_le.iter().zip(r_le).fold(Fr::one(), |acc, (t, r)| {
-        acc * (*t * *r + (Fr::one() - *t) * (Fr::one() - *r))
-    });
     let mut ev = Evaluator::new(tau_le, r_le, observer);
+    let eq_tau = ev.eq_row_src();
     let copy_kernel = copy_kernel_eval(&mut ev, &layout.copies, &layout.fingerprints, relation);
     let constancy = layout
         .selected
@@ -574,7 +544,7 @@ fn public_evals_with<'o, O: TermObserver + ?Sized>(
         Fr::zero(),
     );
     for family in &layout.selected {
-        let indicator = family.indicator(&mut ev);
+        let (indicator, family_s0, family_coord) = family.public_evals(&mut ev);
         sel += indicator;
         match family.kind {
             ReadKind::Gt => is_gt += indicator,
@@ -582,16 +552,16 @@ fn public_evals_with<'o, O: TermObserver + ?Sized>(
             ReadKind::G2 => is_g2 += indicator,
             ReadKind::None => unreachable!("selected families read"),
         }
-        s0 += family.s0_eval(&mut ev);
-        coord += family.coord_eval(&mut ev);
+        s0 += family_s0;
+        coord += family_coord;
     }
+    // `small(r) = Π_{i ≥ 16} (1 − r_i)`; `id(r) = Σ_i 2^i·r_i` by doublings.
     let small = r_le[16..]
         .iter()
-        .fold(Fr::one(), |acc, r| acc * (Fr::one() - *r));
-    let id = r_le
-        .iter()
-        .enumerate()
-        .fold(Fr::zero(), |acc, (i, r)| acc + *r * Fr::from_u64(1u64 << i));
+        .map(|r| Fr::one() - *r)
+        .reduce(|a, b| ev.mul(a, b))
+        .unwrap_or(Fr::one());
+    let id = r_le.iter().rev().fold(Fr::zero(), |acc, r| acc + acc + *r);
     let public = PublicEvals {
         eq_tau,
         copy_kernel,

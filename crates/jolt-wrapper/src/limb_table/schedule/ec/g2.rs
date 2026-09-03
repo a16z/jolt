@@ -153,6 +153,7 @@ impl Builder {
         let region_half = hi_o << 12;
         let table_base = lane.table_base;
         let n = chain.bases.len() as u32;
+        let link_base = self.link_base(n);
         let kb = chain.kbase;
         let half = |k: u32, w: u32| region_half + 64 * (kb + k) + w;
         let digit_table: Vec<[u8; WINDOWS]> = chain
@@ -342,6 +343,7 @@ impl Builder {
                     family: self.selected.len() as u8,
                     j,
                     kd: self.digit_index(&chain.bases[k as usize].1),
+                    link: link_base + k,
                     w,
                 });
                 if k == 0 {
@@ -438,9 +440,7 @@ impl Builder {
                 k_coeff: -(8 * 64 - 8 * 16),
                 w_coeff: -8,
             },
-            digit_base: (0..n)
-                .map(|k| (kb + k, self.digit_index(&chain.bases[k as usize].1)))
-                .collect(),
+            digit_base: (0..n).map(|k| (kb + k, link_base + k)).collect(),
         });
         lane.table_base += n;
         output

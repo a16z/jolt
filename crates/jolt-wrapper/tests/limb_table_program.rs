@@ -432,14 +432,17 @@ fn kernels_match_program_rows() {
 }
 
 /// Verifier arithmetic of the row and link members at the fibonacci profile
-/// (σ = 11, N = 42) stays within the 10k `Fr` multiplication budget.
+/// (σ = 11, N = 42): every field multiplication of the exporter's derivation
+/// (relation, public evaluations and `ω̃`, terms, link batching) is
+/// observed, and the count stays within the 10k `Fr` multiplication budget.
 #[test]
 fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     use ark_ff::UniformRand;
     use jolt_field::Fr;
-    use jolt_wrapper::limb_table::relation::Col;
+    use jolt_wrapper::limb_table::lookup::public_and_omega_evals;
+    use jolt_wrapper::limb_table::relation::{Col, LookupConstants, RowRelation};
     use jolt_wrapper::limb_table::stream::{StreamTermExporter, T2Challenges};
-    use jolt_wrapper::stream::{ColumnId, TermContext, TermExporter, VerifierCost};
+    use jolt_wrapper::stream::{ColumnId, TermContext, TermExporter, TermObserver, VerifierCost};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
     let check = FlattenedCheck::derive(11, 42);
@@ -477,11 +480,43 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
         &mut cost,
     );
     let max_degree = terms.iter().map(|t| t.factors.len()).max().expect("terms");
-    println!(
-        "fibonacci profile: execution-derived verifier {} fr_mul (relation, public evaluations, digit link, terms); {} terms, max degree {}",
+
+    // The same derivation component by component; the parts sum to the whole.
+    let t2 = exporter.challenges(&challenges);
+    let mut relation_cost = VerifierCost::default();
+    let relation = RowRelation::new_with(
+        t2.row.clone(),
+        LookupConstants {
+            one_row: layout.one_cell * 16,
+        },
+        &mut |a, b| relation_cost.fr_mul(a, b),
+    );
+    let tau_le = t2.tau_le();
+    let r_le: Vec<Fr> = point.iter().rev().copied().collect();
+    let mut public_cost = VerifierCost::default();
+    let (public, _omega) =
+        public_and_omega_evals(&layout, &relation, &tau_le, &r_le, t2.rho, &mut public_cost);
+    let mut terms_cost = VerifierCost::default();
+    let _ = relation.batched_terms(&public, batching[0], &mut |a, b| terms_cost.fr_mul(a, b));
+    let link_batching = 1;
+    assert_eq!(
+        relation_cost.fr_mul + public_cost.fr_mul + terms_cost.fr_mul + link_batching,
         cost.fr_mul,
+        "component counts sum to the exporter's"
+    );
+    println!(
+        "fibonacci profile: execution-derived verifier {} fr_mul = relation {} + public \
+         evaluations and ω̃ {} + terms {} + link batching {}; {} terms, max degree {}, {} link \
+         occurrences over {} digit bases",
+        cost.fr_mul,
+        relation_cost.fr_mul,
+        public_cost.fr_mul,
+        terms_cost.fr_mul,
+        link_batching,
         terms.len(),
-        max_degree
+        max_degree,
+        layout.link_occurrences,
+        layout.digit_bases
     );
     assert!(cost.fr_mul <= 10_000, "{} fr_mul", cost.fr_mul);
 }

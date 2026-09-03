@@ -138,7 +138,7 @@ struct TermScale {
 /// Transcript challenges of the row member.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Challenges {
-    /// Big-endian row point (`tau[0]` the most significant bit, bound last).
+    /// Big-endian row point (`tau[0]` the most significant bit, bound first).
     pub tau: Vec<Fr>,
     /// Limb-polynomial evaluation point.
     pub xi: Fr,
@@ -657,8 +657,10 @@ impl RowRelation {
         let g = &self.gammas;
         let eq = scale.eq;
         let column = |i: usize| AffineForm::column(ColumnId(i as u32));
-        let one_minus =
-            |i: usize| AffineForm::constant(Fr::one()).plus(&column(i).scale(-Fr::one()));
+        let one_minus = |i: usize| {
+            AffineForm::constant(Fr::one())
+                .plus(&AffineForm::scaled(ColumnId(i as u32), -Fr::one()))
+        };
         let mut terms = Vec::new();
         // Limb identity, on non-free rows.
         let bound = one_minus(Col::FREE);
@@ -670,7 +672,7 @@ impl RowRelation {
             ));
         }
         let z_xi = self.z_xi_form.clone();
-        let mut limb_linear = z_xi.clone().scale(-Fr::one());
+        let mut limb_linear = -z_xi.clone();
         limb_linear.accumulate(&self.k_xi_form.clone().scale_with(-self.q_xi, mul));
         limb_linear.accumulate(
             &self
@@ -708,8 +710,10 @@ impl RowRelation {
         for grp in 0..HELPER_COLUMNS {
             let f: Vec<AffineForm> = (0..GROUP_SIZE)
                 .map(|i| {
-                    AffineForm::constant(ch.alpha)
-                        .plus(&Self::range_form(GROUP_SIZE * grp + i).scale(-Fr::one()))
+                    AffineForm::constant(ch.alpha).plus(&AffineForm::scaled(
+                        Self::range_column(GROUP_SIZE * grp + i),
+                        -Fr::one(),
+                    ))
                 })
                 .collect();
             let g_range = mul(eq, g[GAMMA_RANGE + grp]);
@@ -753,8 +757,10 @@ impl RowRelation {
         ));
         let e = Self::e_form();
         let one_plus_e = AffineForm::constant(Fr::one()).plus(&e);
-        let one_minus_2neg =
-            AffineForm::constant(Fr::one()).plus(&column(Col::NEG).scale(-Fr::from_u64(2)));
+        let one_minus_2neg = AffineForm::constant(Fr::one()).plus(&AffineForm::scaled(
+            ColumnId(Col::NEG as u32),
+            -Fr::from_u64(2),
+        ));
         let g_digit = mul(eq, g[GAMMA_DIGIT_VALUE]);
         terms.push(Term::new(g_digit, vec![column(Col::D)]));
         terms.push(Term::new(
@@ -895,11 +901,12 @@ impl RowRelation {
         terms
     }
 
-    fn range_form(i: usize) -> AffineForm {
+    /// Range-checked column `i`: the chunks, then the digit bits.
+    fn range_column(i: usize) -> ColumnId {
         if i < CHUNK_COLUMNS {
-            AffineForm::column(ColumnId((Col::CHUNKS + i) as u32))
+            ColumnId((Col::CHUNKS + i) as u32)
         } else {
-            AffineForm::column(ColumnId((Col::DIGITS + i - CHUNK_COLUMNS) as u32))
+            ColumnId((Col::DIGITS + i - CHUNK_COLUMNS) as u32)
         }
     }
 

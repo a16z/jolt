@@ -157,6 +157,7 @@ impl Builder {
     pub(super) fn gt_online(&mut self, check: &FlattenedCheck, values: &WireValues) -> GtCell {
         let bases = check.gt.bases.len() as u32;
         let b = bases;
+        let link_base = self.link_base(bases);
         let scalars = values.scalars(&check.gt);
         let digit_table: Vec<[u8; WINDOWS]> = scalars.iter().map(|s| digits(*s)).collect();
         let cell = |k: u32, w: u32| Cells::GT_ONLINE + 64 * k + w;
@@ -265,6 +266,7 @@ impl Builder {
                     family: self.selected.len() as u8,
                     j,
                     kd: self.digit_index(&check.gt.bases[k as usize].1),
+                    link: link_base + k,
                     w,
                 });
                 if k == 0 {
@@ -312,9 +314,7 @@ impl Builder {
                 k_coeff: -(16 * 64 - 16 * 8),
                 w_coeff: -16,
             },
-            digit_base: (0..b)
-                .map(|k| (k, self.digit_index(&check.gt.bases[k as usize].1)))
-                .collect(),
+            digit_base: (0..b).map(|k| (k, link_base + k)).collect(),
         });
         GtCell(cell(b - 1, WINDOWS as u32 - 1))
     }

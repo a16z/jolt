@@ -44,6 +44,9 @@ pub struct Evaluator<'o, O: TermObserver + ?Sized> {
     /// map field: shared by every element of a family.
     products: HashMap<(Vec<Factor>, Bits), Option<Fr>>,
     pairs: HashMap<(Bits, Bits, u32, u32), Fr>,
+    /// `(q, Σ_u eq(p_bits, u)·q^u)` per field: the digit link's window
+    /// weights are shared by every family of a lane.
+    geometrics: HashMap<(Point, Bits), (Fr, Fr)>,
     observer: &'o mut O,
 }
 
@@ -60,12 +63,60 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
             groups: HashMap::new(),
             products: HashMap::new(),
             pairs: HashMap::new(),
+            geometrics: HashMap::new(),
             observer,
         }
     }
 
     pub fn mul(&mut self, a: Fr, b: Fr) -> Fr {
         self.observer.fr_mul(a, b)
+    }
+
+    /// `eq(row, src)` over the whole point: `Π_i (1 − ρ_i − σ_i + 2·ρ_i·σ_i)`.
+    pub fn eq_row_src(&mut self) -> Fr {
+        let mut product: Option<Fr> = None;
+        for i in 0..LOG_ROWS {
+            let (a, b) = (self.row[i], self.src[i]);
+            let ab = self.mul(a, b);
+            let term = ab + ab - a - b + Fr::one();
+            product = Some(match product {
+                Some(p) => self.mul(p, term),
+                None => term,
+            });
+        }
+        product.unwrap_or(Fr::one())
+    }
+
+    /// `(Π_i v_i, [Π_{j ≠ i} v_j]_i)` by prefix and suffix products
+    /// (`3m − 4` multiplications for `m ≥ 2` values).
+    pub fn all_but_one_products(&mut self, values: &[Fr]) -> (Fr, Vec<Fr>) {
+        let m = values.len();
+        // `prefix[i] = Π_{j < i}`, `suffix[i] = Π_{j ≥ i}`.
+        let mut prefix = vec![Fr::one(); m + 1];
+        for i in 0..m {
+            prefix[i + 1] = if i == 0 {
+                values[0]
+            } else {
+                self.mul(prefix[i], values[i])
+            };
+        }
+        let mut suffix = vec![Fr::one(); m + 1];
+        for i in (0..m).rev() {
+            suffix[i] = if i + 1 == m {
+                values[i]
+            } else {
+                self.mul(values[i], suffix[i + 1])
+            };
+        }
+        let others = (0..m)
+            .map(|i| match (i == 0, i + 1 == m) {
+                (true, true) => Fr::one(),
+                (true, false) => suffix[1],
+                (false, true) => prefix[m - 1],
+                (false, false) => self.mul(prefix[i], suffix[i + 1]),
+            })
+            .collect();
+        (prefix[m], others)
     }
 
     fn point(&self, point: Point) -> &[Fr] {
@@ -305,8 +356,14 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
             .fold(Fr::zero(), |acc, state| acc + states[state])
     }
 
-    /// `Σ_u eq(p_bits, u)·q^u` over the whole field: `Π_i (1 − r_i + r_i·q^{2^i})`.
+    /// `Σ_u eq(p_bits, u)·q^u` over the whole field: `Π_i (1 − r_i + r_i·q^{2^i})`,
+    /// memoized per field for one `q`.
     pub fn geometric(&mut self, point: Point, bits: Bits, q: Fr) -> Fr {
+        if let Some((cached_q, value)) = self.geometrics.get(&(point, bits)) {
+            if *cached_q == q {
+                return *value;
+            }
+        }
         let coords = self.point(point)[usize::from(bits.lo)..usize::from(bits.hi)].to_vec();
         let mut power = q;
         let mut product = Fr::one();
@@ -321,6 +378,7 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
                 self.mul(product, term)
             };
         }
+        let _ = self.geometrics.insert((point, bits), (q, product));
         product
     }
 
@@ -364,7 +422,7 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
     }
 
     /// `(Σ_{u ∈ range} eq(p_bits, u), Σ_{u ∈ range} eq(p_bits, u)·u)` by bit
-    /// decomposition (one multiplication per bit).
+    /// decomposition (the moment recombined by doublings, no multiplication).
     pub fn field_moment(&mut self, point: Point, bits: Bits, range: Range<u32>) -> (Fr, Fr) {
         if bits.width() == 0 {
             return (Fr::one(), Fr::zero());
@@ -374,8 +432,8 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
             let coords = &self.point(point)[usize::from(bits.lo)..usize::from(bits.hi)];
             let moment = coords
                 .iter()
-                .enumerate()
-                .fold(Fr::zero(), |acc, (i, r)| acc + *r * Fr::from_u64(1u64 << i));
+                .rev()
+                .fold(Fr::zero(), |acc, r| acc + acc + *r);
             return (Fr::one(), moment);
         }
         let mut total = Fr::zero();
@@ -389,10 +447,10 @@ impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
                 }
             }
         }
-        let mut moment = Fr::zero();
-        for (i, acc) in per_bit.into_iter().enumerate() {
-            moment += self.mul(acc, Fr::from_u64(1u64 << i));
-        }
+        let moment = per_bit
+            .iter()
+            .rev()
+            .fold(Fr::zero(), |acc, bit_sum| acc + acc + *bit_sum);
         (total, moment)
     }
 
