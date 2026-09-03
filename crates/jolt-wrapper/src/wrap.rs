@@ -1,7 +1,9 @@
 //! Full-wrapper input preparation shared by the prover and integration tests.
 
 use common::jolt_device::JoltDevice;
+use jolt_crypto::Bn254;
 use jolt_field::Fr;
+use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup};
 use jolt_r1cs::Variable;
 use jolt_transcript::Blake3Transcript;
 use thiserror::Error;
@@ -15,6 +17,10 @@ use crate::relation::{
 };
 use crate::spartan::{
     ChallengeDecoder, PublicChallenge, SharedWitnessColumn, SpartanError,
+};
+use crate::stream::{
+    commit_packed, prove_assembly, verify_assembly_with_cost, AssemblyStatement, Column,
+    StageMember, StageResult, StreamError, VerifierCost, WrapperProof,
 };
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
@@ -47,6 +53,8 @@ pub enum WrapError {
     Relation(#[from] RelationError),
     #[error("Spartan witness: {0}")]
     Spartan(#[from] SpartanError),
+    #[error("wrapper stream: {0}")]
+    Stream(#[from] StreamError),
     #[error("packing factor must be a nonzero power of two, got {0}")]
     InvalidPacking(usize),
     #[error("T1 needs 2^{required} rows, common domain is 2^{configured}")]
@@ -60,6 +68,47 @@ pub enum WrapError {
     UnsatisfiedRelation(usize),
     #[error("relation witness is missing variable {0}")]
     MissingWitness(usize),
+}
+
+/// Commits the adapters' common-domain columns and proves their stage-A
+/// members, stage-B reductions, and one final HyperKZG opening.
+pub fn wrap<F>(
+    columns: &[Column],
+    statement: &AssemblyStatement,
+    members: &mut [StageMember<'_>],
+    setup: &HyperKZGProverSetup<Bn254>,
+    final_claims: F,
+) -> Result<WrapperProof, WrapError>
+where
+    F: FnOnce(&StageResult, &[Fr]) -> Result<Vec<Fr>, StreamError>,
+{
+    let packed = commit_packed(columns, statement.k, setup)?;
+    Ok(prove_assembly(
+        &packed,
+        statement,
+        members,
+        setup,
+        final_claims,
+    )?)
+}
+
+/// Verifies the generic member list and returns execution-derived EVM
+/// operation counts with the stage results.
+pub fn verify_wrapped<F>(
+    statement: &AssemblyStatement,
+    proof: &WrapperProof,
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    final_claims: F,
+) -> Result<(Vec<StageResult>, VerifierCost), WrapError>
+where
+    F: Fn(&StageResult, &[Fr], &mut VerifierCost) -> Result<Vec<Fr>, StreamError>,
+{
+    Ok(verify_assembly_with_cost(
+        proof,
+        statement,
+        setup,
+        final_claims,
+    )?)
 }
 
 /// Verified inputs needed before the T1/T2/Spartan sumchecks can be assembled.

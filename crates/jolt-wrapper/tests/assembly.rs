@@ -10,9 +10,9 @@ use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_poly::{CompressedPoly, MultilinearPoly};
 use jolt_wrapper::carry::{carried_final, CarryProver};
 use jolt_wrapper::stream::{
-    commit_packed, prove_assembly, verify_assembly_with_cost, AssemblyMemberStatement,
-    AssemblyStatement, Column, Commitment, StageMember, StageMemberSpec,
+    AssemblyMemberStatement, AssemblyStatement, Column, Commitment, StageMember, StageMemberSpec,
 };
+use jolt_wrapper::wrap::{verify_wrapped, wrap};
 
 #[test]
 fn generic_assembly_round_trip_and_section_tampers() {
@@ -44,12 +44,7 @@ fn generic_assembly_round_trip_and_section_tampers() {
         Bn254::g2_generator(),
     );
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
-    let packed = commit_packed(
-        &columns.iter().cloned().map(Column::Fr).collect::<Vec<_>>(),
-        2,
-        &setup,
-    )
-    .expect("commit columns");
+    let packed_columns = columns.iter().cloned().map(Column::Fr).collect::<Vec<_>>();
     let mut carries = [
         CarryProver::new(&columns[0], &source_points[0], input_claims[0]).expect("carry 0"),
         CarryProver::new(&columns[1], &source_points[1], input_claims[1]).expect("carry 1"),
@@ -96,8 +91,8 @@ fn generic_assembly_round_trip_and_section_tampers() {
                 offset: 0,
             },
         ];
-        prove_assembly(
-            &packed,
+        wrap(
+            &packed_columns,
             &statement,
             &mut members,
             &setup,
@@ -113,7 +108,7 @@ fn generic_assembly_round_trip_and_section_tampers() {
         .expect("prove assembly")
     };
     let verify = |proof| {
-        verify_assembly_with_cost(proof, &statement, &verifier_setup, |stage, claims, _| {
+        verify_wrapped(&statement, proof, &verifier_setup, |stage, claims, _| {
             Ok(vec![
                 carried_final(&source_points[0], &stage.point, claims[0]).expect("carry 0 final"),
                 carried_final(&source_points[1], &stage.point, claims[1]).expect("carry 1 final"),
