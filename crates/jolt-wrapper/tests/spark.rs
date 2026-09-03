@@ -5,7 +5,6 @@
 
 use jolt_field::{Fr, Ring};
 use jolt_r1cs::ConstraintMatrices;
-use jolt_sumcheck::prover::ProveRounds;
 use jolt_transcript::{Keccak256Transcript, Transcript};
 use jolt_wrapper::spark::{
     final_claim, SparkChallenges, SparkProver, SparkTables, SparkWitness, DEGREE, TOTAL_COLUMNS,
@@ -86,7 +85,7 @@ fn spark_matrix_logup_round_trip_and_tampers() {
         offset: 0,
     }];
     let mut verifier_transcript = Keccak256Transcript::<Fr>::new(b"spark-test");
-    verify_stage_with(
+    let _verified = verify_stage_with(
         &proof,
         &shape,
         &[input_claim],
@@ -99,7 +98,8 @@ fn spark_matrix_logup_round_trip_and_tampers() {
                 &challenges,
                 &stage.point,
                 &evaluations,
-            )?])
+            )
+            .expect("final relation")])
         },
     )
     .expect("verify SPARK");
@@ -121,7 +121,8 @@ fn spark_matrix_logup_round_trip_and_tampers() {
                 &challenges,
                 &stage.point,
                 &bad_inverse,
-            )?])
+            )
+            .expect("tampered inverse relation")])
         },
     )
     .is_err());
@@ -142,7 +143,8 @@ fn spark_matrix_logup_round_trip_and_tampers() {
                 &challenges,
                 &stage.point,
                 &bad_table,
-            )?])
+            )
+            .expect("tampered table relation")])
         },
     )
     .is_err());

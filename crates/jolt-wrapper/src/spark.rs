@@ -84,13 +84,7 @@ impl SparkTables {
             });
         }
         let mut entries = BTreeMap::<(usize, usize), [Fr; 3]>::new();
-        add_matrix(
-            &mut entries,
-            &matrices.a,
-            column_start,
-            column_end,
-            VAL_A - VAL_A,
-        );
+        add_matrix(&mut entries, &matrices.a, column_start, column_end, 0);
         add_matrix(
             &mut entries,
             &matrices.b,
@@ -138,9 +132,7 @@ impl SparkTables {
         }
         fixed[ROW_MULTIPLICITY].resize(entry_count, Fr::zero());
         fixed[COL_MULTIPLICITY].resize(entry_count, Fr::zero());
-        for index in 0..entry_count {
-            let row = indices[ROW][index];
-            let col = indices[COL][index];
+        for (&row, &col) in indices[ROW].iter().zip(&indices[COL]) {
             fixed[ROW_MULTIPLICITY][row] += Fr::one();
             fixed[COL_MULTIPLICITY][col] += Fr::one();
         }
