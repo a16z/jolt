@@ -98,18 +98,13 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OutputCheckKernel<F: JoltField> {
     progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
     val_io: Polynomial<F>,
     val_final: Polynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     bind_scratch: Vec<F>,
 }
 impl<F: JoltField> OutputCheckKernel<F> {

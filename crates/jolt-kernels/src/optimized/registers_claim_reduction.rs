@@ -53,6 +53,7 @@ use crate::{
 /// Per-cycle `[rd write value, rs1 value, rs2 value]`, kept as raw `u64`s so
 /// the eq folds run on small-scalar fused multiply-adds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RegisterValuesRow([u64; 3]);
 
 impl WitnessBundle for RegisterValuesRow {
@@ -149,37 +150,20 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F> {
     /// First half of the rounds: the P·Q buffers over the prefix variables.
-    PrefixSuffix {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-        p: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-        q: Vec<F>,
-    },
+    PrefixSuffix { p: Vec<F>, q: Vec<F> },
     /// Remaining rounds: the eq table and the three value columns, dense.
     Dense {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rd_write_value: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rs1_value: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         rs2_value: Vec<F>,
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ClaimReductionKernel<F: JoltField> {
     log_t: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -187,10 +171,8 @@ struct ClaimReductionKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_sq: F,
     /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
     /// Raw per-cycle `u64` values, kept for the phase-2 regeneration.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     values: Vec<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,

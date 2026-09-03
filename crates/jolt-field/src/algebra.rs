@@ -9,6 +9,8 @@
 //! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
 //! protocol stack requires of a scalar field.
 
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{de::DeserializeOwned, Serialize};
@@ -494,17 +496,42 @@ impl<R: Ring> Accumulator for NaiveAccumulator<R> {
     }
 }
 
+/// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
+/// is on, vacuous otherwise.
+///
+/// Field elements own no heap, so this costs the concrete backends nothing
+/// but buys every field-generic container the derive: `F: JoltField` implies
+/// `F: Allocative`, so `Vec<F>` and friends render through the native impls
+/// instead of hand-written byte-sizing visitors.
+#[cfg(feature = "allocative")]
+pub trait MaybeAllocative: Allocative {}
+#[cfg(feature = "allocative")]
+impl<T: Allocative + ?Sized> MaybeAllocative for T {}
+/// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
+/// is on, vacuous otherwise.
+#[cfg(not(feature = "allocative"))]
+pub trait MaybeAllocative {}
+#[cfg(not(feature = "allocative"))]
+impl<T: ?Sized> MaybeAllocative for T {}
+
 /// Everything Jolt's protocol stack requires of a scalar field: field
-/// algebra, a canonical transcript encoding, an accumulator, and serde
-/// wire serialization (canonical-checked, via [`impl_serde_bytes!`]).
+/// algebra, a canonical transcript encoding, an accumulator, serde wire
+/// serialization (canonical-checked, via [`impl_serde_bytes!`]), and heap
+/// visitation under the `allocative` feature.
 ///
 /// Blanket-implemented — implement the component traits and this follows.
 pub trait JoltField:
-    Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned
+    Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned + MaybeAllocative
 {
 }
 
-impl<T: Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned> JoltField
-    for T
+impl<
+        T: Field
+            + CanonicalEncoding
+            + WithAccumulator
+            + Serialize
+            + DeserializeOwned
+            + MaybeAllocative,
+    > JoltField for T
 {
 }

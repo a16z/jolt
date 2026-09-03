@@ -73,11 +73,7 @@ const PAR_THRESHOLD: usize = 1 << 10;
 /// aux tables riding alongside, and the running inactive-round scale.
 /// `Polynomial`-backed so binds take the library's threshold-gated parallel
 /// path (byte-identical fold: `lo + r·(hi − lo)` pairwise, exact field ops).
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct PrecommittedTables<F> {
     value: Polynomial<F>,
     eq: Polynomial<F>,
@@ -238,7 +234,7 @@ fn is_active(active_rounds: &[usize], round: usize) -> bool {
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
-    allocative(bound = "F, R")
+    allocative(bound = "F: JoltField, R")
 )]
 pub struct PrecommittedReductionCarry<F, R> {
     #[cfg_attr(feature = "allocative", allocative(skip))]

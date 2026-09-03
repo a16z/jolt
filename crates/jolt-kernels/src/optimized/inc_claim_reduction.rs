@@ -110,11 +110,7 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct IncKernel<F: JoltField> {
     progress: RoundProgress,
     ram_inc: Polynomial<F>,
