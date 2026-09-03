@@ -272,3 +272,9 @@ Launched: lane 1 = 870ff5e7 (sequential fold commitments −4.1 s, delete claime
 Lane 1 (870ff5e7): honest online 40.3 → 37.5 s (idle start load 3.95). Folds 8.25 → 5.76 s (0.98 → 0.69 µs/pt) — sequential outer level helped but missed ≤ 4.5 s: the smaller fold MSMs (N/2^i) run below the flat-quotient rate (bucket reduction ≈ fixed cost per MSM) → size-aware window choice goes to lane 4. Claimed-value pass 0.51 → 0. Gate clock honest (phase sum = wall within 0.013 %; "adapt_r" −2.5 s of test-only work removed from the clock). Review-4 minors fixed: five-phase pin, T1 state-claim negative, `from_transcript` crate-private, matrix-only counter removed. Bytes/gas unchanged. 89/89 + real 1/1. Lane 1 waited ~40 min for an idle window (external heal/rustc jobs + lane 2's suite).
 
 Lane 3 = 69ab7fd6 (typed T2 row matrix + fused rounds; preparation/adaptation cleanup) in `perf5-lane3`, concurrent with lane 2 (3e5f74a2).
+
+## 19:09 — PERF-5 lane 2 landed (b2a090a42); lane 4 launched
+
+Lane 2 (3e5f74a2): honest online 37.5 → 29.8 s (warm idle rerun, load 3.65). CopyLink helper build 2.96 → 0.03 s; ten CopyLink stage-A members 2.83 → 0.35 s. Bytes 7,488 → 7,392 payload / 7,628 → 7,530 bincode / 352 statement. Verifier 234 → 227 ecMul, 127,884 → 121,705 Fr mul, gas 5,048,805 → 4,868,177. Geometry: CopyLink VK groups 10 → 4 (contiguous), helper groups 1 → 0 (filled into phase 2c), full groups 34 → 27, wire groups 21 → 20, stage B 11 → 10 rounds; challenge counts unchanged [39, 23, 1, 3, 232]. 64/64 + real 1/1. Note: phase 2a read 11.8 s in a loaded run vs 7.4 idle — MSM phases are strongly load-sensitive; only warm idle runs count.
+
+Lane 4 = 75a50106 (BN254 MSM kernels: flat task graph, size/width-aware windows, bucket-pass tuning, thread sweep on 4P+6E; targets full Fr ≤ 0.30 µs/pt, folds ≤ 3.5 s, phase 2a ≤ 5.4 s, quotient ≤ 2.6 s) in `perf5-lane4`, concurrent with lane 3 (69ab7fd6).
