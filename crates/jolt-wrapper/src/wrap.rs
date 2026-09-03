@@ -1,33 +1,46 @@
 //! Full-wrapper input preparation shared by the prover and integration tests.
 
+use std::ops::Range;
+
 use common::jolt_device::JoltDevice;
 use jolt_crypto::Bn254;
-use jolt_field::Fr;
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup};
+use jolt_field::{CanonicalEncoding, Fr, Ring};
+use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver};
+use jolt_poly::UnivariatePoly;
 use jolt_r1cs::Variable;
+use jolt_sumcheck::prover::ProveRounds;
+use jolt_sumcheck::SumcheckError;
 use jolt_transcript::Blake3Transcript;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
 
 use crate::hash_table::schedule::preamble;
 use crate::hash_table::{
-    HashTable, JoltSchedule, LinkMap, PublicInputs, Recorded, RecordingTranscript, ScheduleError,
-    SymbolicSchedule, T1Challenges,
+    HashTable, HashTableKey, JoltSchedule, LinkMap, PublicInputs, Recorded, RecordingTranscript,
+    ScheduleError, StreamTermExporter as HashStreamTermExporter, SymbolicSchedule, T1Challenges,
 };
+use crate::limb_table::digit_link::LinkMember;
+use crate::limb_table::schedule::Layout as LimbTableLayout;
+use crate::limb_table::stream::{LimbTableKey, StreamTermExporter as LimbStreamTermExporter};
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
     build_relation, generate_witness, Pcs, Preprocessing, Proof, Relation, RelationError, Vc,
     Witness,
 };
-use crate::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn, SpartanError};
+use crate::relation_table::{
+    CopyLink, CopyLinkTermExporter, CopyLinkTermSide, DoryScalarLink, DoryScalarLinkProver,
+    DoryScalarTermExporter, PublicCopyLinkTermExporter, RelationCellLayout, RelationTermExporter,
+    TOTAL_COLUMNS,
+};
 use crate::stream::{
-    combine_packed_phases, commit_packed, commitment_prefix_challenges, prove_assembly,
-    verify_assembly_with_cost, AssemblyStatement, Column, Commitment, PackedColumns, StageMember,
-    StageResult, StreamError, TermExporter, VerifierCost, WrapperProof,
+    assembly_transcript, combine_packed_phases, commit_packed, commitment_prefix_challenges,
+    prove_assembly, verify_assembly_from_transcript, AssemblyStatement, Column, ColumnId,
+    Commitment, CountingKeccakTranscript, PackedColumns, StageMember, StageResult, StreamError,
+    Term, TermContext, TermExporter, TermObserver, VerifierCost, WrapperProof,
 };
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
-pub const DEFAULT_PACKING_FACTOR: usize = 16;
+pub const DEFAULT_PACKING_FACTOR: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WrapConfig {
@@ -54,34 +67,63 @@ pub enum WrapError {
     Schedule(#[from] ScheduleError),
     #[error("verifier relation: {0}")]
     Relation(#[from] RelationError),
-    #[error("Spartan witness: {0}")]
-    Spartan(#[from] SpartanError),
     #[error("wrapper stream: {0}")]
     Stream(#[from] StreamError),
     #[error("packing factor must be a nonzero power of two, got {0}")]
     InvalidPacking(usize),
     #[error("T1 needs 2^{required} rows, common domain is 2^{configured}")]
     CommonRowDomain { required: usize, configured: usize },
-    #[error("common row exponent {0} does not fit usize")]
-    CommonRowExponent(usize),
     #[error("relation witness fails at row {0}")]
     UnsatisfiedRelation(usize),
     #[error("relation witness is missing variable {0}")]
     MissingWitness(usize),
-    #[error("wrapper assembly requires exactly two commitment phases")]
+    #[error("wrapper commitment phases do not match the verifier key")]
     CommitmentPhases,
     #[error("T1 verifier-key member layout is invalid")]
     T1MemberLayout,
     #[error("proof profile does not match the wrapper verifier key")]
     ProfileMismatch,
+    #[error("wrapper statement does not match its verifier key")]
+    StatementMismatch,
 }
 
 /// T1 schedule and public-input derivation fixed during trusted setup.
 #[derive(Clone)]
 pub struct WrapHashKey {
     profile_digest: [u8; 32],
-    schedule: SymbolicSchedule,
-    public: PublicInputs,
+    table: HashTableKey,
+    links: LinkMap,
+    group_offset: usize,
+    challenge_offset: usize,
+    members: [usize; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct T1Placement {
+    pub group_offset: usize,
+    pub challenge_offset: usize,
+    pub members: [usize; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DoryLinkPlacement {
+    pub challenge: usize,
+    pub theta: usize,
+    pub member: usize,
+}
+
+pub struct WrapLimbKey {
+    table: LimbTableKey,
+    group_offset: usize,
+}
+
+impl WrapLimbKey {
+    pub fn new(table: LimbTableKey, group_offset: usize) -> Self {
+        Self {
+            table,
+            group_offset,
+        }
+    }
 }
 
 impl WrapHashKey {
@@ -90,6 +132,8 @@ impl WrapHashKey {
         public_io: &JoltDevice,
         proof: &Proof,
         config: WrapConfig,
+        placement: T1Placement,
+        setup: &HyperKZGProverSetup<Bn254>,
     ) -> Result<Self, WrapError> {
         validate_config(config)?;
         let profile = WrapperProfile::new(preprocessing, proof)?;
@@ -107,82 +151,301 @@ impl WrapHashKey {
         } else {
             SymbolicSchedule::from_reference(&records, Some(config.common_log_rows))?
         };
-        let public = PublicInputs::from_preamble(&preamble(&records), &schedule)?;
+        let table = HashTableKey::new(schedule, config.packing_factor, setup)?;
+        let links = LinkMap::new(table.schedule());
         Ok(Self {
             profile_digest,
-            schedule,
-            public,
+            table,
+            links,
+            group_offset: placement.group_offset,
+            challenge_offset: placement.challenge_offset,
+            members: placement.members,
         })
     }
 
     pub fn schedule(&self) -> &SymbolicSchedule {
-        &self.schedule
+        self.table.schedule()
     }
 
-    pub fn public(&self) -> &PublicInputs {
-        &self.public
+    pub fn links(&self) -> &LinkMap {
+        &self.links
     }
+
+    pub fn pinned_commitments(&self) -> Vec<(usize, Commitment)> {
+        self.table.pinned_commitments(self.group_offset)
+    }
+}
+
+#[derive(Clone)]
+pub struct RelationExporterPlan {
+    pub rows: usize,
+    pub columns: [ColumnId; TOTAL_COLUMNS],
+    pub tau: Range<usize>,
+    pub beta: usize,
+    pub gamma: usize,
+    pub weights: Range<usize>,
+    pub member: usize,
+}
+
+#[derive(Clone)]
+pub struct PublicCopyPlan {
+    pub wire: usize,
+    pub rows: Vec<usize>,
+    pub values: Range<usize>,
+}
+
+#[derive(Clone)]
+pub struct CopyExporterPlan {
+    pub link: CopyLink,
+    pub left: CopyLinkTermSide,
+    pub right: CopyLinkTermSide,
+    pub tau: Range<usize>,
+    pub beta: usize,
+    pub gamma: usize,
+    pub weights: Range<usize>,
+    pub member: usize,
+    pub public: Option<PublicCopyPlan>,
+}
+
+#[derive(Clone)]
+pub struct LimbExporterPlan {
+    pub challenge_offset: usize,
+    pub theta_offset: usize,
+    pub rho_offset: usize,
+    pub columns: Vec<ColumnId>,
+    pub row_member: usize,
+    pub link_member: usize,
+}
+
+#[derive(Clone)]
+pub struct ScalarExporterPlan {
+    pub rows: usize,
+    pub cells: RelationCellLayout,
+    pub rho_offset: usize,
+    pub wire: ColumnId,
+    pub member: usize,
+}
+
+#[derive(Clone)]
+pub struct WrapAssemblyPlan {
+    pub hash_columns: Vec<ColumnId>,
+    pub relation: RelationExporterPlan,
+    pub copies: Vec<CopyExporterPlan>,
+    pub limb: LimbExporterPlan,
+    pub scalar: ScalarExporterPlan,
 }
 
 /// Profile-fixed data consumed by wrapper verification.
 pub struct WrapVerifierKey {
     statement: AssemblyStatement,
-    hash_schedule: SymbolicSchedule,
-    hash_links: LinkMap,
+    hash: WrapHashKey,
     hash_public: PublicInputs,
-    t1_challenge_offset: usize,
-    t1_members: [usize; 2],
+    limb: WrapLimbKey,
+    dory_link: Option<DoryLinkPlacement>,
+    assembly: WrapAssemblyPlan,
 }
 
 impl WrapVerifierKey {
     pub fn new(
         mut statement: AssemblyStatement,
-        hash_schedule: SymbolicSchedule,
+        hash: WrapHashKey,
         hash_public: PublicInputs,
-        t1_challenge_offset: usize,
-        t1_members: [usize; 2],
-        pinned_commitments: Vec<(usize, Commitment)>,
-    ) -> Self {
-        let hash_links = LinkMap::new(&hash_schedule);
-        statement.pinned_commitments = pinned_commitments;
-        Self {
-            statement,
-            hash_schedule,
-            hash_links,
-            hash_public,
-            t1_challenge_offset,
-            t1_members,
+        limb: WrapLimbKey,
+        dory_link: Option<DoryLinkPlacement>,
+        assembly: WrapAssemblyPlan,
+        mut pinned_commitments: Vec<(usize, Commitment)>,
+    ) -> Result<Self, WrapError> {
+        if statement.key_digest != hash.profile_digest
+            || !statement
+                .public_inputs
+                .ends_with(&hash_public_statement(&hash_public))
+        {
+            return Err(WrapError::StatementMismatch);
         }
+        pinned_commitments.extend(hash.pinned_commitments());
+        pinned_commitments.extend(limb.table.pinned_commitments(limb.group_offset));
+        statement.pinned_commitments = pinned_commitments;
+        Ok(Self {
+            statement,
+            hash,
+            hash_public,
+            limb,
+            dory_link,
+            assembly,
+        })
     }
 
     pub fn hash_schedule(&self) -> &SymbolicSchedule {
-        &self.hash_schedule
+        self.hash.schedule()
     }
 
     pub fn hash_links(&self) -> &LinkMap {
-        &self.hash_links
+        self.hash.links()
+    }
+
+    pub fn limb_layout(&self) -> &LimbTableLayout {
+        self.limb.table.layout()
+    }
+
+    pub fn term_count(&self, context: &TermContext<'_>) -> usize {
+        self.export_terms(context, &mut NoopVerifierObserver).len()
     }
 
     fn statement(&self, challenges: &[Fr]) -> Result<AssemblyStatement, WrapError> {
-        let count = T1Challenges::count(self.hash_schedule.log_rows);
+        self.statement_observed(challenges, &mut NoopVerifierObserver)
+    }
+
+    fn statement_observed(
+        &self,
+        challenges: &[Fr],
+        observer: &mut dyn TermObserver,
+    ) -> Result<AssemblyStatement, WrapError> {
+        let schedule = self.hash.schedule();
         let end = self
-            .t1_challenge_offset
-            .checked_add(count)
+            .hash
+            .challenge_offset
+            .checked_add(T1Challenges::count(schedule.log_rows))
             .ok_or(WrapError::T1MemberLayout)?;
-        let t1 = challenges
-            .get(self.t1_challenge_offset..end)
-            .ok_or(WrapError::T1MemberLayout)?;
-        let claims = T1Challenges::from_challenges(t1, self.hash_schedule.log_rows)
-            .input_claims(&self.hash_public);
+        if challenges.get(self.hash.challenge_offset..end).is_none() {
+            return Err(WrapError::T1MemberLayout);
+        }
+        let exporter = HashStreamTermExporter {
+            log_rows: schedule.log_rows,
+            challenge_offset: self.hash.challenge_offset,
+            public: &self.hash_public,
+            columns: &[],
+            row_member: self.hash.members[0],
+            wiring_member: self.hash.members[1],
+        };
+        let claims = exporter.input_claims(challenges, observer);
         let mut statement = self.statement.clone();
-        for (member, claim) in self.t1_members.into_iter().zip(claims) {
+        for (member, claim) in self.hash.members.into_iter().zip(claims) {
             statement
                 .members
                 .get_mut(member)
                 .ok_or(WrapError::T1MemberLayout)?
                 .input_claim = claim;
         }
+        if let Some(link) = self.dory_link {
+            let rho = challenges
+                .get(link.challenge)
+                .copied()
+                .ok_or(WrapError::T1MemberLayout)?;
+            let theta = challenges
+                .get(link.theta)
+                .copied()
+                .ok_or(WrapError::T1MemberLayout)?;
+            let claim = crate::limb_table::stream::link_input_claim_with(
+                Fr::from_u64(0),
+                rho,
+                theta,
+                self.limb.table.layout(),
+                &mut |a, b| observer.fr_mul(a, b),
+            );
+            statement
+                .members
+                .get_mut(link.member)
+                .ok_or(WrapError::T1MemberLayout)?
+                .input_claim = claim;
+        }
         Ok(statement)
+    }
+
+    fn export_terms(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        let plan = &self.assembly;
+        let hash = HashStreamTermExporter {
+            log_rows: self.hash.schedule().log_rows,
+            challenge_offset: self.hash.challenge_offset,
+            public: &self.hash_public,
+            columns: &plan.hash_columns,
+            row_member: self.hash.members[0],
+            wiring_member: self.hash.members[1],
+        };
+        let relation = &plan.relation;
+        let relation_weights = context.challenges[relation.weights.clone()]
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("three relation weights"));
+        let relation_exporter = RelationTermExporter {
+            rows: relation.rows,
+            columns: relation.columns,
+            tau: &context.challenges[relation.tau.clone()],
+            beta: context.challenges[relation.beta],
+            gamma: context.challenges[relation.gamma],
+            relation_weights,
+            member_index: relation.member,
+        };
+        let mut terms = hash.terms_observed(context, observer);
+        terms.extend(relation_exporter.terms_observed(context, observer));
+        for copy in &plan.copies {
+            let relation_weights = context.challenges[copy.weights.clone()]
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("three copy-link weights"));
+            if let Some(public) = &copy.public {
+                let exporter = PublicCopyLinkTermExporter {
+                    link: &copy.link,
+                    left: copy.left.clone(),
+                    right: copy.right.clone(),
+                    public_wire: public.wire,
+                    public_rows: &public.rows,
+                    public_values: &self.statement.public_inputs[public.values.clone()],
+                    tau: &context.challenges[copy.tau.clone()],
+                    beta: context.challenges[copy.beta],
+                    gamma: context.challenges[copy.gamma],
+                    relation_weights,
+                    member_index: copy.member,
+                };
+                terms.extend(exporter.terms_observed(context, observer));
+            } else {
+                let exporter = CopyLinkTermExporter {
+                    link: &copy.link,
+                    left: copy.left.clone(),
+                    right: copy.right.clone(),
+                    tau: &context.challenges[copy.tau.clone()],
+                    beta: context.challenges[copy.beta],
+                    gamma: context.challenges[copy.gamma],
+                    relation_weights,
+                    member_index: copy.member,
+                };
+                terms.extend(exporter.terms_observed(context, observer));
+            }
+        }
+        let limb = &plan.limb;
+        let limb_exporter = LimbStreamTermExporter {
+            layout: self.limb.table.layout(),
+            challenge_offset: limb.challenge_offset,
+            theta_offset: limb.theta_offset,
+            rho_offset: limb.rho_offset,
+            columns: &limb.columns,
+            row_member: limb.row_member,
+            link_member: limb.link_member,
+        };
+        terms.extend(limb_exporter.terms_observed(context, observer));
+        let scalar = &plan.scalar;
+        let scalar_link = DoryScalarLink::new(
+            scalar.rows,
+            scalar.cells,
+            self.limb.table.layout(),
+            context.challenges[scalar.rho_offset],
+        );
+        let scalar_exporter = DoryScalarTermExporter {
+            link: &scalar_link,
+            wire: scalar.wire,
+            member_index: scalar.member,
+        };
+        terms.extend(
+            scalar_exporter
+                .terms_observed(context, observer)
+                .into_iter()
+                .map(|mut term| {
+                    term.coefficient = -term.coefficient;
+                    term
+                }),
+        );
+        terms
     }
 
     fn full_commitments(&self, wire: &[Commitment]) -> Result<Vec<Commitment>, WrapError> {
@@ -209,36 +472,44 @@ impl WrapVerifierKey {
         }
         Ok(full)
     }
+}
 
-    fn challenges(&self, commitments: &[Commitment]) -> Result<Vec<Fr>, WrapError> {
-        let mut start = 0usize;
-        let mut phases = Vec::with_capacity(self.statement.commitment_phases.len());
-        for phase in &self.statement.commitment_phases {
-            let end = start
-                .checked_add(phase.group_count)
-                .ok_or(WrapError::CommitmentPhases)?;
-            phases.push((
-                commitments
-                    .get(start..end)
-                    .ok_or(WrapError::CommitmentPhases)?,
-                phase.challenge_count,
-            ));
-            start = end;
-        }
-        if start != commitments.len() {
-            return Err(WrapError::CommitmentPhases);
-        }
-        Ok(commitment_prefix_challenges(
-            &self.statement.key_digest,
-            &self.statement.public_inputs,
-            &phases,
-        ))
+pub fn hash_public_statement(public: &PublicInputs) -> Vec<Fr> {
+    let mut bytes = Vec::with_capacity(32 + public.tail.len());
+    bytes.extend(public.state_in.iter().flat_map(|word| word.to_le_bytes()));
+    bytes.extend_from_slice(&public.tail);
+    bytes
+        .chunks(16)
+        .map(|chunk| {
+            let mut packed = [0u8; 16];
+            packed[..chunk.len()].copy_from_slice(chunk);
+            Fr::from_u128_checked(u128::from_le_bytes(packed))
+                .unwrap_or_else(|| unreachable!("128-bit statement chunk is canonical"))
+        })
+        .collect()
+}
+
+struct KeyTermExporter<'a> {
+    key: &'a WrapVerifierKey,
+}
+
+impl TermExporter for KeyTermExporter<'_> {
+    fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
+        self.key.export_terms(context, &mut NoopVerifierObserver)
+    }
+
+    fn terms_observed(
+        &self,
+        context: &TermContext<'_>,
+        observer: &mut dyn TermObserver,
+    ) -> Vec<Term> {
+        self.key.export_terms(context, observer)
     }
 }
 
-/// Phase-1 commitments and their Fiat–Shamir challenges.
-pub struct WrapPhaseOne {
-    packed: PackedColumns,
+/// Ordered commitment phases and the challenges exposed so far.
+pub struct WrapCommitments {
+    phases: Vec<PackedColumns>,
     challenges: Vec<Fr>,
 }
 
@@ -254,80 +525,138 @@ impl WrapCommitted {
     }
 }
 
-impl WrapPhaseOne {
+impl WrapCommitments {
+    pub fn new() -> Self {
+        Self {
+            phases: Vec::new(),
+            challenges: Vec::new(),
+        }
+    }
+
     pub fn challenges(&self) -> &[Fr] {
         &self.challenges
     }
-}
 
-/// Commits phase 1 before exposing the challenges used to construct table members.
-pub fn commit_wrap_phase_one(
-    columns: &[Column],
-    key: &WrapVerifierKey,
-    setup: &HyperKZGProverSetup<Bn254>,
-) -> Result<WrapPhaseOne, WrapError> {
-    let [phase_one, _] = key.statement.commitment_phases.as_slice() else {
-        return Err(WrapError::CommitmentPhases);
-    };
-    let packed = commit_packed(columns, key.statement.k, setup)?;
-    if packed.layout.group_count != phase_one.group_count {
-        return Err(WrapError::CommitmentPhases);
+    pub fn commit(
+        mut self,
+        columns: &[Column],
+        statement: &AssemblyStatement,
+        setup: &HyperKZGProverSetup<Bn254>,
+    ) -> Result<Self, WrapError> {
+        let spec = statement
+            .commitment_phases
+            .get(self.phases.len())
+            .ok_or(WrapError::CommitmentPhases)?;
+        let packed = commit_packed(columns, statement.k, setup)?;
+        if packed.layout.group_count != spec.group_count {
+            return Err(WrapError::CommitmentPhases);
+        }
+        self.phases.push(packed);
+        let phases = self
+            .phases
+            .iter()
+            .zip(&statement.commitment_phases)
+            .map(|(packed, spec)| (packed.commitments.as_slice(), spec.challenge_count))
+            .collect::<Vec<_>>();
+        self.challenges =
+            commitment_prefix_challenges(&statement.key_digest, &statement.public_inputs, &phases);
+        Ok(self)
     }
-    let challenges = commitment_prefix_challenges(
-        &key.statement.key_digest,
-        &key.statement.public_inputs,
-        &[(&packed.commitments, phase_one.challenge_count)],
-    );
-    Ok(WrapPhaseOne { packed, challenges })
-}
 
-/// Commits phase 2 after helper construction and exposes the remaining member challenges.
-pub fn commit_wrap_phase_two(
-    phase_one: WrapPhaseOne,
-    phase_two_columns: &[Column],
-    key: &WrapVerifierKey,
-    setup: &HyperKZGProverSetup<Bn254>,
-) -> Result<WrapCommitted, WrapError> {
-    let [_, phase_two_spec] = key.statement.commitment_phases.as_slice() else {
-        return Err(WrapError::CommitmentPhases);
-    };
-    let phase_two = commit_packed(phase_two_columns, key.statement.k, setup)?;
-    if phase_two.layout.group_count != phase_two_spec.group_count {
-        return Err(WrapError::CommitmentPhases);
+    pub fn finish(self, statement: &AssemblyStatement) -> Result<WrapCommitted, WrapError> {
+        if self.phases.len() != statement.commitment_phases.len() {
+            return Err(WrapError::CommitmentPhases);
+        }
+        Ok(WrapCommitted {
+            packed: combine_packed_phases(self.phases)?,
+            challenges: self.challenges,
+        })
     }
-    let packed = combine_packed_phases(vec![phase_one.packed, phase_two])?;
-    let challenges = key.challenges(&packed.commitments)?;
-    Ok(WrapCommitted { packed, challenges })
 }
 
-/// Proves stage A only after both commitment phases have fixed every member challenge.
+impl Default for WrapCommitments {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct DoryLinkedProver {
+    digit: LinkMember,
+    scalar: DoryScalarLinkProver,
+    digit_claim: Fr,
+    scalar_claim: Fr,
+    pending: Option<(UnivariatePoly<Fr>, UnivariatePoly<Fr>)>,
+}
+
+impl DoryLinkedProver {
+    pub fn new(digit: LinkMember, scalar: DoryScalarLinkProver, input_claim: Fr) -> Self {
+        let digit_claim = digit.input_claim();
+        let scalar_claim = scalar.input_claim();
+        assert_eq!(digit_claim - scalar_claim, input_claim);
+        Self {
+            digit,
+            scalar,
+            digit_claim,
+            scalar_claim,
+            pending: None,
+        }
+    }
+}
+
+impl ProveRounds<Fr> for DoryLinkedProver {
+    fn num_rounds(&self) -> usize {
+        self.digit.num_rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<Fr>,
+        round: usize,
+        previous_claim: Fr,
+    ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
+        if let Some(challenge) = bind {
+            let (digit, scalar) = self
+                .pending
+                .take()
+                .unwrap_or_else(|| unreachable!("a prior round supplies the bind polynomial"));
+            self.digit_claim = digit.evaluate(challenge);
+            self.scalar_claim = scalar.evaluate(challenge);
+        }
+        if self.digit_claim - self.scalar_claim != previous_claim {
+            return Err(SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual: self.digit_claim - self.scalar_claim,
+            });
+        }
+        let digit = self.digit.prove_round(bind, round, self.digit_claim)?;
+        let scalar = self.scalar.prove_round(bind, round, self.scalar_claim)?;
+        let combined = &digit - &scalar;
+        self.pending = Some((digit, scalar));
+        Ok(combined)
+    }
+
+    fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
+        self.digit.finish_rounds(bind)?;
+        self.scalar.finish_rounds(bind)
+    }
+}
+
+/// Proves stage A only after every commitment phase has fixed the member challenges.
 pub fn wrap(
     committed: WrapCommitted,
     key: &WrapVerifierKey,
     members: &mut [StageMember<'_>],
-    exporters: &[&dyn TermExporter],
     setup: &HyperKZGProverSetup<Bn254>,
 ) -> Result<WrapperProof, WrapError> {
     let statement = key.statement(&committed.challenges)?;
+    let exporter = KeyTermExporter { key };
     Ok(prove_assembly(
         &committed.packed,
         &statement,
         members,
-        exporters,
+        &[&exporter],
         setup,
-    )?)
-}
-
-/// Verifies the generic member list and returns execution-derived EVM
-/// operation counts with the stage results.
-pub fn verify_wrapped(
-    statement: &AssemblyStatement,
-    proof: &WrapperProof,
-    exporters: &[&dyn TermExporter],
-    setup: &HyperKZGVerifierSetup<Bn254>,
-) -> Result<(Vec<StageResult>, VerifierCost), WrapError> {
-    Ok(verify_assembly_with_cost(
-        proof, statement, exporters, setup,
     )?)
 }
 
@@ -335,13 +664,26 @@ pub fn verify_wrapped(
 pub fn verify_wrapped_with_key(
     key: &WrapVerifierKey,
     proof: &WrapperProof,
-    exporters: &[&dyn TermExporter],
     setup: &HyperKZGVerifierSetup<Bn254>,
 ) -> Result<(Vec<StageResult>, VerifierCost), WrapError> {
     let commitments = key.full_commitments(&proof.commitments)?;
-    let challenges = key.challenges(&commitments)?;
-    let statement = key.statement(&challenges)?;
-    verify_wrapped(&statement, proof, exporters, setup)
+    let (mut transcript, challenges) = assembly_transcript::<CountingKeccakTranscript>(
+        &key.statement.key_digest,
+        &key.statement.public_inputs,
+        &commitments,
+        &key.statement,
+    )?;
+    let mut statement_cost = VerifierCost::default();
+    let statement = key.statement_observed(&challenges, &mut statement_cost)?;
+    let exporter = KeyTermExporter { key };
+    Ok(verify_assembly_from_transcript(
+        proof,
+        &statement,
+        &[&exporter],
+        setup,
+        (&mut transcript, &challenges, &commitments),
+        statement_cost,
+    )?)
 }
 
 /// Verified inputs needed before the T1/T2/Spartan sumchecks can be assembled.
@@ -358,8 +700,6 @@ pub struct WrapPreparation {
     pub hash_schedule: JoltSchedule,
     pub hash_table: HashTable,
     pub public_known: Vec<Fr>,
-    pub public_challenges: Vec<PublicChallenge>,
-    pub shared_witness: SharedWitnessColumn,
 }
 
 impl WrapPreparation {
@@ -384,20 +724,12 @@ impl WrapPreparation {
             .map_err(WrapError::UnsatisfiedRelation)?;
 
         let records = verified_transcript(preprocessing, public_io, proof)?;
-        let hash_schedule = JoltSchedule::witness(&records, &hash_key.schedule)?;
-        let hash_public = hash_key.public.clone();
+        let schedule = hash_key.schedule();
+        let hash_public = PublicInputs::from_preamble(&preamble(&records), schedule)?;
+        let hash_schedule = JoltSchedule::witness(&records, schedule)?;
         let hash_table = HashTable::build(&hash_schedule, &hash_public);
 
-        let (public_known, public_challenges) = public_values(&relation, &relation_witness.values)?;
-        let private_start = 1 + relation.public.num_public;
-        let private_witness = relation_witness
-            .values
-            .get(private_start..)
-            .ok_or(WrapError::MissingWitness(private_start))?;
-        let common_rows = 1usize
-            .checked_shl(config.common_log_rows as u32)
-            .ok_or(WrapError::CommonRowExponent(config.common_log_rows))?;
-        let shared_witness = SharedWitnessColumn::new(private_witness, common_rows)?;
+        let public_known = public_values(&relation, &relation_witness.values)?;
 
         Ok(Self {
             config,
@@ -405,13 +737,11 @@ impl WrapPreparation {
             profile_digest,
             relation,
             relation_witness,
-            hash_key: hash_key.schedule.clone(),
+            hash_key: schedule.clone(),
             hash_public,
             hash_schedule,
             hash_table,
             public_known,
-            public_challenges,
-            shared_witness,
         })
     }
 }
@@ -438,10 +768,7 @@ fn verified_transcript(
     Ok(RecordingTranscript::<Blake3Transcript>::take_log())
 }
 
-fn public_values(
-    relation: &Relation,
-    values: &[Fr],
-) -> Result<(Vec<Fr>, Vec<PublicChallenge>), WrapError> {
+fn public_values(relation: &Relation, values: &[Fr]) -> Result<Vec<Fr>, WrapError> {
     let read = |variable: Variable| {
         values
             .get(variable.index())
@@ -454,25 +781,5 @@ fn public_values(
     for variable in relation.public.stage_values {
         known.push(read(variable)?);
     }
-    let outputs = &relation.public.outputs;
-    let mut challenges = Vec::with_capacity(relation.public.num_public - known.len());
-    for &variable in outputs.ram_address.iter().chain(&outputs.bytecode_address) {
-        challenges.push(PublicChallenge {
-            value: read(variable)?,
-            decoder: ChallengeDecoder::Challenge125,
-        });
-    }
-    for &variable in &outputs.bytecode_gammas {
-        challenges.push(PublicChallenge {
-            value: read(variable)?,
-            decoder: ChallengeDecoder::Scalar128,
-        });
-    }
-    for &variable in &outputs.register_address {
-        challenges.push(PublicChallenge {
-            value: read(variable)?,
-            decoder: ChallengeDecoder::Challenge125,
-        });
-    }
-    Ok((known, challenges))
+    Ok(known)
 }

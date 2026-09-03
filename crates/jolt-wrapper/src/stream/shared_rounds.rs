@@ -179,6 +179,14 @@ pub(crate) fn prove_shared_opening<T: Transcript<Challenge = Fr>>(
     setup: &HyperKZGProverSetup<Bn254>,
     transcript: &mut T,
 ) -> Result<(Vec<StageProof>, VariableBatchKzgProof<Bn254>), StreamError> {
+    let degree = stages
+        .iter()
+        .map(|stage| stage.degree)
+        .max()
+        .ok_or(StreamError::EmptyStage)?;
+    if degree > 6 {
+        return Err(StreamError::StageEncoding);
+    }
     let coefficients = stages
         .iter()
         .map(|stage| {
@@ -197,7 +205,7 @@ pub(crate) fn prove_shared_opening<T: Transcript<Challenge = Fr>>(
         if stage.degree > 6 {
             return Err(StreamError::StageEncoding);
         }
-        let mut sum = vec![Fr::zero(); 7];
+        let mut sum = vec![Fr::zero(); stage.degree + 1];
         for (polynomial, coefficient) in stage.polynomials.iter().zip(&coefficients) {
             for (target, &value) in sum.iter_mut().zip(polynomial) {
                 *target += *coefficient * value;
@@ -232,7 +240,7 @@ pub(crate) fn prove_shared_opening<T: Transcript<Challenge = Fr>>(
         &opening_polynomials,
         &points,
         &evaluations,
-        6,
+        degree,
         setup,
         transcript,
     )?;
@@ -370,6 +378,14 @@ where
     T: Transcript<Challenge = Fr>,
     O: VerifierObserver,
 {
+    let degree = stages
+        .iter()
+        .map(|stage| stage.degree)
+        .max()
+        .ok_or(StreamError::EmptyStage)?;
+    if degree > 6 {
+        return Err(StreamError::StageEncoding);
+    }
     let coefficients = stages
         .iter()
         .map(|stage| {
@@ -418,7 +434,7 @@ where
         &commitments,
         &points,
         &evaluations,
-        6,
+        degree,
         opening,
         setup,
         transcript,

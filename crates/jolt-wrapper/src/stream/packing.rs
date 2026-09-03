@@ -174,29 +174,6 @@ impl PackedPolynomial {
             Self::Fr(values) => values.len(),
         }
     }
-
-    pub(crate) fn add(&self, other: &Self) -> Result<Self, StreamError> {
-        let len = self.len();
-        if other.len() != len {
-            return Err(StreamError::RowCount {
-                column: 0,
-                expected: len,
-                actual: other.len(),
-            });
-        }
-        let value = |polynomial: &Self, index| match polynomial {
-            Self::Bits(values) => Fr::from_u64(u64::from(values[index])),
-            Self::U16(values) => Fr::from_u64(u64::from(values[index])),
-            Self::U32(values) => Fr::from_u64(u64::from(values[index])),
-            Self::Fr(values) => values[index],
-        };
-        Ok(Self::Fr(
-            (0..len)
-                .into_par_iter()
-                .map(|index| value(self, index) + value(other, index))
-                .collect(),
-        ))
-    }
 }
 
 #[derive(Clone, Debug)]

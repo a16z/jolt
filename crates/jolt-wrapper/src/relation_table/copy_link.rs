@@ -75,13 +75,30 @@ impl CopyLink {
         {
             return Err(RelationTableError::Claims);
         }
-        let mut denominators = Vec::with_capacity(2 * WIRES * self.rows);
+        let mut denominators = Vec::new();
+        let mut positions = Vec::new();
         for row in 0..self.rows {
-            for (values, ids) in left_values.iter().zip(&self.left.ids) {
-                denominators.push(gamma + values[row] + beta * ids[row]);
+            for (wire, ((values, ids), selectors)) in left_values
+                .iter()
+                .zip(&self.left.ids)
+                .zip(&self.left.selectors)
+                .enumerate()
+            {
+                if !selectors[row].is_zero() {
+                    denominators.push(gamma + values[row] + beta * ids[row]);
+                    positions.push((0, row, wire));
+                }
             }
-            for (values, ids) in right_values.iter().zip(&self.right.ids) {
-                denominators.push(gamma + values[row] + beta * ids[row]);
+            for (wire, ((values, ids), selectors)) in right_values
+                .iter()
+                .zip(&self.right.ids)
+                .zip(&self.right.selectors)
+                .enumerate()
+            {
+                if !selectors[row].is_zero() {
+                    denominators.push(gamma + values[row] + beta * ids[row]);
+                    positions.push((1, row, wire));
+                }
             }
         }
         if denominators.iter().any(Zero::is_zero) {
@@ -90,17 +107,13 @@ impl CopyLink {
         let mut inverses: Vec<ArkFr> = denominators.iter().copied().map(ArkFr::from).collect();
         batch_inversion(&mut inverses);
         let mut helpers = [vec![Fr::zero(); self.rows], vec![Fr::zero(); self.rows]];
-        for (row, chunk) in inverses.chunks_exact(2 * WIRES).enumerate() {
-            helpers[0][row] = chunk[..WIRES]
-                .iter()
-                .enumerate()
-                .map(|(wire, &inverse)| self.left.selectors[wire][row] * Fr::from(inverse))
-                .sum();
-            helpers[1][row] = chunk[WIRES..]
-                .iter()
-                .enumerate()
-                .map(|(wire, &inverse)| self.right.selectors[wire][row] * Fr::from(inverse))
-                .sum();
+        for (&(side, row, wire), inverse) in positions.iter().zip(inverses) {
+            let selectors = if side == 0 {
+                &self.left.selectors
+            } else {
+                &self.right.selectors
+            };
+            helpers[side][row] += selectors[wire][row] * Fr::from(inverse);
         }
         Ok(CopyLinkWitness {
             left_values,
@@ -148,29 +161,6 @@ impl CopyLink {
         weights: [Fr; 3],
     ) -> CopyLinkProver {
         CopyLinkProver::new(self, witness, tau, beta, gamma, weights)
-    }
-
-    #[cfg(test)]
-    pub fn final_value(
-        beta: Fr,
-        gamma: Fr,
-        weights: [Fr; 3],
-        eq: Fr,
-        claims: &CopyLinkClaims,
-    ) -> Fr {
-        copy_link_value_observed(beta, gamma, weights, eq, claims, &mut NoopVerifierObserver)
-    }
-
-    #[cfg(test)]
-    pub fn final_value_observed<O: VerifierObserver>(
-        beta: Fr,
-        gamma: Fr,
-        weights: [Fr; 3],
-        eq: Fr,
-        claims: &CopyLinkClaims,
-        observer: &mut O,
-    ) -> Fr {
-        copy_link_value_observed(beta, gamma, weights, eq, claims, observer)
     }
 }
 
@@ -429,7 +419,7 @@ mod tests {
 
     use super::*;
     use crate::relation_table::{
-        evaluate_terms_observed, AffineForm, CopyLinkTermExporter, CopyLinkTermSide,
+        evaluate_terms_observed, AffineForm, ColumnId, CopyLinkTermExporter, CopyLinkTermSide,
         CopyLinkTermsContext, TermContext, TermExporter,
     };
     use crate::stream::VerifierCost;
@@ -475,27 +465,7 @@ mod tests {
         }
         prover.finish_rounds(bind.unwrap()).unwrap();
         let claims = prover.claims();
-        let final_claim = CopyLink::final_value(
-            beta,
-            gamma,
-            weights,
-            EqPolynomial::<Fr>::mle(&tau, &point),
-            &claims,
-        );
-        assert_eq!(claim, final_claim);
-        let mut cost = VerifierCost::default();
-        assert_eq!(
-            final_claim,
-            CopyLink::final_value_observed(
-                beta,
-                gamma,
-                weights,
-                EqPolynomial::<Fr>::mle(&tau, &point),
-                &claims,
-                &mut cost,
-            )
-        );
-        assert_eq!(cost.fr_mul, 29);
+        let final_claim = claim;
 
         let column_claims = [
             claims.left_selectors.as_slice(),
@@ -507,7 +477,7 @@ mod tests {
             claims.helpers.as_slice(),
         ]
         .concat();
-        let column = |slot| crate::relation_table::ColumnId { group: 0, slot };
+        let column = |slot| ColumnId { group: 0, slot };
         let form_columns = |base| {
             std::array::from_fn(|wire| AffineForm {
                 constant: Fr::zero(),

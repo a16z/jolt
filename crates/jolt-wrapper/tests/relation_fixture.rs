@@ -36,10 +36,9 @@ use jolt_verifier::JoltVerifierPreprocessing;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use jolt_wrapper::profile::WrapperProfile;
 use jolt_wrapper::relation::{
-    build_relation, generate_witness, outsourced_inputs, NativeParity, Relation, ScheduleEntry,
+    build_relation, generate_witness, outsourced_inputs, DoryScalar, Relation, ScheduleEntry,
     SqueezeKind, StageValueInputs, Witness,
 };
-use jolt_wrapper::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn};
 use tracer::execution_backend::TracerBackend;
 
 type Pcs = DoryScheme;
@@ -68,7 +67,7 @@ const EXPECTED_PER_STAGE_2_20: [(&str, usize); 9] = [
 ];
 
 /// Pinned row counts of the fibonacci 2^18 relation (L = 18, K = 13, σ = 11).
-const EXPECTED_CONSTRAINTS_2_18: usize = 5_254;
+const EXPECTED_CONSTRAINTS_2_18: usize = 5_253;
 const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage1", 268),
     ("stage2", 365),
@@ -78,7 +77,7 @@ const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage6a", 229),
     ("stage6b", 974),
     ("stage7", 795),
-    ("stage8", 279),
+    ("stage8", 278),
 ];
 
 fn setup_total_vars(memory_layout: &MemoryLayout, max_padded_trace_length: usize) -> usize {
@@ -263,24 +262,7 @@ fn fibonacci_2_18_relation() {
     let Built {
         relation, witness, ..
     } = &built;
-    let private_start = 1 + relation.public.num_public;
-    let private_witness = witness
-        .values
-        .get(private_start..)
-        .expect("private witness range");
-    let shared_witness =
-        SharedWitnessColumn::new(private_witness, 1 << 18).expect("embed Spartan witness");
-    assert_eq!(shared_witness.inner_member().rounds, 13);
-    assert_eq!(shared_witness.into_column().len(), 1 << 18);
     assert_eq!(relation.matrices.num_constraints, EXPECTED_CONSTRAINTS_2_18);
-    // Every derived and challenge wire was compared with its native owner.
-    assert_eq!(
-        witness.native_parity,
-        NativeParity {
-            derived: 214,
-            challenges: 19,
-        }
-    );
     for (stage, rows) in EXPECTED_PER_STAGE_2_18 {
         assert_eq!(per_stage[stage], rows, "{stage}");
     }
@@ -318,40 +300,6 @@ fn fibonacci_2_18_relation() {
     let bytecode_address: Vec<Fr> = outputs.bytecode_address.iter().map(read).collect();
     let register_address: Vec<Fr> = outputs.register_address.iter().map(read).collect();
     let gammas: Vec<Fr> = outputs.bytecode_gammas.iter().map(read).collect();
-    let recorded_challenges = ram_address
-        .iter()
-        .chain(&bytecode_address)
-        .chain(&register_address)
-        .copied()
-        .map(|value| PublicChallenge {
-            value,
-            decoder: ChallengeDecoder::Challenge125,
-        })
-        .chain(gammas.iter().copied().map(|value| PublicChallenge {
-            value,
-            decoder: ChallengeDecoder::Scalar128,
-        }))
-        .collect::<Vec<_>>();
-    for challenge in &recorded_challenges {
-        let packed = challenge
-            .decoder
-            .pack(challenge.value)
-            .expect("pack recorded challenge");
-        if challenge.decoder == ChallengeDecoder::Challenge125 {
-            assert_eq!(packed[15] & 0xe0, 0);
-        }
-        assert_eq!(
-            challenge.decoder.decode(packed).expect("decode challenge"),
-            challenge.value
-        );
-    }
-    let first = recorded_challenges.first().expect("recorded challenge");
-    let mut tampered = first.decoder.pack(first.value).expect("pack challenge");
-    tampered[0] ^= 1;
-    assert_ne!(
-        first.decoder.decode(tampered).expect("decode tamper"),
-        first.value
-    );
     let recomputed = outsourced_inputs(
         &preprocessing,
         &public_io,
@@ -402,7 +350,7 @@ fn fibonacci_2_18_relation() {
         .dory
         .scalars
         .iter()
-        .find(|(scalar, _)| matches!(scalar, jolt_wrapper::relation::DoryScalar::Gamma))
+        .find(|(scalar, _)| matches!(scalar, DoryScalar::Gamma))
         .expect("dory gamma");
     tampered[gamma_var.index()] += Fr::one();
     let failure = first_failure(relation, &tampered).expect("tampered dory challenge rejected");

@@ -16,10 +16,11 @@ use ark_bn254::{Bn254, Fq12, Fr as ArkFrInner};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ff::PrimeField;
 use common::jolt_device::JoltDevice;
-use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, ArkGT};
+use dory::backends::arkworks::{ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, BN254};
 use dory::primitives::arithmetic::{Field, Group};
+use dory::setup::VerifierSetup;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_polynomial_order;
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::{CanonicalBytes, Fr};
@@ -87,12 +88,12 @@ fn gt_sum(terms: impl IntoIterator<Item = (ArkFr, ArkGT)>) -> ArkGT {
         })
 }
 
-/// The deferred right-hand side with the setup index `delta_index(k)` applied
-/// to the `Delta1R(k)`/`Delta2R(k)` links (identity for the real equation).
+/// The deferred right-hand side with `delta_index(k)` mapping the folded
+/// coordinate `k` to its setup entry.
 fn deferred_rhs(
     scalars: &Scalars,
-    proof: &dory::backends::arkworks::ArkDoryProof,
-    setup: &dory::setup::VerifierSetup<dory::backends::arkworks::BN254>,
+    proof: &ArkDoryProof,
+    setup: &VerifierSetup<BN254>,
     commitments: &[ArkGT],
     delta_index: impl Fn(usize) -> usize,
 ) -> ArkGT {
@@ -117,10 +118,11 @@ fn deferred_rhs(
             (scalars.get(DoryScalar::V(j)), first.d2_right),
         ]);
     }
-    for k in 0..=sigma {
+    for k in 0..sigma {
         terms.push((scalars.get(DoryScalar::Chi(k)), setup.chi[k]));
     }
-    for k in 1..=sigma {
+    terms.push((ArkFr::one(), setup.chi[sigma]));
+    for k in 0..sigma {
         terms.push((
             scalars.get(DoryScalar::Delta1R(k)),
             setup.delta_1r[delta_index(k)],
@@ -136,11 +138,7 @@ fn deferred_rhs(
 
 /// The four-pairing left-hand side with every group scalar taken from the
 /// named links.
-fn pairing_lhs(
-    scalars: &Scalars,
-    proof: &dory::backends::arkworks::ArkDoryProof,
-    setup: &dory::setup::VerifierSetup<dory::backends::arkworks::BN254>,
-) -> ArkGT {
+fn pairing_lhs(scalars: &Scalars, proof: &ArkDoryProof, setup: &VerifierSetup<BN254>) -> ArkGT {
     let sigma = proof.sigma;
     let mut e1_acc = proof.vmv_message.e1;
     let mut e2_acc = setup.g2_0.scale(&scalars.get(DoryScalar::Evaluation));
@@ -197,7 +195,7 @@ fn named_dory_scalars_satisfy_the_native_deferred_check() {
         profile.log_t,
         profile.bytecode_len(),
         profile.ram_k(),
-        jolt_claims::protocols::jolt::JoltRelationId::InstructionReadRaf,
+        JoltRelationId::InstructionReadRaf,
     )
     .expect("formula dimensions");
     let commitments: Vec<ArkGT> =
@@ -221,27 +219,27 @@ fn named_dory_scalars_satisfy_the_native_deferred_check() {
             .collect();
 
     let lhs = pairing_lhs(&scalars, dory_proof, setup);
-    let rhs = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k);
+    let rhs = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k + 1);
     assert_eq!(
         lhs, rhs,
         "named scalars × native bases must reproduce the accepting equation"
     );
 
     // Negative control: pairing the Delta links with the neighbouring setup
-    // constant (the `σ − 1 − j` indexing) breaks the equation.
-    let shifted = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k - 1);
+    // constant breaks the equation.
+    let shifted = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k);
     assert_ne!(lhs, shifted, "a mis-indexed Delta link must be rejected");
     // Negative control: the Delta1R/Delta2R scalars are not interchangeable.
     let swapped_terms = {
         let sigma = dory_proof.sigma;
         let base = deferred_rhs(&scalars, dory_proof, setup, &commitments, |k| k);
         let mut fix = ArkGT::identity();
-        for k in 1..=sigma {
+        for k in 0..sigma {
             let d1 = scalars.get(DoryScalar::Delta1R(k));
             let d2 = scalars.get(DoryScalar::Delta2R(k));
             fix = fix
-                + setup.delta_1r[k].scale(&ArkFr(d2.0 - d1.0))
-                + setup.delta_2r[k].scale(&ArkFr(d1.0 - d2.0));
+                + setup.delta_1r[k + 1].scale(&ArkFr(d2.0 - d1.0))
+                + setup.delta_2r[k + 1].scale(&ArkFr(d1.0 - d2.0));
         }
         base + fix
     };

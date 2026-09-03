@@ -22,17 +22,11 @@ mod packing;
 pub use packing::{
     combine_packed_phases, commit_packed, Column, PackedColumns, PackedPolynomial, PackingLayout,
 };
-mod column_reduction;
-pub use column_reduction::ColumnReduction;
 mod term_stage;
 pub(crate) use term_stage::multilinear_evaluation_observed;
-pub use term_stage::{
-    coefficient_evaluation, coefficient_evaluation_observed, term_reduction,
-    term_reduction_observed, TermReduction, TermStageProver, WeightedColumnReduction,
-};
 pub(crate) use term_stage::{
-    coefficient_evaluation_with_weights_observed, eq_evaluations_observed,
-    term_reduction_with_weights_observed,
+    coefficient_evaluation_with_weights_observed, eq_evaluations_observed, term_reduction,
+    term_reduction_with_weights_observed, TermStageProver, WeightedColumnReduction,
 };
 mod shared_rounds;
 pub(crate) use shared_rounds::{
@@ -40,9 +34,11 @@ pub(crate) use shared_rounds::{
     verify_shared_opening,
 };
 mod protocol;
+pub(crate) use protocol::{
+    assembly_transcript, verify_assembly_from_transcript, CountingKeccakTranscript,
+};
 pub use protocol::{
-    commitment_prefix_challenges, new_stream_transcript, prove_assembly, prove_stream,
-    verify_assembly, verify_assembly_with_cost, verify_stream, verify_stream_with_cost,
+    commitment_prefix_challenges, prove_assembly, verify_assembly, verify_assembly_with_cost,
 };
 
 const STREAM_LABEL: &[u8] = b"jolt-wrapper-v1";

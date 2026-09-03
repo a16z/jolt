@@ -443,3 +443,100 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
   wrong key commitment fails. The real gate rejects a mismatched proof shape and all existing wire,
   stage, factor, reduced-claim, and opening tampers. T2 still supplies one zero stand-in column;
   its phase columns, members, exporter, VK pins, and T2↔R link remain pending.
+
+## Real T2 assembly and k=16/32 gates (03:26)
+
+- T1 now delegates schedule/VK ownership to `hash_table::HashTableKey`; its two VK groups enter the
+  stored wrapper key through `pinned_commitments(0)`. `PublicInputs` are derived from each proof's
+  public preamble against the stored schedule. The wrapper no longer has a parallel T1 pin builder.
+- The real T2 checkpoint contributes 70 phase-1 columns, 72 phase-2 columns, five VK columns, its
+  degree-five row member (131 terms), and the digit-to-R scalar difference member. T1 contributes
+  232 terms; R 15; T1↔R CopyLink 10; the linked T2/R pair 132: **T=390**, nine term rounds, four
+  factor evaluations. T2's low-to-high members use bit-reversed stream columns so every final
+  evaluation is opened at the shared high-to-low point.
+- k=16 groups: T1 20 sent + 2 VK, R 2 (one VK), T1↔R CopyLink 1 VK, T2 phase 1 5 + 1 VK, R helpers
+  1, T2 phase 2 5 = 31 phase-1 groups (26 wire) + 6 phase-2 groups. Mixed T2 groups keep the five
+  digit bits and four field columns in the final phase-1 groups. Payload: phase 1 832; phase 2 192;
+  stage A 1,184; term 608; shared BDFG 96; factors 128; stage B 640; reduced 32; HyperKZG 2,144 =
+  **5,856 B** / bincode **5,972 B**. Challenge IO is 0; seven known public fields are 224 external
+  bytes, making 6,080 B with that calldata.
+- k=32 groups: T1 11 sent + 2 VK, R 2 (one VK), CopyLink 1 VK, T2 phase 1 3 + 1 VK, R helpers 1,
+  T2 phase 2 3 = 20 phase-1 groups (15 wire) + 4 phase-2 groups. Payload: phase 1 480; phase 2 128;
+  stage A 1,184; term 608; shared BDFG 96; factors 128; stage B 640; reduced 32; HyperKZG 2,240 =
+  **5,536 B** / bincode **5,640 B**; 5,760 B with the seven known public fields.
+- k=16 at load 10.35/7.02/6.49: key 88 ms, prepare 553, SRS 3,982, adapters 1,807, offline key
+  commits 1,287, phase 1 commit 7,217, helpers 3,465, phase 2 commit 132,364, proof 14,042,
+  verify 15. Cost: 181 ecMul, 180 ecAdd, 8 pairs, 27,659 Fr mul, 8 inversions, 478 Keccak;
+  **2,570,537 gas**. k=32 at load 9.96/11.07/9.28: key 90, prepare 498, SRS 6,560,
+  adapters 1,472, key commits 1,557, phase 1 commit 3,409, helpers 1,489, phase 2 commit 66,350,
+  proof 14,854, verify 15. Cost: 169 ecMul, 168 ecAdd, 8 pairs, 27,639 Fr mul, 8 inversions,
+  468 Keccak; **2,465,473 gas**.
+- Checkpoint adapter gaps: R names `Delta{1,2}R(1..=sigma)` while T2 names
+  `Delta{1,2}R(0..sigma)`; the integration maps the indices and drops R-only `Chi(sigma)`,
+  `S1Acc`, `S2Acc`. T2 has no stored-key/stream constructor or pre-challenge multiplicity export,
+  so those two assembly steps remain in test support. T1's published k=32 layout keeps its u32
+  words separate and sends 11 groups; mixing its final bit/u32 group would save one commitment but
+  would fork the T1-owned ID/key geometry.
+
+## k=32 default and statement-cost correction (03:40)
+
+- `WrapConfig::default()` and the real gate now select k=32; `WRAP_K=16` keeps the comparison.
+- `WrapVerifierKey::statement` calls T1's observed `StreamTermExporter::input_claims`, adding the
+  missing 705 T1 statement multiplications. The transcript-derived `rho^172` scalar-link input is
+  observed too. Corrected real-gate counts: k=32 **28,516 Fr mul / 2,483,013 gas**; k=16
+  **28,536 Fr mul / 2,588,077 gas**. Proof bytes and group counts are unchanged.
+- Permanent scalar-name assertion: T2 consumes 172 names, every one maps to an R link; the exact
+  three R-only names are `Chi(sigma)`, `S1Acc`, `S2Acc`. Any consumed-set change fails the test.
+- Draft-PR measurement tables: `.journals/pr-tables.md` (real gate at `8133720a3`; observed T1
+  owner from `763b3cb9c`).
+
+## 2026-09-03 06:06 — final T2 adapter integration blocker
+
+- The five-phase wrapper plumbing compiles, and R/T2 now share the 172 scalar names directly: Delta links use folded-coordinate indices `0..sigma`, while `Chi(sigma)`, `S1Acc`, and `S2Acc` stay out of `DoryLinks`. The scalar-set and native deferred-equation tests pass.
+- Real k=32 gate: `Stream(StageLink)` after 72.33 s. `limb_table::RowSumcheck` and `LinkMember` bind adjacent rows (low bit first); packed-column evaluation and the other stage-A members use the stream's high-to-low point. `limb_table::StreamColumns` no longer reverses rows, so T2 member finals cannot equal the opening evaluations.
+- The committed stream adapter has no incremental phase witness constructor. `StreamColumns::new` needs a complete `ClaimedColumns`; phase-1b multiplicities are produced only alongside later-challenge helpers in `LookupColumns::new` / `Columns::logup_columns`. A sound production caller needs phase-specific constructors before final integration can remove the test-side multiplicity path.
+- k=16 was not run: it reaches the same point-order mismatch, and the campaign permits one timing run per variant.
+
+### Required T2 API delta after `4283facd4`
+
+1. **Stage-point order:** `RowSumcheck` and `LinkMember` must bind the most-significant remaining row bit first, matching `relation_table`, `DoryScalarLink`, `EqPolynomial::evals(stage_point, None)`, and `PackedColumns::column_evaluations`. Keep their public signatures; pair row `i` with `i + rows/2` and write the bound row at `i` each round (or use `BindingOrder::HighToLow`). Add a stream regression that drives both members, then checks every claimed final against the matching packed-column evaluation at the returned stage point. `row_sumcheck.rs` and `digit_link.rs` still pair adjacent rows after `4283facd4`.
+2. **Incremental witness export:** add one stateful T2 stream constructor whose phases are callable only in protocol order:
+   - `phase_1b() -> &[Column]`: chunks, digits, `D`, lookup/range multiplicities, sign flag;
+   - `phase_2a(xi, alpha) -> &[Column]`: operands, range helpers/inverse;
+   - `phase_2b(fp_root) -> &[Column]`: fingerprints;
+   - `phase_2c(beta, fp_combine, copy_root) -> &[Column]`: lookup helpers followed by the VK suffix already counted by `commitment_phases`;
+   - `finish(tau, gamma, lambda, lambda_lookup, constancy_root, group_offset) -> (ClaimedColumns, Vec<Vec<Fr>>, StreamColumns)` using the cached phase values, with no recomputation under placeholder future challenges.
+
+`StreamColumns::new(&ClaimedColumns, ...)` alone cannot produce phase 1b before `xi/alpha/fp_root/beta` exist: multiplicities are currently returned only as side effects of `Columns::logup_columns(alpha, ...)` and `LookupColumns::new(..., relation)`. W5 must not recreate either computation.
+
+## 2026-09-03 07:50 — fix #3 integrated, real gates pass
+
+- T2 `StreamBuilder` owns phases 1b/2a/2b/2c and MSB-first member binding. The temporary future-challenge reconstruction, row reversal, multiplicity construction, and lane-local exporter are deleted.
+- R publishes `DoryScalar::link_order(sigma, N)` exactly: K=173 at sigma=11/N=42, with `Chi(sigma)`, `S1Acc`, and `S2Acc` internal. `DoryScalarLink` uses T2 `link_weights(_with)` occurrence weights; the verifier observes all products.
+- k=32: 5,600 B payload / 5,706 B bincode / 224 B statement, T=433, 9 term rounds, 2,520,261 gas. k=16: 5,920 / 6,038 / 224 B, T=433, 9 rounds, 2,625,325 gas.
+- Extended tampers pass: theta-dependent 1b, fingerprint 2b, helper 2c, T2 VK pin, sign row, psi input row, digit occurrence, stage/term/factor/reduced/opening sections.
+
+## 2026-09-03 09:20 — assembly review fixes and final gates
+
+- T2 fix #4 and PERF-4 are integrated. Unique recoding adds 256 window rows, taking T2 to 201,575
+  rows and T=177. The phase-2a MSM path fell from roughly 58 s to 7.3 s at k=32.
+- The key now owns the full exporter plan. `verify_wrapped_with_key` accepts only the key, proof,
+  and HyperKZG setup; its one counting transcript performs both key/statement replay and proof
+  verification.
+- Eleven CopyLinks bind 376 challenge outputs, 1,199 challenge-effective Fr absorbs, 45,152
+  element bytes across 1,526 T2 input rows, and seven public R cells. The 54-byte T1 state/tail is
+  packed into four statement fields and checked at key construction. Program/profile digest
+  mismatch is rejected before verification.
+- R publishes exactly the 173 `FlattenedCheck::wires()` values with occurrence weights. Internal
+  `Chi(sigma)`, `S1Acc`, and `S2Acc` never enter the link.
+- The final term count is 535 with ten term rounds. Stage A is degree 5. The term stage is degree 6:
+  its coefficient MLE multiplies a five-factor T2 term. Forcing degree 5 produces
+  `Stream(StageOutputClaim)`, so the review's degree-5 premise does not match the current protocol.
+- The tamper gate now visits every serialized proof field, plus direct T2 window/sign/psi/digit and
+  R/T2-link witness mutations. Every mutation rejects.
+- Removed the old carry, Spark, Spartan, native-R, tensor-stream, and manual timing paths; removed
+  `NativeParity`, duplicate final evaluators, and superseded tests. `stream/protocol.rs` is 638
+  lines after tensor removal.
+- Final numbers live in `.journals/pr-tables.md`: k=32 5,728 B payload / 5,836 B bincode / 352 B
+  statement; k=16 6,016 / 6,136 / 352 B. Full feature suite: 68/68 in 191.688 s nextest,
+  192.17 s wall. All-target clippy with warnings denied passed.

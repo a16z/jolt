@@ -211,24 +211,6 @@ pub struct ReductionClaim {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TensorTerm {
-    pub coefficient: Fr,
-    pub columns: Vec<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TensorStreamStatement {
-    pub key_digest: [u8; 32],
-    pub rows: usize,
-    pub column_count: usize,
-    pub k: usize,
-    pub row_input_claim: Fr,
-    pub row_degree: usize,
-    pub stage_a_encoding: StageAEncoding,
-    pub terms: Vec<TensorTerm>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssemblyMemberStatement {
     pub input_claim: Fr,
     pub spec: StageMemberSpec,
@@ -310,12 +292,6 @@ pub struct AssemblyStatement {
 pub struct CommitmentPhase {
     pub group_count: usize,
     pub challenge_count: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StageAEncoding {
-    Compressed,
-    KzgCommitted,
 }
 
 #[derive(Debug, Error)]

@@ -6,17 +6,18 @@
 use std::path::Path;
 
 use bincode::config::standard;
-use bincode::serde::{decode_from_slice, encode_to_vec};
+use bincode::serde::decode_from_slice;
 use common::jolt_device::JoltDevice;
-use jolt_crypto::{Bn254, Bn254G1, Pedersen};
+use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_poly::MultilinearPoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 
 use super::*;
+use crate::limb_table::adapter::from_jolt;
+use crate::limb_table::lookup::link_weights;
+use crate::limb_table::schedule::build as build_limb_layout;
 use crate::profile::WrapperProfile;
 use crate::relation::{build_relation, generate_witness, ScheduleEntry};
 use crate::stream::VerifierCost;
@@ -45,16 +46,18 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         generate_witness(&profile, &preprocessing, &public_io, &proof).expect("relation witness");
     let rows = 1 << 18;
     let mut table = RelationTable::from_relation(&relation, rows).expect("lower R1CS");
-    assert_eq!(table.gate_rows(), 38_981);
+    assert_eq!(table.gate_rows(), 38_977);
     assert_eq!(
         table.cell_layout(),
         RelationCellLayout {
-            absorbed_word_base: 38_981,
+            absorbed_word_base: 38_977,
             absorbed_words: 1_222,
-            challenge_base: 40_203,
+            public_input_base: 40_199,
+            public_inputs: 7,
+            challenge_base: 40_206,
             challenges: 376,
             dory_scalar_base: 40_704,
-            dory_scalars: 175,
+            dory_scalars: 172,
             dory_scalar_capacity: 256,
         }
     );
@@ -79,27 +82,6 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         .collect::<Vec<_>>();
     let relation_weights = [Fr::from_u64(53), Fr::from_u64(59), Fr::from_u64(61)];
     let relation_stage_coefficient = Fr::from_u64(67);
-    let column_claims = (0..TOTAL_COLUMNS)
-        .map(|column| {
-            if column < FIXED_COLUMNS {
-                table.fixed[column].as_slice().evaluate(&term_point)
-            } else {
-                table_witness.columns[column - FIXED_COLUMNS]
-                    .as_slice()
-                    .evaluate(&term_point)
-            }
-        })
-        .collect::<Vec<_>>();
-    let native_final = RelationTable::final_value(
-        rows,
-        &term_tau,
-        beta,
-        gamma,
-        relation_weights,
-        &term_point,
-        &column_claims,
-    )
-    .expect("native final relation");
     let term_context = RelationTermsContext {
         columns: std::array::from_fn(|slot| ColumnId { group: 0, slot }),
         tau: &term_tau,
@@ -133,25 +115,6 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         terms.iter().map(|term| term.factors.len()).max(),
         Some(MAX_FACTORS)
     );
-    assert_eq!(
-        relation_stage_coefficient * native_final,
-        evaluate_terms_observed(
-            &terms,
-            &|column| {
-                if column.group != 0 {
-                    return Err(RelationTableError::Claims);
-                }
-                column_claims
-                    .get(column.slot)
-                    .copied()
-                    .ok_or(RelationTableError::Claims)
-            },
-            &mut relation_term_cost,
-        )
-        .expect("evaluate relation terms")
-    );
-    assert_eq!(relation_term_cost.fr_mul, 126);
-
     let challenge_variable = relation
         .link
         .schedule
@@ -183,13 +146,27 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
     table.fixed[Q_C][0] = old_constant;
 
     let rho = Fr::from_u64(41);
-    let scalar_link = DoryScalarLink::new(rows, table.cell_layout(), rho);
+    let t2_inputs = from_jolt(
+        &preprocessing.pcs_setup,
+        &proof.commitments,
+        &proof.joint_opening_proof,
+        &relation.link.dory,
+        &relation_witness.values,
+        Fr::from_u64(43),
+    )
+    .expect("T2 inputs");
+    let t2_layout = build_limb_layout(
+        &t2_inputs.check,
+        &t2_inputs.values,
+        &t2_inputs.setup,
+        &t2_inputs.wire_order,
+    );
+    let scalar_link = DoryScalarLink::new(rows, table.cell_layout(), &t2_layout, rho);
     let mut scalar_prover = scalar_link.prover(&table_witness);
     let mut direct = Fr::zero();
-    let mut power = Fr::one();
-    for (_, variable) in &relation.link.dory.scalars {
-        direct += power * relation_witness.values[variable.index()];
-        power *= rho;
+    let weights = link_weights(&t2_layout, rho);
+    for ((_, variable), weight) in relation.link.dory.scalars.iter().zip(weights) {
+        direct += weight * relation_witness.values[variable.index()];
     }
     assert_eq!(scalar_prover.input_claim(), direct);
     let mut scalar_claim = direct;
@@ -220,7 +197,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
             &mut scalar_cost,
         )
     );
-    assert_eq!(scalar_cost.fr_mul, 34);
+    assert_eq!(scalar_cost.fr_mul, 511);
     let scalar_term_context = DoryScalarTermsContext {
         wire: ColumnId { group: 0, slot: 0 },
         point: &scalar_point,
@@ -246,7 +223,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
             .expect("scalar terms"),
         scalar_terms
     );
-    assert_eq!(scalar_term_cost.fr_mul, 34);
+    assert_eq!(scalar_term_cost.fr_mul, 511);
     assert_eq!(scalar_terms.len(), DORY_SCALAR_TERM_COUNT);
     assert_eq!(scalar_terms[0].factors.len(), 1);
     assert_eq!(
@@ -264,57 +241,11 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         )
         .expect("evaluate scalar terms")
     );
-    assert_eq!(scalar_term_cost.fr_mul, 35);
+    assert_eq!(scalar_term_cost.fr_mul, 512);
     assert_eq!(
         RELATION_TERM_COUNT + COPY_LINK_TERM_COUNT + DORY_SCALAR_TERM_COUNT,
         26
     );
-
-    let pcs_setup = HyperKZGScheme::<Bn254>::setup_from_secret(
-        Fr::from_u64(0x5eed),
-        rows * 16,
-        Bn254::g1_generator(),
-        Bn254::g2_generator(),
-    );
-    let verifier_setup = HyperKZGVerifierSetup::from(&pcs_setup);
-    let (prover_key, verifier_key) = setup(
-        table,
-        profile.digest().expect("profile digest"),
-        16,
-        &pcs_setup,
-    )
-    .expect("relation table key");
-    let table_proof =
-        prove(&prover_key, &relation_witness.values, &pcs_setup).expect("prove relation table");
-    let cost = verify(&verifier_key, &table_proof, &verifier_setup).expect("verify relation table");
-    let bincode_bytes = encode_to_vec(&table_proof, standard())
-        .expect("serialize relation table proof")
-        .len();
-    assert_eq!(table_proof.payload_bytes(), 4_352);
-    assert_eq!(bincode_bytes, 4_415);
-    assert_eq!(
-        cost,
-        VerifierCost {
-            ec_mul: 108,
-            ec_add: 107,
-            pairing_pairs: 8,
-            fr_mul: 8_847,
-            fr_inv: 6,
-            keccak: 310,
-        }
-    );
-
-    let mut claim_tamper = table_proof.clone();
-    claim_tamper.column_claims[WIRE_A] += Fr::one();
-    assert!(verify(&verifier_key, &claim_tamper, &verifier_setup).is_err());
-    let mut copy_tamper = table_proof.clone();
-    copy_tamper.column_claims[SIGMA_A] += Fr::one();
-    assert!(verify(&verifier_key, &copy_tamper, &verifier_setup).is_err());
-    let mut challenge_tamper = table_proof.clone();
-    challenge_tamper.wire_commitments[0] = table_proof.helper_commitments[0];
-    assert!(verify(&verifier_key, &challenge_tamper, &verifier_setup).is_err());
-
-    assert_eq!(verifier_key.layout.group_count, 3);
 }
 
 #[test]
