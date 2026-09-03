@@ -9,6 +9,7 @@ use ark_bn254::Fq;
 
 use super::layout::{normalize, Bits, Factor, Kernel, Piece, Side, LOG_ROWS};
 use super::program::{Program, RowId, RowSpec, Slot, Source};
+use super::schedule::Cells;
 
 /// Coordinate `coord` of element `elem`; element 0 is the op's own rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,7 +33,7 @@ pub const ONE_REF: Ref = Ref {
     elem: ONE_ELEM,
     coord: 0,
 };
-pub const ONE_ROW: RowId = super::schedule::cells::CONSTANTS.start * 16;
+pub const ONE_ROW: RowId = Cells::CONSTANTS.start * 16;
 
 impl TemplateRow {
     /// The row's operand slots: witness rows (quotients, inverses) carry the
@@ -67,6 +68,17 @@ pub enum RowKind {
     InverseFq12 {
         coord: u8,
     },
+    /// Prover witness `den⁻¹`, or zero when `den = 0`.
+    InverseOrZero {
+        den: RefSlots,
+    },
+    /// An exact row: `Σ κ·x·y = z` over the integers (`k = 0`).
+    Exact,
+    /// The sign row of coordinate `of`: exact `Σ κ·x·y + (1 − flag)·2^256 = z`
+    /// with the committed `flag = [of ≥ (q+1)/2]`, i.e. `of > −of`.
+    Sign {
+        of: Ref,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,6 +109,30 @@ impl TemplateRow {
         Self {
             slots: Vec::new(),
             kind,
+            pin: None,
+        }
+    }
+
+    pub fn exact(slots: RefSlots) -> Self {
+        Self {
+            slots,
+            kind: RowKind::Exact,
+            pin: None,
+        }
+    }
+
+    pub fn exact_pinned(slots: RefSlots, value: Fq) -> Self {
+        Self {
+            slots,
+            kind: RowKind::Exact,
+            pin: Some(value),
+        }
+    }
+
+    pub fn sign(slots: RefSlots, of: Ref) -> Self {
+        Self {
+            slots,
+            kind: RowKind::Sign { of },
             pin: None,
         }
     }
@@ -375,6 +411,13 @@ impl Family<'_> {
                             .unwrap_or_default()
                     })),
                     coord: *coord,
+                },
+                RowKind::InverseOrZero { den } => Source::InverseOrZero { den: slots_of(den) },
+                RowKind::Exact => Source::Exact,
+                RowKind::Sign { of } => Source::Sign {
+                    of: resolve(*of)
+                        .unwrap_or_else(|| unreachable!("sign coordinate resolves"))
+                        .0,
                 },
             };
             program.write_row(

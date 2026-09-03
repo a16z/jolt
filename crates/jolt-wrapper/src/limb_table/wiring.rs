@@ -7,8 +7,8 @@
 //! table is `B(v) = Σ_i β_i·K_i(τ,v)`, the verifier evaluates
 //! `Σ_i β_i·K_i(τ, r)` from the layout's kernels ([`super::verifier`]).
 
+use crate::stream::TermObserver;
 use jolt_field::{Fr, Ring, Zero};
-use jolt_hyperkzg::VerifierObserver;
 
 use super::layout::{Factor, Side};
 use super::program::Program;
@@ -94,16 +94,13 @@ pub fn copy_kernel_table(
     table
 }
 
-/// The fingerprint columns `f_pos`, `f_neg` over the rows.
-pub fn fingerprint_columns(
-    reads: &[TableRead],
-    z_xi: &[Fr],
-    relation: &RowRelation,
-) -> (Vec<Fr>, Vec<Fr>) {
+/// The fingerprint columns `f_pos`, `f_neg` over the rows; `fp_pow[s]` is
+/// the fingerprint weight of slot `s`.
+pub fn fingerprint_columns(reads: &[TableRead], z_xi: &[Fr], fp_pow: &[Fr]) -> (Vec<Fr>, Vec<Fr>) {
     let mut pos = vec![Fr::zero(); z_xi.len()];
     let mut neg = vec![Fr::zero(); z_xi.len()];
     for read in reads {
-        let term = relation.fingerprint_weight(usize::from(read.slot)) * z_xi[read.src as usize];
+        let term = fp_pow[usize::from(read.slot)] * z_xi[read.src as usize];
         pos[read.row as usize] += term;
         if read.conjugated {
             neg[read.row as usize] -= term;
@@ -116,7 +113,7 @@ pub fn fingerprint_columns(
 
 /// Verifier: `Σ_i β_i·K_i(τ, r)` over the fixed copies and the fingerprint
 /// kernels, summing each weight's kernels before the one multiplication.
-pub fn copy_kernel_eval<O: VerifierObserver>(
+pub fn copy_kernel_eval<O: TermObserver + ?Sized>(
     evaluator: &mut Evaluator<'_, O>,
     copies: &[ElemWiring],
     fingerprints: &[FingerprintGroup],

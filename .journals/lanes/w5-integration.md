@@ -489,3 +489,29 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
   three R-only names are `Chi(sigma)`, `S1Acc`, `S2Acc`. Any consumed-set change fails the test.
 - Draft-PR measurement tables: `.journals/pr-tables.md` (real gate at `8133720a3`; observed T1
   owner from `763b3cb9c`).
+
+## 2026-09-03 06:06 — final T2 adapter integration blocker
+
+- The five-phase wrapper plumbing compiles, and R/T2 now share the 172 scalar names directly: Delta links use folded-coordinate indices `0..sigma`, while `Chi(sigma)`, `S1Acc`, and `S2Acc` stay out of `DoryLinks`. The scalar-set and native deferred-equation tests pass.
+- Real k=32 gate: `Stream(StageLink)` after 72.33 s. `limb_table::RowSumcheck` and `LinkMember` bind adjacent rows (low bit first); packed-column evaluation and the other stage-A members use the stream's high-to-low point. `limb_table::StreamColumns` no longer reverses rows, so T2 member finals cannot equal the opening evaluations.
+- The committed stream adapter has no incremental phase witness constructor. `StreamColumns::new` needs a complete `ClaimedColumns`; phase-1b multiplicities are produced only alongside later-challenge helpers in `LookupColumns::new` / `Columns::logup_columns`. A sound production caller needs phase-specific constructors before final integration can remove the test-side multiplicity path.
+- k=16 was not run: it reaches the same point-order mismatch, and the campaign permits one timing run per variant.
+
+### Required T2 API delta after `4283facd4`
+
+1. **Stage-point order:** `RowSumcheck` and `LinkMember` must bind the most-significant remaining row bit first, matching `relation_table`, `DoryScalarLink`, `EqPolynomial::evals(stage_point, None)`, and `PackedColumns::column_evaluations`. Keep their public signatures; pair row `i` with `i + rows/2` and write the bound row at `i` each round (or use `BindingOrder::HighToLow`). Add a stream regression that drives both members, then checks every claimed final against the matching packed-column evaluation at the returned stage point. `row_sumcheck.rs` and `digit_link.rs` still pair adjacent rows after `4283facd4`.
+2. **Incremental witness export:** add one stateful T2 stream constructor whose phases are callable only in protocol order:
+   - `phase_1b() -> &[Column]`: chunks, digits, `D`, lookup/range multiplicities, sign flag;
+   - `phase_2a(xi, alpha) -> &[Column]`: operands, range helpers/inverse;
+   - `phase_2b(fp_root) -> &[Column]`: fingerprints;
+   - `phase_2c(beta, fp_combine, copy_root) -> &[Column]`: lookup helpers followed by the VK suffix already counted by `commitment_phases`;
+   - `finish(tau, gamma, lambda, lambda_lookup, constancy_root, group_offset) -> (ClaimedColumns, Vec<Vec<Fr>>, StreamColumns)` using the cached phase values, with no recomputation under placeholder future challenges.
+
+`StreamColumns::new(&ClaimedColumns, ...)` alone cannot produce phase 1b before `xi/alpha/fp_root/beta` exist: multiplicities are currently returned only as side effects of `Columns::logup_columns(alpha, ...)` and `LookupColumns::new(..., relation)`. W5 must not recreate either computation.
+
+## 2026-09-03 07:50 — fix #3 integrated, real gates pass
+
+- T2 `StreamBuilder` owns phases 1b/2a/2b/2c and MSB-first member binding. The temporary future-challenge reconstruction, row reversal, multiplicity construction, and lane-local exporter are deleted.
+- R publishes `DoryScalar::link_order(sigma, N)` exactly: K=173 at sigma=11/N=42, with `Chi(sigma)`, `S1Acc`, and `S2Acc` internal. `DoryScalarLink` uses T2 `link_weights(_with)` occurrence weights; the verifier observes all products.
+- k=32: 5,600 B payload / 5,706 B bincode / 224 B statement, T=433, 9 term rounds, 2,520,261 gas. k=16: 5,920 / 6,038 / 224 B, T=433, 9 rounds, 2,625,325 gas.
+- Extended tampers pass: theta-dependent 1b, fingerprint 2b, helper 2c, T2 VK pin, sign row, psi input row, digit occurrence, stage/term/factor/reduced/opening sections.

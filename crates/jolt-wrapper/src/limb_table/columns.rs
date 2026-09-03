@@ -6,7 +6,7 @@
 //! the row relation as their evaluations at the challenge `ξ`:
 //! `Z_ξ(v) = Σ_a ξ^a·limb_a(v)`.
 
-use ark_bn254::Fq;
+use ark_bn254::{Fq, Fr as ArkFr};
 use ark_ff::{BigInteger, PrimeField};
 use jolt_field::{Fr, Ring};
 use num_bigint::{BigInt, BigUint, Sign};
@@ -14,12 +14,19 @@ use num_integer::Integer;
 use num_traits::{One, Zero};
 use rayon::prelude::*;
 
-use super::program::{Program, Slot, Source};
+use super::program::{half_plus_one, Program, Slot, Source};
 
 pub const CHUNK_BITS: usize = 16;
 pub const LIMB_BITS: usize = 96;
 pub const LIMBS: usize = 3;
 pub const Z_CHUNKS: usize = 16;
+/// Canonicality of byte-linked inputs: the top 64 bits of `q` and the four
+/// `u16` chunks of `d = (q_hi − 1) − z_hi` (an input is accepted only when
+/// `z_hi ≤ q_hi − 1`, losing the `2^-62` fraction of canonical elements with
+/// `z_hi = q_hi`).
+pub const Q_HI: u64 = 0x3064_4e72_e131_a029;
+pub const CANON_SHIFT: usize = 192;
+pub const CANON_CHUNKS: usize = 4;
 pub const K_CHUNKS: usize = 17;
 /// Coefficients of the carry polynomial `C` (degree 3).
 pub const CARRIES: usize = 4;
@@ -51,7 +58,7 @@ pub fn fq_to_biguint(x: &Fq) -> BigUint {
 }
 
 pub fn fr_from_biguint(v: &BigUint) -> Fr {
-    Fr::from(ark_bn254::Fr::from_le_bytes_mod_order(&v.to_bytes_le()))
+    Fr::from(ArkFr::from_le_bytes_mod_order(&v.to_bytes_le()))
 }
 
 pub fn fr_from_bigint(v: &BigInt) -> Fr {
@@ -112,25 +119,43 @@ fn exact_shift_right(value: &BigInt, bits: usize) -> BigInt {
 
 /// The witness of one compute row: `Σ κ·X·Y = k·q + z` over the integers and
 /// the carries `c_i = (d_i + c_{i−1}) / B` of the position sums `d_i`.
+/// `Σ κ·x·y` of a row's slots over the integers.
+fn slot_sum(slots: &[Slot], values: &[BigUint]) -> BigInt {
+    slots.iter().fold(BigInt::zero(), |acc, slot| {
+        acc + BigInt::from(slot.coefficient())
+            * BigInt::from(&values[slot.x as usize] * &values[slot.y as usize])
+    })
+}
+
 fn row_chunks(slots: &[Slot], values: &[BigUint], z: &BigUint, q: &BigUint) -> RowChunks {
     let q_limbs: [BigInt; LIMBS] = std::array::from_fn(|a| BigInt::from(limb(q, a)));
-    let mut sum = BigInt::zero();
     let mut positions = vec![BigInt::zero(); 2 * LIMBS - 1];
     for slot in slots {
         let x = &values[slot.x as usize];
         let y = &values[slot.y as usize];
         let kappa = BigInt::from(slot.coefficient());
-        sum += &kappa * BigInt::from(x * y);
         for a in 0..LIMBS {
             for b in 0..LIMBS {
                 positions[a + b] += &kappa * BigInt::from(limb(x, a) * limb(y, b));
             }
         }
     }
+    let sum = slot_sum(slots, values);
     let z_int = BigInt::from(z.clone());
     let q_int = BigInt::from(q.clone());
-    let (k, remainder) = (&sum - &z_int).div_rem(&q_int);
+    // Exact rows: `z = Σ + (1 − flag)·2^256` differs from the sum by a
+    // multiple of `2^256 ≡ 2^256 (mod q)`; the flag term enters the identity
+    // as the operand `exact·(1 − flag)·2^64·ξ²`, so it is not part of `k`.
+    let flagged = &z_int - &sum == BigInt::one() << 256;
+    let (k, remainder) = if flagged {
+        (BigInt::zero(), BigInt::zero())
+    } else {
+        (&sum - &z_int).div_rem(&q_int)
+    };
     assert!(remainder.is_zero(), "row value is not the sum modulo q");
+    if flagged {
+        positions[LIMBS - 1] += BigInt::one() << (256 - 2 * LIMB_BITS);
+    }
     let k_offset = BigInt::one() << K_OFFSET_BITS;
     let k_prime = (&k + &k_offset)
         .to_biguint()
@@ -196,10 +221,14 @@ pub fn zero_row_chunks() -> RowChunks {
 pub struct Columns {
     pub log_rows: usize,
     pub chunks: Vec<RowChunks>,
-    /// Row values as integers below `2^256` (canonical `Fq` for an honest witness).
+    /// Row values as integers below `2^256` (canonical `Fq` for an honest
+    /// witness; the exact integer on exact rows).
     pub values: Vec<BigUint>,
     /// The values' 96-bit limbs.
     pub limbs: Vec<[Fr; LIMBS]>,
+    /// The committed sign-flag column: `[of > −of]` on sign rows, one on the
+    /// other exact rows (no `2^256` term), zero elsewhere.
+    pub flags: Vec<u8>,
 }
 
 impl Columns {
@@ -215,16 +244,47 @@ impl Columns {
         assert!(log_rows >= TABLE_LOG);
         let q = q_biguint();
         let mut ints: Vec<BigUint> = values.par_iter().map(fq_to_biguint).collect();
+        // Exact rows hold `Σ κ·x·y (+ (1 − flag)·2^256)` as an integer, which
+        // may exceed `q`; their operands are never exact rows above `q`.
+        let mut flags = vec![0u8; 1 << log_rows];
+        let half = fq_to_biguint(&half_plus_one());
+        for row in program.exact_rows() {
+            let spec = &program.rows[row];
+            let mut sum = slot_sum(&spec.slots, &ints);
+            flags[row] = 1;
+            if let Source::Sign { of } = spec.source {
+                if ints[of as usize] < half {
+                    flags[row] = 0;
+                    sum += BigInt::one() << 256;
+                }
+            }
+            ints[row] = sum
+                .to_biguint()
+                .unwrap_or_else(|| unreachable!("exact row value is nonnegative"));
+            assert!(ints[row].bits() as usize <= CHUNK_BITS * Z_CHUNKS);
+        }
         let mut chunks: Vec<RowChunks> = program
             .rows
             .par_iter()
             .zip(&ints)
             .map(|(spec, z)| {
-                if spec.source == Source::Compute {
+                if spec.source == Source::Compute || spec.source.is_exact() {
                     row_chunks(&spec.slots, &ints, z, &q)
                 } else {
                     let mut row = zero_row_chunks();
                     chunks_of(z, &mut row[..Z_CHUNKS]);
+                    if let Source::Input(_) = spec.source {
+                        // Canonicality witness `d = (q_hi − 1) − z_hi` (top 64 bits)
+                        // in the otherwise idle low quotient chunks of an input row.
+                        // The `2^-62` fraction of canonical inputs with `z_hi = q_hi`
+                        // has no witness: the saturated `d` fails the identity.
+                        let z_hi: u64 = (z >> CANON_SHIFT).try_into().unwrap_or(u64::MAX);
+                        let d = (Q_HI - 1).saturating_sub(z_hi);
+                        chunks_of(
+                            &BigUint::from(d),
+                            &mut row[Z_CHUNKS..Z_CHUNKS + CANON_CHUNKS],
+                        );
+                    }
                     row
                 }
             })
@@ -238,6 +298,7 @@ impl Columns {
             chunks,
             values: ints,
             limbs,
+            flags,
         }
     }
 
@@ -257,40 +318,48 @@ impl Columns {
         self.limbs.par_iter().map(|l| xi_form(l, &powers)).collect()
     }
 
-    /// LogUp witness for challenge `alpha` over the range-checked columns
-    /// (chunks then digit bits): helper columns `h_g = 1/Π_{i∈g}(α − c_i)`
-    /// and the multiplicity of every 16-bit value (as a `rows`-long column).
-    pub fn logup_columns(&self, alpha: Fr, digit_bits: &[Vec<u8>]) -> (Vec<Vec<Fr>>, Vec<u32>) {
+    /// Range-checked value `i` (chunks then digit bits) of `row`.
+    fn range_value(&self, digit_bits: &[Vec<u8>], row: usize, i: usize) -> u64 {
+        if i < CHUNK_COLUMNS {
+            u64::from(self.chunks[row][i])
+        } else {
+            u64::from(digit_bits[i - CHUNK_COLUMNS][row])
+        }
+    }
+
+    /// The LogUp multiplicity of every 16-bit value over the range-checked
+    /// columns (as a `rows`-long column; challenge-free, committed in phase 1b).
+    pub fn range_multiplicities(&self, digit_bits: &[Vec<u8>]) -> Vec<u32> {
         assert_eq!(digit_bits.len(), DIGIT_COLUMNS);
-        let value = |row: usize, i: usize| -> u64 {
-            if i < CHUNK_COLUMNS {
-                u64::from(self.chunks[row][i])
-            } else {
-                u64::from(digit_bits[i - CHUNK_COLUMNS][row])
+        let mut multiplicities = vec![0u32; self.rows()];
+        for row in 0..self.rows() {
+            for i in 0..RANGE_COLUMNS {
+                multiplicities[self.range_value(digit_bits, row, i) as usize] += 1;
             }
-        };
-        let helpers: Vec<Vec<Fr>> = (0..HELPER_COLUMNS)
+        }
+        multiplicities
+    }
+
+    /// The LogUp helper columns `h_g = 1/Π_{i∈g}(α − c_i)` over the
+    /// range-checked columns for challenge `alpha` (phase 2a).
+    pub fn range_helpers(&self, alpha: Fr, digit_bits: &[Vec<u8>]) -> Vec<Vec<Fr>> {
+        assert_eq!(digit_bits.len(), DIGIT_COLUMNS);
+        let value = |row, i| self.range_value(digit_bits, row, i);
+        (0..HELPER_COLUMNS)
             .into_par_iter()
             .map(|g| {
-                let mut products: Vec<ark_bn254::Fr> = (0..self.rows())
+                let mut products: Vec<ArkFr> = (0..self.rows())
                     .map(|row| {
                         let product = (0..GROUP_SIZE).fold(Fr::from_u64(1), |acc, i| {
                             acc * (alpha - Fr::from_u64(value(row, GROUP_SIZE * g + i)))
                         });
-                        ark_bn254::Fr::from(product)
+                        ArkFr::from(product)
                     })
                     .collect();
                 ark_ff::batch_inversion(&mut products);
                 products.into_iter().map(Fr::from).collect()
             })
-            .collect();
-        let mut multiplicities = vec![0u32; self.rows()];
-        for row in 0..self.rows() {
-            for i in 0..RANGE_COLUMNS {
-                multiplicities[value(row, i) as usize] += 1;
-            }
-        }
-        (helpers, multiplicities)
+            .collect()
     }
 }
 

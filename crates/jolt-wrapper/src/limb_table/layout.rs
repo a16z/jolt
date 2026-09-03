@@ -5,6 +5,7 @@
 //! `W(r, r') = Σ_row eq(r, row)·w(row)·eq(r', src(row))` as a product of
 //! per-field factors in `O(bits)` each instead of walking an edge list.
 
+use std::cmp::Ordering;
 use std::ops::Range;
 
 use jolt_field::{Fr, One, Ring, Zero};
@@ -268,9 +269,9 @@ fn shift_mle(ru: &[Fr], rv: &[Fr], delta: i64, range: Option<&Range<u32>>) -> Fr
                 };
                 let step = |flag: u64, bound: u64| -> u64 {
                     match u.cmp(&bound) {
-                        std::cmp::Ordering::Less => 1,
-                        std::cmp::Ordering::Greater => 0,
-                        std::cmp::Ordering::Equal => flag,
+                        Ordering::Less => 1,
+                        Ordering::Greater => 0,
+                        Ordering::Equal => flag,
                     }
                 };
                 let next_state = (carry_out
@@ -316,9 +317,9 @@ fn range_mle(ru: &[Fr], range: Option<&Range<u32>>) -> Fr {
             for u in 0..2u64 {
                 let step = |flag: u64, bound: u64| -> u64 {
                     match u.cmp(&bound) {
-                        std::cmp::Ordering::Less => 1,
-                        std::cmp::Ordering::Greater => 0,
-                        std::cmp::Ordering::Equal => flag,
+                        Ordering::Less => 1,
+                        Ordering::Greater => 0,
+                        Ordering::Equal => flag,
                     }
                 };
                 let next_state = (step(lt_lo, lo_i) | (step(lt_hi, hi_i) << 1)) as usize;
@@ -507,27 +508,6 @@ impl Kernel {
         field_groups(&self.factors)
             .into_iter()
             .fold(Fr::one(), |acc, group| acc * field_mle(&group, r, r_src))
-    }
-
-    /// Native verifier cost in field multiplications, the reporting unit.
-    pub fn cost(&self) -> usize {
-        self.factors
-            .iter()
-            .map(|factor| match &factor.rel {
-                Rel::Shift(_) => 32 * usize::from(factor.u.width()),
-                Rel::Const(_) => usize::from(factor.v.width()) + 8 * usize::from(factor.u.width()),
-                Rel::Map(map) => {
-                    map.iter().flatten().count()
-                        * usize::from(factor.u.width() + factor.v.width() + 1)
-                }
-                Rel::Weight(weights) => {
-                    weights.iter().filter(|w| **w != 0).count() * usize::from(factor.u.width() + 1)
-                }
-                Rel::Table(pairs) => {
-                    pairs.len() * usize::from(factor.u.width() + factor.v.width() + 1)
-                }
-            })
-            .sum()
     }
 }
 

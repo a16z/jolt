@@ -4,8 +4,8 @@
 //! from the opening statement, and the native oracle that evaluates the same
 //! equation with arkworks arithmetic.
 
-use ark_bn254::{Bn254, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
-use ark_ec::pairing::Pairing;
+use ark_bn254::{Bn254, Fq, Fq12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+use ark_ec::pairing::{MillerLoopOutput, Pairing};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{Field, One, PrimeField, Zero};
 use dory::backends::arkworks::{
@@ -20,6 +20,7 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 
 use super::tower::fq12_coords;
 use crate::relation::DoryScalar;
+use jolt_field::Fr as JoltFr;
 use std::collections::HashMap;
 
 /// Fiat-Shamir challenges of one transparent Dory opening, in derivation order.
@@ -35,7 +36,7 @@ impl DoryChallenges {
     /// Replays dory-pcs's `verify_evaluation_proof` absorption sequence on a
     /// transcript positioned at the Dory boundary (the adapter is
     /// `jolt_dory`'s, byte for byte).
-    pub fn replay<T: Transcript<Challenge = jolt_field::Fr>>(
+    pub fn replay<T: Transcript<Challenge = JoltFr>>(
         proof: &ArkDoryProof,
         transcript: &mut T,
     ) -> Self {
@@ -270,13 +271,13 @@ impl DoryWitnessInputs {
     }
 
     /// Every element's `Fq` coordinates in [`input_elements`] order.
-    pub fn coordinates(&self) -> Vec<ark_bn254::Fq> {
+    pub fn coordinates(&self) -> Vec<Fq> {
         self.coordinates_in(&input_elements(self.sigma(), self.commitments.len()))
     }
 
     /// The elements' `Fq` coordinates in the given order (the layout's
     /// `input_order`); the table's `Input` rows hold exactly this vector.
-    pub fn coordinates_in(&self, order: &[InputElement]) -> Vec<ark_bn254::Fq> {
+    pub fn coordinates_in(&self, order: &[InputElement]) -> Vec<Fq> {
         let mut out = Vec::new();
         for &element in order {
             match element.kind() {
@@ -301,11 +302,14 @@ fn inv(x: Fr) -> Fr {
 }
 
 /// The scalar of one base: a named verifier wire of the R1CS lane
-/// (`jolt_wrapper::relation::DoryScalar`) or the constant one.
+/// (`jolt_wrapper::relation::DoryScalar`), the constant one, or the
+/// wrapper's offset challenge `θ` (the Straus offsets `R = θ·G`, `Z0 = θ·G'`
+/// and the per-chain corrections `−θ·K` of [`super::schedule`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Wire {
     Named(DoryScalar),
     One,
+    Offset,
 }
 
 /// A GT base of `RHS = Σ_k s_k X_k`.
@@ -536,10 +540,12 @@ impl FlattenedCheck {
 #[derive(Clone, Debug)]
 pub struct WireValues {
     values: HashMap<DoryScalar, Fr>,
+    /// The wrapper's offset challenge `θ`, drawn after the phase-1a commitments.
+    offset: Fr,
 }
 
 impl WireValues {
-    pub fn derive(statement: &DoryStatement, sigma: usize, n: usize) -> Self {
+    pub fn derive(statement: &DoryStatement, sigma: usize, n: usize, offset: Fr) -> Self {
         use DoryScalar as S;
         let ch = &statement.challenges;
         assert_eq!(ch.beta.len(), sigma);
@@ -604,19 +610,21 @@ impl WireValues {
         set(S::Ht, s1_acc * s2_acc);
         set(S::PairingG2ZeroScalar, -ch.gamma * d_inv * s1_acc);
         set(S::PairingG1ZeroScalar, -gamma_inv * d * s2_acc);
-        Self { values }
+        Self { values, offset }
     }
 
     /// Wire values taken from an R1CS witness (the committed adapter path).
-    pub fn from_wires(pairs: Vec<(DoryScalar, Fr)>) -> Self {
+    pub fn from_wires(pairs: Vec<(DoryScalar, Fr)>, offset: Fr) -> Self {
         Self {
             values: pairs.into_iter().collect(),
+            offset,
         }
     }
 
     pub fn get(&self, wire: &Wire) -> Fr {
         match wire {
             Wire::One => Fr::one(),
+            Wire::Offset => self.offset,
             Wire::Named(name) => *self
                 .values
                 .get(name)
@@ -693,7 +701,7 @@ impl NativeCheck {
             (g1(&check.g1_a4, e1_acc), setup.g2_0),
         ];
         let miller = Bn254::multi_miller_loop(pairs.map(|p| p.0), pairs.map(|p| p.1)).0;
-        let lhs = Bn254::final_exponentiation(ark_ec::pairing::MillerLoopOutput(miller))
+        let lhs = Bn254::final_exponentiation(MillerLoopOutput(miller))
             .unwrap_or_else(|| unreachable!("Miller loop output is invertible"))
             .0;
         Self {
@@ -713,11 +721,11 @@ impl NativeCheck {
 
 /// `jolt_dory`'s private Jolt-to-dory-pcs transcript adapter, replicated
 /// byte for byte (labels are dropped; lengths are absorbed with the bytes).
-struct TranscriptAdapter<'a, T: Transcript<Challenge = jolt_field::Fr>> {
+struct TranscriptAdapter<'a, T: Transcript<Challenge = JoltFr>> {
     transcript: &'a mut T,
 }
 
-impl<T: Transcript<Challenge = jolt_field::Fr>> DoryTranscript for TranscriptAdapter<'_, T> {
+impl<T: Transcript<Challenge = JoltFr>> DoryTranscript for TranscriptAdapter<'_, T> {
     type Curve = BN254;
 
     fn append_bytes(&mut self, _label: &[u8], bytes: &[u8]) {
@@ -728,7 +736,7 @@ impl<T: Transcript<Challenge = jolt_field::Fr>> DoryTranscript for TranscriptAda
 
     fn append_field(&mut self, _label: &[u8], value: &ArkFr) {
         self.transcript.append(&Label(b"dory_field"));
-        jolt_field::Fr::from(value.0).append_to_transcript(self.transcript);
+        JoltFr::from(value.0).append_to_transcript(self.transcript);
     }
 
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], value: &G) {

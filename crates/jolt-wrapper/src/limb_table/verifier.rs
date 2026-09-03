@@ -5,11 +5,12 @@
 //! once (memoized), bit-field `eq` tables are shared, and every field
 //! multiplication is reported to the observer.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::Range;
 
+use crate::stream::TermObserver;
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::VerifierObserver;
 
 use super::layout::{field_groups, Bits, Factor, Rel, LOG_ROWS};
 
@@ -33,17 +34,23 @@ fn block_end(bit: u8) -> u8 {
         .unwrap_or_else(|| unreachable!("bit {bit} beyond the row index"))
 }
 
-pub struct Evaluator<'o, O: VerifierObserver> {
+pub struct Evaluator<'o, O: TermObserver + ?Sized> {
     row: Vec<Fr>,
     src: Vec<Fr>,
     tables: HashMap<(Point, Bits), Vec<Fr>>,
     consts: HashMap<(Point, Bits, u32), Fr>,
     groups: HashMap<Vec<Factor>, Fr>,
+    /// `Π_{cell fields ≠ map field} field(group)` per cell factor list and
+    /// map field: shared by every element of a family.
+    products: HashMap<(Vec<Factor>, Bits), Option<Fr>>,
     pairs: HashMap<(Bits, Bits, u32, u32), Fr>,
+    /// `(q, Σ_u eq(p_bits, u)·q^u)` per field: the digit link's window
+    /// weights are shared by every family of a lane.
+    geometrics: HashMap<(Point, Bits), (Fr, Fr)>,
     observer: &'o mut O,
 }
 
-impl<'o, O: VerifierObserver> Evaluator<'o, O> {
+impl<'o, O: TermObserver + ?Sized> Evaluator<'o, O> {
     /// `row_le`: the kernel's row point (the copy identity's `τ`), `src_le`:
     /// the source point (the stage point `r`), both little-endian.
     pub fn new(row_le: &[Fr], src_le: &[Fr], observer: &'o mut O) -> Self {
@@ -54,13 +61,62 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
             tables: HashMap::new(),
             consts: HashMap::new(),
             groups: HashMap::new(),
+            products: HashMap::new(),
             pairs: HashMap::new(),
+            geometrics: HashMap::new(),
             observer,
         }
     }
 
     pub fn mul(&mut self, a: Fr, b: Fr) -> Fr {
         self.observer.fr_mul(a, b)
+    }
+
+    /// `eq(row, src)` over the whole point: `Π_i (1 − ρ_i − σ_i + 2·ρ_i·σ_i)`.
+    pub fn eq_row_src(&mut self) -> Fr {
+        let mut product: Option<Fr> = None;
+        for i in 0..LOG_ROWS {
+            let (a, b) = (self.row[i], self.src[i]);
+            let ab = self.mul(a, b);
+            let term = ab + ab - a - b + Fr::one();
+            product = Some(match product {
+                Some(p) => self.mul(p, term),
+                None => term,
+            });
+        }
+        product.unwrap_or(Fr::one())
+    }
+
+    /// `(Π_i v_i, [Π_{j ≠ i} v_j]_i)` by prefix and suffix products
+    /// (`3m − 4` multiplications for `m ≥ 2` values).
+    pub fn all_but_one_products(&mut self, values: &[Fr]) -> (Fr, Vec<Fr>) {
+        let m = values.len();
+        // `prefix[i] = Π_{j < i}`, `suffix[i] = Π_{j ≥ i}`.
+        let mut prefix = vec![Fr::one(); m + 1];
+        for i in 0..m {
+            prefix[i + 1] = if i == 0 {
+                values[0]
+            } else {
+                self.mul(prefix[i], values[i])
+            };
+        }
+        let mut suffix = vec![Fr::one(); m + 1];
+        for i in (0..m).rev() {
+            suffix[i] = if i + 1 == m {
+                values[i]
+            } else {
+                self.mul(values[i], suffix[i + 1])
+            };
+        }
+        let others = (0..m)
+            .map(|i| match (i == 0, i + 1 == m) {
+                (true, true) => Fr::one(),
+                (true, false) => suffix[1],
+                (false, true) => prefix[m - 1],
+                (false, false) => self.mul(prefix[i], suffix[i + 1]),
+            })
+            .collect();
+        (prefix[m], others)
     }
 
     fn point(&self, point: Point) -> &[Fr] {
@@ -171,9 +227,10 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
             };
             return self.eq_const(Point::Src, f.v, value);
         }
-        // Wide unrestricted `same` field: product of per-bit equalities.
+        // Unrestricted `same` field: product of per-bit equalities (two
+        // multiplications per bit beat one per admitted value from width 2).
         if let [f] = group {
-            if f.rel == Rel::Shift(0) && f.range.is_none() && block_end(u.lo) < u.hi {
+            if f.rel == Rel::Shift(0) && f.range.is_none() && u.width() >= 2 {
                 let mut product = Fr::one();
                 for i in 0..u.width() {
                     let a = self.row[usize::from(u.lo + i)];
@@ -183,6 +240,29 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
                     product = if i == 0 { eq } else { self.mul(product, eq) };
                 }
                 return product;
+            }
+        }
+        // One shift (or identity) with range restrictions over a large range:
+        // the bitwise automaton, `≤ 17` multiplications per bit.
+        if let Some(rel) = relation {
+            if let Rel::Shift(delta) = rel.rel {
+                let restricts_only = group.iter().all(|f| {
+                    std::ptr::eq(f, rel)
+                        || (f.v.width() == 0 && matches!(f.rel, Rel::Const(_)) && f.range.is_some())
+                });
+                if restricts_only {
+                    let mut range = 0..1u32 << u.width();
+                    for f in group {
+                        if let Some(r) = &f.range {
+                            range.start = range.start.max(r.start);
+                            range.end = range.end.min(r.end);
+                        }
+                    }
+                    let values = range.end.saturating_sub(range.start) as usize;
+                    if 3 * values > 17 * usize::from(u.width()) {
+                        return self.shift_automaton(u, rel.v, delta, &range);
+                    }
+                }
             }
         }
         let mut sum = Fr::zero();
@@ -212,8 +292,78 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
         sum
     }
 
-    /// `Σ_u eq(p_bits, u)·q^u` over the whole field: `Π_i (1 − r_i + r_i·q^{2^i})`.
+    /// `Σ_{u ∈ range} eq(r_u, u)·eq(r_v, u + delta)` (no carry out of the
+    /// field) by the bitwise automaton of [`super::layout`]'s `shift_mle`:
+    /// states are (carry, `u < lo` so far, `u < hi` so far), read least
+    /// significant bit first; one multiplication per bit for the four bit
+    /// products and one per live transition.
+    fn shift_automaton(&mut self, u: Bits, v: Bits, delta: i64, range: &Range<u32>) -> Fr {
+        let width = usize::from(u.width());
+        let magnitude = delta.unsigned_abs();
+        if magnitude >= 1u64 << width {
+            return Fr::zero();
+        }
+        let (lo, hi) = (u64::from(range.start), u64::from(range.end));
+        let mut states = [Fr::zero(); 8];
+        states[0] = Fr::one();
+        for i in 0..width {
+            let a = self.row[usize::from(u.lo) + i];
+            let b = self.src[usize::from(v.lo) + i];
+            let ab = self.mul(a, b);
+            // `products[u][v] = bit(a, u)·bit(b, v)`.
+            let products = [[Fr::one() - a - b + ab, b - ab], [a - ab, ab]];
+            let d = (magnitude >> i) & 1;
+            let (lo_i, hi_i) = ((lo >> i) & 1, (hi >> i) & 1);
+            let mut next = [Fr::zero(); 8];
+            for (state, &weight) in states.iter().enumerate() {
+                if weight.is_zero() {
+                    continue;
+                }
+                let (carry, lt_lo, lt_hi) = (
+                    state as u64 & 1,
+                    (state >> 1) as u64 & 1,
+                    (state >> 2) as u64 & 1,
+                );
+                for bit_u in 0..2u64 {
+                    let (bit_v, carry_out) = if delta >= 0 {
+                        let sum = bit_u + d + carry;
+                        (sum & 1, sum >> 1)
+                    } else {
+                        let diff = bit_u as i64 - d as i64 - carry as i64;
+                        (diff.rem_euclid(2) as u64, u64::from(diff < 0))
+                    };
+                    let step = |flag: u64, bound: u64| -> u64 {
+                        match bit_u.cmp(&bound) {
+                            Ordering::Less => 1,
+                            Ordering::Greater => 0,
+                            Ordering::Equal => flag,
+                        }
+                    };
+                    let next_state =
+                        (carry_out | (step(lt_lo, lo_i) << 1) | (step(lt_hi, hi_i) << 2)) as usize;
+                    let term = self.mul(weight, products[bit_u as usize][bit_v as usize]);
+                    next[next_state] += term;
+                }
+            }
+            states = next;
+        }
+        let hi_open = hi >= 1u64 << width;
+        (0..8usize)
+            .filter(|state| {
+                let (carry, lt_lo, lt_hi) = (state & 1, (state >> 1) & 1, (state >> 2) & 1);
+                carry == 0 && lt_lo == 0 && (hi_open || lt_hi == 1)
+            })
+            .fold(Fr::zero(), |acc, state| acc + states[state])
+    }
+
+    /// `Σ_u eq(p_bits, u)·q^u` over the whole field: `Π_i (1 − r_i + r_i·q^{2^i})`,
+    /// memoized per field for one `q`.
     pub fn geometric(&mut self, point: Point, bits: Bits, q: Fr) -> Fr {
+        if let Some((cached_q, value)) = self.geometrics.get(&(point, bits)) {
+            if *cached_q == q {
+                return *value;
+            }
+        }
         let coords = self.point(point)[usize::from(bits.lo)..usize::from(bits.hi)].to_vec();
         let mut power = q;
         let mut product = Fr::one();
@@ -228,10 +378,13 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
                 self.mul(product, term)
             };
         }
+        let _ = self.geometrics.insert((point, bits), (q, product));
         product
     }
 
-    /// `Σ_{u ∈ range} eq(p_bits, u)·f(u)` (one multiplication per admitted value).
+    /// `Σ_{u ∈ range} eq(p_bits, u)·f(u)`: one multiplication per admitted
+    /// value plus one per high-block value when the field crosses a block
+    /// boundary (`eq = eq_lo·eq_hi` factored out of the inner sums).
     pub fn field_sum(
         &mut self,
         point: Point,
@@ -239,16 +392,37 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
         range: Range<u32>,
         f: &dyn Fn(u32) -> Fr,
     ) -> Fr {
-        let mut sum = Fr::zero();
-        for u in range {
-            let e = self.eq_const(point, bits, u);
-            sum += self.mul(e, f(u));
+        let split = block_end(bits.lo);
+        if split >= bits.hi {
+            let mut sum = Fr::zero();
+            for u in range {
+                let e = self.lookup(point, bits, u);
+                sum += self.mul(e, f(u));
+            }
+            return sum;
         }
-        sum
+        let lo_bits = Bits::new(bits.lo, split);
+        let hi_bits = Bits::new(split, bits.hi);
+        let lo_width = lo_bits.width();
+        let mut total = Fr::zero();
+        let mut u = range.start;
+        while u < range.end {
+            let hi = u >> lo_width;
+            let block_end_u = ((hi + 1) << lo_width).min(range.end);
+            let mut inner = Fr::zero();
+            for v in u..block_end_u {
+                let e = self.lookup(point, lo_bits, v & ((1 << lo_width) - 1));
+                inner += self.mul(e, f(v));
+            }
+            let e_hi = self.eq_const(point, hi_bits, hi);
+            total += self.mul(e_hi, inner);
+            u = block_end_u;
+        }
+        total
     }
 
     /// `(Σ_{u ∈ range} eq(p_bits, u), Σ_{u ∈ range} eq(p_bits, u)·u)` by bit
-    /// decomposition (one multiplication per bit).
+    /// decomposition (the moment recombined by doublings, no multiplication).
     pub fn field_moment(&mut self, point: Point, bits: Bits, range: Range<u32>) -> (Fr, Fr) {
         if bits.width() == 0 {
             return (Fr::one(), Fr::zero());
@@ -258,8 +432,8 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
             let coords = &self.point(point)[usize::from(bits.lo)..usize::from(bits.hi)];
             let moment = coords
                 .iter()
-                .enumerate()
-                .fold(Fr::zero(), |acc, (i, r)| acc + *r * Fr::from_u64(1u64 << i));
+                .rev()
+                .fold(Fr::zero(), |acc, r| acc + acc + *r);
             return (Fr::one(), moment);
         }
         let mut total = Fr::zero();
@@ -273,10 +447,10 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
                 }
             }
         }
-        let mut moment = Fr::zero();
-        for (i, acc) in per_bit.into_iter().enumerate() {
-            moment += self.mul(acc, Fr::from_u64(1u64 << i));
-        }
+        let moment = per_bit
+            .iter()
+            .rev()
+            .fold(Fr::zero(), |acc, bit_sum| acc + acc + *bit_sum);
         (total, moment)
     }
 
@@ -296,32 +470,53 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
 
     /// Adds `Π_{other cell fields}·m_map` for every map into `buckets[index]`,
     /// the caller applying one weight per bucket; the cell factors sharing
-    /// the maps' row field join each map's sum.
+    /// the maps' row field join each map's sum. The maps of one bucket are
+    /// summed before the product, and the cell product is memoized across
+    /// the elements sharing the cell.
     pub fn group_into(&mut self, cell: &[Factor], maps: &[(usize, &Factor)], buckets: &mut [Fr]) {
         let Some((_, first)) = maps.first() else {
             return;
         };
         let map_field = first.u;
-        let mut product: Option<Fr> = None;
         let mut shared: Vec<Factor> = Vec::new();
+        let mut others: Vec<Vec<Factor>> = Vec::new();
         for group in field_groups(cell) {
             if group[0].u == map_field {
                 shared = group;
-                continue;
+            } else {
+                others.push(group);
             }
-            let value = self.field(&group);
-            product = Some(match product {
-                Some(p) => self.mul(p, value),
-                None => value,
-            });
         }
+        let key = (cell.to_vec(), map_field);
+        let product = if let Some(&p) = self.products.get(&key) {
+            p
+        } else {
+            let mut product: Option<Fr> = None;
+            for group in &others {
+                let value = self.field(group);
+                product = Some(match product {
+                    Some(p) => self.mul(p, value),
+                    None => value,
+                });
+            }
+            let _ = self.products.insert(key, product);
+            product
+        };
+        let mut sums: Vec<(usize, Fr)> = Vec::new();
         for (index, map) in maps {
             let mut group = shared.clone();
             group.push((*map).clone());
             let m = self.field(&group);
-            buckets[*index] += match product {
-                Some(p) => self.mul(p, m),
-                None => m,
+            if let Some((_, sum)) = sums.iter_mut().find(|(i, _)| i == index) {
+                *sum += m;
+            } else {
+                sums.push((*index, m));
+            }
+        }
+        for (index, sum) in sums {
+            buckets[index] += match product {
+                Some(p) => self.mul(p, sum),
+                None => sum,
             };
         }
     }
@@ -351,6 +546,7 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
             let _ = self.consts.insert((Point::Row, bits, value), v);
         }
         self.groups.clear();
+        self.products.clear();
         self.pairs.clear();
         self
     }

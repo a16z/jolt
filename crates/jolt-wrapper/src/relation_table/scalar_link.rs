@@ -5,30 +5,34 @@ use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 
+use crate::limb_table::lookup::{link_weights, link_weights_with};
+use crate::limb_table::schedule::Layout;
 use crate::stream::TermObserver;
 
 use super::{RelationCellLayout, RelationTableWitness};
 
-pub struct DoryScalarLink {
+pub struct DoryScalarLink<'a> {
     rows: usize,
     base: usize,
     capacity: usize,
     rho: Fr,
+    layout: &'a Layout,
 }
 
-impl DoryScalarLink {
+impl<'a> DoryScalarLink<'a> {
     /// Both the public weight and wire MLEs vary in a round; their product is quadratic.
     pub const DEGREE: usize = 2;
 
-    pub fn new(rows: usize, layout: RelationCellLayout, rho: Fr) -> Self {
+    pub fn new(rows: usize, cells: RelationCellLayout, layout: &'a Layout, rho: Fr) -> Self {
         assert!(rows.is_power_of_two());
-        assert!(layout.dory_scalar_capacity.is_power_of_two());
-        assert_eq!(layout.dory_scalar_base % layout.dory_scalar_capacity, 0);
+        assert!(cells.dory_scalar_capacity.is_power_of_two());
+        assert_eq!(cells.dory_scalar_base % cells.dory_scalar_capacity, 0);
         Self {
             rows,
-            base: layout.dory_scalar_base,
-            capacity: layout.dory_scalar_capacity,
+            base: cells.dory_scalar_base,
+            capacity: cells.dory_scalar_capacity,
             rho,
+            layout,
         }
     }
 
@@ -67,11 +71,9 @@ impl DoryScalarLink {
 
     fn weights(&self) -> Vec<Fr> {
         let mut weights = vec![Fr::zero(); self.rows];
-        let mut power = Fr::one();
-        for value in &mut weights[self.base..self.base + self.capacity] {
-            *value = power;
-            power *= self.rho;
-        }
+        let link = link_weights(self.layout, self.rho);
+        let named = self.layout.digit_bases as usize - 2;
+        weights[self.base..self.base + named].copy_from_slice(&link[..named]);
         weights
     }
 
@@ -95,19 +97,20 @@ impl DoryScalarLink {
                 },
             );
         }
-        let mut powers = Vec::with_capacity(suffix);
-        let mut power = self.rho;
-        for index in 0..suffix {
-            powers.push(power);
-            if index + 1 < suffix {
-                power = observer.fr_mul(power, power);
+        let named = self.layout.digit_bases as usize - 2;
+        let mut layer = link_weights_with(self.layout, self.rho, &mut |a, b| observer.fr_mul(a, b));
+        layer.truncate(named);
+        layer.resize(self.capacity, Fr::zero());
+        for &coordinate in &point[prefix..] {
+            let half = layer.len() / 2;
+            for index in 0..half {
+                let low = layer[index];
+                let difference = layer[index + half] - low;
+                layer[index] = low + observer.fr_mul(coordinate, difference);
             }
+            layer.truncate(half);
         }
-        for (&coordinate, &power) in point[prefix..].iter().zip(powers.iter().rev()) {
-            let selected = Fr::one() - coordinate + observer.fr_mul(coordinate, power);
-            value = observer.fr_mul(value, selected);
-        }
-        value
+        observer.fr_mul(value, layer[0])
     }
 }
 

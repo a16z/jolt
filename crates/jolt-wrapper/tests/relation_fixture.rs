@@ -68,7 +68,7 @@ const EXPECTED_PER_STAGE_2_20: [(&str, usize); 9] = [
 ];
 
 /// Pinned row counts of the fibonacci 2^18 relation (L = 18, K = 13, σ = 11).
-const EXPECTED_CONSTRAINTS_2_18: usize = 5_254;
+const EXPECTED_CONSTRAINTS_2_18: usize = 5_253;
 const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage1", 268),
     ("stage2", 365),
@@ -78,7 +78,7 @@ const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage6a", 229),
     ("stage6b", 974),
     ("stage7", 795),
-    ("stage8", 279),
+    ("stage8", 278),
 ];
 
 fn setup_total_vars(memory_layout: &MemoryLayout, max_padded_trace_length: usize) -> usize {

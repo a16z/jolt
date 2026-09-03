@@ -1,0 +1,86 @@
+diff --git a/crates/jolt-wrapper/tests/hash_table_relation.rs b/crates/jolt-wrapper/tests/hash_table_relation.rs
+index 583a849a4..ba40b0649 100644
+--- a/crates/jolt-wrapper/tests/hash_table_relation.rs
++++ b/crates/jolt-wrapper/tests/hash_table_relation.rs
+@@ -32 +32,3 @@ use jolt_wrapper::hash_table::terms::{
+-use jolt_wrapper::hash_table::wiring::{source, Source, WordSlot, CELL_ROWS, CHALLENGE_POS};
++use jolt_wrapper::hash_table::wiring::{
++    canonicality, source, Source, WordSlot, CELL_ROWS, CHALLENGE_POS,
++};
+@@ -927,0 +930,76 @@ fn modulus_hi_is_the_top_word_of_the_field_modulus() {
++#[test]
++fn canonicality_windows_match_every_representable_alias_class() {
++    let top_word = |bytes: [u8; 32], shifted: bool| {
++        let mut committed = vec![Fr::zero(); COMMITTED];
++        let mut wired = vec![Fr::zero(); WIRED_WORDS];
++        let first = if shifted {
++            [0, 0, bytes[0], bytes[1]]
++        } else {
++            bytes[..4].try_into().expect("four bytes")
++        };
++        let word = u32::from_le_bytes(first);
++        for k in 0..32 {
++            committed[MESSAGE + k] = Fr::from_u64(u64::from((word >> k) & 1));
++        }
++        let next = if shifted { 2 } else { 4 };
++        wired[WiredWord::FrNext(1).index()] = Fr::from_u32(u32::from_be_bytes(
++            bytes[next..next + 4].try_into().expect("four bytes"),
++        ));
++        if shifted {
++            wired[WiredWord::FrLo2.index()] =
++                Fr::from_u64(u64::from(u16::from_be_bytes([bytes[6], bytes[7]])));
++        }
++        canonicality(shifted)
++            .into_iter()
++            .fold(Fr::zero(), |sum, (column, weight)| {
++                let value = if column < COMMITTED {
++                    committed[column]
++                } else {
++                    wired[column - COMMITTED]
++                };
++                sum + weight * value
++            })
++    };
++
++    for times in 1..=5 {
++        let bytes = plus_modulus(canonical_one(), times);
++        let expected = u64::from_be_bytes(bytes[..8].try_into().expect("eight bytes"));
++        assert!(expected >= MODULUS_HI);
++        assert_eq!(top_word(bytes, false), Fr::from_u64(expected));
++        assert_eq!(top_word(bytes, true), Fr::from_u64(expected));
++        assert_eq!(wire_value(&bytes, false), Fr::one());
++        assert_eq!(wire_value(&bytes, true), Fr::one());
++    }
++}
++
++#[test]
++fn verifier_cost_includes_statement_derivation() {
++    let log = synthetic_log(3, 2, 10, 1, 54);
++    let Instance {
++        key, public, table, ..
++    } = instance(&log);
++    let setup = prover_setup(key.rows());
++    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
++    let key = table_key(&key, &setup);
++    let (proof, columns) = prove(&table, &key, &public, &setup);
++    let cost = verify(&proof, &key, &public, &columns, &verifier_setup).expect("proof");
++    let full = full_commitments(&key, &proof);
++    let raw = commitment_prefix_challenges(
++        &DIGEST,
++        &public.field_elements(),
++        &[(&full, T1Challenges::count(key.schedule.log_rows))],
++    );
++    let mut statement = MulCounter(0);
++    let challenges =
++        T1Challenges::from_challenges_with(&raw, key.schedule.log_rows, &mut |a, b| {
++            statement.fr_mul(a, b)
++        });
++    let _ = challenges.input_claims_with(&public, &mut |a, b| statement.fr_mul(a, b));
++
++    assert_eq!(
++        cost.fr_mul,
++        9_963 + statement.0,
++        "VerifierCost must include the verifier's statement derivation"
++    );
++}
++

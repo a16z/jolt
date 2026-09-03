@@ -22,6 +22,10 @@
     reason = "ignored profiling gate with dimensions fixed by the statement"
 )]
 
+#[expect(
+    dead_code,
+    reason = "the profiling target uses only the synthetic opening"
+)]
 mod common;
 #[path = "perf1_profile/t2.rs"]
 mod t2;

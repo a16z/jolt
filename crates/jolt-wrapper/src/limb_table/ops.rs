@@ -4,7 +4,7 @@
 //! G2 affine = `(x0, x1, y0, y1)`; G2 homogeneous projective = `(x0, x1, y0,
 //! y1, z0, z1)`; `Fq2` values = `(re, im)`.
 
-use ark_bn254::Fq;
+use ark_bn254::{Fq, Fq2};
 use ark_ff::{AdditiveGroup, Field};
 
 use super::template::{at, conjugated, own, Ref, RefSlots, RowKind, Template, TemplateRow};
@@ -89,6 +89,22 @@ fn gt_product_rows(
 /// `x · y` over full GT elements (twelve rows).
 pub fn gt_mul(x: GtOperand, y: GtOperand) -> Template {
     Template::new(gt_product_rows(x, y.nonzero, y.conj, |b| at(y.elem, b)))
+}
+
+/// Norm-one check of element 1: `x · conj(x)` pinned to the identity. It
+/// puts the element in the norm-one torus, where conjugation is inversion
+/// (the target group is the order-`r` part of that torus; see the lane
+/// journal's projection argument).
+pub fn gt_norm_one() -> Template {
+    let rows = gt_product_rows(GtOperand::dense(1), [true; 12], true, |b| at(1, b))
+        .into_iter()
+        .enumerate()
+        .map(|(c, row)| {
+            let value = if c == 0 { Fq::ONE } else { Fq::ZERO };
+            TemplateRow::pinned(row.slots, value)
+        })
+        .collect();
+    Template::new(rows)
 }
 
 /// Frobenius power of element 1: each coordinate is a linear form over public
@@ -342,13 +358,15 @@ pub fn miller_add_step(neg_q: bool) -> Template {
 /// `ψ(P) = (conj(x)·cx, conj(y)·cy)` (arkworks' `mul_by_char`), element 1 =
 /// `P` affine, element 2 = constants `(cx.re, cx.im, cy.re, cy.im)`;
 /// `negate_y` folds the sign of `q2 = -ψ(q1)`.
-pub fn g2_psi(negate_y: bool) -> Template {
+pub fn g2_psi(negate_y: bool, conjugate: bool) -> Template {
     let (x, y) = ([at(1, 0), at(1, 1)], [at(1, 2), at(1, 3)]);
     let (cx, cy) = ([at(2, 0), at(2, 1)], [at(2, 2), at(2, 3)]);
+    // `conj(v)·c` (odd powers) or `v·c` (even powers, `conj² = id`).
+    let k = if conjugate { 1 } else { -1 };
     let conj_mul = |v: [Ref; 2], c: [Ref; 2], s: i32| -> [Slots; 2] {
         [
-            vec![(v[0], c[0], s), (v[1], c[1], s)],
-            vec![(v[0], c[1], s), (v[1], c[0], -s)],
+            vec![(v[0], c[0], s), (v[1], c[1], s * k)],
+            vec![(v[0], c[1], s), (v[1], c[0], -s * k)],
         ]
     };
     let sy = if negate_y { -1 } else { 1 };
@@ -444,6 +462,50 @@ pub fn g2_add(neg_q: bool) -> Template {
     rows.push(TemplateRow::compute(y30));
     rows.push(TemplateRow::compute(y31));
     Template::new(rows)
+}
+
+/// [`g2_add`] pinned to the generic case: rows 8–9 hold `inv = (x2 − x1)⁻¹`
+/// and rows 10–11 pin `inv·(x2 − x1) = 1`, so `x2 = x1` (the exceptional
+/// case whose slope pin is vacuous) has no witness.
+pub fn g2_add_guarded(neg_q: bool) -> Template {
+    let mut rows = g2_add(neg_q).rows;
+    let (x1, x2) = ([at(1, 0), at(1, 1)], [at(2, 0), at(2, 1)]);
+    let one = at(3, 0);
+    let inv = [own(8), own(9)];
+    let num: [Slots; 2] = [vec![(one, one, 1)], vec![]];
+    let den: [Slots; 2] = [
+        vec![(x2[0], one, 1), (x1[0], one, -1)],
+        vec![(x2[1], one, 1), (x1[1], one, -1)],
+    ];
+    rows.push(TemplateRow::witness(RowKind::QuotientFq2 {
+        num: num.clone(),
+        den: den.clone(),
+        coord: 0,
+    }));
+    rows.push(TemplateRow::witness(RowKind::QuotientFq2 {
+        num,
+        den,
+        coord: 1,
+    }));
+    let mut pin = fq2_mul(inv, x2, 1);
+    extend2(&mut pin, fq2_mul(inv, x1, -1));
+    rows.push(TemplateRow::pinned(pin[0].clone(), Fq::ONE));
+    rows.push(TemplateRow::pinned(pin[1].clone(), Fq::ZERO));
+    Template::new(rows)
+}
+
+/// `p + q = 0` over two G2 points (elements 1, 2; element 3 = `(1,)`): pins
+/// `x1 − x2 = 0` (rows 0–1) and `y1 + y2 = 0` (rows 2–3).
+pub fn g2_negation_pins() -> Template {
+    let one = at(3, 0);
+    Template::new(
+        (0..4u8)
+            .map(|c| {
+                let sign = if c < 2 { -1 } else { 1 };
+                TemplateRow::pinned(vec![(at(1, c), one, 1), (at(2, c), one, sign)], Fq::ZERO)
+            })
+            .collect(),
+    )
 }
 
 /// Affine G2 doubling (element 1 = `p`, element 2 = `(1,)`): `λ = 3x²/(2y)`,
@@ -569,6 +631,63 @@ pub fn g1_dbl() -> Template {
     ])
 }
 
+/// The GLV endomorphism `φ(x, y) = (ζ·x, y)` of a G1 point (element 1);
+/// element 2 = constants `(ζ, 1)`.
+pub fn g1_endo() -> Template {
+    let (zeta, one) = (at(2, 0), at(2, 1));
+    Template::new(vec![
+        TemplateRow::compute(vec![(at(1, 0), zeta, 1)]),
+        TemplateRow::compute(vec![(at(1, 1), one, 1)]),
+    ])
+}
+
+/// The GLV endomorphism `φ(x, y) = (ω·x, y)` of a G2 point (element 1 =
+/// `x0 x1 y0 y1`); element 2 = constants `(ω.re, ω.im, 1)`.
+pub fn g2_endo() -> Template {
+    let x = [at(1, 0), at(1, 1)];
+    let omega = [at(2, 0), at(2, 1)];
+    let one = at(2, 2);
+    let mut rows: Vec<TemplateRow> = fq2_mul(x, omega, 1)
+        .into_iter()
+        .map(TemplateRow::compute)
+        .collect();
+    rows.push(TemplateRow::compute(vec![(at(1, 2), one, 1)]));
+    rows.push(TemplateRow::compute(vec![(at(1, 3), one, 1)]));
+    Template::new(rows)
+}
+
+/// Sign row of a G1 point (element 1 = `(x, y)`): exact
+/// `y − (q+1)/2 + (1 − flag)·2^256` with `flag = [y > −y]`; element 2 =
+/// constants `((q+1)/2, 1)`.
+pub fn g1_sign() -> Template {
+    let (y, half, one) = (at(1, 1), at(2, 0), at(2, 1));
+    Template::new(vec![TemplateRow::sign(
+        vec![(y, one, 1), (half, one, -1)],
+        y,
+    )])
+}
+
+/// Sign rows of a G2 point (element 1 = `x0 x1 y0 y1`), the lexicographic
+/// `y > −y` on `(y1, y0)`: `inv = y1⁻¹` or zero (row 0), `z = y1·inv` (1),
+/// exact pins `y1·(1 − z) = 0` (2) and `z·(z − 1) = 0` (3) so `z = [y1 ≠ 0]`,
+/// exact `v = z·y1 + (1 − z)·y0` (4), then the sign row of `v` (5); element
+/// 2 = constants `((q+1)/2, 1)`.
+pub fn g2_sign() -> Template {
+    let (y0, y1) = (at(1, 2), at(1, 3));
+    let (half, one) = (at(2, 0), at(2, 1));
+    let (inv, z, v) = (own(0), own(1), own(4));
+    Template::new(vec![
+        TemplateRow::witness(RowKind::InverseOrZero {
+            den: vec![(y1, one, 1)],
+        }),
+        TemplateRow::compute(vec![(y1, inv, 1)]),
+        TemplateRow::exact_pinned(vec![(y1, one, 1), (y1, z, -1)], Fq::ZERO),
+        TemplateRow::exact_pinned(vec![(z, z, 1), (z, one, -1)], Fq::ZERO),
+        TemplateRow::exact(vec![(y1, z, 1), (y0, one, 1), (y0, z, -1)]),
+        TemplateRow::sign(vec![(v, one, 1), (half, one, -1)], v),
+    ])
+}
+
 /// Copy of a G1 point (element 1) with optional `y` negation; element 2 = `(1,)`.
 pub fn g1_copy(negate_y: bool) -> Template {
     let one = at(2, 0);
@@ -602,10 +721,10 @@ pub fn gt_difference_pins() -> Template {
 
 /// `ψ^power(x, y) = (conj^power(x)·cx, conj^power(y)·cy)`, folded from
 /// arkworks' `TWIST_MUL_BY_Q_{X,Y}` (`ψ = mul_by_char`).
-pub fn psi_coefficients(power: usize) -> (ark_bn254::Fq2, ark_bn254::Fq2) {
+pub fn psi_coefficients(power: usize) -> (Fq2, Fq2) {
     use ark_bn254::Config as Bn254Config;
     use ark_ec::bn::BnConfig;
-    let (mut cx, mut cy) = (ark_bn254::Fq2::ONE, ark_bn254::Fq2::ONE);
+    let (mut cx, mut cy) = (Fq2::ONE, Fq2::ONE);
     for _ in 0..power {
         let mut cx_conj = cx;
         let mut cy_conj = cy;
@@ -615,4 +734,60 @@ pub fn psi_coefficients(power: usize) -> (ark_bn254::Fq2, ark_bn254::Fq2) {
         cy = cy_conj * Bn254Config::TWIST_MUL_BY_Q_Y;
     }
     (cx, cy)
+}
+
+/// The completeness guard of an affine G1 add (element 1 = the add's own
+/// rows, element 2 = its first operand `p`, element 3 = `(1,)`):
+/// `t = λ² − 2·x1 − x3 = x2 − x1` (row 0), `inv = t⁻¹` (witness, row 1) and
+/// the pin `inv·t = 1` (row 2), so the add has a witness only in the generic
+/// case `x2 ≠ x1` (the `x2 = x1` cases: `q = p` leaves the slope pin vacuous,
+/// `q = −p` has no witness).
+pub fn g1_add_guard() -> Template {
+    let (lambda, x3) = (at(1, 0), at(1, 2));
+    let x1 = at(2, 0);
+    let one = at(3, 0);
+    let (t, inv) = (own(0), own(1));
+    Template::new(vec![
+        TemplateRow::compute(vec![(lambda, lambda, 1), (x1, one, -2), (x3, one, -1)]),
+        TemplateRow::witness(RowKind::Quotient {
+            num: vec![(one, one, 1)],
+            den: vec![(t, one, 1)],
+        }),
+        TemplateRow::pinned(vec![(inv, t, 1)], Fq::ONE),
+    ])
+}
+
+/// [`g1_add_guard`] over `Fq2` (a G2 add: `λ` rows 0–1, `x3` rows 4–5 of
+/// element 1): `t` rows 0–1, `inv` rows 2–3, pin rows 4–5.
+pub fn g2_add_guard() -> Template {
+    let lambda = [at(1, 0), at(1, 1)];
+    let x3 = [at(1, 4), at(1, 5)];
+    let x1 = [at(2, 0), at(2, 1)];
+    let one = at(3, 0);
+    let t = [own(0), own(1)];
+    let inv = [own(2), own(3)];
+    let mut t_rows = fq2_mul(lambda, lambda, 1);
+    extend2(
+        &mut t_rows,
+        [vec![(x1[0], one, -2)], vec![(x1[1], one, -2)]],
+    );
+    extend2(
+        &mut t_rows,
+        [vec![(x3[0], one, -1)], vec![(x3[1], one, -1)]],
+    );
+    let num: [Slots; 2] = [vec![(one, one, 1)], vec![]];
+    let den: [Slots; 2] = [vec![(t[0], one, 1)], vec![(t[1], one, 1)]];
+    let pin = fq2_mul(inv, t, 1);
+    Template::new(vec![
+        TemplateRow::compute(t_rows[0].clone()),
+        TemplateRow::compute(t_rows[1].clone()),
+        TemplateRow::witness(RowKind::QuotientFq2 {
+            num: num.clone(),
+            den: den.clone(),
+            coord: 0,
+        }),
+        TemplateRow::witness(RowKind::QuotientFq2 { num, den, coord: 1 }),
+        TemplateRow::pinned(pin[0].clone(), Fq::ONE),
+        TemplateRow::pinned(pin[1].clone(), Fq::ZERO),
+    ])
 }

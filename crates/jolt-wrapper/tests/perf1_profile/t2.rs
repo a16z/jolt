@@ -1,17 +1,13 @@
+use ark_bn254::Fr as ArkFr;
 use jolt_crypto::Bn254;
-use jolt_field::{Field, Fr, Ring};
+use jolt_field::{Field, Fr};
 use jolt_hyperkzg::HyperKZGProverSetup;
 use jolt_transcript::{Keccak256Transcript, Transcript};
-use jolt_wrapper::limb_table::columns::{operand_columns, Columns};
+use jolt_wrapper::limb_table::columns::Columns;
 use jolt_wrapper::limb_table::dory::{FlattenedCheck, WireValues};
-use jolt_wrapper::limb_table::export::{free_column, pin_columns, ClaimedColumns};
-use jolt_wrapper::limb_table::lookup::{LookupColumns, PublicColumns};
-use jolt_wrapper::limb_table::relation::col::WIDTH;
-use jolt_wrapper::limb_table::relation::{
-    eq_tau_column, Challenges, LookupConstants, RowRelation, RowSumcheck, SLOTS,
-};
+use jolt_wrapper::limb_table::relation::{RowRelation, RowSumcheck};
 use jolt_wrapper::limb_table::schedule::build;
-use jolt_wrapper::limb_table::wiring::{copy_kernel_table, fingerprint_columns};
+use jolt_wrapper::limb_table::stream::StreamBuilder;
 use jolt_wrapper::stream::prove_kzg_stage;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -28,7 +24,7 @@ pub fn witness() -> T2Witness {
     let sigma = opening.statement.challenges.beta.len();
     let n = opening.witness.commitments.len();
     let check = FlattenedCheck::derive(sigma, n);
-    let values = WireValues::derive(&opening.statement, sigma, n);
+    let values = WireValues::derive(&opening.statement, sigma, n, ArkFr::from(0x72u64));
     let layout = build(&check, &values, &opening.setup, &check.wires());
     let coordinates = opening.witness.coordinates_in(&layout.input_order);
     let evaluated = layout
@@ -37,79 +33,28 @@ pub fn witness() -> T2Witness {
         .expect("evaluate program");
     let columns = Columns::generate(&layout.program, &evaluated, ROWS_LOG);
     let mut rng = StdRng::seed_from_u64(0x72);
-    let challenges = Challenges {
-        tau: (0..ROWS_LOG).map(|_| Fr::random(&mut rng)).collect(),
-        xi: Fr::random(&mut rng),
-        alpha: Fr::random(&mut rng),
-        gamma: Fr::random(&mut rng),
-        lambda: Fr::random(&mut rng),
-        beta: Fr::random(&mut rng),
-        fp_root: Fr::random(&mut rng),
-        fp_combine: Fr::random(&mut rng),
-        lambda_lookup: Fr::random(&mut rng),
-        copy_root: Fr::random(&mut rng),
-        constancy_root: Fr::random(&mut rng),
-    };
-    let relation = RowRelation::new(
-        challenges,
-        LookupConstants {
-            one_row: layout.one_cell * 16,
-        },
+    let mut challenge = || Fr::random(&mut rng);
+    let (xi, alpha, fp_root, beta, fp_combine, copy_root) = (
+        challenge(),
+        challenge(),
+        challenge(),
+        challenge(),
+        challenge(),
+        challenge(),
     );
-    let public = PublicColumns::new(&layout);
-    let z_xi = columns.xi_values(relation.challenges.xi);
-    let operands = operand_columns(&layout.program, &z_xi, SLOTS);
-    let fingerprints = fingerprint_columns(&layout.table_reads, &z_xi, &relation);
-    let lookup = LookupColumns::new(
-        &public,
-        &operands,
-        &fingerprints.0,
-        &fingerprints.1,
-        &relation,
-    );
-    let (helpers, multiplicities) =
-        columns.logup_columns(relation.challenges.alpha, &public.digits);
-    let claimed = ClaimedColumns::assemble(
-        &columns,
-        &public,
-        operands,
-        helpers,
-        multiplicities
-            .into_iter()
-            .map(|value| Fr::from_u64(u64::from(value)))
-            .collect(),
-        PublicColumns::inverse_table(relation.challenges.alpha),
-        lookup,
-        fingerprints,
-        pin_columns(&layout),
-        free_column(&layout),
-    );
-    let eq_tau = eq_tau_column(&relation.challenges.tau);
-    let copy = copy_kernel_table(
-        &layout.program,
-        &public.kinds,
-        &layout.table_reads,
-        &eq_tau,
-        &relation,
-    );
-    let constancy = public.constancy_weights(&eq_tau);
-    let (small, id) = PublicColumns::small_and_id();
-    let mut matrix = claimed.columns;
-    matrix.extend([
-        eq_tau,
-        copy,
-        public.sel,
-        public.is_gt,
-        public.is_g1,
-        public.is_g2,
-        public.s0,
-        public.coord,
-        constancy,
-        small,
-        id,
-    ]);
-    assert_eq!(matrix.len(), WIDTH);
-    T2Witness { relation, matrix }
+    let tau = (0..ROWS_LOG).map(|_| challenge()).collect();
+    let (gamma, lambda, lambda_lookup, constancy_root) =
+        (challenge(), challenge(), challenge(), challenge());
+    let mut builder = StreamBuilder::new(&layout, &columns, 16);
+    let _ = builder.phase_1b();
+    let _ = builder.phase_2a(xi, alpha);
+    let _ = builder.phase_2b(fp_root);
+    let _ = builder.phase_2c(beta, fp_combine, copy_root);
+    let witness = builder.finish(tau, gamma, lambda, lambda_lookup, constancy_root, 0);
+    T2Witness {
+        relation: witness.relation,
+        matrix: witness.matrix,
+    }
 }
 
 pub fn profile(report: &mut Report, witness: &T2Witness, setup: &HyperKZGProverSetup<Bn254>) {

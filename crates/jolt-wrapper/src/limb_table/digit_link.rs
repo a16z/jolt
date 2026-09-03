@@ -4,14 +4,14 @@
 //! the row member), so the sum equals `Σ_kd ρ^{kd}·s_kd` — the R lane's
 //! `Σ_s ρ^s·scalar_s` plus `ρ^K` for the constant-one base.
 
-use jolt_field::{Fr, Ring, Zero};
+use jolt_field::{Fr, Zero};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
 use super::layout::LOG_ROWS;
-use super::relation::col;
+use super::relation::Col;
 use super::terms::{AffineForm, ColumnId, Term};
 
 pub struct LinkMember {
@@ -19,7 +19,6 @@ pub struct LinkMember {
     digit: Vec<Fr>,
     size: usize,
     round: usize,
-    pub cheat: bool,
 }
 
 impl LinkMember {
@@ -32,7 +31,6 @@ impl LinkMember {
             digit: digit_values.to_vec(),
             size,
             round: 0,
-            cheat: false,
         }
     }
 
@@ -48,15 +46,15 @@ impl LinkMember {
         2
     }
 
-    fn round_poly(&self, claim: Fr) -> Vec<Fr> {
+    fn round_poly(&self) -> Vec<Fr> {
         let half = self.size / 2;
         let evals: [Fr; 3] = (0..half)
             .into_par_iter()
             .fold(
                 || [Fr::zero(); 3],
                 |mut acc, i| {
-                    let (o0, o1) = (self.omega[2 * i], self.omega[2 * i + 1]);
-                    let (d0, d1) = (self.digit[2 * i], self.digit[2 * i + 1]);
+                    let (o0, o1) = (self.omega[i], self.omega[i + half]);
+                    let (d0, d1) = (self.digit[i], self.digit[i + half]);
                     acc[0] += o0 * d0;
                     acc[1] += o1 * d1;
                     acc[2] += (o1 + o1 - o0) * (d1 + d1 - d0);
@@ -67,19 +65,16 @@ impl LinkMember {
                 || [Fr::zero(); 3],
                 |a, b| std::array::from_fn(|i| a[i] + b[i]),
             );
-        let mut coefficients = UnivariatePoly::from_evals(&evals).into_coefficients();
-        if self.cheat {
-            let tail: Fr = coefficients[1..].iter().fold(Fr::zero(), |acc, c| acc + *c);
-            coefficients[0] = (claim - tail) * two_inverse();
-        }
-        coefficients
+        UnivariatePoly::from_evals(&evals).into_coefficients()
     }
 
+    /// Most significant remaining row bit first: row `i` pairs with `i + half`.
     fn bind(&mut self, r: Fr) {
         let half = self.size / 2;
         let fold = |column: &mut Vec<Fr>| {
-            for i in 0..half {
-                column[i] = column[2 * i] + r * (column[2 * i + 1] - column[2 * i]);
+            let (lo, hi) = column.split_at_mut(half);
+            for (l, &h) in lo.iter_mut().zip(hi.iter()) {
+                *l += r * (h - *l);
             }
             column.truncate(half);
         };
@@ -96,10 +91,6 @@ impl LinkMember {
     }
 }
 
-fn two_inverse() -> Fr {
-    jolt_field::Field::inverse(&Fr::from_u64(2)).unwrap_or_else(|| unreachable!("2 is invertible"))
-}
-
 impl ProveRounds<Fr> for LinkMember {
     fn num_rounds(&self) -> usize {
         LOG_ROWS
@@ -109,13 +100,13 @@ impl ProveRounds<Fr> for LinkMember {
         &mut self,
         bind: Option<Fr>,
         round: usize,
-        previous_claim: Fr,
+        _previous_claim: Fr,
     ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
         if let Some(r) = bind {
             self.bind(r);
         }
         debug_assert_eq!(round, self.round);
-        Ok(UnivariatePoly::new(self.round_poly(previous_claim)))
+        Ok(UnivariatePoly::new(self.round_poly()))
     }
 
     fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
@@ -126,5 +117,5 @@ impl ProveRounds<Fr> for LinkMember {
 
 /// The member's final relation as one linear term: `ω̃(r)·D(r)`.
 pub fn link_term(omega: Fr) -> Term {
-    Term::new(omega, vec![AffineForm::column(ColumnId(col::D as u32))])
+    Term::new(omega, vec![AffineForm::column(ColumnId(Col::D as u32))])
 }

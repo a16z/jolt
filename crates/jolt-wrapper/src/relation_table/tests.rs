@@ -17,6 +17,9 @@ use jolt_sumcheck::prover::ProveRounds;
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 
 use super::*;
+use crate::limb_table::adapter::from_jolt;
+use crate::limb_table::lookup::link_weights;
+use crate::limb_table::schedule::build as build_limb_layout;
 use crate::profile::WrapperProfile;
 use crate::relation::{build_relation, generate_witness, ScheduleEntry};
 use crate::stream::VerifierCost;
@@ -45,16 +48,16 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         generate_witness(&profile, &preprocessing, &public_io, &proof).expect("relation witness");
     let rows = 1 << 18;
     let mut table = RelationTable::from_relation(&relation, rows).expect("lower R1CS");
-    assert_eq!(table.gate_rows(), 38_981);
+    assert_eq!(table.gate_rows(), 38_977);
     assert_eq!(
         table.cell_layout(),
         RelationCellLayout {
-            absorbed_word_base: 38_981,
+            absorbed_word_base: 38_977,
             absorbed_words: 1_222,
-            challenge_base: 40_203,
+            challenge_base: 40_199,
             challenges: 376,
             dory_scalar_base: 40_704,
-            dory_scalars: 175,
+            dory_scalars: 172,
             dory_scalar_capacity: 256,
         }
     );
@@ -183,13 +186,27 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
     table.fixed[Q_C][0] = old_constant;
 
     let rho = Fr::from_u64(41);
-    let scalar_link = DoryScalarLink::new(rows, table.cell_layout(), rho);
+    let t2_inputs = from_jolt(
+        &preprocessing.pcs_setup,
+        &proof.commitments,
+        &proof.joint_opening_proof,
+        &relation.link.dory,
+        &relation_witness.values,
+        Fr::from_u64(43),
+    )
+    .expect("T2 inputs");
+    let t2_layout = build_limb_layout(
+        &t2_inputs.check,
+        &t2_inputs.values,
+        &t2_inputs.setup,
+        &t2_inputs.wire_order,
+    );
+    let scalar_link = DoryScalarLink::new(rows, table.cell_layout(), &t2_layout, rho);
     let mut scalar_prover = scalar_link.prover(&table_witness);
     let mut direct = Fr::zero();
-    let mut power = Fr::one();
-    for (_, variable) in &relation.link.dory.scalars {
-        direct += power * relation_witness.values[variable.index()];
-        power *= rho;
+    let weights = link_weights(&t2_layout, rho);
+    for ((_, variable), weight) in relation.link.dory.scalars.iter().zip(weights) {
+        direct += weight * relation_witness.values[variable.index()];
     }
     assert_eq!(scalar_prover.input_claim(), direct);
     let mut scalar_claim = direct;
@@ -220,7 +237,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
             &mut scalar_cost,
         )
     );
-    assert_eq!(scalar_cost.fr_mul, 34);
+    assert_eq!(scalar_cost.fr_mul, 494);
     let scalar_term_context = DoryScalarTermsContext {
         wire: ColumnId { group: 0, slot: 0 },
         point: &scalar_point,
@@ -246,7 +263,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
             .expect("scalar terms"),
         scalar_terms
     );
-    assert_eq!(scalar_term_cost.fr_mul, 34);
+    assert_eq!(scalar_term_cost.fr_mul, 494);
     assert_eq!(scalar_terms.len(), DORY_SCALAR_TERM_COUNT);
     assert_eq!(scalar_terms[0].factors.len(), 1);
     assert_eq!(
@@ -264,7 +281,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         )
         .expect("evaluate scalar terms")
     );
-    assert_eq!(scalar_term_cost.fr_mul, 35);
+    assert_eq!(scalar_term_cost.fr_mul, 495);
     assert_eq!(
         RELATION_TERM_COUNT + COPY_LINK_TERM_COUNT + DORY_SCALAR_TERM_COUNT,
         26
@@ -291,14 +308,14 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         .expect("serialize relation table proof")
         .len();
     assert_eq!(table_proof.payload_bytes(), 4_352);
-    assert_eq!(bincode_bytes, 4_415);
+    assert_eq!(bincode_bytes, 4_416);
     assert_eq!(
         cost,
         VerifierCost {
             ec_mul: 108,
             ec_add: 107,
             pairing_pairs: 8,
-            fr_mul: 8_847,
+            fr_mul: 1_225,
             fr_inv: 6,
             keccak: 310,
         }

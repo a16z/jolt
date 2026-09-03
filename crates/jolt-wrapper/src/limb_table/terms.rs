@@ -3,7 +3,31 @@
 //! affine `L`. Prover and verifier build the same list from the transcript
 //! challenges; the stream's term stage compresses it to one claim.
 
+use std::ops::Neg;
+
 use jolt_field::{Fr, Ring, Zero};
+
+/// A (possibly observed) field multiplication the verifier-side derivations
+/// route their constant products through.
+pub type Mul<'a> = &'a mut dyn FnMut(Fr, Fr) -> Fr;
+
+/// The uncounted multiplication (prover side, tests).
+pub fn plain(left: Fr, right: Fr) -> Fr {
+    left * right
+}
+
+/// `1, root, root², …` (`count` powers) with the products observed.
+pub fn powers_with(root: Fr, count: usize, mul: Mul<'_>) -> Vec<Fr> {
+    let mut out = Vec::with_capacity(count);
+    let mut power = Fr::from_u64(1);
+    for i in 0..count {
+        out.push(power);
+        if i + 1 < count {
+            power = if i == 0 { root } else { mul(power, root) };
+        }
+    }
+    out
+}
 
 /// Index into the table's exported column list ([`super::export`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -54,10 +78,10 @@ impl AffineForm {
         }
     }
 
-    pub fn scale(mut self, factor: Fr) -> Self {
-        self.constant *= factor;
+    pub fn scale_with(mut self, factor: Fr, mul: Mul<'_>) -> Self {
+        self.constant = mul(self.constant, factor);
         for (_, weight) in &mut self.weights {
-            *weight *= factor;
+            *weight = mul(*weight, factor);
         }
         self
     }
@@ -68,6 +92,19 @@ impl AffineForm {
             .fold(self.constant, |acc, (id, weight)| {
                 acc + *weight * values[id.0 as usize]
             })
+    }
+}
+
+/// `−form`, no field multiplication.
+impl Neg for AffineForm {
+    type Output = Self;
+
+    fn neg(mut self) -> Self {
+        self.constant = -self.constant;
+        for (_, weight) in &mut self.weights {
+            *weight = -*weight;
+        }
+        self
     }
 }
 
@@ -106,25 +143,4 @@ pub fn evaluate_terms(terms: &[Term], values: &[Fr]) -> Fr {
     terms
         .iter()
         .fold(Fr::zero(), |acc, term| acc + term.evaluate(values))
-}
-
-/// Folds every degree-1 term into one linear term so the list carries one
-/// `d = 1` term plus the genuine products.
-pub fn fold_linear(terms: Vec<Term>) -> Vec<Term> {
-    let mut linear = AffineForm::default();
-    let mut products = Vec::with_capacity(terms.len());
-    for term in terms {
-        match term.factors.len() {
-            0 => linear.constant += term.coefficient,
-            1 => {
-                let [form] = <[AffineForm; 1]>::try_from(term.factors)
-                    .unwrap_or_else(|_| unreachable!("one factor"));
-                linear.accumulate(&form.scale(term.coefficient));
-            }
-            _ => products.push(term),
-        }
-    }
-    let mut out = vec![Term::linear(linear)];
-    out.extend(products);
-    out
 }

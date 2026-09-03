@@ -7,18 +7,26 @@
     reason = "tests report shapes and fail loudly"
 )]
 
+#[expect(
+    dead_code,
+    reason = "fixtures shared with the other limb-table test binaries"
+)]
 mod common;
 
+use std::cmp::Reverse;
 use std::time::Instant;
 
-use ark_bn254::Fq12;
+use ark_bn254::{Fq, Fq12, Fr as ArkFr};
 use ark_ff::Zero;
+use jolt_poly::EqPolynomial;
 use jolt_wrapper::limb_table::dory::{DorySetupInputs, FlattenedCheck, NativeCheck, WireValues};
-use jolt_wrapper::limb_table::layout::ROWS;
+use jolt_wrapper::limb_table::layout::{Factor, ROWS};
+use jolt_wrapper::limb_table::lookup::PublicColumns;
+use jolt_wrapper::limb_table::program::Source;
 use jolt_wrapper::limb_table::schedule::{build, Layout};
 use jolt_wrapper::limb_table::tower::fq12_from_coords;
 
-fn gt(values: &[ark_bn254::Fq], rows: &[u32; 12]) -> Fq12 {
+fn gt(values: &[Fq], rows: &[u32; 12]) -> Fq12 {
     fq12_from_coords(&std::array::from_fn(|c| values[rows[c] as usize]))
 }
 
@@ -65,8 +73,42 @@ fn print_shape(layout: &Layout) {
         layout.selected.len(),
         layout.digit_ops.len()
     );
-    let cost: usize = layout.pieces().iter().map(|p| p.kernel.cost()).sum();
-    println!("fixed-kernel verifier cost ≈ {cost} field multiplications");
+    // Free cells (no row written in the cell) and their largest contiguous run.
+    let used: Vec<bool> = (0..ROWS / 16)
+        .map(|cell| {
+            (0..16).any(|c| {
+                program.rows[cell * 16 + c].source != Source::Compute
+                    || !program.rows[cell * 16 + c].slots.is_empty()
+                    || program.rows[cell * 16 + c].pin.is_some()
+            })
+        })
+        .collect();
+    let free = used.iter().filter(|u| !**u).count();
+    let (mut best, mut best_start, mut run, mut run_start) = (0usize, 0usize, 0usize, 0usize);
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (cell, u) in used.iter().enumerate() {
+        if !*u {
+            if run == 0 {
+                run_start = cell;
+            }
+            run += 1;
+            if run > best {
+                best = run;
+                best_start = run_start;
+            }
+        } else if run > 0 {
+            runs.push((run_start, run));
+            run = 0;
+        }
+    }
+    if run > 0 {
+        runs.push((run_start, run));
+    }
+    runs.sort_by_key(|(_, len)| Reverse(*len));
+    println!(
+        "free cells {free}, largest run {best} at {best_start}; runs ≥ 32: {:?}",
+        runs.iter().filter(|(_, l)| *l >= 32).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -75,7 +117,7 @@ fn program_reproduces_the_deferred_check_on_a_real_opening() {
     let sigma = opening.witness.sigma();
     let n = opening.witness.commitments.len();
     let check = FlattenedCheck::derive(sigma, n);
-    let values = WireValues::derive(&opening.statement, sigma, n);
+    let values = WireValues::derive(&opening.statement, sigma, n, common::offset_challenge());
     let native = NativeCheck::evaluate(&check, &values, &opening.setup, &opening.witness);
     assert!(native.holds(), "flattened deferred check holds natively");
 
@@ -145,7 +187,7 @@ fn random_values(check: &FlattenedCheck, seed: u64) -> WireValues {
     let mut pairs = Vec::new();
     let mut push = |wire: &Wire| {
         if let Wire::Named(name) = wire {
-            pairs.push((name.clone(), ark_bn254::Fr::rand(&mut rng)));
+            pairs.push((name.clone(), ArkFr::rand(&mut rng)));
         }
     };
     for (_, wire) in &check.gt.bases {
@@ -161,7 +203,7 @@ fn random_values(check: &FlattenedCheck, seed: u64) -> WireValues {
             push(wire);
         }
     }
-    WireValues::from_wires(pairs)
+    WireValues::from_wires(pairs, ArkFr::rand(&mut rng))
 }
 
 #[test]
@@ -197,9 +239,7 @@ fn evaluator_matches_kernel_mles() {
     let layout = build(&check, &values, &setup, &check.wires());
     let mut rng = ChaCha20Rng::seed_from_u64(1);
     let point = |rng: &mut ChaCha20Rng| -> Vec<Fr> {
-        (0..LOG_ROWS)
-            .map(|_| Fr::from(ark_bn254::Fr::rand(rng)))
-            .collect()
+        (0..LOG_ROWS).map(|_| Fr::from(ArkFr::rand(rng))).collect()
     };
     let (r, rs) = (point(&mut rng), point(&mut rng));
     let mut kernels: Vec<Kernel> = layout.pieces().into_iter().map(|p| p.kernel).collect();
@@ -212,10 +252,8 @@ fn evaluator_matches_kernel_mles() {
     }
     let mut cost = VerifierCost::default();
     let mut ev = Evaluator::new(&r, &rs, &mut cost);
-    let eq_r =
-        jolt_poly::EqPolynomial::<Fr>::evals(&r.iter().rev().copied().collect::<Vec<_>>(), None);
-    let eq_s =
-        jolt_poly::EqPolynomial::<Fr>::evals(&rs.iter().rev().copied().collect::<Vec<_>>(), None);
+    let eq_r = EqPolynomial::<Fr>::evals(&r.iter().rev().copied().collect::<Vec<_>>(), None);
+    let eq_s = EqPolynomial::<Fr>::evals(&rs.iter().rev().copied().collect::<Vec<_>>(), None);
     let (mut bad, mut bad_edges) = (0, 0);
     for kernel in &kernels {
         let expected = kernel.mle(&r, &rs);
@@ -249,8 +287,7 @@ fn evaluator_matches_kernel_mles() {
     // Shared-cell group evaluation equals the sum of its kernels.
     let mut bad_groups = 0;
     for group in &layout.copies {
-        let maps: Vec<(usize, &jolt_wrapper::limb_table::layout::Factor)> =
-            group.maps.iter().map(|(_, _, map)| (0, map)).collect();
+        let maps: Vec<(usize, &Factor)> = group.maps.iter().map(|(_, _, map)| (0, map)).collect();
         let mut bucket = [Fr::zero()];
         ev.group_into(&group.cell, &maps, &mut bucket);
         let via_group = bucket[0];
@@ -290,7 +327,7 @@ fn kernels_match_program_rows() {
     let setup = random_setup(8, 7);
     let values = random_values(&check, 5);
     let layout = build(&check, &values, &setup, &check.wires());
-    let public = jolt_wrapper::limb_table::lookup::PublicColumns::new(&layout);
+    let public = PublicColumns::new(&layout);
     // (row, slot, side) -> (src, weight) from the program.
     let mut from_rows: BTreeMap<(u32, u8, u8), (u32, i32)> = BTreeMap::new();
     for (row, spec) in layout.program.rows.iter().enumerate() {
@@ -395,58 +432,91 @@ fn kernels_match_program_rows() {
 }
 
 /// Verifier arithmetic of the row and link members at the fibonacci profile
-/// (σ = 11, N = 42) stays within the 10k `Fr` multiplication budget.
+/// (σ = 11, N = 42): every field multiplication of the exporter's derivation
+/// (relation, public evaluations and `ω̃`, terms, link batching) is
+/// observed, and the count stays within the 10k `Fr` multiplication budget.
 #[test]
 fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     use ark_ff::UniformRand;
     use jolt_field::Fr;
-    use jolt_wrapper::limb_table::layout::LOG_ROWS;
-    use jolt_wrapper::limb_table::lookup::{omega_eval, public_evals};
-    use jolt_wrapper::limb_table::relation::{Challenges, LookupConstants, RowRelation};
-    use jolt_wrapper::stream::VerifierCost;
+    use jolt_wrapper::limb_table::lookup::public_and_omega_evals;
+    use jolt_wrapper::limb_table::relation::{Col, LookupConstants, RowRelation};
+    use jolt_wrapper::limb_table::stream::{StreamTermExporter, T2Challenges};
+    use jolt_wrapper::stream::{ColumnId, TermContext, TermExporter, TermObserver, VerifierCost};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
     let check = FlattenedCheck::derive(11, 42);
-    let setup = random_setup(11, 7);
-    let values = random_values(&check, 5);
+    let values = random_values(&check, 1);
+    let setup = random_setup(11, 2);
     let layout = build(&check, &values, &setup, &check.wires());
-    let mut rng = ChaCha20Rng::seed_from_u64(3);
-    let mut fr = || Fr::from(ark_bn254::Fr::rand(&mut rng));
-    let challenges = Challenges {
-        tau: (0..LOG_ROWS).map(|_| fr()).collect(),
-        xi: fr(),
-        alpha: fr(),
-        gamma: fr(),
-        lambda: fr(),
-        beta: fr(),
-        fp_root: fr(),
-        fp_combine: fr(),
-        lambda_lookup: fr(),
-        copy_root: fr(),
-        constancy_root: fr(),
+    let mut rng = ChaCha20Rng::seed_from_u64(0xB0D6);
+    let mut fr = || Fr::from(ArkFr::rand(&mut rng));
+    // θ, the per-phase challenges, ρ; the stage point; two batching coefficients.
+    let challenges: Vec<Fr> = (0..T2Challenges::count() + 2).map(|_| fr()).collect();
+    let point: Vec<Fr> = (0..18).map(|_| fr()).collect();
+    let batching = [fr(), fr()];
+    let ids: Vec<ColumnId> = (0..Col::CLAIMED)
+        .map(|i| ColumnId {
+            group: i / 4,
+            slot: i % 4,
+        })
+        .collect();
+    let exporter = StreamTermExporter {
+        layout: &layout,
+        challenge_offset: 1,
+        theta_offset: 0,
+        rho_offset: 1 + T2Challenges::count(),
+        columns: &ids,
+        row_member: 0,
+        link_member: 1,
     };
-    let tau_le: Vec<Fr> = challenges.tau.iter().rev().copied().collect();
-    let r_le: Vec<Fr> = (0..LOG_ROWS).map(|_| fr()).collect();
-    let rho = fr();
-    let relation = RowRelation::new(
-        challenges,
+    let mut cost = VerifierCost::default();
+    let terms = exporter.terms_observed(
+        &TermContext {
+            row_point: &point,
+            batching_coefficients: &batching,
+            challenges: &challenges,
+        },
+        &mut cost,
+    );
+    let max_degree = terms.iter().map(|t| t.factors.len()).max().expect("terms");
+
+    // The same derivation component by component; the parts sum to the whole.
+    let t2 = exporter.challenges(&challenges);
+    let mut relation_cost = VerifierCost::default();
+    let relation = RowRelation::new_with(
+        t2.row.clone(),
         LookupConstants {
             one_row: layout.one_cell * 16,
         },
+        &mut |a, b| relation_cost.fr_mul(a, b),
     );
-    let mut cost = VerifierCost::default();
-    let evals = public_evals(&layout, &relation, &tau_le, &r_le, &mut cost);
-    let public_cost = cost.fr_mul;
-    let _ = omega_eval(&layout, rho, &r_le, &mut cost);
-    let terms = relation.terms(&evals);
-    let max_degree = terms.iter().map(|t| t.degree()).max().expect("terms");
-    println!(
-        "fibonacci profile: public evals {} + digit link {} = {} fr_mul; {} terms, max degree {}",
-        public_cost,
-        cost.fr_mul - public_cost,
+    let tau_le = t2.tau_le();
+    let r_le: Vec<Fr> = point.iter().rev().copied().collect();
+    let mut public_cost = VerifierCost::default();
+    let (public, _omega) =
+        public_and_omega_evals(&layout, &relation, &tau_le, &r_le, t2.rho, &mut public_cost);
+    let mut terms_cost = VerifierCost::default();
+    let _ = relation.batched_terms(&public, batching[0], &mut |a, b| terms_cost.fr_mul(a, b));
+    let link_batching = 1;
+    assert_eq!(
+        relation_cost.fr_mul + public_cost.fr_mul + terms_cost.fr_mul + link_batching,
         cost.fr_mul,
+        "component counts sum to the exporter's"
+    );
+    println!(
+        "fibonacci profile: execution-derived verifier {} fr_mul = relation {} + public \
+         evaluations and ω̃ {} + terms {} + link batching {}; {} terms, max degree {}, {} link \
+         occurrences over {} digit bases",
+        cost.fr_mul,
+        relation_cost.fr_mul,
+        public_cost.fr_mul,
+        terms_cost.fr_mul,
+        link_batching,
         terms.len(),
-        max_degree
+        max_degree,
+        layout.link_occurrences,
+        layout.digit_bases
     );
     assert!(cost.fr_mul <= 10_000, "{} fr_mul", cost.fr_mul);
 }

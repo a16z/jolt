@@ -3,7 +3,7 @@
 //! elements (in the joint opening's commitment order) and the wire values
 //! the R1CS lane's named Dory scalars take in its witness.
 
-use ark_bn254::Fq12;
+use ark_bn254::{Fq12, Fr as ArkFr};
 use jolt_dory::{DoryCommitment, DoryProof, DoryVerifierSetup};
 use jolt_field::Fr;
 use jolt_verifier::proof::JoltCommitments;
@@ -62,13 +62,15 @@ pub fn ordered_commitments(commitments: &JoltCommitments<DoryCommitment>) -> Vec
 
 /// Builds the table inputs from the verifier setup, the proof's commitments
 /// and joint opening proof, the relation's named Dory scalar wires and the
-/// witness assignment `z` they index (`z[0] = 1`).
+/// witness assignment `z` they index (`z[0] = 1`), and the wrapper's offset
+/// challenge `θ` (drawn from the stream transcript after phase 1a).
 pub fn from_jolt(
     pcs_setup: &DoryVerifierSetup,
     commitments: &JoltCommitments<DoryCommitment>,
     opening_proof: &DoryProof,
     links: &DoryLinks,
     witness_values: &[Fr],
+    offset: Fr,
 ) -> Result<JoltDoryInputs, AdapterError> {
     let proof = opening_proof.0.clone();
     if proof.sigma != links.sigma {
@@ -99,7 +101,7 @@ pub fn from_jolt(
                 index,
                 len: witness_values.len(),
             })?;
-        pairs.push((wire.clone(), ark_bn254::Fr::from(value)));
+        pairs.push((wire.clone(), ArkFr::from(value)));
     }
     let check = FlattenedCheck::derive(proof.sigma, ordered.len());
     let wire_order: Vec<DoryScalar> = links.scalars.iter().map(|(w, _)| w.clone()).collect();
@@ -117,7 +119,7 @@ pub fn from_jolt(
             commitments: ordered,
             proof,
         },
-        values: WireValues::from_wires(pairs),
+        values: WireValues::from_wires(pairs, ArkFr::from(offset)),
         wire_order,
     })
 }

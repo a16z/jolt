@@ -2,13 +2,17 @@
 //! (independent oracle: `G2Prepared` lines and `mul_by_034`).
 
 #![expect(clippy::expect_used, clippy::print_stdout)]
+#[expect(
+    dead_code,
+    reason = "fixtures shared with the other limb-table test binaries"
+)]
 mod common;
 
-use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, Fq6};
+use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, Fq6, G1Affine, G2Affine};
 use ark_ec::bn::{BnConfig, G2Prepared};
 use ark_ff::{Field, One};
 use jolt_wrapper::limb_table::dory::{FlattenedCheck, NativeCheck, WireValues};
-use jolt_wrapper::limb_table::schedule::{build, cells};
+use jolt_wrapper::limb_table::schedule::{build, Cells};
 use jolt_wrapper::limb_table::tower::{fq12_coords, fq12_from_coords};
 
 fn gt_cell(values: &[Fq], cell: u32) -> Fq12 {
@@ -25,23 +29,17 @@ fn miller_cells_match_arkworks_step_by_step() {
     let sigma = opening.witness.sigma();
     let n = opening.witness.commitments.len();
     let check = FlattenedCheck::derive(sigma, n);
-    let values = WireValues::derive(&opening.statement, sigma, n);
+    let values = WireValues::derive(&opening.statement, sigma, n, common::offset_challenge());
     let native = NativeCheck::evaluate(&check, &values, &opening.setup, &opening.witness);
     let layout = build(&check, &values, &opening.setup, &check.wires());
     let coords = opening.witness.coordinates_in(&layout.input_order);
     let v = layout.program.evaluate(&coords).expect("eval");
 
     let g1_at = |cell: u32| {
-        ark_bn254::G1Affine::new_unchecked(
-            v[(cell * 16 + 14) as usize],
-            v[(cell * 16 + 15) as usize],
-        )
+        G1Affine::new_unchecked(v[(cell * 16 + 14) as usize], v[(cell * 16 + 15) as usize])
     };
     let g2_at = |half: u32, off: u32| {
-        ark_bn254::G2Affine::new_unchecked(
-            fq2_at(&v, half * 8 + off),
-            fq2_at(&v, half * 8 + off + 2),
-        )
+        G2Affine::new_unchecked(fq2_at(&v, half * 8 + off), fq2_at(&v, half * 8 + off + 2))
     };
     println!(
         "E1_acc ok: {}",
@@ -80,7 +78,7 @@ fn miller_cells_match_arkworks_step_by_step() {
     let prepared = G2Prepared::<Bn254Config>::from(q0);
     let coeffs = &prepared.ell_coeffs;
     // My first doubling-step lines for p = 0.
-    let group = cells::MILLER_DBL_LINES * 16;
+    let group = Cells::MILLER_DBL_LINES * 16;
     let h = fq2_at(&v, group + 12);
     let j = fq2_at(&v, group + 14);
     let i = fq2_at(&v, group + 18);
@@ -118,12 +116,12 @@ fn miller_cells_match_arkworks_step_by_step() {
     for t in 0..64u32 {
         if t > 0 {
             let _ = f.square_in_place();
-            let mine = gt_cell(&v, cells::MILLER_DBL_GT + 8 * t);
+            let mine = gt_cell(&v, Cells::MILLER_DBL_GT + 8 * t);
             assert_eq!(mine, f, "sq at t={t}");
         }
         for pi in 0..4 {
             ell(&mut f, pi, &mut cursor);
-            let cell = cells::MILLER_DBL_GT + 8 * t + 1 + pi as u32;
+            let cell = Cells::MILLER_DBL_GT + 8 * t + 1 + pi as u32;
             let mine = gt_cell(&v, cell);
             if mine != f {
                 let (p, _) = pairs[pi];
@@ -155,7 +153,7 @@ fn miller_cells_match_arkworks_step_by_step() {
         if ate[63 - t as usize] != 0 {
             for pi in 0..4 {
                 ell(&mut f, pi, &mut cursor);
-                let mine = gt_cell(&v, cells::MILLER_ADD_GT + 4 * a + pi as u32);
+                let mine = gt_cell(&v, Cells::MILLER_ADD_GT + 4 * a + pi as u32);
                 assert_eq!(mine, f, "add ell a={a} p={pi}");
             }
             a += 1;
@@ -164,7 +162,7 @@ fn miller_cells_match_arkworks_step_by_step() {
     for extra in 0..2u32 {
         for pi in 0..4 {
             ell(&mut f, pi, &mut cursor);
-            let mine = gt_cell(&v, cells::MILLER_ADD_GT + 4 * (a + extra) + pi as u32);
+            let mine = gt_cell(&v, Cells::MILLER_ADD_GT + 4 * (a + extra) + pi as u32);
             assert_eq!(mine, f, "final ell {extra} p={pi}");
         }
     }
