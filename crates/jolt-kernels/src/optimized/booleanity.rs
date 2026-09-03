@@ -735,7 +735,7 @@ impl ChunkIndexSource for BooleanityChunks {
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct OptimizedBooleanityCycleKernel<F: JoltField> {
+pub(crate) struct OptimizedBooleanityCycleKernel<F: JoltField> {
     progress: RoundProgress,
     /// Split-eq over the reference cycle, scaled by
     /// `eq(r_address, reference_address)` — together the reference's

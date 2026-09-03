@@ -7,8 +7,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_kernels::{JoltBackend, KernelSlots, ProofSession, ReferenceBackend};
 use jolt_openings::{
-    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, OpeningsError,
-    TransparentObjectSetup,
+    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltProof;

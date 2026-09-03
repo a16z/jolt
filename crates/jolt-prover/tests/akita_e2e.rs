@@ -11,8 +11,8 @@ mod akita_tests {
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
-    use jolt_field::Ring;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
+    use jolt_field::Ring;
     use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;

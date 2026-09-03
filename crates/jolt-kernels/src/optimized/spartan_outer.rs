@@ -76,6 +76,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use super::instruction_input::prepare_instruction_input_rows;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use super::ram_trace::{
@@ -2379,7 +2380,15 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
         log_t: usize,
         witness: &dyn JoltWitnessPlane<F>,
     ) -> Result<(), KernelError<F>> {
-        prepare_instruction_input_rows(session, witness, 1usize << log_t)
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        {
+            prepare_instruction_input_rows(session, witness, 1usize << log_t)
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        {
+            let _ = (session, witness, log_t);
+            Ok(())
+        }
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuterUniskip::prepare")]

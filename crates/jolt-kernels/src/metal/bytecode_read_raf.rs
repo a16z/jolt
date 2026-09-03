@@ -601,10 +601,10 @@ mod tests {
     use crate::metal::solinas::bytecode_read_raf_address::BytecodeAddressStage1TopologyOwner;
     use crate::metal::solinas::InstructionReadRafStage1Owner;
     use crate::metal::spartan_product::SpartanProductRemainderMetalConfig;
-    use crate::optimized::harness::{probe_input_claim, run_lockstep};
     use crate::optimized::instruction_read_raf::{
         collect_instruction_cycle_rows, InstructionCycleRow,
     };
+    use crate::optimized::parity::{probe_input_claim, run_lockstep};
     use crate::uniskip::UniskipKernel;
     use crate::ReferenceBackend;
 

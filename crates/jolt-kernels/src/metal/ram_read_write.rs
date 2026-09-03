@@ -1731,7 +1731,7 @@ mod tests {
     use crate::metal::solinas::ram_cycle_family::RamCycleFamilyOwner;
     use crate::metal::solinas::SolinasMetal;
     use crate::metal::MetalConfig;
-    use crate::optimized::harness::run_lockstep;
+    use crate::optimized::parity::run_lockstep;
     use crate::optimized::spartan_outer::prepare_metal_spartan_outer_stage1_owner_witness_rows;
     use crate::optimized::testing::{with_ram_fixture_backend, FixtureShape, RamOp};
 

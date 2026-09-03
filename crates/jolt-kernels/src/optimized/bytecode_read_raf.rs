@@ -370,7 +370,7 @@ enum StageVal {
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct AddressKernel<F: JoltField> {
+pub(crate) struct AddressKernel<F: JoltField> {
     progress: RoundProgress,
     committed_program: bool,
     stage_weights: Vec<F>,
@@ -880,7 +880,7 @@ impl ChunkIndexSource for BytecodePcChunks {
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct CycleKernel<F: JoltField> {
+pub(crate) struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
     #[cfg(feature = "akita")]

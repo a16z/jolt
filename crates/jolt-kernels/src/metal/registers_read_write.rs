@@ -644,7 +644,7 @@ mod tests {
 
     use super::*;
     use crate::metal::MetalConfig;
-    use crate::optimized::harness::run_lockstep;
+    use crate::optimized::parity::run_lockstep;
     use crate::optimized::registers_read_write::test_support::structured_fixture;
 
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {

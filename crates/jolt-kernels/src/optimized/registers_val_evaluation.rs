@@ -178,7 +178,7 @@ struct RdIncRow {
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct ValEvaluationKernel<F: JoltField> {
+pub(crate) struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncState<F>,
     wa: WaState<F>,

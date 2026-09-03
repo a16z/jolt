@@ -433,7 +433,7 @@ mod tests {
     #[test]
     #[expect(clippy::unwrap_used)]
     fn k256_policy_uses_adaptive_dimensions() {
-        assert_eq!(JoltOneHotK256::inner_basis_range(), (3, 11));
+        assert_eq!(JoltOneHotK256::inner_basis_range(), (3, 16));
         assert_eq!(JoltOneHotK256::opening_basis_range(), (3, 6));
         assert!(matches!(
             JoltOneHotK256::RING_DIMENSION_SCHEDULE_MODE,

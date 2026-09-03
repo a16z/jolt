@@ -780,7 +780,7 @@ mod tests {
 
     use super::*;
     use crate::metal::MetalConfig;
-    use crate::optimized::harness::{probe_input_claim, run_lockstep};
+    use crate::optimized::parity::{probe_input_claim, run_lockstep};
     use crate::optimized::testing::{
         fixture_lowest_address, with_ram_fixture_backend, FixtureShape, RamOp,
     };

@@ -178,11 +178,6 @@ impl InstructionCycleRow {
         ((self.packed_pc_and_flags & PACKED_PC_MASK) - 1) as usize
     }
 
-    #[cfg(test)]
-    pub(crate) fn mapped_pc(&self) -> Option<usize> {
-        Some(self.bytecode_pc())
-    }
-
     #[inline]
     pub(crate) fn remapped_ram_address(&self) -> Option<u64> {
         self.ram_address_plus_one.checked_sub(1)
@@ -288,14 +283,6 @@ impl InstructionCycleRow {
         stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
         Ok(consumers.0.rows)
     }
-}
-
-#[cfg(test)]
-pub(crate) fn collect_instruction_cycle_rows<F: JoltField>(
-    witness: &dyn JoltWitnessPlane<F>,
-    cycles: usize,
-) -> Result<Vec<InstructionCycleRow>, KernelError<F>> {
-    InstructionCycleRow::collect(witness, cycles)
 }
 
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the

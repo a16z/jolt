@@ -36,9 +36,9 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
-use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
-    HammingWeightClaimReduction, HammingWeightClaimReductionChallenges,
-};
+use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionChallenges;
 #[cfg(feature = "akita")]
 use jolt_witness::witnesses::BalancedIncColumn;
 use jolt_witness::witnesses::RaChunkSelector;
@@ -85,6 +85,7 @@ impl FamilySelectors {
         })
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
     fn len(&self) -> usize {
         self.instruction.len() + self.bytecode.len() + self.ram.len() + {
             #[cfg(feature = "akita")]
@@ -200,6 +201,7 @@ fn pushforwards<F: JoltField>(
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) struct HammingWeightPreparePlan<F: JoltField> {
     rounds: usize,
     reference_cycle: Vec<F>,
@@ -211,6 +213,7 @@ pub(crate) struct HammingWeightPreparePlan<F: JoltField> {
     ra_polynomials: usize,
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 impl<F: JoltField> HammingWeightPreparePlan<F> {
     pub(crate) fn new(
         relation: &HammingWeightClaimReduction<F>,

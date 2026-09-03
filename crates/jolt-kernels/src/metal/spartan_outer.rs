@@ -1751,7 +1751,7 @@ mod tests {
         MetalError, OuterRemainderPhase, OuterRemainderSequence, OuterRemainderSequenceConfig,
     };
     use crate::metal::{MetalBackend, MetalConfig, SpartanOuterRemainderMetalConfig};
-    use crate::optimized::harness::run_lockstep;
+    use crate::optimized::parity::run_lockstep;
 
     use crate::optimized::spartan_outer::{
         prepare_metal_spartan_outer_witness_rows, OptimizedOuterRemainder, OptimizedOuterUniskip,

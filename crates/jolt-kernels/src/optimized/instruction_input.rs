@@ -23,6 +23,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 use super::support::collect_rows;
 use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
 use crate::{
@@ -59,11 +60,13 @@ pub struct InstructionInputRow {
     pub imm: Imm,
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct PreparedInstructionInputRows {
     rows: Vec<InstructionInputRow>,
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 impl PreparedInstructionInputRows {
     pub(crate) const fn len(&self) -> usize {
         self.rows.len()
@@ -74,6 +77,7 @@ impl PreparedInstructionInputRows {
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) fn prepare_instruction_input_rows<F: JoltField>(
     session: &mut ProofSession,
     witness: &dyn JoltWitnessPlane<F>,
@@ -107,7 +111,7 @@ pub struct OptimizedInstructionInput;
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
-        session: &mut ProofSession,
+        _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
@@ -483,6 +487,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     }
 }
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
 fn instruction_input_state_error<F: JoltField>(message: impl Into<String>) -> SumcheckError<F> {
     SumcheckError::ComputeBackend {
         backend: "metal",
