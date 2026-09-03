@@ -21,6 +21,10 @@ def check_variant_imports(lines: list[str]) -> list[tuple[int, str]]:
     return CHECKER.check_enum_variant_imports("test.rs", lines, in_raw, in_macro)
 
 
+def check_native_visit(lines: list[str]) -> list[tuple[int, str]]:
+    return CHECKER.check_native_visit("test.rs", lines)
+
+
 class CheckStyleInvariantsTests(unittest.TestCase):
     def test_recognizes_generated_file_header(self) -> None:
         self.assertTrue(
@@ -156,6 +160,30 @@ class CheckStyleInvariantsTests(unittest.TestCase):
         self.assertEqual(
             check(["<D::Error as serde::de::Error>::custom(message);"]), []
         )
+
+    def test_native_visit_rejects_primitive_and_field_containers(self) -> None:
+        attr = '#[cfg_attr(feature = "allocative", allocative(visit = helper))]'
+        for field in [
+            "counts: Vec<Vec<u32>>,",
+            "weights: Vec<F>,",
+            "rows: Vec<Vec<F>>,",
+            "p: [Vec<F>; TERMS],",
+            "Vec<F>,",
+        ]:
+            findings = check_native_visit([attr, "/// doc", field])
+            self.assertEqual(len(findings), 1, field)
+            self.assertIn("[native-visit]", findings[0][1])
+        self.assertEqual(len(check_native_visit([f"Dense({attr} Vec<F>),"])), 1)
+
+    def test_native_visit_allows_heap_free_foreign_elements(self) -> None:
+        attr = '#[cfg_attr(feature = "allocative", allocative(visit = helper))]'
+        for field in [
+            "openings: Vec<JoltOpeningId>,",
+            "checkpoints: Vec<PrefixEval<F>>,",
+            "Vec<InstructionInputRow>,",
+            "tables: Vec<(K, Vec<Polynomial<T>>)>,",
+        ]:
+            self.assertEqual(check_native_visit([attr, field]), [], field)
 
 
 if __name__ == "__main__":

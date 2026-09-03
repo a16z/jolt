@@ -134,11 +134,7 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:

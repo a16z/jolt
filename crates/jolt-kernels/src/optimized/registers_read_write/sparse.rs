@@ -8,16 +8,11 @@ use rayon::prelude::*;
 use super::super::support::RoundChallenges;
 use super::rows::RegisterCycleRow;
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CoeffLut<F> {
     /// Power-of-two length; index 0 is always zero (zero seeds stay zero
     /// under `b + r·(a − b)`), which is what lets an absent merge partner
     /// keep index arithmetic pure.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) values: Vec<F>,
 }
 
@@ -128,6 +123,7 @@ impl<F: JoltField> OneHotCoeff<F> for F {
 /// A `u16` index into a [`CoeffLut`] (newtype: a bare `u16` would collide
 /// with the blanket field-value impl under coherence).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct LutIndex(u16);
 
 impl<F: JoltField> OneHotCoeff<F> for LutIndex {
@@ -170,6 +166,7 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
 /// A `u8` index for the write-coefficient table. That table reaches at most
 /// 256 entries before the read table forces both columns into field form.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct SmallLutIndex(u8);
 
 impl<F: JoltField> OneHotCoeff<F> for SmallLutIndex {
@@ -221,6 +218,7 @@ type SparseEntrySlot<F, R, W> = core::mem::MaybeUninit<SparseEntry<F, R, W>>;
 /// so the values neighboring this entry's slice never need field form until
 /// they participate in a merge.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct SparseEntry<F, R, W> {
     /// Bound `Val(col, row-slice)` coefficient (value *before* the access).
     pub(super) val: F,
@@ -487,22 +485,14 @@ fn split_pair_group<F, R, W>(
     group.split_at(odd_start)
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) enum SparseEntries<F: JoltField> {
     Indexed {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         entries: Vec<IndexedSparseEntry<F>>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
     },
-    Direct(
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-        Vec<DirectSparseEntry<F>>,
-    ),
+    Direct(Vec<DirectSparseEntry<F>>),
 }
 
 impl<F: JoltField> SparseEntries<F> {
@@ -538,11 +528,7 @@ impl<F: JoltField> SparseEntries<F> {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct ReadWriteKernel<F: JoltField> {
     pub(super) log_t: usize,
     pub(super) log_k: usize,
@@ -552,11 +538,8 @@ pub(super) struct ReadWriteKernel<F: JoltField> {
     pub(super) gruen: GruenSplitEqPolynomial<F>,
     pub(super) inc: Polynomial<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) ra: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) wa: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub(super) val: Vec<F>,
     /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
     #[cfg_attr(feature = "allocative", allocative(skip))]

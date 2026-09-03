@@ -15,7 +15,7 @@ workspace = true
 default = ["parallel"]
 akita = ["jolt-claims/akita", "jolt-verifier/akita"]
 # Shallow heap visitation of the proof session (profile harness flamegraphs).
-allocative = ["dep:allocative", "jolt-poly/allocative"]
+allocative = ["dep:allocative", "jolt-field/allocative", "jolt-poly/allocative"]
 parallel = [
   "dep:rayon",
   "jolt-poly/parallel",

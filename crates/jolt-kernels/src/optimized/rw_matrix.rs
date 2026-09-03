@@ -26,6 +26,7 @@ use rayon::prelude::*;
 /// `prev_val`/`next_val` stay raw `u64`s: cycle binding always starts from
 /// the unbound trace, so implicit neighbors are unbound memory values.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct CycleMajorEntry<F> {
     /// Cycle index; in `[0, T)` before binding.
     pub row: usize,
@@ -43,6 +44,7 @@ pub(crate) struct CycleMajorEntry<F> {
 /// order). Checkpoints are field elements: address binding interpolates
 /// them across column pairs.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct AddressMajorEntry<F> {
     pub row: usize,
     pub col: usize,
@@ -258,13 +260,8 @@ fn split_row_pair<F>(
 }
 
 /// The cycle-major sparse matrix: entries sorted by `(row, col)`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct CycleMajorMatrix<F> {
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub entries: Vec<CycleMajorEntry<F>>,
 }
 
@@ -607,13 +604,8 @@ fn merge_address_round_evals<F: JoltField>(
 }
 
 /// The address-major sparse matrix: entries sorted by `(col, row)`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct AddressMajorMatrix<F> {
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     pub entries: Vec<AddressMajorEntry<F>>,
 }
 

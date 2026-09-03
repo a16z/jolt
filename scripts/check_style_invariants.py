@@ -6,7 +6,8 @@ Repo-wide rules (always checked, on every tracked `.rs` file):
   folded-cfg-attr    Adjacent `#[cfg_attr(P, A)]` `#[cfg_attr(P, B)]` with the
                      same predicate must be folded into `#[cfg_attr(P, A, B)]`.
   native-visit       `#[allocative(visit = ...)]` must not decorate a container
-                     of primitives; the native impls report strictly more.
+                     of primitives or field elements (`F`); the native impls
+                     report strictly more.
 
 Diff-scoped rules (checked on lines added relative to `--base`; without
 `--base`, or when the merge base equals HEAD, they are skipped):
@@ -55,9 +56,13 @@ FOLDED_CFG_ATTR_EXEMPT = {
 }
 
 PRIMITIVE = r"(?:u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize|bool|char|f32|f64)"
-PRIMITIVE_CONTAINER = re.compile(
-    r":\s*(?:Vec|Box)\s*<\s*(?:\[\s*)?(?:(?:Vec|Option)\s*<\s*)?" + PRIMITIVE + r"\b"
+NATIVE_ELEMENT = r"(?:" + PRIMITIVE + r"|F)"
+NATIVE_CONTAINER = re.compile(
+    r"(?:^|:\s*)(?:\[\s*)?(?:Vec|Box)\s*<\s*(?:\[\s*)?(?:(?:Vec|Option)\s*<\s*)?"
+    + NATIVE_ELEMENT
+    + r"\b"
 )
+SKIP_LINE = ("#", "//", "/*", "*")
 CFG_ATTR_START = re.compile(r"^\s*#\[cfg_attr\(")
 USE_LINE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+(.+?);\s*(?://.*)?$", re.DOTALL)
 MACRO_BODY_OPEN = re.compile(r"\b(?:macro_rules!\s*\w+|quote!|quote_spanned!)\s*[({\[]")
@@ -335,20 +340,28 @@ def check_native_visit(rel: str, lines: list[str]) -> list[tuple[int, str]]:
     for i, ln in enumerate(lines):
         if "allocative(visit" not in ln:
             continue
-        for j in range(i + 1, min(i + 8, len(lines))):
-            nxt = lines[j].strip()
-            if not nxt or nxt.startswith(("#", "//", "/*", "*")):
-                continue
-            if PRIMITIVE_CONTAINER.search(nxt):
-                findings.append(
-                    (
-                        i + 1,
-                        "[native-visit] `allocative(visit = ...)` on a primitive-element "
-                        "container; drop the attribute and let the native impl render "
-                        "(visit helpers are for foreign-scalar element types only)",
-                    )
+        # Tuple fields trail the attribute on its own line; named fields start
+        # the next non-attribute, non-comment line.
+        field = ln.rsplit(")]", 1)[-1].strip() if ")]" in ln else ""
+        if not field or field.startswith(SKIP_LINE):
+            field = next(
+                (
+                    s
+                    for s in map(str.strip, lines[i + 1 : i + 8])
+                    if s and not s.startswith(SKIP_LINE)
+                ),
+                "",
+            )
+        if NATIVE_CONTAINER.search(field):
+            findings.append(
+                (
+                    i + 1,
+                    "[native-visit] `allocative(visit = ...)` on a container of primitives "
+                    "or field elements; drop the attribute and let the native impl render "
+                    "(`visit_heap_free_elements` is for heap-free element types without "
+                    "an `Allocative` impl)",
                 )
-            break
+            )
     return findings
 
 

@@ -6,24 +6,12 @@ use rayon::prelude::*;
 
 use crate::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TensorEqTable<F: JoltField> {
     e_out: Vec<F>,
     e_in: Vec<F>,
     in_bits: usize,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for TensorEqTable<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        for (key, table) in [("e_out", &self.e_out), ("e_in", &self.e_in)] {
-            let mut visitor = visitor.enter(allocative::Key::new(key), size_of::<Vec<F>>());
-            crate::visit_scalars(table, &mut visitor);
-            visitor.exit();
-        }
-        visitor.exit();
-    }
 }
 
 impl<F: JoltField> TensorEqTable<F> {
@@ -168,6 +156,7 @@ impl<F: JoltField> TensorEqTable<F> {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GruenSplitEqPolynomial<F: JoltField> {
     current_index: usize,
@@ -176,22 +165,6 @@ pub struct GruenSplitEqPolynomial<F: JoltField> {
     e_in_vec: Vec<Vec<F>>,
     e_out_vec: Vec<Vec<F>>,
     binding_order: BindingOrder,
-}
-
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for GruenSplitEqPolynomial<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        for (key, table) in [("e_in_vec", &self.e_in_vec), ("e_out_vec", &self.e_out_vec)] {
-            let mut visitor = visitor.enter(allocative::Key::new(key), size_of::<Vec<Vec<F>>>());
-            crate::visit_scalar_rows(table, &mut visitor);
-            visitor.exit();
-        }
-        let mut point = visitor.enter(allocative::Key::new("point"), size_of::<Vec<F>>());
-        crate::visit_scalars(&self.point, &mut point);
-        point.exit();
-        visitor.exit();
-    }
 }
 
 impl<F: JoltField> GruenSplitEqPolynomial<F> {

@@ -414,19 +414,13 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) 
 /// remainder slot reclaims — the typed-row store (reused for
 /// materialization and the final opening walk), the stage challenge vector,
 /// and the extended-node evaluations of `t1`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau: Vec<F>,
     rows: BundleStore<SpartanOuterRow>,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
 }
 
@@ -582,15 +576,9 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
 /// The `Az`/`Bz` linear forms folded at both stream values — the closed forms
 /// of the relation's derived leaves after the stream bind, kept for
 /// [`SumcheckKernel::validate_derived_tables`].
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct DerivedWeights<F> {
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     az_weights: [Vec<F>; 2],
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     bz_weights: [Vec<F>; 2],
     #[cfg_attr(feature = "allocative", allocative(skip))]
     az_constant: [F; 2],
@@ -600,15 +588,10 @@ struct DerivedWeights<F> {
 
 /// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
     az: Polynomial<F>,
     bz: Polynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     scratch: Vec<F>,
     split_eq: GruenSplitEqPolynomial<F>,
     /// Round-0 endpoints, fused into the materialization pass.
@@ -616,7 +599,7 @@ struct OuterRemainderKernel<F: JoltField> {
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanOuterRow>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
 }
