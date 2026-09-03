@@ -46,9 +46,6 @@ where
     /// The shared stage 1–7 slot registry (naive-served).
     pub base: JoltBackend<F, PCS>,
     trace_commitment: jolt_akita::TraceCommitmentBackend,
-    pub bytecode_reconstruction: Box<dyn PrepareKernel<F, BytecodeChunkReconstructionInstance<F>>>,
-    pub program_image_reconstruction:
-        Box<dyn PrepareKernel<F, ProgramImageReconstructionInstance<F>>>,
 }
 
 /// The packed path's stand-in for the streaming witness-commit slot: stage 0
@@ -102,8 +99,6 @@ where
     pub fn reference() -> Self {
         Self {
             trace_commitment: jolt_akita::TraceCommitmentBackend::cpu(),
-            bytecode_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
-            program_image_reconstruction: Box::new(reconstruction::ReferenceReconstruction),
             base: JoltBackend {
                 commit: Box::new(PackedCommitStub),
                 round_scheduler: Box::new(ReferenceBackend),

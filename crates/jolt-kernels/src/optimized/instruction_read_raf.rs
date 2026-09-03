@@ -593,6 +593,33 @@ impl<F: JoltField> RafSums<F> {
     }
 }
 
+enum InstructionReadRafClaimColumns {
+    Uninitialized,
+    Owned(Vec<u8>),
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    Stage1(InstructionReadRafStage1Lease),
+}
+
+impl InstructionReadRafClaimColumns {
+    fn as_slice(&self) -> Option<&[u8]> {
+        match self {
+            Self::Uninitialized => None,
+            Self::Owned(claims) => Some(claims),
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::Stage1(lease) => Some(lease.claim_slice()),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.as_slice().map_or(0, <[u8]>::len)
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    const fn is_stage1(&self) -> bool {
+        matches!(self, Self::Stage1(_))
+    }
+}
+
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]

@@ -90,7 +90,7 @@ impl<E, const D: usize>
     SubringCoefficientPackingBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, E, D>
     for CpuBackend
 where
-    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField> + jolt_field::MulBaseUnreduced<AkitaField>,
 {
     fn coefficient_packing_partials_batch(
         &self,
