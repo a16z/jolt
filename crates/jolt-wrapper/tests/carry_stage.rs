@@ -1,6 +1,5 @@
 #![expect(
     clippy::expect_used,
-    clippy::indexing_slicing,
     reason = "test fixtures fail immediately on proof errors"
 )]
 
@@ -26,23 +25,24 @@ fn carries_two_claims_into_one_stage_point() {
     let claim_b = evaluations_b.as_slice().evaluate(&source_b);
     let mut carry_a = CarryProver::new(&evaluations_a, &source_a, claim_a).expect("carry A");
     let mut carry_b = CarryProver::new(&evaluations_b, &source_b, claim_b).expect("carry B");
-    let mut members = [
-        StageMember {
-            prover: &mut carry_a,
-            input_claim: claim_a,
-            degree: 2,
-            offset: 0,
-        },
-        StageMember {
-            prover: &mut carry_b,
-            input_claim: claim_b,
-            degree: 2,
-            offset: 0,
-        },
-    ];
     let mut prover_transcript = Keccak256Transcript::<Fr>::new(b"carry-stage-test");
-    let (proof, result) = prove_stage(&mut members, &mut prover_transcript).expect("prove carries");
-    drop(members);
+    let (proof, result) = {
+        let mut members = [
+            StageMember {
+                prover: &mut carry_a,
+                input_claim: claim_a,
+                degree: 2,
+                offset: 0,
+            },
+            StageMember {
+                prover: &mut carry_b,
+                input_claim: claim_b,
+                degree: 2,
+                offset: 0,
+            },
+        ];
+        prove_stage(&mut members, &mut prover_transcript).expect("prove carries")
+    };
     let final_a = carry_a.final_evaluation();
     let final_b = carry_b.final_evaluation();
     assert_eq!(final_a, evaluations_a.as_slice().evaluate(&result.point));
