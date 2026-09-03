@@ -135,10 +135,9 @@ struct OperandClaimsParams {
     cycles_per_high_block: u32,
     address_bits: u32,
     output_stride: u32,
-    remap_indices: u32,
 }
 
-const _: [(); 20] = [(); size_of::<OperandClaimsParams>()];
+const _: [(); 16] = [(); size_of::<OperandClaimsParams>()];
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2622,7 +2621,6 @@ impl RegistersReadWriteCycleSequence {
             cycles_per_high_block: checked_u32(cycles_per_high_block)?,
             address_bits: checked_u32(address_point.len())?,
             output_stride: checked_u32(high_blocks)?,
-            remap_indices: u32::from(self.stage1_source && self.remap_registers),
         };
         let prepare = prepare_started.elapsed();
         let (claims, wall, gpu_active) = autoreleasepool(|| {
@@ -2639,9 +2637,6 @@ impl RegistersReadWriteCycleSequence {
             encoder.set_buffer(2, Some(&self.scratch.e_out), 0);
             encoder.set_buffer(3, Some(&self.scratch.partial_a), 0);
             set_inline_bytes(encoder, 4, &params);
-            if compact_rs1_source.is_some() {
-                encoder.set_buffer(5, Some(&self.register_map), 0);
-            }
             encoder.dispatch_thread_groups(
                 MTLSize {
                     width: high_blocks as u64,

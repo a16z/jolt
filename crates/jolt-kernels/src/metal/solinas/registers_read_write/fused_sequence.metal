@@ -4271,7 +4271,6 @@ struct RegistersReadWriteOperandClaimsParams {
     uint cycles_per_high_block;
     uint address_bits;
     uint output_stride;
-    uint remap_indices;
 };
 
 kernel void solinas_registers_read_write_operand_claims(
@@ -4330,13 +4329,15 @@ kernel void solinas_registers_read_write_operand_claims(
     }
 }
 
+// The compact plane stores raw register indices, the same domain the address
+// point ranges over. The dense-state register remap is internal to the cycle
+// sequence and must not enter this opening.
 kernel void solinas_registers_read_write_compact_rs1_claim(
     device const uchar* rs1_indices [[buffer(0)]],
     device const SolinasFp128* e_hi [[buffer(1)]],
     device const SolinasFp128* e_lo [[buffer(2)]],
     device SolinasFp128* partials [[buffer(3)]],
     constant RegistersReadWriteOperandClaimsParams& params [[buffer(4)]],
-    device const uchar* register_map [[buffer(5)]],
     uint group [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]],
     uint lane [[thread_index_in_simdgroup]],
@@ -4352,10 +4353,6 @@ kernel void solinas_registers_read_write_compact_rs1_claim(
          row_index < block_end;
          row_index += REGISTERS_READ_WRITE_SEQUENCE_THREADS) {
         uint rs1_index = uint(rs1_indices[row_index]);
-        if (params.remap_indices != 0u
-            && rs1_index != REGISTERS_READ_WRITE_NO_REGISTER) {
-            rs1_index = uint(register_map[rs1_index]);
-        }
         if (rs1_index != REGISTERS_READ_WRITE_NO_REGISTER) {
             uint eq_base = (row_index - block_start) << params.address_bits;
             rs1 = solinas_add(rs1, e_lo[eq_base + rs1_index]);
