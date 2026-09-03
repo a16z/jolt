@@ -6,7 +6,7 @@
     reason = "manual real-fixture integration gate"
 )]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
@@ -1098,7 +1098,7 @@ fn t1_commitment_order(proof: &Proof) -> Vec<usize> {
 fn element_targets(
     layout: &T2Layout,
     commitment_order: &[usize],
-) -> HashMap<(HashElementKind, u32), ElementTarget> {
+) -> BTreeMap<(HashElementKind, u32), ElementTarget> {
     let mut by_element = HashMap::new();
     let mut cursor = 0;
     for &element in &layout.input_order {
@@ -1117,7 +1117,7 @@ fn element_targets(
             .is_none());
     }
     assert_eq!(cursor, layout.program.input_rows.len());
-    let mut targets = HashMap::new();
+    let mut targets = BTreeMap::new();
     let mut dory = [0u32; 3];
     for element in input_elements(layout.check.sigma, layout.check.n) {
         let key = if let InputElement::Commitment(index) = element {
@@ -1481,8 +1481,8 @@ fn hash_column_value(table: &HashTable, column: usize, row: usize) -> Fr {
 
 fn tamper_suite(
     proof: &WrapperProof,
-    wire_phase_groups: [usize; 5],
-    k: usize,
+    _wire_phase_groups: [usize; 5],
+    _k: usize,
     rejected: impl Fn(&WrapperProof) -> bool,
 ) {
     let original = proof.clone();
@@ -1491,110 +1491,136 @@ fn tamper_suite(
         edit(&mut candidate);
         assert!(rejected(&candidate));
     };
-    tamper(&|candidate| candidate.commitments[0] = Commitment::new(original.opening.com[0]));
-    let phase_1b = wire_phase_groups[0];
-    let phase_2a = phase_1b + wire_phase_groups[1];
-    let phase_2b = phase_2a + wire_phase_groups[2];
-    let phase_2c = phase_2b + wire_phase_groups[3];
-    tamper(&|candidate| {
-        candidate.commitments[phase_1b] = Commitment::new(original.opening.com[0]);
-    });
-    let sign_group = phase_1b + T2Col::FLAG / k;
-    tamper(&|candidate| {
-        candidate.commitments[sign_group] = Commitment::new(original.opening.com[0]);
-    });
-    let psi_group = phase_1b + usize::from(wire_phase_groups[1] > 1);
-    tamper(&|candidate| {
-        candidate.commitments[psi_group] = Commitment::new(original.opening.com[0]);
-    });
-    tamper(&|candidate| {
-        candidate.commitments[phase_2a] = Commitment::new(original.opening.com[0]);
-    });
-    tamper(&|candidate| {
-        candidate.commitments[phase_2b] = Commitment::new(original.opening.com[0]);
-    });
-    tamper(&|candidate| {
-        candidate.commitments[phase_2c] = Commitment::new(original.opening.com[0]);
-    });
-    tamper(&|candidate| {
-        let helper = candidate.commitments.len() - 1;
-        candidate.commitments[helper] = Commitment::new(original.opening.com[0]);
-    });
-    tamper(&|candidate| {
-        candidate.stages[0]
-            .committed_rounds
-            .as_mut()
-            .expect("stage A")
-            .sum_at_zero += Fr::one();
-    });
-    tamper(&|candidate| {
-        candidate.stages[0]
-            .committed_rounds
-            .as_mut()
-            .expect("stage A")
-            .round_commitments[0] += Bn254::g1_generator();
-    });
-    tamper(&|candidate| {
-        candidate.stages[0]
-            .committed_rounds
-            .as_mut()
-            .expect("stage A")
-            .round_claims[0] += Fr::one();
-    });
-    tamper(&|candidate| {
-        candidate.stages[1]
-            .committed_rounds
-            .as_mut()
-            .expect("term stage")
-            .round_commitments[0] = Bn254::g1_generator();
-    });
-    tamper(&|candidate| {
-        candidate.stages[1]
-            .committed_rounds
-            .as_mut()
-            .expect("term stage")
-            .round_claims[0] += Fr::one();
-    });
-    tamper(&|candidate| {
-        candidate.stages[1]
-            .committed_rounds
-            .as_mut()
-            .expect("term stage")
-            .sum_at_zero += Fr::one();
-    });
-    tamper(&|candidate| {
-        candidate
-            .round_opening
-            .as_mut()
-            .expect("shared round opening")
-            .shifted_commitment += Bn254::g1_generator();
-    });
-    tamper(&|candidate| {
-        candidate
-            .round_opening
-            .as_mut()
-            .expect("shared round opening")
-            .quotient_commitment += Bn254::g1_generator();
-    });
-    tamper(&|candidate| {
-        candidate
-            .round_opening
-            .as_mut()
-            .expect("shared round opening")
-            .evaluation_witness += Bn254::g1_generator();
-    });
-    tamper(&|candidate| candidate.term_evaluations[0] += Fr::one());
-    tamper(&|candidate| {
-        let round = &mut candidate.stages[2].round_polynomials.round_polynomials[0];
-        let mut coefficients = round.coeffs_except_linear_term().to_vec();
-        coefficients[0] += Fr::one();
-        *round = CompressedPoly::new(coefficients);
-    });
-    tamper(&|candidate| candidate.reduced_claims[0] += Fr::one());
-    tamper(&|candidate| candidate.opening.com[0] += Bn254::g1_generator());
+    for challenge in 0..original.public_challenges.len() {
+        tamper(&|candidate| candidate.public_challenges[challenge][0] ^= 1);
+    }
+    for commitment in 0..original.commitments.len() {
+        tamper(&|candidate| {
+            candidate.commitments[commitment] = Commitment::new(original.opening.com[0]);
+        });
+    }
+    for stage in 0..original.stages.len() {
+        for round in 0..original.stages[stage]
+            .round_polynomials
+            .round_polynomials
+            .len()
+        {
+            for coefficient in 0..original.stages[stage].round_polynomials.round_polynomials[round]
+                .coeffs_except_linear_term()
+                .len()
+            {
+                tamper(&|candidate| {
+                    let polynomial =
+                        &mut candidate.stages[stage].round_polynomials.round_polynomials[round];
+                    let mut coefficients = polynomial.coeffs_except_linear_term().to_vec();
+                    coefficients[coefficient] += Fr::one();
+                    *polynomial = CompressedPoly::new(coefficients);
+                });
+            }
+        }
+        if let Some(committed) = &original.stages[stage].committed_rounds {
+            for round in 0..committed.round_commitments.len() {
+                tamper(&|candidate| {
+                    candidate.stages[stage]
+                        .committed_rounds
+                        .as_mut()
+                        .expect("committed stage")
+                        .round_commitments[round] += Bn254::g1_generator();
+                });
+            }
+            for round in 0..committed.round_claims.len() {
+                tamper(&|candidate| {
+                    candidate.stages[stage]
+                        .committed_rounds
+                        .as_mut()
+                        .expect("committed stage")
+                        .round_claims[round] += Fr::one();
+                });
+            }
+            tamper(&|candidate| {
+                candidate.stages[stage]
+                    .committed_rounds
+                    .as_mut()
+                    .expect("committed stage")
+                    .sum_at_zero += Fr::one();
+            });
+            if committed.opening.is_some() {
+                tamper(&|candidate| {
+                    candidate.stages[stage]
+                        .committed_rounds
+                        .as_mut()
+                        .expect("committed stage")
+                        .opening
+                        .as_mut()
+                        .expect("stage opening")
+                        .shifted_commitment += Bn254::g1_generator();
+                });
+                tamper(&|candidate| {
+                    candidate.stages[stage]
+                        .committed_rounds
+                        .as_mut()
+                        .expect("committed stage")
+                        .opening
+                        .as_mut()
+                        .expect("stage opening")
+                        .quotient_commitment += Bn254::g1_generator();
+                });
+                tamper(&|candidate| {
+                    candidate.stages[stage]
+                        .committed_rounds
+                        .as_mut()
+                        .expect("committed stage")
+                        .opening
+                        .as_mut()
+                        .expect("stage opening")
+                        .evaluation_witness += Bn254::g1_generator();
+                });
+            }
+        }
+    }
+    if original.round_opening.is_some() {
+        tamper(&|candidate| {
+            candidate
+                .round_opening
+                .as_mut()
+                .expect("shared round opening")
+                .shifted_commitment += Bn254::g1_generator();
+        });
+        tamper(&|candidate| {
+            candidate
+                .round_opening
+                .as_mut()
+                .expect("shared round opening")
+                .quotient_commitment += Bn254::g1_generator();
+        });
+        tamper(&|candidate| {
+            candidate
+                .round_opening
+                .as_mut()
+                .expect("shared round opening")
+                .evaluation_witness += Bn254::g1_generator();
+        });
+    }
+    for stage in 0..original.stage_claims.len() {
+        for claim in 0..original.stage_claims[stage].len() {
+            tamper(&|candidate| candidate.stage_claims[stage][claim] += Fr::one());
+        }
+    }
+    for evaluation in 0..original.term_evaluations.len() {
+        tamper(&|candidate| candidate.term_evaluations[evaluation] += Fr::one());
+    }
+    for claim in 0..original.reduced_claims.len() {
+        tamper(&|candidate| candidate.reduced_claims[claim] += Fr::one());
+    }
+    for commitment in 0..original.opening.com.len() {
+        tamper(&|candidate| candidate.opening.com[commitment] += Bn254::g1_generator());
+    }
     tamper(&|candidate| candidate.opening.w += Bn254::g1_generator());
-    tamper(&|candidate| candidate.opening.v[0][0] += Fr::one());
-    tamper(&|candidate| candidate.opening.v[1][0] += Fr::one());
+    for row in 0..original.opening.v.len() {
+        for evaluation in 0..original.opening.v[row].len() {
+            tamper(&|candidate| candidate.opening.v[row][evaluation] += Fr::one());
+        }
+    }
     tamper(&|candidate| candidate.opening.p0_at_r_squared += Fr::one());
 }
 
