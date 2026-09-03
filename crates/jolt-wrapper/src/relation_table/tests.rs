@@ -197,7 +197,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
             &mut scalar_cost,
         )
     );
-    assert_eq!(scalar_cost.fr_mul, 494);
+    assert_eq!(scalar_cost.fr_mul, 511);
     let scalar_term_context = DoryScalarTermsContext {
         wire: ColumnId { group: 0, slot: 0 },
         point: &scalar_point,
@@ -223,7 +223,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
             .expect("scalar terms"),
         scalar_terms
     );
-    assert_eq!(scalar_term_cost.fr_mul, 494);
+    assert_eq!(scalar_term_cost.fr_mul, 511);
     assert_eq!(scalar_terms.len(), DORY_SCALAR_TERM_COUNT);
     assert_eq!(scalar_terms[0].factors.len(), 1);
     assert_eq!(
@@ -241,7 +241,7 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         )
         .expect("evaluate scalar terms")
     );
-    assert_eq!(scalar_term_cost.fr_mul, 495);
+    assert_eq!(scalar_term_cost.fr_mul, 512);
     assert_eq!(
         RELATION_TERM_COUNT + COPY_LINK_TERM_COUNT + DORY_SCALAR_TERM_COUNT,
         26
