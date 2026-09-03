@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788459665967,
+  "lastUpdate": 1788460913994,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -153094,6 +153094,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861328,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7b7faf5b9624dd4587d3e1bfc2b05cda8861ab6f",
+          "message": "refactor(kernels): retire the scalar-table visit helpers (#1830)\n\n* refactor(kernels): retire the scalar-table visit helpers\n\nThe akita-field cutover (#1796) removed the last foreign scalar reaching\n`JoltField`, so the trait can finally require `Allocative` and the\nhand-written byte-sizing visitors can go.\n\n`JoltField` gains a cfg-gated `MaybeAllocative` supertrait, shaped like\nthe existing `jolt_kernels::backend::MaybeAllocative`. `F: JoltField` now\nimplies `F: Allocative` under the `allocative` feature, so every\nfield-generic container renders through the native impls: 110 `visit`\nattributes drop to 21 and 60 `bound` attributes to 9.\n\n`jolt_poly::{visit_scalars, visit_scalar_rows}` and\n`jolt_kernels::backend::visit_scalar_pairs` are deleted — allocative's\nnative `Vec`, array, and tuple impls cover every scalar shape. jolt-poly's\nthree hand-rolled container visitors become plain derives.\n\nWhat stays, and why:\n\n- 21 `visit` attributes whose element type owns no heap but has no\n  `Allocative` impl (`Vec<JoltOpeningId>`, `Vec<PrefixEval<F>>`,\n  `Vec<StageVal>`, the row newtypes, the `LookupTableKind`-keyed tables).\n  Deriving `Allocative` on those cascades into jolt-claims,\n  jolt-lookup-tables, and jolt-witness for nothing. Their visitor moves\n  next to `visit_keyed_polys` in jolt-kernels' backend as\n  `visit_heap_free_elements` — the old name stopped being accurate once\n  the elements stopped being scalars.\n- 9 `bound` attributes on generics that are not fields\n  (`PrecommittedReductionCarry`'s relation marker, `BundleStore`'s row\n  type, `LazyFoldedRa`'s chunk source, jolt-field's extension towers, the\n  legacy prover's `bound = \"\"`). Each was confirmed load-bearing by\n  trial deletion.\n\n`jolt-poly/allocative` survives — it is no longer there for the helper\nmodule but for jolt-poly's own container derives — and both it and\n`jolt-kernels/allocative` now forward to `jolt-field/allocative`, without\nwhich the supertrait is vacuous and the derives cannot discharge their\nscalar bound.\n\nHeap accounting is unchanged: both paths report `capacity * size_of::<F>()`\nand count unused capacity. Reported totals rise by the container headers\nthe helpers' oversized inline child previously swallowed, which also\nretires their \"Incorrect size declaration\" warnings.\n\nCloses #1805\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(kernels): derive Allocative on in-crate heap-free rows and pin the helper contract\n\nSix of the kept `visit_heap_free_elements` sites decorated element types\nowned by jolt-kernels and built only from primitives and `F` (`StageVal`,\n`RegisterValuesRow`, `CycleMajorEntry`, `AddressMajorEntry`, `SparseEntry`\nwith its `LutIndex`/`SmallLutIndex` newtypes); those derive `Allocative`\nand render natively, leaving 15 attributes for jolt-claims/-lookup-tables/\n-witness element types.\n\n`visit_heap_free_elements` now pins its heap-free contract with a\ncompile-time `needs_drop` assertion, and `check_style_invariants.py`'s\nnative-visit rule covers field-element containers (`Vec<F>`, `Vec<Vec<F>>`,\n`[Vec<F>; N]`, same-line tuple fields) so the CLAUDE.md \"machine-checked\"\nclaim holds.\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-09-03T13:36:41-04:00",
+          "tree_id": "a09326895d8743e30f8bcb9d871175000e556e2f",
+          "url": "https://github.com/a16z/jolt/commit/7b7faf5b9624dd4587d3e1bfc2b05cda8861ab6f"
+        },
+        "date": 1788460908383,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.4036,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 860416,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.1539,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 507236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7211,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 509088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5497,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 509124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.5431,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 501156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.5718,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119468,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.2952,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 866796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.579,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4777,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.8464,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 506956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.9892,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 29.8143,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1075624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.9927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 630636,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.8238,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2139524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2888,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 506940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5283,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 500364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.3018,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 868720,
             "unit": "KB",
             "extra": ""
           }
