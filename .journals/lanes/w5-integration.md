@@ -419,3 +419,27 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
 - Tampering a T1 commitment, phase-2 commitment, stage-A aggregate, term-round commitment, factor
   evaluation, reduced claim, or HyperKZG value is rejected. T2 remains a zero-column stand-in; the
   missing real phase columns, two members, term exporter, and T2↔R scalar link gate full soundness.
+
+## Stored verifier key and production commitment order (02:43)
+
+- Trusted setup records the reference verifier once in `WrapHashKey`. Production
+  `WrapPreparation` only witnesses against that stored `SymbolicSchedule` and rejects a different
+  `WrapperProfile` before replay. `WrapVerifierKey` owns the schedule, public T1 derivation,
+  member positions, statement shape, and pinned packed-group commitments.
+- Production order is phase-1 commit, draw T1/R/CopyLink helper challenges, construct helper
+  columns, phase-2 commit, draw member points/weights, construct members, then stage A. Verification
+  reconstructs the full commitment list from the wire groups and key groups before replaying both
+  challenge phases.
+- Four phase-1 groups are now key-owned and absent from `WrapperProof`: T1 VK-bit, T1 VK-u16, R
+  fixed, and CopyLink fixed. The real fibonacci `2^18` payload falls **5,600 → 5,472 B**; bincode
+  **5,709 → 5,577 B**. Items: phase 1 672; phase 2 32; stage A 1,184; term 608; shared BDFG/shift
+  96; four factor evaluations 128; stage B 576; reduced claim 32; HyperKZG 2,144; challenge IO 0.
+  The seven known public fields remain 224 external calldata bytes.
+- One release run at load 4.65/5.89/6.47: trusted T1 key 146 ms; wrapper preparation 430; SRS
+  setup 3,179; adapters 445; four offline key commitments 1,010; online phase-1 commit 1,797;
+  helpers 326; phase-2 commit 122; proof 5,906; verify 12. Executed verifier: **170 ecMul, 169
+  ecAdd, 8 pairing pairs, 12,643 Fr mul, 8 inversions, 449 Keccak; 2,171,353 N4 gas**.
+- The permanent assembly test checks that a pinned commitment is absent from the proof and that a
+  wrong key commitment fails. The real gate rejects a mismatched proof shape and all existing wire,
+  stage, factor, reduced-claim, and opening tampers. T2 still supplies one zero stand-in column;
+  its phase columns, members, exporter, VK pins, and T2↔R link remain pending.
