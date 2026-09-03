@@ -615,6 +615,7 @@ fn cell_id(rows: usize, wire: usize, row: usize) -> Fr {
     Fr::from_u64((wire * rows + row) as u64)
 }
 
+#[cfg(test)]
 fn identity_mle_observed<O: VerifierObserver>(point: &[Fr], observer: &mut O) -> Fr {
     point
         .iter()
@@ -624,6 +625,7 @@ fn identity_mle_observed<O: VerifierObserver>(point: &[Fr], observer: &mut O) ->
         })
 }
 
+#[cfg(test)]
 fn eq_mle_observed<O: VerifierObserver>(left: &[Fr], right: &[Fr], observer: &mut O) -> Fr {
     left.iter()
         .zip(right)

@@ -10,7 +10,8 @@ use thiserror::Error;
 
 use crate::hash_table::schedule::preamble;
 use crate::hash_table::{
-    HashTable, JoltSchedule, PublicInputs, RecordingTranscript, ScheduleError, SymbolicSchedule,
+    HashTable, JoltSchedule, LinkMap, PublicInputs, RecordingTranscript, ScheduleError,
+    SymbolicSchedule,
 };
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
@@ -19,7 +20,7 @@ use crate::relation::{
 use crate::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn, SpartanError};
 use crate::stream::{
     commit_packed, prove_assembly, verify_assembly_with_cost, AssemblyStatement, Column,
-    StageMember, StageResult, StreamError, TermExporter, VerifierCost, WrapperProof,
+    Commitment, StageMember, StageResult, StreamError, TermExporter, VerifierCost, WrapperProof,
 };
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
@@ -64,6 +65,40 @@ pub enum WrapError {
     UnsatisfiedRelation(usize),
     #[error("relation witness is missing variable {0}")]
     MissingWitness(usize),
+    #[error("commitment {0} does not match the verifier key")]
+    VerifierKeyCommitment(usize),
+}
+
+/// Profile-fixed data consumed by wrapper verification.
+pub struct WrapVerifierKey {
+    pub statement: AssemblyStatement,
+    hash_schedule: SymbolicSchedule,
+    hash_links: LinkMap,
+    pinned_commitments: Vec<(usize, Commitment)>,
+}
+
+impl WrapVerifierKey {
+    pub fn new(
+        statement: AssemblyStatement,
+        hash_schedule: SymbolicSchedule,
+        pinned_commitments: Vec<(usize, Commitment)>,
+    ) -> Self {
+        let hash_links = LinkMap::new(&hash_schedule);
+        Self {
+            statement,
+            hash_schedule,
+            hash_links,
+            pinned_commitments,
+        }
+    }
+
+    pub fn hash_schedule(&self) -> &SymbolicSchedule {
+        &self.hash_schedule
+    }
+
+    pub fn hash_links(&self) -> &LinkMap {
+        &self.hash_links
+    }
 }
 
 /// Commits the adapters' common-domain columns and proves their stage-A
@@ -92,6 +127,21 @@ pub fn verify_wrapped(
     Ok(verify_assembly_with_cost(
         proof, statement, exporters, setup,
     )?)
+}
+
+/// Verifies against commitments and the T1 schedule pinned during trusted setup.
+pub fn verify_wrapped_with_key(
+    key: &WrapVerifierKey,
+    proof: &WrapperProof,
+    exporters: &[&dyn TermExporter],
+    setup: &HyperKZGVerifierSetup<Bn254>,
+) -> Result<(Vec<StageResult>, VerifierCost), WrapError> {
+    for &(index, commitment) in &key.pinned_commitments {
+        if proof.commitments.get(index) != Some(&commitment) {
+            return Err(WrapError::VerifierKeyCommitment(index));
+        }
+    }
+    verify_wrapped(&key.statement, proof, exporters, setup)
 }
 
 /// Verified inputs needed before the T1/T2/Spartan sumchecks can be assembled.
