@@ -410,3 +410,35 @@ groups). Verifier: `full_commitments` (key pins spliced) → same challenges →
 - `hash_table_fixture`: T = 232, d = 2, 20 + 2 groups, exact Fr counts.
 - clippy (`--lib --test hash_table_relation --test hash_table_fixture --test perf1_profile
   [--test wrap_real_t1_r]`, both feature sets), rustfmt, style checker clean on this lane's files.
+
+## Fix #4 (review #4: MAJOR statement multiplies missing from `VerifierCost`, minors), 2026-09-03
+
+- **MAJOR — one owner for the verifier's T1 statement:** `StreamTermExporter::input_claims(&self,
+  phase_challenges, observer) -> [Fr; 2]` derives the randomizers and both member claims with every
+  multiplication routed through the observer (`from_challenges_with` + `input_claims_with`); the
+  plain `T1Challenges::from_challenges` / `input_claims` are the prover's path (`eq.rs` doc
+  corrected). The test harness's verifier counts it with the stream's `VerifierCost`; the
+  reviewer's repro is permanent: `verifier_cost_includes_statement_derivation` pins the synthetic
+  2^13 total **`fr_mul = 10,666 = 9,963` (stream, 4,130 of them T1's exporter) `+ 703`
+  (statement)**. Real 2^18 fixture (`hash_table_fixture`, through the owner method): exporter
+  **4,206** + statement **705** = **4,911**; the production `VerifierCost` reports `stream + 705`
+  once `WrapVerifierKey::statement` (W5, `wrap.rs:166-176`) calls
+  `StreamTermExporter::input_claims` with the verifier observer instead of the plain pair and adds
+  the result to the stream's cost — W5's file, not edited here. Measured on W5's real 2^18 e2e (`wrap_real_t1_r`, T1 real + R, this HEAD): the production
+  `verify_wrapped_with_key` reports `fr_mul = 13,187` (stream work incl. T1's 4,206 exporter
+  multiplies, without the 705 statement multiplies); the honest execution-derived count is
+  **13,892** once the statement path is routed through `StreamTermExporter::input_claims`.
+- **Minor — key geometry immutable:** `HashTableKey` fields are private (`schedule()`, `vk()`,
+  `packing()`, `commitments()` accessors); `new` rejects a commitment count that is not
+  `vk_group_range(packing, 0).len()` (`StageCount`), so `pinned_commitments` always covers every
+  verifier-key group.
+- **Minor — `FrLo2` doc:** "`bswap16` of the low half-word of `m` two rows later (block bytes 8–9 =
+  bytes 6–7 of the field element)".
+- Review #4's `canonicality_windows_match_every_representable_alias_class` added (both windows
+  read exactly the top 64 bits for `x + k·r`, `k = 1..=5`; every alias's top word `≥ r_hi`).
+- Gates: `cargo check -p jolt-wrapper --all-targets [--features prover-fixtures]` fails only in
+  `tests/perf1_profile.rs` (PERF-1's file: five T2 `limb_table` API mismatches at HEAD —
+  `Wiring` import, `Slot::y_sign`, changed arities — outside this lane); every other target
+  checks. clippy clean on `--lib --test hash_table_relation --test hash_table_fixture
+  --test wrap_real_t1_r` (both feature sets); `hash_table_relation` 13/13; fixture passes;
+  rustfmt + style checker clean on this lane's files.

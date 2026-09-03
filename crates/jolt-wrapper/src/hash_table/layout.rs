@@ -93,9 +93,8 @@ pub enum WiredWord {
     /// Wire rows: `bswap16` of the low half-word of `m` eight rows later (the
     /// last two bytes of a field element absorbed two bytes into its word).
     FrTail,
-    /// Shifted wire rows: `bswap16` of the high half-word of `m` two rows
-    /// later (bytes 6–7 of the field element).
-    /// Bytes 6–7 of a shifted wire: the low half of the word two positions on.
+    /// Shifted wire rows: `bswap16` of the low half-word of `m` two rows later
+    /// (block bytes 8–9 = bytes 6–7 of the field element).
     FrLo2,
 }
 
