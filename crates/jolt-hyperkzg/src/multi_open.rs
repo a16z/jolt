@@ -225,15 +225,13 @@ where
             .copied()
             .filter(|point| !point_set.contains(point))
             .collect::<Vec<_>>();
-        let complement_vanishing = vanishing_polynomial_observed(&complement, observer);
-        let complement_at_z = eval_univariate_observed(&complement_vanishing, z, observer);
+        let complement_at_z = vanishing_evaluation_observed(&complement, z, observer);
         let scale = observer.fr_mul(coefficient, complement_at_z);
         let remainder_at_z = eval_univariate_observed(remainder, z, observer);
         let remainder_commitment = setup.g1.scalar_mul(&remainder_at_z);
         folded_commitment += (commitment - remainder_commitment).scalar_mul(&scale);
     }
-    let union_vanishing = vanishing_polynomial_observed(&union, observer);
-    let vanishing_at_z = eval_univariate_observed(&union_vanishing, z, observer);
+    let vanishing_at_z = vanishing_evaluation_observed(&union, z, observer);
     folded_commitment -= proof.quotient_commitment.scalar_mul(&vanishing_at_z);
     transcript.append(&proof.evaluation_witness);
     folded_commitment += proof.evaluation_witness.scalar_mul(&z);
@@ -342,6 +340,16 @@ where
 {
     points.iter().fold(vec![F::one()], |polynomial, &point| {
         multiply_observed(&polynomial, &[-point, F::one()], observer)
+    })
+}
+
+fn vanishing_evaluation_observed<F, O>(points: &[F], value: F, observer: &mut O) -> F
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
+    points.iter().fold(F::one(), |product, &point| {
+        observer.fr_mul(product, value - point)
     })
 }
 

@@ -30,6 +30,15 @@ pub use term_stage::{
     coefficient_evaluation, coefficient_evaluation_observed, term_reduction,
     term_reduction_observed, TermReduction, TermStageProver, WeightedColumnReduction,
 };
+pub(crate) use term_stage::{
+    coefficient_evaluation_with_weights_observed, eq_evaluations_observed,
+    term_reduction_with_weights_observed,
+};
+mod shared_rounds;
+pub(crate) use shared_rounds::{
+    prove_batch_rounds, prove_rounds, prove_shared_opening, verify_batch_rounds, verify_rounds,
+    verify_shared_opening,
+};
 mod protocol;
 pub use protocol::{
     commitment_prefix_challenges, new_stream_transcript, prove_assembly, prove_stream,
@@ -330,7 +339,7 @@ pub fn prove_kzg_stage<T: Transcript<Challenge = Fr>>(
                 round_commitments,
                 round_claims,
                 sum_at_zero,
-                opening,
+                opening: Some(opening),
             }),
         },
         StageResult {
@@ -535,7 +544,7 @@ fn prove_kzg_batch_stage_inner<T: Transcript<Challenge = Fr>>(
                 round_commitments: recorder.commitments,
                 round_claims: recorder.claims,
                 sum_at_zero,
-                opening,
+                opening: Some(opening),
             }),
         },
         StageResult {
@@ -719,7 +728,10 @@ where
         &committed.round_claims,
         committed.sum_at_zero,
         max_degree,
-        &committed.opening,
+        committed
+            .opening
+            .as_ref()
+            .ok_or(StreamError::StageEncoding)?,
         setup,
         transcript,
         observer,
@@ -791,7 +803,10 @@ where
         &committed.round_claims,
         committed.sum_at_zero,
         degree,
-        &committed.opening,
+        committed
+            .opening
+            .as_ref()
+            .ok_or(StreamError::StageEncoding)?,
         setup,
         transcript,
         observer,

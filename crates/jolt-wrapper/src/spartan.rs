@@ -253,6 +253,7 @@ pub fn prove_spartan(
         public_challenges: pack_challenges(public.challenges)?,
         commitments: packed.commitments,
         stages: vec![outer_proof, inner_proof],
+        round_opening: None,
         stage_claims: vec![outer_result.output_claims, inner_result.output_claims],
         term_evaluations: Vec::new(),
         reduced_claims: vec![az, bz, cz, witness_eval],
@@ -280,6 +281,8 @@ pub fn verify_spartan(
     validate_dimensions(r1cs, public_inputs.len(), witness_len)?;
     if proof.commitments.len() != 1
         || proof.stages.len() != 2
+        || proof.round_opening.is_some()
+        || !proof.term_evaluations.is_empty()
         || proof.stage_claims.len() != 2
         || proof.reduced_claims.len() != 4
     {

@@ -358,7 +358,8 @@ fn committed_stage_a_round_trip_and_tampers() {
         .committed_rounds
         .as_mut()
         .expect("committed stage");
-    committed.opening.evaluation_witness = committed.opening.shifted_commitment;
+    let opening = committed.opening.as_mut().expect("round opening");
+    opening.evaluation_witness = opening.shifted_commitment;
     assert!(verify_stream(&opening_tamper, &statement, &verifier_setup).is_err());
 
     let mut degree_tamper = proof.clone();
@@ -367,6 +368,8 @@ fn committed_stage_a_round_trip_and_tampers() {
         .as_mut()
         .expect("committed stage")
         .opening
+        .as_mut()
+        .expect("round opening")
         .shifted_commitment += Bn254::g1_generator();
     assert!(verify_stream(&degree_tamper, &statement, &verifier_setup).is_err());
 

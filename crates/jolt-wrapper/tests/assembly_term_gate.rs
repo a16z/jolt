@@ -191,6 +191,7 @@ fn term_compression_gate() {
     let term_evaluations = proof.term_evaluations.len() * 32;
     let stage_b = clear_stage_bytes(&proof.stages[2]);
     let commitments = proof.commitments.len() * 32;
+    let shared_round_opening = 96 * usize::from(proof.round_opening.is_some());
     let reduced_claim = proof.reduced_claims.len() * 32;
     let opening = proof.payload_bytes()
         - stage_a
@@ -198,6 +199,7 @@ fn term_compression_gate() {
         - term_evaluations
         - stage_b
         - commitments
+        - shared_round_opening
         - reduced_claim;
     let bincode = encode_to_vec(&proof, standard()).expect("serialize").len();
     assert_eq!(proof.bincode_bytes(), bincode);
@@ -207,7 +209,7 @@ fn term_compression_gate() {
         phase_challenges.len()
     );
     println!(
-        "bytes commitments={commitments} stage_a={stage_a} term_stage={term_stage} ell={term_evaluations} stage_b={stage_b} reduced={reduced_claim} opening={opening} proof={} io={IO_BYTES} total_with_io={} bincode={bincode}",
+        "bytes commitments={commitments} stage_a={stage_a} term_stage={term_stage} shared_round_opening={shared_round_opening} ell={term_evaluations} stage_b={stage_b} reduced={reduced_claim} opening={opening} proof={} io={IO_BYTES} total_with_io={} bincode={bincode}",
         proof.payload_bytes(),
         proof.payload_bytes() + IO_BYTES,
     );
@@ -216,7 +218,7 @@ fn term_compression_gate() {
 
 fn committed_stage_bytes(stage: &StageProof) -> usize {
     let committed = stage.committed_rounds.as_ref().expect("committed stage");
-    32 * (committed.round_commitments.len() + committed.round_claims.len() + 4)
+    32 * (committed.round_commitments.len() + committed.round_claims.len() + 1)
 }
 
 fn clear_stage_bytes(stage: &StageProof) -> usize {
@@ -234,8 +236,9 @@ fn estimated_gas(cost: VerifierCost, proof: &WrapperProof) -> usize {
             .stages
             .iter()
             .filter_map(|stage| stage.committed_rounds.as_ref())
-            .map(|stage| stage.round_commitments.len() + 3)
+            .map(|stage| stage.round_commitments.len() + 3 * usize::from(stage.opening.is_some()))
             .sum::<usize>()
+        + 3 * usize::from(proof.round_opening.is_some())
         + proof.opening.com.len()
         + 1;
     let calldata = proof.payload_bytes() + 32 * proof_g1 + IO_BYTES;

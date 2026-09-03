@@ -10,12 +10,13 @@ use jolt_sumcheck::prover::ProveRounds;
 use jolt_transcript::{AppendToTranscript, Keccak256Transcript, Transcript};
 
 use super::{
-    coefficient_evaluation_observed, prove_kzg_batch_stage_deferred, prove_kzg_stage, prove_stage,
-    term_reduction, term_reduction_observed, verify_kzg_batch_stage_deferred_observed,
-    verify_kzg_stage_observed, verify_stage_with_observed, AssemblyStatement, ColumnReduction,
-    Commitment, PackedColumns, PackingLayout, ReductionClaim, StageAEncoding, StageMember,
-    StageMemberSpec, StageProof, StageResult, StreamError, TensorStreamStatement, TensorTerm,
-    TermContext, TermExporter, TermStageProver, VerifierCost, WeightedColumnReduction,
+    coefficient_evaluation_with_weights_observed, eq_evaluations_observed, prove_batch_rounds,
+    prove_kzg_stage, prove_rounds, prove_shared_opening, prove_stage, term_reduction,
+    term_reduction_with_weights_observed, verify_batch_rounds, verify_kzg_stage_observed,
+    verify_rounds, verify_shared_opening, verify_stage_with_observed, AssemblyStatement,
+    ColumnReduction, Commitment, PackedColumns, PackingLayout, ReductionClaim, StageAEncoding,
+    StageMember, StageMemberSpec, StageProof, StageResult, StreamError, TensorStreamStatement,
+    TensorTerm, TermContext, TermExporter, TermStageProver, VerifierCost, WeightedColumnReduction,
     WrapperProof, STREAM_LABEL,
 };
 
@@ -76,7 +77,7 @@ pub fn prove_assembly(
         &packed.commitments,
         statement,
     )?;
-    let (row_stage, row_result) = prove_kzg_batch_stage_deferred(members, setup, &mut transcript)?;
+    let (row_rounds, row_result) = prove_batch_rounds(members, setup, &mut transcript)?;
     let column_values = packed.column_evaluations(&row_result.point)?;
     let context = TermContext {
         row_point: &row_result.point,
@@ -91,13 +92,17 @@ pub fn prove_assembly(
     if term_prover.input_claim() != row_result.final_claim {
         return Err(StreamError::StageLink);
     }
-    let (term_stage, term_result) = prove_kzg_stage(
+    let (term_rounds, term_result) = prove_rounds(
         &mut term_prover,
         row_result.final_claim,
         6,
         setup,
         &mut transcript,
     )?;
+    let (mut committed_stages, round_opening) =
+        prove_shared_opening(vec![row_rounds, term_rounds], setup, &mut transcript)?;
+    let term_stage = committed_stages.pop().ok_or(StreamError::StageCount)?;
+    let row_stage = committed_stages.pop().ok_or(StreamError::StageCount)?;
     let term_evaluations = term_prover.factor_evaluations()?;
     let coefficient = term_prover
         .coefficient_evaluation()
@@ -153,6 +158,7 @@ pub fn prove_assembly(
     prove_direct_opening(
         packed,
         vec![row_stage, term_stage, column_stage],
+        Some(round_opening),
         Vec::new(),
         term_evaluations,
         &claim,
@@ -217,14 +223,8 @@ where
         .iter()
         .map(|member| member.input_claim)
         .collect();
-    let row_result = verify_kzg_batch_stage_deferred_observed(
-        row_proof,
-        &specs,
-        &input_claims,
-        setup,
-        transcript,
-        observer,
-    )?;
+    let (row_result, row_rounds) =
+        verify_batch_rounds(row_proof, &specs, &input_claims, transcript, observer)?;
     let context = TermContext {
         row_point: &row_result.point,
         batching_coefficients: &row_result.coefficients,
@@ -236,11 +236,19 @@ where
         .collect::<Vec<_>>();
     let term_rounds = terms.len().next_power_of_two().max(2).trailing_zeros() as usize;
     let term_proof = proof.stages.get(1).ok_or(StreamError::StageCount)?;
-    let term_result = verify_kzg_stage_observed(
+    let (term_result, term_rounds) = verify_rounds(
         term_proof,
         row_result.final_claim,
         term_rounds,
         6,
+        transcript,
+    )?;
+    verify_shared_opening(
+        &[row_rounds, term_rounds],
+        proof
+            .round_opening
+            .as_ref()
+            .ok_or(StreamError::StageEncoding)?,
         setup,
         transcript,
         observer,
@@ -254,7 +262,9 @@ where
         return Err(StreamError::StageMemberCount);
     }
     absorb_term_evaluations(&proof.term_evaluations, transcript);
-    let coefficient = coefficient_evaluation_observed(&terms, &term_result.point, observer)?;
+    let term_weights = eq_evaluations_observed(&term_result.point, observer);
+    let coefficient =
+        coefficient_evaluation_with_weights_observed(&terms, &term_weights, observer)?;
     let mut expected = coefficient;
     for &evaluation in &proof.term_evaluations {
         expected = observer.fr_mul(expected, evaluation);
@@ -267,9 +277,9 @@ where
         .iter()
         .map(|_| transcript.challenge())
         .collect::<Vec<_>>();
-    let reduction = term_reduction_observed(
+    let reduction = term_reduction_with_weights_observed(
         &terms,
-        &term_result.point,
+        &term_weights,
         &lambdas,
         layout.padded_column_count,
         statement.k,
@@ -346,6 +356,7 @@ fn validate_assembly_proof(
         || proof.stages.len() != 3
         || !proof.stage_claims.is_empty()
         || proof.term_evaluations.is_empty()
+        || proof.round_opening.is_none()
         || proof.commitments.len() != layout.group_count
         || proof.reduced_claims.len() != 1
         || proof.opening.com.len() + 1 != layout.packed_vars()
@@ -476,6 +487,7 @@ pub fn prove_stream(
     prove_direct_opening(
         packed,
         vec![row_stage, column_stage],
+        None,
         vec![factor_claims],
         Vec::new(),
         &claim,
@@ -484,9 +496,14 @@ pub fn prove_stream(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "proof sections and the opening claim are serialized separately"
+)]
 fn prove_direct_opening(
     packed: &PackedColumns,
     stages: Vec<StageProof>,
+    round_opening: Option<jolt_hyperkzg::VariableBatchKzgProof<Bn254>>,
     stage_claims: Vec<Vec<Fr>>,
     term_evaluations: Vec<Fr>,
     claim: &ReductionClaim,
@@ -505,6 +522,7 @@ fn prove_direct_opening(
         public_challenges: Vec::new(),
         commitments: packed.commitments.clone(),
         stages,
+        round_opening,
         stage_claims,
         term_evaluations,
         reduced_claims: vec![claim.value],
@@ -559,6 +577,8 @@ fn verify_stream_observed<T: Transcript<Challenge = Fr>>(
     let factor_columns = tensor_factor_columns(&statement.terms);
     if !proof.public_challenges.is_empty()
         || proof.stages.len() != 2
+        || proof.round_opening.is_some()
+        || !proof.term_evaluations.is_empty()
         || proof.stage_claims.len() != 1
         || proof.stage_claims.first().map(Vec::len) != Some(factor_columns.len())
         || proof.commitments.len() != layout.group_count

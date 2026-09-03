@@ -266,13 +266,22 @@ pub fn coefficient_evaluation_observed<O: VerifierObserver>(
     observer: &mut O,
 ) -> Result<Fr, StreamError> {
     let weights = eq_evaluations_observed(point, observer);
+    coefficient_evaluation_with_weights_observed(terms, &weights, observer)
+}
+
+pub(crate) fn coefficient_evaluation_with_weights_observed<O: VerifierObserver>(
+    terms: &[Term],
+    weights: &[Fr],
+    observer: &mut O,
+) -> Result<Fr, StreamError> {
     if terms.len() > weights.len() {
         return Err(StreamError::StageMemberCount);
     }
     Ok(terms
         .iter()
         .zip(weights)
-        .map(|(term, weight)| observer.fr_mul(term.coefficient, weight))
+        .filter(|(_, weight)| !weight.is_zero())
+        .map(|(term, &weight)| observer.fr_mul(term.coefficient, weight))
         .sum())
 }
 
@@ -310,13 +319,35 @@ pub fn term_reduction_observed<O: VerifierObserver>(
         return Err(StreamError::StageMemberCount);
     }
     let term_weights = eq_evaluations_observed(point, observer);
+    term_reduction_with_weights_observed(terms, &term_weights, lambdas, columns, packing, observer)
+}
+
+pub(crate) fn term_reduction_with_weights_observed<O: VerifierObserver>(
+    terms: &[Term],
+    term_weights: &[Fr],
+    lambdas: &[Fr],
+    columns: usize,
+    packing: usize,
+    observer: &mut O,
+) -> Result<TermReduction, StreamError> {
+    let factor_count = terms
+        .iter()
+        .map(|term| term.factors.len())
+        .max()
+        .ok_or(StreamError::EmptyTensor)?;
+    if factor_count != lambdas.len() {
+        return Err(StreamError::StageMemberCount);
+    }
     if terms.len() > term_weights.len() {
         return Err(StreamError::StageMemberCount);
     }
     let padding_constant: Fr = term_weights.iter().skip(terms.len()).copied().sum();
     let mut factor_constants = vec![Fr::zero(); factor_count];
     let mut factor_weights = vec![vec![Fr::zero(); columns]; factor_count];
-    for (term, term_weight) in terms.iter().zip(term_weights) {
+    for (term, &term_weight) in terms.iter().zip(term_weights) {
+        if term_weight.is_zero() {
+            continue;
+        }
         for (factor, (factor_constant, factor_weights)) in factor_constants
             .iter_mut()
             .zip(&mut factor_weights)
@@ -390,7 +421,10 @@ fn evaluate_form(form: &AffineForm, columns: &[Fr], packing: usize) -> Result<Fr
         })
 }
 
-fn eq_evaluations_observed<O: VerifierObserver>(point: &[Fr], observer: &mut O) -> Vec<Fr> {
+pub(crate) fn eq_evaluations_observed<O: VerifierObserver>(
+    point: &[Fr],
+    observer: &mut O,
+) -> Vec<Fr> {
     let mut evaluations = vec![Fr::one()];
     for &challenge in point {
         let mut next = Vec::with_capacity(2 * evaluations.len());

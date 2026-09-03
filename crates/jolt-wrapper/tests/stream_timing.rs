@@ -27,8 +27,9 @@ fn estimated_n4_gas(cost: VerifierCost, proof: &WrapperProof) -> usize {
             .stages
             .iter()
             .filter_map(|stage| stage.committed_rounds.as_ref())
-            .map(|stage| stage.round_commitments.len() + 3)
+            .map(|stage| stage.round_commitments.len() + 3 * usize::from(stage.opening.is_some()))
             .sum::<usize>()
+        + 3 * usize::from(proof.round_opening.is_some())
         + proof.opening.com.len()
         + 1;
     let evm_calldata_bytes = proof.payload_bytes() + 32 * proof_g1;

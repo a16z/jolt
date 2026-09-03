@@ -55,7 +55,7 @@ pub struct CommittedStageProof {
     pub round_commitments: Vec<Bn254G1>,
     pub round_claims: Vec<Fr>,
     pub sum_at_zero: Fr,
-    pub opening: VariableBatchKzgProof<Bn254>,
+    pub opening: Option<VariableBatchKzgProof<Bn254>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +63,7 @@ pub struct WrapperProof {
     pub public_challenges: Vec<[u8; 16]>,
     pub commitments: Vec<Commitment>,
     pub stages: Vec<StageProof>,
+    pub round_opening: Option<VariableBatchKzgProof<Bn254>>,
     pub stage_claims: Vec<Vec<Fr>>,
     pub term_evaluations: Vec<Fr>,
     pub reduced_claims: Vec<Fr>,
@@ -82,8 +83,9 @@ impl WrapperProof {
             .stages
             .iter()
             .filter_map(|stage| stage.committed_rounds.as_ref())
-            .map(|stage| stage.round_commitments.len() + 3)
-            .sum::<usize>();
+            .map(|stage| stage.round_commitments.len() + 3 * usize::from(stage.opening.is_some()))
+            .sum::<usize>()
+            + 3 * usize::from(self.round_opening.is_some());
         let committed_scalars = self
             .stages
             .iter()
@@ -128,7 +130,8 @@ impl WrapperProof {
                     varint_bytes(committed.round_commitments.len())
                         + committed.round_commitments.len() * varint_bytes(32)
                         + varint_bytes(committed.round_claims.len())
-                        + 3 * varint_bytes(32)
+                        + 1
+                        + 3 * usize::from(committed.opening.is_some()) * varint_bytes(32)
                 }
                 None => 0,
             })
@@ -141,6 +144,8 @@ impl WrapperProof {
             + stage_prefixes
             + self.stages.len()
             + committed_prefixes
+            + 1
+            + 3 * usize::from(self.round_opening.is_some()) * varint_bytes(32)
             + varint_bytes(self.stage_claims.len())
             + self
                 .stage_claims
