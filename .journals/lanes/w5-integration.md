@@ -107,9 +107,9 @@ current Spartan verifier can evaluate matrix MLEs in `O(nnz)` and remains the na
 but it is a standalone transcript with a standalone W opening. Treating that component proof as the
 full wrapper would leave T1/T2 and their links unbound, so it is measured only as an R component.
 
-The native fallback can replace SPARK's matrix-memory argument only after stages 0/A/B exist: it
-computes the same matrix MLEs from the verifier key in `O(nnz)` and adds no proof bytes, but it does
-not remove the outer→inner dependency above.
+The native fallback can replace SPARK's matrix-memory argument only after A and S fix `rx` and
+`ry`: it computes the same matrix MLEs from the verifier key in `O(nnz)` and adds no proof bytes,
+but it does not remove the outer→inner dependency above.
 
 ## Measured native-R component
 
