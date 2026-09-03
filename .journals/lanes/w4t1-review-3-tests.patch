@@ -1,0 +1,226 @@
+diff --git a/crates/jolt-wrapper/tests/hash_table_relation.rs b/crates/jolt-wrapper/tests/hash_table_relation.rs
+index 866e8177b..b727bb9d0 100644
+--- a/crates/jolt-wrapper/tests/hash_table_relation.rs
++++ b/crates/jolt-wrapper/tests/hash_table_relation.rs
+@@ -36,9 +36,9 @@ use jolt_wrapper::hash_table::{
+ };
+ use jolt_wrapper::stream::{
+     commit_packed, commitment_prefix_challenges, prove_assembly, verify_assembly_with_cost,
+-    AssemblyMemberStatement, AssemblyStatement, Commitment, CommitmentPhase, StageMember,
+-    StageMemberSpec, StreamError, TermContext, TermExporter, TermObserver, VerifierCost,
+-    WrapperProof,
++    AffineForm as StreamAffineForm, AssemblyMemberStatement, AssemblyStatement, Commitment,
++    CommitmentPhase, StageMember, StageMemberSpec, StreamError, Term as StreamTerm, TermContext,
++    TermExporter, TermObserver, VerifierCost, WrapperProof,
+ };
+ use rand::rngs::StdRng;
+ use rand::{Rng, RngCore, SeedableRng};
+@@ -503,6 +503,62 @@ fn exporter<'a>(
+     }
+ }
+ 
++struct OwnChallengeExporter<'a> {
++    challenges: &'a T1Challenges,
++    public: &'a PublicInputs,
++    columns: &'a StreamColumns,
++}
++
++impl OwnChallengeExporter<'_> {
++    fn export(
++        &self,
++        context: &TermContext<'_>,
++        mul: &mut dyn FnMut(Fr, Fr) -> Fr,
++    ) -> Vec<StreamTerm> {
++        terms(
++            &FinalContext {
++                challenges: self.challenges,
++                row_point: context.row_point,
++                rho_rows: context.batching_coefficients[0],
++                rho_wiring: context.batching_coefficients[1],
++                public: self.public,
++            },
++            mul,
++        )
++        .into_iter()
++        .map(|term| StreamTerm {
++            coefficient: term.coefficient,
++            factors: term
++                .factors
++                .into_iter()
++                .map(|form| StreamAffineForm {
++                    constant: form.constant,
++                    weights: form
++                        .weights
++                        .into_iter()
++                        .map(|(column, weight)| (self.columns.ids[column], weight))
++                        .collect(),
++                })
++                .collect(),
++        })
++        .collect()
++    }
++}
++
++impl TermExporter for OwnChallengeExporter<'_> {
++    fn terms(&self, context: &TermContext<'_>) -> Vec<StreamTerm> {
++        self.export(context, &mut |left, right| left * right)
++    }
++
++    fn terms_observed(
++        &self,
++        context: &TermContext<'_>,
++        observer: &mut dyn TermObserver,
++    ) -> Vec<StreamTerm> {
++        self.export(context, &mut |left, right| observer.fr_mul(left, right))
++    }
++}
++
+ /// T1's phase challenges as the stream draws them after the commitments.
+ fn drawn_challenges(
+     key: &SymbolicSchedule,
+@@ -906,6 +962,79 @@ fn noncanonical_wire_bytes_are_rejected() {
+     }
+ }
+ 
++#[test]
++fn shifted_noncanonical_word_can_bypass_canonicality() {
++    let shape = (2, 10, 1, 54);
++    let honest = synthetic_log(3, shape.0, shape.1, shape.2, shape.3);
++    let Instance { key, .. } = instance(&honest);
++    let setup = prover_setup(key.rows());
++    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
++
++    let mut canonical = [0u8; 32];
++    canonical[8] = 0x47;
++    canonical[9] = 0xb0;
++    let noncanonical = plus_modulus(canonical, 1);
++    assert_eq!(
++        &noncanonical[..10],
++        &[0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x2a, 0, 0]
++    );
++    assert_eq!(
++        wire_value(&canonical, true),
++        wire_value(&noncanonical, true)
++    );
++
++    let tampered = synthetic_log_with(
++        3,
++        shape.0,
++        shape.1,
++        shape.2,
++        shape.3,
++        Some(Tamper {
++            round: 0,
++            element: 0,
++            bytes: noncanonical,
++        }),
++    );
++    let Instance { public, table, .. } = instance_under(&tampered, key.clone());
++    let (proof, columns) = prove(&table, &key, &public, &setup);
++    let _ = verify(&proof, &key, &public, &columns, &verifier_setup)
++        .expect("the shifted canonicality constraint reads the wrong half-word");
++}
++
++#[test]
++fn prover_controlled_vk_selector_can_disable_canonicality() {
++    let shape = (2, 10, 1, 54);
++    let honest = synthetic_log(3, shape.0, shape.1, shape.2, shape.3);
++    let Instance { key, .. } = instance(&honest);
++    let setup = prover_setup(key.rows());
++    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
++    for (round, shifted) in [(0, true), (1, false)] {
++        let tampered = synthetic_log_with(
++            3,
++            shape.0,
++            shape.1,
++            shape.2,
++            shape.3,
++            Some(Tamper {
++                round,
++                element: 0,
++                bytes: plus_modulus(canonical_one(), 1),
++            }),
++        );
++        let Instance {
++            public, mut table, ..
++        } = instance_under(&tampered, key.clone());
++        if shifted {
++            table.vk.wire_shifted.fill(0);
++        } else {
++            table.vk.wire_aligned.fill(0);
++        }
++        let (proof, columns) = prove(&table, &key, &public, &setup);
++        let _ = verify(&proof, &key, &public, &columns, &verifier_setup)
++            .expect("the verifier does not bind the alleged VK columns to the key");
++    }
++}
++
+ /// B2: the verifier's schedule is the key's, never the proof's — a proof of
+ /// another run of the profile verifies under the key; a run of another shape
+ /// is not a witness of the key.
+@@ -947,6 +1076,21 @@ fn key_schedule_is_proof_independent() {
+     ));
+ }
+ 
++#[test]
++fn proof_of_foreign_schedule_verifies_under_key() {
++    let a = instance(&synthetic_log(3, 2, 10, 1, 54));
++    let b = instance(&synthetic_log(3, 3, 10, 1, 54));
++    assert_eq!(a.key.log_rows, b.key.log_rows);
++    assert_eq!(a.public, b.public);
++    assert_ne!(a.key, b.key);
++
++    let setup = prover_setup(a.key.rows());
++    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
++    let (proof, columns) = prove(&b.table, &a.key, &a.public, &setup);
++    let _ = verify(&proof, &a.key, &a.public, &columns, &verifier_setup)
++        .expect("the verifier does not bind schedule-derived columns to the key");
++}
++
+ /// B3: `τ` and the batching challenges are the stream's post-commitment
+ /// challenges. A prover using its own randomizers cannot link its stage to
+ /// the exporter's terms; a proof's challenges change with its commitments.
+@@ -996,3 +1140,43 @@ fn randomizers_are_bound_to_the_commitments() {
+     swapped.commitments.swap(0, 1);
+     assert!(verify(&swapped, &key, &public, &columns, &verifier_setup).is_err());
+ }
++
++#[test]
++fn verifier_rejects_a_complete_own_randomizer_proof() {
++    let log = synthetic_log(3, 2, 10, 1, 54);
++    let Instance {
++        key, public, table, ..
++    } = instance(&log);
++    let setup = prover_setup(key.rows());
++    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
++    let columns = StreamColumns::new(&table, K, 0);
++    let packed = commit_packed(&columns.columns, K, &setup).expect("commit");
++    let mut rng = StdRng::seed_from_u64(0xc0de);
++    let own = random_challenges(&mut rng, key.log_rows);
++    let relation = own.relation();
++    let mut members = Members::new(&table, &relation, &own);
++    let claims = members.input_claims;
++    let statement = statement(&key, &public, &columns, claims);
++    let own_exporter = OwnChallengeExporter {
++        challenges: &own,
++        public: &public,
++        columns: &columns,
++    };
++    let mut stage = [
++        StageMember {
++            prover: &mut members.rows,
++            input_claim: claims[0],
++            degree: STAGE_DEGREE,
++            offset: 0,
++        },
++        StageMember {
++            prover: &mut members.wiring,
++            input_claim: claims[1],
++            degree: STAGE_DEGREE,
++            offset: 0,
++        },
++    ];
++    let proof = prove_assembly(&packed, &statement, &mut stage, &[&own_exporter], &setup)
++        .expect("complete proof under prover-chosen randomizers");
++    assert!(verify(&proof, &key, &public, &columns, &verifier_setup).is_err());
++}
