@@ -1,20 +1,26 @@
 //! Recording replay of the native verifier: the transcript event log the
-//! assign-mode walk reads challenge values and prover scalars from, and
-//! asserts the circuit's schedule against.
+//! assign-mode walk reads challenge values and prover scalars from and asserts
+//! the circuit's schedule against, plus the native stage outputs the parity
+//! guard rebuilds the verifier's own sumcheck instances from.
 
 use std::cell::RefCell;
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_crypto::Commitment;
 use jolt_field::Fr;
 use jolt_transcript::{Blake3Transcript, Transcript};
 use jolt_verifier::stages::{
     build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7,
     stage8,
 };
+use jolt_verifier::verifier::CheckedInputs;
 use serde::{Deserialize, Serialize};
 
 use super::{Pcs, Preprocessing, Proof, RelationError, Vc};
+
+type VcOutput = <Vc as Commitment>::Output;
 
 /// Which decoder the verifier applies to the 16-byte squeeze: `challenge()`
 /// (125-bit, Montgomery high-limb placement) or `challenge_scalar()` (128-bit
@@ -34,6 +40,25 @@ pub(crate) enum Event {
 pub(crate) struct Replay {
     pub events: Vec<Event>,
     pub state_in: [u8; 32],
+    pub native: NativeReplay,
+}
+
+/// What the native verifier computed on the way: the checked inputs, the
+/// formula dimensions, every stage's clear output, and the squeeze values in
+/// draw order with the index at which each stage began drawing.
+pub(crate) struct NativeReplay {
+    pub checked: CheckedInputs,
+    pub formula_dimensions: JoltFormulaDimensions,
+    pub squeezes: Vec<Fr>,
+    pub stage_squeezes: [usize; 8],
+    pub stage1: stage1::Stage1Output<Fr, VcOutput>,
+    pub stage2: stage2::Stage2Output<Fr, VcOutput>,
+    pub stage3: stage3::Stage3Output<Fr, VcOutput>,
+    pub stage4: stage4::Stage4Output<Fr, VcOutput>,
+    pub stage5: stage5::Stage5Output<Fr, VcOutput>,
+    pub stage6a: stage6a::Stage6aOutput<Fr, VcOutput>,
+    pub stage6b: stage6b::Stage6bOutput<Fr, VcOutput>,
+    pub stage7: stage7::Stage7Output<Fr, VcOutput>,
 }
 
 thread_local! {
@@ -46,6 +71,15 @@ fn take_log() -> Vec<Event> {
 
 fn push(event: Event) {
     LOG.with(|log| log.borrow_mut().push(event));
+}
+
+fn squeezes_logged() -> usize {
+    LOG.with(|log| {
+        log.borrow()
+            .iter()
+            .filter(|event| matches!(event, Event::Squeeze { .. }))
+            .count()
+    })
 }
 
 /// Forwards every call to `T`, logging each `append_bytes` payload and each
@@ -113,9 +147,14 @@ pub(crate) fn replay(
         checked.trace_length.ilog2() as usize,
         JoltRelationId::InstructionReadRaf,
     )?;
+    let mut stage_squeezes = [0; 8];
+    stage_squeezes[0] = squeezes_logged();
     let stage1 = stage1::verify(&checked, proof, &mut transcript)?;
+    stage_squeezes[1] = squeezes_logged();
     let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1)?;
+    stage_squeezes[2] = squeezes_logged();
     let stage3 = stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2)?;
+    stage_squeezes[3] = squeezes_logged();
     let stage4 = stage4::verify(
         &checked,
         preprocessing,
@@ -124,6 +163,7 @@ pub(crate) fn replay(
         &stage2,
         &stage3,
     )?;
+    stage_squeezes[4] = squeezes_logged();
     let stage5 = stage5::verify(
         &checked,
         proof,
@@ -132,6 +172,7 @@ pub(crate) fn replay(
         &stage2,
         &stage4,
     )?;
+    stage_squeezes[5] = squeezes_logged();
     let stage6a = stage6a::verify(
         &checked,
         preprocessing,
@@ -144,6 +185,7 @@ pub(crate) fn replay(
         &stage4,
         &stage5,
     )?;
+    stage_squeezes[6] = squeezes_logged();
     let stage6b = stage6b::verify(
         &checked,
         preprocessing,
@@ -157,6 +199,7 @@ pub(crate) fn replay(
         &stage5,
         &stage6a,
     )?;
+    stage_squeezes[7] = squeezes_logged();
     let stage7 = stage7::verify(
         &checked,
         proof,
@@ -175,8 +218,30 @@ pub(crate) fn replay(
         &stage6b,
         &stage7,
     )?);
+    let events = take_log();
+    let squeezes = events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Squeeze { value, .. } => Some(*value),
+            Event::Append(_) => None,
+        })
+        .collect();
     Ok(Replay {
-        events: take_log(),
+        events,
         state_in,
+        native: NativeReplay {
+            checked,
+            formula_dimensions,
+            squeezes,
+            stage_squeezes,
+            stage1,
+            stage2,
+            stage3,
+            stage4,
+            stage5,
+            stage6a,
+            stage6b,
+            stage7,
+        },
     })
 }

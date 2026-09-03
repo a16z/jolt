@@ -7,7 +7,7 @@ use jolt_field::{CanonicalEncoding, Field, Fr, One, Zero};
 use jolt_r1cs::{ConstraintMatrices, LinearCombination, R1csBuilder, Variable};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
 
-use super::replay::{Event, Replay, SqueezeKind};
+use super::replay::{Event, SqueezeKind};
 use super::{RelationError, RowSpan, ScheduleEntry};
 
 pub(crate) type Lc = LinearCombination<Fr>;
@@ -124,12 +124,12 @@ pub(crate) struct Ctx {
 }
 
 impl Ctx {
-    pub(crate) fn new(replay: Option<Replay>) -> Self {
+    pub(crate) fn new(events: Option<Vec<Event>>) -> Self {
         Self {
             builder: R1csBuilder::new(),
             values: vec![Some(Fr::one())],
-            replay: replay.map(|replay| Cursor {
-                events: replay.events,
+            replay: events.map(|events| Cursor {
+                events,
                 position: 0,
             }),
             schedule: Vec::new(),

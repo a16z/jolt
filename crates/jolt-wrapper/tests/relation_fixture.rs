@@ -36,11 +36,10 @@ use jolt_verifier::JoltVerifierPreprocessing;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use jolt_wrapper::profile::WrapperProfile;
 use jolt_wrapper::relation::{
-    build_relation, generate_witness, outsourced_inputs, Relation, ScheduleEntry, SqueezeKind,
-    StageValueInputs, Witness,
+    build_relation, generate_witness, outsourced_inputs, NativeParity, Relation, ScheduleEntry,
+    SqueezeKind, StageValueInputs, Witness,
 };
 use jolt_wrapper::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn};
-use jolt_wrapper::wrap::{WrapConfig, WrapPreparation};
 use tracer::execution_backend::TracerBackend;
 
 type Pcs = DoryScheme;
@@ -55,7 +54,7 @@ const FIBONACCI_UNITS_2_18: u32 = 19_660;
 const CACHE_DIR: &str = "/Volumes/Dev/scratch/wrapper-fixtures";
 
 /// Pinned row counts of the fibonacci 2^20 relation (L = 20, K = 13, σ = 12).
-const EXPECTED_CONSTRAINTS_2_20: usize = 5_454;
+const EXPECTED_CONSTRAINTS_2_20: usize = 5_455;
 const EXPECTED_PER_STAGE_2_20: [(&str, usize); 9] = [
     ("stage1", 278),
     ("stage2", 383),
@@ -65,11 +64,11 @@ const EXPECTED_PER_STAGE_2_20: [(&str, usize); 9] = [
     ("stage6a", 229),
     ("stage6b", 1_038),
     ("stage7", 795),
-    ("stage8", 291),
+    ("stage8", 292),
 ];
 
 /// Pinned row counts of the fibonacci 2^18 relation (L = 18, K = 13, σ = 11).
-const EXPECTED_CONSTRAINTS_2_18: usize = 5_253;
+const EXPECTED_CONSTRAINTS_2_18: usize = 5_254;
 const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage1", 268),
     ("stage2", 365),
@@ -79,7 +78,7 @@ const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage6a", 229),
     ("stage6b", 974),
     ("stage7", 795),
-    ("stage8", 278),
+    ("stage8", 279),
 ];
 
 fn setup_total_vars(memory_layout: &MemoryLayout, max_padded_trace_length: usize) -> usize {
@@ -260,24 +259,7 @@ fn relation_on_fixture(log_t: usize) -> (Built, BTreeMap<String, usize>) {
 #[test]
 fn fibonacci_2_18_relation() {
     let (built, per_stage) = relation_on_fixture(18);
-    let (preprocessing, public_io, proof) = fixture(18);
-    let prepare_start = Instant::now();
-    let preparation =
-        WrapPreparation::new(&preprocessing, &public_io, &proof, WrapConfig::default())
-            .expect("prepare wrapper inputs");
-    println!(
-        "wrap preparation: {:.1} ms; T1 rows {} / 2^{}; R rows {}; public {}+{}",
-        prepare_start.elapsed().as_secs_f64() * 1e3,
-        preparation.hash_table.rows,
-        preparation.hash_table.log_rows,
-        preparation.relation.matrices.num_constraints,
-        preparation.public_known.len(),
-        preparation.public_challenges.len(),
-    );
-    assert_eq!(preparation.hash_table.log_rows, 18);
-    assert_eq!(preparation.public_known.len(), 7);
-    assert_eq!(preparation.public_challenges.len(), 38);
-    assert_eq!(preparation.shared_witness.inner_member().rounds, 13);
+    let (preprocessing, public_io, _) = fixture(18);
     let Built {
         relation, witness, ..
     } = &built;
@@ -291,6 +273,14 @@ fn fibonacci_2_18_relation() {
     assert_eq!(shared_witness.inner_member().rounds, 13);
     assert_eq!(shared_witness.into_column().len(), 1 << 18);
     assert_eq!(relation.matrices.num_constraints, EXPECTED_CONSTRAINTS_2_18);
+    // Every derived and challenge wire was compared with its native owner.
+    assert_eq!(
+        witness.native_parity,
+        NativeParity {
+            derived: 214,
+            challenges: 19,
+        }
+    );
     for (stage, rows) in EXPECTED_PER_STAGE_2_18 {
         assert_eq!(per_stage[stage], rows, "{stage}");
     }

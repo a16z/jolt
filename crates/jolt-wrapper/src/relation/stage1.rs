@@ -8,6 +8,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_opening, outer_uniskip_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
 };
 use jolt_claims::protocols::jolt::relations::spartan::{OuterRemainder, OuterUniskip};
+use jolt_claims::protocols::jolt::SpartanOuterPublic;
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::{Fr, One};
 use jolt_r1cs::constraint::SparseRow;
@@ -46,6 +47,7 @@ pub(crate) fn walk(
 ) -> Result<Stage1, RelationError> {
     let log_t = profile.log_t;
     let dimensions = SpartanOuterDimensions::rv64(log_t);
+    let include_affine_terms = dimensions.include_affine_terms();
 
     ctx.section("stage1/tau");
     let tau = ctx.squeeze_vector(SqueezeKind::Challenge, log_t + 2)?;
@@ -123,6 +125,42 @@ pub(crate) fn walk(
     let kernel_az = ctx.mul(&tau_kernel, &az);
     let expected = ctx.mul(&kernel_az, &bz);
     finish_batch(ctx, &batch, &[expected], &final_claim);
+
+    // The native linear-form weights, as the same combination of row weights
+    // the per-row products above use (the parity guard checks them).
+    let weight = |rows: &[SparseRow<Fr>], column: usize| -> Lc {
+        let mut form = Accum::default();
+        for (row, row_weight) in rows.iter().zip(&row_weights) {
+            for &(candidate, coefficient) in row {
+                if candidate == column {
+                    form.add(row_weight, coefficient);
+                }
+            }
+        }
+        form.finish()
+    };
+    for (index, &column) in columns.iter().enumerate() {
+        wires.derived(
+            SpartanOuterPublic::AzWeight(index),
+            weight(&matrices.a, column),
+        );
+        wires.derived(
+            SpartanOuterPublic::BzWeight(index),
+            weight(&matrices.b, column),
+        );
+    }
+    if include_affine_terms {
+        let constant = rv64::const_column();
+        wires.derived(
+            SpartanOuterPublic::AzConstant,
+            weight(&matrices.a, constant),
+        );
+        wires.derived(
+            SpartanOuterPublic::BzConstant,
+            weight(&matrices.b, constant),
+        );
+    }
+    wires.derived(SpartanOuterPublic::TauKernel, tau_kernel);
 
     Ok(Stage1 { point })
 }

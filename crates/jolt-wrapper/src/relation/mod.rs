@@ -14,6 +14,7 @@ mod ctx;
 mod dory;
 mod gadgets;
 mod lower;
+mod native;
 mod public_io;
 mod replay;
 mod stage1;
@@ -38,11 +39,13 @@ use jolt_verifier::{JoltProof, JoltVerifierPreprocessing, VerifierError};
 use thiserror::Error;
 
 pub use dory::{DoryLinks, DoryScalar};
+pub use native::NativeParity;
 pub use public_io::{outsourced_inputs, OutsourcedInputs, PublicOutputs, StageValueInputs};
 pub use replay::SqueezeKind;
 
 use crate::profile::WrapperProfile;
 use ctx::Ctx;
+use replay::Replay;
 use wiring::Wires;
 
 pub type Pcs = DoryScheme;
@@ -68,6 +71,13 @@ pub enum RelationError {
     },
     #[error("missing {kind} source {id}")]
     MissingSource { kind: &'static str, id: String },
+    #[error("{kind} {id}: gadget {gadget:?}, native {native:?}")]
+    NativeMismatch {
+        kind: &'static str,
+        id: String,
+        gadget: Fr,
+        native: Fr,
+    },
     #[error("geometry: {0}")]
     Geometry(String),
     #[error("witness value missing for variable {0}")]
@@ -138,6 +148,8 @@ pub struct Witness {
     /// Transcript state after the natively absorbed preamble and commitments.
     pub state_in: [u8; 32],
     pub outsourced: OutsourcedInputs,
+    /// Coverage of the native parity guard that ran while assigning.
+    pub native_parity: NativeParity,
 }
 
 /// The native data the assign-mode walk evaluates the outsourced public
@@ -149,12 +161,15 @@ pub(crate) struct Native<'a> {
 
 pub fn build_relation(profile: &WrapperProfile) -> Result<Relation, RelationError> {
     let mut ctx = Ctx::new(None);
-    let (public, dory) = walk(&mut ctx, profile, None)?;
+    let walked = walk(&mut ctx, profile, None)?;
     let (matrices, _, schedule, rows) = ctx.finish();
     Ok(Relation {
         matrices,
-        public,
-        link: LinkTable { schedule, dory },
+        public: walked.public,
+        link: LinkTable {
+            schedule,
+            dory: walked.dory,
+        },
         rows,
     })
 }
@@ -165,14 +180,18 @@ pub fn generate_witness(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<Witness, RelationError> {
-    let replay = replay::replay(preprocessing, public_io, proof)?;
-    let state_in = replay.state_in;
-    let mut ctx = Ctx::new(Some(replay));
+    let Replay {
+        events,
+        state_in,
+        native: replay,
+    } = replay::replay(preprocessing, public_io, proof)?;
+    let mut ctx = Ctx::new(Some(events));
     let native = Native {
         preprocessing,
         public_io,
     };
-    let (public, _) = walk(&mut ctx, profile, Some(&native))?;
+    let Walked { public, wires, .. } = walk(&mut ctx, profile, Some(&native))?;
+    let native_parity = native::check(&ctx, &wires, preprocessing, proof, &replay)?;
     let (_, values, _, _) = ctx.finish();
     let values = values
         .into_iter()
@@ -189,17 +208,24 @@ pub fn generate_witness(
         values,
         state_in,
         outsourced,
+        native_parity,
     })
 }
 
 /// The whole schedule, stage by stage. Build mode (`native == None`) leaves
 /// every prover-supplied and challenge wire unassigned; assign mode reads them
 /// off the replay and evaluates the outsourced inputs natively.
+struct Walked {
+    public: PublicLayout,
+    dory: DoryLinks,
+    wires: Wires,
+}
+
 fn walk(
     ctx: &mut Ctx,
     profile: &WrapperProfile,
     native: Option<&Native<'_>>,
-) -> Result<(PublicLayout, DoryLinks), RelationError> {
+) -> Result<Walked, RelationError> {
     let public = public_io::allocate(ctx, profile);
     let mut wires = Wires::default();
     let stage1 = stage1::walk(ctx, profile, &mut wires)?;
@@ -215,31 +241,9 @@ fn walk(
     let stage7 = stage7::walk(ctx, profile, &mut wires, &stage5, &stage6a, &stage6b)?;
     let dory = stage8::walk(ctx, profile, &wires, &stage5, &stage7)?;
     ctx.expect_replay_consumed()?;
-    Ok((public.finish(), dory))
-}
-
-/// Diagnostic surface for the table-parity test: every lookup-table gadget
-/// evaluated at a concrete `point` (in `LookupTableKind::iter()` order),
-/// after checking the rows the gadgets emitted against their own hints.
-pub fn table_gadget_values(point: &[Fr]) -> Result<Vec<Fr>, RelationError> {
-    let mut ctx = Ctx::new(None);
-    let wires: Vec<ctx::Lc> = point
-        .iter()
-        .map(|value| ctx::lc_var(ctx.alloc(Some(*value))))
-        .collect();
-    let gadgets = tables::table_mles(&mut ctx, &wires);
-    let values = gadgets
-        .iter()
-        .map(|lc| ctx.value(lc).ok_or(RelationError::Witness(0)))
-        .collect::<Result<Vec<_>, _>>()?;
-    let (matrices, assignment, _, _) = ctx.finish();
-    let assignment = assignment
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| value.ok_or(RelationError::Witness(index)))
-        .collect::<Result<Vec<_>, _>>()?;
-    matrices
-        .check_witness(&assignment)
-        .map_err(|row| RelationError::Geometry(format!("table gadget row {row} unsatisfied")))?;
-    Ok(values)
+    Ok(Walked {
+        public: public.finish(),
+        dory,
+        wires,
+    })
 }

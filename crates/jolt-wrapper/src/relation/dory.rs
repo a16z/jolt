@@ -16,9 +16,13 @@ const G1_BYTES: usize = 32;
 const G2_BYTES: usize = 64;
 
 /// A Dory verifier scalar, indexed by fold round `j` (0 = first fold) where
-/// applicable. `Chi(k)`, `Delta1R(k)`, `Delta2R(k)` follow the setup index
-/// `k = σ − 1 − j`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// applicable. The setup-constant scalars carry the setup index instead: round
+/// `j` folds with `Δ1R[k], Δ2R[k]` at `k = σ − j` (the native verifier reads
+/// `setup.delta_*[num_rounds]` while `num_rounds` counts down from `σ`) and
+/// with `Δ1L[k] = Δ2L[k] = χ[k − 1]`, so `Chi(k)` collects the round
+/// `j = σ − 1 − k` products plus the unit contribution of every `χ[k]`
+/// (`Chi(σ)` is the unit alone).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DoryScalar {
     /// `y`: the joint evaluation claim (scalar on `Γ2_0`).
     Evaluation,
@@ -55,10 +59,10 @@ pub enum DoryScalar {
     S2Acc,
     /// `s1_acc · s2_acc` (the `HT` scalar).
     Ht,
-    /// `−γ · d⁻¹ · s1_acc`.
-    PairingE1Scalar,
-    /// `−γ⁻¹ · d · s2_acc`.
-    PairingE2Scalar,
+    /// `−γ · d⁻¹ · s1_acc`: the `Γ2_0` coefficient of the `e(H1, ·)` pairing input.
+    PairingG2ZeroScalar,
+    /// `−γ⁻¹ · d · s2_acc`: the `Γ1_0` coefficient of the `e(·, H2)` pairing input.
+    PairingG1ZeroScalar,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,6 +151,7 @@ pub(crate) fn walk(
         &(betas[0].clone() + d_squared.clone()),
     );
 
+    emit(ctx, DoryScalar::Chi(sigma), &Lc::one());
     let mut s1_acc = Lc::one();
     let mut s2_acc = Lc::one();
     for j in 0..sigma {
@@ -175,9 +180,9 @@ pub(crate) fn walk(
             &(Lc::one() + chi_left + chi_right),
         );
         let delta_1r = ctx.mul(&u, &betas[j]);
-        emit(ctx, DoryScalar::Delta1R(sigma - 1 - j), &delta_1r);
+        emit(ctx, DoryScalar::Delta1R(sigma - j), &delta_1r);
         let delta_2r = ctx.mul(&v, &beta_inv[j]);
-        emit(ctx, DoryScalar::Delta2R(sigma - 1 - j), &delta_2r);
+        emit(ctx, DoryScalar::Delta2R(sigma - j), &delta_2r);
         // Round j folds coordinate index σ − 1 − j.
         let coordinate = sigma - 1 - j;
         let y = &s1_coords[coordinate];
@@ -193,10 +198,10 @@ pub(crate) fn walk(
     emit(ctx, DoryScalar::Ht, &ht);
     let gamma_d_inv = ctx.mul(&gamma, &d_inv);
     let e1_scalar = ctx.mul(&gamma_d_inv, &s1_acc);
-    emit(ctx, DoryScalar::PairingE1Scalar, &-e1_scalar);
+    emit(ctx, DoryScalar::PairingG2ZeroScalar, &-e1_scalar);
     let gamma_inv_d = ctx.mul(&gamma_inv, &d);
     let e2_scalar = ctx.mul(&gamma_inv_d, &s2_acc);
-    emit(ctx, DoryScalar::PairingE2Scalar, &-e2_scalar);
+    emit(ctx, DoryScalar::PairingG1ZeroScalar, &-e2_scalar);
 
     Ok(DoryLinks {
         num_vars,
