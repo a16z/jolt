@@ -312,13 +312,19 @@ mod tests {
             claim_reduction_output_openings, HammingWeightClaimReductionDimensions,
         };
         use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-        use jolt_claims::protocols::jolt::relations::claim_reductions;
+        #[cfg(not(feature = "akita"))]
+        use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
+            TrustedAddressPhase, UntrustedAddressPhase,
+        };
+        use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::AddressPhase as BytecodeAddressPhase;
+        use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::ClaimReduction as HammingWeightClaimReductionRelation;
+        use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::AddressPhase as ProgramImageAddressPhase;
         use jolt_claims::protocols::jolt::PrecommittedReductionDimensions;
         use jolt_claims::SymbolicSumcheck;
 
         let ra_layout = JoltRaPolynomialLayout::new(2, 1, 1).unwrap();
         let hamming_dimensions = HammingWeightClaimReductionDimensions::new(ra_layout, 4);
-        let hamming = claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);
+        let hamming = HammingWeightClaimReductionRelation::new(hamming_dimensions);
         assert_eq!(
             hamming.expected_output_openings::<Fr>().len(),
             claim_reduction_output_openings(hamming_dimensions)
@@ -329,21 +335,17 @@ mod tests {
         let reduction_dimensions = PrecommittedReductionDimensions::new(4, 3, true);
         #[cfg(not(feature = "akita"))]
         {
-            let trusted_advice =
-                claim_reductions::advice::TrustedAddressPhase::new(reduction_dimensions);
+            let trusted_advice = TrustedAddressPhase::new(reduction_dimensions);
             assert_eq!(trusted_advice.expected_output_openings::<Fr>().len(), 1);
-            let untrusted_advice =
-                claim_reductions::advice::UntrustedAddressPhase::new(reduction_dimensions);
+            let untrusted_advice = UntrustedAddressPhase::new(reduction_dimensions);
             assert_eq!(untrusted_advice.expected_output_openings::<Fr>().len(), 1);
         }
 
         let chunk_count = 4;
-        let bytecode =
-            claim_reductions::bytecode::AddressPhase::new((reduction_dimensions, chunk_count));
+        let bytecode = BytecodeAddressPhase::new((reduction_dimensions, chunk_count));
         assert_eq!(bytecode.expected_output_openings::<Fr>().len(), chunk_count);
 
-        let program_image =
-            claim_reductions::program_image::AddressPhase::new(reduction_dimensions);
+        let program_image = ProgramImageAddressPhase::new(reduction_dimensions);
         assert_eq!(program_image.expected_output_openings::<Fr>().len(), 1);
     }
 }
