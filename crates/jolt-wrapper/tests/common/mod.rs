@@ -105,3 +105,10 @@ pub fn synthetic_opening(num_vars: usize, n: usize, seed: u64) -> Opening {
         },
     }
 }
+
+/// The wrapper's offset challenge `θ` of the fixture (drawn from the stream
+/// transcript after phase 1a in production; any nonzero value here).
+pub fn offset_challenge() -> ArkFr {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x000F_F5E7);
+    ArkFr::rand(&mut rng)
+}

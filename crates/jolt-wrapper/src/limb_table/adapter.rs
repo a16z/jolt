@@ -62,13 +62,15 @@ pub fn ordered_commitments(commitments: &JoltCommitments<DoryCommitment>) -> Vec
 
 /// Builds the table inputs from the verifier setup, the proof's commitments
 /// and joint opening proof, the relation's named Dory scalar wires and the
-/// witness assignment `z` they index (`z[0] = 1`).
+/// witness assignment `z` they index (`z[0] = 1`), and the wrapper's offset
+/// challenge `θ` (drawn from the stream transcript after phase 1a).
 pub fn from_jolt(
     pcs_setup: &DoryVerifierSetup,
     commitments: &JoltCommitments<DoryCommitment>,
     opening_proof: &DoryProof,
     links: &DoryLinks,
     witness_values: &[Fr],
+    offset: Fr,
 ) -> Result<JoltDoryInputs, AdapterError> {
     let proof = opening_proof.0.clone();
     if proof.sigma != links.sigma {
@@ -117,7 +119,7 @@ pub fn from_jolt(
             commitments: ordered,
             proof,
         },
-        values: WireValues::from_wires(pairs),
+        values: WireValues::from_wires(pairs, ArkFr::from(offset)),
         wire_order,
     })
 }

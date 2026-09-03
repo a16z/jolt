@@ -8,34 +8,31 @@
 //! final-exponentiation glue rows use explicit `Table` edge lists (`≤ 64`
 //! edges per family).
 
-use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, G1Affine, G2Affine};
+use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, G2Affine};
 use ark_ec::bn::{BnConfig, G2Prepared};
 use ark_ec::short_weierstrass::SWCurveConfig;
-use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
-use num_bigint::BigUint;
+use ark_ff::{AdditiveGroup, Field};
 use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::relation::DoryScalar;
 
 use super::digits::{digits, WINDOWS};
-use super::dory::{
-    DorySetupInputs, FlattenedCheck, G1Base, G2Base, GtBase, InputElement, Wire, WireValues,
-};
+use super::dory::{DorySetupInputs, FlattenedCheck, GtBase, InputElement, Wire, WireValues};
 use super::layout::{Bits, Factor, Piece, Rel, LOG_ROWS};
 use super::ops::{
-    ell, g1_add, g1_copy, g1_dbl, g1_on_curve, g2_add, g2_copy, g2_dbl, g2_on_curve, g2_psi,
-    gt_difference_pins, gt_frobenius, gt_inverse_pin, gt_inverse_witness, gt_mul, miller_add_step,
-    miller_double_step, GtOperand, ADD_LINE, CONST_LINE, DOUBLE_LINE,
+    ell, g2_psi, gt_difference_pins, gt_frobenius, gt_inverse_pin, gt_inverse_witness, gt_mul,
+    gt_norm_one, miller_add_step, miller_double_step, GtOperand, ADD_LINE, CONST_LINE, DOUBLE_LINE,
 };
 use super::program::{Program, RowId};
-use super::relation::{FP_SLOTS_G1, FP_SLOTS_G2, FP_SLOTS_GT};
+use super::relation::FP_SLOTS_GT;
 use super::template::{
     fingerprint_maps, DigitRule, ElemRel, ElemWiring, Family, Template, ONE_ROW,
 };
 use super::tower::{fq12_coords, frobenius_form};
 use super::wiring::{FingerprintGroup, ReadKind, TableRead};
+
+mod ec;
 
 /// Row-count profile of one opening: `σ` reduction rounds, `n` commitments.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,8 +60,14 @@ impl Cells {
     pub const FINAL: u32 = 9600;
     /// Structured constant cells (points in output layout).
     pub const POINT_CONSTANTS: u32 = 9601;
+    /// `9728 + k`: the norm-one check of the GT input base `k`.
+    pub const GT_NORM: u32 = 9728;
     /// Final-exponentiation glue and the `ψ` points (explicit edges).
-    pub const GLUE: u32 = 9728;
+    pub const GLUE: u32 = 9888;
+    pub const GLUE_END: u32 = 10048;
+    /// The G2 offset chain `θ·G2`: `HI2 = 4`, `k` slots `58..64` (cells `10048..10240`).
+    pub const G2_OFFSET_HI: u32 = 4;
+    pub const G2_OFFSET_K: u32 = 58;
     /// Half-cell index `row >> 3 = 20480 + 64·k + w`.
     pub const G2_ONLINE_HALF: u32 = 20480;
     /// `11776 + 8·t + s`: `s = 0` squaring, `s = 1 + p` doubling-line `ell`.
@@ -91,6 +94,14 @@ impl Cells {
     pub const CONST_LINES_ADD: u32 = 15104;
     /// `15360 + 128·chain + 2·step + slot`: `f^{-x}` chains.
     pub const FE_CHAINS: u32 = 15360;
+    /// `15872 + 256·chain + local`: the G2 subgroup checks of the two
+    /// proof-derived Miller `Q` inputs (`2^i·P` at half cells, guarded adds
+    /// and the `ψ` tail at cells).
+    pub const PSI_CHAIN: u32 = 15872;
+    /// `15168 + b` (row 0) / `14912 + b` (rows 0–5): sign rows of the
+    /// byte-linked G1 / G2 base points `b`.
+    pub const G1_SIGN: u32 = 15168;
+    pub const G2_SIGN: u32 = 14912;
 }
 
 const C: Bits = Bits::new(0, 4);
@@ -230,10 +241,15 @@ pub struct Layout {
     pub families: Vec<FamilyStats>,
     /// The `one` element cell (rows `0..12` hold `1, 0, …, 0`).
     pub one_cell: u32,
-    /// Digit bases: the named wires in the published order, then the constant one.
+    /// Digit bases: the named wires in the published order, the constant one,
+    /// then the offset challenge `θ`.
     pub digit_bases: u32,
     /// Committed input elements in the order of the `Input` rows (the T1 link order).
     pub input_order: Vec<InputElement>,
+    /// The sign row of every byte-linked G1/G2 point: its `flag` column entry
+    /// is `[y > −y]` (Fq2: lexicographic on `(y1, y0)`), the compressed
+    /// encoding's sign bit the T1 link binds.
+    pub sign_rows: Vec<(InputElement, RowId)>,
     /// The pinned rows `lhs_c − rhs_c = 0`.
     pub final_check: [RowId; 12],
     /// Cells of the four pairing G1 points (rows 14–15) and half cells of the
@@ -271,6 +287,7 @@ struct Builder {
     digit_ops: Vec<DigitOp>,
     families: Vec<FamilyStats>,
     input_order: Vec<InputElement>,
+    sign_rows: Vec<(InputElement, RowId)>,
     glue_next: u32,
     wire_index: HashMap<DoryScalar, u32>,
     one_cell: u32,
@@ -321,18 +338,20 @@ impl Builder {
             digit_ops: Vec::new(),
             families: Vec::new(),
             input_order: Vec::new(),
+            sign_rows: Vec::new(),
             glue_next: Cells::GLUE,
             wire_index,
             one_cell,
         }
     }
 
-    /// Digit-base index of a wire: its position in the published order, or
-    /// the extra index after every named wire for the constant one.
+    /// Digit-base index of a wire: its position in the published order, then
+    /// the constant one, then the offset challenge `θ`.
     pub(super) fn digit_index(&self, wire: &Wire) -> u32 {
         match wire {
             Wire::Named(scalar) => self.wire_index[scalar],
             Wire::One => self.wire_index.len() as u32,
+            Wire::Offset => self.wire_index.len() as u32 + 1,
         }
     }
 
@@ -439,7 +458,7 @@ impl Builder {
     fn glue_cell(&mut self) -> u32 {
         let cell = self.glue_next;
         self.glue_next += 1;
-        assert!(cell < Cells::GLUE + 128, "glue region full");
+        assert!(cell < Cells::GLUE_END, "glue region full");
         cell
     }
 
@@ -503,6 +522,7 @@ impl Builder {
         }
         let template = gt_mul(GtOperand::dense(1), GtOperand::dense(2));
         let reading = template.clone().padded(2);
+        let hi_t = hi(Cells::GT_TABLE, HI_T);
         let family = Family {
             name: "gt_table",
             template: &template,
@@ -511,7 +531,7 @@ impl Builder {
                     vec![
                         Factor::shift(E_T, E_T, -1).with_range(1..8),
                         Factor::same(K_T, K_T),
-                        Factor::constant(HI_T, hi(Cells::GT_TABLE, HI_T)),
+                        Factor::constant(HI_T, hi_t),
                     ],
                     C,
                     0,
@@ -520,7 +540,7 @@ impl Builder {
                     vec![
                         Factor::constant(E_T, 0),
                         Factor::same(K_T, K_T),
-                        Factor::constant(HI_T, hi(Cells::GT_TABLE, HI_T)),
+                        Factor::constant(HI_T, hi_t),
                     ],
                     C,
                     0,
@@ -531,18 +551,14 @@ impl Builder {
             domain: vec![
                 Factor::restrict(E_T, 1..8),
                 Factor::restrict(K_T, 0..bases as u32),
-                Factor::restrict(
-                    HI_T,
-                    hi(Cells::GT_TABLE, HI_T)..hi(Cells::GT_TABLE, HI_T) + 1,
-                ),
+                Factor::restrict(HI_T, hi_t..hi_t + 1),
             ],
         };
         let ops: Vec<(RowId, Option<u8>)> = (0..bases as u32)
             .flat_map(|k| (1..8u32).map(move |e| (row(Cells::GT_TABLE + 8 * k + e), None)))
             .collect();
         self.place(&family, &ops, false);
-        // Fingerprints of every entry (`e ∈ 0..8`) and of the `one` cell.
-        let hi_t = hi(Cells::GT_TABLE, HI_T);
+        // Fingerprints of every entry (`e ∈ 0..8`).
         let entries = (0..bases as u32)
             .flat_map(|k| (0..8u32).map(move |e| row(Cells::GT_TABLE + 8 * k + e)));
         self.table_region(
@@ -558,6 +574,7 @@ impl Builder {
             0,
             FP_SLOTS_GT,
         );
+        // The `one` cell's fingerprints.
         let one_cell = self.one_cell;
         self.table_region(
             vec![Factor::restrict(CELL, one_cell..one_cell + 1)],
@@ -569,6 +586,45 @@ impl Builder {
             0,
             FP_SLOTS_GT,
         );
+    }
+
+    /// `x · conj(x) = 1` for every byte-linked GT input: raw `Fq12` inputs
+    /// land in the norm-one torus, where the conjugation the negative digits
+    /// use is inversion. Order-`r` membership is not needed: the torus is the
+    /// direct product of the target group and a subgroup of order coprime to
+    /// `r`, every verifier equation splits component-wise, and the target-group
+    /// component equations are the honest ones under the same challenges.
+    /// `x·conj(x) = 1` for every GT base (the byte-linked inputs; the setup
+    /// constants ride along in the same range), at `GT_NORM + k` for base `k`
+    /// (its table entry `e = 0` is the leaf cell).
+    fn gt_norm_checks(&mut self, bases: usize) {
+        let norm = gt_norm_one();
+        let k_op = Bits::new(4, 12);
+        let hi_op = Bits::new(12, 18);
+        let hi_n = hi(Cells::GT_NORM, hi_op);
+        let family = Family {
+            name: "gt_norm_one",
+            template: &norm,
+            elems: vec![ElemRel::structured(
+                vec![
+                    Factor::same(k_op, K_T),
+                    Factor::constant(E_T, 0),
+                    Factor::constant(HI_T, hi(Cells::GT_TABLE, HI_T)),
+                ],
+                C,
+                0,
+            )],
+            own_bits: C,
+            own_offset: 0,
+            domain: vec![
+                Factor::restrict(k_op, 0..bases as u32),
+                Factor::restrict(hi_op, hi_n..hi_n + 1),
+            ],
+        };
+        let ops: Vec<(RowId, Option<u8>)> = (0..bases as u32)
+            .map(|k| (row(Cells::GT_NORM + k), None))
+            .collect();
+        self.place(&family, &ops, false);
     }
 
     /// Straus over the 64 windows: per window four squarings of the
@@ -760,857 +816,8 @@ impl Builder {
     }
 }
 
-/// Public offsets of an affine Straus chain: the accumulator starts at `R`
-/// and every table entry carries `+Z0`, so no operand is ever the identity;
-/// the total `16^64·R + n·((16^64 − 1)/15)·Z0` is subtracted at the end.
-struct Offsets<A: AffineRepr> {
-    r: A,
-    z0: A,
-}
-
-impl<A: AffineRepr> Offsets<A> {
-    fn new() -> Self {
-        let r = A::generator();
-        let z0 = (r.into_group() + r.into_group()).into_affine();
-        Self { r, z0 }
-    }
-
-    fn correction(&self, bases: usize) -> A {
-        let order = BigUint::from_bytes_be(
-            &<<A as AffineRepr>::ScalarField as PrimeField>::MODULUS.to_bytes_be(),
-        );
-        let sixteen_pow = BigUint::from(1u32) << (4 * WINDOWS);
-        let r_scale = &sixteen_pow % &order;
-        let z_scale = (&sixteen_pow - BigUint::from(1u32)) / BigUint::from(15u32)
-            * BigUint::from(bases)
-            % &order;
-        let total = self.r.into_group().mul_bigint(r_scale.to_u64_digits())
-            + self.z0.into_group().mul_bigint(z_scale.to_u64_digits());
-        (-total).into_affine()
-    }
-}
-
-/// One EC chain's placement: global `k` of its first add and its digits.
-struct EcChain {
-    kbase: u32,
-    bases: usize,
-    digits: Vec<[u8; WINDOWS]>,
-}
-
-impl Builder {
-    // ----- G1 (four-row ops in rows 12–15 of GT cells) ------------------
-
-    /// Base points, tables, the four Straus chains and their corrections;
-    /// returns the corrected chain outputs (cells whose rows 14–15 hold the point).
-    fn g1(
-        &mut self,
-        check: &FlattenedCheck,
-        values: &WireValues,
-        setup: &DorySetupInputs,
-    ) -> [u32; 4] {
-        let offsets = Offsets::<G1Affine>::new();
-        let [rx, ry] = [self.constant(offsets.r.x), self.constant(offsets.r.y)];
-        let [zx, zy] = [self.constant(offsets.z0.x), self.constant(offsets.z0.y)];
-        let three = self.constant(Fq::from(3u64));
-        let one = self.one();
-        let curve = g1_on_curve();
-        let copy = g1_copy(false);
-        let copy_neg = g1_copy(true);
-        let add = g1_add(false);
-        let sub = g1_add(true);
-        let dbl = g1_dbl();
-        let chains = check.g1_chains();
-        let mut table_base = 0u32;
-        let mut first_input: HashMap<InputElement, u32> = HashMap::new();
-        let mut outputs = [0u32; 4];
-        let mut fresh_inputs: Vec<u32> = Vec::new();
-        for (m, msm) in chains.iter().enumerate() {
-            let m32 = m as u32;
-            let chain = EcChain {
-                kbase: 64 * m32,
-                bases: msm.bases.len(),
-                digits: values.scalars(msm).iter().map(|s| digits(*s)).collect(),
-            };
-            let cell = |k: u32, w: u32| 4096 * m32 + 64 * k + w;
-            // Inputs.
-            for (i, (base, _)) in msm.bases.iter().enumerate() {
-                let b = table_base + i as u32;
-                let input_cell = Cells::G1_INPUT + b;
-                let point_rows = [row(input_cell) + 12, row(input_cell) + 13];
-                match base {
-                    G1Base::Input(element) => {
-                        if let Some(&source) = first_input.get(element) {
-                            let family = Family {
-                                name: "g1_input_copy",
-                                template: &copy,
-                                elems: vec![
-                                    ElemRel::Rows(vec![row(source) + 12, row(source) + 13]),
-                                    self.ones(),
-                                ],
-                                own_bits: C,
-                                own_offset: 12,
-                                domain: vec![Factor::restrict(CELL, input_cell..input_cell + 1)],
-                            };
-                            self.place(&family, &[(row(input_cell), None)], false);
-                        } else {
-                            let _ = first_input.insert(*element, input_cell);
-                            for r in point_rows {
-                                let index = self.program.input_rows.len();
-                                self.program.input_at(r, index);
-                            }
-                            self.input_order.push(*element);
-                            fresh_inputs.push(b);
-                        }
-                    }
-                    G1Base::Gamma1Zero => {
-                        self.program.pinned_constant_at(point_rows[0], setup.g1_0.x);
-                        self.program.pinned_constant_at(point_rows[1], setup.g1_0.y);
-                    }
-                    G1Base::NegAcc => {
-                        let source = outputs[0];
-                        let family = Family {
-                            name: "g1_neg_acc",
-                            template: &copy_neg,
-                            elems: vec![
-                                ElemRel::Rows(vec![row(source) + 14, row(source) + 15]),
-                                self.ones(),
-                            ],
-                            own_bits: C,
-                            own_offset: 12,
-                            domain: vec![Factor::restrict(CELL, input_cell..input_cell + 1)],
-                        };
-                        self.place(&family, &[(row(input_cell), None)], false);
-                    }
-                }
-            }
-            // Tables: `(j − 8)·P + Z0` at rows 14–15 of `G1_TABLE + 16·b + j`.
-            let b_range = table_base..table_base + msm.bases.len() as u32;
-            let tcell = |b: u32, j: u32| Cells::G1_TABLE + 16 * b + j;
-            let hi1 = hi(Cells::G1_TABLE, HI1T);
-            let z0_family = Family {
-                name: "g1_table_z0",
-                template: &copy,
-                elems: vec![ElemRel::Rows(vec![zx, zy]), self.ones()],
-                own_bits: C,
-                own_offset: 14,
-                domain: vec![
-                    Factor::restrict(J1, 8..9),
-                    Factor::restrict(B1, b_range.clone()),
-                    Factor::restrict(HI1T, hi1..hi1 + 1),
-                ],
-            };
-            let p_elem = ElemRel::structured(
-                vec![
-                    Factor::same(B1, B1I),
-                    Factor::constant(HI1I, hi(Cells::G1_INPUT, HI1I)),
-                ],
-                C,
-                12,
-            );
-            let prev = |delta: i64, range: Range<u32>| {
-                ElemRel::structured(
-                    vec![
-                        Factor::shift(J1, J1, delta).with_range(range),
-                        Factor::same(B1, B1),
-                        Factor::constant(HI1T, hi1),
-                    ],
-                    C,
-                    14,
-                )
-            };
-            let up = Family {
-                name: "g1_table_up",
-                template: &add,
-                elems: vec![prev(-1, 9..16), p_elem.clone(), self.ones()],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![
-                    Factor::restrict(J1, 9..16),
-                    Factor::restrict(B1, b_range.clone()),
-                    Factor::restrict(HI1T, hi1..hi1 + 1),
-                ],
-            };
-            let down = Family {
-                name: "g1_table_down",
-                template: &sub,
-                elems: vec![prev(1, 0..8), p_elem, self.ones()],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![
-                    Factor::restrict(J1, 0..8),
-                    Factor::restrict(B1, b_range.clone()),
-                    Factor::restrict(HI1T, hi1..hi1 + 1),
-                ],
-            };
-            for b in b_range.clone() {
-                z0_family.emit(&mut self.program, row(tcell(b, 8)), None);
-                for j in 9..16 {
-                    up.emit(&mut self.program, row(tcell(b, j)), None);
-                }
-                for j in (0..8).rev() {
-                    down.emit(&mut self.program, row(tcell(b, j)), None);
-                }
-            }
-            let nb = msm.bases.len();
-            self.record(&z0_family, nb, false);
-            self.record(&up, 7 * nb, false);
-            self.record(&down, 8 * nb, false);
-            let entries = b_range
-                .clone()
-                .flat_map(|b| (0..16u32).map(move |j| row(tcell(b, j))));
-            self.table_region(
-                vec![
-                    Factor::restrict(B1, b_range.clone()),
-                    Factor::restrict(HI1T, hi1..hi1 + 1),
-                ],
-                CELL,
-                entries,
-                &add,
-                C,
-                12,
-                14,
-                FP_SLOTS_G1,
-            );
-
-            // Online: doublings then adds per window, then the correction.
-            let n = chain.bases as u32;
-            let k_field = |k: u32| 64 * m32 + k;
-            let restrict = |lo: u32, hi_: u32| Factor::restrict(KM1, k_field(lo)..k_field(hi_));
-            let const_k = |value: u32, at: u32| Factor {
-                u: KM1,
-                v: KM1,
-                rel: Rel::Const(k_field(value)),
-                range: Some(k_field(at)..k_field(at) + 1),
-            };
-            let acc_prev = |delta: i64, lo: u32, hi_: u32| {
-                ElemRel::structured(
-                    vec![
-                        Factor::shift(KM1, KM1, delta).with_range(k_field(lo)..k_field(hi_)),
-                        Factor::same(W1, W1),
-                    ],
-                    C,
-                    14,
-                )
-            };
-            let selected = ElemRel::Selected {
-                factors: vec![
-                    Factor::shift(K1, B1, i64::from(table_base)).with_range(0..n),
-                    Factor::restrict(M1, m32..m32 + 1),
-                    Factor::constant(HI1T, hi1),
-                ],
-                coord_bits: C,
-                offset: 14,
-                entry_bits: J1,
-                rule: DigitRule::Ec,
-            };
-            let add0 = Family {
-                name: "g1_add0",
-                template: &add,
-                elems: vec![
-                    ElemRel::structured(vec![const_k(n + 3, 0), Factor::same(W1, W1)], C, 14),
-                    selected.clone(),
-                    self.ones(),
-                ],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![restrict(0, 1)],
-            };
-            let adds = Family {
-                name: "g1_add",
-                template: &add,
-                elems: vec![acc_prev(-1, 1, n), selected, self.ones()],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![restrict(1, n)],
-            };
-            let dbl_init = Family {
-                name: "g1_dbl_init",
-                template: &dbl,
-                elems: vec![ElemRel::Rows(vec![rx, ry]), self.ones()],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![restrict(n, n + 1), Factor::restrict(W1, 0..1)],
-            };
-            let dbl0 = Family {
-                name: "g1_dbl0",
-                template: &dbl,
-                elems: vec![
-                    ElemRel::structured(vec![const_k(n - 1, n), Factor::shift(W1, W1, -1)], C, 14),
-                    self.ones(),
-                ],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![restrict(n, n + 1), Factor::restrict(W1, 1..64)],
-            };
-            let dbls = Family {
-                name: "g1_dbl",
-                template: &dbl,
-                elems: vec![acc_prev(-1, n + 1, n + 4), self.ones()],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![restrict(n + 1, n + 4)],
-            };
-            let correction = offsets.correction(chain.bases);
-            let [cx, cy] = [self.constant(correction.x), self.constant(correction.y)];
-            let corr = Family {
-                name: "g1_corr",
-                template: &add,
-                elems: vec![
-                    ElemRel::structured(vec![const_k(n - 1, n + 4), Factor::same(W1, W1)], C, 14),
-                    ElemRel::Rows(vec![cx, cy]),
-                    self.ones(),
-                ],
-                own_bits: C,
-                own_offset: 12,
-                domain: vec![restrict(n + 4, n + 5), Factor::restrict(W1, 63..64)],
-            };
-            let (mut c_init, mut c_dbl0, mut c_dbl, mut c_add0, mut c_add) = (0, 0, 0, 0, 0);
-            for w in 0..WINDOWS as u32 {
-                if w == 0 {
-                    dbl_init.emit(&mut self.program, row(cell(n, w)), None);
-                    c_init += 1;
-                } else {
-                    dbl0.emit(&mut self.program, row(cell(n, w)), None);
-                    c_dbl0 += 1;
-                }
-                for i in 1..4 {
-                    dbls.emit(&mut self.program, row(cell(n + i, w)), None);
-                    c_dbl += 1;
-                }
-                for k in 0..n {
-                    let j = chain.digits[k as usize][WINDOWS - 1 - w as usize];
-                    self.digit_ops.push(DigitOp {
-                        first_row: row(cell(k, w)) + 13,
-                        rows: 3,
-                        kind: ReadKind::G1,
-                        family: self.selected.len() as u8,
-                        j,
-                        kd: self.digit_index(&msm.bases[k as usize].1),
-                        w,
-                    });
-                    if k == 0 {
-                        add0.emit(&mut self.program, row(cell(k, w)), Some(j));
-                        c_add0 += 1;
-                    } else {
-                        adds.emit(&mut self.program, row(cell(k, w)), Some(j));
-                        c_add += 1;
-                    }
-                }
-            }
-            corr.emit(&mut self.program, row(cell(n + 4, 63)), None);
-            self.record(&dbl_init, c_init, false);
-            self.record(&dbl0, c_dbl0, false);
-            self.record(&dbls, c_dbl, false);
-            self.record(&add0, c_add0, true);
-            self.record(&adds, c_add, true);
-            self.record(&corr, 1, false);
-            // Reference entry `j = 8` of base `b = table_base + k`: row
-            // `16·(G1_TABLE + 16b + 8) + c` from op row `16·(4096m + 64k + w) + c`,
-            // with the `KM1` field holding `64m + k`.
-            self.selected.push(SelectedFamily {
-                kind: ReadKind::G1,
-                domain: vec![Factor::restrict(C, 13..16), restrict(0, n)],
-                c_bits: C,
-                first_c: 13,
-                rows: 3,
-                k_bits: KM1,
-                w_bits: W1,
-                key: KeyBase {
-                    constant: 16 * i64::from(Cells::G1_TABLE) + 128 + 256 * i64::from(table_base)
-                        - 16384 * i64::from(m32),
-                    k_coeff: -768,
-                    w_coeff: -16,
-                },
-                digit_base: (0..n)
-                    .map(|k| (k_field(k), self.digit_index(&msm.bases[k as usize].1)))
-                    .collect(),
-            });
-            outputs[m] = cell(n + 4, 63);
-            table_base += msm.bases.len() as u32;
-        }
-        let mut mask = vec![0i32; 64];
-        for b in &fresh_inputs {
-            mask[*b as usize] = 1;
-        }
-        let hi_i = hi(Cells::G1_INPUT, HI1I);
-        let family = Family {
-            name: "g1_on_curve",
-            template: &curve,
-            elems: vec![
-                ElemRel::structured(vec![Factor::same(CELL, CELL)], C, 12),
-                ElemRel::Rows(vec![three, one]),
-            ],
-            own_bits: C,
-            own_offset: 14,
-            domain: vec![
-                Factor::weight(B1I, mask),
-                Factor::restrict(HI1I, hi_i..hi_i + 1),
-            ],
-        };
-        let ops: Vec<(RowId, Option<u8>)> = fresh_inputs
-            .iter()
-            .map(|b| (row(Cells::G1_INPUT + b), None))
-            .collect();
-        self.place(&family, &ops, false);
-        outputs
-    }
-}
-
-impl Builder {
-    // ----- G2 (eight-row ops, two per cell) ------------------------------
-
-    /// Base points (`b < 3σ+3`: the two chains' bases, then `E2_fin` and the
-    /// `B2` copy the Miller loop reads), tables, chains and corrections.
-    /// Returns the half cells of the corrected chain outputs (point at rows
-    /// 4–7) and of the two Miller `Q` inputs (point at rows 0–3).
-    fn g2(
-        &mut self,
-        check: &FlattenedCheck,
-        values: &WireValues,
-        setup: &DorySetupInputs,
-    ) -> ([u32; 2], [u32; 2]) {
-        let offsets = Offsets::<G2Affine>::new();
-        let r = [
-            self.fq2_constant(offsets.r.x),
-            self.fq2_constant(offsets.r.y),
-        ]
-        .concat();
-        let z0 = [
-            self.fq2_constant(offsets.z0.x),
-            self.fq2_constant(offsets.z0.y),
-        ]
-        .concat();
-        let b_curve = self.fq2_constant(<ark_bn254::g2::Config as SWCurveConfig>::COEFF_B);
-        let one = self.one();
-        let curve = g2_on_curve();
-        let copy = g2_copy(false);
-        let copy_neg = g2_copy(true);
-        let add = g2_add(false);
-        let sub = g2_add(true);
-        let dbl = g2_dbl();
-        let chains = check.g2_chains();
-        let hi_t = hi(Cells::G2_TABLE_HALF / 2, HI2T);
-        let hi_i = hi(Cells::G2_INPUT_HALF / 2, HI2I);
-        let hi_o = hi(Cells::G2_ONLINE_HALF / 2, HI2);
-        let input_half = |b: u32| Cells::G2_INPUT_HALF + b;
-        let mut table_base = 0u32;
-        let mut first_input: HashMap<InputElement, u32> = HashMap::new();
-        let mut outputs = [0u32; 2];
-        let mut fresh_halves: Vec<u32> = Vec::new();
-        let kbases = [0u32, 39];
-        for (m, msm) in chains.iter().enumerate() {
-            let chain = EcChain {
-                kbase: kbases[m],
-                bases: msm.bases.len(),
-                digits: values.scalars(msm).iter().map(|s| digits(*s)).collect(),
-            };
-            let half = |k: u32, w: u32| Cells::G2_ONLINE_HALF + 64 * k + w;
-            for (i, (base, _)) in msm.bases.iter().enumerate() {
-                let b = table_base + i as u32;
-                let h = input_half(b);
-                match base {
-                    G2Base::Input(element) => {
-                        if let Some(&source) = first_input.get(element) {
-                            let family = Family {
-                                name: "g2_input_copy",
-                                template: &copy,
-                                elems: vec![
-                                    ElemRel::Rows((0..4).map(|c| half_row(source) + c).collect()),
-                                    self.ones(),
-                                ],
-                                own_bits: C3,
-                                own_offset: 0,
-                                domain: vec![Factor::restrict(Bits::new(3, 18), h..h + 1)],
-                            };
-                            self.place(&family, &[(half_row(h), None)], false);
-                        } else {
-                            let _ = first_input.insert(*element, h);
-                            self.g2_input_leaf(h, *element);
-                            fresh_halves.push(h);
-                        }
-                    }
-                    G2Base::Gamma2Zero => {
-                        for (c, v) in [
-                            setup.g2_0.x.c0,
-                            setup.g2_0.x.c1,
-                            setup.g2_0.y.c0,
-                            setup.g2_0.y.c1,
-                        ]
-                        .iter()
-                        .enumerate()
-                        {
-                            self.program.pinned_constant_at(half_row(h) + c as u32, *v);
-                        }
-                    }
-                    G2Base::NegAcc => {
-                        let source = outputs[0];
-                        let family = Family {
-                            name: "g2_neg_acc",
-                            template: &copy_neg,
-                            elems: vec![
-                                ElemRel::Rows((4..8).map(|c| half_row(source) + c).collect()),
-                                self.ones(),
-                            ],
-                            own_bits: C3,
-                            own_offset: 0,
-                            domain: vec![Factor::restrict(Bits::new(3, 18), h..h + 1)],
-                        };
-                        self.place(&family, &[(half_row(h), None)], false);
-                    }
-                }
-            }
-            // Tables at half cells `G2_TABLE_HALF + 16·b + j`, points at rows 4–7.
-            let b_range = table_base..table_base + msm.bases.len() as u32;
-            let thalf = |b: u32, j: u32| Cells::G2_TABLE_HALF + 16 * b + j;
-            let z0_family = Family {
-                name: "g2_table_z0",
-                template: &copy,
-                elems: vec![ElemRel::Rows(z0.clone()), self.ones()],
-                own_bits: C3,
-                own_offset: 4,
-                domain: vec![
-                    Factor::restrict(J2, 8..9),
-                    Factor::restrict(B2, b_range.clone()),
-                    Factor::restrict(HI2T, hi_t..hi_t + 1),
-                ],
-            };
-            let p_elem = ElemRel::structured(
-                vec![Factor::same(B2, B2I), Factor::constant(HI2I, hi_i)],
-                C3,
-                0,
-            );
-            let prev = |delta: i64, range: Range<u32>| {
-                ElemRel::structured(
-                    vec![
-                        Factor::shift(J2, J2, delta).with_range(range),
-                        Factor::same(B2, B2),
-                        Factor::constant(HI2T, hi_t),
-                    ],
-                    C3,
-                    4,
-                )
-            };
-            let up = Family {
-                name: "g2_table_up",
-                template: &add,
-                elems: vec![prev(-1, 9..16), p_elem.clone(), self.ones()],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![
-                    Factor::restrict(J2, 9..16),
-                    Factor::restrict(B2, b_range.clone()),
-                    Factor::restrict(HI2T, hi_t..hi_t + 1),
-                ],
-            };
-            let down = Family {
-                name: "g2_table_down",
-                template: &sub,
-                elems: vec![prev(1, 0..8), p_elem, self.ones()],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![
-                    Factor::restrict(J2, 0..8),
-                    Factor::restrict(B2, b_range.clone()),
-                    Factor::restrict(HI2T, hi_t..hi_t + 1),
-                ],
-            };
-            for b in b_range.clone() {
-                z0_family.emit(&mut self.program, half_row(thalf(b, 8)), None);
-                for j in 9..16 {
-                    up.emit(&mut self.program, half_row(thalf(b, j)), None);
-                }
-                for j in (0..8).rev() {
-                    down.emit(&mut self.program, half_row(thalf(b, j)), None);
-                }
-            }
-            let nb = msm.bases.len();
-            self.record(&z0_family, nb, false);
-            self.record(&up, 7 * nb, false);
-            self.record(&down, 8 * nb, false);
-            let entries = b_range
-                .clone()
-                .flat_map(|b| (0..16u32).map(move |j| half_row(thalf(b, j))));
-            self.table_region(
-                vec![
-                    Factor::restrict(B2, b_range.clone()),
-                    Factor::restrict(HI2T, hi_t..hi_t + 1),
-                ],
-                Bits::new(3, LOG_ROWS as u8),
-                entries,
-                &add,
-                C3,
-                0,
-                4,
-                FP_SLOTS_G2,
-            );
-
-            let n = chain.bases as u32;
-            let kb = chain.kbase;
-            let restrict = |lo: u32, hi_: u32| Factor::restrict(K2, kb + lo..kb + hi_);
-            let const_k = |value: u32, at: u32| Factor {
-                u: K2,
-                v: K2,
-                rel: Rel::Const(kb + value),
-                range: Some(kb + at..kb + at + 1),
-            };
-            let acc_prev = |delta: i64, lo: u32, hi_: u32| {
-                ElemRel::structured(
-                    vec![
-                        Factor::shift(K2, K2, delta).with_range(kb + lo..kb + hi_),
-                        Factor::same(W2, W2),
-                        Factor::constant(HI2, hi_o),
-                    ],
-                    C3,
-                    4,
-                )
-            };
-            let selected = ElemRel::Selected {
-                factors: vec![
-                    Factor::shift(K2, B2, i64::from(table_base) - i64::from(kb))
-                        .with_range(kb..kb + n),
-                    Factor::constant(HI2T, hi_t),
-                ],
-                coord_bits: C3,
-                offset: 4,
-                entry_bits: J2,
-                rule: DigitRule::Ec,
-            };
-            let region = Factor::restrict(HI2, hi_o..hi_o + 1);
-            let add0 = Family {
-                name: "g2_add0",
-                template: &add,
-                elems: vec![
-                    ElemRel::structured(
-                        vec![
-                            const_k(n + 3, 0),
-                            Factor::same(W2, W2),
-                            Factor::constant(HI2, hi_o),
-                        ],
-                        C3,
-                        4,
-                    ),
-                    selected.clone(),
-                    self.ones(),
-                ],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![restrict(0, 1), region.clone()],
-            };
-            let adds = Family {
-                name: "g2_add",
-                template: &add,
-                elems: vec![acc_prev(-1, 1, n), selected, self.ones()],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![restrict(1, n), region.clone()],
-            };
-            let dbl_init = Family {
-                name: "g2_dbl_init",
-                template: &dbl,
-                elems: vec![ElemRel::Rows(r.clone()), self.ones()],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![
-                    restrict(n, n + 1),
-                    Factor::restrict(W2, 0..1),
-                    region.clone(),
-                ],
-            };
-            let dbl0 = Family {
-                name: "g2_dbl0",
-                template: &dbl,
-                elems: vec![
-                    ElemRel::structured(
-                        vec![
-                            const_k(n - 1, n),
-                            Factor::shift(W2, W2, -1),
-                            Factor::constant(HI2, hi_o),
-                        ],
-                        C3,
-                        4,
-                    ),
-                    self.ones(),
-                ],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![
-                    restrict(n, n + 1),
-                    Factor::restrict(W2, 1..64),
-                    region.clone(),
-                ],
-            };
-            let dbls = Family {
-                name: "g2_dbl",
-                template: &dbl,
-                elems: vec![acc_prev(-1, n + 1, n + 4), self.ones()],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![restrict(n + 1, n + 4), region.clone()],
-            };
-            let correction = offsets.correction(chain.bases);
-            let c_rows = [
-                self.fq2_constant(correction.x),
-                self.fq2_constant(correction.y),
-            ]
-            .concat();
-            let corr = Family {
-                name: "g2_corr",
-                template: &add,
-                elems: vec![
-                    ElemRel::structured(
-                        vec![
-                            const_k(n - 1, n + 4),
-                            Factor::same(W2, W2),
-                            Factor::constant(HI2, hi_o),
-                        ],
-                        C3,
-                        4,
-                    ),
-                    ElemRel::Rows(c_rows),
-                    self.ones(),
-                ],
-                own_bits: C3,
-                own_offset: 0,
-                domain: vec![
-                    restrict(n + 4, n + 5),
-                    Factor::restrict(W2, 63..64),
-                    region.clone(),
-                ],
-            };
-            let (mut c_init, mut c_dbl0, mut c_dbl, mut c_add0, mut c_add) = (0, 0, 0, 0, 0);
-            for w in 0..WINDOWS as u32 {
-                if w == 0 {
-                    dbl_init.emit(&mut self.program, half_row(half(kb + n, w)), None);
-                    c_init += 1;
-                } else {
-                    dbl0.emit(&mut self.program, half_row(half(kb + n, w)), None);
-                    c_dbl0 += 1;
-                }
-                for i in 1..4 {
-                    dbls.emit(&mut self.program, half_row(half(kb + n + i, w)), None);
-                    c_dbl += 1;
-                }
-                for k in 0..n {
-                    let j = chain.digits[k as usize][WINDOWS - 1 - w as usize];
-                    self.digit_ops.push(DigitOp {
-                        first_row: half_row(half(kb + k, w)) + 2,
-                        rows: 6,
-                        kind: ReadKind::G2,
-                        family: self.selected.len() as u8,
-                        j,
-                        kd: self.digit_index(&msm.bases[k as usize].1),
-                        w,
-                    });
-                    if k == 0 {
-                        add0.emit(&mut self.program, half_row(half(kb + k, w)), Some(j));
-                        c_add0 += 1;
-                    } else {
-                        adds.emit(&mut self.program, half_row(half(kb + k, w)), Some(j));
-                        c_add += 1;
-                    }
-                }
-            }
-            corr.emit(&mut self.program, half_row(half(kb + n + 4, 63)), None);
-            self.record(&dbl_init, c_init, false);
-            self.record(&dbl0, c_dbl0, false);
-            self.record(&dbls, c_dbl, false);
-            self.record(&add0, c_add0, true);
-            self.record(&adds, c_add, true);
-            self.record(&corr, 1, false);
-            // Reference entry `j = 8` of base `b = table_base + k`: row
-            // `8·(G2_TABLE_HALF + 16b + 8) + c` from op row
-            // `8·(G2_ONLINE_HALF + 64·k2 + w) + c`, `k2 = kb + k` the `K2` field.
-            self.selected.push(SelectedFamily {
-                kind: ReadKind::G2,
-                domain: vec![Factor::restrict(C3, 2..8), restrict(0, n), region.clone()],
-                c_bits: C3,
-                first_c: 2,
-                rows: 6,
-                k_bits: K2,
-                w_bits: W2,
-                key: KeyBase {
-                    constant: 8
-                        * (i64::from(Cells::G2_TABLE_HALF) - i64::from(Cells::G2_ONLINE_HALF))
-                        + 64
-                        + 128 * (i64::from(table_base) - i64::from(kb)),
-                    k_coeff: -(8 * 64 - 8 * 16),
-                    w_coeff: -8,
-                },
-                digit_base: (0..n)
-                    .map(|k| (kb + k, self.digit_index(&msm.bases[k as usize].1)))
-                    .collect(),
-            });
-            outputs[m] = half(kb + n + 4, 63);
-            table_base += msm.bases.len() as u32;
-        }
-        // Miller `Q` inputs: `E2_fin` (committed) and a copy of `B2` in input layout.
-        let e2_fin = input_half(table_base);
-        self.g2_input_leaf(e2_fin, InputElement::FinalE2);
-        fresh_halves.push(e2_fin);
-        self.g2_on_curve_family(&fresh_halves, &curve, &b_curve, one);
-        let b2 = input_half(table_base + 1);
-        let family = Family {
-            name: "g2_b2_copy",
-            template: &copy,
-            elems: vec![
-                ElemRel::Rows((4..8).map(|c| half_row(outputs[1]) + c).collect()),
-                self.ones(),
-            ],
-            own_bits: C3,
-            own_offset: 0,
-            domain: vec![Factor::restrict(Bits::new(3, 18), b2..b2 + 1)],
-        };
-        self.place(&family, &[(half_row(b2), None)], false);
-        (outputs, [e2_fin, b2])
-    }
-
-    /// A committed G2 point at rows 0–3 of half cell `h` (its on-curve check
-    /// is placed once for all inputs by [`Self::g2_on_curve_family`]).
-    fn g2_input_leaf(&mut self, h: u32, element: InputElement) {
-        for c in 0..4 {
-            let index = self.program.input_rows.len();
-            self.program.input_at(half_row(h) + c, index);
-        }
-        self.input_order.push(element);
-    }
-
-    fn g2_on_curve_family(
-        &mut self,
-        halves: &[u32],
-        curve: &Template,
-        b_curve: &[RowId; 2],
-        one: RowId,
-    ) {
-        let mut mask = vec![0i32; 64];
-        for h in halves {
-            mask[(h - Cells::G2_INPUT_HALF) as usize] = 1;
-        }
-        let hi_i = hi(Cells::G2_INPUT_HALF / 2, HI2I);
-        let family = Family {
-            name: "g2_on_curve",
-            template: curve,
-            elems: vec![
-                ElemRel::structured(
-                    vec![Factor::same(Bits::new(3, 18), Bits::new(3, 18))],
-                    C3,
-                    0,
-                ),
-                ElemRel::Rows(vec![b_curve[0], b_curve[1], one]),
-            ],
-            own_bits: C3,
-            own_offset: 4,
-            domain: vec![
-                Factor::weight(B2I, mask),
-                Factor::restrict(HI2I, hi_i..hi_i + 1),
-            ],
-        };
-        let ops: Vec<(RowId, Option<u8>)> = halves.iter().map(|h| (half_row(*h), None)).collect();
-        self.place(&family, &ops, false);
-    }
-}
-
 /// Non-adjacent form of `value`, least significant digit first.
-fn naf(mut value: u64) -> Vec<i8> {
+fn naf(mut value: u128) -> Vec<i8> {
     let mut out = Vec::new();
     while value != 0 {
         let digit = if value & 1 == 1 {
@@ -1622,7 +829,7 @@ fn naf(mut value: u64) -> Vec<i8> {
         value = if digit < 0 {
             value.div_ceil(2)
         } else {
-            (value - digit as u64) / 2
+            (value - digit as u128) / 2
         };
     }
     out
@@ -1692,8 +899,8 @@ impl Builder {
         let psi_consts = ElemRel::Rows([self.fq2_constant(cx), self.fq2_constant(cy)].concat());
         let q1_cells = [self.glue_cell(), self.glue_cell()];
         let q2_cells = [self.glue_cell(), self.glue_cell()];
-        let psi = g2_psi(false);
-        let psi_neg = g2_psi(true);
+        let psi = g2_psi(false, true);
+        let psi_neg = g2_psi(true, true);
         let q1 = Family {
             name: "ml_psi",
             template: &psi,
@@ -2401,7 +1608,7 @@ impl Builder {
         );
         let (y12, y13, y8f, y14, y15a, y15, result) =
             (cell(), cell(), cell(), cell(), cell(), cell(), cell());
-        let naf_x = naf(Bn254Config::X[0]);
+        let naf_x = naf(u128::from(Bn254Config::X[0]));
         let chain_steps = naf_x.len() as u32 - 1;
         let chain_out = |chain: u32| Cells::FE_CHAINS + 128 * chain + 2 * (chain_steps - 1) + 1;
         let [res0, res1, res2] = [chain_out(0), chain_out(1), chain_out(2)];
@@ -2636,9 +1843,11 @@ pub fn build(
     b.program.pinned_constant_at(row(h1_cell) + 15, setup.h1.y);
 
     b.gt_tables(check, setup);
+    b.gt_norm_checks(check.gt.bases.len());
     let rhs = b.gt_online(check, values);
     let g1_out = b.g1(check, values, setup);
     let (g2_out, q_halves) = b.g2(check, values, setup);
+    b.g2_subgroup_checks(q_halves);
     // Pairs: (A1, E2_fin), (H1, B2), (A3, H2), (A4, Γ2_0).
     let p_cells = [g1_out[2], h1_cell, g1_out[1], g1_out[3]];
     let miller = b.miller(q_halves, &[setup.h2, setup.g2_0], p_cells);
@@ -2668,8 +1877,9 @@ pub fn build(
         digit_ops: b.digit_ops,
         families: b.families,
         one_cell: b.one_cell,
-        digit_bases: b.wire_index.len() as u32 + 1,
+        digit_bases: b.wire_index.len() as u32 + 2,
         input_order: b.input_order,
+        sign_rows: b.sign_rows,
         pairing_points: p_cells,
         q_halves,
         g1_outputs: g1_out,

@@ -9,6 +9,7 @@
 
 mod common;
 
+use std::cmp::Reverse;
 use std::time::Instant;
 
 use ark_bn254::{Fq, Fq12, Fr as ArkFr};
@@ -17,6 +18,7 @@ use jolt_poly::EqPolynomial;
 use jolt_wrapper::limb_table::dory::{DorySetupInputs, FlattenedCheck, NativeCheck, WireValues};
 use jolt_wrapper::limb_table::layout::{Factor, ROWS};
 use jolt_wrapper::limb_table::lookup::PublicColumns;
+use jolt_wrapper::limb_table::program::Source;
 use jolt_wrapper::limb_table::schedule::{build, Layout};
 use jolt_wrapper::limb_table::tower::fq12_from_coords;
 
@@ -67,6 +69,42 @@ fn print_shape(layout: &Layout) {
         layout.selected.len(),
         layout.digit_ops.len()
     );
+    // Free cells (no row written in the cell) and their largest contiguous run.
+    let used: Vec<bool> = (0..ROWS / 16)
+        .map(|cell| {
+            (0..16).any(|c| {
+                program.rows[cell * 16 + c].source != Source::Compute
+                    || !program.rows[cell * 16 + c].slots.is_empty()
+                    || program.rows[cell * 16 + c].pin.is_some()
+            })
+        })
+        .collect();
+    let free = used.iter().filter(|u| !**u).count();
+    let (mut best, mut best_start, mut run, mut run_start) = (0usize, 0usize, 0usize, 0usize);
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (cell, u) in used.iter().enumerate() {
+        if !*u {
+            if run == 0 {
+                run_start = cell;
+            }
+            run += 1;
+            if run > best {
+                best = run;
+                best_start = run_start;
+            }
+        } else if run > 0 {
+            runs.push((run_start, run));
+            run = 0;
+        }
+    }
+    if run > 0 {
+        runs.push((run_start, run));
+    }
+    runs.sort_by_key(|(_, len)| Reverse(*len));
+    println!(
+        "free cells {free}, largest run {best} at {best_start}; runs ≥ 32: {:?}",
+        runs.iter().filter(|(_, l)| *l >= 32).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -75,7 +113,7 @@ fn program_reproduces_the_deferred_check_on_a_real_opening() {
     let sigma = opening.witness.sigma();
     let n = opening.witness.commitments.len();
     let check = FlattenedCheck::derive(sigma, n);
-    let values = WireValues::derive(&opening.statement, sigma, n);
+    let values = WireValues::derive(&opening.statement, sigma, n, common::offset_challenge());
     let native = NativeCheck::evaluate(&check, &values, &opening.setup, &opening.witness);
     assert!(native.holds(), "flattened deferred check holds natively");
 
@@ -161,7 +199,7 @@ fn random_values(check: &FlattenedCheck, seed: u64) -> WireValues {
             push(wire);
         }
     }
-    WireValues::from_wires(pairs)
+    WireValues::from_wires(pairs, ArkFr::rand(&mut rng))
 }
 
 #[test]

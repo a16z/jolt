@@ -108,6 +108,31 @@ pub enum Source {
         coords: Box<[Lin; 12]>,
         coord: u8,
     },
+    /// Prover witness `den⁻¹`, or zero when `den = 0`.
+    InverseOrZero {
+        den: Vec<Slot>,
+    },
+    /// `Σ κ·x·y = z` over the integers (`k = 0`; the `exact` VK column).
+    Exact,
+    /// Exact `Σ κ·x·y + (1 − flag)·2^256 = z` with the committed sign flag
+    /// `flag = [of ≥ (q+1)/2]` of row `of` (`of > −of`).
+    Sign {
+        of: RowId,
+    },
+}
+
+impl Source {
+    /// Rows whose limb identity is exact (`k = 0`).
+    pub fn is_exact(&self) -> bool {
+        matches!(self, Self::Exact | Self::Sign { .. })
+    }
+}
+
+/// `(q + 1)/2`: the smallest `y` with `y > −y`.
+pub fn half_plus_one() -> Fq {
+    Fq::from(2u64)
+        .inverse()
+        .unwrap_or_else(|| unreachable!("2 is invertible"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,6 +258,14 @@ impl Program {
                 pin,
             },
         );
+    }
+
+    /// Rows with an exact limb identity (`k = 0`).
+    pub fn exact_rows(&self) -> impl Iterator<Item = usize> + '_ {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter_map(|(row, spec)| spec.source.is_exact().then_some(row))
     }
 
     /// Rows exempt from the limb identity: inputs and public constants.
@@ -391,6 +424,15 @@ impl Program {
                         .ok_or(EvaluationError::NonInvertible { row })?;
                     fq12_coords(&inverse)[*coord as usize]
                 }
+                Source::InverseOrZero { den } => {
+                    eval_slots(&values, den).inverse().unwrap_or(Fq::ZERO)
+                }
+                Source::Exact => eval_slots(&values, &spec.slots),
+                Source::Sign { of } => {
+                    let flag = sign_flag(values[*of as usize]);
+                    let offset = if flag { Fq::ZERO } else { pow_256() };
+                    eval_slots(&values, &spec.slots) + offset
+                }
             };
             values[row] = value;
         }
@@ -410,6 +452,16 @@ impl Program {
         }
         Ok(())
     }
+}
+
+/// The canonical sign of `y`: `y > −y`, i.e. `y ≥ (q + 1)/2`.
+pub fn sign_flag(y: Fq) -> bool {
+    y >= half_plus_one()
+}
+
+/// `2^256 mod q`.
+fn pow_256() -> Fq {
+    Fq::from(2u64).pow([256u64])
 }
 
 pub fn signed(k: i32) -> Fq {

@@ -25,7 +25,7 @@ fn miller_cells_match_arkworks_step_by_step() {
     let sigma = opening.witness.sigma();
     let n = opening.witness.commitments.len();
     let check = FlattenedCheck::derive(sigma, n);
-    let values = WireValues::derive(&opening.statement, sigma, n);
+    let values = WireValues::derive(&opening.statement, sigma, n, common::offset_challenge());
     let native = NativeCheck::evaluate(&check, &values, &opening.setup, &opening.witness);
     let layout = build(&check, &values, &opening.setup, &check.wires());
     let coords = opening.witness.coordinates_in(&layout.input_order);

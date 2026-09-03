@@ -302,11 +302,14 @@ fn inv(x: Fr) -> Fr {
 }
 
 /// The scalar of one base: a named verifier wire of the R1CS lane
-/// (`jolt_wrapper::relation::DoryScalar`) or the constant one.
+/// (`jolt_wrapper::relation::DoryScalar`), the constant one, or the
+/// wrapper's offset challenge `θ` (the Straus offsets `R = θ·G`, `Z0 = θ·G'`
+/// and the per-chain corrections `−θ·K` of [`super::schedule`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Wire {
     Named(DoryScalar),
     One,
+    Offset,
 }
 
 /// A GT base of `RHS = Σ_k s_k X_k`.
@@ -537,10 +540,12 @@ impl FlattenedCheck {
 #[derive(Clone, Debug)]
 pub struct WireValues {
     values: HashMap<DoryScalar, Fr>,
+    /// The wrapper's offset challenge `θ`, drawn after the phase-1a commitments.
+    offset: Fr,
 }
 
 impl WireValues {
-    pub fn derive(statement: &DoryStatement, sigma: usize, n: usize) -> Self {
+    pub fn derive(statement: &DoryStatement, sigma: usize, n: usize, offset: Fr) -> Self {
         use DoryScalar as S;
         let ch = &statement.challenges;
         assert_eq!(ch.beta.len(), sigma);
@@ -605,19 +610,21 @@ impl WireValues {
         set(S::Ht, s1_acc * s2_acc);
         set(S::PairingG2ZeroScalar, -ch.gamma * d_inv * s1_acc);
         set(S::PairingG1ZeroScalar, -gamma_inv * d * s2_acc);
-        Self { values }
+        Self { values, offset }
     }
 
     /// Wire values taken from an R1CS witness (the committed adapter path).
-    pub fn from_wires(pairs: Vec<(DoryScalar, Fr)>) -> Self {
+    pub fn from_wires(pairs: Vec<(DoryScalar, Fr)>, offset: Fr) -> Self {
         Self {
             values: pairs.into_iter().collect(),
+            offset,
         }
     }
 
     pub fn get(&self, wire: &Wire) -> Fr {
         match wire {
             Wire::One => Fr::one(),
+            Wire::Offset => self.offset,
             Wire::Named(name) => *self
                 .values
                 .get(name)

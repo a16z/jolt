@@ -15,8 +15,9 @@ use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
 use super::columns::{
-    recompose, xi_powers, Constants, CARRIES, CARRY_CHUNKS, CHUNK_BITS, CHUNK_COLUMNS,
-    DIGIT_COLUMNS, GROUP_SIZE, HELPER_COLUMNS, K_CHUNKS, LIMBS, RANGE_COLUMNS, Z_CHUNKS,
+    recompose, xi_powers, Constants, CANON_CHUNKS, CANON_SHIFT, CARRIES, CARRY_CHUNKS, CHUNK_BITS,
+    CHUNK_COLUMNS, DIGIT_COLUMNS, GROUP_SIZE, HELPER_COLUMNS, K_CHUNKS, LIMBS, Q_HI, RANGE_COLUMNS,
+    Z_CHUNKS,
 };
 use super::layout::LOG_ROWS;
 use super::terms::{fold_linear, AffineForm, ColumnId, Term};
@@ -24,10 +25,10 @@ use super::terms::{fold_linear, AffineForm, ColumnId, Term};
 /// Slots per row (the dense `Fq12` product form).
 pub const SLOTS: usize = 22;
 
-/// Column indices of the exported column list: committed phase 1, committed
-/// phase 2 (after the challenges `ξ, α, β, γ` are drawn), then the
+/// Column indices of the row member's matrix, in packing order: the
+/// committed phases 1b, 2a, 2b, 2c (each committed before the challenges the
+/// next one depends on, see [`super::export::phases`]), then the
 /// VK-committed public columns.
-/// Column indices of the row member's matrix, in packing order.
 pub struct Col;
 
 impl Col {
@@ -41,25 +42,35 @@ impl Col {
     pub const M_POS: usize = Self::D + 1;
     pub const M_NEG: usize = Self::M_POS + 1;
     pub const MULT: usize = Self::M_NEG + 1;
-    pub const PHASE1_END: usize = Self::MULT + 1;
+    /// Sign flags `[y > −y]` of the byte-linked points, on their sign rows.
+    pub const FLAG: usize = Self::MULT + 1;
+    /// Phase 1b: every prover-chosen value column, committed before `ξ, α`.
+    pub const PHASE_1B_END: usize = Self::FLAG + 1;
 
-    pub const X: usize = Self::PHASE1_END;
+    pub const X: usize = Self::PHASE_1B_END;
     pub const Y: usize = Self::X + SLOTS;
     pub const HELPERS: usize = Self::Y + SLOTS;
     pub const INV: usize = Self::HELPERS + HELPER_COLUMNS;
-    pub const H: usize = Self::INV + 1;
+    /// Phase 2a: functions of `ξ, α` and phase-1b values, committed before `fp_root`.
+    pub const PHASE_2A_END: usize = Self::INV + 1;
+    pub const F_POS: usize = Self::PHASE_2A_END;
+    pub const F_NEG: usize = Self::F_POS + 1;
+    /// Phase 2b: the table fingerprints (`fp_root`), committed before `β, fp_combine, copy_root`.
+    pub const PHASE_2B_END: usize = Self::F_NEG + 1;
+    pub const H: usize = Self::PHASE_2B_END;
     pub const G_POS: usize = Self::H + 1;
     pub const G_NEG: usize = Self::G_POS + 1;
-    pub const F_POS: usize = Self::G_NEG + 1;
-    pub const F_NEG: usize = Self::F_POS + 1;
-    pub const PHASE2_END: usize = Self::F_NEG + 1;
-    pub const COMMITTED: usize = Self::PHASE2_END;
+    /// Phase 2c: the lookup helpers (`β, fp_combine`), committed before `τ, γ, λ, …`.
+    pub const PHASE_2C_END: usize = Self::G_NEG + 1;
+    pub const COMMITTED: usize = Self::PHASE_2C_END;
 
     pub const PIN: usize = Self::COMMITTED;
     pub const PIN_LIMBS: usize = Self::PIN + 1;
     /// Rows exempt from the limb identity (inputs, public constants).
     pub const FREE: usize = Self::PIN_LIMBS + LIMBS;
-    pub const VK_END: usize = Self::FREE + 1;
+    /// Rows whose limb identity is exact (`k = 0`): sign gadgets.
+    pub const EXACT: usize = Self::FREE + 1;
+    pub const VK_END: usize = Self::EXACT + 1;
     /// Every column with an evaluation claim at the stage point.
     pub const CLAIMED: usize = Self::VK_END;
 
@@ -159,7 +170,16 @@ const GAMMA_DIGIT_VALUE: usize = GAMMA_DIGIT_RANGE + 1;
 const GAMMA_READ: usize = GAMMA_DIGIT_VALUE + 1;
 const GAMMA_TABLE: usize = GAMMA_READ + 1;
 const GAMMA_INV: usize = GAMMA_TABLE + 2;
-pub const GAMMA_TERMS: usize = GAMMA_INV + 1;
+/// The range table lives on the first `2^16` rows: multiplicity and inverse
+/// vanish elsewhere, so no prover value can extend the table.
+const GAMMA_TABLE_GATE: usize = GAMMA_INV + 1;
+/// Byte-linked inputs (free rows that are not pinned constants) are canonical:
+/// `d + z_hi = q_hi − 1` with `d` the four low quotient chunks.
+const GAMMA_CANON: usize = GAMMA_TABLE_GATE + 2;
+/// Sign gadgets: the flag is a bit and exact rows have `k = 0`.
+const GAMMA_FLAG_BOOL: usize = GAMMA_CANON + 1;
+const GAMMA_EXACT: usize = GAMMA_FLAG_BOOL + 1;
+pub const GAMMA_TERMS: usize = GAMMA_EXACT + 1;
 
 /// Fingerprinted operand slots per selected op kind.
 pub const FP_SLOTS_GT: usize = SLOTS;
@@ -176,6 +196,8 @@ pub struct RowRelation {
     gammas: Vec<Fr>,
     xi_pow: [Fr; LIMBS],
     q_xi: Fr,
+    /// `2^256` in limb form: `2^64·ξ²` (the sign rows' flag term).
+    flag_xi: Fr,
     fp_pow: Vec<Fr>,
     copy_pow: Vec<Fr>,
     constancy_pow: Vec<Fr>,
@@ -199,6 +221,7 @@ impl RowRelation {
         let q_xi = constants.q_xi(&xi_pow);
         Self {
             gammas: powers(challenges.gamma, GAMMA_TERMS),
+            flag_xi: Fr::pow2(64) * xi_pow[2],
             xi_pow,
             q_xi,
             fp_pow: powers(challenges.fp_root, SLOTS),
@@ -270,11 +293,15 @@ impl RowRelation {
             products += v[Col::X + s] * v[Col::Y + s];
         }
         let z_xi = self.z_xi(chunks);
-        let limb = products
+        let k_xi = self.k_xi(chunks);
+        let limb = products + v[Col::EXACT] * (Fr::one() - v[Col::FLAG]) * self.flag_xi
             - z_xi
-            - self.k_xi(chunks) * self.q_xi
+            - k_xi * self.q_xi
             - (c.pow_limb - ch.xi) * self.c_xi(chunks);
         let mut phi = g[GAMMA_LIMB] * (Fr::one() - v[Col::FREE]) * limb;
+        // Sign gadgets: a bit flag, exact rows without a quotient.
+        phi += g[GAMMA_FLAG_BOOL] * v[Col::FLAG] * (v[Col::FLAG] - Fr::one());
+        phi += g[GAMMA_EXACT] * v[Col::EXACT] * k_xi;
         // Pins.
         let pin_xi = (0..LIMBS).fold(Fr::zero(), |acc, a| {
             acc + v[Col::PIN_LIMBS + a] * self.xi_pow[a]
@@ -319,9 +346,24 @@ impl RowRelation {
             phi += g[GAMMA_TABLE + i]
                 * (v[gc] * (ch.beta + v[Col::ID] + offset + ch.fp_combine * v[fc]) - v[mc]);
         }
-        // Range inverse table.
+        // Range inverse table, gated to its `2^16` rows.
         phi += g[GAMMA_INV] * v[Col::SMALL] * (v[Col::INV] * (ch.alpha - v[Col::ID]) - Fr::one());
+        let outside = Fr::one() - v[Col::SMALL];
+        phi += g[GAMMA_TABLE_GATE] * outside * v[Col::MULT];
+        phi += g[GAMMA_TABLE_GATE + 1] * outside * v[Col::INV];
+        phi +=
+            g[GAMMA_CANON] * v[Col::FREE] * (Fr::one() - v[Col::PIN]) * Self::canonicality(chunks);
         phi
+    }
+
+    /// `d + z_hi − (q_hi − 1)` over a row's chunks (zero on canonical free rows).
+    fn canonicality(chunks: &[Fr]) -> Fr {
+        let mut sum = -Fr::from_u64(Q_HI - 1);
+        for i in 0..CANON_CHUNKS {
+            let weight = Fr::from_u64(1u64 << (CHUNK_BITS * i));
+            sum += weight * (chunks[Z_CHUNKS + i] + chunks[CANON_SHIFT / CHUNK_BITS + i]);
+        }
+        sum
     }
 
     fn range_value(v: &[Fr], i: usize) -> Fr {
@@ -424,11 +466,13 @@ impl RowRelation {
         out.push((
             "limb",
             (Fr::one() - v[Col::FREE])
-                * (products
+                * (products + v[Col::EXACT] * (Fr::one() - v[Col::FLAG]) * self.flag_xi
                     - z_xi
                     - self.k_xi(chunks) * self.q_xi
                     - (c.pow_limb - ch.xi) * self.c_xi(chunks)),
         ));
+        out.push(("flag_bool", v[Col::FLAG] * (v[Col::FLAG] - Fr::one())));
+        out.push(("exact_quotient", v[Col::EXACT] * self.k_xi(chunks)));
         let pin_xi = (0..LIMBS).fold(Fr::zero(), |acc, a| {
             acc + v[Col::PIN_LIMBS + a] * self.xi_pow[a]
         });
@@ -481,6 +525,13 @@ impl RowRelation {
         out.push((
             "inverse_table",
             v[Col::SMALL] * (v[Col::INV] * (ch.alpha - v[Col::ID]) - Fr::one()),
+        ));
+        let outside = Fr::one() - v[Col::SMALL];
+        out.push(("range_mult_gate", outside * v[Col::MULT]));
+        out.push(("range_inv_gate", outside * v[Col::INV]));
+        out.push((
+            "canonicality",
+            v[Col::FREE] * (Fr::one() - v[Col::PIN]) * Self::canonicality(chunks),
         ));
         out
     }
@@ -542,7 +593,26 @@ impl RowRelation {
         let mut limb_linear = z_xi.clone().scale(-Fr::one());
         limb_linear.accumulate(&self.k_xi_form().scale(-self.q_xi));
         limb_linear.accumulate(&self.c_xi_form().scale(-(c.pow_limb - ch.xi)));
-        terms.push(Term::new(eq * g[GAMMA_LIMB], vec![bound, limb_linear]));
+        terms.push(Term::new(
+            eq * g[GAMMA_LIMB],
+            vec![bound.clone(), limb_linear],
+        ));
+        terms.push(Term::new(
+            eq * g[GAMMA_LIMB] * self.flag_xi,
+            vec![bound, column(Col::EXACT), one_minus(Col::FLAG)],
+        ));
+        // Sign gadgets.
+        terms.push(Term::new(
+            eq * g[GAMMA_FLAG_BOOL],
+            vec![
+                column(Col::FLAG),
+                column(Col::FLAG).plus(&AffineForm::constant(-Fr::one())),
+            ],
+        ));
+        terms.push(Term::new(
+            eq * g[GAMMA_EXACT],
+            vec![column(Col::EXACT), self.k_xi_form()],
+        ));
         // Pins.
         let mut pin_xi = AffineForm::default();
         for a in 0..LIMBS {
@@ -681,6 +751,29 @@ impl RowRelation {
             vec![column(Col::INV)],
         ));
         terms.push(Term::new(-gi, vec![]));
+        let outside = eq * (Fr::one() - public.small);
+        terms.push(Term::new(
+            outside * g[GAMMA_TABLE_GATE],
+            vec![column(Col::MULT)],
+        ));
+        terms.push(Term::new(
+            outside * g[GAMMA_TABLE_GATE + 1],
+            vec![column(Col::INV)],
+        ));
+        // Canonicality of free rows.
+        let mut canon = AffineForm::constant(-Fr::from_u64(Q_HI - 1));
+        for i in 0..CANON_CHUNKS {
+            let weight = Fr::from_u64(1u64 << (CHUNK_BITS * i));
+            canon.add_column(ColumnId((Col::CHUNKS + Z_CHUNKS + i) as u32), weight);
+            canon.add_column(
+                ColumnId((Col::CHUNKS + CANON_SHIFT / CHUNK_BITS + i) as u32),
+                weight,
+            );
+        }
+        terms.push(Term::new(
+            eq * g[GAMMA_CANON],
+            vec![column(Col::FREE), one_minus(Col::PIN), canon],
+        ));
         // Lookup sum.
         terms.push(Term::new(ch.lambda_lookup, vec![h.clone()]));
         terms.push(Term::new(-ch.lambda_lookup, vec![column(Col::G_POS)]));

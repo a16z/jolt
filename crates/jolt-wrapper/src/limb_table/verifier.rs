@@ -5,6 +5,7 @@
 //! once (memoized), bit-field `eq` tables are shared, and every field
 //! multiplication is reported to the observer.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -171,9 +172,10 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
             };
             return self.eq_const(Point::Src, f.v, value);
         }
-        // Wide unrestricted `same` field: product of per-bit equalities.
+        // Unrestricted `same` field: product of per-bit equalities (two
+        // multiplications per bit beat one per admitted value from width 2).
         if let [f] = group {
-            if f.rel == Rel::Shift(0) && f.range.is_none() && block_end(u.lo) < u.hi {
+            if f.rel == Rel::Shift(0) && f.range.is_none() && u.width() >= 2 {
                 let mut product = Fr::one();
                 for i in 0..u.width() {
                     let a = self.row[usize::from(u.lo + i)];
@@ -183,6 +185,29 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
                     product = if i == 0 { eq } else { self.mul(product, eq) };
                 }
                 return product;
+            }
+        }
+        // One shift (or identity) with range restrictions over a large range:
+        // the bitwise automaton, `≤ 17` multiplications per bit.
+        if let Some(rel) = relation {
+            if let Rel::Shift(delta) = rel.rel {
+                let restricts_only = group.iter().all(|f| {
+                    std::ptr::eq(f, rel)
+                        || (f.v.width() == 0 && matches!(f.rel, Rel::Const(_)) && f.range.is_some())
+                });
+                if restricts_only {
+                    let mut range = 0..1u32 << u.width();
+                    for f in group {
+                        if let Some(r) = &f.range {
+                            range.start = range.start.max(r.start);
+                            range.end = range.end.min(r.end);
+                        }
+                    }
+                    let values = range.end.saturating_sub(range.start) as usize;
+                    if 3 * values > 17 * usize::from(u.width()) {
+                        return self.shift_automaton(u, rel.v, delta, &range);
+                    }
+                }
             }
         }
         let mut sum = Fr::zero();
@@ -210,6 +235,70 @@ impl<'o, O: VerifierObserver> Evaluator<'o, O> {
             sum += self.scaled(term, weight);
         }
         sum
+    }
+
+    /// `Σ_{u ∈ range} eq(r_u, u)·eq(r_v, u + delta)` (no carry out of the
+    /// field) by the bitwise automaton of [`super::layout`]'s `shift_mle`:
+    /// states are (carry, `u < lo` so far, `u < hi` so far), read least
+    /// significant bit first; one multiplication per bit for the four bit
+    /// products and one per live transition.
+    fn shift_automaton(&mut self, u: Bits, v: Bits, delta: i64, range: &Range<u32>) -> Fr {
+        let width = usize::from(u.width());
+        let magnitude = delta.unsigned_abs();
+        if magnitude >= 1u64 << width {
+            return Fr::zero();
+        }
+        let (lo, hi) = (u64::from(range.start), u64::from(range.end));
+        let mut states = [Fr::zero(); 8];
+        states[0] = Fr::one();
+        for i in 0..width {
+            let a = self.row[usize::from(u.lo) + i];
+            let b = self.src[usize::from(v.lo) + i];
+            let ab = self.mul(a, b);
+            // `products[u][v] = bit(a, u)·bit(b, v)`.
+            let products = [[Fr::one() - a - b + ab, b - ab], [a - ab, ab]];
+            let d = (magnitude >> i) & 1;
+            let (lo_i, hi_i) = ((lo >> i) & 1, (hi >> i) & 1);
+            let mut next = [Fr::zero(); 8];
+            for (state, &weight) in states.iter().enumerate() {
+                if weight.is_zero() {
+                    continue;
+                }
+                let (carry, lt_lo, lt_hi) = (
+                    state as u64 & 1,
+                    (state >> 1) as u64 & 1,
+                    (state >> 2) as u64 & 1,
+                );
+                for bit_u in 0..2u64 {
+                    let (bit_v, carry_out) = if delta >= 0 {
+                        let sum = bit_u + d + carry;
+                        (sum & 1, sum >> 1)
+                    } else {
+                        let diff = bit_u as i64 - d as i64 - carry as i64;
+                        (diff.rem_euclid(2) as u64, u64::from(diff < 0))
+                    };
+                    let step = |flag: u64, bound: u64| -> u64 {
+                        match bit_u.cmp(&bound) {
+                            Ordering::Less => 1,
+                            Ordering::Greater => 0,
+                            Ordering::Equal => flag,
+                        }
+                    };
+                    let next_state =
+                        (carry_out | (step(lt_lo, lo_i) << 1) | (step(lt_hi, hi_i) << 2)) as usize;
+                    let term = self.mul(weight, products[bit_u as usize][bit_v as usize]);
+                    next[next_state] += term;
+                }
+            }
+            states = next;
+        }
+        let hi_open = hi >= 1u64 << width;
+        (0..8usize)
+            .filter(|state| {
+                let (carry, lt_lo, lt_hi) = (state & 1, (state >> 1) & 1, (state >> 2) & 1);
+                carry == 0 && lt_lo == 0 && (hi_open || lt_hi == 1)
+            })
+            .fold(Fr::zero(), |acc, state| acc + states[state])
     }
 
     /// `Σ_u eq(p_bits, u)·q^u` over the whole field: `Π_i (1 − r_i + r_i·q^{2^i})`.
