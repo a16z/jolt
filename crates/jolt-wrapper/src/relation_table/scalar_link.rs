@@ -1,5 +1,7 @@
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::{NoopVerifierObserver, VerifierObserver};
+#[cfg(test)]
+use jolt_hyperkzg::NoopVerifierObserver;
+use jolt_hyperkzg::VerifierObserver;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
@@ -29,6 +31,10 @@ impl DoryScalarLink {
         }
     }
 
+    pub(super) fn rows(&self) -> usize {
+        self.rows
+    }
+
     pub fn prover(&self, witness: &RelationTableWitness) -> DoryScalarLinkProver {
         let weights = self.weights();
         let wire = witness.columns[0].clone();
@@ -41,10 +47,12 @@ impl DoryScalarLink {
         }
     }
 
+    #[cfg(test)]
     pub fn final_claim(&self, point: &[Fr], wire: Fr) -> Fr {
         self.final_claim_observed(point, wire, &mut NoopVerifierObserver)
     }
 
+    #[cfg(test)]
     pub fn final_claim_observed<O: VerifierObserver>(
         &self,
         point: &[Fr],
@@ -66,7 +74,11 @@ impl DoryScalarLink {
         weights
     }
 
-    fn weight_at_observed<O: VerifierObserver>(&self, point: &[Fr], observer: &mut O) -> Fr {
+    pub(super) fn weight_at_observed<O: VerifierObserver>(
+        &self,
+        point: &[Fr],
+        observer: &mut O,
+    ) -> Fr {
         let suffix = self.capacity.trailing_zeros() as usize;
         let prefix = point.len() - suffix;
         let prefix_index = self.base >> suffix;

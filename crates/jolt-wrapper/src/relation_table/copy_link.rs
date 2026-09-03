@@ -87,11 +87,7 @@ impl CopyLink {
         if denominators.iter().any(Zero::is_zero) {
             return Err(RelationTableError::ZeroDenominator);
         }
-        let mut inverses: Vec<ArkFr> = denominators
-            .iter()
-            .copied()
-            .map(ArkFr::from)
-            .collect();
+        let mut inverses: Vec<ArkFr> = denominators.iter().copied().map(ArkFr::from).collect();
         batch_inversion(&mut inverses);
         let mut helpers = [vec![Fr::zero(); self.rows], vec![Fr::zero(); self.rows]];
         for (row, chunk) in inverses.chunks_exact(2 * WIRES).enumerate() {
@@ -154,6 +150,7 @@ impl CopyLink {
         CopyLinkProver::new(self, witness, tau, beta, gamma, weights)
     }
 
+    #[cfg(test)]
     pub fn final_value(
         beta: Fr,
         gamma: Fr,
@@ -161,9 +158,10 @@ impl CopyLink {
         eq: Fr,
         claims: &CopyLinkClaims,
     ) -> Fr {
-        Self::final_value_observed(beta, gamma, weights, eq, claims, &mut NoopVerifierObserver)
+        copy_link_value_observed(beta, gamma, weights, eq, claims, &mut NoopVerifierObserver)
     }
 
+    #[cfg(test)]
     pub fn final_value_observed<O: VerifierObserver>(
         beta: Fr,
         gamma: Fr,
@@ -172,29 +170,7 @@ impl CopyLink {
         claims: &CopyLinkClaims,
         observer: &mut O,
     ) -> Fr {
-        let left = grouped_selected_relation_observed(
-            claims.left_values,
-            claims.left_ids,
-            claims.left_selectors,
-            claims.helpers[0],
-            beta,
-            gamma,
-            observer,
-        );
-        let right = grouped_selected_relation_observed(
-            claims.right_values,
-            claims.right_ids,
-            claims.right_selectors,
-            claims.helpers[1],
-            beta,
-            gamma,
-            observer,
-        );
-        let eq_left = observer.fr_mul(eq, left);
-        let left = observer.fr_mul(weights[0], eq_left);
-        let eq_right = observer.fr_mul(eq, right);
-        let right = observer.fr_mul(weights[1], eq_right);
-        left + right + observer.fr_mul(weights[2], claims.helpers[0] - claims.helpers[1])
+        copy_link_value_observed(beta, gamma, weights, eq, claims, observer)
     }
 }
 
@@ -252,7 +228,7 @@ impl CopyLinkProver {
             .into_par_iter()
             .map(|row| {
                 let claims = claims_at(&values, row);
-                CopyLink::final_value(beta, gamma, weights, eq[row], &claims)
+                copy_link_value(beta, gamma, weights, eq[row], &claims)
             })
             .sum();
         Self {
@@ -314,7 +290,7 @@ impl ProveRounds<Fr> for CopyLinkProver {
                     let eq =
                         self.eq
                             .sumcheck_round_eval_with_order(index, x, BindingOrder::HighToLow);
-                    *value = CopyLink::final_value(
+                    *value = copy_link_value(
                         self.beta,
                         self.gamma,
                         self.weights,
@@ -366,6 +342,43 @@ fn claims_from_values(values: &[Fr; COPY_COLUMNS]) -> CopyLinkClaims {
     }
 }
 
+fn copy_link_value(beta: Fr, gamma: Fr, weights: [Fr; 3], eq: Fr, claims: &CopyLinkClaims) -> Fr {
+    copy_link_value_observed(beta, gamma, weights, eq, claims, &mut NoopVerifierObserver)
+}
+
+fn copy_link_value_observed<O: VerifierObserver>(
+    beta: Fr,
+    gamma: Fr,
+    weights: [Fr; 3],
+    eq: Fr,
+    claims: &CopyLinkClaims,
+    observer: &mut O,
+) -> Fr {
+    let left = grouped_selected_relation_observed(
+        claims.left_values,
+        claims.left_ids,
+        claims.left_selectors,
+        claims.helpers[0],
+        beta,
+        gamma,
+        observer,
+    );
+    let right = grouped_selected_relation_observed(
+        claims.right_values,
+        claims.right_ids,
+        claims.right_selectors,
+        claims.helpers[1],
+        beta,
+        gamma,
+        observer,
+    );
+    let eq_left = observer.fr_mul(eq, left);
+    let left = observer.fr_mul(weights[0], eq_left);
+    let eq_right = observer.fr_mul(eq, right);
+    let right = observer.fr_mul(weights[1], eq_right);
+    left + right + observer.fr_mul(weights[2], claims.helpers[0] - claims.helpers[1])
+}
+
 fn grouped_selected_relation(
     values: [Fr; WIRES],
     ids: [Fr; WIRES],
@@ -415,6 +428,10 @@ mod tests {
     use jolt_sumcheck::prover::ProveRounds;
 
     use super::*;
+    use crate::relation_table::{
+        evaluate_terms_observed, AffineForm, CopyLinkTermExporter, CopyLinkTermSide,
+        CopyLinkTermsContext, TermContext, TermExporter,
+    };
     use crate::stream::VerifierCost;
 
     #[test]
@@ -479,6 +496,83 @@ mod tests {
             )
         );
         assert_eq!(cost.fr_mul, 29);
+
+        let column_claims = [
+            claims.left_selectors.as_slice(),
+            claims.left_ids.as_slice(),
+            claims.left_values.as_slice(),
+            claims.right_selectors.as_slice(),
+            claims.right_ids.as_slice(),
+            claims.right_values.as_slice(),
+            claims.helpers.as_slice(),
+        ]
+        .concat();
+        let column = |slot| crate::relation_table::ColumnId { group: 0, slot };
+        let form_columns = |base| {
+            std::array::from_fn(|wire| AffineForm {
+                constant: Fr::zero(),
+                weights: vec![(column(base + wire), Fr::one())],
+            })
+        };
+        let term_context = CopyLinkTermsContext {
+            left: CopyLinkTermSide {
+                selectors: [column(0), column(1), column(2)],
+                ids: form_columns(3),
+                values: form_columns(6),
+                helper: column(18),
+            },
+            right: CopyLinkTermSide {
+                selectors: [column(9), column(10), column(11)],
+                ids: form_columns(12),
+                values: form_columns(15),
+                helper: column(19),
+            },
+            beta,
+            gamma,
+            eq: EqPolynomial::<Fr>::mle(&tau, &point),
+            relation_weights: weights,
+            stage_coefficient: Fr::from_u64(31),
+        };
+        let exporter = CopyLinkTermExporter {
+            link: &link,
+            left: term_context.left.clone(),
+            right: term_context.right.clone(),
+            tau: &tau,
+            beta,
+            gamma,
+            relation_weights: weights,
+            member_index: 0,
+        };
+        let export_context = TermContext {
+            row_point: &point,
+            batching_coefficients: &[term_context.stage_coefficient],
+            challenges: &[],
+        };
+        let mut term_cost = VerifierCost::default();
+        let terms = exporter.terms_observed(&export_context, &mut term_cost);
+        assert_eq!(exporter.terms(&export_context), terms);
+        assert_eq!(link.terms(&term_context), terms);
+        assert_eq!(term_cost.fr_mul, 13);
+        assert_eq!(terms.len(), crate::relation_table::COPY_LINK_TERM_COUNT);
+        assert_eq!(
+            terms.iter().map(|term| term.factors.len()).max(),
+            Some(crate::relation_table::MAX_FACTORS)
+        );
+        assert_eq!(
+            term_context.stage_coefficient * final_claim,
+            evaluate_terms_observed(
+                &terms,
+                &|column| {
+                    column_claims
+                        .get(column.slot)
+                        .copied()
+                        .ok_or(RelationTableError::Claims)
+                },
+                &mut term_cost,
+            )
+            .unwrap()
+        );
+        assert_eq!(term_cost.fr_mul, 59);
 
         let mut right_bad = values.clone();
         right_bad[0][1] += Fr::one();

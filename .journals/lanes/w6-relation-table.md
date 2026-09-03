@@ -61,6 +61,54 @@ Code commit: `f845ec8ad`.
   one CopyLink 29; Dory scalar link 34; **166 total**, below the 5,000 cap. Each extra CopyLink adds
   29. No term scans R rows.
 
+## Term export contract (published 00:48)
+
+- W5's 00:52 shared types: `ColumnId { group, slot }`,
+  `AffineForm { constant: Fr, weights: Vec<(ColumnId, Fr)> }`, and
+  `Term { coefficient: Fr, factors: Vec<AffineForm> }`. Column IDs are physical packed locations;
+  fixed/VK and prover phases use the same namespace. R's typed exporter folds its member index
+  from `TermContext::batching_coefficients` into every exported coefficient.
+- `RelationTable::terms(&RelationTermsContext)`: context supplies the 14 R column IDs in the
+  canonical order, `tau`, `r_A`, `(beta,gamma)`, and three member-batching weights. Virtual
+  `id_w(r_A) = w * rows + identity(r_A)` and `eq(tau,r_A)` are folded into affine constants and
+  term coefficients. Export shape: 5 gate terms + 4 identity-copy terms + 4 sigma-copy terms + 2
+  helper-sum terms = **15 terms**, maximum 4 factors.
+- `CopyLink::terms(&CopyLinkTermsContext)`: context supplies, per side, three selector, logical-ID,
+  and value affine forms plus one helper column ID; also `eq(tau,r_A)`, `(beta,gamma)`, three
+  internal member weights, and its stage-A batching coefficient. Export shape: 4 terms per side +
+  2 helper-sum terms = **10 terms**, maximum 4 factors. T1 can pass decoded-bit affine forms;
+  logical IDs can be VK columns or verifier-computed constants without changing the term shape.
+- `DoryScalarLink::terms(&DoryScalarTermsContext)`: one degree-1 term whose coefficient is the
+  product-form `weight_scalar_block(r_A)` and whose sole factor is R wire `a`. The stage-A member
+  remains degree 2 because its row weight and wire MLE both bind.
+- W5 maps phase-1 columns `a,b,c`, phase-2 columns `h_id,h_sigma` and link helpers, and the 9 VK
+  columns into global IDs after packing. No R per-column claims enter the proof. The term-stage
+  consumes these exports; native final evaluators remain equality-test oracles only.
+- Exact W5 adapters: `RelationTermExporter`, `CopyLinkTermExporter`, and
+  `DoryScalarTermExporter` implement `stream::TermExporter`; each stores its stage-member index and
+  reads the outer coefficient from `TermContext::batching_coefficients`. The relation adapter stores
+  only `rows`, transcript state, and column IDs, so verifier work/storage does not depend on R rows.
+
+## Term export measurements (00:52)
+
+- Exact export with one CopyLink: relation gate/internal-copy **15 terms**, CopyLink **10**, Dory
+  scalar link **1** → **T_R = 26**, maximum factor count **d_R = 4**. The gate contributes 5;
+  each grouped well-formedness side contributes 4; each helper-sum contributes 2 across its sides.
+- `VerifierObserver::fr_mul` while constructing terms: relation **79** (54 eq + 18 identity + 3
+  virtual-ID scales + 4 coefficient products), CopyLink **58** (54 eq + 4 coefficients), scalar
+  link **34** → **171 Fr multiplications / 3,420 N4 gas**. These counts include each stage-A
+  member's outer batching coefficient. Evaluating the exported terms against column values for the
+  native-oracle test costs another 94, or **265 total**, independent of the 38,981 gate rows.
+- Real fibonacci fixture: exported 15-term relation equals the native final evaluator; scalar
+  one-term export equals its native evaluator. Synthetic CopyLink's 10-term export equals the
+  native final evaluator. The standalone test harness verifier rises 7,364 → **7,385 Fr** because
+  it now exercises term evaluation; its main-stream replacement is W5's term stage.
+- R proof-data effect: **−448 B** by removing its 14 per-column claims; R contributes 26 terms and
+  zero claims. Using the orchestrator's shared-stage arithmetic gives 5,760 − 448 + 640 − 544 =
+  **5,408 B projected**, **−5,088 B** versus the 10,496 B Spartan+SPARK fallback. The 640 B term
+  stage and 544 B committed-round saving are shared whole-stream items owned by W5, not isolated R
+  measurements.
+
 ## Measurements
 
 Real `/Volumes/Dev/scratch/wrapper-fixtures/fibonacci_2_18_blake3.bin`, 10 Rayon threads. Load

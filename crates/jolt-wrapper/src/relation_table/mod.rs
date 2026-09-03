@@ -4,6 +4,7 @@ mod copy_link;
 mod protocol;
 mod prover;
 mod scalar_link;
+mod terms;
 #[cfg(all(test, feature = "prover-fixtures"))]
 mod tests;
 
@@ -25,6 +26,12 @@ pub use protocol::{
 };
 pub use prover::RelationTableProver;
 pub use scalar_link::{DoryScalarLink, DoryScalarLinkProver};
+pub use terms::{
+    evaluate_terms, evaluate_terms_observed, AffineForm, ColumnId, CopyLinkTermExporter,
+    CopyLinkTermSide, CopyLinkTermsContext, DoryScalarTermExporter, DoryScalarTermsContext,
+    RelationTermExporter, RelationTermsContext, Term, TermContext, TermExporter,
+    COPY_LINK_TERM_COUNT, DORY_SCALAR_TERM_COUNT, MAX_FACTORS, RELATION_TERM_COUNT,
+};
 
 pub const WIRES: usize = 3;
 pub const FIXED_COLUMNS: usize = 9;
@@ -442,11 +449,7 @@ impl RelationTable {
         if denominators.iter().any(Zero::is_zero) {
             return Err(RelationTableError::ZeroDenominator);
         }
-        let mut inverses: Vec<ArkFr> = denominators
-            .iter()
-            .copied()
-            .map(ArkFr::from)
-            .collect();
+        let mut inverses: Vec<ArkFr> = denominators.iter().copied().map(ArkFr::from).collect();
         batch_inversion(&mut inverses);
         for (row, chunk) in inverses.chunks_exact(2 * WIRES).enumerate() {
             let active = self.fixed[ACTIVE][row];

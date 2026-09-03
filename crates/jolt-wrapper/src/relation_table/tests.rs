@@ -12,6 +12,7 @@ use jolt_crypto::{Bn254, Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::{Fr, One, Ring, Zero};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
+use jolt_poly::MultilinearPoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 
@@ -69,6 +70,87 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
     table
         .check_witness(&table_witness, beta, gamma)
         .expect("gate and copy checks");
+
+    let term_point = (0..18)
+        .map(|index| Fr::from_u64((index + 5) as u64))
+        .collect::<Vec<_>>();
+    let term_tau = (0..18)
+        .map(|index| Fr::from_u64((index + 29) as u64))
+        .collect::<Vec<_>>();
+    let relation_weights = [Fr::from_u64(53), Fr::from_u64(59), Fr::from_u64(61)];
+    let relation_stage_coefficient = Fr::from_u64(67);
+    let column_claims = (0..TOTAL_COLUMNS)
+        .map(|column| {
+            if column < FIXED_COLUMNS {
+                table.fixed[column].as_slice().evaluate(&term_point)
+            } else {
+                table_witness.columns[column - FIXED_COLUMNS]
+                    .as_slice()
+                    .evaluate(&term_point)
+            }
+        })
+        .collect::<Vec<_>>();
+    let native_final = RelationTable::final_value(
+        rows,
+        &term_tau,
+        beta,
+        gamma,
+        relation_weights,
+        &term_point,
+        &column_claims,
+    )
+    .expect("native final relation");
+    let term_context = RelationTermsContext {
+        columns: std::array::from_fn(|slot| ColumnId { group: 0, slot }),
+        tau: &term_tau,
+        point: &term_point,
+        beta,
+        gamma,
+        relation_weights,
+        stage_coefficient: relation_stage_coefficient,
+    };
+    let exporter = RelationTermExporter {
+        rows,
+        columns: term_context.columns,
+        tau: &term_tau,
+        beta,
+        gamma,
+        relation_weights,
+        member_index: 0,
+    };
+    let export_context = TermContext {
+        row_point: &term_point,
+        batching_coefficients: &[relation_stage_coefficient],
+        challenges: &[],
+    };
+    let mut relation_term_cost = VerifierCost::default();
+    let terms = exporter.terms_observed(&export_context, &mut relation_term_cost);
+    assert_eq!(exporter.terms(&export_context), terms);
+    assert_eq!(table.terms(&term_context).expect("relation terms"), terms);
+    assert_eq!(relation_term_cost.fr_mul, 79);
+    assert_eq!(terms.len(), RELATION_TERM_COUNT);
+    assert_eq!(
+        terms.iter().map(|term| term.factors.len()).max(),
+        Some(MAX_FACTORS)
+    );
+    assert_eq!(
+        relation_stage_coefficient * native_final,
+        evaluate_terms_observed(
+            &terms,
+            &|column| {
+                if column.group != 0 {
+                    return Err(RelationTableError::Claims);
+                }
+                column_claims
+                    .get(column.slot)
+                    .copied()
+                    .ok_or(RelationTableError::Claims)
+            },
+            &mut relation_term_cost,
+        )
+        .expect("evaluate relation terms")
+    );
+    assert_eq!(relation_term_cost.fr_mul, 126);
 
     let challenge_variable = relation
         .link
@@ -139,6 +221,54 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         )
     );
     assert_eq!(scalar_cost.fr_mul, 34);
+    let scalar_term_context = DoryScalarTermsContext {
+        wire: ColumnId { group: 0, slot: 0 },
+        point: &scalar_point,
+        stage_coefficient: Fr::from_u64(67),
+    };
+    let scalar_exporter = DoryScalarTermExporter {
+        link: &scalar_link,
+        wire: scalar_term_context.wire,
+        member_index: 0,
+    };
+    let scalar_export_context = TermContext {
+        row_point: &scalar_point,
+        batching_coefficients: &[scalar_term_context.stage_coefficient],
+        challenges: &[],
+    };
+    let mut scalar_term_cost = VerifierCost::default();
+    let scalar_terms =
+        scalar_exporter.terms_observed(&scalar_export_context, &mut scalar_term_cost);
+    assert_eq!(scalar_exporter.terms(&scalar_export_context), scalar_terms);
+    assert_eq!(
+        scalar_link
+            .terms(&scalar_term_context)
+            .expect("scalar terms"),
+        scalar_terms
+    );
+    assert_eq!(scalar_term_cost.fr_mul, 34);
+    assert_eq!(scalar_terms.len(), DORY_SCALAR_TERM_COUNT);
+    assert_eq!(scalar_terms[0].factors.len(), 1);
+    assert_eq!(
+        scalar_term_context.stage_coefficient * scalar_claim,
+        evaluate_terms_observed(
+            &scalar_terms,
+            &|column| {
+                if column == scalar_term_context.wire {
+                    Ok(scalar_prover.wire_claim())
+                } else {
+                    Err(RelationTableError::Claims)
+                }
+            },
+            &mut scalar_term_cost,
+        )
+        .expect("evaluate scalar terms")
+    );
+    assert_eq!(scalar_term_cost.fr_mul, 35);
+    assert_eq!(
+        RELATION_TERM_COUNT + COPY_LINK_TERM_COUNT + DORY_SCALAR_TERM_COUNT,
+        26
+    );
 
     let pcs_setup = HyperKZGScheme::<Bn254>::setup_from_secret(
         Fr::from_u64(0x5eed),
@@ -216,4 +346,49 @@ fn real_shape_copy_link_binds_challenge_value() {
         .witness(left_values, right_bad, beta, gamma)
         .expect("bad copy witness");
     assert!(link.check(&bad, beta, gamma).is_err());
+
+    let column = |slot| ColumnId { group: 0, slot };
+    let form_columns = |base| {
+        std::array::from_fn(|wire| AffineForm {
+            constant: Fr::zero(),
+            weights: vec![(column(base + wire), Fr::one())],
+        })
+    };
+    let tau = (0..18)
+        .map(|index| Fr::from_u64((index + 7) as u64))
+        .collect::<Vec<_>>();
+    let point = (0..18)
+        .map(|index| Fr::from_u64((index + 37) as u64))
+        .collect::<Vec<_>>();
+    let exporter = CopyLinkTermExporter {
+        link: &link,
+        left: CopyLinkTermSide {
+            selectors: [column(0), column(1), column(2)],
+            ids: form_columns(3),
+            values: form_columns(6),
+            helper: column(18),
+        },
+        right: CopyLinkTermSide {
+            selectors: [column(9), column(10), column(11)],
+            ids: form_columns(12),
+            values: form_columns(15),
+            helper: column(19),
+        },
+        tau: &tau,
+        beta,
+        gamma,
+        relation_weights: [Fr::from_u64(43), Fr::from_u64(47), Fr::from_u64(53)],
+        member_index: 0,
+    };
+    let mut term_cost = VerifierCost::default();
+    let terms = exporter.terms_observed(
+        &TermContext {
+            row_point: &point,
+            batching_coefficients: &[Fr::from_u64(59)],
+            challenges: &[],
+        },
+        &mut term_cost,
+    );
+    assert_eq!(terms.len(), COPY_LINK_TERM_COUNT);
+    assert_eq!(term_cost.fr_mul, 58);
 }
