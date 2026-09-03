@@ -34,7 +34,7 @@ const H_LEFT_COL: usize = 3;
 const H_RIGHT_ROW: usize = 4;
 const H_RIGHT_COL: usize = 5;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum SparkError {
     #[error("SPARK column range [{start}, {end}) exceeds {total} R1CS columns")]
     ColumnRange {
@@ -192,7 +192,6 @@ impl SparkTables {
     }
 
     fn witness_columns(
-        &self,
         witness: &SparkWitness,
         common_rows: usize,
     ) -> Result<Vec<Column>, SparkError> {
@@ -277,9 +276,7 @@ impl SparkProverKey {
         setup: &HyperKZGProverSetup<Bn254>,
     ) -> Result<(PackedColumns, Vec<Commitment>), SparkError> {
         let witness_packed = commit_packed(
-            &self
-                .tables
-                .witness_columns(witness, self.fixed.layout.rows)?,
+            &SparkTables::witness_columns(witness, self.fixed.layout.rows)?,
             self.fixed.layout.k,
             setup,
         )?;
