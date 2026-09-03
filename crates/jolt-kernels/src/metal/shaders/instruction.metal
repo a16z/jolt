@@ -200,6 +200,15 @@ inline ulong jk_window_sign_bit(ulong x, ulong y) {
 #define JK_SUF_POW2_OFFSET_B 51u
 #define JK_SUF_POW2_OFFSET_H 52u
 #define JK_SUF_ALIGN_ADDR 53u
+#define JK_SUF_SHIFT_DATA_B 54u
+#define JK_SUF_SHIFT_DATA_H 55u
+#define JK_SUF_SHIFT_DATA_W 56u
+#define JK_SUF_OFFSET_SCALE_B 57u
+#define JK_SUF_OFFSET_SCALE_H 58u
+#define JK_SUF_OFFSET_SCALE_W 59u
+#define JK_SUF_XOR_ROT_L1_PAIRS 60u
+#define JK_SUF_TOP_Y_BIT 61u
+#define JK_SUF_BOTTOM_X_BIT 62u
 
 inline ulong jk_suffix_mle(uint id, ulong s_lo, ulong s_hi, uint len) {
     ulong x = 0ul;
@@ -403,6 +412,43 @@ inline ulong jk_suffix_mle(uint id, ulong s_lo, ulong s_hi, uint len) {
             return 1ul << (8u * (uint)(s_lo & 6ul));
         case JK_SUF_ALIGN_ADDR:
             return s_lo & ~7ul;
+        case JK_SUF_SHIFT_DATA_B:
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return (x & 0xFFul) << (8u * (uint)(y & 7ul));
+        case JK_SUF_SHIFT_DATA_H:
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return (x & 0xFFFFul) << (8u * (uint)(y & 6ul));
+        case JK_SUF_SHIFT_DATA_W:
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return (x & 0xFFFFFFFFul) << (8u * (uint)(y & 4ul));
+        case JK_SUF_OFFSET_SCALE_B:
+            // 2^(8·(y mod 8)) over the offset bits y_0..y_2 (even index
+            // positions); the masked y half is the partial factor for the
+            // offset bits the suffix owns.
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return 1ul << (8u * (uint)(y & 7ul));
+        case JK_SUF_OFFSET_SCALE_H:
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return 1ul << (8u * (uint)(y & 6ul));
+        case JK_SUF_OFFSET_SCALE_W:
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return 1ul << (8u * (uint)(y & 4ul));
+        case JK_SUF_XOR_ROT_L1_PAIRS: {
+            jk_uninterleave(s_lo, s_hi, x, y);
+            uint pairs = len / 2u;
+            return (x ^ (y << 1)) & ((1ul << pairs) - 1ul) & ~1ul;
+        }
+        case JK_SUF_TOP_Y_BIT: {
+            uint pairs = len / 2u;
+            if (pairs == 0u) {
+                return 0ul;
+            }
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return (y >> (pairs - 1u)) & 1ul;
+        }
+        case JK_SUF_BOTTOM_X_BIT:
+            jk_uninterleave(s_lo, s_hi, x, y);
+            return x & 1ul;
         default:
             return 0ul;
     }

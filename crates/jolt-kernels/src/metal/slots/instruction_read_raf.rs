@@ -37,6 +37,7 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::instruction::CANONICAL_INSTRUCTION_ADDRESS;
 use jolt_field::{Fr, Ring};
+use jolt_lookup_tables::tables::suffixes::NUM_SUFFIXES;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
 use jolt_witness::JoltWitnessPlane;
@@ -59,6 +60,10 @@ const KIND: &str = "instruction_read_raf";
 /// Per-table suffix capacity baked into the shaders (`JK_IRR_SUF_CELLS`);
 /// every lookup table today uses at most 8 suffixes.
 const MAX_SUFFIXES: usize = 8;
+/// Suffix ids the shader's `jk_suffix_mle` switch covers. A grown `Suffixes`
+/// enum must be ported there before this bumps: an uncovered id evaluates to
+/// 0 on the device, which is an invalid proof rather than a dispatch failure.
+const _: () = assert!(NUM_SUFFIXES == 63);
 const CHUNK_SIZE: usize = 256;
 const RAF_CELLS: usize = 6 * CHUNK_SIZE;
 const SUF_CELLS: usize = MAX_SUFFIXES * CHUNK_SIZE;
@@ -1649,7 +1654,7 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-    use jolt_lookup_tables::tables::suffixes::{Suffixes, NUM_SUFFIXES};
+    use jolt_lookup_tables::tables::suffixes::Suffixes;
     use jolt_lookup_tables::{LookupBits, LookupTableKind};
     use jolt_sumcheck::ProveRounds;
 
@@ -1667,7 +1672,7 @@ mod tests {
     /// Every variant in declaration order; pins the `as u8` discriminants
     /// the device switch mirrors (a reordered enum fails the count or the
     /// per-id comparison below).
-    const ALL_SUFFIXES: [Suffixes; 54] = [
+    const ALL_SUFFIXES: [Suffixes; 63] = [
         Suffixes::One,
         Suffixes::And,
         Suffixes::AndNot,
@@ -1722,6 +1727,15 @@ mod tests {
         Suffixes::Pow2OffsetB,
         Suffixes::Pow2OffsetH,
         Suffixes::AlignAddr,
+        Suffixes::ShiftDataB,
+        Suffixes::ShiftDataH,
+        Suffixes::ShiftDataW,
+        Suffixes::OffsetScaleB,
+        Suffixes::OffsetScaleH,
+        Suffixes::OffsetScaleW,
+        Suffixes::XorRotL1Pairs,
+        Suffixes::TopYBit,
+        Suffixes::BottomXBit,
     ];
 
     #[test]
