@@ -540,3 +540,24 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
 - Final numbers live in `.journals/pr-tables.md`: k=32 5,728 B payload / 5,836 B bincode / 352 B
   statement; k=16 6,016 / 6,136 / 352 B. Full feature suite: 68/68 in 191.688 s nextest,
   192.17 s wall. All-target clippy with warnings denied passed.
+
+## 2026-09-03 10:01 — assembly review #2 fixes
+
+- `WrapVerifierKey::new` now builds the complete key from `WrapperProfile`, T1/T2 keys, public
+  fields, and the HyperKZG setup. Relation lowering, all CopyLinks, physical column IDs, challenge
+  and member offsets, commitment phases, and pinned commitments have no caller-supplied plan.
+- `WrapperProfile` stores each commitment-family count. Its canonical final-opening-to-transcript
+  permutation handles unequal RAM-RA/bytecode-RA sizes; the review regression passes.
+- Each `TermExporter` publishes its factor bound. The key stores the maximum four-factor bound;
+  term proving and verification derive degree 5 from it. The four factor evaluations and proof
+  bytes are unchanged.
+- Raw exporter-plan types and the combined Dory prover are private/test-local. Stale top-level
+  Spartan/Groth16 text is removed. Production and both large test files are split below 1,000
+  lines.
+- Code commit `5e69d158b` passed repository hooks with style, fmt, clippy, and typos enabled.
+  Final real gates at that SHA: k=32 5,728/5,836/352 B in 57.224 s; k=16
+  6,016/6,136/352 B in 43.452 s. Full numbers and start loads are in `.journals/pr-tables.md`.
+- `b39157273` promotes smaller synthetic instances to HyperKZG's degree-5 floor while retaining
+  each key's exporter-derived upper bound. Repository hooks passed again. At this final code SHA,
+  k=32 ran in 56.175 s and k=16 in 43.501 s; the full feature suite passed 69/69 in
+  190.155 s nextest / 190.67 s wall.

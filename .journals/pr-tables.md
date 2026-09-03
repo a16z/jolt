@@ -1,7 +1,7 @@
 # Wrapper draft PR — final measured tables
 
 Source: non-ignored `wrap_real_t1_r::real_t1_relation_table_round_trip_and_tampers`, cached
-fibonacci `2^18` proof, code through `10cde06ff`. Mac mini M4, 10 Rayon threads. Default
+fibonacci `2^18` proof, code `b39157273`. Mac mini M4, 10 Rayon threads. Default
 `k=32`; `WRAP_K=16` selects the comparison.
 
 ## Link coverage
@@ -62,29 +62,29 @@ CopyLink VK groups are key data and add no proof bytes.
 All members use the `2^18` row domain. T1 contributes 232 terms; R 15; eleven CopyLinks 110; T2
 177; the R→T2 scalar input one: **T=535**, ten term rounds. T2 uses 201,575 rows with N=42 and
 the 256 unique-recoding window rows. The T2 verifier path performs **9,973 Fr multiplications**;
-T1 statement evaluation adds **705**. The term stage has actual degree 6: a coefficient MLE times
-T2's five-factor term. Forcing degree 5 fails `StageOutputClaim`; stage A remains degree 5.
+T1 statement evaluation adds **705**. Exporter metadata fixes the term degree at key construction:
+T2's maximum four factors plus the coefficient MLE gives degree 5. Stage A is also degree 5.
 
 ## Timing
 
 | phase (ms) | k=32 | k=16 |
 |---|---:|---:|
-| deterministic SRS setup | 7,845 | 3,658 |
-| key/profile | 309 | 291 |
-| wrapper preparation | 592 | 600 |
-| R adaptation | 3,513 | 3,518 |
-| T2 adaptation | 1,211 | 1,331 |
-| offline key commitments | 2,208 | 1,562 |
-| phase 1a commitments | 2,235 | 930 |
-| T2 phase 1b commitments | 989 | 973 |
-| T2 phase 2a commitments | 7,284 | 7,402 |
-| T2 phase 2b commitments | 97 | 88 |
-| R/Copy helpers | 3,199 | 3,104 |
-| T2 phase 2c + helpers | 429 | 400 |
-| proof stages/opening | 19,711 | 13,921 |
-| verifier | 22 | 20 |
+| deterministic SRS setup | 7,745 | 3,758 |
+| key/profile | 394 | 360 |
+| wrapper preparation | 642 | 601 |
+| R adaptation | 2,835 | 2,394 |
+| T2 adaptation | 1,360 | 1,425 |
+| offline key commitments | 1,204 | 773 |
+| phase 1a commitments | 1,539 | 993 |
+| T2 phase 1b commitments | 1,160 | 1,056 |
+| T2 phase 2a commitments | 7,370 | 7,434 |
+| T2 phase 2b commitments | 119 | 79 |
+| R/Copy helpers | 3,148 | 2,895 |
+| T2 phase 2c + helpers | 404 | 438 |
+| proof stages/opening | 19,654 | 13,807 |
+| verifier | 21 | 21 |
 
-Start load averages: k=32 4.89 / 5.06 / 8.56; k=16 7.54 / 5.05 / 8.91. PERF-4 reduced
+Start load averages: k=32 25.09 / 26.25 / 16.57; k=16 13.30 / 22.67 / 15.88. PERF-4 reduced
 phase 2a from roughly 58 s to 7.3 s at k=32.
 
 ## Verifier cost
@@ -117,5 +117,5 @@ The real gate mutates every serialized field independently and requires rejectio
 - public-field mismatch and program/profile-digest mismatch.
 
 The 173-scalar contract test pins wire order and excludes internal `Chi(sigma)`, `S1Acc`, and
-`S2Acc`. Full crate gate: 68/68 passed, one ignored, nextest/wall **191.688/192.17 s**. All-target
-clippy with warnings denied passed.
+`S2Acc`. Full crate gate: 69/69 passed, nextest/wall **190.155/190.67 s**. All-target clippy with
+warnings denied passed.
