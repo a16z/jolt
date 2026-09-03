@@ -13,8 +13,8 @@ use jolt_poly::{BindingOrder, CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::stream::{
-    commit_packed, prove_stream, verify_stream, verify_stream_with_cost, Column, StageAEncoding,
-    TensorStreamStatement, TensorTerm,
+    commit_packed, prove_stream, verify_stream, verify_stream_with_cost, Column, PackedPolynomial,
+    StageAEncoding, TensorStreamStatement, TensorTerm,
 };
 
 struct RowRelation {
@@ -163,6 +163,12 @@ fn synthetic_stream_round_trip_and_tampers() {
     );
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
     let packed = commit_packed(&fixture, 8, &setup).expect("commit columns");
+    assert!(packed.polynomials[..5]
+        .iter()
+        .all(|polynomial| matches!(polynomial, PackedPolynomial::Bits(_))));
+    assert!(packed.polynomials[5..]
+        .iter()
+        .all(|polynomial| matches!(polynomial, PackedPolynomial::U16(_))));
     let relation_terms = terms();
     let mut row_relation = RowRelation::new(dense_columns(&fixture), relation_terms.clone());
     let row_input = row_relation.claim;

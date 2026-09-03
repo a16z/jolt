@@ -10,11 +10,11 @@ use jolt_sumcheck::prover::ProveRounds;
 use jolt_transcript::{AppendToTranscript, Keccak256Transcript, Transcript};
 
 use super::{
-    combine_evaluations, prove_kzg_batch_stage, prove_kzg_stage, prove_stage,
-    verify_kzg_batch_stage_observed, verify_kzg_stage_observed, verify_stage_with_observed,
-    AssemblyStatement, ColumnReduction, Commitment, PackedColumns, PackingLayout, ReductionClaim,
-    StageAEncoding, StageMember, StageMemberSpec, StageProof, StageResult, StreamError,
-    TensorStreamStatement, TensorTerm, VerifierCost, WrapperProof, STREAM_LABEL,
+    prove_kzg_batch_stage, prove_kzg_stage, prove_stage, verify_kzg_batch_stage_observed,
+    verify_kzg_stage_observed, verify_stage_with_observed, AssemblyStatement, ColumnReduction,
+    Commitment, PackedColumns, PackingLayout, ReductionClaim, StageAEncoding, StageMember,
+    StageMemberSpec, StageProof, StageResult, StreamError, TensorStreamStatement, TensorTerm,
+    VerifierCost, WrapperProof, STREAM_LABEL,
 };
 
 struct CountingKeccakTranscript {
@@ -448,7 +448,7 @@ fn prove_direct_opening(
     transcript: &mut Keccak256Transcript<Fr>,
 ) -> Result<WrapperProof, StreamError> {
     transcript.append(&claim.value);
-    let combined_evaluations = combine_evaluations(&packed.evaluations, &claim.polynomial_weights);
+    let combined_evaluations = packed.rlc_evaluations(&claim.polynomial_weights)?;
     if combined_evaluations.as_slice().evaluate(&claim.point) != claim.value {
         return Err(StreamError::OpeningClaim);
     }

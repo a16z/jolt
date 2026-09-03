@@ -287,23 +287,17 @@ impl SparkProverKey {
             .zip(&witness_packed.commitments)
             .map(|(fixed, witness)| <Commitment as HomomorphicCommitment<Fr>>::add(fixed, witness))
             .collect();
-        let evaluations = self
+        let polynomials = self
             .fixed
-            .evaluations
+            .polynomials
             .iter()
-            .zip(&witness_packed.evaluations)
-            .map(|(fixed, witness)| {
-                fixed
-                    .iter()
-                    .zip(witness)
-                    .map(|(&fixed, &witness)| fixed + witness)
-                    .collect()
-            })
-            .collect();
+            .zip(&witness_packed.polynomials)
+            .map(|(fixed, witness)| fixed.add(witness))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok((
             PackedColumns {
                 layout: self.fixed.layout,
-                evaluations,
+                polynomials,
                 commitments,
             },
             witness_packed.commitments,

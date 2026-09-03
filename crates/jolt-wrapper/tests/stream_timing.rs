@@ -16,7 +16,7 @@ use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::stream::{
-    commit_packed, prove_stream, verify_stream_with_cost, Column, StageAEncoding,
+    commit_packed, prove_stream, verify_stream_with_cost, Column, PackedPolynomial, StageAEncoding,
     TensorStreamStatement, TensorTerm, VerifierCost, WrapperProof,
 };
 use rayon::prelude::*;
@@ -221,6 +221,83 @@ fn n3_g_shape_timing() {
         .expect("write timing line");
     }
     std::fs::write("/tmp/w4s-stream-timing.txt", results).expect("write timing result");
+}
+
+#[test]
+#[ignore = "2^21 typed packed-column timing"]
+fn typed_column_timing() {
+    let rows = 1 << 18;
+    let k = 8;
+    let mut columns: Vec<Column> = (0..163)
+        .into_par_iter()
+        .map(|column| {
+            Column::Bits(
+                (0..rows)
+                    .map(|row| (mix(row as u64 ^ ((column as u64) << 32)) & 1) as u8)
+                    .collect(),
+            )
+        })
+        .collect();
+    let chunk_columns: Vec<Column> = (0..54)
+        .into_par_iter()
+        .map(|column| {
+            Column::U16(
+                (0..rows)
+                    .map(|row| mix(row as u64 ^ ((column as u64) << 32)) as u16)
+                    .collect(),
+            )
+        })
+        .collect();
+    columns.extend(chunk_columns);
+    let field_columns: Vec<Column> = (0..20)
+        .into_par_iter()
+        .map(|column| {
+            Column::Fr(
+                (0..rows)
+                    .map(|row| Fr::from_u64(mix(row as u64 ^ ((column as u64) << 32))))
+                    .collect(),
+            )
+        })
+        .collect();
+    columns.extend(field_columns);
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(23),
+        rows * k,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    let packed = commit_packed(&columns, k, &setup).expect("commit columns");
+    let point = vec![Fr::from_u64(3); rows.trailing_zeros() as usize];
+    let eval_start = Instant::now();
+    let evaluations = packed
+        .column_evaluations(&point)
+        .expect("column evaluations");
+    let eval_seconds = eval_start.elapsed().as_secs_f64();
+    let weights = (0..packed.layout.group_count)
+        .map(|index| Fr::from_u64(index as u64 + 1))
+        .collect::<Vec<_>>();
+    let rlc_start = Instant::now();
+    let rlc = packed.rlc_evaluations(&weights).expect("RLC evaluations");
+    let rlc_seconds = rlc_start.elapsed().as_secs_f64();
+    let storage_bytes = packed
+        .polynomials
+        .iter()
+        .map(|polynomial| match polynomial {
+            PackedPolynomial::Bits(values) => values.len(),
+            PackedPolynomial::U16(values) => 2 * values.len(),
+            PackedPolynomial::Fr(values) => 32 * values.len(),
+        })
+        .sum::<usize>();
+    assert_eq!(evaluations.len(), packed.layout.padded_column_count);
+    assert_eq!(rlc.len(), rows * k);
+    std::fs::write(
+        "/tmp/w4s-typed-columns.txt",
+        format!(
+            "rows={rows} k={k} groups={} storage={storage_bytes}B column_evaluations={eval_seconds:.6}s rlc={rlc_seconds:.6}s\n",
+            packed.layout.group_count,
+        ),
+    )
+    .expect("write timing result");
 }
 
 fn mix(mut value: u64) -> u64 {

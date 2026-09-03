@@ -179,9 +179,48 @@ impl PackingLayout {
 }
 
 #[derive(Clone, Debug)]
+pub enum PackedPolynomial {
+    Bits(Vec<u8>),
+    U16(Vec<u16>),
+    Fr(Vec<Fr>),
+}
+
+impl PackedPolynomial {
+    fn len(&self) -> usize {
+        match self {
+            Self::Bits(values) => values.len(),
+            Self::U16(values) => values.len(),
+            Self::Fr(values) => values.len(),
+        }
+    }
+
+    pub(crate) fn add(&self, other: &Self) -> Result<Self, StreamError> {
+        let len = self.len();
+        if other.len() != len {
+            return Err(StreamError::RowCount {
+                column: 0,
+                expected: len,
+                actual: other.len(),
+            });
+        }
+        let value = |polynomial: &Self, index| match polynomial {
+            Self::Bits(values) => Fr::from_u64(u64::from(values[index])),
+            Self::U16(values) => Fr::from_u64(u64::from(values[index])),
+            Self::Fr(values) => values[index],
+        };
+        Ok(Self::Fr(
+            (0..len)
+                .into_par_iter()
+                .map(|index| value(self, index) + value(other, index))
+                .collect(),
+        ))
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct PackedColumns {
     pub layout: PackingLayout,
-    pub evaluations: Vec<Vec<Fr>>,
+    pub polynomials: Vec<PackedPolynomial>,
     pub commitments: Vec<Commitment>,
 }
 
@@ -196,16 +235,42 @@ impl PackedColumns {
         }
         let row_weights = EqPolynomial::<Fr>::evals(row_point, None);
         let bound_groups: Vec<Vec<Fr>> = self
-            .evaluations
+            .polynomials
             .par_iter()
-            .map(|evaluations| {
+            .map(|polynomial| {
                 let mut values = vec![Fr::zero(); self.layout.k];
-                for (&row_weight, row) in row_weights
-                    .iter()
-                    .zip(evaluations.chunks_exact(self.layout.k))
-                {
-                    for (value, &entry) in values.iter_mut().zip(row) {
-                        *value += row_weight * entry;
+                match polynomial {
+                    PackedPolynomial::Bits(evaluations) => {
+                        for (&row_weight, row) in row_weights
+                            .iter()
+                            .zip(evaluations.chunks_exact(self.layout.k))
+                        {
+                            for (value, &entry) in values.iter_mut().zip(row) {
+                                if entry == 1 {
+                                    *value += row_weight;
+                                }
+                            }
+                        }
+                    }
+                    PackedPolynomial::U16(evaluations) => {
+                        for (&row_weight, row) in row_weights
+                            .iter()
+                            .zip(evaluations.chunks_exact(self.layout.k))
+                        {
+                            for (value, &entry) in values.iter_mut().zip(row) {
+                                *value += row_weight * Fr::from_u64(u64::from(entry));
+                            }
+                        }
+                    }
+                    PackedPolynomial::Fr(evaluations) => {
+                        for (&row_weight, row) in row_weights
+                            .iter()
+                            .zip(evaluations.chunks_exact(self.layout.k))
+                        {
+                            for (value, &entry) in values.iter_mut().zip(row) {
+                                *value += row_weight * entry;
+                            }
+                        }
                     }
                 }
                 values
@@ -216,6 +281,34 @@ impl PackedColumns {
             .collect();
         values.resize(self.layout.padded_column_count, Fr::zero());
         Ok(values)
+    }
+
+    pub fn rlc_evaluations(&self, weights: &[Fr]) -> Result<Vec<Fr>, StreamError> {
+        if weights.len() != self.polynomials.len() {
+            return Err(StreamError::OpeningClaim);
+        }
+        Ok((0..self.polynomials[0].len())
+            .into_par_iter()
+            .map(|index| {
+                self.polynomials
+                    .iter()
+                    .zip(weights)
+                    .map(|(polynomial, &weight)| match polynomial {
+                        PackedPolynomial::Bits(values) => {
+                            if values[index] == 1 {
+                                weight
+                            } else {
+                                Fr::zero()
+                            }
+                        }
+                        PackedPolynomial::U16(values) => {
+                            weight * Fr::from_u64(u64::from(values[index]))
+                        }
+                        PackedPolynomial::Fr(values) => values[index] * weight,
+                    })
+                    .sum()
+            })
+            .collect())
     }
 }
 
@@ -254,45 +347,61 @@ pub fn commit_packed(
         });
     }
     let groups = layout.group_count;
-    let evaluations: Vec<Vec<Fr>> = (0..groups)
+    let polynomials: Vec<PackedPolynomial> = (0..groups)
         .into_par_iter()
         .map(|group| {
-            let mut packed = vec![Fr::zero(); packed_len];
-            for row in 0..rows {
-                for slot in 0..k {
-                    if let Some(column) = columns.get(group * k + slot) {
-                        packed[row * k + slot] = column.value(row);
+            let mut group_columns = columns.iter().skip(group * k).take(k);
+            if group_columns
+                .clone()
+                .all(|column| matches!(column, Column::Bits(_)))
+            {
+                let mut packed = vec![0; packed_len];
+                for row in 0..rows {
+                    for slot in 0..k {
+                        if let Some(Column::Bits(column)) = columns.get(group * k + slot) {
+                            packed[row * k + slot] = column[row];
+                        }
                     }
                 }
+                PackedPolynomial::Bits(packed)
+            } else if group_columns.all(|column| matches!(column, Column::U16(_))) {
+                let mut packed = vec![0; packed_len];
+                for row in 0..rows {
+                    for slot in 0..k {
+                        if let Some(Column::U16(column)) = columns.get(group * k + slot) {
+                            packed[row * k + slot] = column[row];
+                        }
+                    }
+                }
+                PackedPolynomial::U16(packed)
+            } else {
+                let mut packed = vec![Fr::zero(); packed_len];
+                for row in 0..rows {
+                    for slot in 0..k {
+                        if let Some(column) = columns.get(group * k + slot) {
+                            packed[row * k + slot] = column.value(row);
+                        }
+                    }
+                }
+                PackedPolynomial::Fr(packed)
             }
-            packed
         })
         .collect();
 
-    let bit_groups: Vec<usize> = (0..groups)
-        .filter(|&group| {
-            columns
-                .iter()
-                .skip(group * k)
-                .take(k)
-                .all(|column| matches!(column, Column::Bits(_)))
+    let bit_groups: Vec<usize> = polynomials
+        .iter()
+        .enumerate()
+        .filter_map(|(group, polynomial)| {
+            matches!(polynomial, PackedPolynomial::Bits(_)).then_some(group)
         })
         .collect();
-    let packed_bits: Vec<Vec<u8>> = bit_groups
-        .par_iter()
-        .map(|&group| {
-            let mut packed = vec![0; packed_len];
-            for row in 0..rows {
-                for slot in 0..k {
-                    if let Some(Column::Bits(column)) = columns.get(group * k + slot) {
-                        packed[row * k + slot] = column[row];
-                    }
-                }
-            }
-            packed
+    let bit_refs: Vec<&[u8]> = polynomials
+        .iter()
+        .filter_map(|polynomial| match polynomial {
+            PackedPolynomial::Bits(values) => Some(values.as_slice()),
+            PackedPolynomial::U16(_) | PackedPolynomial::Fr(_) => None,
         })
         .collect();
-    let bit_refs: Vec<&[u8]> = packed_bits.iter().map(Vec::as_slice).collect();
     let mut indexed_commitments: Vec<(usize, Commitment)> = bit_groups
         .into_iter()
         .zip(
@@ -302,38 +411,19 @@ pub fn commit_packed(
         )
         .collect();
     let mut other_commitments = (0..groups)
-        .filter(|&group| {
-            !columns
-                .iter()
-                .skip(group * k)
-                .take(k)
-                .all(|column| matches!(column, Column::Bits(_)))
-        })
+        .filter(|&group| !matches!(polynomials[group], PackedPolynomial::Bits(_)))
         .collect::<Vec<_>>()
         .into_par_iter()
         .map(|group| {
-            let all_u16 = columns
-                .iter()
-                .skip(group * k)
-                .take(k)
-                .all(|column| matches!(column, Column::U16(_)));
-            let commitment = if all_u16 {
-                let mut packed = vec![0u16; packed_len];
-                for row in 0..rows {
-                    for slot in 0..k {
-                        if let Some(Column::U16(column)) = columns.get(group * k + slot) {
-                            packed[row * k + slot] = column[row];
-                        }
-                    }
-                }
-                Commitment::new(Bn254::g1_affine_msm_small(
+            let commitment = match &polynomials[group] {
+                PackedPolynomial::U16(values) => Commitment::new(Bn254::g1_affine_msm_small(
                     &setup.g1_powers()[..packed_len],
-                    &packed,
-                ))
-            } else {
-                HyperKZGScheme::<Bn254>::commit(evaluations[group].as_slice(), setup)
+                    values,
+                )),
+                PackedPolynomial::Fr(values) => HyperKZGScheme::<Bn254>::commit(values, setup)
                     .map(|(commitment, ())| commitment)
-                    .map_err(StreamError::Commitment)?
+                    .map_err(StreamError::Commitment)?,
+                PackedPolynomial::Bits(_) => return Err(StreamError::StageCount),
             };
             Ok((group, commitment))
         })
@@ -347,7 +437,7 @@ pub fn commit_packed(
 
     Ok(PackedColumns {
         layout,
-        evaluations,
+        polynomials,
         commitments,
     })
 }
@@ -1184,19 +1274,6 @@ impl ProveRounds<Fr> for ColumnReduction {
         self.eq.bind_with_order(bind, BindingOrder::HighToLow);
         Ok(())
     }
-}
-
-pub(super) fn combine_evaluations(polynomials: &[Vec<Fr>], weights: &[Fr]) -> Vec<Fr> {
-    (0..polynomials[0].len())
-        .into_par_iter()
-        .map(|index| {
-            polynomials
-                .iter()
-                .zip(weights)
-                .map(|(polynomial, &weight)| polynomial[index] * weight)
-                .sum()
-        })
-        .collect()
 }
 
 fn boolean_point(index: usize, variables: usize) -> Vec<Fr> {
