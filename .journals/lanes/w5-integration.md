@@ -477,3 +477,15 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
   so those two assembly steps remain in test support. T1's published k=32 layout keeps its u32
   words separate and sends 11 groups; mixing its final bit/u32 group would save one commitment but
   would fork the T1-owned ID/key geometry.
+
+## k=32 default and statement-cost correction (03:40)
+
+- `WrapConfig::default()` and the real gate now select k=32; `WRAP_K=16` keeps the comparison.
+- `WrapVerifierKey::statement` calls T1's observed `StreamTermExporter::input_claims`, adding the
+  missing 705 T1 statement multiplications. The transcript-derived `rho^172` scalar-link input is
+  observed too. Corrected real-gate counts: k=32 **28,516 Fr mul / 2,483,013 gas**; k=16
+  **28,536 Fr mul / 2,588,077 gas**. Proof bytes and group counts are unchanged.
+- Permanent scalar-name assertion: T2 consumes 172 names, every one maps to an R link; the exact
+  three R-only names are `Chi(sigma)`, `S1Acc`, `S2Acc`. Any consumed-set change fails the test.
+- Draft-PR measurement tables: `.journals/pr-tables.md` (real gate at `8133720a3`; observed T1
+  owner from `763b3cb9c`).
