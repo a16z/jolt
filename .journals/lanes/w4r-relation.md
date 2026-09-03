@@ -53,6 +53,11 @@ Date: 2026-09-02. Branch: `wrap/spartan-hyperkzg`. Lane: W4-R (relation + profil
 
 Per stage: 1: 268 · 2: 365 · 3: 342 · 4: 212 · 5: 1,790 · 6a: 229 · 6b: 974 · 7: 795 · 8: 278.
 
+Fibonacci 2^20 (L = 20, σ = 12; proof generated in 12.6 s / 1.48 GiB RSS on the mini, cached):
+**5,454** constraints, 7,031 variables, 45 public — per stage 278 · 383 · 376 · 230 · 1,834 · 229 ·
+1,038 · 795 · 291; `build_relation` 9 ms, `generate_witness` 181 ms. Growth per unit of `log_t` is
+≈ 100 rows (the `L`-round batches at degrees 3/3/3/10/5 plus the `L`-coordinate eq gadgets).
+
 The plan's ≈9.7k estimate assumed the expanded 1,296-term Spartan-outer form and per-term products;
 the factored `TauKernel·Az·Bz` form (19 row-weight wires, constant matrix entries), constant folding
 in `Ctx::mul`, and sorted-prefix memoization in the expression lowering bring stages 1–7 to 4,975.
@@ -114,7 +119,7 @@ cargo clippy -p jolt-wrapper --all-targets --features prover-fixtures -q --messa
 ```
 
 `relation_fixture`: real proof → build, witness, `check_witness`; pinned total and per-stage row
-counts; outsourced inputs recomputed from public outputs; tampers: a stage-1 round coefficient fails
+counts (2^18 and, ignored by default, 2^20); outsourced inputs recomputed from public outputs; tampers: a stage-1 round coefficient fails
 at `stage1/remainder` row 38, `ValIo` at `stage2/expected` row 626, Dory γ at `stage8/dory` row 5082.
 Per-derived-id parity is covered by the gadget unit tests (one per formula family) plus the real-proof
 satisfaction, which exercises every derived id's gadget against the prover's actual claims.
