@@ -49,10 +49,10 @@ use jolt_wrapper::stream::{
     VerifierCost, WrapperProof,
 };
 use jolt_wrapper::wrap::{
-    verify_wrapped_with_key, wrap as wrap_proof, CopyExporterPlan, DoryLinkPlacement,
-    DoryLinkedProver, LimbExporterPlan, PublicCopyPlan, RelationExporterPlan, ScalarExporterPlan,
-    T1Placement, WrapAssemblyPlan, WrapCommitments, WrapConfig, WrapError, WrapHashKey,
-    WrapLimbKey, WrapPreparation, WrapVerifierKey,
+    hash_public_statement, verify_wrapped_with_key, wrap as wrap_proof, CopyExporterPlan,
+    DoryLinkPlacement, DoryLinkedProver, LimbExporterPlan, PublicCopyPlan, RelationExporterPlan,
+    ScalarExporterPlan, T1Placement, WrapAssemblyPlan, WrapCommitments, WrapConfig, WrapError,
+    WrapHashKey, WrapLimbKey, WrapPreparation, WrapVerifierKey,
 };
 
 #[path = "wrap_real_t1_r/t2.rs"]
@@ -66,7 +66,6 @@ const FIXTURE: &str = "/Volumes/Dev/scratch/wrapper-fixtures/fibonacci_2_18_blak
 const LOG_ROWS: usize = 18;
 const ROWS: usize = 1 << LOG_ROWS;
 #[test]
-#[ignore = "manual real fibonacci 2^18 wrapper gate"]
 fn real_t1_relation_table_round_trip_and_tampers() {
     let k = std::env::var("WRAP_K")
         .map_or(Ok(32), |value| value.parse())
@@ -228,7 +227,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         .map(|phase| phase.group_count)
         .sum::<usize>();
     let mut public_inputs = preparation.public_known.clone();
-    public_inputs.extend(preparation.hash_public.field_elements());
+    public_inputs.extend(hash_public_statement(&preparation.hash_public));
     let member_degrees = std::iter::once(3)
         .chain(std::iter::once(3))
         .chain(std::iter::once(5))
@@ -525,7 +524,8 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         Some(link_placement),
         assembly_plan.clone(),
         pinned_commitments.clone(),
-    );
+    )
+    .expect("wrapper verifier key");
     let wrong_verifier_key = WrapVerifierKey::new(
         statement.clone(),
         wrong_hash_key,
@@ -534,7 +534,8 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         Some(link_placement),
         assembly_plan.clone(),
         wrong_pins,
-    );
+    )
+    .expect("wrong-pin wrapper key");
     let mut public_statement = statement.clone();
     public_statement.public_inputs[0] += Fr::one();
     let public_verifier_key = WrapVerifierKey::new(
@@ -548,7 +549,8 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         Some(link_placement),
         assembly_plan.clone(),
         pinned_commitments.clone(),
-    );
+    )
+    .expect("public-mismatch wrapper key");
     let mut program_statement = statement.clone();
     program_statement.key_digest[0] ^= 1;
     let program_verifier_key = WrapVerifierKey::new(
@@ -563,6 +565,10 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         assembly_plan,
         pinned_commitments.clone(),
     );
+    assert!(matches!(
+        program_verifier_key,
+        Err(WrapError::StatementMismatch)
+    ));
     assert_eq!(verifier_key.hash_links(), &links);
     assert_eq!(verifier_key.hash_schedule(), &preparation.hash_key);
     let key_commit_ms = fixed_key_commit_ms + key_commit_started.elapsed().as_millis();
@@ -726,7 +732,6 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     );
     assert!(verify_wrapped_with_key(&wrong_verifier_key, &wrapped, &verifier_setup).is_err());
     assert!(verify_wrapped_with_key(&public_verifier_key, &wrapped, &verifier_setup).is_err());
-    assert!(verify_wrapped_with_key(&program_verifier_key, &wrapped, &verifier_setup).is_err());
     assert_t2_row_tamper_rejected(
         &t2_witness,
         T2Col::FLAG,
@@ -748,6 +753,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         wire_phase_groups,
         term_count,
         cost,
+        statement.public_inputs.len(),
         &[
             ("setup", setup_ms),
             ("key_profile", key_profile_ms),
@@ -1597,6 +1603,7 @@ fn report(
     wire_phase_groups: [usize; 5],
     term_count: usize,
     cost: VerifierCost,
+    statement_fields: usize,
     times: &[(&str, u128)],
     uptime: &[u8],
 ) {
@@ -1629,7 +1636,7 @@ fn report(
         .join(" ");
     println!("phases_ms {phases}");
     println!(
-        "bytes phase1a={} phase1b={} phase2a={} phase2b={} phase2c={} stage_a={stage_a} term={term_stage} shared_bdfg={shared} ell={ell} stage_b={stage_b} reduced={reduced} hyperkzg={opening} io_challenges=0 proof={} bincode={} public_known={}",
+        "bytes phase1a={} phase1b={} phase2a={} phase2b={} phase2c={} stage_a={stage_a} term={term_stage} shared_bdfg={shared} ell={ell} stage_b={stage_b} reduced={reduced} hyperkzg={opening} proof={} bincode={} statement={}",
         commitment_bytes[0],
         commitment_bytes[1],
         commitment_bytes[2],
@@ -1637,7 +1644,7 @@ fn report(
         commitment_bytes[4],
         proof.payload_bytes(),
         proof.bincode_bytes(),
-        32 * 7,
+        32 * statement_fields,
     );
     println!(
         "terms={term_count} term_rounds={}",

@@ -256,19 +256,6 @@ impl TermReduction {
     }
 }
 
-pub fn coefficient_evaluation(terms: &[Term], point: &[Fr]) -> Result<Fr, StreamError> {
-    coefficient_evaluation_observed(terms, point, &mut NoopVerifierObserver)
-}
-
-pub fn coefficient_evaluation_observed<O: VerifierObserver>(
-    terms: &[Term],
-    point: &[Fr],
-    observer: &mut O,
-) -> Result<Fr, StreamError> {
-    let weights = eq_evaluations_observed(point, observer);
-    coefficient_evaluation_with_weights_observed(terms, &weights, observer)
-}
-
 pub(crate) fn coefficient_evaluation_with_weights_observed<O: VerifierObserver>(
     terms: &[Term],
     weights: &[Fr],

@@ -4,6 +4,8 @@
 //! (`x_i·y_i`, the equality prefix, the shift recurrence, …) are built once
 //! per point and reused across tables.
 
+use std::ops::Range;
+
 use jolt_field::{Fr, One, Ring};
 use jolt_lookup_tables::LookupTableKind;
 
@@ -128,7 +130,7 @@ impl<'a> TablePoint<'a> {
     }
 
     /// `acc ← acc·(1+y_i) + x_i·y_i` over `range` (the SRL/PEXT recurrence).
-    fn shift_recurrence(&self, ctx: &mut Ctx, range: std::ops::Range<usize>) -> Lc {
+    fn shift_recurrence(&self, ctx: &mut Ctx, range: Range<usize>) -> Lc {
         let mut acc = Lc::zero();
         for i in range {
             let scaled = ctx.mul(&acc, self.y(i));
@@ -175,7 +177,7 @@ impl<'a> TablePoint<'a> {
 
     /// Rotate-right variants: `first_sum` is the shift recurrence, `second_sum`
     /// re-inserts the shifted-out bits at the top.
-    fn rotr(&self, ctx: &mut Ctx, range: std::ops::Range<usize>, first_sum: &Lc) -> Lc {
+    fn rotr(&self, ctx: &mut Ctx, range: Range<usize>, first_sum: &Lc) -> Lc {
         let mut prod_one_plus_y = Lc::one();
         let mut second = Accum::default();
         for i in range {
@@ -187,12 +189,7 @@ impl<'a> TablePoint<'a> {
     }
 
     /// `lane · Π_{i ∈ steps} (1 + (2^(EIGHTH·2^i) − 1) · bit_i)`.
-    fn window(
-        ctx: &mut Ctx,
-        lane: Lc,
-        steps: std::ops::Range<usize>,
-        bit: impl Fn(usize) -> Lc,
-    ) -> Lc {
+    fn window(ctx: &mut Ctx, lane: Lc, steps: Range<usize>, bit: impl Fn(usize) -> Lc) -> Lc {
         let mut acc = lane;
         for i in steps {
             let factor = Lc::one() + bit(i).scale(mask(EIGHTH << i));
@@ -201,7 +198,7 @@ impl<'a> TablePoint<'a> {
         acc
     }
 
-    fn shift_data(&self, ctx: &mut Ctx, lane_bits: usize, steps: std::ops::Range<usize>) -> Lc {
+    fn shift_data(&self, ctx: &mut Ctx, lane_bits: usize, steps: Range<usize>) -> Lc {
         let lane = weighted((0..lane_bits).map(|k| (self.x(XLEN - 1 - k).clone(), pow2(k))));
         Self::window(ctx, lane, steps, |i| self.y(XLEN - 1 - i).clone())
     }

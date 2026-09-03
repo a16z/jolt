@@ -16,10 +16,11 @@ use ark_bn254::{Bn254, Fq12, Fr as ArkFrInner};
 use ark_ec::pairing::{Pairing, PairingOutput};
 use ark_ff::PrimeField;
 use common::jolt_device::JoltDevice;
-use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, ArkGT};
+use dory::backends::arkworks::{ArkDoryProof, ArkFr, ArkG1, ArkG2, ArkGT, BN254};
 use dory::primitives::arithmetic::{Field, Group};
+use dory::setup::VerifierSetup;
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_polynomial_order;
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::{CanonicalBytes, Fr};
@@ -91,8 +92,8 @@ fn gt_sum(terms: impl IntoIterator<Item = (ArkFr, ArkGT)>) -> ArkGT {
 /// coordinate `k` to its setup entry.
 fn deferred_rhs(
     scalars: &Scalars,
-    proof: &dory::backends::arkworks::ArkDoryProof,
-    setup: &dory::setup::VerifierSetup<dory::backends::arkworks::BN254>,
+    proof: &ArkDoryProof,
+    setup: &VerifierSetup<BN254>,
     commitments: &[ArkGT],
     delta_index: impl Fn(usize) -> usize,
 ) -> ArkGT {
@@ -137,11 +138,7 @@ fn deferred_rhs(
 
 /// The four-pairing left-hand side with every group scalar taken from the
 /// named links.
-fn pairing_lhs(
-    scalars: &Scalars,
-    proof: &dory::backends::arkworks::ArkDoryProof,
-    setup: &dory::setup::VerifierSetup<dory::backends::arkworks::BN254>,
-) -> ArkGT {
+fn pairing_lhs(scalars: &Scalars, proof: &ArkDoryProof, setup: &VerifierSetup<BN254>) -> ArkGT {
     let sigma = proof.sigma;
     let mut e1_acc = proof.vmv_message.e1;
     let mut e2_acc = setup.g2_0.scale(&scalars.get(DoryScalar::Evaluation));
@@ -198,7 +195,7 @@ fn named_dory_scalars_satisfy_the_native_deferred_check() {
         profile.log_t,
         profile.bytecode_len(),
         profile.ram_k(),
-        jolt_claims::protocols::jolt::JoltRelationId::InstructionReadRaf,
+        JoltRelationId::InstructionReadRaf,
     )
     .expect("formula dimensions");
     let commitments: Vec<ArkGT> =

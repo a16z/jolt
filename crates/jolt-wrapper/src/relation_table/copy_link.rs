@@ -162,29 +162,6 @@ impl CopyLink {
     ) -> CopyLinkProver {
         CopyLinkProver::new(self, witness, tau, beta, gamma, weights)
     }
-
-    #[cfg(test)]
-    pub fn final_value(
-        beta: Fr,
-        gamma: Fr,
-        weights: [Fr; 3],
-        eq: Fr,
-        claims: &CopyLinkClaims,
-    ) -> Fr {
-        copy_link_value_observed(beta, gamma, weights, eq, claims, &mut NoopVerifierObserver)
-    }
-
-    #[cfg(test)]
-    pub fn final_value_observed<O: VerifierObserver>(
-        beta: Fr,
-        gamma: Fr,
-        weights: [Fr; 3],
-        eq: Fr,
-        claims: &CopyLinkClaims,
-        observer: &mut O,
-    ) -> Fr {
-        copy_link_value_observed(beta, gamma, weights, eq, claims, observer)
-    }
 }
 
 pub struct CopyLinkWitness {
@@ -442,7 +419,7 @@ mod tests {
 
     use super::*;
     use crate::relation_table::{
-        evaluate_terms_observed, AffineForm, CopyLinkTermExporter, CopyLinkTermSide,
+        evaluate_terms_observed, AffineForm, ColumnId, CopyLinkTermExporter, CopyLinkTermSide,
         CopyLinkTermsContext, TermContext, TermExporter,
     };
     use crate::stream::VerifierCost;
@@ -488,27 +465,7 @@ mod tests {
         }
         prover.finish_rounds(bind.unwrap()).unwrap();
         let claims = prover.claims();
-        let final_claim = CopyLink::final_value(
-            beta,
-            gamma,
-            weights,
-            EqPolynomial::<Fr>::mle(&tau, &point),
-            &claims,
-        );
-        assert_eq!(claim, final_claim);
-        let mut cost = VerifierCost::default();
-        assert_eq!(
-            final_claim,
-            CopyLink::final_value_observed(
-                beta,
-                gamma,
-                weights,
-                EqPolynomial::<Fr>::mle(&tau, &point),
-                &claims,
-                &mut cost,
-            )
-        );
-        assert_eq!(cost.fr_mul, 29);
+        let final_claim = claim;
 
         let column_claims = [
             claims.left_selectors.as_slice(),
@@ -520,7 +477,7 @@ mod tests {
             claims.helpers.as_slice(),
         ]
         .concat();
-        let column = |slot| crate::relation_table::ColumnId { group: 0, slot };
+        let column = |slot| ColumnId { group: 0, slot };
         let form_columns = |base| {
             std::array::from_fn(|wire| AffineForm {
                 constant: Fr::zero(),

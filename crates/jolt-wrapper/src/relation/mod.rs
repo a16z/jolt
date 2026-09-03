@@ -14,7 +14,6 @@ mod ctx;
 mod dory;
 mod gadgets;
 mod lower;
-mod native;
 mod public_io;
 mod replay;
 mod stage1;
@@ -39,7 +38,6 @@ use jolt_verifier::{JoltProof, JoltVerifierPreprocessing, VerifierError};
 use thiserror::Error;
 
 pub use dory::{DoryLinks, DoryScalar};
-pub use native::NativeParity;
 pub use public_io::{outsourced_inputs, OutsourcedInputs, PublicOutputs, StageValueInputs};
 pub use replay::SqueezeKind;
 
@@ -148,8 +146,6 @@ pub struct Witness {
     /// Transcript state after the natively absorbed preamble and commitments.
     pub state_in: [u8; 32],
     pub outsourced: OutsourcedInputs,
-    /// Coverage of the native parity guard that ran while assigning.
-    pub native_parity: NativeParity,
 }
 
 /// The native data the assign-mode walk evaluates the outsourced public
@@ -180,18 +176,13 @@ pub fn generate_witness(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<Witness, RelationError> {
-    let Replay {
-        events,
-        state_in,
-        native: replay,
-    } = replay::replay(preprocessing, public_io, proof)?;
+    let Replay { events, state_in } = replay::replay(preprocessing, public_io, proof)?;
     let mut ctx = Ctx::new(Some(events));
     let native = Native {
         preprocessing,
         public_io,
     };
-    let Walked { public, wires, .. } = walk(&mut ctx, profile, Some(&native))?;
-    let native_parity = native::check(&ctx, &wires, preprocessing, proof, &replay)?;
+    let Walked { public, .. } = walk(&mut ctx, profile, Some(&native))?;
     let (_, values, _, _) = ctx.finish();
     let values = values
         .into_iter()
@@ -208,7 +199,6 @@ pub fn generate_witness(
         values,
         state_in,
         outsourced,
-        native_parity,
     })
 }
 
@@ -218,7 +208,6 @@ pub fn generate_witness(
 struct Walked {
     public: PublicLayout,
     dory: DoryLinks,
-    wires: Wires,
 }
 
 fn walk(
@@ -244,6 +233,5 @@ fn walk(
     Ok(Walked {
         public: public.finish(),
         dory,
-        wires,
     })
 }

@@ -6,13 +6,10 @@
 //! sumcheck stream and one HyperKZG opening. Layer 2 (Groth16) is out of this
 //! crate.
 
-pub mod carry;
 pub mod hash_table;
 pub mod limb_table;
 pub mod profile;
 pub mod relation;
 pub mod relation_table;
-pub mod spark;
-pub mod spartan;
 pub mod stream;
 pub mod wrap;

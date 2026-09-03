@@ -1,7 +1,6 @@
 //! Plonkish row-table lowering of the verifier-algebra R1CS.
 
 mod copy_link;
-mod protocol;
 mod prover;
 mod scalar_link;
 mod terms;
@@ -22,9 +21,6 @@ use crate::stream::{Column, StreamError};
 
 pub use crate::stream::{AffineForm, ColumnId, Term, TermContext, TermExporter};
 pub use copy_link::{CopyLink, CopyLinkClaims, CopyLinkProver, CopyLinkSide, CopyLinkWitness};
-pub use protocol::{
-    prove, setup, verify, RelationTableProof, RelationTableProverKey, RelationTableVerifierKey,
-};
 pub use prover::RelationTableProver;
 pub use scalar_link::{DoryScalarLink, DoryScalarLinkProver};
 pub use terms::{
@@ -377,36 +373,8 @@ impl RelationTable {
         self.cell_layout
     }
 
-    pub fn fixed_column_count(&self) -> usize {
-        FIXED_COLUMNS
-    }
-
-    pub fn witness_column_count(&self) -> usize {
-        WITNESS_COLUMNS
-    }
-
     pub fn fixed_columns(&self) -> Vec<Column> {
         self.fixed.iter().cloned().map(Column::Fr).collect()
-    }
-
-    fn masked_columns(&self, witness: &RelationTableWitness, part: WitnessPart) -> Vec<Column> {
-        let mut columns: Vec<Column> = (0..TOTAL_COLUMNS)
-            .map(|_| Column::Fr(vec![Fr::zero(); self.rows]))
-            .collect();
-        let range = match part {
-            WitnessPart::Wires => 0..WIRES,
-            WitnessPart::Helpers => WIRES..WITNESS_COLUMNS,
-        };
-        for index in range {
-            columns[FIXED_COLUMNS + index] = Column::Fr(witness.columns[index].clone());
-        }
-        columns
-    }
-
-    fn fixed_masked_columns(&self) -> Vec<Column> {
-        let mut columns = self.fixed_columns();
-        columns.extend((0..WITNESS_COLUMNS).map(|_| Column::Fr(vec![Fr::zero(); self.rows])));
-        columns
     }
 
     pub fn wire_witness(
@@ -522,90 +490,6 @@ impl RelationTable {
         }
         Ok(())
     }
-
-    #[cfg(test)]
-    pub fn final_value(
-        rows: usize,
-        tau: &[Fr],
-        beta: Fr,
-        gamma: Fr,
-        relation_weights: [Fr; 3],
-        point: &[Fr],
-        claims: &[Fr],
-    ) -> Result<Fr, RelationTableError> {
-        Self::final_value_observed(
-            rows,
-            tau,
-            beta,
-            gamma,
-            relation_weights,
-            point,
-            claims,
-            &mut NoopVerifierObserver,
-        )
-    }
-
-    #[cfg(test)]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "mirrors the transcript challenges and stage-B claim inputs"
-    )]
-    pub fn final_value_observed<O: VerifierObserver>(
-        rows: usize,
-        tau: &[Fr],
-        beta: Fr,
-        gamma: Fr,
-        relation_weights: [Fr; 3],
-        point: &[Fr],
-        claims: &[Fr],
-        observer: &mut O,
-    ) -> Result<Fr, RelationTableError> {
-        if claims.len() != TOTAL_COLUMNS || point.len() != rows.trailing_zeros() as usize {
-            return Err(RelationTableError::Claims);
-        }
-        let fixed: [Fr; FIXED_COLUMNS] = claims[..FIXED_COLUMNS]
-            .try_into()
-            .map_err(|_| RelationTableError::Claims)?;
-        let wires = [claims[WIRE_A], claims[WIRE_B], claims[WIRE_C]];
-        let identity = identity_mle_observed(point, observer);
-        let ids = std::array::from_fn(|wire| Fr::from_u64(wire as u64 * rows as u64) + identity);
-        let sigmas = [fixed[SIGMA_A], fixed[SIGMA_B], fixed[SIGMA_C]];
-        let eq = eq_mle_observed(tau, point, observer);
-        let selectors = fixed[..5]
-            .try_into()
-            .map_err(|_| RelationTableError::Claims)?;
-        let gate_value = gate_value_observed(selectors, wires, observer);
-        let gate = observer.fr_mul(eq, gate_value);
-        let id_relation = grouped_relation_observed(
-            wires,
-            ids,
-            fixed[ACTIVE],
-            claims[H_ID],
-            beta,
-            gamma,
-            observer,
-        );
-        let sigma_relation = grouped_relation_observed(
-            wires,
-            sigmas,
-            fixed[ACTIVE],
-            claims[H_SIGMA],
-            beta,
-            gamma,
-            observer,
-        );
-        let eq_id = observer.fr_mul(eq, id_relation);
-        let id_term = observer.fr_mul(relation_weights[0], eq_id);
-        let eq_sigma = observer.fr_mul(eq, sigma_relation);
-        let sigma_term = observer.fr_mul(relation_weights[1], eq_sigma);
-        let sum_term = observer.fr_mul(relation_weights[2], claims[H_ID] - claims[H_SIGMA]);
-        Ok(gate + id_term + sigma_term + sum_term)
-    }
-}
-
-enum WitnessPart {
-    Wires,
-    Helpers,
 }
 
 pub struct RelationTableWitness {
@@ -628,27 +512,6 @@ fn symbol_value(symbol: Symbol, assignment: &[Fr], nodes: &[Option<Fr>], num_var
 
 fn cell_id(rows: usize, wire: usize, row: usize) -> Fr {
     Fr::from_u64((wire * rows + row) as u64)
-}
-
-#[cfg(test)]
-fn identity_mle_observed<O: VerifierObserver>(point: &[Fr], observer: &mut O) -> Fr {
-    point
-        .iter()
-        .enumerate()
-        .fold(Fr::zero(), |sum, (index, &coordinate)| {
-            sum + observer.fr_mul(coordinate, Fr::from_u64(1 << (point.len() - index - 1)))
-        })
-}
-
-#[cfg(test)]
-fn eq_mle_observed<O: VerifierObserver>(left: &[Fr], right: &[Fr], observer: &mut O) -> Fr {
-    left.iter()
-        .zip(right)
-        .fold(Fr::one(), |value, (&left, &right)| {
-            let both = observer.fr_mul(left, right);
-            let neither = observer.fr_mul(Fr::one() - left, Fr::one() - right);
-            observer.fr_mul(value, both + neither)
-        })
 }
 
 fn gate_value(selectors: [Fr; 5], wires: [Fr; WIRES]) -> Fr {
@@ -704,40 +567,4 @@ fn grouped_relation_observed<O: VerifierObserver>(
         + observer.fr_mul(denominators[0], denominators[2])
         + observer.fr_mul(denominators[1], denominators[2]);
     observer.fr_mul(helper, product) - observer.fr_mul(active, elementary)
-}
-
-#[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail on invalid evaluator shapes")]
-mod cost_tests {
-    use jolt_field::{Fr, Ring};
-
-    use super::*;
-    use crate::stream::VerifierCost;
-
-    #[test]
-    fn final_evaluator_cost_is_row_count_independent() {
-        let rows = 1 << 18;
-        let tau = (0..18)
-            .map(|index| Fr::from_u64((index + 2) as u64))
-            .collect::<Vec<_>>();
-        let point = (0..18)
-            .map(|index| Fr::from_u64((index + 23) as u64))
-            .collect::<Vec<_>>();
-        let claims = (0..TOTAL_COLUMNS)
-            .map(|index| Fr::from_u64((index + 47) as u64))
-            .collect::<Vec<_>>();
-        let mut cost = VerifierCost::default();
-        let _ = RelationTable::final_value_observed(
-            rows,
-            &tau,
-            Fr::from_u64(67),
-            Fr::from_u64(71),
-            [Fr::from_u64(73), Fr::from_u64(79), Fr::from_u64(83)],
-            &point,
-            &claims,
-            &mut cost,
-        )
-        .expect("valid evaluator shape");
-        assert_eq!(cost.fr_mul, 103);
-    }
 }

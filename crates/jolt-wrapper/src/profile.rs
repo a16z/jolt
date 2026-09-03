@@ -3,6 +3,7 @@
 //! verifier preprocessing plus the proof-shape fields the prover fixes
 //! (`trace_length`, `ram_K`, the chunking configs, the trace order).
 
+use bincode::error::EncodeError;
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{
     geometry::dimensions::TracePolynomialOrder, JoltOneHotConfig, JoltReadWriteConfig,
@@ -26,7 +27,7 @@ pub enum ProfileError {
     #[error("bytecode length {0} is not a power of two")]
     BytecodeLength(usize),
     #[error("profile serialization: {0}")]
-    Encode(#[from] bincode::error::EncodeError),
+    Encode(#[from] EncodeError),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

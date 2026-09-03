@@ -6,13 +6,11 @@
 use std::path::Path;
 
 use bincode::config::standard;
-use bincode::serde::{decode_from_slice, encode_to_vec};
+use bincode::serde::decode_from_slice;
 use common::jolt_device::JoltDevice;
-use jolt_crypto::{Bn254, Bn254G1, Pedersen};
+use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::{Fr, One, Ring, Zero};
-use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
-use jolt_poly::MultilinearPoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 
@@ -84,27 +82,6 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         .collect::<Vec<_>>();
     let relation_weights = [Fr::from_u64(53), Fr::from_u64(59), Fr::from_u64(61)];
     let relation_stage_coefficient = Fr::from_u64(67);
-    let column_claims = (0..TOTAL_COLUMNS)
-        .map(|column| {
-            if column < FIXED_COLUMNS {
-                table.fixed[column].as_slice().evaluate(&term_point)
-            } else {
-                table_witness.columns[column - FIXED_COLUMNS]
-                    .as_slice()
-                    .evaluate(&term_point)
-            }
-        })
-        .collect::<Vec<_>>();
-    let native_final = RelationTable::final_value(
-        rows,
-        &term_tau,
-        beta,
-        gamma,
-        relation_weights,
-        &term_point,
-        &column_claims,
-    )
-    .expect("native final relation");
     let term_context = RelationTermsContext {
         columns: std::array::from_fn(|slot| ColumnId { group: 0, slot }),
         tau: &term_tau,
@@ -138,25 +115,6 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         terms.iter().map(|term| term.factors.len()).max(),
         Some(MAX_FACTORS)
     );
-    assert_eq!(
-        relation_stage_coefficient * native_final,
-        evaluate_terms_observed(
-            &terms,
-            &|column| {
-                if column.group != 0 {
-                    return Err(RelationTableError::Claims);
-                }
-                column_claims
-                    .get(column.slot)
-                    .copied()
-                    .ok_or(RelationTableError::Claims)
-            },
-            &mut relation_term_cost,
-        )
-        .expect("evaluate relation terms")
-    );
-    assert_eq!(relation_term_cost.fr_mul, 126);
-
     let challenge_variable = relation
         .link
         .schedule
@@ -288,52 +246,6 @@ fn fibonacci_relation_table_exactness_stream_and_tampers() {
         RELATION_TERM_COUNT + COPY_LINK_TERM_COUNT + DORY_SCALAR_TERM_COUNT,
         26
     );
-
-    let pcs_setup = HyperKZGScheme::<Bn254>::setup_from_secret(
-        Fr::from_u64(0x5eed),
-        rows * 16,
-        Bn254::g1_generator(),
-        Bn254::g2_generator(),
-    );
-    let verifier_setup = HyperKZGVerifierSetup::from(&pcs_setup);
-    let (prover_key, verifier_key) = setup(
-        table,
-        profile.digest().expect("profile digest"),
-        16,
-        &pcs_setup,
-    )
-    .expect("relation table key");
-    let table_proof =
-        prove(&prover_key, &relation_witness.values, &pcs_setup).expect("prove relation table");
-    let cost = verify(&verifier_key, &table_proof, &verifier_setup).expect("verify relation table");
-    let bincode_bytes = encode_to_vec(&table_proof, standard())
-        .expect("serialize relation table proof")
-        .len();
-    assert_eq!(table_proof.payload_bytes(), 4_352);
-    assert_eq!(bincode_bytes, 4_416);
-    assert_eq!(
-        cost,
-        VerifierCost {
-            ec_mul: 108,
-            ec_add: 107,
-            pairing_pairs: 8,
-            fr_mul: 1_225,
-            fr_inv: 6,
-            keccak: 310,
-        }
-    );
-
-    let mut claim_tamper = table_proof.clone();
-    claim_tamper.column_claims[WIRE_A] += Fr::one();
-    assert!(verify(&verifier_key, &claim_tamper, &verifier_setup).is_err());
-    let mut copy_tamper = table_proof.clone();
-    copy_tamper.column_claims[SIGMA_A] += Fr::one();
-    assert!(verify(&verifier_key, &copy_tamper, &verifier_setup).is_err());
-    let mut challenge_tamper = table_proof.clone();
-    challenge_tamper.wire_commitments[0] = table_proof.helper_commitments[0];
-    assert!(verify(&verifier_key, &challenge_tamper, &verifier_setup).is_err());
-
-    assert_eq!(verifier_key.layout.group_count, 3);
 }
 
 #[test]

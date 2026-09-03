@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use common::jolt_device::JoltDevice;
 use jolt_crypto::Bn254;
-use jolt_field::{Fr, Ring};
+use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver};
 use jolt_poly::UnivariatePoly;
 use jolt_r1cs::Variable;
@@ -32,7 +32,6 @@ use crate::relation_table::{
     DoryScalarTermExporter, PublicCopyLinkTermExporter, RelationCellLayout, RelationTermExporter,
     TOTAL_COLUMNS,
 };
-use crate::spartan::{ChallengeDecoder, PublicChallenge, SharedWitnessColumn, SpartanError};
 use crate::stream::{
     assembly_transcript, combine_packed_phases, commit_packed, commitment_prefix_challenges,
     prove_assembly, verify_assembly_from_transcript, AssemblyStatement, Column, ColumnId,
@@ -68,16 +67,12 @@ pub enum WrapError {
     Schedule(#[from] ScheduleError),
     #[error("verifier relation: {0}")]
     Relation(#[from] RelationError),
-    #[error("Spartan witness: {0}")]
-    Spartan(#[from] SpartanError),
     #[error("wrapper stream: {0}")]
     Stream(#[from] StreamError),
     #[error("packing factor must be a nonzero power of two, got {0}")]
     InvalidPacking(usize),
     #[error("T1 needs 2^{required} rows, common domain is 2^{configured}")]
     CommonRowDomain { required: usize, configured: usize },
-    #[error("common row exponent {0} does not fit usize")]
-    CommonRowExponent(usize),
     #[error("relation witness fails at row {0}")]
     UnsatisfiedRelation(usize),
     #[error("relation witness is missing variable {0}")]
@@ -88,6 +83,8 @@ pub enum WrapError {
     T1MemberLayout,
     #[error("proof profile does not match the wrapper verifier key")]
     ProfileMismatch,
+    #[error("wrapper statement does not match its verifier key")]
+    StatementMismatch,
 }
 
 /// T1 schedule and public-input derivation fixed during trusted setup.
@@ -257,18 +254,25 @@ impl WrapVerifierKey {
         dory_link: Option<DoryLinkPlacement>,
         assembly: WrapAssemblyPlan,
         mut pinned_commitments: Vec<(usize, Commitment)>,
-    ) -> Self {
+    ) -> Result<Self, WrapError> {
+        if statement.key_digest != hash.profile_digest
+            || !statement
+                .public_inputs
+                .ends_with(&hash_public_statement(&hash_public))
+        {
+            return Err(WrapError::StatementMismatch);
+        }
         pinned_commitments.extend(hash.pinned_commitments());
         pinned_commitments.extend(limb.table.pinned_commitments(limb.group_offset));
         statement.pinned_commitments = pinned_commitments;
-        Self {
+        Ok(Self {
             statement,
             hash,
             hash_public,
             limb,
             dory_link,
             assembly,
-        }
+        })
     }
 
     pub fn hash_schedule(&self) -> &SymbolicSchedule {
@@ -470,6 +474,21 @@ impl WrapVerifierKey {
     }
 }
 
+pub fn hash_public_statement(public: &PublicInputs) -> Vec<Fr> {
+    let mut bytes = Vec::with_capacity(32 + public.tail.len());
+    bytes.extend(public.state_in.iter().flat_map(|word| word.to_le_bytes()));
+    bytes.extend_from_slice(&public.tail);
+    bytes
+        .chunks(16)
+        .map(|chunk| {
+            let mut packed = [0u8; 16];
+            packed[..chunk.len()].copy_from_slice(chunk);
+            Fr::from_u128_checked(u128::from_le_bytes(packed))
+                .unwrap_or_else(|| unreachable!("128-bit statement chunk is canonical"))
+        })
+        .collect()
+}
+
 struct KeyTermExporter<'a> {
     key: &'a WrapVerifierKey,
 }
@@ -623,30 +642,6 @@ impl ProveRounds<Fr> for DoryLinkedProver {
     }
 }
 
-pub struct NegatingTermExporter<'a>(pub &'a dyn TermExporter);
-
-impl TermExporter for NegatingTermExporter<'_> {
-    fn terms(&self, context: &TermContext<'_>) -> Vec<Term> {
-        let mut terms = self.0.terms(context);
-        for term in &mut terms {
-            term.coefficient = -term.coefficient;
-        }
-        terms
-    }
-
-    fn terms_observed(
-        &self,
-        context: &TermContext<'_>,
-        observer: &mut dyn TermObserver,
-    ) -> Vec<Term> {
-        let mut terms = self.0.terms_observed(context, observer);
-        for term in &mut terms {
-            term.coefficient = -term.coefficient;
-        }
-        terms
-    }
-}
-
 /// Proves stage A only after every commitment phase has fixed the member challenges.
 pub fn wrap(
     committed: WrapCommitted,
@@ -705,8 +700,6 @@ pub struct WrapPreparation {
     pub hash_schedule: JoltSchedule,
     pub hash_table: HashTable,
     pub public_known: Vec<Fr>,
-    pub public_challenges: Vec<PublicChallenge>,
-    pub shared_witness: SharedWitnessColumn,
 }
 
 impl WrapPreparation {
@@ -736,16 +729,7 @@ impl WrapPreparation {
         let hash_schedule = JoltSchedule::witness(&records, schedule)?;
         let hash_table = HashTable::build(&hash_schedule, &hash_public);
 
-        let (public_known, public_challenges) = public_values(&relation, &relation_witness.values)?;
-        let private_start = 1 + relation.public.num_public;
-        let private_witness = relation_witness
-            .values
-            .get(private_start..)
-            .ok_or(WrapError::MissingWitness(private_start))?;
-        let common_rows = 1usize
-            .checked_shl(config.common_log_rows as u32)
-            .ok_or(WrapError::CommonRowExponent(config.common_log_rows))?;
-        let shared_witness = SharedWitnessColumn::new(private_witness, common_rows)?;
+        let public_known = public_values(&relation, &relation_witness.values)?;
 
         Ok(Self {
             config,
@@ -758,8 +742,6 @@ impl WrapPreparation {
             hash_schedule,
             hash_table,
             public_known,
-            public_challenges,
-            shared_witness,
         })
     }
 }
@@ -786,10 +768,7 @@ fn verified_transcript(
     Ok(RecordingTranscript::<Blake3Transcript>::take_log())
 }
 
-fn public_values(
-    relation: &Relation,
-    values: &[Fr],
-) -> Result<(Vec<Fr>, Vec<PublicChallenge>), WrapError> {
+fn public_values(relation: &Relation, values: &[Fr]) -> Result<Vec<Fr>, WrapError> {
     let read = |variable: Variable| {
         values
             .get(variable.index())
@@ -802,25 +781,5 @@ fn public_values(
     for variable in relation.public.stage_values {
         known.push(read(variable)?);
     }
-    let outputs = &relation.public.outputs;
-    let mut challenges = Vec::with_capacity(relation.public.num_public - known.len());
-    for &variable in outputs.ram_address.iter().chain(&outputs.bytecode_address) {
-        challenges.push(PublicChallenge {
-            value: read(variable)?,
-            decoder: ChallengeDecoder::Challenge125,
-        });
-    }
-    for &variable in &outputs.bytecode_gammas {
-        challenges.push(PublicChallenge {
-            value: read(variable)?,
-            decoder: ChallengeDecoder::Scalar128,
-        });
-    }
-    for &variable in &outputs.register_address {
-        challenges.push(PublicChallenge {
-            value: read(variable)?,
-            decoder: ChallengeDecoder::Challenge125,
-        });
-    }
-    Ok((known, challenges))
+    Ok(known)
 }
