@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788456155940,
+  "lastUpdate": 1788459665967,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -152842,6 +152842,258 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 860952,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f40a67388b5cbc37fa9bde59edccd83f6600c71b",
+          "message": "chore(deps): bump reth-ethereum-primitives from `6377a95` to `2e6e838` (#1835)\n\nBumps [reth-ethereum-primitives](https://github.com/paradigmxyz/reth) from `6377a95` to `2e6e838`.\n- [Release notes](https://github.com/paradigmxyz/reth/releases)\n- [Commits](https://github.com/paradigmxyz/reth/compare/6377a957c1a36be65678b9d2fb85645e1223ef60...2e6e838b938f636409bcbb88454d2b1c3e0b06a1)\n\n---\nupdated-dependencies:\n- dependency-name: reth-ethereum-primitives\n  dependency-version: 68877d5fd7d146ef070bbe7dbabbe1097ea1da62\n  dependency-type: direct:production\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-03T13:15:20-04:00",
+          "tree_id": "80d740e040046edc210a416a7860c1eeab937580",
+          "url": "https://github.com/a16z/jolt/commit/f40a67388b5cbc37fa9bde59edccd83f6600c71b"
+        },
+        "date": 1788459660612,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.441,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.1412,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 503464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7145,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 502796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5603,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500888,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 3.5678,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 496712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.2199,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119696,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.3122,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861600,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5714,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498576,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4767,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 509144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.7876,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 509248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.0296,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 509420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 30.0635,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1080088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 13.7097,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 617132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 73.6735,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2149892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.2625,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 509084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.5045,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 13.9522,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861328,
             "unit": "KB",
             "extra": ""
           }
