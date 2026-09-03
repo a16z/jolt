@@ -1,0 +1,28 @@
+[package]
+name = "jolt-wrapper"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Spartan + HyperKZG wrapper of the Jolt/Dory verifier (proof-size reduction)"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-dory = { path = "../jolt-dory" }
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-hyperkzg = { path = "../jolt-hyperkzg" }
+jolt-openings = { path = "../jolt-openings" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript", features = ["transcript-blake3"] }
+jolt-verifier = { path = "../jolt-verifier" }
+rayon = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+rand = { workspace = true }

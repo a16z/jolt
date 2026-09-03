@@ -4073,6 +4073,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-wrapper"
+version = "0.1.0"
+dependencies = [
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-hyperkzg",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-verifier",
+ "rand 0.8.7",
+ "rayon",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-wrapper-bench"
 version = "0.1.0"
 dependencies = [
