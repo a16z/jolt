@@ -9,12 +9,9 @@ use crate::limb_table::lookup::{link_weights, link_weights_with};
 use crate::limb_table::schedule::Layout;
 use crate::stream::TermObserver;
 
-use super::{RelationCellLayout, RelationTableWitness};
-
 pub struct DoryScalarLink<'a> {
     rows: usize,
-    base: usize,
-    capacity: usize,
+    positions: &'a [usize],
     rho: Fr,
     layout: &'a Layout,
 }
@@ -23,14 +20,13 @@ impl<'a> DoryScalarLink<'a> {
     /// Both the public weight and wire MLEs vary in a round; their product is quadratic.
     pub const DEGREE: usize = 2;
 
-    pub fn new(rows: usize, cells: RelationCellLayout, layout: &'a Layout, rho: Fr) -> Self {
+    pub fn new(rows: usize, positions: &'a [usize], layout: &'a Layout, rho: Fr) -> Self {
         assert!(rows.is_power_of_two());
-        assert!(cells.dory_scalar_capacity.is_power_of_two());
-        assert_eq!(cells.dory_scalar_base % cells.dory_scalar_capacity, 0);
+        assert!(positions.iter().all(|position| *position < rows));
+        assert_eq!(positions.len(), layout.digit_bases as usize - 2);
         Self {
             rows,
-            base: cells.dory_scalar_base,
-            capacity: cells.dory_scalar_capacity,
+            positions,
             rho,
             layout,
         }
@@ -40,12 +36,11 @@ impl<'a> DoryScalarLink<'a> {
         self.rows
     }
 
-    pub fn prover(&self, witness: &RelationTableWitness) -> DoryScalarLinkProver {
+    pub fn prover(&self, wire: &[Fr]) -> DoryScalarLinkProver {
         let weights = self.weights();
-        let wire = witness.columns[0].clone();
-        let input_claim = weights.iter().zip(&wire).map(|(&a, &b)| a * b).sum();
+        let input_claim = weights.iter().zip(wire).map(|(&a, &b)| a * b).sum();
         DoryScalarLinkProver {
-            wire: Polynomial::new(wire),
+            wire: Polynomial::new(wire.to_vec()),
             weight: Polynomial::new(weights),
             rounds: self.rows.trailing_zeros() as usize,
             input_claim,
@@ -72,8 +67,9 @@ impl<'a> DoryScalarLink<'a> {
     fn weights(&self) -> Vec<Fr> {
         let mut weights = vec![Fr::zero(); self.rows];
         let link = link_weights(self.layout, self.rho);
-        let named = self.layout.digit_bases as usize - 2;
-        weights[self.base..self.base + named].copy_from_slice(&link[..named]);
+        for (&position, &weight) in self.positions.iter().zip(&link) {
+            weights[position] += weight;
+        }
         weights
     }
 
@@ -82,35 +78,27 @@ impl<'a> DoryScalarLink<'a> {
         point: &[Fr],
         observer: &mut O,
     ) -> Fr {
-        let suffix = self.capacity.trailing_zeros() as usize;
-        let prefix = point.len() - suffix;
-        let prefix_index = self.base >> suffix;
-        let mut value = Fr::one();
-        for (index, &coordinate) in point[..prefix].iter().enumerate() {
-            let bit = (prefix_index >> (prefix - index - 1)) & 1;
-            value = observer.fr_mul(
-                value,
-                if bit == 1 {
-                    coordinate
-                } else {
-                    Fr::one() - coordinate
-                },
-            );
-        }
-        let named = self.layout.digit_bases as usize - 2;
-        let mut layer = link_weights_with(self.layout, self.rho, &mut |a, b| observer.fr_mul(a, b));
-        layer.truncate(named);
-        layer.resize(self.capacity, Fr::zero());
-        for &coordinate in &point[prefix..] {
-            let half = layer.len() / 2;
-            for index in 0..half {
-                let low = layer[index];
-                let difference = layer[index + half] - low;
-                layer[index] = low + observer.fr_mul(coordinate, difference);
-            }
-            layer.truncate(half);
-        }
-        observer.fr_mul(value, layer[0])
+        let weights = link_weights_with(self.layout, self.rho, &mut |a, b| observer.fr_mul(a, b));
+        self.positions
+            .iter()
+            .zip(weights)
+            .fold(Fr::zero(), |sum, (&position, weight)| {
+                let eq = point
+                    .iter()
+                    .enumerate()
+                    .fold(Fr::one(), |value, (index, &coordinate)| {
+                        let bit = (position >> (point.len() - index - 1)) & 1;
+                        observer.fr_mul(
+                            value,
+                            if bit == 1 {
+                                coordinate
+                            } else {
+                                Fr::one() - coordinate
+                            },
+                        )
+                    });
+                sum + observer.fr_mul(weight, eq)
+            })
     }
 }
 

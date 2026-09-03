@@ -24,21 +24,22 @@ use crate::hash_table::{
 use crate::limb_table::columns::Columns as LimbColumns;
 use crate::limb_table::schedule::Layout as LimbTableLayout;
 use crate::limb_table::stream::{LimbTableKey, StreamTermExporter as LimbStreamTermExporter};
+use crate::links::{
+    CopyLink, CopyLinkTermExporter, CopyLinkTermSide, DoryScalarLink, DoryScalarTermExporter,
+    LinkError, WIRES,
+};
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
     build_relation, generate_witness, Pcs, Preprocessing, Proof, Relation, RelationError, Vc,
     Witness,
 };
-use crate::relation_table::{
-    CopyLink, CopyLinkTermExporter, CopyLinkTermSide, DoryScalarLink, DoryScalarTermExporter,
-    PublicCopyLinkTermExporter, RelationCellLayout, RelationTableError, RelationTermExporter,
-    TOTAL_COLUMNS, WIRES,
-};
+use crate::spartan::SpartanError;
 use crate::stream::{
     assembly_transcript, combine_packed_phases, commit_packed, commitment_prefix_challenges,
-    prove_assembly, verify_assembly_from_transcript, AssemblyStatement, Column, ColumnId,
-    Commitment, CountingKeccakTranscript, PackedColumns, StageMember, StageResult, StreamError,
-    Term, TermContext, TermExporter, TermObserver, VerifierCost, WrapperProof,
+    prove_spartan_assembly, verify_spartan_assembly_from_transcript, AssemblyStatement, Column,
+    ColumnId, Commitment, CountingKeccakTranscript, PackedColumns, SpartanAssembly,
+    SpartanVerifierAssembly, StageMember, StageResult, StreamError, Term, TermContext,
+    TermExporter, TermObserver, VerifierCost, WrapperProof,
 };
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
@@ -69,8 +70,10 @@ pub enum WrapError {
     Schedule(#[from] ScheduleError),
     #[error("verifier relation: {0}")]
     Relation(#[from] RelationError),
-    #[error("relation table: {0}")]
-    RelationTable(#[from] RelationTableError),
+    #[error("link: {0}")]
+    Link(#[from] LinkError),
+    #[error("Spartan: {0}")]
+    Spartan(#[from] SpartanError),
     #[error("wrapper stream: {0}")]
     Stream(#[from] StreamError),
     #[error("packing factor must be a nonzero power of two, got {0}")]
@@ -169,24 +172,6 @@ impl WrapHashKey {
 }
 
 #[derive(Clone)]
-struct RelationExporterPlan {
-    rows: usize,
-    columns: [ColumnId; TOTAL_COLUMNS],
-    tau: Range<usize>,
-    beta: usize,
-    gamma: usize,
-    weights: Range<usize>,
-    member: usize,
-}
-
-#[derive(Clone)]
-struct PublicCopyPlan {
-    wire: usize,
-    rows: Vec<usize>,
-    values: Range<usize>,
-}
-
-#[derive(Clone)]
 struct CopyExporterPlan {
     link: CopyLink,
     left: CopyLinkTermSide,
@@ -196,7 +181,6 @@ struct CopyExporterPlan {
     gamma: usize,
     weights: Range<usize>,
     member: usize,
-    public: Option<PublicCopyPlan>,
 }
 
 #[derive(Clone)]
@@ -212,7 +196,7 @@ struct LimbExporterPlan {
 #[derive(Clone)]
 struct ScalarExporterPlan {
     rows: usize,
-    cells: RelationCellLayout,
+    positions: Vec<usize>,
     rho_offset: usize,
     wire: ColumnId,
     member: usize,
@@ -221,7 +205,8 @@ struct ScalarExporterPlan {
 #[derive(Clone)]
 struct WrapAssemblyPlan {
     hash_columns: Vec<ColumnId>,
-    relation: RelationExporterPlan,
+    witness_column: ColumnId,
+    carry_member: usize,
     copies: Vec<CopyExporterPlan>,
     limb: LimbExporterPlan,
     scalar: ScalarExporterPlan,
@@ -231,13 +216,12 @@ struct WrapAssemblyPlan {
 #[derive(Clone)]
 enum LeftLinkValue {
     Hash(HashAffineForm),
-    Public,
     Zero,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum LimbLinkValue {
-    Relation,
+    Witness,
     Chunk(usize),
     Sign,
     Zero,
@@ -248,7 +232,6 @@ struct CopyKey {
     link: CopyLink,
     left: [LeftLinkValue; WIRES],
     right: [LimbLinkValue; WIRES],
-    public_rows: Vec<usize>,
 }
 
 pub type CopyLinkValues = ([Vec<Fr>; WIRES], [Vec<Fr>; WIRES]);
@@ -262,6 +245,7 @@ pub struct WrapVerifierKey {
     dory_link: Option<DoryLinkPlacement>,
     assembly: WrapAssemblyPlan,
     copies: Vec<CopyKey>,
+    relation: Relation,
 }
 
 impl WrapVerifierKey {
@@ -284,7 +268,7 @@ impl WrapVerifierKey {
             public_inputs,
             setup,
         )?;
-        hash.challenge_offset = 2 + 2 * assembly.copies.len();
+        hash.challenge_offset = 2 * assembly.copies.len();
         Ok(Self {
             statement: assembly.statement,
             hash,
@@ -293,6 +277,7 @@ impl WrapVerifierKey {
             dory_link: Some(assembly.dory_link),
             assembly: assembly.plan,
             copies: assembly.copies,
+            relation: assembly.relation,
         })
     }
 
@@ -327,24 +312,17 @@ impl WrapVerifierKey {
         &self,
         index: usize,
         hash: &HashTable,
-        relation_a: &[Fr],
+        witness: &[Fr],
         limb: &LimbColumns,
     ) -> Option<CopyLinkValues> {
         let copy = self.copies.get(index)?;
-        let rows = relation_a.len();
+        let rows = witness.len();
         let left = copy.left.clone().map(|source| match source {
             LeftLinkValue::Hash(form) => materialize_hash_form(&form, hash),
-            LeftLinkValue::Public => {
-                let mut column = vec![Fr::from_u64(0); rows];
-                for (&row, &value) in copy.public_rows.iter().zip(&self.statement.public_inputs) {
-                    column[row] = value;
-                }
-                column
-            }
             LeftLinkValue::Zero => vec![Fr::from_u64(0); rows],
         });
         let right = copy.right.map(|source| match source {
-            LimbLinkValue::Relation => relation_a.to_vec(),
+            LimbLinkValue::Witness => witness.to_vec(),
             LimbLinkValue::Chunk(chunk) => limb
                 .chunk_column(chunk)
                 .into_iter()
@@ -370,6 +348,15 @@ impl WrapVerifierKey {
 
     pub fn limb_layout(&self) -> &LimbTableLayout {
         self.limb.table.layout()
+    }
+
+    pub fn dory_scalar_link(&self, rho: Fr) -> DoryScalarLink<'_> {
+        DoryScalarLink::new(
+            self.assembly.scalar.rows,
+            &self.assembly.scalar.positions,
+            self.limb.table.layout(),
+            rho,
+        )
     }
 
     pub fn term_count(&self, context: &TermContext<'_>) -> usize {
@@ -450,53 +437,22 @@ impl WrapVerifierKey {
             row_member: self.hash.members[0],
             wiring_member: self.hash.members[1],
         };
-        let relation = &plan.relation;
-        let relation_weights = context.challenges[relation.weights.clone()]
-            .try_into()
-            .unwrap_or_else(|_| unreachable!("three relation weights"));
-        let relation_exporter = RelationTermExporter {
-            rows: relation.rows,
-            columns: relation.columns,
-            tau: &context.challenges[relation.tau.clone()],
-            beta: context.challenges[relation.beta],
-            gamma: context.challenges[relation.gamma],
-            relation_weights,
-            member_index: relation.member,
-        };
         let mut terms = hash.terms_observed(context, observer);
-        terms.extend(relation_exporter.terms_observed(context, observer));
         for copy in &plan.copies {
             let relation_weights = context.challenges[copy.weights.clone()]
                 .try_into()
                 .unwrap_or_else(|_| unreachable!("three copy-link weights"));
-            if let Some(public) = &copy.public {
-                let exporter = PublicCopyLinkTermExporter {
-                    link: &copy.link,
-                    left: copy.left.clone(),
-                    right: copy.right.clone(),
-                    public_wire: public.wire,
-                    public_rows: &public.rows,
-                    public_values: &self.statement.public_inputs[public.values.clone()],
-                    tau: &context.challenges[copy.tau.clone()],
-                    beta: context.challenges[copy.beta],
-                    gamma: context.challenges[copy.gamma],
-                    relation_weights,
-                    member_index: copy.member,
-                };
-                terms.extend(exporter.terms_observed(context, observer));
-            } else {
-                let exporter = CopyLinkTermExporter {
-                    link: &copy.link,
-                    left: copy.left.clone(),
-                    right: copy.right.clone(),
-                    tau: &context.challenges[copy.tau.clone()],
-                    beta: context.challenges[copy.beta],
-                    gamma: context.challenges[copy.gamma],
-                    relation_weights,
-                    member_index: copy.member,
-                };
-                terms.extend(exporter.terms_observed(context, observer));
-            }
+            let exporter = CopyLinkTermExporter {
+                link: &copy.link,
+                left: copy.left.clone(),
+                right: copy.right.clone(),
+                tau: &context.challenges[copy.tau.clone()],
+                beta: context.challenges[copy.beta],
+                gamma: context.challenges[copy.gamma],
+                relation_weights,
+                member_index: copy.member,
+            };
+            terms.extend(exporter.terms_observed(context, observer));
         }
         let limb = &plan.limb;
         let limb_exporter = LimbStreamTermExporter {
@@ -512,7 +468,7 @@ impl WrapVerifierKey {
         let scalar = &plan.scalar;
         let scalar_link = DoryScalarLink::new(
             scalar.rows,
-            scalar.cells,
+            &scalar.positions,
             self.limb.table.layout(),
             context.challenges[scalar.rho_offset],
         );
@@ -672,16 +628,36 @@ impl Default for WrapCommitments {
 pub fn wrap(
     committed: WrapCommitted,
     key: &WrapVerifierKey,
-    members: &mut [StageMember<'_>],
+    relation_witness: &Witness,
+    members: Vec<StageMember<'_>>,
     setup: &HyperKZGProverSetup<Bn254>,
 ) -> Result<WrapperProof, WrapError> {
     let statement = key.statement(&committed.challenges)?;
     let exporter = KeyTermExporter { key };
-    Ok(prove_assembly(
+    let public_columns = 1 + key.relation.public.num_public;
+    let witness = relation_witness
+        .values
+        .get(public_columns..)
+        .ok_or(WrapError::StatementMismatch)?;
+    if relation_witness.values.get(1..public_columns)
+        != statement
+            .public_inputs
+            .get(..key.relation.public.num_public)
+    {
+        return Err(WrapError::StatementMismatch);
+    }
+    Ok(prove_spartan_assembly(
         &committed.packed,
         &statement,
         members,
         &[&exporter],
+        SpartanAssembly {
+            matrices: &key.relation.matrices,
+            public_inputs: &statement.public_inputs[..key.relation.public.num_public],
+            witness,
+            witness_column: key.assembly.witness_column,
+            carry_member: key.assembly.carry_member,
+        },
         setup,
     )?)
 }
@@ -702,10 +678,16 @@ pub fn verify_wrapped_with_key(
     let mut statement_cost = VerifierCost::default();
     let statement = key.statement_observed(&challenges, &mut statement_cost)?;
     let exporter = KeyTermExporter { key };
-    Ok(verify_assembly_from_transcript(
+    Ok(verify_spartan_assembly_from_transcript(
         proof,
         &statement,
         &[&exporter],
+        SpartanVerifierAssembly {
+            matrices: &key.relation.matrices,
+            public_inputs: &statement.public_inputs[..key.relation.public.num_public],
+            witness_column: key.assembly.witness_column,
+            carry_member: key.assembly.carry_member,
+        },
         setup,
         (&mut transcript, &challenges, &commitments),
         statement_cost,

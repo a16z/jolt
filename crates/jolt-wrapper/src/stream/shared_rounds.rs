@@ -121,7 +121,7 @@ pub(crate) fn prove_rounds<T: Transcript<Challenge = Fr>>(
     setup: &HyperKZGProverSetup<Bn254>,
     transcript: &mut T,
 ) -> Result<(PendingRoundStage, StageResult), StreamError> {
-    if !(5..=6).contains(&degree) || prover.num_rounds() == 0 {
+    if !(3..=6).contains(&degree) || prover.num_rounds() == 0 {
         return Err(StreamError::StageEncoding);
     }
     append_sumcheck_claim(transcript, &input_claim);

@@ -105,8 +105,16 @@ pub(crate) fn walk(
     finish_batch(ctx, &batch, &expected, &final_claim);
 
     ctx.section("stage6a/public");
-    PublicSlots::bind_outputs(ctx, &public.outputs().bytecode_address, &bytecode_address)?;
-    PublicSlots::bind_outputs(ctx, &public.outputs().bytecode_gammas, &bytecode_gammas)?;
+    PublicSlots::bind_points(
+        ctx,
+        &public.evaluation_points().bytecode_address,
+        &bytecode_address,
+    )?;
+    PublicSlots::bind_points(
+        ctx,
+        &public.evaluation_points().bytecode_gammas,
+        &bytecode_gammas,
+    )?;
 
     Ok(Stage6a {
         bytecode_address,

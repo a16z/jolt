@@ -152,11 +152,13 @@ fn report(
     times: &[(&str, u128)],
     uptime: &[u8],
 ) {
-    let stage_a = committed_stage_bytes(&proof.stages[0]);
-    let term_stage = committed_stage_bytes(&proof.stages[1]);
+    let outer = committed_stage_bytes(&proof.stages[0]);
+    let inner = clear_stage_bytes(&proof.stages[1]);
+    let stage_a = committed_stage_bytes(&proof.stages[2]);
+    let term_stage = committed_stage_bytes(&proof.stages[3]);
     let shared = 96 * usize::from(proof.round_opening.is_some());
     let ell = 32 * proof.term_evaluations.len();
-    let stage_b = clear_stage_bytes(&proof.stages[2]);
+    let stage_b = clear_stage_bytes(&proof.stages[4]);
     let reduced = 32 * proof.reduced_claims.len();
     let commitment_bytes = wire_phase_groups.map(|groups| 32 * groups);
     assert_eq!(
@@ -165,6 +167,8 @@ fn report(
     );
     let opening = proof.payload_bytes()
         - commitment_bytes.iter().sum::<usize>()
+        - outer
+        - inner
         - stage_a
         - term_stage
         - shared
@@ -181,7 +185,7 @@ fn report(
         .join(" ");
     println!("phases_ms {phases}");
     println!(
-        "bytes phase1a={} phase1b={} phase2a={} phase2b={} phase2c={} stage_a={stage_a} term={term_stage} shared_bdfg={shared} ell={ell} stage_b={stage_b} reduced={reduced} hyperkzg={opening} proof={} bincode={} statement={}",
+        "bytes phase1a={} phase1b={} phase2a={} phase2b={} phase2c={} spartan_outer={outer} spartan_inner={inner} stage_a={stage_a} term={term_stage} shared_bdfg={shared} ell={ell} stage_b={stage_b} reduced={reduced} hyperkzg={opening} proof={} bincode={} statement={}",
         commitment_bytes[0],
         commitment_bytes[1],
         commitment_bytes[2],
@@ -193,7 +197,7 @@ fn report(
     );
     println!(
         "terms={term_count} term_rounds={}",
-        proof.stages[1]
+        proof.stages[3]
             .committed_rounds
             .as_ref()
             .expect("term stage")

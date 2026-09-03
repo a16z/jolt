@@ -184,6 +184,7 @@ pub(crate) fn walk(
         &(betas[0].clone() + d_squared.clone()),
     );
 
+    let _chi_sigma = ctx.materialize(&Lc::one());
     let mut s1_acc = Lc::one();
     let mut s2_acc = Lc::one();
     for j in 0..sigma {

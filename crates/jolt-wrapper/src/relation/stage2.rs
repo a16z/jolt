@@ -185,7 +185,7 @@ pub(crate) fn walk(
     // (`address_opening_point` reorders the same batch coordinates), so one
     // public copy serves `ValIo` and `InitEval`.
     debug_assert_eq!(output_check_address, ram_address);
-    PublicSlots::bind_outputs(ctx, &public.outputs().ram_address, &ram_address)?;
+    PublicSlots::bind_points(ctx, &public.evaluation_points().ram_address, &ram_address)?;
     let val_io = match native {
         Some(native) => {
             let address = values(ctx, &ram_address)?;

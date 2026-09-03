@@ -38,7 +38,7 @@ use jolt_verifier::{JoltProof, JoltVerifierPreprocessing, VerifierError};
 use thiserror::Error;
 
 pub use dory::{DoryLinks, DoryScalar};
-pub use public_io::{outsourced_inputs, OutsourcedInputs, PublicOutputs, StageValueInputs};
+pub use public_io::{outsourced_inputs, EvaluationPoints, OutsourcedInputs, StageValueInputs};
 pub use replay::SqueezeKind;
 
 use crate::profile::WrapperProfile;
@@ -104,16 +104,14 @@ pub struct LinkTable {
     pub dory: DoryLinks,
 }
 
-/// The public column `z[1..=num_public]`: the outsourced evaluations the
-/// native verifier computes (inputs) and the wires it evaluates them at
-/// (outputs, copied into the public segment by one equality row each).
+/// The seven public columns and the private wires at which they are evaluated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicLayout {
     pub num_public: usize,
     pub val_io: Variable,
     pub init_eval: Variable,
     pub stage_values: [Variable; NUM_STAGE_VALUES],
-    pub outputs: PublicOutputs,
+    pub evaluation_points: EvaluationPoints,
 }
 
 /// A labeled run of constraint rows, for attributing `check_witness` failures.

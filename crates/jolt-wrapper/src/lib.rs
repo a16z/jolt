@@ -1,14 +1,15 @@
 //! HyperKZG wrapper of the Jolt/Dory verifier.
 //!
-//! The verifier's work is encoded as (R) a row table for the stage algebra,
-//! (T1) a Blake3 transcript table, and (T2) a non-native limb table for the
-//! Dory final check. One batched sumcheck stream and one HyperKZG opening
-//! verify all three tables and their copy links.
+//! The verifier's field algebra is proved by Spartan, while a Blake3 transcript
+//! table and a non-native limb table bind its witness to the original proof.
+//! One batched stream and one HyperKZG opening verify the tables and links.
 
+pub mod carry;
 pub mod hash_table;
 pub mod limb_table;
+pub mod links;
 pub mod profile;
 pub mod relation;
-pub mod relation_table;
+pub mod spartan;
 pub mod stream;
 pub mod wrap;

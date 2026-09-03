@@ -53,7 +53,7 @@ const FIBONACCI_UNITS_2_18: u32 = 19_660;
 const CACHE_DIR: &str = "/Volumes/Dev/scratch/wrapper-fixtures";
 
 /// Pinned row counts of the fibonacci 2^18 relation (L = 18, K = 13, σ = 11).
-const EXPECTED_CONSTRAINTS_2_18: usize = 5_253;
+const EXPECTED_CONSTRAINTS_2_18: usize = 5_254;
 const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage1", 268),
     ("stage2", 365),
@@ -63,7 +63,7 @@ const EXPECTED_PER_STAGE_2_18: [(&str, usize); 9] = [
     ("stage6a", 229),
     ("stage6b", 974),
     ("stage7", 795),
-    ("stage8", 278),
+    ("stage8", 279),
 ];
 
 fn setup_total_vars(memory_layout: &MemoryLayout, max_padded_trace_length: usize) -> usize {
@@ -249,6 +249,8 @@ fn fibonacci_2_18_relation() {
         relation, witness, ..
     } = &built;
     assert_eq!(relation.matrices.num_constraints, EXPECTED_CONSTRAINTS_2_18);
+    assert_eq!(relation.matrices.num_vars, 6_761);
+    assert_eq!(relation.public.num_public, 7);
     for (stage, rows) in EXPECTED_PER_STAGE_2_18 {
         assert_eq!(per_stage[stage], rows, "{stage}");
     }
@@ -281,7 +283,7 @@ fn fibonacci_2_18_relation() {
 
     // The outsourced inputs recomputed from the public outputs alone.
     let read = |variable: &Variable| witness.values[variable.index()];
-    let outputs = &relation.public.outputs;
+    let outputs = &relation.public.evaluation_points;
     let ram_address: Vec<Fr> = outputs.ram_address.iter().map(read).collect();
     let bytecode_address: Vec<Fr> = outputs.bytecode_address.iter().map(read).collect();
     let register_address: Vec<Fr> = outputs.register_address.iter().map(read).collect();

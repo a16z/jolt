@@ -31,15 +31,17 @@ pub(crate) use term_stage::{
 mod shared_rounds;
 pub(crate) use shared_rounds::{
     prove_batch_rounds, prove_rounds, prove_shared_opening, verify_batch_rounds, verify_rounds,
-    verify_shared_opening,
+    verify_shared_opening, PendingRoundStage, VerifiedRoundStage,
 };
 mod protocol;
-pub(crate) use protocol::{
-    assembly_transcript, verify_assembly_from_transcript, CountingKeccakTranscript,
-};
 pub use protocol::{
-    commitment_prefix_challenges, prove_assembly, verify_assembly, verify_assembly_with_cost,
+    prove_assembly, prove_spartan_assembly, verify_assembly, verify_assembly_with_cost,
+    SpartanAssembly,
 };
+pub(crate) use protocol::{verify_spartan_assembly_from_transcript, SpartanVerifierAssembly};
+mod transcript;
+pub use transcript::commitment_prefix_challenges;
+pub(crate) use transcript::{assembly_transcript, CountingKeccakTranscript};
 
 const STREAM_LABEL: &[u8] = b"jolt-wrapper-v1";
 const KZG_ROUND_COMMITMENT_LABEL: &[u8] = b"sumcheck_kzg_commitment";
@@ -358,7 +360,7 @@ struct KzgBatchRecorder<'a> {
 
 impl<'a> KzgBatchRecorder<'a> {
     fn new(setup: &'a HyperKZGProverSetup<Bn254>, degree: usize) -> Result<Self, StreamError> {
-        if !(5..=6).contains(&degree) {
+        if !(3..=6).contains(&degree) {
             return Err(StreamError::StageEncoding);
         }
         if setup.g1_powers().len() < degree + 1 {

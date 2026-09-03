@@ -1,8 +1,8 @@
 //! The public column: the outsourced evaluations the native verifier
 //! computes from the program (`ValIo`, `InitEval`, the five bytecode-table
 //! stage folds) and the challenge wires those evaluations are taken at.
-//! Public variables occupy `z[1..=num_public]` so the wrapping Spartan can
-//! treat them as its public-input prefix.
+//! The seven outsourced values occupy the public prefix. Transcript-derived
+//! addresses and challenges follow them as private Spartan witness values.
 
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
@@ -20,11 +20,9 @@ use crate::profile::WrapperProfile;
 
 pub const NUM_BYTECODE_GAMMAS: usize = 6;
 
-/// The challenge wires the outsourced inputs are evaluated at, copied into
-/// the public column so the outside evaluator sees exactly the wires the
-/// relation used.
+/// The private challenge wires at which the outsourced inputs are evaluated.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PublicOutputs {
+pub struct EvaluationPoints {
     /// RAM address point (`log_k_ram` coordinates): `InitEval`'s and `ValIo`'s
     /// point (the read-write and output-check members bind the same wires).
     pub ram_address: Vec<Variable>,
@@ -59,19 +57,14 @@ pub(crate) fn allocate(ctx: &mut Ctx, profile: &WrapperProfile) -> PublicSlots {
     let bytecode_address = (0..profile.log_k_bytecode).map(|_| next()).collect();
     let bytecode_gammas = std::array::from_fn(|_| next());
     let register_address = std::array::from_fn(|_| next());
-    let num_public = 2
-        + NUM_STAGE_VALUES
-        + profile.log_k_ram
-        + profile.log_k_bytecode
-        + NUM_BYTECODE_GAMMAS
-        + REGISTER_ADDRESS_BITS;
+    let num_public = 2 + NUM_STAGE_VALUES;
     PublicSlots {
         layout: PublicLayout {
             num_public,
             val_io,
             init_eval,
             stage_values,
-            outputs: PublicOutputs {
+            evaluation_points: EvaluationPoints {
                 ram_address,
                 bytecode_address,
                 bytecode_gammas,
@@ -94,8 +87,8 @@ impl PublicSlots {
         lc_var(self.layout.stage_values[stage])
     }
 
-    pub(crate) fn outputs(&self) -> &PublicOutputs {
-        &self.layout.outputs
+    pub(crate) fn evaluation_points(&self) -> &EvaluationPoints {
+        &self.layout.evaluation_points
     }
 
     pub(crate) fn val_io_slot(&self) -> Variable {
@@ -110,13 +103,13 @@ impl PublicSlots {
         self.layout.stage_values[stage]
     }
 
-    /// Copies a challenge wire into its public slot (one equality row).
-    pub(crate) fn bind_outputs(
+    /// Binds each evaluation-point slot to the challenge wire used by R.
+    pub(crate) fn bind_points(
         ctx: &mut Ctx,
         slots: &[Variable],
         wires: &[Lc],
     ) -> Result<(), RelationError> {
-        assert_eq!(slots.len(), wires.len(), "public output arity");
+        assert_eq!(slots.len(), wires.len(), "evaluation-point arity");
         for (&slot, wire) in slots.iter().zip(wires) {
             if let Some(value) = ctx.value(wire) {
                 ctx.assign(slot, value)?;

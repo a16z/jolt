@@ -94,7 +94,11 @@ pub(crate) fn walk(
     })?;
 
     ctx.section("stage4/public");
-    PublicSlots::bind_outputs(ctx, &public.outputs().register_address, &register_address)?;
+    PublicSlots::bind_points(
+        ctx,
+        &public.evaluation_points().register_address,
+        &register_address,
+    )?;
 
     ctx.section("stage4/expected");
     let eq_cycle = eq(ctx, &stage3.point, &register_cycle);

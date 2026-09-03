@@ -24,6 +24,7 @@ use jolt_wrapper::hash_table::{
     LinkMap, Members as HashMembers, StreamColumns as HashStreamColumns, T1Challenges,
 };
 use jolt_wrapper::limb_table::digit_link::LinkMember;
+use jolt_wrapper::limb_table::lookup::link_weights;
 use jolt_wrapper::limb_table::relation::Col as T2Col;
 use jolt_wrapper::limb_table::schedule::WINDOW_ROW_BASE;
 use jolt_wrapper::limb_table::stream::{
@@ -31,11 +32,11 @@ use jolt_wrapper::limb_table::stream::{
     vk_group_range as t2_vk_group_range, LimbTableKey, Members as T2Members,
     StreamBuilder as T2StreamBuilder, StreamWitness, T2Challenges,
 };
+use jolt_wrapper::links::DoryScalarLinkProver;
 use jolt_wrapper::profile::WrapperProfile;
-use jolt_wrapper::relation::{Pcs, Vc};
-use jolt_wrapper::relation_table::{
-    DoryScalarLink, DoryScalarLinkProver, RelationTable, RelationTableProver, WIRES,
-};
+use jolt_wrapper::relation::{Pcs, ScheduleEntry, Vc};
+use jolt_wrapper::spartan::matrix_nnz;
+use jolt_wrapper::spartan::SharedWitnessColumn;
 use jolt_wrapper::stream::{
     commit_packed, Column, Commitment, StageMember, StageProof, TermContext, VerifierCost,
     WrapperProof,
@@ -64,7 +65,11 @@ impl DoryLinkedProver {
     fn new(digit: LinkMember, scalar: DoryScalarLinkProver, input_claim: Fr) -> Self {
         let digit_claim = digit.input_claim();
         let scalar_claim = scalar.input_claim();
-        assert_eq!(digit_claim - scalar_claim, input_claim);
+        assert_eq!(
+            digit_claim - scalar_claim,
+            input_claim,
+            "digit={digit_claim:?} scalar={scalar_claim:?}"
+        );
         Self {
             digit,
             scalar,
@@ -118,7 +123,7 @@ const FIXTURE: &str = "/Volumes/Dev/scratch/wrapper-fixtures/fibonacci_2_18_blak
 const LOG_ROWS: usize = 18;
 const ROWS: usize = 1 << LOG_ROWS;
 #[test]
-fn real_t1_relation_table_round_trip_and_tampers() {
+fn real_wrapper_round_trip_and_tampers() {
     let k = std::env::var("WRAP_K")
         .map_or(Ok(32), |value| value.parse())
         .expect("WRAP_K is an integer");
@@ -169,12 +174,11 @@ fn real_t1_relation_table_round_trip_and_tampers() {
 
     let started = Instant::now();
     let hash_columns = HashStreamColumns::new(&preparation.hash_table, k, 0);
-    let relation_table =
-        RelationTable::from_relation(&preparation.relation, ROWS).expect("lower R table");
-    let cells = relation_table.cell_layout();
-    let mut relation_witness = relation_table
-        .wire_witness(&preparation.relation_witness.values)
-        .expect("R wires");
+    let public_columns = 1 + preparation.relation.public.num_public;
+    let shared_witness =
+        SharedWitnessColumn::new(&preparation.relation_witness.values[public_columns..], ROWS)
+            .expect("shared Spartan witness");
+    let witness_values = shared_witness.evaluations().to_vec();
     let links = LinkMap::new(&preparation.hash_key);
     let (_, reference_layout) = T2Base::new(
         &preprocessing,
@@ -184,7 +188,6 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         Fr::zero(),
     )
     .expect("build reference T2 link layout");
-    let relation_a = relation_witness.evaluations()[0].clone();
     let started_key = Instant::now();
     let hash_key =
         WrapHashKey::from_reference(&preprocessing, &public_io, &original_proof, config, &setup)
@@ -205,7 +208,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     .expect("wrapper verifier key");
     let fixed_key_commit_ms = started_key.elapsed().as_millis();
     let copy_count = verifier_key.copy_count();
-    let t1_challenge_offset = 2 + 2 * copy_count;
+    let t1_challenge_offset = 2 * copy_count;
     let theta_offset = t1_challenge_offset + T1Challenges::count(LOG_ROWS);
     let rho_offset = theta_offset + 1;
     let t2_challenge_offset = rho_offset + 1;
@@ -214,16 +217,8 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let adapt_r_ms = started.elapsed().as_millis();
 
     let mut phase_1a_columns = hash_columns.columns;
-    let relation_fixed_base = phase_1a_columns.len();
-    phase_1a_columns.extend(relation_table.fixed_columns());
-    pad_fr(&mut phase_1a_columns, k);
-    let relation_wire_base = phase_1a_columns.len();
-    phase_1a_columns.extend(
-        relation_witness.evaluations()[..WIRES]
-            .iter()
-            .cloned()
-            .map(Column::Fr),
-    );
+    let witness_base = phase_1a_columns.len();
+    phase_1a_columns.push(Column::Fr(witness_values.clone()));
     pad_fr(&mut phase_1a_columns, k);
     let mut copy_fixed_bases = Vec::with_capacity(copy_count);
     for index in 0..copy_count {
@@ -239,8 +234,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let t2_group_offset = phase_1a_groups;
     let t2_phases = t2_commitment_phases(k);
     let t2_vk_groups = t2_vk_group_range(k, 0).len();
-    let relation_helper_count = relation_witness.evaluations().len() - WIRES;
-    let relation_helper_groups = (relation_helper_count + 2 * copy_count).div_ceil(k);
+    let helper_groups = (2 * copy_count).div_ceil(k);
     let total_groups = statement
         .commitment_phases
         .iter()
@@ -254,10 +248,8 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         .expect("phase 1a commitments");
     let phase_1a_commit_ms = started.elapsed().as_millis();
     let phase_1_values = commitments.challenges().to_vec();
-    let relation_beta = phase_1_values[0];
-    let relation_gamma = phase_1_values[1];
     let copy_challenges = (0..copy_count)
-        .map(|index| (phase_1_values[2 + 2 * index], phase_1_values[3 + 2 * index]))
+        .map(|index| (phase_1_values[2 * index], phase_1_values[2 * index + 1]))
         .collect::<Vec<_>>();
     let hash_challenges =
         T1Challenges::from_challenges(&phase_1_values[t1_challenge_offset..theta_offset], LOG_ROWS);
@@ -308,12 +300,6 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let known = commitments.challenges()[t2_challenge_offset..].to_vec();
 
     let started = Instant::now();
-    relation_table
-        .add_copy_helpers(&mut relation_witness, relation_beta, relation_gamma)
-        .expect("R helpers");
-    relation_table
-        .check_witness(&relation_witness, relation_beta, relation_gamma)
-        .expect("R witness");
     let copy_witnesses = (0..copy_count)
         .zip(&copy_challenges)
         .map(|(index, &(beta, gamma))| {
@@ -321,7 +307,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
                 .copy_values(
                     index,
                     &preparation.hash_table,
-                    &relation_a,
+                    &witness_values,
                     &t2_base.columns,
                 )
                 .expect("canonical copy values");
@@ -334,22 +320,16 @@ fn real_t1_relation_table_round_trip_and_tampers() {
             witness
         })
         .collect::<Vec<_>>();
-    let mut relation_helper_columns = relation_witness.evaluations()[WIRES..]
+    let mut helper_columns = copy_witnesses
         .iter()
-        .cloned()
+        .flat_map(|witness| witness.helpers.iter().cloned())
         .map(Column::Fr)
         .collect::<Vec<_>>();
-    relation_helper_columns.extend(
-        copy_witnesses
-            .iter()
-            .flat_map(|witness| witness.helpers.iter().cloned())
-            .map(Column::Fr),
-    );
-    pad_fr(&mut relation_helper_columns, k);
+    pad_fr(&mut helper_columns, k);
     let helper_ms = started.elapsed().as_millis();
 
     let mut final_phase_columns = t2_builder.phase_2c(known[3], known[4], known[5]).to_vec();
-    final_phase_columns.extend(relation_helper_columns);
+    final_phase_columns.extend(helper_columns);
     let started = Instant::now();
     commitments = commitments
         .commit(&final_phase_columns, &statement, &setup)
@@ -372,11 +352,9 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         t2_group_offset,
     );
     let mut cursor = r_stage_challenge_offset;
-    let tau_relation = take_point(full_challenges, &mut cursor);
     let tau_copies = (0..copy_count)
         .map(|_| take_point(full_challenges, &mut cursor))
         .collect::<Vec<_>>();
-    let relation_weights = take_array(full_challenges, &mut cursor);
     let copy_weights = (0..copy_count)
         .map(|_| take_array(full_challenges, &mut cursor))
         .collect::<Vec<_>>();
@@ -385,7 +363,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
 
     let mut wrong_layout = t2_base.layout();
     wrong_layout.one_cell += 1;
-    let t2_member = 3 + copy_count;
+    let t2_member = 2 + copy_count;
     let dory_member = t2_member + 1;
     let wrong_verifier_key = WrapVerifierKey::new(
         &preparation.profile,
@@ -430,14 +408,6 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         wiring: mut hash_wiring,
         input_claims: hash_input_claims,
     } = HashMembers::new(&preparation.hash_table, &hash_relation, &hash_challenges);
-    let mut relation_rows = RelationTableProver::new(
-        &relation_table,
-        &relation_witness,
-        tau_relation.clone(),
-        relation_beta,
-        relation_gamma,
-        relation_weights,
-    );
     let mut copy_rows = (0..copy_count)
         .zip(&copy_witnesses)
         .zip(&tau_copies)
@@ -460,25 +430,28 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         &t2_witness.matrix[T2Col::D],
         t2_rho,
     );
-    let scalar_link = DoryScalarLink::new(
-        ROWS,
-        relation_table.cell_layout(),
-        verifier_key.limb_layout(),
-        t2_rho,
-    );
-    let scalar_prover = scalar_link.prover(&relation_witness);
+    let scalar_link = verifier_key.dory_scalar_link(t2_rho);
+    let scalar_prover = scalar_link.prover(&witness_values);
+    let weights = link_weights(verifier_key.limb_layout(), t2_rho);
+    let expected_scalar = preparation
+        .relation
+        .link
+        .dory
+        .scalars
+        .iter()
+        .zip(weights)
+        .map(|((_, variable), weight)| {
+            weight * preparation.relation_witness.values[variable.index()]
+        })
+        .sum::<Fr>();
+    assert_eq!(scalar_prover.input_claim(), expected_scalar);
     let dory_link_claim = link_input_claim(Fr::zero(), t2_rho, theta, verifier_key.limb_layout());
     let mut dory_link = DoryLinkedProver::new(t2_digit_link, scalar_prover, dory_link_claim);
     assert!(hash_rows.input_claim().is_zero());
-    assert!(relation_rows.input_claim().is_zero());
     assert!(copy_rows.iter().all(|rows| rows.input_claim().is_zero()));
     assert!(t2_rows.input_claim().is_zero());
 
-    let mut input_claims = vec![
-        hash_input_claims[0],
-        hash_input_claims[1],
-        relation_rows.input_claim(),
-    ];
+    let mut input_claims = vec![hash_input_claims[0], hash_input_claims[1]];
     input_claims.extend(copy_rows.iter().map(|rows| rows.input_claim()));
     input_claims.extend([Fr::zero(), dory_link_claim]);
     let mut members = vec![
@@ -494,17 +467,11 @@ fn real_t1_relation_table_round_trip_and_tampers() {
             degree: 3,
             offset: 0,
         },
-        StageMember {
-            prover: &mut relation_rows,
-            input_claim: input_claims[2],
-            degree: 5,
-            offset: 0,
-        },
     ];
     for (index, rows) in copy_rows.iter_mut().enumerate() {
         members.push(StageMember {
             prover: rows,
-            input_claim: input_claims[3 + index],
+            input_claim: input_claims[2 + index],
             degree: 5,
             offset: 0,
         });
@@ -525,8 +492,14 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     ]);
 
     let started = Instant::now();
-    let wrapped = wrap_proof(committed, &verifier_key, &mut members, &setup)
-        .expect("prove real T1/T2/R wrapper");
+    let wrapped = wrap_proof(
+        committed,
+        &verifier_key,
+        &preparation.relation_witness,
+        members,
+        &setup,
+    )
+    .expect("prove real T1/T2/R wrapper");
     let prove_ms = started.elapsed().as_millis();
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
     let started = Instant::now();
@@ -534,18 +507,18 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         .expect("verify real T1/T2/R wrapper");
     let verify_ms = started.elapsed().as_millis();
     let term_context = TermContext {
-        row_point: &results[0].point,
-        batching_coefficients: &results[0].coefficients,
+        row_point: &results[2].point,
+        batching_coefficients: &results[2].coefficients,
         challenges: &assembly_challenges,
     };
     let term_count = verifier_key.term_count(&term_context);
 
     let wire_phase_groups = [
-        phase_1a_groups - hash_columns.vk_groups.len() - 1 - copy_count,
+        phase_1a_groups - hash_columns.vk_groups.len() - copy_count,
         t2_phases[0].group_count,
         t2_phases[1].group_count,
         t2_phases[2].group_count,
-        t2_phases[3].group_count - t2_vk_groups + relation_helper_groups,
+        t2_phases[3].group_count - t2_vk_groups + helper_groups,
     ];
     tamper_suite(&wrapped, wire_phase_groups, k, |proof| {
         verify_wrapped_with_key(&verifier_key, proof, &verifier_setup).is_err()
@@ -571,14 +544,25 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let pinned_phase_1a = hash_columns
         .vk_groups
         .clone()
-        .chain(std::iter::once(relation_fixed_base / k))
         .chain(copy_fixed_bases.iter().map(|base| base / k))
         .collect::<Vec<_>>();
+    let absorbed_row = preparation
+        .relation
+        .link
+        .schedule
+        .iter()
+        .find_map(|entry| match entry {
+            ScheduleEntry::Fr(variable) => Some(variable.index() - public_columns),
+            ScheduleEntry::Bytes(_)
+            | ScheduleEntry::Opaque { .. }
+            | ScheduleEntry::Squeeze { .. } => None,
+        })
+        .expect("absorbed R witness");
     assert_r_absorbed_word_commitment_tamper_rejected(
         &wrapped,
         &phase_1a_columns,
-        relation_wire_base,
-        cells.absorbed_word_base,
+        witness_base,
+        absorbed_row,
         &pinned_phase_1a,
         k,
         &setup,
@@ -626,8 +610,36 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         ],
         &uptime,
     );
+    let matrix_nnz = matrix_nnz(&preparation.relation.matrices);
+    let public_nnz = preparation
+        .relation
+        .matrices
+        .a
+        .iter()
+        .chain(&preparation.relation.matrices.b)
+        .chain(&preparation.relation.matrices.c)
+        .flatten()
+        .filter(|(column, _)| *column < public_columns)
+        .count();
     println!(
-        "groups k={k} t1_sent={} t1_vk={} r=2 copy_vk={} t2_1b={} t2_2a={} t2_2b={} t2_2c={} t2_vk={} r_helpers={} full={} wire={}",
+        "r1cs constraints={} variables={} public=7 witness={} matrix_nnz={} native_matrix_fr={}",
+        preparation.relation.matrices.num_constraints,
+        preparation.relation.matrices.num_vars,
+        witness_values
+            .len()
+            .min(preparation.relation.matrices.num_vars - public_columns),
+        matrix_nnz,
+        2 * public_nnz + 4 * (matrix_nnz - public_nnz),
+    );
+    println!(
+        "links challenges={} absorbed_fr={} element_bytes=45152 copy_links={} copy_terms={} dory_scalars=173",
+        links.challenges.len(),
+        links.wires.len() + links.wires_shifted.len(),
+        copy_count,
+        10 * copy_count,
+    );
+    println!(
+        "groups k={k} t1_sent={} t1_vk={} w=1 copy_vk={} t2_1b={} t2_2a={} t2_2b={} t2_2c={} t2_vk={} helpers={} full={} wire={}",
         hash_columns.group_count - hash_columns.vk_groups.len(),
         hash_columns.vk_groups.len(),
         copy_count,
@@ -636,7 +648,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
         t2_phases[2].group_count,
         t2_phases[3].group_count,
         t2_vk_groups,
-        relation_helper_groups,
+        helper_groups,
         total_groups,
         wire_phase_groups.iter().sum::<usize>(),
     );

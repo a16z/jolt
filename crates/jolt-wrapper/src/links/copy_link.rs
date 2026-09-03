@@ -7,7 +7,7 @@ use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
-use super::{RelationTableError, DEGREE, WIRES};
+use super::{LinkError, DEGREE, WIRES};
 
 /// VK columns describing three link slots per row. `ids` are logical edge
 /// identifiers shared by the two sides; selectors disable unused slots.
@@ -18,10 +18,7 @@ pub struct CopyLinkSide {
 }
 
 impl CopyLinkSide {
-    pub fn new(
-        selectors: [Vec<Fr>; WIRES],
-        ids: [Vec<Fr>; WIRES],
-    ) -> Result<Self, RelationTableError> {
+    pub fn new(selectors: [Vec<Fr>; WIRES], ids: [Vec<Fr>; WIRES]) -> Result<Self, LinkError> {
         let rows = selectors[0].len();
         if !rows.is_power_of_two()
             || selectors
@@ -29,7 +26,7 @@ impl CopyLinkSide {
                 .chain(&ids)
                 .any(|column| column.len() != rows)
         {
-            return Err(RelationTableError::RowDomain {
+            return Err(LinkError::RowDomain {
                 minimum: rows.next_power_of_two(),
                 actual: rows,
             });
@@ -46,10 +43,10 @@ pub struct CopyLink {
 }
 
 impl CopyLink {
-    pub fn new(left: CopyLinkSide, right: CopyLinkSide) -> Result<Self, RelationTableError> {
+    pub fn new(left: CopyLinkSide, right: CopyLinkSide) -> Result<Self, LinkError> {
         let rows = left.selectors[0].len();
         if right.selectors[0].len() != rows {
-            return Err(RelationTableError::RowDomain {
+            return Err(LinkError::RowDomain {
                 minimum: rows,
                 actual: right.selectors[0].len(),
             });
@@ -67,13 +64,13 @@ impl CopyLink {
         right_values: [Vec<Fr>; WIRES],
         beta: Fr,
         gamma: Fr,
-    ) -> Result<CopyLinkWitness, RelationTableError> {
+    ) -> Result<CopyLinkWitness, LinkError> {
         if left_values
             .iter()
             .chain(&right_values)
             .any(|column| column.len() != self.rows)
         {
-            return Err(RelationTableError::Claims);
+            return Err(LinkError::Claims);
         }
         let mut denominators = Vec::new();
         let mut positions = Vec::new();
@@ -102,7 +99,7 @@ impl CopyLink {
             }
         }
         if denominators.iter().any(Zero::is_zero) {
-            return Err(RelationTableError::ZeroDenominator);
+            return Err(LinkError::ZeroDenominator);
         }
         let mut inverses: Vec<ArkFr> = denominators.iter().copied().map(ArkFr::from).collect();
         batch_inversion(&mut inverses);
@@ -122,12 +119,7 @@ impl CopyLink {
         })
     }
 
-    pub fn check(
-        &self,
-        witness: &CopyLinkWitness,
-        beta: Fr,
-        gamma: Fr,
-    ) -> Result<(), RelationTableError> {
+    pub fn check(&self, witness: &CopyLinkWitness, beta: Fr, gamma: Fr) -> Result<(), LinkError> {
         let mut sum = Fr::zero();
         for row in 0..self.rows {
             for (side, values, helper) in [
@@ -140,7 +132,7 @@ impl CopyLink {
                 if grouped_selected_relation(values, ids, selectors, helper, beta, gamma)
                     != Fr::zero()
                 {
-                    return Err(RelationTableError::Copy);
+                    return Err(LinkError::Copy);
                 }
             }
             sum += witness.helpers[0][row] - witness.helpers[1][row];
@@ -148,7 +140,7 @@ impl CopyLink {
         if sum.is_zero() {
             Ok(())
         } else {
-            Err(RelationTableError::Copy)
+            Err(LinkError::Copy)
         }
     }
 
@@ -418,7 +410,7 @@ mod tests {
     use jolt_sumcheck::prover::ProveRounds;
 
     use super::*;
-    use crate::relation_table::{
+    use crate::links::{
         evaluate_terms_observed, AffineForm, ColumnId, CopyLinkTermExporter, CopyLinkTermSide,
         CopyLinkTermsContext, TermContext, TermExporter,
     };
@@ -523,10 +515,10 @@ mod tests {
         assert_eq!(exporter.terms(&export_context), terms);
         assert_eq!(link.terms(&term_context), terms);
         assert_eq!(term_cost.fr_mul, 13);
-        assert_eq!(terms.len(), crate::relation_table::COPY_LINK_TERM_COUNT);
+        assert_eq!(terms.len(), crate::links::COPY_LINK_TERM_COUNT);
         assert_eq!(
             terms.iter().map(|term| term.factors.len()).max(),
-            Some(crate::relation_table::MAX_FACTORS)
+            Some(crate::links::MAX_FACTORS)
         );
         assert_eq!(
             term_context.stage_coefficient * final_claim,
@@ -536,7 +528,7 @@ mod tests {
                     column_claims
                         .get(column.slot)
                         .copied()
-                        .ok_or(RelationTableError::Claims)
+                        .ok_or(LinkError::Claims)
                 },
                 &mut term_cost,
             )

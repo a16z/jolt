@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, One, Ring, Zero};
 use jolt_hyperkzg::HyperKZGProverSetup;
+use jolt_r1cs::Variable;
 
 use crate::hash_table::layout::MESSAGE;
 use crate::hash_table::terms::{
@@ -19,12 +20,9 @@ use crate::limb_table::schedule::Layout as LimbTableLayout;
 use crate::limb_table::stream::{
     commitment_phases as limb_commitment_phases, LimbTableKey, T2Challenges,
 };
+use crate::links::{CopyLink, CopyLinkSide, CopyLinkTermSide, WIRES};
 use crate::profile::WrapperProfile;
 use crate::relation::{build_relation, Relation, ScheduleEntry, SqueezeKind};
-use crate::relation_table::{
-    CopyLink, CopyLinkSide, CopyLinkTermSide, RelationCellLayout, RelationTable, FIXED_COLUMNS,
-    TOTAL_COLUMNS, WIRES,
-};
 use crate::stream::{
     commit_packed, AffineForm, AssemblyMemberStatement, AssemblyStatement, Column, ColumnId,
     Commitment, CommitmentPhase, StageMemberSpec,
@@ -32,8 +30,8 @@ use crate::stream::{
 
 use super::{
     hash_public_statement, CopyExporterPlan, CopyKey, DoryLinkPlacement, LeftLinkValue,
-    LimbExporterPlan, LimbLinkValue, PublicCopyPlan, RelationExporterPlan, ScalarExporterPlan,
-    WrapAssemblyPlan, WrapError, WrapHashKey, WrapLimbKey,
+    LimbExporterPlan, LimbLinkValue, ScalarExporterPlan, WrapAssemblyPlan, WrapError, WrapHashKey,
+    WrapLimbKey,
 };
 
 pub(super) struct KeyAssembly {
@@ -42,6 +40,7 @@ pub(super) struct KeyAssembly {
     pub(super) dory_link: DoryLinkPlacement,
     pub(super) plan: WrapAssemblyPlan,
     pub(super) copies: Vec<CopyKey>,
+    pub(super) relation: Relation,
 }
 
 pub(super) fn build_key_assembly(
@@ -58,19 +57,15 @@ pub(super) fn build_key_assembly(
     }
     let rows = 1usize << hash.schedule().log_rows;
     let relation = build_relation(profile)?;
-    let relation_table = RelationTable::from_relation(&relation, rows)?;
-    let cells = relation_table.cell_layout();
-    if public_inputs.len() != cells.public_inputs {
+    if public_inputs.len() != relation.public.num_public {
         return Err(WrapError::StatementMismatch);
     }
     let copies = canonical_copy_keys(
         hash.links(),
         &relation,
-        cells,
         limb_table.layout(),
         &profile.commitment_link_order(),
         rows,
-        public_inputs.len(),
     )?;
     let hash_columns = hash.table.column_ids(0);
     let hash_groups = hash_columns
@@ -79,9 +74,8 @@ pub(super) fn build_key_assembly(
         .max()
         .ok_or(WrapError::CommitmentPhases)?
         + 1;
-    let relation_fixed_base = hash_groups * packing;
-    let relation_wire_base = relation_fixed_base + FIXED_COLUMNS.div_ceil(packing) * packing;
-    let mut copy_base = relation_wire_base + WIRES.div_ceil(packing) * packing;
+    let witness_base = hash_groups * packing;
+    let mut copy_base = witness_base + packing;
     let copy_fixed_bases = copies
         .iter()
         .map(|_| {
@@ -97,18 +91,19 @@ pub(super) fn build_key_assembly(
         .iter()
         .map(|phase| phase.group_count)
         .sum::<usize>();
-    let helper_count = TOTAL_COLUMNS - FIXED_COLUMNS - WIRES + 2 * copies.len();
+    let helper_count = 2 * copies.len();
     let helper_groups = helper_count.div_ceil(packing);
     let helper_base = (t2_group_offset + t2_groups) * packing;
 
-    let t1_challenge_offset = 2 + 2 * copies.len();
+    let t1_challenge_offset = 2 * copies.len();
     let theta_offset = t1_challenge_offset + T1Challenges::count(hash.schedule().log_rows);
     let rho_offset = theta_offset + 1;
     let t2_challenge_offset = rho_offset + 1;
     let r_stage_challenge_offset = t2_challenge_offset + T2Challenges::count();
-    let weights_offset = r_stage_challenge_offset + (1 + copies.len()) * hash.schedule().log_rows;
-    let t2_member = 3 + copies.len();
+    let weights_offset = r_stage_challenge_offset + copies.len() * hash.schedule().log_rows;
+    let t2_member = 2 + copies.len();
     let dory_member = t2_member + 1;
+    let carry_member = dory_member + 1;
 
     let mut commitment_phases = vec![CommitmentPhase {
         group_count: phase_1a_groups,
@@ -119,7 +114,7 @@ pub(super) fn build_key_assembly(
         .last_mut()
         .ok_or(WrapError::CommitmentPhases)?;
     final_phase.group_count += helper_groups;
-    final_phase.challenge_count += (1 + copies.len()) * (hash.schedule().log_rows + 3);
+    final_phase.challenge_count += copies.len() * (hash.schedule().log_rows + 3);
     let total_groups = commitment_phases
         .iter()
         .map(|phase| phase.group_count)
@@ -127,9 +122,8 @@ pub(super) fn build_key_assembly(
     public_inputs.extend(hash_public_statement(hash_public));
     let members = std::iter::once(3)
         .chain(std::iter::once(3))
-        .chain(std::iter::once(5))
         .chain(std::iter::repeat_n(5, copies.len()))
-        .chain([5, 2])
+        .chain([5, 2, 2])
         .map(|degree| AssemblyMemberStatement {
             input_claim: Fr::zero(),
             spec: StageMemberSpec {
@@ -141,13 +135,6 @@ pub(super) fn build_key_assembly(
         .collect();
 
     let mut pinned_commitments = hash.pinned_commitments();
-    pinned_commitments.extend(commit_key_columns(
-        relation_table.fixed_columns(),
-        relation_fixed_base / packing,
-        packing,
-        rows,
-        setup,
-    )?);
     for (copy, &base) in copies.iter().zip(&copy_fixed_bases) {
         pinned_commitments.extend(commit_key_columns(
             fixed_copy_columns(&copy.link),
@@ -159,16 +146,7 @@ pub(super) fn build_key_assembly(
     }
     pinned_commitments.extend(limb_table.pinned_commitments(t2_group_offset));
 
-    let relation_columns = std::array::from_fn(|column| {
-        if column < FIXED_COLUMNS {
-            physical_id(relation_fixed_base + column, packing)
-        } else if column < FIXED_COLUMNS + WIRES {
-            physical_id(relation_wire_base + column - FIXED_COLUMNS, packing)
-        } else {
-            physical_id(helper_base + column - FIXED_COLUMNS - WIRES, packing)
-        }
-    });
-    let relation_a = relation_columns[FIXED_COLUMNS];
+    let witness_column = physical_id(witness_base, packing);
     let limb_columns = limb_table.column_ids(t2_group_offset);
     let copy_plans = copies
         .iter()
@@ -182,12 +160,9 @@ pub(super) fn build_key_assembly(
                 }),
                 values: copy.left.clone().map(|source| match source {
                     LeftLinkValue::Hash(form) => map_hash_form(&form, &hash_columns),
-                    LeftLinkValue::Public | LeftLinkValue::Zero => zero_form(),
+                    LeftLinkValue::Zero => zero_form(),
                 }),
-                helper: physical_id(
-                    helper_base + TOTAL_COLUMNS - FIXED_COLUMNS - WIRES + 2 * index,
-                    packing,
-                ),
+                helper: physical_id(helper_base + 2 * index, packing),
             };
             let right = CopyLinkTermSide {
                 selectors: std::array::from_fn(|wire| {
@@ -198,27 +173,19 @@ pub(super) fn build_key_assembly(
                 }),
                 values: copy
                     .right
-                    .map(|source| limb_link_form(source, relation_a, &limb_columns)),
-                helper: physical_id(
-                    helper_base + TOTAL_COLUMNS - FIXED_COLUMNS - WIRES + 2 * index + 1,
-                    packing,
-                ),
+                    .map(|source| limb_link_form(source, witness_column, &limb_columns)),
+                helper: physical_id(helper_base + 2 * index + 1, packing),
             };
             CopyExporterPlan {
                 link: copy.link.clone(),
                 left,
                 right,
-                tau: r_stage_challenge_offset + (index + 1) * hash.schedule().log_rows
-                    ..r_stage_challenge_offset + (index + 2) * hash.schedule().log_rows,
-                beta: 2 + 2 * index,
-                gamma: 3 + 2 * index,
-                weights: weights_offset + 3 * (index + 1)..weights_offset + 3 * (index + 2),
-                member: 3 + index,
-                public: (!copy.public_rows.is_empty()).then(|| PublicCopyPlan {
-                    wire: 0,
-                    rows: copy.public_rows.clone(),
-                    values: 0..cells.public_inputs,
-                }),
+                tau: r_stage_challenge_offset + index * hash.schedule().log_rows
+                    ..r_stage_challenge_offset + (index + 1) * hash.schedule().log_rows,
+                beta: 2 * index,
+                gamma: 2 * index + 1,
+                weights: weights_offset + 3 * index..weights_offset + 3 * (index + 1),
+                member: 2 + index,
             }
         })
         .collect();
@@ -234,15 +201,8 @@ pub(super) fn build_key_assembly(
     };
     let plan = WrapAssemblyPlan {
         hash_columns,
-        relation: RelationExporterPlan {
-            rows,
-            columns: relation_columns,
-            tau: r_stage_challenge_offset..r_stage_challenge_offset + hash.schedule().log_rows,
-            beta: 0,
-            gamma: 1,
-            weights: weights_offset..weights_offset + 3,
-            member: 2,
-        },
+        witness_column,
+        carry_member,
         copies: copy_plans,
         limb: LimbExporterPlan {
             challenge_offset: t2_challenge_offset,
@@ -254,9 +214,15 @@ pub(super) fn build_key_assembly(
         },
         scalar: ScalarExporterPlan {
             rows,
-            cells,
+            positions: relation
+                .link
+                .dory
+                .scalars
+                .iter()
+                .map(|(_, variable)| variable.index() - 1 - relation.public.num_public)
+                .collect(),
             rho_offset,
-            wire: relation_a,
+            wire: witness_column,
             member: dory_member,
         },
         max_factors: 4,
@@ -271,6 +237,7 @@ pub(super) fn build_key_assembly(
         },
         plan,
         copies,
+        relation,
     })
 }
 
@@ -325,9 +292,9 @@ fn map_hash_form(form: &HashAffineForm, columns: &[ColumnId]) -> AffineForm {
     }
 }
 
-fn limb_link_form(source: LimbLinkValue, relation_a: ColumnId, limb: &[ColumnId]) -> AffineForm {
+fn limb_link_form(source: LimbLinkValue, witness: ColumnId, limb: &[ColumnId]) -> AffineForm {
     match source {
-        LimbLinkValue::Relation => column_form(relation_a),
+        LimbLinkValue::Witness => column_form(witness),
         LimbLinkValue::Chunk(chunk) => column_form(limb[LimbCol::CHUNKS + chunk]),
         LimbLinkValue::Sign => column_form(limb[LimbCol::FLAG]),
         LimbLinkValue::Zero => zero_form(),
@@ -349,16 +316,13 @@ fn fixed_copy_columns(link: &CopyLink) -> Vec<Column> {
 fn canonical_copy_keys(
     links: &LinkMap,
     relation: &Relation,
-    cells: RelationCellLayout,
     limb: &LimbTableLayout,
     commitment_order: &[usize],
     rows: usize,
-    public_inputs: usize,
 ) -> Result<Vec<CopyKey>, WrapError> {
     let mut copies = vec![
-        challenge_copy_key(links, relation, cells.challenge_base, rows)?,
-        absorbed_word_copy_key(links, cells.absorbed_word_base, rows)?,
-        public_copy_key(cells.public_input_base, public_inputs, rows)?,
+        challenge_copy_key(links, relation, rows)?,
+        absorbed_word_copy_key(links, relation, rows)?,
     ];
     copies.extend(element_copy_keys(links, limb, commitment_order, rows)?);
     Ok(copies)
@@ -367,7 +331,6 @@ fn canonical_copy_keys(
 fn challenge_copy_key(
     links: &LinkMap,
     relation: &Relation,
-    relation_base: usize,
     rows: usize,
 ) -> Result<CopyKey, WrapError> {
     let relation_squeezes = relation
@@ -375,7 +338,7 @@ fn challenge_copy_key(
         .schedule
         .iter()
         .filter_map(|entry| match entry {
-            ScheduleEntry::Squeeze { kind, .. } => Some(*kind),
+            ScheduleEntry::Squeeze { kind, var } => Some((*kind, *var)),
             ScheduleEntry::Bytes(_) | ScheduleEntry::Fr(_) | ScheduleEntry::Opaque { .. } => None,
         })
         .collect::<Vec<_>>();
@@ -386,7 +349,8 @@ fn challenge_copy_key(
     let mut left_ids = std::array::from_fn(|_| vec![Fr::zero(); rows]);
     let mut right_selectors = std::array::from_fn(|_| vec![Fr::zero(); rows]);
     let mut right_ids = std::array::from_fn(|_| vec![Fr::zero(); rows]);
-    for (index, ((squeeze, left_row), kind)) in
+    let mut right_slots = HashMap::new();
+    for (index, ((squeeze, left_row), (kind, variable))) in
         links.challenges.iter().zip(relation_squeezes).enumerate()
     {
         let wire = match (squeeze.decoder, kind) {
@@ -397,8 +361,14 @@ fn challenge_copy_key(
         let id = Fr::from_u64(index as u64 + 1);
         left_selectors[wire][*left_row] = Fr::one();
         left_ids[wire][*left_row] = id;
-        right_selectors[wire][relation_base + index] = Fr::one();
-        right_ids[wire][relation_base + index] = id;
+        let right_row = witness_row(relation, variable)?;
+        let right_wire = right_slots.entry(right_row).or_insert(0usize);
+        if *right_wire >= WIRES {
+            return Err(WrapError::T1MemberLayout);
+        }
+        right_selectors[*right_wire][right_row] = Fr::one();
+        right_ids[*right_wire][right_row] = id;
+        *right_wire += 1;
     }
     Ok(CopyKey {
         link: CopyLink::new(
@@ -411,32 +381,65 @@ fn challenge_copy_key(
             LeftLinkValue::Zero,
         ],
         right: [
-            LimbLinkValue::Relation,
-            LimbLinkValue::Relation,
-            LimbLinkValue::Zero,
+            LimbLinkValue::Witness,
+            LimbLinkValue::Witness,
+            LimbLinkValue::Witness,
         ],
-        public_rows: Vec::new(),
     })
 }
 
-fn absorbed_word_copy_key(links: &LinkMap, base: usize, rows: usize) -> Result<CopyKey, WrapError> {
+fn absorbed_word_copy_key(
+    links: &LinkMap,
+    relation: &Relation,
+    rows: usize,
+) -> Result<CopyKey, WrapError> {
+    let absorbed = relation
+        .link
+        .schedule
+        .iter()
+        .filter_map(|entry| match entry {
+            ScheduleEntry::Fr(variable) => Some(*variable),
+            ScheduleEntry::Bytes(_)
+            | ScheduleEntry::Opaque { .. }
+            | ScheduleEntry::Squeeze { .. } => None,
+        })
+        .collect::<Vec<_>>();
     let mut left_selectors = std::array::from_fn(|_| vec![Fr::zero(); rows]);
     let mut left_ids = std::array::from_fn(|_| vec![Fr::zero(); rows]);
     let mut right_selectors = std::array::from_fn(|_| vec![Fr::zero(); rows]);
     let mut right_ids = std::array::from_fn(|_| vec![Fr::zero(); rows]);
+    let mut right_slots = HashMap::new();
     for &(index, row) in &links.wires {
         let id = Fr::from_u64(u64::from(index) + 1);
         left_selectors[0][row] = Fr::one();
         left_ids[0][row] = id;
-        right_selectors[0][base + index as usize] = Fr::one();
-        right_ids[0][base + index as usize] = id;
+        let variable = *absorbed
+            .get(index as usize)
+            .ok_or(WrapError::T1MemberLayout)?;
+        let right_row = witness_row(relation, variable)?;
+        let right_wire = right_slots.entry(right_row).or_insert(0usize);
+        if *right_wire >= WIRES {
+            return Err(WrapError::T1MemberLayout);
+        }
+        right_selectors[*right_wire][right_row] = Fr::one();
+        right_ids[*right_wire][right_row] = id;
+        *right_wire += 1;
     }
     for &(index, row) in &links.wires_shifted {
         let id = Fr::from_u64(u64::from(index) + 1);
         left_selectors[1][row] = Fr::one();
         left_ids[1][row] = id;
-        right_selectors[0][base + index as usize] = Fr::one();
-        right_ids[0][base + index as usize] = id;
+        let variable = *absorbed
+            .get(index as usize)
+            .ok_or(WrapError::T1MemberLayout)?;
+        let right_row = witness_row(relation, variable)?;
+        let right_wire = right_slots.entry(right_row).or_insert(0usize);
+        if *right_wire >= WIRES {
+            return Err(WrapError::T1MemberLayout);
+        }
+        right_selectors[*right_wire][right_row] = Fr::one();
+        right_ids[*right_wire][right_row] = id;
+        *right_wire += 1;
     }
     Ok(CopyKey {
         link: CopyLink::new(
@@ -449,44 +452,18 @@ fn absorbed_word_copy_key(links: &LinkMap, base: usize, rows: usize) -> Result<C
             LeftLinkValue::Zero,
         ],
         right: [
-            LimbLinkValue::Relation,
-            LimbLinkValue::Zero,
-            LimbLinkValue::Zero,
+            LimbLinkValue::Witness,
+            LimbLinkValue::Witness,
+            LimbLinkValue::Witness,
         ],
-        public_rows: Vec::new(),
     })
 }
 
-fn public_copy_key(base: usize, values: usize, rows: usize) -> Result<CopyKey, WrapError> {
-    let public_rows = (0..values).collect::<Vec<_>>();
-    let mut left_selectors = std::array::from_fn(|_| vec![Fr::zero(); rows]);
-    let mut left_ids = std::array::from_fn(|_| vec![Fr::zero(); rows]);
-    let mut right_selectors = std::array::from_fn(|_| vec![Fr::zero(); rows]);
-    let mut right_ids = std::array::from_fn(|_| vec![Fr::zero(); rows]);
-    for (index, &row) in public_rows.iter().enumerate() {
-        let id = Fr::from_u64(index as u64 + 1);
-        left_selectors[0][row] = Fr::one();
-        left_ids[0][row] = id;
-        right_selectors[0][base + index] = Fr::one();
-        right_ids[0][base + index] = id;
-    }
-    Ok(CopyKey {
-        link: CopyLink::new(
-            CopyLinkSide::new(left_selectors, left_ids)?,
-            CopyLinkSide::new(right_selectors, right_ids)?,
-        )?,
-        left: [
-            LeftLinkValue::Public,
-            LeftLinkValue::Zero,
-            LeftLinkValue::Zero,
-        ],
-        right: [
-            LimbLinkValue::Relation,
-            LimbLinkValue::Zero,
-            LimbLinkValue::Zero,
-        ],
-        public_rows,
-    })
+fn witness_row(relation: &Relation, variable: Variable) -> Result<usize, WrapError> {
+    variable
+        .index()
+        .checked_sub(1 + relation.public.num_public)
+        .ok_or(WrapError::T1MemberLayout)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -665,7 +642,6 @@ fn element_copy_keys(
                 )?,
                 left: left.map(|value| LeftLinkValue::Hash(value.form())),
                 right,
-                public_rows: Vec::new(),
             })
         })
         .collect()

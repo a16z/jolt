@@ -561,3 +561,30 @@ binds its two stage-A member coefficients. The adapter is ready on top of commit
   each key's exporter-derived upper bound. Repository hooks passed again. At this final code SHA,
   k=32 ran in 56.175 s and k=16 in 43.501 s; the full feature suite passed 69/69 in
   190.155 s nextest / 190.67 s wall.
+
+## 2026-09-03 13:36 — R1CS + Spartan replacement
+
+- The Plonkish R table is deleted. R is the exact 5,254-constraint / 6,761-variable relation,
+  with constant one plus seven statement fields public and 6,753 private W values. The internal
+  `Chi(sigma)=1` row remains in R; `Chi(sigma)`, `S1Acc`, and `S2Acc` do not enter the T2 link.
+- W occupies one phase-1a Fr column over the common `2^18` domain. Values `0..6,753` are the
+  private R assignment; the suffix is zero. Spartan uses a 13-round committed degree-3 outer and
+  a 13-round clear degree-2 inner. Its outer joins stage A and the term stage in the shared BDFG
+  opening. An 18-round degree-2 carry member binds the inner W evaluation to the committed W
+  column at stage A's point.
+- The verifier evaluates the three sparse matrix MLEs natively: 34,945 nonzeros and 136,946
+  observed Fr multiplications. The outer claims feed the inner input; the verifier computes the
+  public contribution from the seven statement fields and one. No SPARK commitment remains.
+- Ten generic CopyLinks bind 376 T1 squeezes and 1,199 challenge-effective Fr absorbs to W, plus
+  45,152 T1 element bytes to 1,526 T2 rows. The scalar link reads 173 W occurrences with T2's
+  occurrence weights. Generic CopyLink/scalar code moved to `links/`; the row table, gates,
+  selectors, permutation witness, and standalone Spartan proof API were removed.
+- Final real gates: k=32 = 7,488 B payload / 7,628 B bincode / 352 B statement, 510 terms / nine
+  term rounds, 179,547 Fr mul, 857 Keccak, 6,082,065 gas; k=16 = 7,776 / 7,928 / 352 B,
+  172,364 Fr mul, 864 Keccak, 6,050,469 gas. Full itemization and loads are in
+  `.journals/pr-tables.md`.
+- Every proof field is mutated by the real gate. Extra negatives cover Spartan rounds and claims,
+  the W commitment, an absorbed-Fr W row, T2 window/sign/psi/digit/input rows, the T2 VK pin,
+  statement mismatch, and program/profile mismatch.
+- `cargo clippy -p jolt-wrapper --all-targets -- -D warnings` passed. The full
+  `prover-fixtures` nextest suite passed 67/67 in 193.100 s, 193.88 s wall.
