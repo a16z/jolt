@@ -6,7 +6,6 @@
 
 use jolt_field::{Fr, Ring};
 use jolt_poly::MultilinearPoly;
-use jolt_sumcheck::prover::ProveRounds;
 use jolt_transcript::{Keccak256Transcript, Transcript};
 use jolt_wrapper::carry::{carried_final, CarryProver};
 use jolt_wrapper::stream::{prove_stage, verify_stage_with, StageMember, StageMemberSpec};
