@@ -897,7 +897,7 @@ mod tests {
 
     #[cfg(not(feature = "field-inline"))]
     #[test]
-    fn trace_row_is_64_bytes() {
-        assert_eq!(std::mem::size_of::<TraceRow>(), 64);
+    fn trace_row_size_is_pinned() {
+        assert_eq!(std::mem::size_of::<TraceRow>(), TRACE_ROW_BYTES);
     }
 }
