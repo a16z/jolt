@@ -11,14 +11,16 @@ mod common;
 
 use std::time::Instant;
 
-use ark_bn254::Fq12;
+use ark_bn254::{Fq, Fq12, Fr as ArkFr};
 use ark_ff::Zero;
+use jolt_poly::EqPolynomial;
 use jolt_wrapper::limb_table::dory::{DorySetupInputs, FlattenedCheck, NativeCheck, WireValues};
-use jolt_wrapper::limb_table::layout::ROWS;
+use jolt_wrapper::limb_table::layout::{Factor, ROWS};
+use jolt_wrapper::limb_table::lookup::PublicColumns;
 use jolt_wrapper::limb_table::schedule::{build, Layout};
 use jolt_wrapper::limb_table::tower::fq12_from_coords;
 
-fn gt(values: &[ark_bn254::Fq], rows: &[u32; 12]) -> Fq12 {
+fn gt(values: &[Fq], rows: &[u32; 12]) -> Fq12 {
     fq12_from_coords(&std::array::from_fn(|c| values[rows[c] as usize]))
 }
 
@@ -143,7 +145,7 @@ fn random_values(check: &FlattenedCheck, seed: u64) -> WireValues {
     let mut pairs = Vec::new();
     let mut push = |wire: &Wire| {
         if let Wire::Named(name) = wire {
-            pairs.push((name.clone(), ark_bn254::Fr::rand(&mut rng)));
+            pairs.push((name.clone(), ArkFr::rand(&mut rng)));
         }
     };
     for (_, wire) in &check.gt.bases {
@@ -195,9 +197,7 @@ fn evaluator_matches_kernel_mles() {
     let layout = build(&check, &values, &setup, &check.wires());
     let mut rng = ChaCha20Rng::seed_from_u64(1);
     let point = |rng: &mut ChaCha20Rng| -> Vec<Fr> {
-        (0..LOG_ROWS)
-            .map(|_| Fr::from(ark_bn254::Fr::rand(rng)))
-            .collect()
+        (0..LOG_ROWS).map(|_| Fr::from(ArkFr::rand(rng))).collect()
     };
     let (r, rs) = (point(&mut rng), point(&mut rng));
     let mut kernels: Vec<Kernel> = layout.pieces().into_iter().map(|p| p.kernel).collect();
@@ -210,10 +210,8 @@ fn evaluator_matches_kernel_mles() {
     }
     let mut cost = VerifierCost::default();
     let mut ev = Evaluator::new(&r, &rs, &mut cost);
-    let eq_r =
-        jolt_poly::EqPolynomial::<Fr>::evals(&r.iter().rev().copied().collect::<Vec<_>>(), None);
-    let eq_s =
-        jolt_poly::EqPolynomial::<Fr>::evals(&rs.iter().rev().copied().collect::<Vec<_>>(), None);
+    let eq_r = EqPolynomial::<Fr>::evals(&r.iter().rev().copied().collect::<Vec<_>>(), None);
+    let eq_s = EqPolynomial::<Fr>::evals(&rs.iter().rev().copied().collect::<Vec<_>>(), None);
     let (mut bad, mut bad_edges) = (0, 0);
     for kernel in &kernels {
         let expected = kernel.mle(&r, &rs);
@@ -247,8 +245,7 @@ fn evaluator_matches_kernel_mles() {
     // Shared-cell group evaluation equals the sum of its kernels.
     let mut bad_groups = 0;
     for group in &layout.copies {
-        let maps: Vec<(usize, &jolt_wrapper::limb_table::layout::Factor)> =
-            group.maps.iter().map(|(_, _, map)| (0, map)).collect();
+        let maps: Vec<(usize, &Factor)> = group.maps.iter().map(|(_, _, map)| (0, map)).collect();
         let mut bucket = [Fr::zero()];
         ev.group_into(&group.cell, &maps, &mut bucket);
         let via_group = bucket[0];
@@ -288,7 +285,7 @@ fn kernels_match_program_rows() {
     let setup = random_setup(8, 7);
     let values = random_values(&check, 5);
     let layout = build(&check, &values, &setup, &check.wires());
-    let public = jolt_wrapper::limb_table::lookup::PublicColumns::new(&layout);
+    let public = PublicColumns::new(&layout);
     // (row, slot, side) -> (src, weight) from the program.
     let mut from_rows: BTreeMap<(u32, u8, u8), (u32, i32)> = BTreeMap::new();
     for (row, spec) in layout.program.rows.iter().enumerate() {
@@ -409,7 +406,7 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     let values = random_values(&check, 5);
     let layout = build(&check, &values, &setup, &check.wires());
     let mut rng = ChaCha20Rng::seed_from_u64(3);
-    let mut fr = || Fr::from(ark_bn254::Fr::rand(&mut rng));
+    let mut fr = || Fr::from(ArkFr::rand(&mut rng));
     let challenges = Challenges {
         tau: (0..LOG_ROWS).map(|_| fr()).collect(),
         xi: fr(),

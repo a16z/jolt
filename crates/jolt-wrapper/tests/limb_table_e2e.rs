@@ -15,6 +15,7 @@ mod common;
 
 use std::time::Instant;
 
+use ark_bn254::Fr as ArkFr;
 use ark_ff::UniformRand;
 use jolt_field::{Fr, Ring, Zero};
 use jolt_sumcheck::prover::ProveRounds;
@@ -27,7 +28,7 @@ use jolt_wrapper::limb_table::lookup::{
     omega_column, omega_eval, public_evals, LookupColumns, PublicColumns,
 };
 use jolt_wrapper::limb_table::relation::{
-    col, eq_tau_column, Challenges, LookupConstants, RowRelation, RowSumcheck, SLOTS,
+    eq_tau_column, Challenges, Col, LookupConstants, RowRelation, RowSumcheck, SLOTS,
 };
 use jolt_wrapper::limb_table::schedule::{build, Layout};
 use jolt_wrapper::limb_table::terms::evaluate_terms;
@@ -37,7 +38,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 fn fr(rng: &mut ChaCha20Rng) -> Fr {
-    Fr::from(ark_bn254::Fr::rand(rng))
+    Fr::from(ArkFr::rand(rng))
 }
 
 fn challenges(rng: &mut ChaCha20Rng) -> Challenges {
@@ -161,7 +162,7 @@ fn matrix(
         small,
         id,
     ]);
-    assert_eq!(columns.len(), col::WIDTH);
+    assert_eq!(columns.len(), Col::WIDTH);
     columns
 }
 
@@ -183,7 +184,7 @@ fn every_constraint_vanishes_on_an_honest_witness() {
     let public = PublicColumns::new(&w.layout);
     let columns = matrix(&w, &relation, &public, &public.digits.clone());
     let rows = 1usize << LOG_ROWS;
-    let mut row_values = vec![Fr::zero(); col::WIDTH];
+    let mut row_values = vec![Fr::zero(); Col::WIDTH];
     let mut sums: Vec<(&str, Fr)> = Vec::new();
     let mut first_bad: Vec<(&str, usize)> = Vec::new();
     for x in 0..rows {
@@ -296,7 +297,7 @@ fn members_verify_and_terms_match_on_a_real_opening() {
     let (r_link, link_claim) = drive(&mut link, input, &mut driver);
     assert_eq!(r_link, r_le);
     let (digit, omega_final) = link.final_values();
-    assert_eq!(digit, claims[col::D], "digit value claim");
+    assert_eq!(digit, claims[Col::D], "digit value claim");
     let mut link_cost = VerifierCost::default();
     let omega = omega_eval(&w.layout, rho, &r_le, &mut link_cost);
     assert_eq!(omega, omega_final, "ω̃(r)");
@@ -350,18 +351,18 @@ fn tampered_witnesses_are_rejected() {
     let row = op.first_row as usize;
     // A chunk of a compute row (breaks the limb identity and the copies).
     rejects(columns.clone(), &relation, &w.layout, |c| {
-        c[col::CHUNKS + 3][row] += Fr::from_u64(1);
+        c[Col::CHUNKS + 3][row] += Fr::from_u64(1);
     });
     // A wrong digit on one op row (breaks the lookup or the constancy).
     rejects(columns.clone(), &relation, &w.layout, |c| {
-        c[col::E0][row] = Fr::from_u64(1) - c[col::E0][row];
+        c[Col::E0][row] = Fr::from_u64(1) - c[Col::E0][row];
     });
     // A copied operand that does not match its source.
     rejects(columns.clone(), &relation, &w.layout, |c| {
-        c[col::X + 3][row] += Fr::from_u64(1);
+        c[Col::X + 3][row] += Fr::from_u64(1);
     });
     // A looked-up operand replaced by another value.
     rejects(columns, &relation, &w.layout, |c| {
-        c[col::Y + 3][row] += Fr::from_u64(1);
+        c[Col::Y + 3][row] += Fr::from_u64(1);
     });
 }

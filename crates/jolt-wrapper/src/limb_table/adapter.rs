@@ -3,7 +3,7 @@
 //! elements (in the joint opening's commitment order) and the wire values
 //! the R1CS lane's named Dory scalars take in its witness.
 
-use ark_bn254::Fq12;
+use ark_bn254::{Fq12, Fr as ArkFr};
 use jolt_dory::{DoryCommitment, DoryProof, DoryVerifierSetup};
 use jolt_field::Fr;
 use jolt_verifier::proof::JoltCommitments;
@@ -99,7 +99,7 @@ pub fn from_jolt(
                 index,
                 len: witness_values.len(),
             })?;
-        pairs.push((wire.clone(), ark_bn254::Fr::from(value)));
+        pairs.push((wire.clone(), ArkFr::from(value)));
     }
     let check = FlattenedCheck::derive(proof.sigma, ordered.len());
     let wire_order: Vec<DoryScalar> = links.scalars.iter().map(|(w, _)| w.clone()).collect();

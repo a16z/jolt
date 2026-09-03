@@ -4,14 +4,14 @@
 //! the row member), so the sum equals `Σ_kd ρ^{kd}·s_kd` — the R lane's
 //! `Σ_s ρ^s·scalar_s` plus `ρ^K` for the constant-one base.
 
-use jolt_field::{Fr, Ring, Zero};
+use jolt_field::{Field, Fr, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
 use super::layout::LOG_ROWS;
-use super::relation::col;
+use super::relation::Col;
 use super::terms::{AffineForm, ColumnId, Term};
 
 pub struct LinkMember {
@@ -97,7 +97,7 @@ impl LinkMember {
 }
 
 fn two_inverse() -> Fr {
-    jolt_field::Field::inverse(&Fr::from_u64(2)).unwrap_or_else(|| unreachable!("2 is invertible"))
+    Field::inverse(&Fr::from_u64(2)).unwrap_or_else(|| unreachable!("2 is invertible"))
 }
 
 impl ProveRounds<Fr> for LinkMember {
@@ -126,5 +126,5 @@ impl ProveRounds<Fr> for LinkMember {
 
 /// The member's final relation as one linear term: `ω̃(r)·D(r)`.
 pub fn link_term(omega: Fr) -> Term {
-    Term::new(omega, vec![AffineForm::column(ColumnId(col::D as u32))])
+    Term::new(omega, vec![AffineForm::column(ColumnId(Col::D as u32))])
 }

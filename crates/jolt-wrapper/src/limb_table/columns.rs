@@ -6,7 +6,7 @@
 //! the row relation as their evaluations at the challenge `ξ`:
 //! `Z_ξ(v) = Σ_a ξ^a·limb_a(v)`.
 
-use ark_bn254::Fq;
+use ark_bn254::{Fq, Fr as ArkFr};
 use ark_ff::{BigInteger, PrimeField};
 use jolt_field::{Fr, Ring};
 use num_bigint::{BigInt, BigUint, Sign};
@@ -51,7 +51,7 @@ pub fn fq_to_biguint(x: &Fq) -> BigUint {
 }
 
 pub fn fr_from_biguint(v: &BigUint) -> Fr {
-    Fr::from(ark_bn254::Fr::from_le_bytes_mod_order(&v.to_bytes_le()))
+    Fr::from(ArkFr::from_le_bytes_mod_order(&v.to_bytes_le()))
 }
 
 pub fn fr_from_bigint(v: &BigInt) -> Fr {
@@ -272,12 +272,12 @@ impl Columns {
         let helpers: Vec<Vec<Fr>> = (0..HELPER_COLUMNS)
             .into_par_iter()
             .map(|g| {
-                let mut products: Vec<ark_bn254::Fr> = (0..self.rows())
+                let mut products: Vec<ArkFr> = (0..self.rows())
                     .map(|row| {
                         let product = (0..GROUP_SIZE).fold(Fr::from_u64(1), |acc, i| {
                             acc * (alpha - Fr::from_u64(value(row, GROUP_SIZE * g + i)))
                         });
-                        ark_bn254::Fr::from(product)
+                        ArkFr::from(product)
                     })
                     .collect();
                 ark_ff::batch_inversion(&mut products);

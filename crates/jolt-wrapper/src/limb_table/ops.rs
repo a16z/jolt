@@ -4,7 +4,7 @@
 //! G2 affine = `(x0, x1, y0, y1)`; G2 homogeneous projective = `(x0, x1, y0,
 //! y1, z0, z1)`; `Fq2` values = `(re, im)`.
 
-use ark_bn254::Fq;
+use ark_bn254::{Fq, Fq2};
 use ark_ff::{AdditiveGroup, Field};
 
 use super::template::{at, conjugated, own, Ref, RefSlots, RowKind, Template, TemplateRow};
@@ -602,10 +602,10 @@ pub fn gt_difference_pins() -> Template {
 
 /// `ψ^power(x, y) = (conj^power(x)·cx, conj^power(y)·cy)`, folded from
 /// arkworks' `TWIST_MUL_BY_Q_{X,Y}` (`ψ = mul_by_char`).
-pub fn psi_coefficients(power: usize) -> (ark_bn254::Fq2, ark_bn254::Fq2) {
+pub fn psi_coefficients(power: usize) -> (Fq2, Fq2) {
     use ark_bn254::Config as Bn254Config;
     use ark_ec::bn::BnConfig;
-    let (mut cx, mut cy) = (ark_bn254::Fq2::ONE, ark_bn254::Fq2::ONE);
+    let (mut cx, mut cy) = (Fq2::ONE, Fq2::ONE);
     for _ in 0..power {
         let mut cx_conj = cx;
         let mut cy_conj = cy;

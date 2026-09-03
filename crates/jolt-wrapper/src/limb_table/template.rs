@@ -9,6 +9,7 @@ use ark_bn254::Fq;
 
 use super::layout::{normalize, Bits, Factor, Kernel, Piece, Side, LOG_ROWS};
 use super::program::{Program, RowId, RowSpec, Slot, Source};
+use super::schedule::Cells;
 
 /// Coordinate `coord` of element `elem`; element 0 is the op's own rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,7 +33,7 @@ pub const ONE_REF: Ref = Ref {
     elem: ONE_ELEM,
     coord: 0,
 };
-pub const ONE_ROW: RowId = super::schedule::cells::CONSTANTS.start * 16;
+pub const ONE_ROW: RowId = Cells::CONSTANTS.start * 16;
 
 impl TemplateRow {
     /// The row's operand slots: witness rows (quotients, inverses) carry the

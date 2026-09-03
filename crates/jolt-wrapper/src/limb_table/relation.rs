@@ -27,59 +27,60 @@ pub const SLOTS: usize = 22;
 /// Column indices of the exported column list: committed phase 1, committed
 /// phase 2 (after the challenges `ξ, α, β, γ` are drawn), then the
 /// VK-committed public columns.
-pub mod col {
-    use super::*;
+/// Column indices of the row member's matrix, in packing order.
+pub struct Col;
 
+impl Col {
     pub const CHUNKS: usize = 0;
-    pub const DIGITS: usize = CHUNKS + CHUNK_COLUMNS;
-    pub const ZERO: usize = DIGITS;
-    pub const NEG: usize = DIGITS + 1;
-    pub const E0: usize = DIGITS + 2;
+    pub const DIGITS: usize = Self::CHUNKS + CHUNK_COLUMNS;
+    pub const ZERO: usize = Self::DIGITS;
+    pub const NEG: usize = Self::DIGITS + 1;
+    pub const E0: usize = Self::DIGITS + 2;
     /// The digit value `d = (1 − zero)(1 − 2neg)(1 + e)` as a column.
-    pub const D: usize = DIGITS + DIGIT_COLUMNS;
-    pub const M_POS: usize = D + 1;
-    pub const M_NEG: usize = M_POS + 1;
-    pub const MULT: usize = M_NEG + 1;
-    pub const PHASE1_END: usize = MULT + 1;
+    pub const D: usize = Self::DIGITS + DIGIT_COLUMNS;
+    pub const M_POS: usize = Self::D + 1;
+    pub const M_NEG: usize = Self::M_POS + 1;
+    pub const MULT: usize = Self::M_NEG + 1;
+    pub const PHASE1_END: usize = Self::MULT + 1;
 
-    pub const X: usize = PHASE1_END;
-    pub const Y: usize = X + SLOTS;
-    pub const HELPERS: usize = Y + SLOTS;
-    pub const INV: usize = HELPERS + HELPER_COLUMNS;
-    pub const H: usize = INV + 1;
-    pub const G_POS: usize = H + 1;
-    pub const G_NEG: usize = G_POS + 1;
-    pub const F_POS: usize = G_NEG + 1;
-    pub const F_NEG: usize = F_POS + 1;
-    pub const PHASE2_END: usize = F_NEG + 1;
-    pub const COMMITTED: usize = PHASE2_END;
+    pub const X: usize = Self::PHASE1_END;
+    pub const Y: usize = Self::X + SLOTS;
+    pub const HELPERS: usize = Self::Y + SLOTS;
+    pub const INV: usize = Self::HELPERS + HELPER_COLUMNS;
+    pub const H: usize = Self::INV + 1;
+    pub const G_POS: usize = Self::H + 1;
+    pub const G_NEG: usize = Self::G_POS + 1;
+    pub const F_POS: usize = Self::G_NEG + 1;
+    pub const F_NEG: usize = Self::F_POS + 1;
+    pub const PHASE2_END: usize = Self::F_NEG + 1;
+    pub const COMMITTED: usize = Self::PHASE2_END;
 
-    pub const PIN: usize = COMMITTED;
-    pub const PIN_LIMBS: usize = PIN + 1;
+    pub const PIN: usize = Self::COMMITTED;
+    pub const PIN_LIMBS: usize = Self::PIN + 1;
     /// Rows exempt from the limb identity (inputs, public constants).
-    pub const FREE: usize = PIN_LIMBS + LIMBS;
-    pub const VK_END: usize = FREE + 1;
+    pub const FREE: usize = Self::PIN_LIMBS + LIMBS;
+    pub const VK_END: usize = Self::FREE + 1;
     /// Every column with an evaluation claim at the stage point.
-    pub const CLAIMED: usize = VK_END;
+    pub const CLAIMED: usize = Self::VK_END;
 
     /// Prover-only public columns appended to the matrix.
-    pub const EQ_TAU: usize = CLAIMED;
-    pub const COPY_KERNEL: usize = EQ_TAU + 1;
-    pub const SEL: usize = COPY_KERNEL + 1;
-    pub const IS_GT: usize = SEL + 1;
-    pub const IS_G1: usize = IS_GT + 1;
-    pub const IS_G2: usize = IS_G1 + 1;
-    pub const S0: usize = IS_G2 + 1;
-    pub const COORD: usize = S0 + 1;
-    pub const CONSTANCY: usize = COORD + 1;
-    pub const SMALL: usize = CONSTANCY + 1;
-    pub const ID: usize = SMALL + 1;
-    pub const WIDTH: usize = ID + 1;
-    pub const PUBLIC: usize = WIDTH - CLAIMED;
+    pub const EQ_TAU: usize = Self::CLAIMED;
+    pub const COPY_KERNEL: usize = Self::EQ_TAU + 1;
+    pub const SEL: usize = Self::COPY_KERNEL + 1;
+    pub const IS_GT: usize = Self::SEL + 1;
+    pub const IS_G1: usize = Self::IS_GT + 1;
+    pub const IS_G2: usize = Self::IS_G1 + 1;
+    pub const S0: usize = Self::IS_G2 + 1;
+    pub const COORD: usize = Self::S0 + 1;
+    pub const CONSTANCY: usize = Self::COORD + 1;
+    pub const SMALL: usize = Self::CONSTANCY + 1;
+    pub const ID: usize = Self::SMALL + 1;
+    pub const WIDTH: usize = Self::ID + 1;
+    pub const PUBLIC: usize = Self::WIDTH - Self::CLAIMED;
 }
 
 /// Verifier-evaluated public multilinears at the stage point, in the order of
-/// the prover-only matrix columns (`col::EQ_TAU..col::WIDTH`).
+/// the prover-only matrix columns (`Col::EQ_TAU..Col::WIDTH`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicEvals {
     pub eq_tau: Fr,
@@ -97,7 +98,7 @@ pub struct PublicEvals {
 }
 
 impl PublicEvals {
-    fn as_array(&self) -> [Fr; col::PUBLIC] {
+    fn as_array(&self) -> [Fr; Col::PUBLIC] {
         [
             self.eq_tau,
             self.copy_kernel,
@@ -261,51 +262,51 @@ impl RowRelation {
     fn phi(&self, v: &[Fr]) -> Fr {
         let ch = &self.challenges;
         let c = &self.constants;
-        let chunks = &v[col::CHUNKS..col::CHUNKS + CHUNK_COLUMNS];
+        let chunks = &v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS];
         let g = &self.gammas;
         // Limb identity.
         let mut products = Fr::zero();
         for s in 0..SLOTS {
-            products += v[col::X + s] * v[col::Y + s];
+            products += v[Col::X + s] * v[Col::Y + s];
         }
         let z_xi = self.z_xi(chunks);
         let limb = products
             - z_xi
             - self.k_xi(chunks) * self.q_xi
             - (c.pow_limb - ch.xi) * self.c_xi(chunks);
-        let mut phi = g[GAMMA_LIMB] * (Fr::one() - v[col::FREE]) * limb;
+        let mut phi = g[GAMMA_LIMB] * (Fr::one() - v[Col::FREE]) * limb;
         // Pins.
         let pin_xi = (0..LIMBS).fold(Fr::zero(), |acc, a| {
-            acc + v[col::PIN_LIMBS + a] * self.xi_pow[a]
+            acc + v[Col::PIN_LIMBS + a] * self.xi_pow[a]
         });
-        phi += g[GAMMA_PIN] * v[col::PIN] * (z_xi - pin_xi);
+        phi += g[GAMMA_PIN] * v[Col::PIN] * (z_xi - pin_xi);
         // Range groups.
         for grp in 0..HELPER_COLUMNS {
             let product = (0..GROUP_SIZE).fold(Fr::one(), |acc, i| {
                 acc * (ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i))
             });
-            phi += g[GAMMA_RANGE + grp] * (v[col::HELPERS + grp] * product - Fr::one());
+            phi += g[GAMMA_RANGE + grp] * (v[Col::HELPERS + grp] * product - Fr::one());
         }
         // Digit bits.
         for b in 0..DIGIT_COLUMNS {
-            let bit = v[col::DIGITS + b];
+            let bit = v[Col::DIGITS + b];
             phi += g[GAMMA_BOOL + b] * bit * (bit - Fr::one());
         }
         phi += g[GAMMA_DIGIT_RANGE]
-            * (Fr::one() - v[col::NEG])
-            * v[col::E0]
-            * v[col::E0 + 1]
-            * v[col::E0 + 2];
+            * (Fr::one() - v[Col::NEG])
+            * v[Col::E0]
+            * v[Col::E0 + 1]
+            * v[Col::E0 + 2];
         let (d, _) = Self::digit(v);
-        phi += g[GAMMA_DIGIT_VALUE] * (v[col::D] - v[col::SEL] * d);
+        phi += g[GAMMA_DIGIT_VALUE] * (v[Col::D] - v[Col::SEL] * d);
         // Operand lookup, reading side.
         let (key, fingerprint) = self.read_key(v);
         phi += g[GAMMA_READ]
-            * (v[col::H] * (ch.beta + key + ch.fp_combine * fingerprint) - v[col::SEL]);
+            * (v[Col::H] * (ch.beta + key + ch.fp_combine * fingerprint) - v[Col::SEL]);
         // Operand lookup, table side.
         for (i, (gc, fc, mc)) in [
-            (col::G_POS, col::F_POS, col::M_POS),
-            (col::G_NEG, col::F_NEG, col::M_NEG),
+            (Col::G_POS, Col::F_POS, Col::M_POS),
+            (Col::G_NEG, Col::F_NEG, Col::M_NEG),
         ]
         .into_iter()
         .enumerate()
@@ -316,18 +317,18 @@ impl RowRelation {
                 Fr::zero()
             };
             phi += g[GAMMA_TABLE + i]
-                * (v[gc] * (ch.beta + v[col::ID] + offset + ch.fp_combine * v[fc]) - v[mc]);
+                * (v[gc] * (ch.beta + v[Col::ID] + offset + ch.fp_combine * v[fc]) - v[mc]);
         }
         // Range inverse table.
-        phi += g[GAMMA_INV] * v[col::SMALL] * (v[col::INV] * (ch.alpha - v[col::ID]) - Fr::one());
+        phi += g[GAMMA_INV] * v[Col::SMALL] * (v[Col::INV] * (ch.alpha - v[Col::ID]) - Fr::one());
         phi
     }
 
     fn range_value(v: &[Fr], i: usize) -> Fr {
         if i < CHUNK_COLUMNS {
-            v[col::CHUNKS + i]
+            v[Col::CHUNKS + i]
         } else {
-            v[col::DIGITS + i - CHUNK_COLUMNS]
+            v[Col::DIGITS + i - CHUNK_COLUMNS]
         }
     }
 
@@ -335,8 +336,8 @@ impl RowRelation {
     /// entry magnitude `e`.
     fn digit(v: &[Fr]) -> (Fr, Fr) {
         let two = Fr::from_u64(2);
-        let e = v[col::E0] + two * v[col::E0 + 1] + two * two * v[col::E0 + 2];
-        let d = (Fr::one() - v[col::ZERO]) * (Fr::one() - two * v[col::NEG]) * (Fr::one() + e);
+        let e = v[Col::E0] + two * v[Col::E0 + 1] + two * two * v[Col::E0 + 2];
+        let d = (Fr::one() - v[Col::ZERO]) * (Fr::one() - two * v[Col::NEG]) * (Fr::one() + e);
         (d, e)
     }
 
@@ -346,19 +347,19 @@ impl RowRelation {
     /// `fingerprint = Σ_{s<n} fp^s·Y_s`.
     fn read_key(&self, v: &[Fr]) -> (Fr, Fr) {
         let (_, e) = Self::digit(v);
-        let d = v[col::D];
+        let d = v[Col::D];
         let sixteen = Fr::from_u64(16);
         let one_row = Fr::from_u64(u64::from(self.lookup.one_row));
-        let gt_key = (Fr::one() - v[col::ZERO]) * (v[col::S0] + sixteen * e)
-            + v[col::ZERO] * (one_row + v[col::COORD])
-            + Fr::from_u64(NEG_KEY_OFFSET) * v[col::NEG];
+        let gt_key = (Fr::one() - v[Col::ZERO]) * (v[Col::S0] + sixteen * e)
+            + v[Col::ZERO] * (one_row + v[Col::COORD])
+            + Fr::from_u64(NEG_KEY_OFFSET) * v[Col::NEG];
         // `stride` vanishes on GT rows, so it needs no `(1 − is_gt)` factor.
-        let stride = sixteen * v[col::IS_G1] + Fr::from_u64(8) * v[col::IS_G2];
-        let key = v[col::IS_GT] * gt_key + (Fr::one() - v[col::IS_GT]) * v[col::S0] + stride * d;
-        let fp = |n: usize| (0..n).fold(Fr::zero(), |acc, s| acc + self.fp_pow[s] * v[col::Y + s]);
-        let fingerprint = v[col::IS_GT] * fp(FP_SLOTS_GT)
-            + v[col::IS_G1] * fp(FP_SLOTS_G1)
-            + v[col::IS_G2] * fp(FP_SLOTS_G2);
+        let stride = sixteen * v[Col::IS_G1] + Fr::from_u64(8) * v[Col::IS_G2];
+        let key = v[Col::IS_GT] * gt_key + (Fr::one() - v[Col::IS_GT]) * v[Col::S0] + stride * d;
+        let fp = |n: usize| (0..n).fold(Fr::zero(), |acc, s| acc + self.fp_pow[s] * v[Col::Y + s]);
+        let fingerprint = v[Col::IS_GT] * fp(FP_SLOTS_GT)
+            + v[Col::IS_G1] * fp(FP_SLOTS_G1)
+            + v[Col::IS_G2] * fp(FP_SLOTS_G2);
         (key, fingerprint)
     }
 
@@ -371,44 +372,44 @@ impl RowRelation {
             let f: [Fr; GROUP_SIZE] =
                 std::array::from_fn(|i| ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i));
             let elementary = f[1] * f[2] + f[0] * f[2] + f[0] * f[1];
-            logup += v[col::HELPERS + grp] * elementary;
+            logup += v[Col::HELPERS + grp] * elementary;
         }
-        logup -= v[col::MULT] * v[col::INV];
+        logup -= v[Col::MULT] * v[Col::INV];
         // Operand lookup sum.
-        let lookup = v[col::H] - v[col::G_POS] - v[col::G_NEG];
+        let lookup = v[Col::H] - v[Col::G_POS] - v[Col::G_NEG];
         // Copy identities: eq(τ,x)·Σ β_i·col_i(x) − B(x)·Z_ξ(x); looked-up
         // `Y_s` (the fingerprinted slots of selected rows) are not copies.
         let mut copied = Fr::zero();
         for s in 0..SLOTS {
-            copied += self.copy_pow[s] * v[col::X + s];
-            copied += self.copy_pow[SLOTS + s] * Self::copy_mask(v, s) * v[col::Y + s];
+            copied += self.copy_pow[s] * v[Col::X + s];
+            copied += self.copy_pow[SLOTS + s] * Self::copy_mask(v, s) * v[Col::Y + s];
         }
         copied +=
-            self.copy_pow[2 * SLOTS] * v[col::F_POS] + self.copy_pow[2 * SLOTS + 1] * v[col::F_NEG];
-        let z_xi = self.z_xi(&v[col::CHUNKS..col::CHUNKS + CHUNK_COLUMNS]);
-        let copy = v[col::EQ_TAU] * copied - v[col::COPY_KERNEL] * z_xi;
+            self.copy_pow[2 * SLOTS] * v[Col::F_POS] + self.copy_pow[2 * SLOTS + 1] * v[Col::F_NEG];
+        let z_xi = self.z_xi(&v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS]);
+        let copy = v[Col::EQ_TAU] * copied - v[Col::COPY_KERNEL] * z_xi;
         // Digit constancy: W(x)·Σ_b β'_b·bit_b(x).
         let bits = (0..DIGIT_COLUMNS).fold(Fr::zero(), |acc, b| {
-            acc + self.constancy_pow[b] * v[col::DIGITS + b]
+            acc + self.constancy_pow[b] * v[Col::DIGITS + b]
         });
-        ch.lambda * logup + ch.lambda_lookup * lookup + copy + v[col::CONSTANCY] * bits
+        ch.lambda * logup + ch.lambda_lookup * lookup + copy + v[Col::CONSTANCY] * bits
     }
 
     /// `1 − Σ_kind is_kind(x)·[s < fp_slots(kind)]`: whether `Y_s` is a copy.
     fn copy_mask(v: &[Fr], s: usize) -> Fr {
-        let mut mask = Fr::one() - v[col::IS_GT];
+        let mut mask = Fr::one() - v[Col::IS_GT];
         if s < FP_SLOTS_G1 {
-            mask -= v[col::IS_G1];
+            mask -= v[Col::IS_G1];
         }
         if s < FP_SLOTS_G2 {
-            mask -= v[col::IS_G2];
+            mask -= v[Col::IS_G2];
         }
         mask
     }
 
     /// The summand at one (possibly extrapolated) row of the matrix.
     pub fn summand(&self, v: &[Fr]) -> Fr {
-        v[col::EQ_TAU] * self.phi(v) + self.linear(v)
+        v[Col::EQ_TAU] * self.phi(v) + self.linear(v)
     }
 
     /// Every row-local constraint's unweighted value at a row (each is zero
@@ -416,70 +417,70 @@ impl RowRelation {
     pub fn constraint_values(&self, v: &[Fr]) -> Vec<(&'static str, Fr)> {
         let ch = &self.challenges;
         let c = &self.constants;
-        let chunks = &v[col::CHUNKS..col::CHUNKS + CHUNK_COLUMNS];
+        let chunks = &v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS];
         let mut out = Vec::new();
-        let products = (0..SLOTS).fold(Fr::zero(), |acc, s| acc + v[col::X + s] * v[col::Y + s]);
+        let products = (0..SLOTS).fold(Fr::zero(), |acc, s| acc + v[Col::X + s] * v[Col::Y + s]);
         let z_xi = self.z_xi(chunks);
         out.push((
             "limb",
-            (Fr::one() - v[col::FREE])
+            (Fr::one() - v[Col::FREE])
                 * (products
                     - z_xi
                     - self.k_xi(chunks) * self.q_xi
                     - (c.pow_limb - ch.xi) * self.c_xi(chunks)),
         ));
         let pin_xi = (0..LIMBS).fold(Fr::zero(), |acc, a| {
-            acc + v[col::PIN_LIMBS + a] * self.xi_pow[a]
+            acc + v[Col::PIN_LIMBS + a] * self.xi_pow[a]
         });
-        out.push(("pin", v[col::PIN] * (z_xi - pin_xi)));
+        out.push(("pin", v[Col::PIN] * (z_xi - pin_xi)));
         let mut range = Fr::zero();
         for grp in 0..HELPER_COLUMNS {
             let product = (0..GROUP_SIZE).fold(Fr::one(), |acc, i| {
                 acc * (ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i))
             });
-            range += v[col::HELPERS + grp] * product - Fr::one();
+            range += v[Col::HELPERS + grp] * product - Fr::one();
         }
         out.push(("range", range));
         let mut bools = Fr::zero();
         for b in 0..DIGIT_COLUMNS {
-            let bit = v[col::DIGITS + b];
+            let bit = v[Col::DIGITS + b];
             bools += bit * (bit - Fr::one());
         }
         out.push(("digit_bool", bools));
         out.push((
             "digit_range",
-            (Fr::one() - v[col::NEG]) * v[col::E0] * v[col::E0 + 1] * v[col::E0 + 2],
+            (Fr::one() - v[Col::NEG]) * v[Col::E0] * v[Col::E0 + 1] * v[Col::E0 + 2],
         ));
-        out.push(("digit_value", v[col::D] - v[col::SEL] * Self::digit(v).0));
+        out.push(("digit_value", v[Col::D] - v[Col::SEL] * Self::digit(v).0));
         let (key, fingerprint) = self.read_key(v);
         out.push((
             "lookup_read",
-            v[col::H] * (ch.beta + key + ch.fp_combine * fingerprint) - v[col::SEL],
+            v[Col::H] * (ch.beta + key + ch.fp_combine * fingerprint) - v[Col::SEL],
         ));
         for (name, gc, fc, mc, offset) in [
             (
                 "lookup_table_pos",
-                col::G_POS,
-                col::F_POS,
-                col::M_POS,
+                Col::G_POS,
+                Col::F_POS,
+                Col::M_POS,
                 Fr::zero(),
             ),
             (
                 "lookup_table_neg",
-                col::G_NEG,
-                col::F_NEG,
-                col::M_NEG,
+                Col::G_NEG,
+                Col::F_NEG,
+                Col::M_NEG,
                 Fr::from_u64(NEG_KEY_OFFSET),
             ),
         ] {
             out.push((
                 name,
-                v[gc] * (ch.beta + v[col::ID] + offset + ch.fp_combine * v[fc]) - v[mc],
+                v[gc] * (ch.beta + v[Col::ID] + offset + ch.fp_combine * v[fc]) - v[mc],
             ));
         }
         out.push((
             "inverse_table",
-            v[col::SMALL] * (v[col::INV] * (ch.alpha - v[col::ID]) - Fr::one()),
+            v[Col::SMALL] * (v[Col::INV] * (ch.alpha - v[Col::ID]) - Fr::one()),
         ));
         out
     }
@@ -493,32 +494,32 @@ impl RowRelation {
         for grp in 0..HELPER_COLUMNS {
             let f: [Fr; GROUP_SIZE] =
                 std::array::from_fn(|i| ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i));
-            logup += v[col::HELPERS + grp] * (f[1] * f[2] + f[0] * f[2] + f[0] * f[1]);
+            logup += v[Col::HELPERS + grp] * (f[1] * f[2] + f[0] * f[2] + f[0] * f[1]);
         }
-        logup -= v[col::MULT] * v[col::INV];
-        let lookup = v[col::H] - v[col::G_POS] - v[col::G_NEG];
+        logup -= v[Col::MULT] * v[Col::INV];
+        let lookup = v[Col::H] - v[Col::G_POS] - v[Col::G_NEG];
         let mut copied = Fr::zero();
         for s in 0..SLOTS {
-            copied += self.copy_pow[s] * v[col::X + s];
-            copied += self.copy_pow[SLOTS + s] * Self::copy_mask(v, s) * v[col::Y + s];
+            copied += self.copy_pow[s] * v[Col::X + s];
+            copied += self.copy_pow[SLOTS + s] * Self::copy_mask(v, s) * v[Col::Y + s];
         }
         copied +=
-            self.copy_pow[2 * SLOTS] * v[col::F_POS] + self.copy_pow[2 * SLOTS + 1] * v[col::F_NEG];
-        let z_xi = self.z_xi(&v[col::CHUNKS..col::CHUNKS + CHUNK_COLUMNS]);
-        let copy = v[col::EQ_TAU] * copied - v[col::COPY_KERNEL] * z_xi;
+            self.copy_pow[2 * SLOTS] * v[Col::F_POS] + self.copy_pow[2 * SLOTS + 1] * v[Col::F_NEG];
+        let z_xi = self.z_xi(&v[Col::CHUNKS..Col::CHUNKS + CHUNK_COLUMNS]);
+        let copy = v[Col::EQ_TAU] * copied - v[Col::COPY_KERNEL] * z_xi;
         let bits = (0..DIGIT_COLUMNS).fold(Fr::zero(), |acc, b| {
-            acc + self.constancy_pow[b] * v[col::DIGITS + b]
+            acc + self.constancy_pow[b] * v[Col::DIGITS + b]
         });
         vec![
             ("range_logup", logup),
             ("lookup_logup", lookup),
             ("copy", copy),
-            ("constancy", v[col::CONSTANCY] * bits),
+            ("constancy", v[Col::CONSTANCY] * bits),
         ]
     }
 
     /// The member's final relation as terms over the claimed column
-    /// evaluations (`col::CLAIMED` columns), given the public multilinears
+    /// evaluations (`Col::CLAIMED` columns), given the public multilinears
     /// at the stage point. `Σ_t term_t(v) == summand(v ∥ public)`.
     pub fn terms(&self, public: &PublicEvals) -> Vec<Term> {
         let ch = &self.challenges;
@@ -530,11 +531,11 @@ impl RowRelation {
             |i: usize| AffineForm::constant(Fr::one()).plus(&column(i).scale(-Fr::one()));
         let mut terms = Vec::new();
         // Limb identity, on non-free rows.
-        let bound = one_minus(col::FREE);
+        let bound = one_minus(Col::FREE);
         for s in 0..SLOTS {
             terms.push(Term::new(
                 eq * g[GAMMA_LIMB],
-                vec![bound.clone(), column(col::X + s), column(col::Y + s)],
+                vec![bound.clone(), column(Col::X + s), column(Col::Y + s)],
             ));
         }
         let z_xi = self.z_xi_form();
@@ -545,11 +546,11 @@ impl RowRelation {
         // Pins.
         let mut pin_xi = AffineForm::default();
         for a in 0..LIMBS {
-            pin_xi.add_column(ColumnId((col::PIN_LIMBS + a) as u32), -self.xi_pow[a]);
+            pin_xi.add_column(ColumnId((Col::PIN_LIMBS + a) as u32), -self.xi_pow[a]);
         }
         terms.push(Term::new(
             eq * g[GAMMA_PIN],
-            vec![column(col::PIN), z_xi.clone().plus(&pin_xi)],
+            vec![column(Col::PIN), z_xi.clone().plus(&pin_xi)],
         ));
         // Range groups and the LogUp sum.
         for grp in 0..HELPER_COLUMNS {
@@ -559,12 +560,12 @@ impl RowRelation {
                         .plus(&Self::range_form(GROUP_SIZE * grp + i).scale(-Fr::one()))
                 })
                 .collect();
-            let mut factors = vec![column(col::HELPERS + grp)];
+            let mut factors = vec![column(Col::HELPERS + grp)];
             factors.extend(f.iter().cloned());
             terms.push(Term::new(eq * g[GAMMA_RANGE + grp], factors));
             terms.push(Term::new(-eq * g[GAMMA_RANGE + grp], vec![]));
             for i in 0..GROUP_SIZE {
-                let mut factors = vec![column(col::HELPERS + grp)];
+                let mut factors = vec![column(Col::HELPERS + grp)];
                 factors.extend(
                     f.iter()
                         .enumerate()
@@ -576,65 +577,65 @@ impl RowRelation {
         }
         terms.push(Term::new(
             -ch.lambda,
-            vec![column(col::MULT), column(col::INV)],
+            vec![column(Col::MULT), column(Col::INV)],
         ));
         // Digit bits.
         for b in 0..DIGIT_COLUMNS {
             terms.push(Term::new(
                 eq * g[GAMMA_BOOL + b],
                 vec![
-                    column(col::DIGITS + b),
-                    column(col::DIGITS + b).plus(&AffineForm::constant(-Fr::one())),
+                    column(Col::DIGITS + b),
+                    column(Col::DIGITS + b).plus(&AffineForm::constant(-Fr::one())),
                 ],
             ));
         }
         terms.push(Term::new(
             eq * g[GAMMA_DIGIT_RANGE],
             vec![
-                one_minus(col::NEG),
-                column(col::E0),
-                column(col::E0 + 1),
-                column(col::E0 + 2),
+                one_minus(Col::NEG),
+                column(Col::E0),
+                column(Col::E0 + 1),
+                column(Col::E0 + 2),
             ],
         ));
         let e = Self::e_form();
         let one_plus_e = AffineForm::constant(Fr::one()).plus(&e);
         let one_minus_2neg =
-            AffineForm::constant(Fr::one()).plus(&column(col::NEG).scale(-Fr::from_u64(2)));
-        terms.push(Term::new(eq * g[GAMMA_DIGIT_VALUE], vec![column(col::D)]));
+            AffineForm::constant(Fr::one()).plus(&column(Col::NEG).scale(-Fr::from_u64(2)));
+        terms.push(Term::new(eq * g[GAMMA_DIGIT_VALUE], vec![column(Col::D)]));
         terms.push(Term::new(
             -eq * g[GAMMA_DIGIT_VALUE] * public.sel,
-            vec![one_minus(col::ZERO), one_minus_2neg, one_plus_e],
+            vec![one_minus(Col::ZERO), one_minus_2neg, one_plus_e],
         ));
         // Lookup, reading side: h·(β + key + fp_combine·F) − sel.
         let sixteen = Fr::from_u64(16);
         let one_row = Fr::from_u64(u64::from(self.lookup.one_row));
         let gr = eq * g[GAMMA_READ];
-        let h = column(col::H);
+        let h = column(Col::H);
         terms.push(Term::new(gr * ch.beta, vec![h.clone()]));
         // GT key.
         terms.push(Term::new(
             gr * public.is_gt * public.s0,
-            vec![h.clone(), one_minus(col::ZERO)],
+            vec![h.clone(), one_minus(Col::ZERO)],
         ));
         terms.push(Term::new(
             gr * public.is_gt * sixteen,
-            vec![h.clone(), one_minus(col::ZERO), e.clone()],
+            vec![h.clone(), one_minus(Col::ZERO), e.clone()],
         ));
         terms.push(Term::new(
             gr * public.is_gt * (one_row + public.coord),
-            vec![h.clone(), column(col::ZERO)],
+            vec![h.clone(), column(Col::ZERO)],
         ));
         terms.push(Term::new(
             gr * public.is_gt * Fr::from_u64(NEG_KEY_OFFSET),
-            vec![h.clone(), column(col::NEG)],
+            vec![h.clone(), column(Col::NEG)],
         ));
         // EC key.
         let is_ec = Fr::one() - public.is_gt;
         terms.push(Term::new(gr * is_ec * public.s0, vec![h.clone()]));
         terms.push(Term::new(
             gr * (sixteen * public.is_g1 + Fr::from_u64(8) * public.is_g2),
-            vec![h.clone(), column(col::D)],
+            vec![h.clone(), column(Col::D)],
         ));
         // Fingerprints.
         for (indicator, n) in [
@@ -644,7 +645,7 @@ impl RowRelation {
         ] {
             let mut fp = AffineForm::default();
             for s in 0..n {
-                fp.add_column(ColumnId((col::Y + s) as u32), self.fp_pow[s]);
+                fp.add_column(ColumnId((Col::Y + s) as u32), self.fp_pow[s]);
             }
             terms.push(Term::new(
                 gr * ch.fp_combine * indicator,
@@ -654,8 +655,8 @@ impl RowRelation {
         terms.push(Term::new(-gr * public.sel, vec![]));
         // Lookup, table side.
         for (i, (gc, fc, mc)) in [
-            (col::G_POS, col::F_POS, col::M_POS),
-            (col::G_NEG, col::F_NEG, col::M_NEG),
+            (Col::G_POS, Col::F_POS, Col::M_POS),
+            (Col::G_NEG, Col::F_NEG, Col::M_NEG),
         ]
         .into_iter()
         .enumerate()
@@ -677,17 +678,17 @@ impl RowRelation {
         let gi = eq * g[GAMMA_INV] * public.small;
         terms.push(Term::new(
             gi * (ch.alpha - public.id),
-            vec![column(col::INV)],
+            vec![column(Col::INV)],
         ));
         terms.push(Term::new(-gi, vec![]));
         // Lookup sum.
         terms.push(Term::new(ch.lambda_lookup, vec![h.clone()]));
-        terms.push(Term::new(-ch.lambda_lookup, vec![column(col::G_POS)]));
-        terms.push(Term::new(-ch.lambda_lookup, vec![column(col::G_NEG)]));
+        terms.push(Term::new(-ch.lambda_lookup, vec![column(Col::G_POS)]));
+        terms.push(Term::new(-ch.lambda_lookup, vec![column(Col::G_NEG)]));
         // Copy identities (looked-up `Y_s` masked out).
         let mut copied = AffineForm::default();
         for s in 0..SLOTS {
-            copied.add_column(ColumnId((col::X + s) as u32), self.copy_pow[s]);
+            copied.add_column(ColumnId((Col::X + s) as u32), self.copy_pow[s]);
             let mut mask = Fr::one() - public.is_gt;
             if s < FP_SLOTS_G1 {
                 mask -= public.is_g1;
@@ -696,18 +697,18 @@ impl RowRelation {
                 mask -= public.is_g2;
             }
             copied.add_column(
-                ColumnId((col::Y + s) as u32),
+                ColumnId((Col::Y + s) as u32),
                 self.copy_pow[SLOTS + s] * mask,
             );
         }
-        copied.add_column(ColumnId(col::F_POS as u32), self.copy_pow[2 * SLOTS]);
-        copied.add_column(ColumnId(col::F_NEG as u32), self.copy_pow[2 * SLOTS + 1]);
+        copied.add_column(ColumnId(Col::F_POS as u32), self.copy_pow[2 * SLOTS]);
+        copied.add_column(ColumnId(Col::F_NEG as u32), self.copy_pow[2 * SLOTS + 1]);
         terms.push(Term::new(public.eq_tau, vec![copied]));
         terms.push(Term::new(-public.copy_kernel, vec![z_xi]));
         // Digit constancy.
         let mut bits = AffineForm::default();
         for b in 0..DIGIT_COLUMNS {
-            bits.add_column(ColumnId((col::DIGITS + b) as u32), self.constancy_pow[b]);
+            bits.add_column(ColumnId((Col::DIGITS + b) as u32), self.constancy_pow[b]);
         }
         terms.push(Term::new(public.constancy, vec![bits]));
         fold_linear(terms)
@@ -717,7 +718,7 @@ impl RowRelation {
         let mut form = AffineForm::default();
         for j in 0..count {
             form.add_column(
-                ColumnId((col::CHUNKS + start + j) as u32),
+                ColumnId((Col::CHUNKS + start + j) as u32),
                 self.constants.pow_chunk[j],
             );
         }
@@ -758,16 +759,16 @@ impl RowRelation {
 
     fn range_form(i: usize) -> AffineForm {
         if i < CHUNK_COLUMNS {
-            AffineForm::column(ColumnId((col::CHUNKS + i) as u32))
+            AffineForm::column(ColumnId((Col::CHUNKS + i) as u32))
         } else {
-            AffineForm::column(ColumnId((col::DIGITS + i - CHUNK_COLUMNS) as u32))
+            AffineForm::column(ColumnId((Col::DIGITS + i - CHUNK_COLUMNS) as u32))
         }
     }
 
     fn e_form() -> AffineForm {
         let mut e = AffineForm::default();
         for (i, weight) in [1u64, 2, 4].into_iter().enumerate() {
-            e.add_column(ColumnId((col::E0 + i) as u32), Fr::from_u64(weight));
+            e.add_column(ColumnId((Col::E0 + i) as u32), Fr::from_u64(weight));
         }
         e
     }
@@ -800,17 +801,17 @@ pub struct RowSumcheck<'a> {
 }
 
 impl<'a> RowSumcheck<'a> {
-    /// `columns[i]` is matrix column `i` (`col::WIDTH` columns of `2^LOG_ROWS`
+    /// `columns[i]` is matrix column `i` (`Col::WIDTH` columns of `2^LOG_ROWS`
     /// rows: claimed columns then the public ones).
     pub fn new(relation: &'a RowRelation, columns: &[Vec<Fr>]) -> Self {
-        assert_eq!(columns.len(), col::WIDTH);
+        assert_eq!(columns.len(), Col::WIDTH);
         let rows = 1usize << LOG_ROWS;
         for column in columns {
             assert_eq!(column.len(), rows);
         }
-        let mut matrix = vec![Fr::zero(); rows * col::WIDTH];
+        let mut matrix = vec![Fr::zero(); rows * Col::WIDTH];
         matrix
-            .par_chunks_mut(col::WIDTH)
+            .par_chunks_mut(Col::WIDTH)
             .enumerate()
             .for_each(|(row, slot)| {
                 for (value, column) in slot.iter_mut().zip(columns) {
@@ -838,14 +839,14 @@ impl<'a> RowSumcheck<'a> {
     /// `Σ_row summand(row)` — zero for an honest witness.
     pub fn input_claim(&self) -> Fr {
         self.matrix
-            .par_chunks(col::WIDTH)
+            .par_chunks(Col::WIDTH)
             .map(|row| self.relation.summand(row))
             .sum()
     }
 
     fn round_poly(&self, claim: Fr) -> Vec<Fr> {
         let relation = self.relation;
-        let width = col::WIDTH;
+        let width = Col::WIDTH;
         let evals: Vec<Fr> = self.matrix[..self.rows * width]
             .par_chunks(2 * width)
             .fold(
@@ -878,7 +879,7 @@ impl<'a> RowSumcheck<'a> {
     }
 
     fn bind(&mut self, r: Fr) {
-        let width = col::WIDTH;
+        let width = Col::WIDTH;
         let half = self.rows / 2;
         if self.scratch.len() < half * width {
             self.scratch.resize(half * width, Fr::zero());
@@ -899,17 +900,17 @@ impl<'a> RowSumcheck<'a> {
     /// public columns (which the verifier recomputes).
     pub fn final_row(&self) -> &[Fr] {
         assert_eq!(self.rows, 1, "sumcheck not finished");
-        &self.matrix[..col::WIDTH]
+        &self.matrix[..Col::WIDTH]
     }
 
-    /// Claimed column evaluations at the point (`col::CLAIMED` values).
+    /// Claimed column evaluations at the point (`Col::CLAIMED` values).
     pub fn claims(&self) -> Vec<Fr> {
-        self.final_row()[..col::CLAIMED].to_vec()
+        self.final_row()[..Col::CLAIMED].to_vec()
     }
 
     /// The public columns' final values (the verifier's oracle in tests).
     pub fn public_evals(&self) -> PublicEvals {
-        let p = &self.final_row()[col::CLAIMED..];
+        let p = &self.final_row()[Col::CLAIMED..];
         PublicEvals {
             eq_tau: p[0],
             copy_kernel: p[1],
@@ -928,7 +929,7 @@ impl<'a> RowSumcheck<'a> {
 
 impl PublicEvals {
     /// Matrix row layout helper: the public part of a final row.
-    pub fn to_row(&self) -> [Fr; col::PUBLIC] {
+    pub fn to_row(&self) -> [Fr; Col::PUBLIC] {
         self.as_array()
     }
 }

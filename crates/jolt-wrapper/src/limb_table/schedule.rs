@@ -9,12 +9,13 @@
 //! edges per family).
 
 use ark_bn254::{Config as Bn254Config, Fq, Fq12, Fq2, G1Affine, G2Affine};
-use ark_ec::bn::BnConfig;
+use ark_ec::bn::{BnConfig, G2Prepared};
 use ark_ec::short_weierstrass::SWCurveConfig;
 use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
 use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
 use num_bigint::BigUint;
 use std::collections::HashMap;
+use std::ops::Range;
 
 use crate::relation::DoryScalar;
 
@@ -29,8 +30,10 @@ use super::ops::{
     miller_double_step, GtOperand, ADD_LINE, CONST_LINE, DOUBLE_LINE,
 };
 use super::program::{Program, RowId};
-use super::relation::FP_SLOTS_GT;
-use super::template::{fingerprint_maps, DigitRule, ElemRel, ElemWiring, Family, Template};
+use super::relation::{FP_SLOTS_G1, FP_SLOTS_G2, FP_SLOTS_GT};
+use super::template::{
+    fingerprint_maps, DigitRule, ElemRel, ElemWiring, Family, Template, ONE_ROW,
+};
 use super::tower::{fq12_coords, frobenius_form};
 use super::wiring::{FingerprintGroup, ReadKind, TableRead};
 
@@ -49,11 +52,14 @@ impl Profile {
 
 /// Cell indices (`row = 16·cell + c`) of every region; each box is aligned
 /// so its index fields are bit-fields of the row index.
-pub mod cells {
+/// Cell (and half-cell) bases of the fixed layout.
+pub struct Cells;
+
+impl Cells {
     /// `64·k + w`: GT Straus mults (`k < B`) and per-window squarings (`k ∈ B..B+4`).
     pub const GT_ONLINE: u32 = 0;
     /// Public constants, one row each (`1024` rows).
-    pub const CONSTANTS: std::ops::Range<u32> = 9536..9600;
+    pub const CONSTANTS: Range<u32> = 9536..9600;
     pub const FINAL: u32 = 9600;
     /// Structured constant cells (points in output layout).
     pub const POINT_CONSTANTS: u32 = 9601;
@@ -298,10 +304,10 @@ impl Builder {
             .enumerate()
             .map(|(i, wire)| (wire.clone(), i as u32))
             .collect();
-        let mut program = Program::new(row(cells::CONSTANTS.start)..row(cells::CONSTANTS.end));
-        assert_eq!(program.one, super::template::ONE_ROW);
+        let mut program = Program::new(row(Cells::CONSTANTS.start)..row(Cells::CONSTANTS.end));
+        assert_eq!(program.one, ONE_ROW);
         // The `one` element cell shares the point-constants cell (rows 0..12).
-        let one_cell = cells::POINT_CONSTANTS;
+        let one_cell = Cells::POINT_CONSTANTS;
         for c in 0..12u32 {
             let value = if c == 0 { Fq::ONE } else { Fq::ZERO };
             program.pinned_constant_at(row(one_cell) + c, value);
@@ -315,7 +321,7 @@ impl Builder {
             digit_ops: Vec::new(),
             families: Vec::new(),
             input_order: Vec::new(),
-            glue_next: cells::GLUE,
+            glue_next: Cells::GLUE,
             wire_index,
             one_cell,
         }
@@ -433,7 +439,7 @@ impl Builder {
     fn glue_cell(&mut self) -> u32 {
         let cell = self.glue_next;
         self.glue_next += 1;
-        assert!(cell < cells::GLUE + 128, "glue region full");
+        assert!(cell < Cells::GLUE + 128, "glue region full");
         cell
     }
 
@@ -486,7 +492,7 @@ impl Builder {
     fn gt_tables(&mut self, check: &FlattenedCheck, setup: &DorySetupInputs) {
         let bases = check.gt.bases.len();
         for (k, (base, _)) in check.gt.bases.iter().enumerate() {
-            let cell = cells::GT_TABLE + 8 * k as u32;
+            let cell = Cells::GT_TABLE + 8 * k as u32;
             match base {
                 GtBase::Input(element) => self.gt_leaf(cell, GtLeaf::Input(*element)),
                 GtBase::Chi(i) => self.gt_leaf(cell, GtLeaf::Constant(&setup.chi[*i])),
@@ -505,7 +511,7 @@ impl Builder {
                     vec![
                         Factor::shift(E_T, E_T, -1).with_range(1..8),
                         Factor::same(K_T, K_T),
-                        Factor::constant(HI_T, hi(cells::GT_TABLE, HI_T)),
+                        Factor::constant(HI_T, hi(Cells::GT_TABLE, HI_T)),
                     ],
                     C,
                     0,
@@ -514,7 +520,7 @@ impl Builder {
                     vec![
                         Factor::constant(E_T, 0),
                         Factor::same(K_T, K_T),
-                        Factor::constant(HI_T, hi(cells::GT_TABLE, HI_T)),
+                        Factor::constant(HI_T, hi(Cells::GT_TABLE, HI_T)),
                     ],
                     C,
                     0,
@@ -527,18 +533,18 @@ impl Builder {
                 Factor::restrict(K_T, 0..bases as u32),
                 Factor::restrict(
                     HI_T,
-                    hi(cells::GT_TABLE, HI_T)..hi(cells::GT_TABLE, HI_T) + 1,
+                    hi(Cells::GT_TABLE, HI_T)..hi(Cells::GT_TABLE, HI_T) + 1,
                 ),
             ],
         };
         let ops: Vec<(RowId, Option<u8>)> = (0..bases as u32)
-            .flat_map(|k| (1..8u32).map(move |e| (row(cells::GT_TABLE + 8 * k + e), None)))
+            .flat_map(|k| (1..8u32).map(move |e| (row(Cells::GT_TABLE + 8 * k + e), None)))
             .collect();
         self.place(&family, &ops, false);
         // Fingerprints of every entry (`e ∈ 0..8`) and of the `one` cell.
-        let hi_t = hi(cells::GT_TABLE, HI_T);
+        let hi_t = hi(Cells::GT_TABLE, HI_T);
         let entries = (0..bases as u32)
-            .flat_map(|k| (0..8u32).map(move |e| row(cells::GT_TABLE + 8 * k + e)));
+            .flat_map(|k| (0..8u32).map(move |e| row(Cells::GT_TABLE + 8 * k + e)));
         self.table_region(
             vec![
                 Factor::restrict(K_T, 0..bases as u32),
@@ -573,12 +579,12 @@ impl Builder {
         let b = bases;
         let scalars = values.scalars(&check.gt);
         let digit_table: Vec<[u8; WINDOWS]> = scalars.iter().map(|s| digits(*s)).collect();
-        let cell = |k: u32, w: u32| cells::GT_ONLINE + 64 * k + w;
+        let cell = |k: u32, w: u32| Cells::GT_ONLINE + 64 * k + w;
         let one_row = row(self.one_cell);
         let table_entry = ElemRel::Selected {
             factors: vec![
                 Factor::same(K_ON, K_T),
-                Factor::constant(HI_T, hi(cells::GT_TABLE, HI_T)),
+                Factor::constant(HI_T, hi(Cells::GT_TABLE, HI_T)),
             ],
             coord_bits: C,
             offset: 0,
@@ -722,7 +728,7 @@ impl Builder {
             k_bits: K_ON,
             w_bits: W_ON,
             key: KeyBase {
-                constant: 16 * (i64::from(cells::GT_TABLE) - i64::from(cells::GT_ONLINE)),
+                constant: 16 * (i64::from(Cells::GT_TABLE) - i64::from(Cells::GT_ONLINE)),
                 k_coeff: -(16 * 64 - 16 * 8),
                 w_coeff: -16,
             },
@@ -815,8 +821,7 @@ impl Builder {
         let dbl = g1_dbl();
         let chains = check.g1_chains();
         let mut table_base = 0u32;
-        let mut first_input: std::collections::HashMap<InputElement, u32> =
-            std::collections::HashMap::new();
+        let mut first_input: HashMap<InputElement, u32> = HashMap::new();
         let mut outputs = [0u32; 4];
         let mut fresh_inputs: Vec<u32> = Vec::new();
         for (m, msm) in chains.iter().enumerate() {
@@ -830,7 +835,7 @@ impl Builder {
             // Inputs.
             for (i, (base, _)) in msm.bases.iter().enumerate() {
                 let b = table_base + i as u32;
-                let input_cell = cells::G1_INPUT + b;
+                let input_cell = Cells::G1_INPUT + b;
                 let point_rows = [row(input_cell) + 12, row(input_cell) + 13];
                 match base {
                     G1Base::Input(element) => {
@@ -880,8 +885,8 @@ impl Builder {
             }
             // Tables: `(j − 8)·P + Z0` at rows 14–15 of `G1_TABLE + 16·b + j`.
             let b_range = table_base..table_base + msm.bases.len() as u32;
-            let tcell = |b: u32, j: u32| cells::G1_TABLE + 16 * b + j;
-            let hi1 = hi(cells::G1_TABLE, HI1T);
+            let tcell = |b: u32, j: u32| Cells::G1_TABLE + 16 * b + j;
+            let hi1 = hi(Cells::G1_TABLE, HI1T);
             let z0_family = Family {
                 name: "g1_table_z0",
                 template: &copy,
@@ -897,12 +902,12 @@ impl Builder {
             let p_elem = ElemRel::structured(
                 vec![
                     Factor::same(B1, B1I),
-                    Factor::constant(HI1I, hi(cells::G1_INPUT, HI1I)),
+                    Factor::constant(HI1I, hi(Cells::G1_INPUT, HI1I)),
                 ],
                 C,
                 12,
             );
-            let prev = |delta: i64, range: std::ops::Range<u32>| {
+            let prev = |delta: i64, range: Range<u32>| {
                 ElemRel::structured(
                     vec![
                         Factor::shift(J1, J1, delta).with_range(range),
@@ -964,7 +969,7 @@ impl Builder {
                 C,
                 12,
                 14,
-                super::relation::FP_SLOTS_G1,
+                FP_SLOTS_G1,
             );
 
             // Online: doublings then adds per window, then the correction.
@@ -1111,7 +1116,7 @@ impl Builder {
                 k_bits: KM1,
                 w_bits: W1,
                 key: KeyBase {
-                    constant: 16 * i64::from(cells::G1_TABLE) + 128 + 256 * i64::from(table_base)
+                    constant: 16 * i64::from(Cells::G1_TABLE) + 128 + 256 * i64::from(table_base)
                         - 16384 * i64::from(m32),
                     k_coeff: -768,
                     w_coeff: -16,
@@ -1127,7 +1132,7 @@ impl Builder {
         for b in &fresh_inputs {
             mask[*b as usize] = 1;
         }
-        let hi_i = hi(cells::G1_INPUT, HI1I);
+        let hi_i = hi(Cells::G1_INPUT, HI1I);
         let family = Family {
             name: "g1_on_curve",
             template: &curve,
@@ -1144,7 +1149,7 @@ impl Builder {
         };
         let ops: Vec<(RowId, Option<u8>)> = fresh_inputs
             .iter()
-            .map(|b| (row(cells::G1_INPUT + b), None))
+            .map(|b| (row(Cells::G1_INPUT + b), None))
             .collect();
         self.place(&family, &ops, false);
         outputs
@@ -1184,13 +1189,12 @@ impl Builder {
         let sub = g2_add(true);
         let dbl = g2_dbl();
         let chains = check.g2_chains();
-        let hi_t = hi(cells::G2_TABLE_HALF / 2, HI2T);
-        let hi_i = hi(cells::G2_INPUT_HALF / 2, HI2I);
-        let hi_o = hi(cells::G2_ONLINE_HALF / 2, HI2);
-        let input_half = |b: u32| cells::G2_INPUT_HALF + b;
+        let hi_t = hi(Cells::G2_TABLE_HALF / 2, HI2T);
+        let hi_i = hi(Cells::G2_INPUT_HALF / 2, HI2I);
+        let hi_o = hi(Cells::G2_ONLINE_HALF / 2, HI2);
+        let input_half = |b: u32| Cells::G2_INPUT_HALF + b;
         let mut table_base = 0u32;
-        let mut first_input: std::collections::HashMap<InputElement, u32> =
-            std::collections::HashMap::new();
+        let mut first_input: HashMap<InputElement, u32> = HashMap::new();
         let mut outputs = [0u32; 2];
         let mut fresh_halves: Vec<u32> = Vec::new();
         let kbases = [0u32, 39];
@@ -1200,7 +1204,7 @@ impl Builder {
                 bases: msm.bases.len(),
                 digits: values.scalars(msm).iter().map(|s| digits(*s)).collect(),
             };
-            let half = |k: u32, w: u32| cells::G2_ONLINE_HALF + 64 * k + w;
+            let half = |k: u32, w: u32| Cells::G2_ONLINE_HALF + 64 * k + w;
             for (i, (base, _)) in msm.bases.iter().enumerate() {
                 let b = table_base + i as u32;
                 let h = input_half(b);
@@ -1257,7 +1261,7 @@ impl Builder {
             }
             // Tables at half cells `G2_TABLE_HALF + 16·b + j`, points at rows 4–7.
             let b_range = table_base..table_base + msm.bases.len() as u32;
-            let thalf = |b: u32, j: u32| cells::G2_TABLE_HALF + 16 * b + j;
+            let thalf = |b: u32, j: u32| Cells::G2_TABLE_HALF + 16 * b + j;
             let z0_family = Family {
                 name: "g2_table_z0",
                 template: &copy,
@@ -1275,7 +1279,7 @@ impl Builder {
                 C3,
                 0,
             );
-            let prev = |delta: i64, range: std::ops::Range<u32>| {
+            let prev = |delta: i64, range: Range<u32>| {
                 ElemRel::structured(
                     vec![
                         Factor::shift(J2, J2, delta).with_range(range),
@@ -1337,7 +1341,7 @@ impl Builder {
                 C3,
                 0,
                 4,
-                super::relation::FP_SLOTS_G2,
+                FP_SLOTS_G2,
             );
 
             let n = chain.bases as u32;
@@ -1526,7 +1530,7 @@ impl Builder {
                 w_bits: W2,
                 key: KeyBase {
                     constant: 8
-                        * (i64::from(cells::G2_TABLE_HALF) - i64::from(cells::G2_ONLINE_HALF))
+                        * (i64::from(Cells::G2_TABLE_HALF) - i64::from(Cells::G2_ONLINE_HALF))
                         + 64
                         + 128 * (i64::from(table_base) - i64::from(kb)),
                     k_coeff: -(8 * 64 - 8 * 16),
@@ -1579,9 +1583,9 @@ impl Builder {
     ) {
         let mut mask = vec![0i32; 64];
         for h in halves {
-            mask[(h - cells::G2_INPUT_HALF) as usize] = 1;
+            mask[(h - Cells::G2_INPUT_HALF) as usize] = 1;
         }
-        let hi_i = hi(cells::G2_INPUT_HALF / 2, HI2I);
+        let hi_i = hi(Cells::G2_INPUT_HALF / 2, HI2I);
         let family = Family {
             name: "g2_on_curve",
             template: curve,
@@ -1676,11 +1680,11 @@ impl Builder {
         let dbl_step = miller_double_step();
         let add_step = miller_add_step(false);
         let add_step_neg = miller_add_step(true);
-        let dcell = |t: u32, p: u32| cells::MILLER_DBL_LINES + 4 * t + 2 * p;
-        let acell = |a: u32, p: u32| cells::MILLER_ADD_LINES + 4 * a + 2 * p;
+        let dcell = |t: u32, p: u32| Cells::MILLER_DBL_LINES + 4 * t + 2 * p;
+        let acell = |a: u32, p: u32| Cells::MILLER_ADD_LINES + 4 * a + 2 * p;
         let (hi_ld, hi_la) = (
-            hi(cells::MILLER_DBL_LINES, HI_LD),
-            hi(cells::MILLER_ADD_LINES, HI_LA),
+            hi(Cells::MILLER_DBL_LINES, HI_LD),
+            hi(Cells::MILLER_ADD_LINES, HI_LA),
         );
 
         // ψ points for the two final additions.
@@ -1954,7 +1958,7 @@ impl Builder {
 
         // Public lines of pairs 2–3.
         for (i, q) in const_q.iter().enumerate() {
-            let prepared = ark_ec::bn::G2Prepared::<Bn254Config>::from(*q);
+            let prepared = G2Prepared::<Bn254Config>::from(*q);
             let mut coeffs = prepared.ell_coeffs.iter();
             let mut write = |cell: u32, coeff: &(Fq2, Fq2, Fq2)| {
                 for (c, v) in [
@@ -1968,14 +1972,14 @@ impl Builder {
             };
             for t in 0..steps {
                 write(
-                    cells::CONST_LINES_DBL + 2 * t + i as u32,
+                    Cells::CONST_LINES_DBL + 2 * t + i as u32,
                     coeffs
                         .next()
                         .unwrap_or_else(|| unreachable!("G2Prepared has one line per step")),
                 );
                 if let Some(a) = add_index[t as usize] {
                     write(
-                        cells::CONST_LINES_ADD + 2 * a + i as u32,
+                        Cells::CONST_LINES_ADD + 2 * a + i as u32,
                         coeffs
                             .next()
                             .unwrap_or_else(|| unreachable!("G2Prepared has one line per step")),
@@ -1984,7 +1988,7 @@ impl Builder {
             }
             for a in loop_adds..adds {
                 write(
-                    cells::CONST_LINES_ADD + 2 * a + i as u32,
+                    Cells::CONST_LINES_ADD + 2 * a + i as u32,
                     coeffs
                         .next()
                         .unwrap_or_else(|| unreachable!("G2Prepared has one line per step")),
@@ -2006,19 +2010,19 @@ impl Builder {
     ) -> GtCell {
         let steps = add_after.len() as u32;
         let one = self.one();
-        let dcell = |t: u32, s: u32| cells::MILLER_DBL_GT + 8 * t + s;
-        let acell = |a: u32, p: u32| cells::MILLER_ADD_GT + 4 * a + p;
+        let dcell = |t: u32, s: u32| Cells::MILLER_DBL_GT + 8 * t + s;
+        let acell = |a: u32, p: u32| Cells::MILLER_ADD_GT + 4 * a + p;
         let (hi_md, hi_ma) = (
-            hi(cells::MILLER_DBL_GT, HI_MD),
-            hi(cells::MILLER_ADD_GT, HI_MA),
+            hi(Cells::MILLER_DBL_GT, HI_MD),
+            hi(Cells::MILLER_ADD_GT, HI_MA),
         );
         let (hi_ld, hi_la) = (
-            hi(cells::MILLER_DBL_LINES, HI_LD),
-            hi(cells::MILLER_ADD_LINES, HI_LA),
+            hi(Cells::MILLER_DBL_LINES, HI_LD),
+            hi(Cells::MILLER_ADD_LINES, HI_LA),
         );
         let (hi_cd, hi_ca) = (
-            hi(cells::CONST_LINES_DBL, HI_CD),
-            hi(cells::CONST_LINES_ADD, HI_CA),
+            hi(Cells::CONST_LINES_DBL, HI_CD),
+            hi(Cells::CONST_LINES_ADD, HI_CA),
         );
         let identity = gt_mul(GtOperand::one(1), GtOperand::one(1));
         let dense = gt_mul(GtOperand::dense(1), GtOperand::dense(1));
@@ -2399,7 +2403,7 @@ impl Builder {
             (cell(), cell(), cell(), cell(), cell(), cell(), cell());
         let naf_x = naf(Bn254Config::X[0]);
         let chain_steps = naf_x.len() as u32 - 1;
-        let chain_out = |chain: u32| cells::FE_CHAINS + 128 * chain + 2 * (chain_steps - 1) + 1;
+        let chain_out = |chain: u32| Cells::FE_CHAINS + 128 * chain + 2 * (chain_steps - 1) + 1;
         let [res0, res1, res2] = [chain_out(0), chain_out(1), chain_out(2)];
 
         // Easy part.
@@ -2486,8 +2490,8 @@ impl Builder {
     fn fe_chain(&mut self, naf_x: &[i8], (chain, base): (u32, u32)) {
         let steps = naf_x.len() - 1;
         let one = self.one();
-        let hi_fe = hi(cells::FE_CHAINS, HI_FE);
-        let cell = |step: u32, slot: u32| cells::FE_CHAINS + 128 * chain + 2 * step + slot;
+        let hi_fe = hi(Cells::FE_CHAINS, HI_FE);
+        let cell = |step: u32, slot: u32| Cells::FE_CHAINS + 128 * chain + 2 * step + slot;
         // Digit of step `s` (processing from the most significant): naf[steps − 1 − s].
         let digit_mask = |value: i8| -> Vec<i32> {
             (0..64)
@@ -2627,7 +2631,7 @@ pub fn build(
     );
     let mut b = Builder::new(wire_order);
     // H1 in output layout (rows 14–15) so every pairing point shares one elem shape.
-    let h1_cell = cells::POINT_CONSTANTS;
+    let h1_cell = Cells::POINT_CONSTANTS;
     b.program.pinned_constant_at(row(h1_cell) + 14, setup.h1.x);
     b.program.pinned_constant_at(row(h1_cell) + 15, setup.h1.y);
 
@@ -2647,12 +2651,12 @@ pub fn build(
             elems: vec![lhs.fixed(), rhs.fixed(), b.ones()],
             own_bits: C,
             own_offset: 0,
-            domain: vec![Factor::restrict(CELL, cells::FINAL..cells::FINAL + 1)],
+            domain: vec![Factor::restrict(CELL, Cells::FINAL..Cells::FINAL + 1)],
         },
-        &[(row(cells::FINAL), None)],
+        &[(row(Cells::FINAL), None)],
         false,
     );
-    let final_check = GtCell(cells::FINAL).rows();
+    let final_check = GtCell(Cells::FINAL).rows();
     Layout {
         profile,
         check: check.clone(),

@@ -13,6 +13,8 @@ use super::relation::{PublicEvals, RowRelation, FP_SLOTS_G1, FP_SLOTS_G2, FP_SLO
 use super::schedule::{Layout, SelectedFamily};
 use super::verifier::{Evaluator, Point};
 use super::wiring::{copy_kernel_eval, ReadKind};
+use ark_bn254::Fr as ArkFr;
+use std::ops::Range;
 
 pub const DIGIT_BITS: usize = 5;
 const NEG_KEY_OFFSET: u64 = 1 << LOG_ROWS;
@@ -184,8 +186,8 @@ impl PublicColumns {
 
     /// The range inverse table column `1/(α − x)` for `x < 2^16`, zero above.
     pub fn inverse_table(alpha: Fr) -> Vec<Fr> {
-        let mut values: Vec<ark_bn254::Fr> = (0..1u64 << 16)
-            .map(|v| ark_bn254::Fr::from(alpha - Fr::from_u64(v)))
+        let mut values: Vec<ArkFr> = (0..1u64 << 16)
+            .map(|v| ArkFr::from(alpha - Fr::from_u64(v)))
             .collect();
         ark_ff::batch_inversion(&mut values);
         let mut column: Vec<Fr> = values.into_iter().map(Fr::from).collect();
@@ -204,7 +206,7 @@ pub struct LookupColumns {
 }
 
 fn batch_invert(values: &mut [Fr]) {
-    let mut ark: Vec<ark_bn254::Fr> = values.iter().map(|v| ark_bn254::Fr::from(*v)).collect();
+    let mut ark: Vec<ArkFr> = values.iter().map(|v| ArkFr::from(*v)).collect();
     ark_ff::batch_inversion(&mut ark);
     for (slot, v) in values.iter_mut().zip(ark) {
         *slot = Fr::from(v);
@@ -287,8 +289,8 @@ impl LookupColumns {
 
 /// Fields of the 18 row bits as `(bits, range)`: the family's restricted
 /// fields (from its `restrict` factors) and the free gaps (full range).
-fn field_partition(domain: &[Factor]) -> Vec<(Bits, std::ops::Range<u32>, Option<Factor>)> {
-    let mut fields: Vec<(Bits, std::ops::Range<u32>, Option<Factor>)> = Vec::new();
+fn field_partition(domain: &[Factor]) -> Vec<(Bits, Range<u32>, Option<Factor>)> {
+    let mut fields: Vec<(Bits, Range<u32>, Option<Factor>)> = Vec::new();
     for factor in domain {
         assert!(factor.v.width() == 0, "domain factors have no source field");
         let range = match (&factor.rel, &factor.range) {
