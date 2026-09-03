@@ -11,8 +11,8 @@ use thiserror::Error;
 
 use crate::hash_table::schedule::preamble;
 use crate::hash_table::{
-    HashTable, JoltSchedule, LinkMap, PublicInputs, Recorded, RecordingTranscript, ScheduleError,
-    SymbolicSchedule, T1Challenges,
+    HashTable, HashTableKey, JoltSchedule, LinkMap, PublicInputs, Recorded, RecordingTranscript,
+    ScheduleError, SymbolicSchedule, T1Challenges,
 };
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
@@ -80,8 +80,18 @@ pub enum WrapError {
 #[derive(Clone)]
 pub struct WrapHashKey {
     profile_digest: [u8; 32],
-    schedule: SymbolicSchedule,
-    public: PublicInputs,
+    table: HashTableKey,
+    links: LinkMap,
+    group_offset: usize,
+    challenge_offset: usize,
+    members: [usize; 2],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct T1Placement {
+    pub group_offset: usize,
+    pub challenge_offset: usize,
+    pub members: [usize; 2],
 }
 
 impl WrapHashKey {
@@ -90,6 +100,8 @@ impl WrapHashKey {
         public_io: &JoltDevice,
         proof: &Proof,
         config: WrapConfig,
+        placement: T1Placement,
+        setup: &HyperKZGProverSetup<Bn254>,
     ) -> Result<Self, WrapError> {
         validate_config(config)?;
         let profile = WrapperProfile::new(preprocessing, proof)?;
@@ -107,75 +119,77 @@ impl WrapHashKey {
         } else {
             SymbolicSchedule::from_reference(&records, Some(config.common_log_rows))?
         };
-        let public = PublicInputs::from_preamble(&preamble(&records), &schedule)?;
+        let table = HashTableKey::new(schedule, config.packing_factor, setup)?;
+        let links = LinkMap::new(&table.schedule);
         Ok(Self {
             profile_digest,
-            schedule,
-            public,
+            table,
+            links,
+            group_offset: placement.group_offset,
+            challenge_offset: placement.challenge_offset,
+            members: placement.members,
         })
     }
 
     pub fn schedule(&self) -> &SymbolicSchedule {
-        &self.schedule
+        &self.table.schedule
     }
 
-    pub fn public(&self) -> &PublicInputs {
-        &self.public
+    pub fn links(&self) -> &LinkMap {
+        &self.links
+    }
+
+    pub fn pinned_commitments(&self) -> Vec<(usize, Commitment)> {
+        self.table.pinned_commitments(self.group_offset)
     }
 }
 
 /// Profile-fixed data consumed by wrapper verification.
 pub struct WrapVerifierKey {
     statement: AssemblyStatement,
-    hash_schedule: SymbolicSchedule,
-    hash_links: LinkMap,
+    hash: WrapHashKey,
     hash_public: PublicInputs,
-    t1_challenge_offset: usize,
-    t1_members: [usize; 2],
 }
 
 impl WrapVerifierKey {
     pub fn new(
         mut statement: AssemblyStatement,
-        hash_schedule: SymbolicSchedule,
+        hash: WrapHashKey,
         hash_public: PublicInputs,
-        t1_challenge_offset: usize,
-        t1_members: [usize; 2],
-        pinned_commitments: Vec<(usize, Commitment)>,
+        mut pinned_commitments: Vec<(usize, Commitment)>,
     ) -> Self {
-        let hash_links = LinkMap::new(&hash_schedule);
+        pinned_commitments.extend(hash.pinned_commitments());
         statement.pinned_commitments = pinned_commitments;
         Self {
             statement,
-            hash_schedule,
-            hash_links,
+            hash,
             hash_public,
-            t1_challenge_offset,
-            t1_members,
         }
     }
 
     pub fn hash_schedule(&self) -> &SymbolicSchedule {
-        &self.hash_schedule
+        self.hash.schedule()
     }
 
     pub fn hash_links(&self) -> &LinkMap {
-        &self.hash_links
+        self.hash.links()
     }
 
     fn statement(&self, challenges: &[Fr]) -> Result<AssemblyStatement, WrapError> {
-        let count = T1Challenges::count(self.hash_schedule.log_rows);
+        let schedule = self.hash.schedule();
+        let count = T1Challenges::count(schedule.log_rows);
         let end = self
-            .t1_challenge_offset
+            .hash
+            .challenge_offset
             .checked_add(count)
             .ok_or(WrapError::T1MemberLayout)?;
         let t1 = challenges
-            .get(self.t1_challenge_offset..end)
+            .get(self.hash.challenge_offset..end)
             .ok_or(WrapError::T1MemberLayout)?;
-        let claims = T1Challenges::from_challenges(t1, self.hash_schedule.log_rows)
-            .input_claims(&self.hash_public);
+        let claims =
+            T1Challenges::from_challenges(t1, schedule.log_rows).input_claims(&self.hash_public);
         let mut statement = self.statement.clone();
-        for (member, claim) in self.t1_members.into_iter().zip(claims) {
+        for (member, claim) in self.hash.members.into_iter().zip(claims) {
             statement
                 .members
                 .get_mut(member)
@@ -384,8 +398,9 @@ impl WrapPreparation {
             .map_err(WrapError::UnsatisfiedRelation)?;
 
         let records = verified_transcript(preprocessing, public_io, proof)?;
-        let hash_schedule = JoltSchedule::witness(&records, &hash_key.schedule)?;
-        let hash_public = hash_key.public.clone();
+        let schedule = hash_key.schedule();
+        let hash_public = PublicInputs::from_preamble(&preamble(&records), schedule)?;
+        let hash_schedule = JoltSchedule::witness(&records, schedule)?;
         let hash_table = HashTable::build(&hash_schedule, &hash_public);
 
         let (public_known, public_challenges) = public_values(&relation, &relation_witness.values)?;
@@ -405,7 +420,7 @@ impl WrapPreparation {
             profile_digest,
             relation,
             relation_witness,
-            hash_key: hash_key.schedule.clone(),
+            hash_key: schedule.clone(),
             hash_public,
             hash_schedule,
             hash_table,

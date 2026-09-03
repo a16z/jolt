@@ -39,7 +39,7 @@ use jolt_wrapper::stream::{
 };
 use jolt_wrapper::wrap::{
     commit_wrap_phase_one, commit_wrap_phase_two, verify_wrapped_with_key, wrap as wrap_proof,
-    WrapConfig, WrapError, WrapHashKey, WrapPreparation, WrapVerifierKey,
+    T1Placement, WrapConfig, WrapError, WrapHashKey, WrapPreparation, WrapVerifierKey,
 };
 
 type Proof = JoltProof<Pcs, Vc>;
@@ -95,11 +95,25 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let uptime = Command::new("uptime").output().expect("uptime").stdout;
     let started = Instant::now();
     let (preprocessing, public_io, original_proof) = fixture();
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(0x5eed),
+        ROWS * K,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    let setup_ms = started.elapsed().as_millis();
+    let started = Instant::now();
     let hash_key = WrapHashKey::from_reference(
         &preprocessing,
         &public_io,
         &original_proof,
         WrapConfig::default(),
+        T1Placement {
+            group_offset: 0,
+            challenge_offset: 4,
+            members: [0, 1],
+        },
+        &setup,
     )
     .expect("build trusted T1 key");
     let key_profile_ms = started.elapsed().as_millis();
@@ -127,17 +141,9 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     let prepare_ms = started.elapsed().as_millis();
 
     let started = Instant::now();
-    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
-        Fr::from_u64(0x5eed),
-        ROWS * K,
-        Bn254::g1_generator(),
-        Bn254::g2_generator(),
-    );
-    let setup_ms = started.elapsed().as_millis();
-
-    let started = Instant::now();
     let hash_columns = StreamColumns::new(&preparation.hash_table, K, 0);
     assert_eq!(hash_columns.group_count, 22);
+    assert_eq!(hash_columns.vk_groups, 20..22);
     let relation_table =
         RelationTable::from_relation(&preparation.relation, ROWS).expect("lower R table");
     let mut relation_witness = relation_table
@@ -172,7 +178,7 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     assert_eq!(phase_1_groups, 25);
 
     let started = Instant::now();
-    let pinned_groups = [20, 21, relation_fixed_base / K, link_fixed_base / K];
+    let pinned_groups = [relation_fixed_base / K, link_fixed_base / K];
     let pinned_commitments = pinned_groups
         .into_iter()
         .map(|group| {
@@ -213,10 +219,8 @@ fn real_t1_relation_table_round_trip_and_tampers() {
     };
     let verifier_key = WrapVerifierKey::new(
         statement,
-        hash_key.schedule().clone(),
-        hash_key.public().clone(),
-        4,
-        [0, 1],
+        hash_key,
+        preparation.hash_public.clone(),
         pinned_commitments,
     );
     assert_eq!(verifier_key.hash_links(), &links);
