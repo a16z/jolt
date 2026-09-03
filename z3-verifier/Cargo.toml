@@ -8,7 +8,7 @@ paste.workspace = true
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
-z3 = "0.20.0"
+z3 = "0.21.0"
 # Never used from Rust — declared only to pin the Z3 that `vendored-z3` builds.
 # z3-sys asks for `z3-src = "416"`, which would let the solver change under the
 # nightly between runs and surface as a spurious soundness signal. 416.0.2 is
