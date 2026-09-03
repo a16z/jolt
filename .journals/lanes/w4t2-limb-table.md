@@ -1,8 +1,8 @@
 # W4-T2 — limb table (non-native BN254 Fq arithmetic for the Dory deferred check)
 
 Lane journal. Code: `crates/jolt-wrapper/src/limb_table/`, tests `crates/jolt-wrapper/tests/limb_table_*.rs`
-(+ `tests/common/mod.rs`). Checkpoint commits: `eea2a0d27` (fixed layout), `a6e09751d` (relation v2 + terms export,
-this entry).
+(+ `tests/common/mod.rs`). Checkpoint commits: `eea2a0d27` (fixed layout), `a6e09751d` (relation v2 + terms export),
+`93f166b80` (style: `Col`/`Cells` associated constants, zero style-checker findings).
 
 ## What the table proves
 
@@ -15,7 +15,7 @@ per cell, Miller steps use 32 rows. The Straus schedule (radix-16 signed digits,
 
 ## Protocol (post 00:42 steer: terms, zero-round wiring, phase-separated columns)
 
-Committed columns (`relation::col`, packing order = index order; `export::columns()` carries the phase per column):
+Committed columns (`relation::Col`, packing order = index order; `export::columns()` carries the phase per column):
 
 | phase | columns | count | col range |
 |---|---|---|---|
@@ -26,7 +26,7 @@ Committed columns (`relation::col`, packing order = index order; `export::column
 | 2 | lookup read helper `h`, table helpers `g_pos, g_neg`, fingerprints `f_pos, f_neg` | 5 | 137..142 |
 | VK | `pin`, `pin_limb_0..2`, `free` | 5 | 142..147 |
 
-Phase 1 = 70 columns, phase 2 = 72, VK = 5 (`col::PHASE1_END`, `col::PHASE2_END`, `col::VK_END`). The prover also
+Phase 1 = 70 columns, phase 2 = 72, VK = 5 (`Col::PHASE1_END`, `Col::PHASE2_END`, `Col::VK_END`). The prover also
 carries 11 public columns (`eq_tau`, copy kernel, `sel/is_gt/is_g1/is_g2`, `S0`, `coord`, constancy, `small`, `id`)
 that the verifier recomputes in closed form (`PublicEvals`).
 
@@ -62,7 +62,7 @@ kernels, `small`, `id`; then `relation::terms()` — the whole final relation as
 
 ### Terms export (W5 interface)
 
-`terms.rs`: `ColumnId(u32)` (index into `export::columns()`, i.e. `relation::col`), `AffineForm { constant, weights }`,
+`terms.rs`: `ColumnId(u32)` (index into `export::columns()`, i.e. `relation::Col`), `AffineForm { constant, weights }`,
 `Term { coefficient, factors }` — the same shape as W5's `stream::types` (`ColumnId { group, slot }` there; the
 adapter maps my column index to the packed `(group, slot)` through the export list). `RowRelation::terms(&PublicEvals)`
 returns **131 terms, max degree 4** (fibonacci profile and every profile: the count depends only on the relation):
@@ -116,8 +116,8 @@ columns 0.4 s, row member 2.8 s (debug build, 2^18 rows × 158 columns), verifie
 - `limb_table_miller`: Miller cells vs arkworks step by step.
 - `limb_table_e2e`: every constraint vanishes on the honest witness; both members driven with random challenges,
   round checks, verifier closed forms == prover public columns at `r`, `Σ_t coeff·Π L(v) == final claim`, digit-link
-  input `Σ ρ^k s_k + ρ^K`, `ω̃(r)` closed form; tamper suite (flipped chunk, wrong digit bit, broken copy, replaced
-  looked-up operand) rejected by the term check.
+  input `Σ ρ^k s_k + ρ^K`, `ω̃(r)` closed form; tamper suite (flipped chunk, chunk `+2^16` past the range table, wrong digit bit, broken copy,
+  replaced looked-up operand) rejected by the term check.
 
 ## Bugs fixed this checkpoint (for reviewers)
 

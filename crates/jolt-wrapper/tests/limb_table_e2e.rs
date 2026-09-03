@@ -353,6 +353,10 @@ fn tampered_witnesses_are_rejected() {
     rejects(columns.clone(), &relation, &w.layout, |c| {
         c[Col::CHUNKS + 3][row] += Fr::from_u64(1);
     });
+    // A chunk pushed past the 16-bit range table (breaks the range LogUp).
+    rejects(columns.clone(), &relation, &w.layout, |c| {
+        c[Col::CHUNKS + 5][row] += Fr::from_u64(1 << 16);
+    });
     // A wrong digit on one op row (breaks the lookup or the constancy).
     rejects(columns.clone(), &relation, &w.layout, |c| {
         c[Col::E0][row] = Fr::from_u64(1) - c[Col::E0][row];
