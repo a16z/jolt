@@ -1,7 +1,6 @@
 //! The owned one-hot commitment surface: `commit_one_hot_group_owned` must
-//! agree with the borrowed path, and `open_one_hot_group_from_hint` must
-//! produce proofs the plain batch verifier accepts — the hint owns the only
-//! copy of the witnesses.
+//! agree with the borrowed path, and its hint must drive native batching to
+//! proofs the batch verifier accepts.
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
@@ -11,11 +10,14 @@
 )]
 mod support;
 
-use jolt_akita::{AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16};
-use jolt_openings::{CommitmentScheme, OpeningsError};
+use jolt_akita::{
+    AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatching, AkitaScheme, AkitaSetupParams,
+    AKITA_ONE_HOT_K16,
+};
+use jolt_openings::{BatchOpeningScheme, CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{f, layout};
+use support::{f, layout, native_statement};
 
 /// `log2(K) + 8`: the smallest K=16 one-hot dimension the folded-only
 /// planner schedules (mirrors the scheme unit tests' roundtrip size).
@@ -56,7 +58,7 @@ fn group_polynomials() -> Vec<OneHotPolynomial> {
     ]
 }
 
-fn opening_point() -> Vec<jolt_akita::AkitaField> {
+fn opening_point() -> Vec<AkitaField> {
     (0..NUM_VARS).map(|index| f(index as u64 + 3)).collect()
 }
 
@@ -75,7 +77,7 @@ fn owned_group_commitment_matches_borrowed_group_commitment() {
 }
 
 #[test]
-fn owned_group_opens_from_hint_and_verifies() {
+fn owned_group_opens_through_native_batching_and_verifies() {
     let (prover_setup, verifier_setup) = one_hot_setup(2);
     let polynomials = group_polynomials();
     let point = opening_point();
@@ -84,41 +86,42 @@ fn owned_group_opens_from_hint_and_verifies() {
         .map(|polynomial| MultilinearPoly::evaluate(polynomial, &point))
         .collect();
     let (commitment, hint) =
-        AkitaScheme::commit_one_hot_group_owned(&prover_setup, layout(3), polynomials)
+        AkitaScheme::commit_one_hot_group_owned(&prover_setup, layout(3), polynomials.clone())
             .expect("owned commit should succeed");
+    let witnesses: AkitaNativeBatchPolynomials<'_> = polynomials
+        .iter()
+        .map(|polynomial| polynomial as &dyn MultilinearPoly<AkitaField>)
+        .collect();
+    let statement = native_statement(commitment, &point, evaluations.iter().copied());
 
     let mut prover_transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
-    let proof = AkitaScheme::open_one_hot_group_from_hint(
-        &point,
-        &evaluations,
+    let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
+        statement.clone(),
+        witnesses.clone(),
         hint.clone(),
         &mut prover_transcript,
     )
-    .expect("hint-owned opening should prove");
+    .expect("owned one-hot group should prove");
 
     let mut verifier_transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
-    AkitaScheme::verify_batch(
-        &commitment,
-        &point,
-        &evaluations,
-        &proof,
+    <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
+        &statement,
+        &proof,
         &mut verifier_transcript,
     )
-    .expect("hint-owned proof should verify");
+    .expect("owned one-hot group proof should verify");
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
-    let mut tampered = evaluations;
-    tampered[0] += f(1);
+    let mut tampered = statement.clone();
+    tampered[0].evaluation.value += f(1);
     let mut verifier_transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
     assert!(
-        AkitaScheme::verify_batch(
-            &commitment,
-            &point,
+        <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
             &tampered,
             &proof,
-            &verifier_setup,
             &mut verifier_transcript,
         )
         .is_err(),
@@ -126,14 +129,14 @@ fn owned_group_opens_from_hint_and_verifies() {
     );
 
     let mut transcript = Blake2bTranscript::new(b"akita-owned-one-hot");
-    let err = AkitaScheme::open_one_hot_group_from_hint(
-        &point,
-        &tampered[..1],
+    let err = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
+        statement[..1].to_vec(),
+        witnesses,
         hint,
         &mut transcript,
     )
-    .expect_err("one claim for a two-slot hint must reject");
+    .expect_err("one claim for a two-slot commitment must reject");
     assert!(
         matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("claims")),
         "unexpected error: {err}"

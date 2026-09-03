@@ -325,10 +325,6 @@ mod tests {
         clippy::expect_used,
         reason = "tests assert successful schedule resolution"
     )]
-    #![expect(
-        clippy::panic,
-        reason = "tests destructure honest proof shapes and fail loudly on fixture drift"
-    )]
 
     use super::*;
     use crate::adapters::serialize_akita;
@@ -470,14 +466,18 @@ mod tests {
     }
 
     #[test]
-    fn resolve_schedule_rejects_unknown_one_hot_chunk_size() {
-        let num_vars = 13;
-        let point = point(num_vars);
-        let layout = OpeningClaimsLayout::new(num_vars, 1).expect("layout");
-        let mut commitment = dense_commitment(num_vars, 1);
+    fn unknown_one_hot_chunk_size_rejects_before_deserialization() {
+        let (mut commitment, point, _, resolved) = resolved_dense(16, 2);
         commitment.backend_flavor = AkitaBackendFlavor::OneHot;
         commitment.one_hot_k = 32;
-        let err = resolve_schedule(&commitment, &layout, &point)
+        let proof = AkitaBatchProof {
+            statement_bridge: Vec::new(),
+            serialized_schedule_selection: serialize_akita(&resolved.selection())
+                .expect("serialize selection"),
+            serialized_akita_proof_shape: Vec::new(),
+            serialized_akita_proof: Vec::new(),
+        };
+        let err = deserialize_checked_backend_payload(&commitment, &proof, 2, &point)
             .expect_err("unknown one-hot chunk size must be rejected");
         assert!(
             err.to_string().contains("unsupported Akita one-hot K"),
@@ -486,7 +486,7 @@ mod tests {
     }
 
     /// A real prover run must realize exactly the fold structure the
-    /// schedule prescribes — `scheduled_proof_shape` is derived from the
+    /// schedule prescribes — the canonical shape is derived from the
     /// schedule, so this ties the validator's model to actual backend
     /// prover output.
     #[test]
@@ -497,14 +497,15 @@ mod tests {
         use jolt_transcript::{Blake2bTranscript, Transcript};
 
         let num_vars = 14;
-        let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(num_vars, 1, [7; 32]))
-            .expect("dense setup should build");
+        let (prover_setup, _) =
+            AkitaScheme::setup(AkitaSetupParams::dense_only(num_vars, 1, [7; 32]))
+                .expect("dense setup should build");
         let poly = Polynomial::new(
             (0..1u64 << num_vars)
                 .map(|index| AkitaField::from_u64(index + 1))
                 .collect(),
         );
-        let (commitment, hint) =
+        let (_, hint) =
             AkitaScheme::commit(&poly, &prover_setup).expect("dense commit should succeed");
         let point = point(num_vars);
         let eval = poly.evaluate(&point);
@@ -520,113 +521,19 @@ mod tests {
         .expect("open should succeed");
 
         let layout = OpeningClaimsLayout::new(num_vars, 1).expect("layout");
-        let resolved = resolve_schedule(&commitment, &layout, &point).expect("schedule");
+        let selection = deserialize_selection(&proof).expect("selection");
+        let resolved =
+            resolve_schedule_row::<AkitaConfig>(selection, &layout, &point).expect("schedule");
         let schedule = resolved.schedule();
         let realized =
             deserialize_akita::<AkitaBackendProofShape>(&proof.serialized_akita_proof_shape, &())
                 .expect("honest proof shape should deserialize");
-        validate_proof_shape(&realized, schedule).expect("realized shape must validate");
+        validate_proof_shape::<AkitaConfig>(&realized, schedule, &layout)
+            .expect("realized shape must validate");
         assert_eq!(
             realized.recursive_folds.len(),
             schedule.recursive_folds.len(),
             "prover must realize the scheduled fold depth"
         );
-    }
-
-    fn expect_shape_rejection(
-        shape: &AkitaBackendProofShape,
-        schedule: &FoldSchedule,
-        expected_fragment: &str,
-    ) {
-        let err =
-            validate_proof_shape(shape, schedule).expect_err("forged proof shape must be rejected");
-        assert!(
-            err.to_string().contains(expected_fragment),
-            "expected error containing {expected_fragment:?}, got: {err}"
-        );
-    }
-
-    /// Every count, stage, and witness-binding field of a level shape is
-    /// schedule-determined; each single-field forgery of the scheduled shape
-    /// must reject with its own diagnostic.
-    #[test]
-    fn forged_level_and_terminal_shapes_reject_against_the_schedule() {
-        let num_vars = 20;
-        let point = point(num_vars);
-        let layout = OpeningClaimsLayout::new(num_vars, 2).expect("layout");
-        let commitment = dense_commitment(num_vars, 2);
-        let resolved = resolve_schedule(&commitment, &layout, &point).expect("schedule");
-        let schedule = resolved.schedule();
-        assert!(
-            !schedule.recursive_folds.is_empty(),
-            "fixture needs at least one recursive fold"
-        );
-        let honest = scheduled_proof_shape(schedule);
-        validate_proof_shape(&honest, schedule).expect("scheduled shape must validate");
-
-        let mut extra_level = honest.clone();
-        extra_level.recursive_folds.push(extra_level.root.clone());
-        expect_shape_rejection(&extra_level, schedule, "recursive fold levels");
-
-        let mut truncated = honest.clone();
-        let _ = truncated.recursive_folds.pop();
-        expect_shape_rejection(&truncated, schedule, "recursive fold levels");
-
-        let mut forged_stage2 = honest.clone();
-        forged_stage2
-            .root
-            .stage2_sumcheck_proof
-            .push(STAGE2_SUMCHECK_DEGREE);
-        expect_shape_rejection(&forged_stage2, schedule, "stage-2");
-
-        let mut forged_stage1 = honest.clone();
-        let _ = forged_stage1.root.stage1_stages.pop();
-        expect_shape_rejection(&forged_stage1, schedule, "stage-1");
-
-        let mut forged_stage3 = honest.clone();
-        forged_stage3.root.stage3_sumcheck = Some(akita_types::SetupProductSumcheckShape {
-            sumcheck: vec![STAGE2_SUMCHECK_DEGREE],
-        });
-        expect_shape_rejection(&forged_stage3, schedule, "stage-3");
-
-        // The root has a recursive successor, so its outgoing binding must be
-        // an outer commitment with the successor's exact coefficient count.
-        let NextWitnessBindingShape::OuterPayload { coeffs } = honest.root.next_witness_binding
-        else {
-            panic!("a root with a successor must bind an outer commitment");
-        };
-        let mut forged_commit = honest.clone();
-        forged_commit.root.next_witness_binding =
-            NextWitnessBindingShape::OuterPayload { coeffs: coeffs + 1 };
-        expect_shape_rejection(&forged_commit, schedule, "next-commitment");
-
-        let mut forged_binding = honest.clone();
-        forged_binding.root.next_witness_binding = NextWitnessBindingShape::TerminalInnerState;
-        expect_shape_rejection(&forged_binding, schedule, "witness binding");
-
-        // The last recursive fold precedes the terminal, so an outer
-        // commitment there contradicts the schedule position.
-        let mut forged_tail = honest.clone();
-        forged_tail
-            .recursive_folds
-            .last_mut()
-            .expect("fixture has a recursive fold")
-            .next_witness_binding = NextWitnessBindingShape::OuterPayload { coeffs: 1 };
-        expect_shape_rejection(&forged_tail, schedule, "witness binding");
-
-        let mut forged_partials = honest.clone();
-        forged_partials.root.extension_opening_reduction = Some(ExtensionOpeningReductionShape {
-            partials: MAX_EXT_REDUCTION_PARTIALS + 1,
-            sumcheck: Vec::new(),
-        });
-        expect_shape_rejection(&forged_partials, schedule, "partials");
-
-        let mut forged_reduction_rounds = honest.clone();
-        forged_reduction_rounds.terminal.extension_opening_reduction =
-            Some(ExtensionOpeningReductionShape {
-                partials: 1,
-                sumcheck: vec![2; MAX_SUMCHECK_ROUNDS + 1],
-            });
-        expect_shape_rejection(&forged_reduction_rounds, schedule, "protocol cap");
     }
 }

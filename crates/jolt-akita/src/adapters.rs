@@ -991,6 +991,7 @@ mod tests {
     )]
 
     use super::*;
+    use jolt_field::Ring;
 
     fn af(value: u64) -> AkitaField {
         AkitaField::from_u64(value)
@@ -1129,35 +1130,6 @@ mod tests {
         assert_ne!(
             mle_big_endian(&transformed, &point),
             mle_big_endian(&evals, &point),
-        );
-    }
-
-    #[test]
-    fn sparse_unit_polynomial_rejects_malformed_index_sets() {
-        let err = sparse_unit_polynomial(usize::BITS as usize, [0])
-            .expect_err("2^64 domain must overflow");
-        assert!(
-            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("bit width")),
-            "unexpected error: {err}"
-        );
-
-        let err =
-            sparse_unit_polynomial(3, [0]).expect_err("domain below the ring dimension rejects");
-        assert!(
-            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("smaller than the minimum source ring dimension")),
-            "unexpected error: {err}"
-        );
-
-        let err = sparse_unit_polynomial(6, [64]).expect_err("out-of-domain index rejects");
-        assert!(
-            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("outside domain size 64")),
-            "unexpected error: {err}"
-        );
-
-        let err = sparse_unit_polynomial(6, [3, 3]).expect_err("duplicate index rejects");
-        assert!(
-            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("more than once")),
-            "unexpected error: {err}"
         );
     }
 

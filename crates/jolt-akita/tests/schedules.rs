@@ -234,7 +234,7 @@ fn strip_import_header(source: &str) -> &str {
 /// reverse-inclusion sweep rules out stale or duplicated entries.
 #[test]
 fn emit_specs_and_checked_in_catalogs_agree_exactly() {
-    let [k16_spec, k256_spec, _dense_spec] = family_specs(std::path::PathBuf::new());
+    let [k16_spec, k256_spec, _dense_spec] = family_specs(PathBuf::new()).expect("emit specs");
     let cases = [
         (
             k16_spec,
@@ -250,7 +250,7 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
     for (spec, module_name, table) in cases {
         assert_eq!(spec.module_name, module_name, "spec order regressed");
         assert!(
-            spec.group_batch_keys.is_empty(),
+            spec.grouped_requests.is_empty(),
             "Jolt one-hot families emit scalar single-group schedules only"
         );
         assert_eq!(
@@ -264,9 +264,9 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
                 "{module_name}: Jolt one-hot catalogs are scalar-only"
             );
             assert!(
-                spec.keys.contains(&entry.root.final_group.layout),
+                spec.keys.contains(&entry.final_group),
                 "{module_name}: stale catalog entry {:?} is not a reachable shape",
-                entry.root.final_group.layout
+                entry.final_group
             );
         }
         for (index, key) in spec.keys.iter().enumerate() {

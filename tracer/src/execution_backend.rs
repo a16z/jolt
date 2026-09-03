@@ -596,12 +596,12 @@ mod tests {
         let rows = output.trace.rows();
         assert!(rows.len() >= 3, "two ADDIs plus the jump expansion");
         // addi x1, x0, 1
-        let rd = rows[0].registers.rd.expect("first ADDI writes rd");
+        let rd = rows[0].registers().rd.expect("first ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (1, 0, 1));
         // addi x2, x1, 2 reads the value the first ADDI wrote
-        let rs1 = rows[1].registers.rs1.expect("second ADDI reads rs1");
+        let rs1 = rows[1].registers().rs1.expect("second ADDI reads rs1");
         assert_eq!((rs1.register, rs1.value), (1, 1));
-        let rd = rows[1].registers.rd.expect("second ADDI writes rd");
+        let rd = rows[1].registers().rd.expect("second ADDI writes rd");
         assert_eq!((rd.register, rd.pre_value, rd.post_value), (2, 0, 3));
 
         // The final memory image contains the loaded program bytes

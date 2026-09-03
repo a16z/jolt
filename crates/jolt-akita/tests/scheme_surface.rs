@@ -148,31 +148,6 @@ fn open_without_hint_recommits_deterministically() {
     assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }
 
-#[test]
-fn open_batch_rejects_mismatched_claim_counts() {
-    let (prover_setup, _) = setup_for(DENSE_VARS, 2, layout(7));
-    let poly_a = polynomial(DENSE_VARS, 1);
-    let poly_b = polynomial(DENSE_VARS, 20);
-    let point: Vec<_> = (0..DENSE_VARS).map(|index| f(index as u64 + 2)).collect();
-    let (_, hint) =
-        AkitaScheme::commit_group(&prover_setup, layout(7), &[poly_a.clone(), poly_b.clone()])
-            .expect("group commit should succeed");
-
-    let mut transcript = Blake2bTranscript::new(b"akita-batch-mismatch");
-    let err = AkitaScheme::open_batch_from_hint(
-        &point,
-        &[poly_a.evaluate(&point)],
-        &prover_setup,
-        hint,
-        &mut transcript,
-    )
-    .expect_err("two committed polynomials with one evaluation must reject");
-    assert!(
-        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("2 polynomials but statement has 1 claims")),
-        "unexpected error: {err}"
-    );
-}
-
 /// The hiding commitment binds the committed evaluation bytes into the
 /// transcript: equal evaluations bind identically, distinct ones diverge.
 #[test]

@@ -1206,8 +1206,7 @@ pub fn expected_rejection_phase(target: TamperTarget) -> VerifierPhase {
 }
 
 /// Which stage's batched sumcheck verifies each relation. Folds 6a/6b into
-/// `Stage6`; the stage-7 reductions are listed at stage 7 even though stage 8
-/// re-reads their claims for reconstruction.
+/// `Stage6`.
 fn relation_phase(id: JoltRelationId) -> VerifierPhase {
     match id {
         JoltRelationId::SpartanOuter => VerifierPhase::Stage1,
@@ -1238,10 +1237,6 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
         | JoltRelationId::BytecodeClaimReduction
         | JoltRelationId::HammingWeightClaimReduction
         | JoltRelationId::ProgramImageClaimReduction => VerifierPhase::Stage7,
-        JoltRelationId::UntrustedAdviceReconstruction
-        | JoltRelationId::TrustedAdviceReconstruction
-        | JoltRelationId::ProgramImageReconstruction
-        | JoltRelationId::BytecodeChunkReconstruction => VerifierPhase::Stage8Openings,
     }
 }
 
@@ -1275,10 +1270,6 @@ fn relation_from_stage_string(stage: &str) -> Option<JoltRelationId> {
         JoltRelationId::ProgramImageClaimReduction,
         JoltRelationId::IncClaimReduction,
         JoltRelationId::HammingWeightClaimReduction,
-        JoltRelationId::UntrustedAdviceReconstruction,
-        JoltRelationId::TrustedAdviceReconstruction,
-        JoltRelationId::ProgramImageReconstruction,
-        JoltRelationId::BytecodeChunkReconstruction,
     ]
     .into_iter()
     .find(|id| format!("{id:?}") == stage)

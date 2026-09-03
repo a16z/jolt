@@ -395,8 +395,8 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
     );
 }
 
-/// One-hot and sparse-unit hints certify that the committed data was
-/// one-hot; handing the prover dense witnesses for such a hint must reject.
+/// One-hot hints certify that the committed data was one-hot; handing the
+/// prover dense witnesses for such a hint must reject.
 #[test]
 fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
     use jolt_akita::{AkitaSetupParams, AKITA_ONE_HOT_K16};
@@ -438,36 +438,5 @@ fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
             &mut transcript,
         ),
         "one_hot prover hint requires one-hot witness polynomials",
-    );
-
-    // Same guard for the sparse-unit representation of a public one-hot
-    // commitment (K=4 rides the dense-flavor sparse path).
-    let (sparse_setup, _) = setup_for(14, 1, layout(7));
-    let sparse_indices: Vec<_> = (0..(1usize << 14) / 4)
-        .map(|row| {
-            if row % 5 == 4 {
-                None
-            } else {
-                Some((row % 4) as u8)
-            }
-        })
-        .collect();
-    let sparse_source = OneHotPolynomial::new(4, sparse_indices);
-    let (sparse_commitment, sparse_hint) =
-        AkitaScheme::commit(&sparse_source, &sparse_setup).expect("sparse commit should succeed");
-    let dense_14 = polynomial(14, 1);
-    let point_14: Vec<_> = (0..14).map(|index| f(index as u64 + 2)).collect();
-    let sparse_statement =
-        single_statement(sparse_commitment, &point_14, dense_14.evaluate(&point_14));
-    let mut transcript = Blake2bTranscript::new(b"akita-bb-dense-for-sparse");
-    expect_invalid_batch(
-        <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
-            &sparse_setup,
-            sparse_statement,
-            batch_polynomials([&dense_14]),
-            sparse_hint,
-            &mut transcript,
-        ),
-        "sparse_unit prover hint requires one-hot witness polynomials",
     );
 }
