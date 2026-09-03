@@ -14,7 +14,8 @@ use jolt_claims::protocols::{
 use jolt_field::{Fr, Ring};
 use jolt_program::{
     execution::{
-        JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
+        JoltProgram, OwnedTrace, RamAccess, RegisterRead, RegisterState, RegisterWrite,
+        TraceOutput, TraceRow,
     },
     field_inline::{
         FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
@@ -110,11 +111,17 @@ fn fr(value: u64) -> Fr {
 }
 
 fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-    TraceRow {
-        instruction,
-        field_inline: Some(data.into()),
-        ..TraceRow::default()
-    }
+    field_row_with_registers(instruction, RegisterState::default(), data)
+}
+
+fn field_row_with_registers(
+    instruction: JoltInstructionRow,
+    registers: RegisterState,
+    data: FieldInlineTraceData,
+) -> TraceRow {
+    let mut row = TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap();
+    row.field_inline = Some(data.into());
+    row
 }
 
 fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
@@ -250,10 +257,15 @@ fn field_inline_public_provider_is_absent_for_fr_off_programs() {
     let witness = witness(
         &program,
         &preprocessing,
-        vec![TraceRow {
-            instruction: instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3),
-            ..TraceRow::default()
-        }],
+        vec![TraceRow::from_instruction(instruction(
+            JoltInstructionKind::ADDI,
+            0,
+            Some(1),
+            Some(2),
+            None,
+            3,
+        ))
+        .unwrap()],
         2,
     );
 
@@ -275,34 +287,30 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
         None,
         0,
     );
-    let load_row = TraceRow {
-        instruction: load,
-        registers: RegisterState {
+    let load_row = field_row_with_registers(
+        load,
+        RegisterState {
             rs1: Some(RegisterRead {
                 register: 5,
                 value: 19,
             }),
             ..RegisterState::default()
         },
-        field_inline: Some(
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadFromX),
-                rd: Some(FieldRegisterWrite {
-                    register: 1,
-                    pre_value: enc(0),
-                    post_value: enc(19),
-                }),
-                bridge: Some(FieldInlineBridge::LoadFromX {
-                    x_register: 5,
-                    x_value: 19,
-                    field_value: enc(19),
-                }),
-                ..FieldInlineTraceData::default()
-            }
-            .into(),
-        ),
-        ..TraceRow::default()
-    };
+        FieldInlineTraceData {
+            op: Some(FieldInlineOp::LoadFromX),
+            rd: Some(FieldRegisterWrite {
+                register: 1,
+                pre_value: enc(0),
+                post_value: enc(19),
+            }),
+            bridge: Some(FieldInlineBridge::LoadFromX {
+                x_register: 5,
+                x_value: 19,
+                field_value: enc(19),
+            }),
+            ..FieldInlineTraceData::default()
+        },
+    );
 
     let store = instruction(
         JoltInstructionKind::FIELD_STORE_TO_X,
@@ -312,9 +320,9 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
         None,
         0,
     );
-    let store_row = TraceRow {
-        instruction: store,
-        registers: RegisterState {
+    let store_row = field_row_with_registers(
+        store,
+        RegisterState {
             rd: Some(RegisterWrite {
                 register: 6,
                 pre_value: 0,
@@ -322,25 +330,21 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
             }),
             ..RegisterState::default()
         },
-        field_inline: Some(
-            FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToX),
-                rs1: Some(FieldRegisterRead {
-                    register: 1,
-                    value: enc(19),
-                }),
-                bridge: Some(FieldInlineBridge::StoreToX {
-                    field_register: 1,
-                    field_value: enc(19),
-                    x_register: 6,
-                    x_value: 19,
-                }),
-                ..FieldInlineTraceData::default()
-            }
-            .into(),
-        ),
-        ..TraceRow::default()
-    };
+        FieldInlineTraceData {
+            op: Some(FieldInlineOp::StoreToX),
+            rs1: Some(FieldRegisterRead {
+                register: 1,
+                value: enc(19),
+            }),
+            bridge: Some(FieldInlineBridge::StoreToX {
+                field_register: 1,
+                field_value: enc(19),
+                x_register: 6,
+                x_value: 19,
+            }),
+            ..FieldInlineTraceData::default()
+        },
+    );
 
     let bytecode = vec![load, store];
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);

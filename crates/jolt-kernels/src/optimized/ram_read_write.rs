@@ -44,19 +44,24 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::ram_trace::{RamAccessColumns, NO_ACCESS};
-use super::rw_matrix::{AddressMajorMatrix, CycleMajorEntry, CycleMajorMatrix};
+use super::ram_trace::RamAccessColumns;
+use super::rw_matrix::{
+    round0_bind, round0_quadratic_coefficients, AddressMajorMatrix, CycleMajorMatrix,
+};
 use super::support::pin_derived_term_if_derived;
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The phase state machine: cycle rounds on the cycle-major matrix, address
-/// rounds on the address-major matrix, then the fully bound values. `None`
-/// only transiently inside a transition.
+/// Raw columns, cycle matrix, address matrix, then bound values.
+/// The first bind creates the first sparse entry vector at half size.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F: JoltField> {
+    Round0 {
+        columns: RamAccessColumns,
+        gruen: GruenSplitEqPolynomial<F>,
+    },
     Cycle {
         matrix: CycleMajorMatrix<F>,
         gruen: GruenSplitEqPolynomial<F>,
@@ -88,6 +93,7 @@ pub(crate) struct RamReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
 }
+
 impl<F: JoltField> Phase<F> {
     /// The error for a bind or round message arriving outside its phase.
     fn error() -> SumcheckError<F> {
@@ -97,17 +103,32 @@ impl<F: JoltField> Phase<F> {
     }
 }
 
+/// Cycle bind that triggers the late allocator purge.
+const LATE_PURGE_CYCLE_ROUNDS: usize = 6;
+
 impl<F: JoltField> RamReadWriteKernel<F> {
     /// Bind the challenge of `round` (0-indexed over the member's window),
     /// advancing the phase machine at the boundaries.
     fn ingest(&mut self, r: F, round: usize) -> Result<(), SumcheckError<F>> {
         if round < self.log_t {
-            let Some(Phase::Cycle { matrix, gruen }) = &mut self.phase else {
-                return Err(Phase::error());
-            };
-            matrix.bind(r);
-            gruen.bind(r);
-            self.inc.bind_with_order(r, BindingOrder::LowToHigh);
+            if matches!(self.phase, Some(Phase::Round0 { .. })) {
+                // Create the first matrix already bound at half size.
+                let Some(Phase::Round0 { columns, mut gruen }) = self.phase.take() else {
+                    return Err(Phase::error());
+                };
+                let matrix = round0_bind(&columns, r);
+                drop(columns);
+                gruen.bind(r);
+                self.phase = Some(Phase::Cycle { matrix, gruen });
+            } else {
+                let Some(Phase::Cycle { matrix, gruen }) = &mut self.phase else {
+                    return Err(Phase::error());
+                };
+                matrix.bind(r);
+                gruen.bind(r);
+            }
+            // Avoid a fresh half-size increment table each round.
+            let _ = self.inc.bind_low_to_high_in_place(r);
             if round == self.log_t - 1 {
                 let Some(Phase::Cycle { matrix, gruen }) = self.phase.take() else {
                     return Err(Phase::error());
@@ -119,6 +140,10 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 if self.log_k == 0 {
                     self.finalize()?;
                 }
+            }
+            // Purge after raw columns, late bind tails, and the cycle matrix.
+            if round == 0 || round == LATE_PURGE_CYCLE_ROUNDS || round == self.log_t - 1 {
+                crate::mem::purge_retained_memory(self.log_t);
             }
         } else {
             let Some(Phase::Address { matrix, .. }) = &mut self.phase else {
@@ -152,18 +177,38 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         &self,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let Some(Phase::Cycle { matrix, gruen }) = &self.phase else {
-            return Err(Phase::error());
+        let (gruen, [q_0, q_infty]) = match &self.phase {
+            Some(Phase::Round0 { columns, gruen }) => {
+                let e_in = gruen.e_in_current();
+                let e_out = gruen.e_out_current();
+                let in_bits = e_in.len().trailing_zeros() as usize;
+                let in_mask = e_in.len() - 1;
+                (
+                    gruen,
+                    round0_quadratic_coefficients(
+                        columns,
+                        |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
+                        &self.inc,
+                        self.gamma,
+                    ),
+                )
+            }
+            Some(Phase::Cycle { matrix, gruen }) => {
+                let e_in = gruen.e_in_current();
+                let e_out = gruen.e_out_current();
+                let in_bits = e_in.len().trailing_zeros() as usize;
+                let in_mask = e_in.len() - 1;
+                (
+                    gruen,
+                    matrix.quadratic_coefficients(
+                        |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
+                        &self.inc,
+                        self.gamma,
+                    ),
+                )
+            }
+            _ => return Err(Phase::error()),
         };
-        let e_in = gruen.e_in_current();
-        let e_out = gruen.e_out_current();
-        let in_bits = e_in.len().trailing_zeros() as usize;
-        let in_mask = e_in.len() - 1;
-        let [q_0, q_infty] = matrix.quadratic_coefficients(
-            |pair| e_out[pair >> in_bits] * e_in[pair & in_mask],
-            &self.inc,
-            self.gamma,
-        );
         Ok(gruen.gruen_poly_deg_3(q_0, q_infty, previous_claim))
     }
 
@@ -282,27 +327,16 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
                 reason: "RAM read-write checking geometry is inconsistent",
             });
         }
+        // Sparse matrix indices are u32.
+        if log_t > 32 || log_k > 32 {
+            return Err(KernelError::Unsupported {
+                reason: "optimized RAM read-write checking packs indices as u32 \
+                         (log_T, log_K ≤ 32)",
+            });
+        }
 
-        let (columns, values) = RamAccessColumns::shared_with_values(session, witness, log_t)?;
-        columns.validate_addresses(1usize << log_k)?;
-
-        let entries: Vec<CycleMajorEntry<F>> = columns
-            .addresses
-            .iter()
-            .enumerate()
-            .filter(|&(_, &address)| address != NO_ACCESS)
-            .map(|(cycle, &address)| {
-                let pre_value = values.pre_values[cycle];
-                CycleMajorEntry {
-                    row: cycle,
-                    col: address as usize,
-                    prev_val: pre_value,
-                    next_val: values.post_values[cycle],
-                    val: F::from_u64(pre_value),
-                    ra: F::one(),
-                }
-            })
-            .collect();
+        let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
+        super::ram_trace::validate_addresses(&columns.addresses, 1usize << log_k)?;
 
         let inc = Polynomial::new(witness.oracle_table(ram_inc().polynomial_id())?);
         let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
@@ -313,11 +347,11 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
                 reason: "RAM read-write witness tables disagree with the relation geometry",
             });
         }
-        let val_init = Polynomial::new(columns.reconstruct_val_init(&values.pre_values, val_final));
+        let val_init = Polynomial::new(columns.reconstruct_val_init(val_final));
 
         Ok(Box::new(RamReadWriteKernel {
-            phase: Some(Phase::Cycle {
-                matrix: CycleMajorMatrix { entries },
+            phase: Some(Phase::Round0 {
+                columns,
                 gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             }),
             inc,
@@ -332,8 +366,6 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use std::sync::Arc;
-
     use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, Ring};
@@ -342,7 +374,6 @@ mod tests {
         RamReadWriteChallenges, RamReadWriteInputClaims,
     };
 
-    use super::super::ram_trace::RamAccessValues;
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
@@ -419,8 +450,6 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(session.state::<RamAccessValues>().is_none());
-            assert!(session.state::<Arc<RamAccessColumns>>().is_some());
 
             let input_claim = dense_input_claim(witness, &tau_low, gamma, shape.ram_k);
             assert_parity(

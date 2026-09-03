@@ -1,4 +1,4 @@
-//! Typed per-cycle register rows and sparse-entry collection.
+//! Typed per-cycle register rows and the one-pass sparse-entry collection.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
@@ -15,9 +15,11 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::sparse::IndexedSparseEntry;
+use super::sparse::SeedEntry;
 use crate::KernelError;
 
+/// Operand indices and raw values for one cycle.
+/// Manual because atomic witness types do not expose operand indices.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RegisterCycleRow {
     /// `(register, read value)`.
@@ -29,9 +31,7 @@ pub(crate) struct RegisterCycleRow {
 }
 
 impl WitnessBundle for RegisterCycleRow {
-    // `TraceRow` is nameable from this crate only through the doc-hidden
-    // re-export the bundle derive uses; jolt-kernels deliberately has no
-    // jolt-program dependency.
+    // The hidden re-export avoids a jolt-program dependency.
     fn from_row(
         row: &TraceRow,
         _next: Option<&TraceRow>,
@@ -44,6 +44,7 @@ impl WitnessBundle for RegisterCycleRow {
                 .rd_index()
                 .map(|register| (register, row.rd_pre_value(), row.rd_write_value())),
         };
+        // Match the trace oracle's register-domain check.
         for register in [
             cycle.rs1.map(|(register, _)| register),
             cycle.rs2.map(|(register, _)| register),
@@ -69,96 +70,103 @@ impl WitnessBundle for RegisterCycleRow {
     }
 }
 
-/// Cross-member carry: the per-cycle `rd` hot indices, parked by this kernel's
-/// `prepare` for the stage-5 val-evaluation kernel (which otherwise re-walks
-/// the trace to collect them).
+/// Per-cycle `rd` indices shared with stage 5.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
 
-/// The row-window size of the streaming entry-collection pass (matches
-/// `support::collect_rows`: wide enough to amortize the per-chunk rayon
-/// extraction dispatch).
+/// Row-window size for streaming collection.
 const COLLECT_CHUNK: usize = 1 << 16;
 
-/// Streaming consumer building the sparse entries and the operand index
-/// columns in one trace pass, no whole-trace row materialization.
-pub(super) struct CollectRegisterEntries<F: JoltField> {
-    pub(super) entries: Vec<IndexedSparseEntry<F>>,
+/// Signed rd write delta, or zero without an rd operand.
+#[inline]
+fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
+    match cycle.rd {
+        Some((_, pre, post)) => post as i128 - pre as i128,
+        None => 0,
+    }
+}
+
+/// Builds entries, operand indices, and `rd_inc` in one trace pass.
+pub(super) struct CollectRegisterEntries {
+    pub(super) entries: Vec<SeedEntry>,
     pub(super) rs1_indices: Vec<Option<u8>>,
     pub(super) rs2_indices: Vec<Option<u8>>,
     pub(super) rd_indices: Vec<Option<u8>>,
+    pub(super) rd_inc: Vec<i128>,
 }
 
-impl<F: JoltField> StreamConsumer for CollectRegisterEntries<F> {
+impl StreamConsumer for CollectRegisterEntries {
     type Witness = RegisterCycleRow;
 
     fn consume(&mut self, chunk: &[RegisterCycleRow]) {
         for cycle in chunk {
-            let row = self.rs1_indices.len();
-            debug_assert!(u32::try_from(row).is_ok());
-            let (cells, len) = cycle.entries(row as u32);
+            let row = self.rs1_indices.len() as u32;
+            let (cells, len) = cycle.entries(row);
             self.entries.extend_from_slice(&cells[..len]);
             self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
             self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
             self.rd_indices.push(cycle.rd.map(|(k, ..)| k));
+            self.rd_inc.push(raw_rd_inc(cycle));
         }
     }
 }
 
-impl<F: JoltField> CollectRegisterEntries<F> {
-    /// Builds the sparse entries and the operand index columns in one trace
-    /// pass. Slice-backed sources build index-parallel; re-emulating sources
-    /// stream sequentially. Entry values and order are identical either way —
-    /// [`RegisterCycleRow::entries`] is pure per cycle, and runs concatenate in
-    /// cycle order.
-    pub(super) fn collect(
+impl CollectRegisterEntries {
+    /// Collects in parallel when random access is available; streams otherwise.
+    pub(super) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
+        // Seed rows are packed as u32.
+        if u32::try_from(cycles.saturating_sub(1)).is_err() {
+            return Err(KernelError::InvariantViolation {
+                reason: "cycle count exceeds the seed entries' packed u32 row domain",
+            });
+        }
         #[cfg(feature = "parallel")]
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
                 return Self::collect_par(&access, cycles);
             }
         }
-        let mut consumers = (Self {
+        let mut consumers = (CollectRegisterEntries {
             entries: Vec::with_capacity(cycles * 3),
             rs1_indices: Vec::with_capacity(cycles),
             rs2_indices: Vec::with_capacity(cycles),
             rd_indices: Vec::with_capacity(cycles),
+            rd_inc: Vec::with_capacity(cycles),
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
         Ok(consumers.0)
     }
 
-    /// The index-parallel entry build: a first pass counts each chunk's
-    /// entries (extraction-only, no staging), so entries scatter straight into
-    /// their exclusive-scan offsets on the second pass — no per-chunk runs, no
-    /// co-resident copy (the entry vector is the stage's largest allocation;
-    /// briefly doubling it moves the prover's peak). The three operand index
-    /// columns fill on the counting pass. Entry values and order are identical
-    /// to the streaming pass: [`RegisterCycleRow::entries`] is pure per cycle.
+    /// Two-pass parallel build: count and fill columns, then scatter entries.
+    /// Exclusive offsets avoid a second entry-sized allocation.
     #[cfg(feature = "parallel")]
-    fn collect_par(access: &RandomAccessRows, cycles: usize) -> Result<Self, KernelError<F>> {
+    fn collect_par<F: JoltField>(
+        access: &RandomAccessRows,
+        cycles: usize,
+    ) -> Result<Self, KernelError<F>> {
         use core::mem::MaybeUninit;
-        /// The scatter grain (matches the whole-range collectors' load-balance
-        /// tradeoff at ~3 entries per cycle).
+        /// Scatter grain at about three entries per cycle.
         const CHUNK: usize = 1 << 14;
         let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+        let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
         let chunk_count = cycles.div_ceil(CHUNK);
-        // Pass 1: count entries per chunk and fill the index columns.
+        // Pass 1: count entries per chunk and fill the index + rd_inc columns.
         let mut counts: Vec<usize> = Vec::new();
         (
             rs1_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
             rs2_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
             rd_indices.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
+            rd_inc.spare_capacity_mut()[..cycles].par_chunks_mut(CHUNK),
         )
             .into_par_iter()
             .enumerate()
-            .map(|(chunk_index, (rs1, rs2, rd))| {
+            .map(|(chunk_index, (rs1, rs2, rd, inc))| {
                 let base = chunk_index * CHUNK;
                 let mut count = 0usize;
                 for offset in 0..rs1.len() {
@@ -168,6 +176,7 @@ impl<F: JoltField> CollectRegisterEntries<F> {
                             let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
                             let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
                             let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
+                            let _ = inc[offset].write(raw_rd_inc(&cycle));
                         }
                         Err(failure) => {
                             error.record(base + offset, failure);
@@ -181,28 +190,27 @@ impl<F: JoltField> CollectRegisterEntries<F> {
         if let Some(failure) = error.take() {
             return Err(failure.into());
         }
-        // SAFETY: the error latch is empty, so every chunk ran to completion and
-        // initialized its whole span of all three index columns.
+        // SAFETY: the error latch is empty, so every chunk ran to completion
+        // and initialized its whole span of all four columns.
         unsafe {
             rs1_indices.set_len(cycles);
             rs2_indices.set_len(cycles);
             rd_indices.set_len(cycles);
+            rd_inc.set_len(cycles);
         }
 
-        // Exclusive scan of the per-chunk counts, then pass 2: re-extract and
-        // scatter entries straight to their offsets.
+        // Scan counts, then scatter into exclusive windows.
         let mut offsets: Vec<usize> = Vec::with_capacity(chunk_count);
         let mut total = 0usize;
         for &count in &counts {
             offsets.push(total);
             total += count;
         }
-        let mut entries: Vec<IndexedSparseEntry<F>> = Vec::with_capacity(total);
+        let mut entries: Vec<SeedEntry> = Vec::with_capacity(total);
         {
-            let mut rest: &mut [MaybeUninit<IndexedSparseEntry<F>>] =
+            let mut rest: &mut [MaybeUninit<SeedEntry>] =
                 &mut entries.spare_capacity_mut()[..total];
-            let mut windows: Vec<&mut [MaybeUninit<IndexedSparseEntry<F>>]> =
-                Vec::with_capacity(chunk_count);
+            let mut windows: Vec<&mut [MaybeUninit<SeedEntry>]> = Vec::with_capacity(chunk_count);
             for &count in &counts {
                 let (head, tail) = rest.split_at_mut(count);
                 windows.push(head);
@@ -217,9 +225,7 @@ impl<F: JoltField> CollectRegisterEntries<F> {
                     let top = ((chunk_index + 1) * CHUNK).min(cycles);
                     let mut written = 0usize;
                     for row in base..top {
-                        // Pass 1 latched any extraction error; a second window
-                        // over the same immutable rows cannot fail differently,
-                        // but stay conservative and latch again.
+                        // Latch unexpected second-pass extraction failures.
                         match access.window::<RegisterCycleRow>(row) {
                             Ok(cycle) => {
                                 let (cells, len) = cycle.entries(row as u32);
@@ -240,43 +246,15 @@ impl<F: JoltField> CollectRegisterEntries<F> {
                 return Err(failure.into());
             }
         }
-        // SAFETY: the windows partition exactly `total` slots (the exclusive
-        // scan of the same counts pass 2 reproduces), and every window was
-        // fully written above.
+        // SAFETY: exclusive windows cover all `total` initialized slots.
         unsafe { entries.set_len(total) };
-        Ok(Self {
+        Ok(CollectRegisterEntries {
             entries,
             rs1_indices,
             rs2_indices,
             rd_indices,
+            rd_inc,
         })
-    }
-}
-
-#[cfg(feature = "parallel")]
-impl RegisterCycleRow {
-    /// The entry count [`Self::entries`] will produce for one cycle — the
-    /// counting pass's cheap twin (kept adjacent so the merge rules stay in
-    /// sync: rs2 folds into rs1's entry, rd into either read's).
-    fn entry_count(&self) -> usize {
-        let mut count = 0usize;
-        let mut cols = [None; 2];
-        if let Some((rs1, _)) = self.rs1 {
-            cols[0] = Some(rs1);
-            count += 1;
-        }
-        if let Some((rs2, _)) = self.rs2 {
-            if cols[0] != Some(rs2) {
-                cols[1] = Some(rs2);
-                count += 1;
-            }
-        }
-        if let Some((rd, ..)) = self.rd {
-            if cols[0] != Some(rd) && cols[1] != Some(rd) {
-                count += 1;
-            }
-        }
-        count
     }
 }
 
@@ -293,33 +271,6 @@ mod tests {
     };
 
     use super::*;
-
-    /// The counting pass and the write pass must agree on every operand
-    /// pattern — including raw index 255, which the old `u8::MAX` sentinel
-    /// collided with (count 0, write 1 → pass-2 window overrun).
-    #[cfg(feature = "parallel")]
-    #[test]
-    fn cycle_entry_count_matches_cycle_entries() {
-        use jolt_field::Fr;
-        let candidates: [Option<u8>; 5] = [None, Some(0), Some(5), Some(127), Some(255)];
-        for rs1 in candidates {
-            for rs2 in candidates {
-                for rd in candidates {
-                    let cycle = RegisterCycleRow {
-                        rs1: rs1.map(|register| (register, 11)),
-                        rs2: rs2.map(|register| (register, 22)),
-                        rd: rd.map(|register| (register, 33, 44)),
-                    };
-                    let (_, len) = cycle.entries::<Fr>(0);
-                    assert_eq!(
-                        cycle.entry_count(),
-                        len,
-                        "count/write divergence for {cycle:?}"
-                    );
-                }
-            }
-        }
-    }
 
     #[test]
     fn rejects_register_outside_protocol_domain() {

@@ -98,13 +98,8 @@ impl GuestState {
 }
 
 /// One row's dynamic values, written by generated code in record mode.
-///
-/// Generated code cannot construct a `TraceRow` (its `Option` fields have no
-/// guaranteed layout), so it writes this fixed POD instead and a Rust pass
-/// reassembles rows afterwards, taking the static half from
-/// `expanded_bytecode[row_index]`. 64 bytes keeps the cursor bump a shift and
-/// the write pattern cache-friendly; the fields a given kind does not use are
-/// simply ignored by the reassembly pass.
+/// Rust adds static bytecode fields and validates the final `TraceRow`.
+/// The 64-byte size keeps cursor bumps cheap.
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 pub struct Observation {

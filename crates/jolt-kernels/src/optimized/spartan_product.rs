@@ -292,7 +292,8 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    scratch: Vec<F>,
+    /// Whether the first-shrink purge ran.
+    purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
@@ -410,7 +411,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         Ok(Self {
             left: Polynomial::new(left),
             right: Polynomial::new(right),
-            scratch: Vec::new(),
+            purged: false,
             split_eq,
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
@@ -420,10 +421,13 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.left
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
-        self.right
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+        let shrunk = self.left.bind_low_to_high_in_place(challenge);
+        let _ = self.right.bind_low_to_high_in_place(challenge);
+        // Purge once after the first shrink.
+        if shrunk && !self.purged {
+            self.purged = true;
+            crate::mem::purge_retained_memory(self.challenges.total());
+        }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;

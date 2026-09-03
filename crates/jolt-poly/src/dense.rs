@@ -263,6 +263,53 @@ impl<F: JoltField> Polynomial<F> {
         self.num_vars -= 1;
     }
 
+    /// Binds the LSB variable in place without another buffer:
+    /// `v[j] = v[2j] + r·(v[2j+1] − v[2j])`. Once the backing allocation
+    /// reaches 8x the live length it is released; the return value reports
+    /// that release so callers can purge after it.
+    ///
+    /// Each power-of-two level writes below its read window. Earlier outputs
+    /// lie below later reads, and each level splits into disjoint `dst` and
+    /// `src`.
+    #[inline]
+    pub fn bind_low_to_high_in_place(&mut self, scalar: F) -> bool {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
+        debug_assert!(self.evals.len().is_power_of_two());
+        let half = self.evals.len() / 2;
+
+        let (lo, hi) = (self.evals[0], self.evals[1]);
+        self.evals[0] = lo + scalar * (hi - lo);
+        let mut e = 2;
+        while e <= half {
+            let (head, tail) = self.evals.split_at_mut(e);
+            let dst = &mut head[e / 2..];
+            let src = &tail[..e];
+            let write = |(k, out): (usize, &mut F)| {
+                let lo = src[2 * k];
+                *out = lo + scalar * (src[2 * k + 1] - lo);
+            };
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                dst.par_iter_mut()
+                    .enumerate()
+                    .with_min_len(1 << 10)
+                    .for_each(write);
+            }
+            #[cfg(not(feature = "parallel"))]
+            dst.iter_mut().enumerate().for_each(write);
+            e *= 2;
+        }
+        self.evals.truncate(half);
+
+        self.num_vars -= 1;
+        let shrink = self.evals.capacity() >= 8 * self.evals.len().max(1);
+        if shrink {
+            self.evals.shrink_to_fit();
+        }
+        shrink
+    }
+
     /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
     ///
     /// This has the same semantics as `bind_with_order(scalar, BindingOrder::LowToHigh)`,

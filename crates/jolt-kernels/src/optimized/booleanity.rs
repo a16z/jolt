@@ -799,19 +799,10 @@ pub(crate) mod testing {
             max_padded_trace_length: 4.max(1 << log_t),
         });
         let program = Arc::new(JoltProgram::default());
-        // Field mutation instead of struct literals: `TraceRow` grows a
-        // cfg-gated field under the `field-inline` feature, which a literal
-        // cannot spell portably from this crate.
         let row = |instruction: Option<JoltInstructionRow>,
                    registers: RegisterState,
                    ram_access: RamAccess| {
-            let mut row = TraceRow::default();
-            if let Some(instruction) = instruction {
-                row.instruction = instruction;
-            }
-            row.registers = registers;
-            row.ram_access = ram_access;
-            row
+            TraceRow::new(instruction.unwrap_or_default(), registers, ram_access).unwrap()
         };
         let mut rows = vec![
             // Hot bytecode, hot RAM, register activity.
