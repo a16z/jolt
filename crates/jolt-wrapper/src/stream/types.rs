@@ -219,6 +219,25 @@ pub struct TensorStreamStatement {
     pub terms: Vec<TensorTerm>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssemblyMemberStatement {
+    pub input_claim: Fr,
+    pub spec: StageMemberSpec,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssemblyStatement {
+    pub key_digest: [u8; 32],
+    pub public_inputs: Vec<Fr>,
+    pub rows: usize,
+    pub column_count: usize,
+    pub k: usize,
+    pub members: Vec<AssemblyMemberStatement>,
+    /// Column evaluations at stage A's row point needed by the member-final
+    /// checks and reduced by stage B into the final packed opening.
+    pub factor_columns: Vec<usize>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StageAEncoding {
     Compressed,

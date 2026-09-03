@@ -22,7 +22,10 @@ use rayon::prelude::*;
 mod types;
 pub use types::*;
 mod protocol;
-pub use protocol::{new_stream_transcript, prove_stream, verify_stream, verify_stream_with_cost};
+pub use protocol::{
+    new_stream_transcript, prove_assembly, prove_stream, verify_assembly,
+    verify_assembly_with_cost, verify_stream, verify_stream_with_cost,
+};
 
 const STREAM_LABEL: &[u8] = b"jolt-wrapper-v1";
 const KZG_ROUND_COMMITMENT_LABEL: &[u8] = b"sumcheck_kzg_commitment";
@@ -741,6 +744,31 @@ where
     T: Transcript<Challenge = Fr>,
     F: FnOnce(&StageResult) -> Result<Vec<Fr>, StreamError>,
 {
+    verify_kzg_batch_stage_observed(
+        proof,
+        members,
+        input_claims,
+        setup,
+        transcript,
+        &mut NoopVerifierObserver,
+        |result, _| output_claims(result),
+    )
+}
+
+pub fn verify_kzg_batch_stage_observed<T, F, O>(
+    proof: &StageProof,
+    members: &[StageMemberSpec],
+    input_claims: &[Fr],
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    transcript: &mut T,
+    observer: &mut O,
+    output_claims: F,
+) -> Result<StageResult, StreamError>
+where
+    T: Transcript<Challenge = Fr>,
+    F: FnOnce(&StageResult, &mut O) -> Result<Vec<Fr>, StreamError>,
+    O: VerifierObserver,
+{
     if proof.committed_rounds.is_none() || !proof.round_polynomials.round_polynomials.is_empty() {
         return Err(StreamError::StageEncoding);
     }
@@ -775,7 +803,9 @@ where
             offset: member.offset,
         })
         .collect();
-    let prelude = BatchPrelude::new(descriptions, max_rounds, max_degree);
+    let prelude = BatchPrelude::new_observed(descriptions, max_rounds, max_degree, || {
+        observer.record_fr_mul();
+    });
     let committed = proof
         .committed_rounds
         .as_ref()
@@ -807,16 +837,14 @@ where
         output_claims: Vec::new(),
         final_claim: claim,
     };
-    let output_claims = output_claims(&result)?;
+    let output_claims = output_claims(&result, observer)?;
     if output_claims.len() != members.len() {
         return Err(StreamError::StageMemberCount);
     }
-    let expected: Fr = result
-        .coefficients
-        .iter()
-        .zip(&output_claims)
-        .map(|(&coefficient, &output_claim)| coefficient * output_claim)
-        .sum();
+    let mut expected = Fr::zero();
+    for (&coefficient, &output_claim) in result.coefficients.iter().zip(&output_claims) {
+        expected += observer.fr_mul(coefficient, output_claim);
+    }
     if expected != result.final_claim {
         return Err(StreamError::StageOutputClaim);
     }
@@ -831,7 +859,7 @@ where
         &committed.opening,
         setup,
         transcript,
-        &mut NoopVerifierObserver,
+        observer,
     )?;
     result.output_claims = output_claims;
     Ok(result)
