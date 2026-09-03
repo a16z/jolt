@@ -93,7 +93,6 @@ where
         config.trace_polynomial_order,
         config.one_hot_config,
         trusted_advice.is_some(),
-        untrusted_advice_present,
         false,
     )?;
 

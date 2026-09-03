@@ -261,6 +261,7 @@ where
         &formula_dimensions,
         trusted_advice_commitment,
         &mut transcript,
+        &stage4,
         &stage6b,
         &stage7,
     )?;
@@ -341,6 +342,7 @@ where
     let ram_k = proof.ram_K;
     let trace_polynomial_order = proof.trace_polynomial_order;
     let one_hot_config = proof.one_hot_config;
+    #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
     // The zk axis is fixed at compile time; every branch below const-folds.
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
@@ -448,9 +450,11 @@ where
                 })
             })
             .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let trusted_advice_size = trusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_trusted_advice_size, "trusted"))
         .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let untrusted_advice_size = untrusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_untrusted_advice_size, "untrusted"))
         .transpose()?;
@@ -458,7 +462,9 @@ where
         trace_polynomial_order,
         num::ilog2(trace_length),
         one_hot_config.committed_chunk_bits(),
+        #[cfg(not(feature = "akita"))]
         trusted_advice_size,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice_size,
         committed_program,
     )
@@ -479,6 +485,7 @@ where
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn advice_size_to_usize(value: u64, kind: &'static str) -> Result<usize, VerifierError> {
     usize::try_from(value).map_err(|_| VerifierError::InvalidMemoryLayout {
         reason: format!("maximum {kind} advice size {value} does not fit usize"),
@@ -943,7 +950,7 @@ pub fn validate_inputs_from_parts<PCS, VC>(
     trace_polynomial_order: TracePolynomialOrder,
     one_hot_config: JoltOneHotConfig,
     trusted_advice_commitment_present: bool,
-    untrusted_advice_commitment_present: bool,
+    #[cfg(not(feature = "akita"))] untrusted_advice_commitment_present: bool,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
@@ -1056,9 +1063,11 @@ where
                 })
             })
             .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let trusted_advice_size = trusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_trusted_advice_size, "trusted"))
         .transpose()?;
+    #[cfg(not(feature = "akita"))]
     let untrusted_advice_size = untrusted_advice_commitment_present
         .then(|| advice_size_to_usize(memory_layout.max_untrusted_advice_size, "untrusted"))
         .transpose()?;
@@ -1066,7 +1075,9 @@ where
         trace_polynomial_order,
         num::ilog2(trace_length),
         one_hot_config.committed_chunk_bits(),
+        #[cfg(not(feature = "akita"))]
         trusted_advice_size,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice_size,
         committed_program,
     )
@@ -1616,7 +1627,9 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
+                #[cfg(not(feature = "akita"))]
                 untrusted_advice: None,
                 bytecode_reduction: None,
                 program_image_reduction: None,
@@ -1632,7 +1645,9 @@ mod tests {
                         #[cfg(feature = "akita")]
                         balanced_inc_carry: zero,
                     },
+                #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
+                #[cfg(not(feature = "akita"))]
                 untrusted_advice: None,
                 bytecode_address_phase: None,
                 program_image_address_phase: None,
