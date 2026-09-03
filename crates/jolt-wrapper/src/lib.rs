@@ -12,3 +12,4 @@ pub mod profile;
 pub mod relation;
 pub mod spartan;
 pub mod stream;
+pub mod wrap;
