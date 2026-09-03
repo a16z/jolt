@@ -38,9 +38,8 @@ pub struct Stage6aBuildParts<'a, F: JoltField> {
 }
 
 /// The booleanity reference-cycle source for `anchor`, in the big-endian
-/// order the relation reverses. Single-sourced here so the prover's
-/// background pushforward build, both batch builders, and the verifier can
-/// never disagree on the point.
+/// order the relation reverses. Single-sourced here so the stage-6a and
+/// stage-6b batch builders can never disagree on the point.
 pub fn booleanity_reference_cycle_source<F: JoltField>(
     anchor: BooleanityAnchor,
     stage1_cycle_binding: &[F],

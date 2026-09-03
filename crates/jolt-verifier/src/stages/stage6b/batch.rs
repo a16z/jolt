@@ -55,6 +55,7 @@ use crate::stages::stage4::outputs::Stage4OutputPoints;
 use crate::stages::stage4::Stage4Output;
 use crate::stages::stage5::outputs::Stage5OutputPoints;
 use crate::stages::stage5::Stage5Output;
+use crate::stages::stage6a::batch::booleanity_reference_cycle_source;
 use crate::stages::stage6a::bytecode_read_raf::bytecode_stage_points;
 use crate::stages::stage6a::outputs::{Stage6aCarriedChallenges, Stage6aOutputPoints};
 use crate::stages::stage6a::Stage6aOutput;
@@ -400,16 +401,15 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 reason: error.to_string(),
             })?;
         // The little-endian reference cycle is construction geometry (the
-        // reversed anchor source: the stage-5 instruction cycle or the
-        // stage-1 cycle binding, no draw of its own), so it is rederived from
-        // the anchor-selected upstream point rather than carried with the
-        // stage-6a draws.
-        let booleanity_reference_cycle: Vec<F> = match booleanity_anchor {
-            BooleanityAnchor::Stage5Instruction => {
-                stage5_instruction_cycle.iter().rev().copied().collect()
-            }
-            BooleanityAnchor::Stage1CycleV1 => stage1_cycle_binding.iter().rev().copied().collect(),
-        };
+        // reversed anchor source, no draw of its own), so it is rederived
+        // from the anchor-selected upstream point rather than carried with
+        // the stage-6a draws.
+        let mut booleanity_reference_cycle = booleanity_reference_cycle_source(
+            booleanity_anchor,
+            &stage1_cycle_binding,
+            stage5_points,
+        );
+        booleanity_reference_cycle.reverse();
         let booleanity = Booleanity::new(
             booleanity_dimensions,
             booleanity_r_address,

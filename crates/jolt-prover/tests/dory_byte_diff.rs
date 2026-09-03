@@ -76,6 +76,7 @@ mod support {
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
     use jolt_prover_legacy::zkvm::ram::populate_memory_states;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::config::BooleanityAnchor;
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::JoltVerifierPreprocessing;
     use jolt_witness::{JoltVmWitnessConfig, TraceBackend};
@@ -234,7 +235,7 @@ mod support {
         // Legacy anchors booleanity at the stage-5 instruction point; pin the
         // modular side to it so the twins stay wire-equal (the V1 anchor is
         // covered by the modular-only e2e tests).
-        config.booleanity_anchor = jolt_verifier::config::BooleanityAnchor::Stage5Instruction;
+        config.booleanity_anchor = BooleanityAnchor::Stage5Instruction;
         assert_eq!(config.trace_length, legacy_proof.trace_length);
         assert_eq!(
             config.booleanity_anchor,
@@ -479,7 +480,9 @@ mod muldiv {
     use jolt_field::Fr;
     use jolt_program::execution::JoltProgram;
     use jolt_prover::dory::stages::stage0::prove_stage0;
-    use jolt_prover::dory::stages::stage8::prove_stage8;
+    use jolt_prover::dory::stages::stage8::{
+        prove_stage8, stage8_materialization_plan, Stage8Prepared,
+    };
     use jolt_prover::stages::stage1::prove_stage1;
     use jolt_prover::stages::stage2::prove_stage2;
     use jolt_prover::stages::stage3::prove_stage3;
@@ -934,13 +937,12 @@ mod muldiv {
 
             // The stage-8 ratchet: the joint batched opening, then the final
             // end-of-proof transcript state — the whole clear proof.
-            let stage8_plan =
-                jolt_prover::dory::stages::stage8::stage8_materialization_plan::<
-                    Fr,
-                    DoryScheme,
-                    Pedersen<Bn254G1>,
-                >(&legacy_pre_stage1.checked, &config, &prover_preprocessing)
-                .expect("stage 8 materialization plan");
+            let stage8_plan = stage8_materialization_plan::<Fr, DoryScheme, Pedersen<Bn254G1>>(
+                &legacy_pre_stage1.checked,
+                &config,
+                &prover_preprocessing,
+            )
+            .expect("stage 8 materialization plan");
             let stage8_polynomials = backend
                 .joint_opening
                 .prepare(
@@ -951,10 +953,7 @@ mod muldiv {
                     stage8_plan.grid,
                 )
                 .expect("stage 8 polynomials materialize");
-            let stage8_prepared = jolt_prover::dory::stages::stage8::Stage8Prepared::new(
-                stage8_plan,
-                stage8_polynomials,
-            );
+            let stage8_prepared = Stage8Prepared::new(stage8_plan, stage8_polynomials);
             let stage8 = prove_stage8::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 &legacy_pre_stage1.checked,
                 &config,
@@ -1343,8 +1342,8 @@ mod advice_consumer {
 
         // The metal backend, device slots forced onto the GPU and
         // probe-verified, must assemble the identical proof too — advice
-        // mode reruns the stage-6b/7 claim-reduction slots this wave
-        // converted under a different claim wiring.
+        // mode drives the stage-6b/7 claim-reduction slots under a different
+        // claim wiring.
         #[cfg(all(feature = "metal", target_os = "macos"))]
         {
             let _gpu = jolt_kernels::metal::testing::gpu_lock();

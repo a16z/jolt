@@ -66,12 +66,6 @@ impl<F: JoltField> BytecodeStagePoints<F> {
     }
 }
 
-/// Derive the [`BytecodeStagePoints`] from the mode-agnostic upstream opening
-/// points. Shared by the stage-6a and stage-6b batch builds (both proving
-/// modes, both fronts), single-sourcing the five-leg wiring on the clear-mode
-/// paths. The BlindFold ZK input derivation (`crate::stages::zk::blindfold`)
-/// assembles its own legs from the committed consistency points and does not
-/// route through this helper.
 /// The first four stage cycle points — everything the address-phase
 /// pushforwards need that exists before stage 5 finishes. Single-sourced with
 /// [`bytecode_stage_points`] so the prover's early background walk and the
@@ -97,6 +91,12 @@ pub fn bytecode_early_stage_points<F: JoltField>(
     ])
 }
 
+/// Derive the [`BytecodeStagePoints`] from the mode-agnostic upstream opening
+/// points. Shared by the stage-6a and stage-6b batch builds (both proving
+/// modes, both fronts), single-sourcing the five-leg wiring on the clear-mode
+/// paths. The BlindFold ZK input derivation (`crate::stages::zk::blindfold`)
+/// assembles its own legs from the committed consistency points and does not
+/// route through this helper.
 pub fn bytecode_stage_points<F: JoltField>(
     stage1_cycle_binding: &[F],
     stage2: &Stage2BatchOutputPoints<F>,
