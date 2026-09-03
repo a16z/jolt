@@ -157,6 +157,29 @@ inline ulong address_suffix_full_sign_extension_w(AddressSuffixFullBits bits) {
     return fill;
 }
 
+// ShiftData{B,H,W}: the suffix-owned low lane bits of `x`, shifted by the
+// byte offset the suffix owns from `y` (`eighths` = lane width in eighths of
+// the word). Mirrors `shift_data_suffix` in jolt-lookup-tables.
+inline ulong address_suffix_full_shift_data(AddressSuffixFullBits bits, uint eighths) {
+    uint lane_bits = eighths * 8u;
+    ulong lane = lane_bits >= 64u ? bits.x : (bits.x & address_suffix_full_mask(lane_bits));
+    uint offset = (uint)(bits.y & (ulong)(8u - eighths));
+    return lane << (8u * offset);
+}
+
+// OffsetScale{B,H,W}: `2^(8 * offset)` over the offset bits the suffix owns
+// (bit `y_i` sits at interleaved position `2i`). Mirrors `offset_scale_suffix`.
+inline ulong address_suffix_full_offset_scale(AddressSuffixFullBits bits, uint eighths) {
+    uint mask = 8u - eighths;
+    uint shift = 0u;
+    for (uint i = 0; i < 3u; i++) {
+        if (((mask >> i) & 1u) == 1u && 2u * i < bits.len && ((bits.lo >> (2u * i)) & 1ul) == 1ul) {
+            shift += 8u << i;
+        }
+    }
+    return 1ul << shift;
+}
+
 inline ulong address_suffix_full_evaluate(uchar kind, AddressSuffixFullBits bits) {
     ulong operand_mask = address_suffix_full_mask(bits.operand_len);
     switch (kind) {
@@ -260,6 +283,24 @@ inline ulong address_suffix_full_evaluate(uchar kind, AddressSuffixFullBits bits
         case 53: return 1ul << (8 * (uint)(bits.lo & 7ul));
         case 54: return 1ul << (8 * (uint)(bits.lo & 6ul));
         case 55: return bits.lo & ~7ul;
+        case 56: return address_suffix_full_shift_data(bits, 1u);
+        case 57: return address_suffix_full_shift_data(bits, 2u);
+        case 58: return address_suffix_full_shift_data(bits, 4u);
+        case 59: return address_suffix_full_offset_scale(bits, 1u);
+        case 60: return address_suffix_full_offset_scale(bits, 2u);
+        case 61: return address_suffix_full_offset_scale(bits, 4u);
+        case 62: {
+            uint pairs = bits.len / 2u;
+            if (pairs == 64u) {
+                return bits.x ^ ((bits.y << 1) | (bits.y >> 63));
+            }
+            return (bits.x ^ (bits.y << 1)) & address_suffix_full_mask(pairs) & ~1ul;
+        }
+        case 63: {
+            uint pairs = bits.len / 2u;
+            return pairs == 0u ? 0ul : (bits.y >> (pairs - 1u)) & 1ul;
+        }
+        case 64: return bits.len == 0u ? 0ul : (bits.x & 1ul);
         default: return 0ul;
     }
 }

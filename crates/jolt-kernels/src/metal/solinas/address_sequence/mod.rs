@@ -97,6 +97,15 @@ const fn metal_suffix_kind(suffix: Suffixes) -> u8 {
         Suffixes::Pow2OffsetB => 53,
         Suffixes::Pow2OffsetH => 54,
         Suffixes::AlignAddr => 55,
+        Suffixes::ShiftDataB => 56,
+        Suffixes::ShiftDataH => 57,
+        Suffixes::ShiftDataW => 58,
+        Suffixes::OffsetScaleB => 59,
+        Suffixes::OffsetScaleH => 60,
+        Suffixes::OffsetScaleW => 61,
+        Suffixes::XorRotL1Pairs => 62,
+        Suffixes::TopYBit => 63,
+        Suffixes::BottomXBit => 64,
     }
 }
 
