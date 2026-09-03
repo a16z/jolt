@@ -34,7 +34,13 @@ fn main() {
         .map(|_| (0..max_rows).map(|_| (rng.next_u32() & 1) as u8).collect())
         .collect();
 
-    for (rows, count) in [(1 << 17, 1), (1 << 17, 16), (1 << 17, 163), (1 << 18, 163)] {
+    for (rows, count) in [
+        (1 << 17, 1),
+        (1 << 17, 16),
+        (1 << 18, 22),
+        (1 << 17, 163),
+        (1 << 18, 163),
+    ] {
         let columns: Vec<&[u8]> = columns[..count]
             .iter()
             .map(|column| &column[..rows])

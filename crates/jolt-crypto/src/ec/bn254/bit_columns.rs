@@ -10,6 +10,7 @@ const BASES_PER_GROUP: usize = 6;
 const SUBSETS_PER_GROUP: usize = 1 << BASES_PER_GROUP;
 const GROUPS_PER_CHUNK: usize = 256;
 const GROUPED_THRESHOLD_PER_BASE: usize = 24;
+const INTERLEAVED_BASES_PER_CHUNK: usize = 1 << 14;
 
 /// Commits binary columns as affine subset sums over `bases`.
 ///
@@ -22,17 +23,12 @@ pub fn g1_bit_columns_msm(bases: &[Bn254G1Affine], columns: &[&[u8]]) -> Vec<Bn2
     );
 
     let bases = Bn254G1Affine::as_inner_slice(bases);
-    let selected_per_column: Vec<usize> = columns
+    let selected = columns
         .par_iter()
         .map(|column| column.iter().filter(|&&bit| bit != 0).count())
-        .collect();
-    let selected = selected_per_column.iter().sum::<usize>();
+        .sum::<usize>();
     if selected <= bases.len().saturating_mul(GROUPED_THRESHOLD_PER_BASE) {
-        columns
-            .par_iter()
-            .zip(selected_per_column)
-            .map(|(column, selected)| commit_column(bases, column, selected))
-            .collect()
+        commit_columns_interleaved(bases, columns)
     } else {
         commit_grouped(bases, columns)
     }
@@ -40,39 +36,91 @@ pub fn g1_bit_columns_msm(bases: &[Bn254G1Affine], columns: &[&[u8]]) -> Vec<Bn2
 
 #[expect(
     clippy::indexing_slicing,
-    reason = "pair and carry indices are bounded by the active scratch length"
+    reason = "chunk and column bounds derive from the common base length"
 )]
-fn commit_column(bases: &[G1Affine], column: &[u8], selected: usize) -> Bn254G1 {
-    let mut points = Vec::with_capacity(selected);
-    points.extend(
-        column
-            .iter()
-            .zip(bases)
-            .filter_map(|(&bit, &base)| (bit != 0).then_some(base)),
-    );
-    if points.is_empty() {
-        return Bn254G1::from(G1Projective::zero());
-    }
+fn commit_columns_interleaved(bases: &[G1Affine], columns: &[&[u8]]) -> Vec<Bn254G1> {
+    let chunk_count = bases.len().div_ceil(INTERLEAVED_BASES_PER_CHUNK);
+    let partials: Vec<Vec<G1Projective>> = (0..chunk_count)
+        .into_par_iter()
+        .map(|chunk| {
+            let start = chunk * INTERLEAVED_BASES_PER_CHUNK;
+            let end = (start + INTERLEAVED_BASES_PER_CHUNK).min(bases.len());
+            let chunk_bases = &bases[start..end];
+            let mut points: Vec<Vec<G1Affine>> = columns
+                .iter()
+                .map(|column| {
+                    column[start..end]
+                        .iter()
+                        .zip(chunk_bases)
+                        .filter_map(|(&bit, &base)| (bit != 0).then_some(base))
+                        .collect()
+                })
+                .collect();
+            reduce_interleaved(&mut points);
+            points
+                .into_iter()
+                .map(|column| {
+                    column
+                        .first()
+                        .copied()
+                        .map_or_else(G1Projective::zero, G1Projective::from)
+                })
+                .collect()
+        })
+        .collect();
 
-    let mut denominators = Vec::with_capacity(points.len() / 2);
-    let mut prefixes = Vec::with_capacity(points.len() / 2);
-    let mut len = points.len();
-    while len > 1 {
-        let pairs = len / 2;
+    (0..columns.len())
+        .into_par_iter()
+        .map(|column| {
+            Bn254G1::from(
+                partials
+                    .iter()
+                    .fold(G1Projective::zero(), |sum, chunk| sum + chunk[column]),
+            )
+        })
+        .collect()
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "pair and carry indices are bounded by each column's active length"
+)]
+fn reduce_interleaved(columns: &mut [Vec<G1Affine>]) {
+    let mut denominators = Vec::new();
+    let mut prefixes = Vec::new();
+    loop {
+        let pairs = columns.iter().map(|column| column.len() / 2).sum();
+        if pairs == 0 {
+            return;
+        }
         denominators.clear();
-        denominators.extend((0..pairs).map(|i| pair_denominator(points[2 * i], points[2 * i + 1])));
+        denominators.reserve(pairs);
+        for column in columns.iter() {
+            denominators.extend(
+                (0..column.len() / 2)
+                    .map(|pair| pair_denominator(column[2 * pair], column[2 * pair + 1])),
+            );
+        }
         batch_invert(&mut denominators, &mut prefixes);
 
-        for i in 0..pairs {
-            points[i] = add_affine(points[2 * i], points[2 * i + 1], denominators[i]);
+        let mut inverse = 0;
+        for column in columns.iter_mut() {
+            let len = column.len();
+            let pairs = len / 2;
+            for pair in 0..pairs {
+                column[pair] = add_affine(
+                    column[2 * pair],
+                    column[2 * pair + 1],
+                    denominators[inverse],
+                );
+                inverse += 1;
+            }
+            if len % 2 == 1 {
+                column[pairs] = column[len - 1];
+            }
+            column.truncate(len.div_ceil(2));
         }
-        if len % 2 == 1 {
-            points[pairs] = points[len - 1];
-        }
-        len = len.div_ceil(2);
     }
-
-    Bn254G1::from(G1Projective::from(points[0]))
 }
 
 fn commit_grouped(bases: &[G1Affine], columns: &[&[u8]]) -> Vec<Bn254G1> {
@@ -320,17 +368,19 @@ mod tests {
     #[test]
     fn random_columns_match_projective_sums() {
         let mut rng = ChaCha20Rng::seed_from_u64(7);
-        for len in [0, 1, 2, 3, 31, 128] {
-            let bases: Vec<Bn254G1Affine> = (0..len)
-                .map(|_| Bn254G1Affine(G1Projective::rand(&mut rng).into_affine()))
-                .collect();
-            let columns: Vec<Vec<u8>> = (0..64)
-                .map(|_| (0..len).map(|_| (rng.next_u32() & 1) as u8).collect())
-                .collect();
-            let refs: Vec<&[u8]> = columns.iter().map(Vec::as_slice).collect();
-            let got = g1_bit_columns_msm(&bases, &refs);
-            for (got, column) in got.iter().zip(&columns) {
-                assert_eq!(*got, expected(&bases, column));
+        for column_count in [1, 22, 64] {
+            for len in [0, 1, 2, 3, 31, 128] {
+                let bases: Vec<Bn254G1Affine> = (0..len)
+                    .map(|_| Bn254G1Affine(G1Projective::rand(&mut rng).into_affine()))
+                    .collect();
+                let columns: Vec<Vec<u8>> = (0..column_count)
+                    .map(|_| (0..len).map(|_| (rng.next_u32() & 1) as u8).collect())
+                    .collect();
+                let refs: Vec<&[u8]> = columns.iter().map(Vec::as_slice).collect();
+                let got = g1_bit_columns_msm(&bases, &refs);
+                for (got, column) in got.iter().zip(&columns) {
+                    assert_eq!(*got, expected(&bases, column));
+                }
             }
         }
     }
