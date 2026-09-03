@@ -10,6 +10,8 @@
 //!   perf1_full_statement_profile --run-ignored ignored-only --cargo-quiet --no-capture
 //! CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/perf1 cargo nextest run -p jolt-wrapper --release \
 //!   perf2_msm_profile --run-ignored ignored-only --cargo-quiet --no-capture
+//! CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/perf1 cargo nextest run -p jolt-wrapper --release \
+//!   perf2_commit_open_profile --run-ignored ignored-only --cargo-quiet --no-capture
 //! ```
 
 #![expect(
@@ -991,4 +993,29 @@ fn perf2_msm_profile() {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "PERF-2 commit and opening benchmark"]
+fn perf2_commit_open_profile() {
+    let mut report = Report::new();
+    let n = 1 << 21;
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(23),
+        n,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    let columns = full_statement_columns();
+    let packed = commit_packed(&columns, 8, &setup).expect("commit packed columns");
+    profile_commit_kernels(&mut report, &columns, &packed, 8, &setup);
+
+    let mut rng = StdRng::seed_from_u64(0xf003);
+    let polynomial = (0..n).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
+    let point = (0..21).map(|_| Fr::random(&mut rng)).collect::<Vec<_>>();
+    let mut transcript = Keccak256Transcript::<Fr>::new(b"perf2-open");
+    let _ = report.measure("open    HyperKZG::open total", || {
+        HyperKZGScheme::<Bn254>::open(&setup, &polynomial, &point, &mut transcript).expect("open")
+    });
+    println!("{}", report.summary());
 }
