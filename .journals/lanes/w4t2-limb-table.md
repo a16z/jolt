@@ -187,3 +187,52 @@ is 1,082 lines (soft blocker; `RowSumcheck` is the natural next cut).
 - The `Cargo.lock` diff in the worktree is not mine (left unstaged).
 - The arkworks-fork MSM pool storm above: any dense full-width polynomial committed through `commit_rows_dense` at
   2^22 hits it on macOS; production polynomials are small-valued or one-hot, which is why nobody sees it.
+
+## Fix #2 (review #2, `b44217e65`)
+
+**Blocker — θ-digit correction base.** Kept the correction base `−K` (scalar `θ`) inside each main chain — the
+alternative, one fixed-base start chain `R_n = θ·G_n` per chain so that no `θ` digit enters a main chain, was
+implemented and measured: it costs six extra single-base chains (their tables, doublings and selected families) and
+**+1,800 verifier `Fr` mults** (copy kernels 8.5k → 10.2k), i.e. 11,818 at σ = 11 / N = 42, so it was reverted.
+Instead every correction-base add is guarded: `ops::g1_add_guard` / `g2_add_guard` (3 / 6 rows: `t = λ² − 2x1 − x3
+= x2 − x1` from the add's own rows, `inv = t⁻¹`, pin `inv·t = 1`) at slot `n + 4` of every main chain (64 guards per
+chain, +128 verifier mults, rows used 201,319 at N = 42). The `ec` module doc now states exactly what the code
+enforces: an add with `x_entry = x_acc` is either `entry = acc` (vacuous slope pin — the only exploitable case) or
+`entry = −acc` (the pin reads `0 = −2y1`: no witness); the correction adds admit neither; for a proof-base add or a
+doubling the accumulator is `θ·A·G − 16·k_K·P_w·G + H` with `P_w` the `θ`-digit prefix consumed so far, and with
+`θ = 16^{64−w}·P_w + S_w` the exceptional equation is `(A ∓ λ)·S_w + ((A ∓ λ)·16^{64−w} − 16k_K)·P_w = c`: at most one
+`S_w` per prefix and one prefix per suffix, so ≤ 2^129 bad `θ` per site (2^{−125}) provided both coefficients are
+nonzero. `offsets_are_nondegenerate` sweeps them for every `(w, k, n ≤ 64)` on both groups — the previous sweep used a
+wrong (linearly accumulated) offset count; the corrected `A_{w,k} = 16^{w+1} + λ(n(16^{w+1} − 16)/15 + k)` exposes the
+single zero: the last add's `acc = −entry`, the zero MSM, θ-independent by construction and witness-free.
+`Program::evaluate` no longer fails on a zero slope denominator (slope 0, the pinned slope row then fails), so every
+exceptional case is a verifier-path rejection: `zero_msm_output_is_rejected_for_every_offset_challenge` (`A1 = FinalE1
++ d·Γ1_0 = 0`, `θ = 1, 2`), `exact_small_torsion_pairing_inputs_are_rejected` (orders 10,069 and 5,864,401), both from
+the reviewer's patch.
+
+**Major — `commitment_phases` and the VK groups.** The last phase's `group_count` now includes the pinned VK groups
+(their physical position), so the phase list owns the block's whole group geometry: packing 4 → `[18, 17, 1, 3]` (39
+groups), 16 → `[5, 5, 1, 2]` (13), 32 → `[3, 3, 1, 2]` (9); `prover_group_count` and `vk_group_range` are unchanged.
+Tests: `stream::tests::phases_cover_every_group` (4/16/32) and the reviewer's e2e test, plus the exporter e2e
+asserting `vk_groups.end == offset + Σ phases`. **W5 API note:** only this semantic change; `StreamTermExporter`,
+`StreamColumns`, `Members`, `T2Challenges`, `link_input_claim` are unchanged.
+
+**Major — budget at the real profile.** `verifier_arithmetic_within_budget_at_fibonacci_profile` runs σ = 11, N = 42
+(the reviewer's 10,019). Trims: `RowRelation::batched_terms` scales the five quantities every term is linear in
+(`eq(τ,r)`, `λ`, `λ_lookup`, copy kernel, constancy kernel) instead of 175 coefficients (−170); `public_and_omega_evals`
+evaluates the digit link on the public-evaluation evaluator (shared eq tables); `Evaluator::group_into` memoizes each
+family's cell product and sums the maps of one bucket before multiplying. The `ρ` powers and `1/mult` scalings of the
+digit-link weights are now observed too (`rho_weights_with`, +197 — they were uncounted). **Exact count: 9,986 Fr
+mults** (175 terms, degree 4), 14 below the cap. Remaining lever: the assembly computes the same `ρ` powers for R's
+scalar link; an exporter that receives them would save 175.
+
+**Minor.** `RowSumcheck`, `eq_tau_column` moved to `row_sumcheck.rs` (re-exported from `relation`; relation.rs 923
+lines).
+
+**Consumed scalars of `link_input_claim` (for W5 / R, σ = 11, N = 42, K = 173).** `FlattenedCheck::wires()` order —
+first occurrence over the GT bases, then the G1 chains (acc, A3, A1, A4), then the G2 chains (acc, B2):
+`CommitmentWeight(0..N)`, `D2Init`, then for `j = 0..σ`: `Alpha(j), AlphaInv(j), UAlpha(j), U(j), VAlphaInv(j), V(j),
+Delta1R(σ−1−j), Delta2R(σ−1−j)`; then `Chi(0..σ)`, `Ht`, `Beta(0..σ)`, `GammaInv`, `PairingG1ZeroScalar`, `D`,
+`DSquared`, `DInv`, `BetaInv(0..σ)`, `Evaluation`, `Gamma`, `PairingG2ZeroScalar`; digit base `K` is the constant one
+(`ρ^K`), `K + 1` the offset challenge (`ρ^{K+1}·θ`). Not consumed (R must not publish them): `Chi(σ)`, `S1Acc`,
+`S2Acc`.
