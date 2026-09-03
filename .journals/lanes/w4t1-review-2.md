@@ -1,7 +1,8 @@
 # W4-T1 review #2
 
-Scope: `c4a218b14` plus `72190b623`; diff from `1c6155bb5` limited to
-`crates/jolt-wrapper/src/hash_table/**`, hash-table tests, and `wrap.rs`.
+Scope: `c4a218b14` plus `72190b623`; diff from `1c6155bb5` limited to the T1 implementation,
+hash-table tests/consumers, its lane journal, and the fixture's `Cargo.lock` entry. The restored
+`limb_table/selection.rs` blob exactly matches `1c6155bb5`; no unrelated source change remains.
 
 ## Findings
 
@@ -100,9 +101,15 @@ Scope: `c4a218b14` plus `72190b623`; diff from `1c6155bb5` limited to
 ## Checks
 
 - `cargo nextest run -p jolt-wrapper --features prover-fixtures hash_table --cargo-quiet`: 2 passed.
-- Synthetic `hash_table_relation`: 4 passed; 724 entries, 537 structural kernels, 30 value forms.
+- Explicit `hash_table_relation | hash_table_fixture` filter: 7 passed with the scratch-only
+  adversarial patch; 724 entries, 537 structural kernels, 30 value forms.
 - Real `hash_table_fixture`: passed; 1,819 active cells, 376 challenges, 1,199 wires, 230 terms,
   degree 2; stage A 0.741 s.
+- `cargo clippy -p jolt-wrapper -q -- -D warnings`, with and without `prover-fixtures`: passed;
+  scoped clippy including both hash-table test binaries also passed. `--all-targets` reaches
+  unrelated W4-T2 test errors (`random_setup` dead code; an unfulfilled lint expectation).
+- Adversarial test patch: `/tmp/w4t1-review2-adversarial-tests.patch`; aligned and shifted
+  canonical-`1` / non-canonical-`q + 1` aliases both reproduce.
 - `uv run scripts/check_style_invariants.py --base 1c6155bb5`: passed.
 
 **VERDICT: 3 blockers / 1 major / 2 minors.**
