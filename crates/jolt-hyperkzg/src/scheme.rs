@@ -57,12 +57,13 @@ where
         g1: P::G1,
         g2: P::G2,
     ) -> HyperKZGProverSetup<P> {
-        let mut g1_powers = Vec::with_capacity(max_degree.max(2) + 1);
-        let mut cur = g1;
+        let mut scalars = Vec::with_capacity(max_degree.max(2) + 1);
+        let mut cur = P::ScalarField::one();
         for _ in 0..=max_degree.max(2) {
-            g1_powers.push(cur);
-            cur = cur.scalar_mul(&beta);
+            scalars.push(cur);
+            cur *= beta;
         }
+        let g1_powers: Vec<P::G1> = scalars.par_iter().map(|s| g1.scalar_mul(s)).collect();
         let g1_powers = P::g1_to_affine(&g1_powers);
 
         let mut g2_powers = Vec::with_capacity(4);

@@ -186,6 +186,30 @@ impl Public {
             + self.lambda * (logup - values.multiplicity * values.inverse_table)
     }
 
+    /// The relation's value at the sumcheck's end: `eq(τ, point)·Φ(claims) + λ·L(claims)`
+    /// with the public inverse table evaluated at `point_be` (big-endian).
+    pub fn final_value(&self, claims: &Claims, point_be: &[Fr]) -> Result<Fr, &'static str> {
+        let (c, g) = (self.num_chunk_columns, self.num_groups());
+        if claims.committed.len() != c + g + 1 || claims.operand_limbs.len() != 2 * LIMBS * self.t {
+            return Err("claim count");
+        }
+        let eq = EqPolynomial::<Fr>::mle(&self.tau, point_be);
+        let eq_point = EqPolynomial::<Fr>::evals(point_be, None);
+        let inverse_table = self
+            .inverse_table()
+            .iter()
+            .zip(&eq_point)
+            .fold(Fr::zero(), |acc, (inv, weight)| acc + *inv * *weight);
+        let values = Layout {
+            chunks: &claims.committed[..c],
+            helpers: &claims.committed[c..c + g],
+            multiplicity: claims.committed[c + g],
+            operands: &claims.operand_limbs,
+            inverse_table,
+        };
+        Ok(self.summand(eq, &values))
+    }
+
     /// Replays the sumcheck and checks the final claim against the relation at
     /// the point; returns the point (round order) for the opening.
     pub fn verify<T: Transcript<Challenge = Fr>>(
@@ -214,27 +238,9 @@ impl Public {
             claim = poly.evaluate(r);
             point.push(r);
         }
-        let (c, g) = (self.num_chunk_columns, self.num_groups());
-        if claims.committed.len() != c + g + 1 || claims.operand_limbs.len() != 2 * LIMBS * self.t {
-            return Err("claim count");
-        }
         // Variables were bound low-to-high; eq tables are big-endian in tau/point.
         let point_be: Vec<Fr> = point.iter().rev().copied().collect();
-        let eq = EqPolynomial::<Fr>::mle(&self.tau, &point_be);
-        let eq_point = EqPolynomial::<Fr>::evals(&point_be, None);
-        let inverse_table = self
-            .inverse_table()
-            .iter()
-            .zip(&eq_point)
-            .fold(Fr::zero(), |acc, (inv, weight)| acc + *inv * *weight);
-        let values = Layout {
-            chunks: &claims.committed[..c],
-            helpers: &claims.committed[c..c + g],
-            multiplicity: claims.committed[c + g],
-            operands: &claims.operand_limbs,
-            inverse_table,
-        };
-        if self.summand(eq, &values) != claim {
+        if self.final_value(claims, &point_be)? != claim {
             return Err("final claim");
         }
         Ok(point)
@@ -280,6 +286,15 @@ pub struct Prover {
     num_chunk_columns: usize,
     num_groups: usize,
     t: usize,
+    rows: usize,
+    round: usize,
+    eq_prefix: Fr,
+    claim: Fr,
+    /// Evaluation points `X = 0..s+2` for the degree-(s+1) range part.
+    points: Vec<Fr>,
+    /// Honest prover self-checks; a tampered run instead forces every round
+    /// check to pass so that rejection happens at the final relation check.
+    pub honest: bool,
 }
 
 /// Linear extrapolation of a row pair to `X = x`: `even + x·(odd − even)`.
@@ -330,6 +345,7 @@ impl Prover {
                 slot[c + g + 1 + operands] = inverse_table.get(row).copied().unwrap_or(Fr::zero());
             });
         table.operand_rows = Vec::new();
+        let high_points = public.group_size + 2;
         Self {
             table,
             helpers,
@@ -340,6 +356,12 @@ impl Prover {
             num_chunk_columns: c,
             num_groups: g,
             t,
+            rows,
+            round: 0,
+            eq_prefix: Fr::one(),
+            claim: Fr::zero(),
+            points: (0..high_points as u64).map(Fr::from_u64).collect(),
+            honest: true,
         }
     }
 
@@ -347,186 +369,215 @@ impl Prover {
         self.num_chunk_columns + self.num_groups + 1
     }
 
+    pub fn rows(&self) -> usize {
+        self.table.rows
+    }
+
+    /// Committed column `(column, row)`: chunks, then helpers, then the multiplicity column.
+    pub fn committed(&self, column: usize, row: usize) -> Fr {
+        let (c, g) = (self.num_chunk_columns, self.num_groups);
+        if column < c {
+            self.table.chunk(column, row)
+        } else if column < c + g {
+            self.helpers[column - c][row]
+        } else {
+            self.multiplicities
+                .get(row)
+                .map_or(Fr::zero(), |&m| Fr::from_u64(u64::from(m)))
+        }
+    }
+
     /// RLC of the committed columns (chunks, helpers, multiplicity) with `weights`.
     pub fn rlc(&self, weights: &[Fr]) -> Vec<Fr> {
-        let (c, g) = (self.num_chunk_columns, self.num_groups);
         (0..self.table.rows)
             .into_par_iter()
             .map(|row| {
-                let mut acc = Fr::zero();
-                for (j, weight) in weights[..c].iter().enumerate() {
-                    acc += *weight * self.table.chunk(j, row);
-                }
-                for (weight, column) in weights[c..c + g].iter().zip(&self.helpers) {
-                    acc += *weight * column[row];
-                }
-                if let Some(&m) = self.multiplicities.get(row) {
-                    acc += weights[c + g] * Fr::from_u64(u64::from(m));
-                }
-                acc
+                weights
+                    .iter()
+                    .enumerate()
+                    .fold(Fr::zero(), |acc, (j, w)| acc + *w * self.committed(j, row))
             })
             .collect()
     }
 
-    /// Runs the sumcheck; returns the round polynomials (coefficients), the
-    /// challenge point (round order) and the final claims.
+    /// `Σ_row eq(τ,row)·summand(row)` — zero for an honest witness.
+    pub fn input_claim(&self, public: &Public) -> Fr {
+        let (c, g, t) = (self.num_chunk_columns, self.num_groups, self.t);
+        let eq = EqPolynomial::<Fr>::evals(&public.tau, None);
+        self.matrix
+            .par_chunks(self.width)
+            .zip(&eq)
+            .map(|(row, &eq)| public.summand(eq, &layout(row, c, g, t)))
+            .sum()
+    }
+
+    /// Coefficients of this round's polynomial
+    /// `s(X) = eq_prefix·eq1(τ_round, X)·(q_low + q_high)(X) + λ·L(X)`.
+    #[expect(clippy::unwrap_used, reason = "2 is invertible")]
+    pub fn round_poly(&mut self, public: &Public) -> Vec<Fr> {
+        let width = self.width;
+        let (c, g, t) = (self.num_chunk_columns, self.num_groups, self.t);
+        let n = public.log_rows;
+        let s = public.group_size;
+        let high_points = s + 2;
+        let logup_points = s.max(2) + 1;
+        let points = &self.points;
+        let rows = self.rows;
+        let round = self.round;
+        let tau_round = public.tau[n - 1 - round];
+        let eq_rest = if round + 1 == n {
+            vec![Fr::one()]
+        } else {
+            EqPolynomial::<Fr>::evals(&public.tau[..n - 1 - round], None)
+        };
+        let sums = self.matrix[..rows * width]
+            .par_chunks(2 * width)
+            .zip(&eq_rest)
+            .fold(
+                || {
+                    (
+                        vec![Fr::zero(); 3 + 2 * high_points],
+                        vec![Fr::zero(); width],
+                        vec![Fr::zero(); c + g],
+                    )
+                },
+                |(mut acc, mut full, mut partial), (pair, &eq)| {
+                    let (even, odd) = pair.split_at(width);
+                    let (q_low, rest) = acc.split_at_mut(3);
+                    let (q_high, l) = rest.split_at_mut(high_points);
+                    // Low part at X = 0, 1 (direct rows) and 2 (extrapolated).
+                    let even_view = layout(even, c, g, t);
+                    let odd_view = layout(odd, c, g, t);
+                    q_low[0] += eq * public.phi_low(even_view.chunks, even_view.operands);
+                    q_low[1] += eq * public.phi_low(odd_view.chunks, odd_view.operands);
+                    extrapolate(&mut full, even, odd, points[2]);
+                    let two_view = layout(&full, c, g, t);
+                    q_low[2] += eq * public.phi_low(two_view.chunks, two_view.operands);
+                    // Range/LogUp part at X = 0..high_points (chunks + helpers only).
+                    let mut high = |x: usize, view: &Layout<'_>| {
+                        let (range, logup) = public.range_and_logup(view.chunks, view.helpers);
+                        q_high[x] += eq * range;
+                        let m = even_view.multiplicity
+                            + points[x] * (odd_view.multiplicity - even_view.multiplicity);
+                        let inv = even_view.inverse_table
+                            + points[x] * (odd_view.inverse_table - even_view.inverse_table);
+                        l[x] += logup - m * inv;
+                    };
+                    high(0, &even_view);
+                    high(1, &odd_view);
+                    high(2, &two_view);
+                    for (x, &point) in points.iter().enumerate().skip(3) {
+                        extrapolate(&mut partial, &even[..c + g], &odd[..c + g], point);
+                        let view = Layout {
+                            chunks: &partial[..c],
+                            helpers: &partial[c..c + g],
+                            multiplicity: Fr::zero(),
+                            operands: &[],
+                            inverse_table: Fr::zero(),
+                        };
+                        high(x, &view);
+                    }
+                    (acc, full, partial)
+                },
+            )
+            .map(|(acc, _, _)| acc)
+            .reduce(
+                || vec![Fr::zero(); 3 + 2 * high_points],
+                |a, b| a.iter().zip(&b).map(|(x, y)| *x + *y).collect(),
+            );
+        let (q_low, rest) = sums.split_at(3);
+        let (q_high, l) = rest.split_at(high_points);
+        let mut q = UnivariatePoly::from_evals(q_low).into_coefficients();
+        add_coefficients(
+            &mut q,
+            &UnivariatePoly::from_evals(q_high).into_coefficients(),
+            Fr::one(),
+        );
+        let a = self.eq_prefix * (Fr::one() - tau_round);
+        let b = self.eq_prefix * (tau_round + tau_round - Fr::one());
+        let mut coefficients = vec![Fr::zero(); q.len() + 1];
+        for (i, &qi) in q.iter().enumerate() {
+            coefficients[i] += a * qi;
+            coefficients[i + 1] += b * qi;
+        }
+        add_coefficients(
+            &mut coefficients,
+            &UnivariatePoly::from_evals(&l[..logup_points]).into_coefficients(),
+            public.lambda,
+        );
+        while coefficients.len() > 2 && coefficients.last() == Some(&Fr::zero()) {
+            let _ = coefficients.pop();
+        }
+        if !self.honest {
+            let tail: Fr = coefficients[1..].iter().fold(Fr::zero(), |acc, c| acc + *c);
+            coefficients[0] = (self.claim - tail) * Fr::from_u64(2).inverse().unwrap();
+        }
+        coefficients
+    }
+
+    /// Binds the current round's variable to `r` (the round polynomial's
+    /// evaluation there becomes the running claim).
+    pub fn bind(&mut self, public: &Public, coefficients: &[Fr], r: Fr) {
+        let width = self.width;
+        let rows = self.rows;
+        let half = rows / 2;
+        let tau_round = public.tau[public.log_rows - 1 - self.round];
+        if self.scratch.len() < half * width {
+            self.scratch.resize(half * width, Fr::zero());
+        }
+        self.scratch[..half * width]
+            .par_chunks_mut(width)
+            .zip(self.matrix[..rows * width].par_chunks(2 * width))
+            .for_each(|(out, pair)| {
+                let (even, odd) = pair.split_at(width);
+                extrapolate(out, even, odd, r);
+            });
+        std::mem::swap(&mut self.matrix, &mut self.scratch);
+        self.eq_prefix *= (Fr::one() - tau_round) * (Fr::one() - r) + tau_round * r;
+        self.claim = UnivariatePoly::new(coefficients.to_vec()).evaluate(r);
+        self.rows = half;
+        self.round += 1;
+    }
+
+    /// Final claims after every round: committed columns and operand limbs.
+    pub fn claims(&self) -> Claims {
+        let (c, g, t) = (self.num_chunk_columns, self.num_groups, self.t);
+        let finals = &self.matrix[..self.width];
+        Claims {
+            committed: finals[..=c + g].to_vec(),
+            operand_limbs: finals[c + g + 1..c + g + 1 + 2 * LIMBS * t].to_vec(),
+        }
+    }
+
+    /// Runs the sumcheck alone; returns the round polynomials (coefficients),
+    /// the challenge point (round order) and the final claims.
     pub fn prove<T: Transcript<Challenge = Fr>>(
         &mut self,
         public: &Public,
         transcript: &mut T,
         self_check: bool,
     ) -> (Vec<Vec<Fr>>, Vec<Fr>, Claims) {
-        let width = self.width;
-        let (c, g, t) = (self.num_chunk_columns, self.num_groups, self.t);
-        let n = public.log_rows;
-        let s = public.group_size;
-        // Evaluation points X = 0..=high_points−1 for the degree-(s+1) range part
-        // (and the degree-max(s,2) LogUp part); the degree-2 low part uses X = 0, 1, 2.
-        let high_points = s + 2;
-        let logup_points = s.max(2) + 1;
-        let points: Vec<Fr> = (0..high_points as u64).map(Fr::from_u64).collect();
-        let mut rows = self.table.rows;
+        self.honest = self_check;
         if self_check {
-            let eq = EqPolynomial::<Fr>::evals(&public.tau, None);
-            let total: Fr = self
-                .matrix
-                .par_chunks(width)
-                .zip(&eq)
-                .map(|(row, &eq)| public.summand(eq, &layout(row, c, g, t)))
-                .sum();
             assert_eq!(
-                total,
+                self.input_claim(public),
                 Fr::zero(),
                 "honest witness must satisfy the relation"
             );
         }
-        let mut claim = Fr::zero();
-        let mut eq_prefix = Fr::one();
+        let n = public.log_rows;
         let mut round_polys = Vec::with_capacity(n);
         let mut point = Vec::with_capacity(n);
-        for round in 0..n {
-            let half = rows / 2;
-            let tau_round = public.tau[n - 1 - round];
-            let eq_rest = if round + 1 == n {
-                vec![Fr::one()]
-            } else {
-                EqPolynomial::<Fr>::evals(&public.tau[..n - 1 - round], None)
-            };
-            let sums = self.matrix[..rows * width]
-                .par_chunks(2 * width)
-                .zip(&eq_rest)
-                .fold(
-                    || {
-                        (
-                            vec![Fr::zero(); 3 + 2 * high_points],
-                            vec![Fr::zero(); width],
-                            vec![Fr::zero(); c + g],
-                        )
-                    },
-                    |(mut acc, mut full, mut partial), (pair, &eq)| {
-                        let (even, odd) = pair.split_at(width);
-                        let (q_low, rest) = acc.split_at_mut(3);
-                        let (q_high, l) = rest.split_at_mut(high_points);
-                        // Low part at X = 0, 1 (direct rows) and 2 (extrapolated).
-                        let even_view = layout(even, c, g, t);
-                        let odd_view = layout(odd, c, g, t);
-                        q_low[0] += eq * public.phi_low(even_view.chunks, even_view.operands);
-                        q_low[1] += eq * public.phi_low(odd_view.chunks, odd_view.operands);
-                        extrapolate(&mut full, even, odd, points[2]);
-                        let two_view = layout(&full, c, g, t);
-                        q_low[2] += eq * public.phi_low(two_view.chunks, two_view.operands);
-                        // Range/LogUp part at X = 0..high_points (chunks + helpers only).
-                        let mut high = |x: usize, view: &Layout<'_>| {
-                            let (range, logup) = public.range_and_logup(view.chunks, view.helpers);
-                            q_high[x] += eq * range;
-                            let m = even_view.multiplicity
-                                + points[x] * (odd_view.multiplicity - even_view.multiplicity);
-                            let inv = even_view.inverse_table
-                                + points[x] * (odd_view.inverse_table - even_view.inverse_table);
-                            l[x] += logup - m * inv;
-                        };
-                        high(0, &even_view);
-                        high(1, &odd_view);
-                        high(2, &two_view);
-                        for (x, &point) in points.iter().enumerate().skip(3) {
-                            extrapolate(&mut partial, &even[..c + g], &odd[..c + g], point);
-                            let view = Layout {
-                                chunks: &partial[..c],
-                                helpers: &partial[c..c + g],
-                                multiplicity: Fr::zero(),
-                                operands: &[],
-                                inverse_table: Fr::zero(),
-                            };
-                            high(x, &view);
-                        }
-                        (acc, full, partial)
-                    },
-                )
-                .map(|(acc, _, _)| acc)
-                .reduce(
-                    || vec![Fr::zero(); 3 + 2 * high_points],
-                    |a, b| a.iter().zip(&b).map(|(x, y)| *x + *y).collect(),
-                );
-            let (q_low, rest) = sums.split_at(3);
-            let (q_high, l) = rest.split_at(high_points);
-            // s(X) = eq_prefix·eq1(τ_round, X)·(q_low + q_high)(X) + λ·L(X).
-            let mut q = UnivariatePoly::from_evals(q_low).into_coefficients();
-            add_coefficients(
-                &mut q,
-                &UnivariatePoly::from_evals(q_high).into_coefficients(),
-                Fr::one(),
-            );
-            let a = eq_prefix * (Fr::one() - tau_round);
-            let b = eq_prefix * (tau_round + tau_round - Fr::one());
-            let mut coefficients = vec![Fr::zero(); q.len() + 1];
-            for (i, &qi) in q.iter().enumerate() {
-                coefficients[i] += a * qi;
-                coefficients[i + 1] += b * qi;
-            }
-            add_coefficients(
-                &mut coefficients,
-                &UnivariatePoly::from_evals(&l[..logup_points]).into_coefficients(),
-                public.lambda,
-            );
-            while coefficients.len() > 2 && coefficients.last() == Some(&Fr::zero()) {
-                let _ = coefficients.pop();
-            }
-            if !self_check {
-                // Adaptive cheater: force the round check `s(0) + s(1) = claim` so
-                // that a bad witness is only caught by the final relation check.
-                let tail: Fr = coefficients[1..].iter().fold(Fr::zero(), |acc, c| acc + *c);
-                coefficients[0] = (claim - tail) * Fr::from_u64(2).inverse().unwrap();
-            }
-            let poly = UnivariatePoly::new(coefficients.clone());
+        for _ in 0..n {
+            let coefficients = self.round_poly(public);
             for coefficient in &coefficients {
                 transcript.append(coefficient);
             }
             let r: Fr = transcript.challenge();
-            claim = poly.evaluate(r);
+            self.bind(public, &coefficients, r);
             round_polys.push(coefficients);
             point.push(r);
-
-            // Bind into the ping-pong buffer, then swap.
-            if self.scratch.len() < half * width {
-                self.scratch.resize(half * width, Fr::zero());
-            }
-            self.scratch[..half * width]
-                .par_chunks_mut(width)
-                .zip(self.matrix[..rows * width].par_chunks(2 * width))
-                .for_each(|(out, pair)| {
-                    let (even, odd) = pair.split_at(width);
-                    extrapolate(out, even, odd, r);
-                });
-            std::mem::swap(&mut self.matrix, &mut self.scratch);
-            eq_prefix *= (Fr::one() - tau_round) * (Fr::one() - r) + tau_round * r;
-            rows = half;
         }
-        let finals = &self.matrix[..width];
-        let claims = Claims {
-            committed: finals[..=c + g].to_vec(),
-            operand_limbs: finals[c + g + 1..c + g + 1 + 2 * LIMBS * t].to_vec(),
-        };
-        let _ = claim;
-        (round_polys, point, claims)
+        (round_polys, point, self.claims())
     }
 }

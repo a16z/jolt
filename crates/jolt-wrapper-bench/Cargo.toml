@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 license = "MIT OR Apache-2.0"
-description = "Microbench for the wrapper's committed-bit transcript table: batch-addition HyperKZG commits, degree-3 sumcheck, one RLC opening"
+description = "Microbench for the wrapper's committed-bit transcript table and the batched layer-1 sumcheck stream: packed HyperKZG commits, row/column sumchecks, one opening"
 
 [lints]
 workspace = true
@@ -14,6 +14,7 @@ bincode = { workspace = true }
 jolt-crypto = { workspace = true }
 jolt-field = { workspace = true, features = ["bn254"] }
 jolt-hyperkzg = { workspace = true }
+jolt-limb-bench = { path = "../jolt-limb-bench" }
 jolt-openings = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true }

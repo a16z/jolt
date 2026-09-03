@@ -4080,6 +4080,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-hyperkzg",
+ "jolt-limb-bench",
  "jolt-openings",
  "jolt-poly",
  "jolt-transcript",

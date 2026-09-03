@@ -246,6 +246,12 @@ pub struct Constants {
     pub carry_offset: Fr,
 }
 
+impl Default for Constants {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Constants {
     pub fn new() -> Self {
         let q = q_biguint();
