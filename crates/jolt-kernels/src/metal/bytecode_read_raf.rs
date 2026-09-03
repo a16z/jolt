@@ -35,6 +35,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+const RESIDENT_RADIX_ADDRESS_LOG2: u32 = 14;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BytecodeReadRafAddressImplementation {
     Cpu,
@@ -65,8 +67,47 @@ impl Default for BytecodeReadRafAddressMetalConfig {
     }
 }
 
-pub(super) fn bytecode_address_major_supported(witness: &dyn JoltWitnessPlane<AkitaField>) -> bool {
+pub(super) fn bytecode_address_stage1_topology_supported(
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+) -> bool {
     witness.program_preprocessing().bytecode.bytecode.len() == 1usize << ADDRESS_LOG2
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BytecodeReadRafAddressRoute {
+    Cpu(&'static str),
+    Stage1Sparse,
+    ResidentRadix,
+}
+
+fn select_bytecode_address_route(
+    trace_elements: usize,
+    address_elements: usize,
+    config: BytecodeReadRafAddressMetalConfig,
+    has_stage1_carrier: bool,
+    has_resident_rows: bool,
+) -> BytecodeReadRafAddressRoute {
+    if config.implementation == BytecodeReadRafAddressImplementation::Cpu {
+        return BytecodeReadRafAddressRoute::Cpu("configured_cpu");
+    }
+    if trace_elements < config.trace_cutoff_elements {
+        return BytecodeReadRafAddressRoute::Cpu("trace_cutoff");
+    }
+    if address_elements == 1usize << ADDRESS_LOG2 {
+        return if has_stage1_carrier {
+            BytecodeReadRafAddressRoute::Stage1Sparse
+        } else {
+            BytecodeReadRafAddressRoute::Cpu("stage1_carrier")
+        };
+    }
+    if address_elements == 1usize << RESIDENT_RADIX_ADDRESS_LOG2 {
+        return if has_resident_rows {
+            BytecodeReadRafAddressRoute::ResidentRadix
+        } else {
+            BytecodeReadRafAddressRoute::Cpu("resident_rows")
+        };
+    }
+    BytecodeReadRafAddressRoute::Cpu("address_domain")
 }
 
 struct BytecodeAddressEqTables {
@@ -84,7 +125,13 @@ fn split_bytecode_address_eq_tables(
             reason: "bytecode address stage count is invalid",
         });
     }
-    if log_rows < INNER_LOG2 as usize || address_elements != 1usize << ADDRESS_LOG2 {
+    if log_rows < INNER_LOG2 as usize
+        || !matches!(
+            address_elements,
+            value if value == 1usize << ADDRESS_LOG2
+                || value == 1usize << RESIDENT_RADIX_ADDRESS_LOG2
+        )
+    {
         return Err(KernelError::InvariantViolation {
             reason: "bytecode address geometry is invalid",
         });
@@ -236,78 +283,136 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             fallback_reason = tracing::field::Empty,
         );
         let _route_guard = route_span.enter();
-        if config.implementation == BytecodeReadRafAddressImplementation::Cpu {
-            let _ = route_span.record("realized_route", "cpu");
-            let _ = route_span.record("fallback_reason", "configured_cpu");
-            return Ok(Box::new(cpu(session)?));
-        }
-
         let address_elements = 1usize << dimensions.log_k();
-        if trace_elements < config.trace_cutoff_elements {
+        let resident_rows = session
+            .state::<BooleanityRows>()
+            .filter(|rows| {
+                rows.len() == trace_elements && self.context.validate_booleanity_rows(rows).is_ok()
+            })
+            .cloned();
+        let route = select_bytecode_address_route(
+            trace_elements,
+            address_elements,
+            config,
+            session
+                .state::<BytecodeAddressSparseStage1Carrier>()
+                .is_some(),
+            resident_rows.is_some(),
+        );
+        if let BytecodeReadRafAddressRoute::Cpu(reason) = route {
             let _ = route_span.record("realized_route", "cpu");
-            let _ = route_span.record("fallback_reason", "trace_cutoff");
+            let _ = route_span.record("fallback_reason", reason);
             return Ok(Box::new(cpu(session)?));
         }
-        if address_elements != 1usize << ADDRESS_LOG2 {
-            let _ = route_span.record("realized_route", "cpu");
-            let _ = route_span.record("fallback_reason", "address_domain");
-            return Ok(Box::new(cpu(session)?));
-        }
-        let _ = route_span.record("realized_route", "address_major_fused_stage1_grouped_v1");
-        let _ = route_span.record("fallback_reason", "none");
         let stage_points = relation
             .stage_cycle_points()
             .iter()
             .chain(relation.fused_inc_cycle_points())
             .cloned()
             .collect::<Vec<_>>();
-        let prepare_span =
-            tracing::info_span!("MetalBytecodeReadRafAddress::address_major_prepare").entered();
         let tables =
             split_bytecode_address_eq_tables(&stage_points, dimensions.log_t(), address_elements)?;
-        let carrier = session.take::<BytecodeAddressSparseStage1Carrier>().ok_or(
-            KernelError::InvariantViolation {
-                reason: "bytecode address-major carrier is missing",
-            },
-        )?;
-        let receipt = carrier.receipt();
-        let invocation = self
-            .context
-            .prepare_bytecode_address_sparse_resident(carrier, &tables.e_lo, &tables.e_hi)
-            .map_err(|error| {
-                KernelError::Sumcheck(metal_error(format!(
-                    "bytecode address-major carrier preparation failed: {error}"
-                )))
-            })?;
-        drop(prepare_span);
-
-        let _join_span =
-            tracing::info_span!("MetalBytecodeReadRafAddress::address_major_join").entered();
-        let observation = invocation.execute_timed().map_err(|error| {
-            KernelError::Sumcheck(metal_error(format!(
-                "bytecode address-major completion failed: {error}"
-            )))
-        })?;
-        if observation.receipt != receipt {
-            return Err(KernelError::InvariantViolation {
-                reason: "bytecode address-major source identity changed",
-            });
-        }
-        drop(invocation);
+        let (output, entry_trace_index) = match route {
+            BytecodeReadRafAddressRoute::Stage1Sparse => {
+                let _ =
+                    route_span.record("realized_route", "address_major_fused_stage1_grouped_v1");
+                let _ = route_span.record("fallback_reason", "none");
+                let prepare_span =
+                    tracing::info_span!("MetalBytecodeReadRafAddress::address_major_prepare")
+                        .entered();
+                let carrier = session.take::<BytecodeAddressSparseStage1Carrier>().ok_or(
+                    KernelError::InvariantViolation {
+                        reason: "bytecode address-major carrier is missing",
+                    },
+                )?;
+                let receipt = carrier.receipt();
+                let invocation = self
+                    .context
+                    .prepare_bytecode_address_sparse_resident(carrier, &tables.e_lo, &tables.e_hi)
+                    .map_err(|error| {
+                        KernelError::Sumcheck(metal_error(format!(
+                            "bytecode address-major carrier preparation failed: {error}"
+                        )))
+                    })?;
+                drop(prepare_span);
+                let _join_span =
+                    tracing::info_span!("MetalBytecodeReadRafAddress::address_major_join")
+                        .entered();
+                let observation = invocation.execute_timed().map_err(|error| {
+                    KernelError::Sumcheck(metal_error(format!(
+                        "bytecode address-major completion failed: {error}"
+                    )))
+                })?;
+                if observation.receipt != receipt {
+                    return Err(KernelError::InvariantViolation {
+                        reason: "bytecode address-major source identity changed",
+                    });
+                }
+                (observation.output, receipt.first_push_pc())
+            }
+            BytecodeReadRafAddressRoute::ResidentRadix => {
+                let _ = route_span.record("realized_route", "resident_radix_v1");
+                let _ = route_span.record("fallback_reason", "none");
+                let prepare_span = tracing::info_span!(
+                    "MetalBytecodeReadRafAddress::resident_radix_prepare",
+                    work_items = tracing::field::Empty,
+                    member_owned_bytes = tracing::field::Empty,
+                    count_gpu_ns = tracing::field::Empty,
+                    reduce_gpu_ns = tracing::field::Empty,
+                );
+                let prepare_guard = prepare_span.enter();
+                let rows = resident_rows.ok_or(KernelError::InvariantViolation {
+                    reason: "resident bytecode address rows disappeared",
+                })?;
+                let invocation = self
+                    .context
+                    .prepare_bytecode_address_resident(
+                        rows,
+                        dimensions.log_k() as u32,
+                        &tables.e_lo,
+                        &tables.e_hi,
+                    )
+                    .map_err(|error| {
+                        KernelError::Sumcheck(metal_error(format!(
+                            "resident bytecode address preparation failed: {error}"
+                        )))
+                    })?;
+                let observation = invocation.execute_timed().map_err(|error| {
+                    KernelError::Sumcheck(metal_error(format!(
+                        "resident bytecode address completion failed: {error}"
+                    )))
+                })?;
+                let _ = prepare_span.record("work_items", observation.stats.work_items());
+                let _ = prepare_span
+                    .record("member_owned_bytes", observation.stats.member_owned_bytes());
+                let count_gpu_ns = u64::try_from(observation.stats.count_gpu_time().as_nanos())
+                    .unwrap_or(u64::MAX);
+                let reduce_gpu_ns = u64::try_from(observation.stats.reduce_gpu_time().as_nanos())
+                    .unwrap_or(u64::MAX);
+                let _ = prepare_span.record("count_gpu_ns", count_gpu_ns);
+                let _ = prepare_span.record("reduce_gpu_ns", reduce_gpu_ns);
+                drop(prepare_guard);
+                (observation.output, observation.first_push_pc)
+            }
+            BytecodeReadRafAddressRoute::Cpu(_) => {
+                return Err(KernelError::InvariantViolation {
+                    reason: "bytecode address CPU route escaped early dispatch",
+                });
+            }
+        };
         let expected_fields = stage_points.len().checked_mul(address_elements).ok_or(
             KernelError::InvariantViolation {
                 reason: "bytecode address-major output size overflow",
             },
         )?;
-        if observation.output.len() != expected_fields {
+        if output.len() != expected_fields {
             return Err(KernelError::TableSizeMismatch {
                 table: "Metal bytecode address pushforwards".to_owned(),
                 expected: expected_fields,
-                got: observation.output.len(),
+                got: output.len(),
             });
         }
-        let pushforwards = observation
-            .output
+        let pushforwards = output
             .chunks_exact(address_elements)
             .map(<[AkitaField]>::to_vec)
             .collect::<Vec<_>>();
@@ -315,7 +420,7 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>> for Meta
             witness,
             cpu_inputs(),
             pushforwards,
-            receipt.first_push_pc(),
+            entry_trace_index,
         )?;
         Ok(Box::new(prepared))
     }
@@ -609,6 +714,23 @@ mod tests {
     use crate::ReferenceBackend;
 
     #[test]
+    fn logk14_selects_resident_route_without_stage1_topology() {
+        let config = BytecodeReadRafAddressMetalConfig {
+            implementation: BytecodeReadRafAddressImplementation::AddressMajor,
+            trace_cutoff_elements: 1 << 26,
+        };
+
+        assert_eq!(
+            select_bytecode_address_route(1 << 28, 1 << 14, config, false, true),
+            BytecodeReadRafAddressRoute::ResidentRadix
+        );
+        assert_eq!(
+            select_bytecode_address_route(1 << 28, 1 << 13, config, true, true),
+            BytecodeReadRafAddressRoute::Stage1Sparse
+        );
+    }
+
+    #[test]
     fn bytecode_address_metal_is_opt_in() {
         assert_eq!(
             BytecodeReadRafAddressMetalConfig::default().implementation,
@@ -617,10 +739,10 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_bytecode_domain_skips_the_stage1_carrier() {
+    fn logk14_skips_the_stage1_carrier() {
         let log_t = 15;
         with_sample_backend_at_geometry(log_t, 14, 8, |witness| {
-            assert!(!bytecode_address_major_supported(witness));
+            assert!(!bytecode_address_stage1_topology_supported(witness));
             let backend = MetalBackend::new(super::super::MetalConfig {
                 instruction_read_raf: super::super::InstructionReadRafMetalConfig {
                     address_cutoff_elements: 1 << log_t,
@@ -647,6 +769,185 @@ mod tests {
                 .state::<BytecodeAddressStage1TopologyOwner>()
                 .is_none());
         });
+    }
+
+    #[test]
+    fn logk14_resident_route_matches_reference_without_stage1_topology() {
+        let log_t = 15;
+        let log_k = 14;
+        with_sample_backend_at_geometry(log_t, log_k, 8, |witness| {
+            assert_eq!(
+                witness.program_preprocessing().bytecode.bytecode.len(),
+                1 << log_k
+            );
+            let dimensions = BytecodeReadRafDimensions::new(log_t, log_k, 2);
+            let relation = BytecodeReadRafAddressPhase::new(
+                dimensions,
+                true,
+                BytecodeStagePoints {
+                    stage_cycle_points: std::array::from_fn(|stage| {
+                        point(log_t, 211 + stage as u64)
+                    }),
+                    register_read_write_point: point(7 + log_t, 239),
+                    register_val_evaluation_point: point(7 + log_t, 241),
+                    fused_inc_cycle_points: (0..4)
+                        .map(|stage| point(log_t, 251 + stage as u64))
+                        .collect(),
+                },
+                0,
+            );
+            let challenges = BytecodeReadRafAddressPhaseChallenges {
+                gamma: AkitaField::from_u64(257),
+                stage1_gamma: AkitaField::from_u64(263),
+                stage2_gamma: AkitaField::from_u64(269),
+                stage3_gamma: AkitaField::from_u64(271),
+                stage4_gamma: AkitaField::from_u64(277),
+                stage5_gamma: AkitaField::from_u64(281),
+            };
+            let claims = LatticeReadRafAddressPhaseInputClaims::<AkitaField>::default();
+            let points = LatticeReadRafAddressPhaseInputClaims::<Vec<AkitaField>>::default();
+            let inputs = || ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &challenges,
+            };
+            let mut reference = <ReferenceBackend as PrepareKernel<
+                AkitaField,
+                BytecodeReadRafAddressPhase<AkitaField>,
+            >>::prepare(
+                &ReferenceBackend,
+                &mut ProofSession::default(),
+                witness,
+                inputs(),
+            )
+            .unwrap();
+            let claim = probe_input_claim(reference.as_mut());
+
+            let backend = MetalBackend::new(super::super::MetalConfig {
+                instruction_read_raf: super::super::InstructionReadRafMetalConfig {
+                    address_cutoff_elements: 1 << log_t,
+                    ..Default::default()
+                },
+                bytecode_read_raf_address: BytecodeReadRafAddressMetalConfig {
+                    implementation: BytecodeReadRafAddressImplementation::AddressMajor,
+                    trace_cutoff_elements: 1 << log_t,
+                },
+                ..Default::default()
+            })
+            .unwrap();
+            let packed = collect_instruction_cycle_rows::<AkitaField>(witness, 1 << log_t).unwrap();
+            let resident = backend
+                .context
+                .prepare_booleanity_rows(InstructionCycleRow::metal_booleanity_rows(&packed))
+                .unwrap();
+            let mut session = ProofSession::default();
+            session.park(resident);
+            assert!(session
+                .state::<BytecodeAddressStage1TopologyOwner>()
+                .is_none());
+            assert!(session
+                .state::<BytecodeAddressSparseStage1Carrier>()
+                .is_none());
+            let mut actual = <MetalBackend as PrepareKernel<
+                AkitaField,
+                BytecodeReadRafAddressPhase<AkitaField>,
+            >>::prepare(&backend, &mut session, witness, inputs())
+            .unwrap();
+
+            let round_challenges = point(log_k, 307);
+            run_lockstep(
+                reference.as_mut(),
+                actual.as_mut(),
+                claim,
+                &round_challenges,
+            );
+            assert_eq!(
+                reference.output_claims(&claims).unwrap(),
+                actual.output_claims(&claims).unwrap()
+            );
+        });
+    }
+
+    #[test]
+    fn logk14_resident_scatter_covers_high_addresses_and_split_hot_items() {
+        use crate::metal::solinas::BooleanityRow;
+
+        let log_t = 15;
+        let log_k = 14;
+        let cycles = 1usize << log_t;
+        let addresses = 1usize << log_k;
+        let stage_points = (0..9)
+            .map(|stage| point(log_t, 401 + stage as u64))
+            .collect::<Vec<_>>();
+        let tables = split_bytecode_address_eq_tables(&stage_points, log_t, addresses).unwrap();
+        let mut mapped = Vec::with_capacity(cycles);
+        let mut increments = Vec::with_capacity(cycles);
+        let rows = (0..cycles)
+            .map(|cycle| {
+                let pc = if cycle < 6_000 {
+                    None
+                } else {
+                    Some((cycle * 7_919) % (addresses - 1))
+                };
+                let increment = if cycle.is_multiple_of(3) {
+                    -((cycle % 29 + 1) as i128)
+                } else {
+                    (cycle % 31 + 1) as i128
+                };
+                mapped.push(pc);
+                increments.push(increment);
+                BooleanityRow::new(0, pc.map(|value| value as u64), None, increment).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert!(mapped
+            .iter()
+            .flatten()
+            .copied()
+            .max()
+            .is_some_and(|pc| pc >= 1 << 13));
+
+        let backend = MetalBackend::new(Default::default()).unwrap();
+        let resident = backend.context.prepare_booleanity_rows(&rows).unwrap();
+        let invocation = backend
+            .context
+            .prepare_bytecode_address_resident(resident, log_k as u32, &tables.e_lo, &tables.e_hi)
+            .unwrap();
+        let observation = invocation.execute_timed().unwrap();
+        assert_eq!(observation.first_push_pc, 0);
+        let mut populations = vec![0usize; addresses];
+        for address in mapped.iter().map(|pc| pc.unwrap_or(0)) {
+            populations[address] += 1;
+        }
+        assert!(populations[0] > 4_096);
+        assert_eq!(
+            observation.stats.work_items(),
+            populations
+                .iter()
+                .map(|count| count.div_ceil(4_096))
+                .sum::<usize>()
+        );
+        assert!(observation.stats.member_owned_bytes() < 6usize << 30);
+
+        let mut expected = vec![AkitaField::zero(); stage_points.len() * addresses];
+        for cycle in 0..cycles {
+            let address = mapped[cycle].unwrap_or(0);
+            let outer = cycle >> INNER_LOG2;
+            let inner = cycle & ((1 << INNER_LOG2) - 1);
+            for stage in 0..stage_points.len() {
+                let mut contribution = tables.e_lo[stage][inner] * tables.e_hi[stage][outer];
+                if stage >= 5 {
+                    let magnitude = AkitaField::from_u64(increments[cycle].unsigned_abs() as u64);
+                    contribution *= if increments[cycle] < 0 {
+                        -magnitude
+                    } else {
+                        magnitude
+                    };
+                }
+                expected[stage * addresses + address] += contribution;
+            }
+        }
+        assert_eq!(observation.output, expected);
     }
 
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {

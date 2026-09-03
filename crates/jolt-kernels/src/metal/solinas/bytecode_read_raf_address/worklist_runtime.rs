@@ -18,25 +18,25 @@ use crate::metal::solinas::{
     PipelineLimits, SolinasMetal,
 };
 
-const WORKER_PIPELINE: &str = "solinas_bytecode_address_sparse_worker_packed_4_5_4";
-const REDUCE_PIPELINE: &str = "solinas_bytecode_address_sparse_reduce";
-const WORKER_THREADS: usize = 128;
-const WORKER_ITEMS_PER_THREADGROUP: usize = 4;
-const REDUCE_THREADS: usize = 256;
-const SIMD_WIDTH: usize = 32;
+pub(super) const WORKER_PIPELINE: &str = "solinas_bytecode_address_sparse_worker_packed_4_5_4";
+pub(super) const REDUCE_PIPELINE: &str = "solinas_bytecode_address_sparse_reduce";
+pub(super) const WORKER_THREADS: usize = 128;
+pub(super) const WORKER_ITEMS_PER_THREADGROUP: usize = 4;
+pub(super) const REDUCE_THREADS: usize = 256;
+pub(super) const SIMD_WIDTH: usize = 32;
 const THREADGROUP_BYTES: usize = 0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct BytecodeAddressSparseParams {
-    physical_rows: u32,
-    addresses: u32,
-    inner_length: u32,
-    outer_length: u32,
-    work_items: u32,
-    stages: u32,
-    base_stages: u32,
-    reserved: u32,
+pub(super) struct BytecodeAddressSparseParams {
+    pub(super) physical_rows: u32,
+    pub(super) addresses: u32,
+    pub(super) inner_length: u32,
+    pub(super) outer_length: u32,
+    pub(super) work_items: u32,
+    pub(super) stages: u32,
+    pub(super) base_stages: u32,
+    pub(super) reserved: u32,
 }
 
 const _: [(); 32] = [(); size_of::<BytecodeAddressSparseParams>()];
@@ -400,11 +400,22 @@ pub(crate) enum BytecodeAddressSparseRuntimeError {
     ThreadgroupMemory { requested: u64, maximum: u64 },
     #[error("bytecode sparse address invocation has inconsistent resources or state")]
     InvalidState,
+    #[error(
+        "resident bytecode address summarized {summarized_rows} rows, expected {expected_rows}"
+    )]
+    InvalidResidentSummary {
+        expected_rows: usize,
+        summarized_rows: usize,
+    },
+    #[error("resident bytecode address observed {invalid_rows} invalid rows")]
+    InvalidResidentState { invalid_rows: u32 },
+    #[error("resident bytecode address needs {bytes} member-owned bytes, limit is {maximum}")]
+    ResidentStorageTooLarge { bytes: usize, maximum: usize },
     #[error("bytecode sparse address output read before execution")]
     NotExecuted,
 }
 
-fn validate_table_shape(
+pub(super) fn validate_table_shape(
     table: &'static str,
     tables: &[Vec<AkitaField>],
     expected_length: usize,
@@ -429,14 +440,14 @@ fn validate_table_shape(
     Ok(())
 }
 
-fn flatten_tables(tables: &[Vec<AkitaField>]) -> Vec<Fp128> {
+pub(super) fn flatten_tables(tables: &[Vec<AkitaField>]) -> Vec<Fp128> {
     tables
         .iter()
         .flat_map(|table| table.iter().map(Fp128::from_jolt_field))
         .collect()
 }
 
-fn padding_base_terms(
+pub(super) fn padding_base_terms(
     physical_rows: usize,
     e_lo: &[Vec<AkitaField>],
     e_hi: &[Vec<AkitaField>],
@@ -485,7 +496,7 @@ fn padding_base_terms(
     Ok(padding)
 }
 
-fn validate_pipeline(
+pub(super) fn validate_pipeline(
     pipeline: &'static str,
     limits: PipelineLimits,
     expected_threads: usize,
@@ -503,7 +514,7 @@ fn validate_pipeline(
     Ok(())
 }
 
-fn field_bytes(fields: usize) -> Result<usize, BytecodeAddressSparseRuntimeError> {
+pub(super) fn field_bytes(fields: usize) -> Result<usize, BytecodeAddressSparseRuntimeError> {
     fields
         .checked_mul(size_of::<Fp128>())
         .ok_or(BytecodeAddressSparseRuntimeError::SizeOverflow(
@@ -511,13 +522,16 @@ fn field_bytes(fields: usize) -> Result<usize, BytecodeAddressSparseRuntimeError
         ))
 }
 
-fn shader_count(
+pub(super) fn shader_count(
     name: &'static str,
     value: usize,
 ) -> Result<u32, BytecodeAddressSparseRuntimeError> {
     u32::try_from(value).map_err(|_| BytecodeAddressSparseRuntimeError::SizeOverflow(name))
 }
 
-fn to_u64(name: &'static str, value: usize) -> Result<u64, BytecodeAddressSparseRuntimeError> {
+pub(super) fn to_u64(
+    name: &'static str,
+    value: usize,
+) -> Result<u64, BytecodeAddressSparseRuntimeError> {
     u64::try_from(value).map_err(|_| BytecodeAddressSparseRuntimeError::SizeOverflow(name))
 }
