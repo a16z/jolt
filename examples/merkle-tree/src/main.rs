@@ -10,11 +10,8 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_merkle_tree(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_merkle_tree(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_merkle_tree(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_merkle_tree(&prover_preprocessing);
 
     let leaf1: &[u8] = &[5u8; 32];
     let leaf2 = [6u8; 32];
@@ -26,9 +23,7 @@ pub fn main() {
         TrustedAdvice::new(leaf3),
         &prover_preprocessing,
     );
-    let verifier_trusted_advice_commitment = trusted_advice_commitment.map(
-        <jolt_sdk::PCS as jolt_sdk::ProofCommitmentScheme<jolt_sdk::F>>::commitment_into_verifier,
-    );
+    let verifier_trusted_advice_commitment = trusted_advice_commitment.clone();
 
     let prove_merkle_tree = guest::build_prover_merkle_tree(program, prover_preprocessing.clone());
     let verify_merkle_tree = guest::build_verifier_merkle_tree(verifier_preprocessing);

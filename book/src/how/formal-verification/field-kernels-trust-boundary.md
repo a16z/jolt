@@ -171,7 +171,7 @@ the following evidence.
 7. Evidence that the claimed execution path reaches that code.
 8. Every operation and representation that remains outside the claim.
 
-The current legacy `akita` feature still reaches the external Akita field
+The current `akita` feature still reaches the external Akita field
 implementation. The Jolt Fp128 theorems do not cover that runtime path. The
 field cutover and downstream binary inspection must happen before a claim about
 the complete Akita path is valid.

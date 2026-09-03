@@ -24,7 +24,7 @@
 //! An optimization agent can therefore target any span it discovers in a
 //! trace without editing `jolt-eval`; parsed keys are interned
 //! (`Box::leak`) so the objective stays `Copy` like every other
-//! [`OptimizationObjective`](super::OptimizationObjective) variant.
+//! [`OptimizationObjective`] variant.
 
 use std::path::Path;
 use std::process::Command;

@@ -30,7 +30,7 @@ pub const ONE_HOT_TRACE_K256_CAPACITY: usize = 32;
 /// program bytecode/image). Akita's dense DP planner admits no fold
 /// schedule below 2^13 coefficients for these single-polynomial groups; one
 /// variable of headroom over the current floor absorbs upstream repricing.
-/// [`PrefixPackedObjectPlan::new`] pads slot capacity — never column arity —
+/// `PrefixPackedObjectPlan::new` pads slot capacity, never column arity,
 /// up to this bound, so claim reduction is unchanged. Like any unused slot,
 /// the padding is unconstrained committed data whose contribution to the
 /// single reduced opening is zero w.h.p. under the sampled selector; nothing

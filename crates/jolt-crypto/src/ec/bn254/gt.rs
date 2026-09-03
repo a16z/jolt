@@ -3,6 +3,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
+use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
 use jolt_field::JoltField;
 
 use jolt_transcript::{AppendToTranscript, Transcript};
@@ -55,6 +56,20 @@ impl Default for Bn254GT {
     #[inline(always)]
     fn default() -> Self {
         Self(Fq12::ONE)
+    }
+}
+
+impl CanonicalSerialize for Bn254GT {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        writer: W,
+        compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.0.serialize_with_mode(writer, compress)
+    }
+
+    fn serialized_size(&self, compress: Compress) -> usize {
+        self.0.serialized_size(compress)
     }
 }
 

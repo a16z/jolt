@@ -14,23 +14,18 @@ workspace = true
 [features]
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel", "dep:rayon"]
-prover-fixtures = ["jolt-prover-legacy/host"]
+prover-fixtures = ["dep:jolt-host"]
 # The packed (lattice/Akita) protocol. Like jolt-verifier, one compiled
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the packed envelope, so the Dory (elliptic-curve) path `src/dory` is
 # compiled out and the Akita (lattice) path `src/akita` replaces it.
 # Mutually exclusive with `zk` (compile error on the combination).
-# jolt-prover-legacy must flip together with jolt-verifier: the verifier's
-# own akita edge to it is a dev-dependency edge that does not propagate here,
-# and a host-only legacy build against an akita-shaped jolt-verifier fails to
-# compile.
 akita = [
   "dep:jolt-akita",
   "jolt-verifier/akita",
   "jolt-claims/akita",
   "jolt-field/solinas",
   "jolt-kernels/akita",
-  "jolt-prover-legacy/akita",
 ]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
 # commitments and stage-8 opening, and the BlindFold tail. One compiled
@@ -40,19 +35,12 @@ zk = [
   "jolt-kernels/zk",
   "dep:jolt-blindfold",
   "dep:rand_core",
-  # Dev-dependency forward (the jolt-verifier `zk` feature does the same):
-  # the ZK e2e builds its preprocessing through legacy host code, which
-  # carries the BlindFold vector-commitment setup only in its own zk mode.
-  "jolt-prover-legacy/zk",
 ]
-# The profile harness (`[[bin]] jolt-prover`, `profile` subcommand): guest
-# compile/trace via the legacy host toolchain plus the jolt-profiling
-# subscriber stack (chrome trace + summary.json + monitor counters).
+# The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
   "dep:bincode",
   "dep:chrono",
   "dep:clap",
-  "dep:jolt-dory",
   "dep:jolt-inlines-keccak256",
   "jolt-inlines-keccak256/host",
   "dep:jolt-inlines-sha2",
@@ -60,8 +48,7 @@ profiling = [
   "dep:jolt-profiling",
   "jolt-profiling/monitor",
   "jolt-profiling/summary",
-  "dep:jolt-prover-legacy",
-  "jolt-prover-legacy/host",
+  "dep:jolt-host",
   "dep:postcard",
   "postcard/use-std",
   "dep:tracer",
@@ -79,11 +66,13 @@ allocative = [
 ]
 
 [dependencies]
+ark-serialize.workspace = true
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
+jolt-dory.workspace = true
 jolt-field.workspace = true
 jolt-kernels = { workspace = true, default-features = false }
 jolt-lookup-tables.workspace = true
@@ -103,18 +92,17 @@ tracing.workspace = true
 # Optional: the `profiling` harness (bins cannot use dev-dependencies).
 allocative = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
+blake2.workspace = true
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
-jolt-dory = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
+jolt-host = { workspace = true, optional = true }
 # default-features = false: the `profiling` feature adds `summary`
 # explicitly; `allocative` needs only the flamegraph hooks.
 jolt-profiling = { workspace = true, optional = true, default-features = false }
-jolt-prover-legacy = { workspace = true, optional = true, default-features = false, features = [
-  "minimal",
-] }
 postcard = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
 tracer = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -126,10 +114,8 @@ jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 # Subscriber stack for tests; the profiling smoke test's summary usage
 # arrives via the `profiling` feature's `jolt-profiling/summary`.
 jolt-profiling = { workspace = true, default-features = false }
-jolt-prover-legacy = { workspace = true, features = ["minimal"] }
 postcard = { workspace = true, features = ["use-std"] }
 rand_core = { workspace = true, features = ["getrandom"] }
-serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
 tracer.workspace = true
 

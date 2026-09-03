@@ -68,6 +68,74 @@ pub const NUM_EQ_CONSTRAINTS: usize = 19;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
 
+pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
+    let mut names = [""; NUM_VARS_PER_CYCLE];
+    names[V_CONST] = "One";
+    names[V_LEFT_INSTRUCTION_INPUT] = "LeftInstructionInput";
+    names[V_RIGHT_INSTRUCTION_INPUT] = "RightInstructionInput";
+    names[V_PRODUCT] = "Product";
+    names[V_SHOULD_BRANCH] = "ShouldBranch";
+    names[V_PC] = "PC";
+    names[V_UNEXPANDED_PC] = "UnexpandedPC";
+    names[V_IMM] = "Imm";
+    names[V_RAM_ADDRESS] = "RamAddress";
+    names[V_RS1_VALUE] = "Rs1Value";
+    names[V_RS2_VALUE] = "Rs2Value";
+    names[V_RD_WRITE_VALUE] = "RdWriteValue";
+    names[V_RAM_READ_VALUE] = "RamReadValue";
+    names[V_RAM_WRITE_VALUE] = "RamWriteValue";
+    names[V_LEFT_LOOKUP_OPERAND] = "LeftLookupOperand";
+    names[V_RIGHT_LOOKUP_OPERAND] = "RightLookupOperand";
+    names[V_NEXT_UNEXPANDED_PC] = "NextUnexpandedPC";
+    names[V_NEXT_PC] = "NextPC";
+    names[V_NEXT_IS_VIRTUAL] = "NextIsVirtual";
+    names[V_NEXT_IS_FIRST_IN_SEQUENCE] = "NextIsFirstInSequence";
+    names[V_LOOKUP_OUTPUT] = "LookupOutput";
+    names[V_SHOULD_JUMP] = "ShouldJump";
+    names[V_FLAG_ADD_OPERANDS] = "OpFlags_AddOperands";
+    names[V_FLAG_SUBTRACT_OPERANDS] = "OpFlags_SubtractOperands";
+    names[V_FLAG_MULTIPLY_OPERANDS] = "OpFlags_MultiplyOperands";
+    names[V_FLAG_LOAD] = "OpFlags_Load";
+    names[V_FLAG_STORE] = "OpFlags_Store";
+    names[V_FLAG_JUMP] = "OpFlags_Jump";
+    names[V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD] = "OpFlags_WriteLookupOutputToRD";
+    names[V_FLAG_VIRTUAL_INSTRUCTION] = "OpFlags_VirtualInstruction";
+    names[V_FLAG_ASSERT] = "OpFlags_Assert";
+    names[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = "OpFlags_DoNotUpdateUnexpandedPC";
+    names[V_FLAG_ADVICE] = "OpFlags_Advice";
+    names[V_FLAG_IS_COMPRESSED] = "OpFlags_IsCompressed";
+    names[V_FLAG_IS_FIRST_IN_SEQUENCE] = "OpFlags_IsFirstInSequence";
+    names[V_FLAG_IS_LAST_IN_SEQUENCE] = "OpFlags_IsLastInSequence";
+    names[V_BRANCH] = "Branch";
+    names[V_NEXT_IS_NOOP] = "NextIsNoop";
+    names
+};
+
+pub const RV64_CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
+    "RamAddrEqRs1PlusImmIfLoadStore",
+    "RamAddrEqZeroIfNotLoadStore",
+    "RamReadEqRamWriteIfLoad",
+    "RamReadEqRdWriteIfLoad",
+    "Rs2EqRamWriteIfStore",
+    "LeftLookupZeroUnlessAddSubMul",
+    "LeftLookupEqLeftInputOtherwise",
+    "RightLookupAdd",
+    "RightLookupSub",
+    "RightLookupEqProductIfMul",
+    "RightLookupEqRightInputOtherwise",
+    "AssertLookupOne",
+    "RdWriteEqLookupIfWriteLookupToRd",
+    "RdWriteEqPCPlusConstIfWritePCtoRD",
+    "NextUnexpPCEqLookupIfShouldJump",
+    "NextUnexpPCEqPCPlusImmIfShouldBranch",
+    "NextUnexpPCUpdateOtherwise",
+    "NextPCEqPCPlusOneIfInline",
+    "MustStartSequenceFromBeginning",
+    "Product",
+    "ShouldBranch",
+    "ShouldJump",
+];
+
 pub const fn const_column() -> usize {
     V_CONST
 }
@@ -435,6 +503,8 @@ pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
 #[expect(clippy::expect_used, reason = "tests may unwind via panic")]
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use jolt_field::{Fr, Ring};
     use num_traits::Zero;
@@ -469,6 +539,28 @@ mod tests {
         assert_eq!(matrices.a.len(), 22);
         assert_eq!(matrices.b.len(), 22);
         assert_eq!(matrices.c.len(), 22);
+    }
+
+    #[test]
+    fn exported_layout_names_are_complete_and_unique() {
+        assert!(RV64_VARIABLE_NAMES.iter().all(|name| !name.is_empty()));
+        assert!(RV64_CONSTRAINT_NAMES.iter().all(|name| !name.is_empty()));
+        assert_eq!(
+            RV64_VARIABLE_NAMES
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            NUM_VARS_PER_CYCLE
+        );
+        assert_eq!(
+            RV64_CONSTRAINT_NAMES
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            NUM_CONSTRAINTS_PER_CYCLE
+        );
     }
 
     #[test]

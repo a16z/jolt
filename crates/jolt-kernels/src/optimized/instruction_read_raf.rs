@@ -28,8 +28,8 @@
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
 //! - **Shared witness rows**: re-emulating sources keep a strong
-//!   [`SharedInstructionRows`] carry in the [`ProofSession`]; slice-backed
-//!   sources keep only [`SharedInstructionRowsWeak`], sharing inside one stage
+//!   `SharedInstructionRows` carry in the [`ProofSession`]; slice-backed
+//!   sources keep only `SharedInstructionRowsWeak`, sharing inside one stage
 //!   and rebuilding index-parallel later so `40 B × T` rows do not survive
 //!   through the prover's peak window.
 

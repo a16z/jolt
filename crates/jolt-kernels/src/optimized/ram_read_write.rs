@@ -8,7 +8,7 @@
 //!
 //! - **Sparse read-write matrix**: one entry per RAM access;
 //!   `prev_val`/`next_val` checkpoints recover every implicit coefficient
-//!   (see [`super::rw_matrix`]).
+//!   (see `rw_matrix`).
 //! - **Gruen split-eq + Dao–Thaler factoring** for the `log_T` cycle rounds:
 //!   the eq factor stays in `O(√T)` tables and each cubic round message is
 //!   reconstructed from the quadratic factor's `[q(0), q_∞]` plus the

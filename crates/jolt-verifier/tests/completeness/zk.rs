@@ -137,10 +137,10 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         modular.eval_commitments
     );
 
-    assert_eq!(modular.coefficient_rows, 221);
+    assert_eq!(modular.coefficient_rows, 227);
     assert_eq!(modular.output_claim_rows, 15);
     assert_eq!(modular.eval_commitments, 1);
-    assert_eq!(modular.auxiliary_rows, 33);
+    assert_eq!(modular.auxiliary_rows, 36);
     assert_eq!(modular.error_row_count, 64);
 }
 

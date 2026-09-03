@@ -5,8 +5,7 @@
 //! `(2^7 × T)` one-hot `rd_wa` grid into a dense cycle table at prepare time
 //! and binds three dense `T`-sized tables per round.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/registers/val_evaluation.rs`:
+//! Carries forward the former registers value-evaluation optimizations:
 //!
 //! - **Lazy one-hot `wa`** (legacy `RaPolynomial`, first-round form): round 0
 //!   serves `wa(j) = eq(r_address)[rd_j]` straight from the per-cycle hot

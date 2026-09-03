@@ -26,8 +26,8 @@ pub use ec::{JoltGroup, PairingGroup, Pedersen, PedersenSetup};
 
 mod commitment;
 pub use commitment::{
-    Commitment, DeriveSetup, HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening,
-    VectorOpeningError,
+    Commitment, DeriveSetup, HomomorphicCommitment, NoCommitment, NoVectorCommitment,
+    VectorCommitment, VectorCommitmentOpening, VectorOpeningError,
 };
 
 #[cfg(feature = "bn254")]

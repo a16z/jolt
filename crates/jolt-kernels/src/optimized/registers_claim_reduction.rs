@@ -5,8 +5,7 @@
 //! four dense `T`-sized tables (`eq(τ_low)` plus the three value columns)
 //! every round.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/claim_reductions/registers.rs`:
+//! Carries forward the former registers claim-reduction optimizations:
 //!
 //! - **Prefix–suffix P·Q decomposition** (eprint 2025/611, Appendix A) for
 //!   the first half of the rounds: `Σ_j eq(τ, j)·V(j)` becomes

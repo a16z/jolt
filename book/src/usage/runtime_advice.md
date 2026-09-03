@@ -174,12 +174,11 @@ pub fn main() {
     let target_dir = "/tmp/jolt-guest-targets";
 
     let mut program = guest::compile_verify_composite(target_dir);
-    let shared_preprocessing = guest::preprocess_shared_verify_composite(&mut program);
+    let shared_preprocessing = guest::preprocess_shared_verify_composite(&mut program).unwrap();
     let prover_preprocessing =
-        guest::preprocess_prover_verify_composite(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+        guest::preprocess_prover_verify_composite(shared_preprocessing);
     let verifier_preprocessing =
-        guest::preprocess_verifier_verify_composite(shared_preprocessing, verifier_setup);
+        guest::verifier_preprocessing_from_prover_verify_composite(&prover_preprocessing);
 
     let prove = guest::build_prover_verify_composite(program, prover_preprocessing);
     let verify = guest::build_verifier_verify_composite(verifier_preprocessing);

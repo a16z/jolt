@@ -6,8 +6,6 @@
 //! address phase of bytecode read-RAF stages five `BytecodeValClaim(i)` claims;
 //! this reduction batches them with powers of `eta` and reduces the batch into
 //! openings of `BytecodeChunk(i)` over the shared precommitted schedule.
-//! Mirrors `jolt-prover-legacy`'s `zkvm/claim_reductions/bytecode.rs` and the
-//! committed-bytecode geometry of `zkvm/bytecode/chunks.rs`.
 
 use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};

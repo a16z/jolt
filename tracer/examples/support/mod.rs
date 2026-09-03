@@ -1,5 +1,5 @@
 //! Shared support for the trace_* example harnesses: guest builds via the
-//! jolt CLI, mirroring `host::Program`'s defaults in jolt-prover-legacy
+//! jolt CLI, mirroring `jolt_host::Program`'s defaults
 //! (no-std, backtrace off, default memory layout, `--release`, feature
 //! `guest`) so the two paths produce byte-identical guest ELFs and reuse the
 //! same cached builds under /tmp/jolt-guest-targets.
@@ -19,7 +19,7 @@ const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
 /// Build `package` with the jolt CLI (`JOLT_PATH` overrides the binary) and
 /// return its ELF bytes, ELF path, and the memory config the tracer runs it
 /// with — the counterpart of `host::Program::new(package)` + `trace`'s
-/// internal setup in jolt-prover-legacy.
+/// internal setup in `jolt-host`.
 pub fn build_guest(package: &str) -> (Vec<u8>, PathBuf, MemoryConfig) {
     let jolt_cmd = std::env::var("JOLT_PATH").unwrap_or_else(|_| "jolt".to_string());
     // Same layout as host::Program::build_with_features; the trailing '-' is

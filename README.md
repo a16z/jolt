@@ -77,17 +77,17 @@ Install the Jolt CLI:
 
 This repository uses workspaces, and each workspace can be built individually, e.g.
 
-```cargo build -p jolt-prover-legacy```
+```cargo build -p jolt-prover```
 
 For faster incremental builds, use the `build-fast` profile:
 
-```cargo build --profile build-fast -p jolt-prover-legacy```
+```cargo build --profile build-fast -p jolt-prover```
 
 ## Test
 
-Unit and end-to-end tests for `jolt-prover-legacy` can be run using the following command:
+Unit and end-to-end tests for the prover can be run using the following command:
 
-```cargo nextest run -p jolt-prover-legacy --features host```
+```cargo nextest run -p jolt-prover --features prover-fixtures```
 
 Examples in the [`examples`](./examples/) directory can be run using e.g.
 
@@ -101,41 +101,31 @@ Jolt is instrumented using [tokio-rs/tracing](https://github.com/tokio-rs/tracin
 
 To generate a trace, run e.g.
 
-```cargo run --release -p jolt-prover-legacy profile --name sha3 --format chrome```
+```cargo run --release -p jolt-prover --features profiling -- profile --name fibonacci --format chrome```
 
-Where `--name` can be `sha2`, `sha3`, `sha2-chain`, `sha3-chain`, `fibonacci`, or `btreemap`. The corresponding guest programs can be found in the [`examples`](./examples/) directory. The benchmark inputs are provided in [`e2e_profiling.rs`](./crates/jolt-prover-legacy/benches/e2e_profiling.rs).
+Where `--name` can be `fibonacci`, `sha2-chain`, `sha3-chain`, or `btreemap`.
+The corresponding guest programs can be found in the [`examples`](./examples/) directory.
 
-The above command will output a JSON file in the workspace rootwith a name `trace-<timestamp>.json`, which can be viewed in [Perfetto](https://ui.perfetto.dev/).
+The command writes a timestamped directory under `benchmark-runs/` containing
+`trace.json`, `summary.json`, and `memory.html`. The trace can be viewed in
+[Perfetto](https://ui.perfetto.dev/).
 
-To easily see CPU and memory usage in the trace, you can use `--features monitor` which will log these metrics as tracing events:
+CPU and memory counters are included in the Chrome trace. For a multi-scale sweep:
 
 ```bash
-cargo run --release --features monitor -p jolt-prover-legacy profile --name sha3 --format chrome
-# Converts counter events into Perfetto counter tracks for easier visualization
-python3 scripts/postprocess_trace.py benchmark-runs/perfetto_traces/*.json
+cargo run --release -p jolt-prover --features profiling -- benchmark --min-scale 18 --max-scale 21 --resume
 ```
-
-You may also enable pprof for detailed CPU profiling:
-
-```cargo run --release --features pprof -p jolt-prover-legacy profile --name sha3 --format chrome```
-
-This will produce a `.pb` profile, which you can view in [pprof](https://github.com/google/pprof):
-
-```go tool pprof -http=:8080 target/release/jolt-prover-legacy benchmark-runs/pprof/sha3_prove.pb```
 
 ### Memory profiling
 
 Jolt uses [allocative](https://github.com/facebookexperimental/allocative) for memory profiling.
-Allocative allows you to (recursively) measure the total heap space occupied by a data structure implementing the `Allocative` trait, and optionally generate a flamegraph.
-In Jolt, most sumcheck data structures implement the `Allocative` trait, and we generate a flamegraph at the start and end of stages 2-7 (see [`prover.rs`](./crates/jolt-prover-legacy/src/zkvm/prover.rs)).
+The prover records per-batch heap snapshots for its live sumcheck state.
 
 To generate allocative output, run:
 
-```RUST_LOG=debug cargo run --release --features allocative -p jolt-prover-legacy profile --name sha3 --format chrome```
+```cargo run --release -p jolt-prover --features profiling,allocative -- profile --name fibonacci --format chrome```
 
-Where, as above, `--name` can be `sha2`, `sha3`, `sha2-chain`, `fibonacci`, or `btreemap`.
-
-The above command will log memory usage info to the command line and output multiple SVG files, e.g. `stage3_start_flamechart.svg`, which can be viewed in a web browser of your choosing.
+Heap totals are included in `summary.json` and rendered in `memory.html`.
 
 ### Debugging
 

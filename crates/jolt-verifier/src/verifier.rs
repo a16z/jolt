@@ -310,10 +310,7 @@ where
     Ok((checked, transcript))
 }
 
-#[expect(
-    non_snake_case,
-    reason = "Matches current jolt-prover-legacy proof field name."
-)]
+#[expect(non_snake_case, reason = "Preserves the deployed proof field name.")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedInputs {
     pub public_io: JoltDevice,
@@ -765,7 +762,7 @@ pub fn absorb_committed_program_commitments<C, T>(
 /// and optional advice commitments) in the consensus-critical order. WARNING:
 /// this covers only the commitments carried by the proof itself; committed
 /// program-image commitments live in the preprocessing and are absorbed
-/// separately by [`absorb_commitments`] immediately after this call.
+/// separately by `absorb_commitments` immediately after this call.
 #[cfg(not(feature = "akita"))]
 pub fn absorb_transcript_commitments<C, T>(
     commitments: &JoltCommitments<C>,
@@ -836,8 +833,8 @@ pub struct PreStage1VerifierState<T> {
 
 /// Absorbs the Jolt Fiat-Shamir preamble: the preprocessing digest, public I/O
 /// metadata, and the proof-derived structural parameters carried by
-/// [`ProofTranscriptConfig`]. WARNING: the byte order here is consensus-critical
-/// — it must stay identical to the order [`verify`] uses (via [`absorb_preamble`])
+/// [`ProofTranscriptConfig`]. WARNING: the byte order here is consensus-critical.
+/// It must stay identical to the order [`verify`] uses (via `absorb_preamble`)
 /// or prover and verifier transcripts diverge.
 pub fn absorb_transcript_preamble<T>(
     checked: &CheckedInputs,

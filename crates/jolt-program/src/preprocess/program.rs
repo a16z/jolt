@@ -33,11 +33,21 @@ impl JoltProgramPreprocessing {
             max_padded_trace_length,
         })
     }
+
+    pub fn metadata(&self) -> Option<ProgramMetadata> {
+        Some(ProgramMetadata {
+            entry_address: self.bytecode.entry_address,
+            min_bytecode_address: self.ram.min_bytecode_address,
+            entry_bytecode_index: self.bytecode.entry_bytecode_index()?,
+            program_image_len_words: self.ram.bytecode_words.len(),
+            bytecode_len: self.bytecode.code_size,
+        })
+    }
 }
 
 /// Verifier-side program shape for committed program mode: the trusted
 /// commitments replace the bytecode table and program image, so only this
-/// metadata accompanies them. Mirrors `jolt-prover-legacy`'s `ProgramMetadata`.
+/// metadata accompanies them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",

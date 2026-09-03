@@ -19,7 +19,7 @@ const PAR_THRESHOLD: usize = 1024;
 /// Multilinear polynomial stored as evaluations over the Boolean hypercube $\{0,1\}^n$.
 ///
 /// Generic over the scalar type `T`:
-/// - When `T` is a [`Field`] type: full polynomial with in-place [`bind`](Polynomial::bind),
+/// - When `T` is a [`JoltField`] type: full polynomial with in-place [`bind`](Polynomial::bind),
 ///   [`evaluate`](Polynomial::evaluate), and arithmetic operators.
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
 ///   [`bind_to_field`](Polynomial::bind_to_field) for on-demand field promotion.
