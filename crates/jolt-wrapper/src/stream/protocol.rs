@@ -124,7 +124,7 @@ pub fn prove_assembly(
     let column_claim = reduction.claim(&term_evaluations, &lambdas)?;
     let mut column_prover = WeightedColumnReduction::new(column_values, reduction.weights)?;
     if column_prover.input_claim() != column_claim {
-        return Err(StreamError::StageLink);
+        return Err(StreamError::OpeningClaim);
     }
     let (column_stage, column_result) = {
         let mut column_members = [StageMember {
@@ -675,6 +675,24 @@ pub fn new_stream_transcript(
     commitments: &[Commitment],
 ) -> Keccak256Transcript<Fr> {
     seed_stream_transcript::<Keccak256Transcript<Fr>>(key_digest, public_statement, commitments)
+}
+
+pub fn commitment_prefix_challenges(
+    key_digest: &[u8; 32],
+    public_statement: &[Fr],
+    phases: &[(&[Commitment], usize)],
+) -> Vec<Fr> {
+    let mut transcript = Keccak256Transcript::<Fr>::new(STREAM_LABEL);
+    transcript.append_bytes(key_digest);
+    for value in public_statement {
+        transcript.append(value);
+    }
+    let mut challenges = Vec::new();
+    for &(commitments, challenge_count) in phases {
+        absorb_commitments(commitments, &mut transcript);
+        challenges.extend((0..challenge_count).map(|_| transcript.challenge()));
+    }
+    challenges
 }
 
 fn assembly_transcript<T: Transcript<Challenge = Fr>>(

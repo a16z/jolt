@@ -313,6 +313,7 @@ pub fn term_reduction_observed<O: VerifierObserver>(
     if terms.len() > term_weights.len() {
         return Err(StreamError::StageMemberCount);
     }
+    let padding_constant: Fr = term_weights.iter().skip(terms.len()).copied().sum();
     let mut factor_constants = vec![Fr::zero(); factor_count];
     let mut factor_weights = vec![vec![Fr::zero(); columns]; factor_count];
     for (term, term_weight) in terms.iter().zip(term_weights) {
@@ -338,6 +339,9 @@ pub fn term_reduction_observed<O: VerifierObserver>(
                 }
             }
         }
+    }
+    for constant in &mut factor_constants {
+        *constant += padding_constant;
     }
     let mut weights = vec![Fr::zero(); columns];
     for (factor_weights, &lambda) in factor_weights.iter().zip(lambdas) {

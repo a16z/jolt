@@ -10,10 +10,11 @@ use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_poly::{CompressedPoly, EqPolynomial, MultilinearPoly};
 use jolt_wrapper::carry::CarryProver;
 use jolt_wrapper::stream::{
-    AffineForm, AssemblyMemberStatement, AssemblyStatement, Column, ColumnId, Commitment,
-    CommitmentPhase, StageMember, StageMemberSpec, Term, TermContext, TermExporter,
+    combine_packed_phases, commit_packed, commitment_prefix_challenges, prove_assembly,
+    verify_assembly_with_cost, AffineForm, AssemblyMemberStatement, AssemblyStatement, Column,
+    ColumnId, Commitment, CommitmentPhase, StageMember, StageMemberSpec, Term, TermContext,
+    TermExporter,
 };
-use jolt_wrapper::wrap::{verify_wrapped, wrap};
 
 struct CarryTerms {
     member: usize,
@@ -64,7 +65,17 @@ fn generic_assembly_round_trip_and_section_tampers() {
         Bn254::g2_generator(),
     );
     let verifier_setup = HyperKZGVerifierSetup::from(&setup);
-    let packed_columns = columns.iter().cloned().map(Column::Fr).collect::<Vec<_>>();
+    let wire_columns = [Column::Fr(columns[0].clone())];
+    let wire_packed = commit_packed(&wire_columns, 1, &setup).expect("wire commitment");
+    let phase_challenges = commitment_prefix_challenges(
+        &[83; 32],
+        &[Fr::from_u64(89)],
+        &[(&wire_packed.commitments, 2)],
+    );
+    assert_eq!(phase_challenges.len(), 2);
+    let helper_columns = [Column::Fr(columns[1].clone())];
+    let helper_packed = commit_packed(&helper_columns, 1, &setup).expect("helper commitment");
+    let packed = combine_packed_phases(vec![wire_packed, helper_packed]).expect("combine phases");
     let mut carries = [
         CarryProver::new(&columns[0], &source_points[0], input_claims[0]).expect("carry 0"),
         CarryProver::new(&columns[1], &source_points[1], input_claims[1]).expect("carry 1"),
@@ -136,16 +147,10 @@ fn generic_assembly_round_trip_and_section_tampers() {
                 offset: 0,
             },
         ];
-        wrap(
-            &packed_columns,
-            &statement,
-            &mut members,
-            &exporters,
-            &setup,
-        )
-        .expect("prove assembly")
+        prove_assembly(&packed, &statement, &mut members, &exporters, &setup)
+            .expect("prove assembly")
     };
-    let verify = |proof| verify_wrapped(&statement, proof, &exporters, &verifier_setup);
+    let verify = |proof| verify_assembly_with_cost(proof, &statement, &exporters, &verifier_setup);
     let (results, cost) = verify(&proof).expect("verify assembly");
     assert_eq!(results.len(), 3);
     assert!(cost.pairing_pairs > 0);
