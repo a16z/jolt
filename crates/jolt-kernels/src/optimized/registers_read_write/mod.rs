@@ -123,11 +123,13 @@ impl OptimizedRegistersReadWrite {
             log_k,
             // The cycle phase ran on the device: the continuation starts in
             // the address phase with the dense K-sized state populated, so
-            // the sparse cycle state is never consulted.
+            // the sparse cycle state is never consulted. `CoeffLut::new`
+            // requires a populated power-of-two table; the empty LUT is the
+            // module's `unused_lut`.
             cycle: CycleState::new(
                 Vec::new(),
-                CoeffLut::new(Vec::new()),
-                CoeffLut::new(Vec::new()),
+                CycleState::unused_lut(),
+                CycleState::unused_lut(),
                 Vec::new(),
             ),
             eq_scalar: gruen.current_scalar(),
