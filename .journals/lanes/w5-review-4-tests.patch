@@ -1,0 +1,31 @@
+diff --git a/crates/jolt-wrapper/tests/wrap_real_t1_r.rs b/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
+index 1f8b43a0c..1ef6b0e67 100644
+--- a/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
++++ b/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
+@@ -233,6 +233,14 @@ fn real_wrapper_round_trip_and_tampers() {
+     let phase_1a_groups = phase_1a_columns.len() / k;
+     let t2_group_offset = phase_1a_groups;
+     let t2_phases = t2_commitment_phases(k);
++    assert_eq!(
++        statement
++            .commitment_phases
++            .iter()
++            .map(|phase| phase.challenge_count)
++            .collect::<Vec<_>>(),
++        [39, 23, 1, 3, 232],
++    );
+     assert_eq!(
+         statement.commitment_phases[0].challenge_count,
+         T1Challenges::count(LOG_ROWS) + 1,
+@@ -394,6 +402,11 @@ fn real_wrapper_round_trip_and_tampers() {
+     .expect("wrong-pin wrapper key");
+     let mut wrong_hash_public = preparation.hash_public.clone();
+     wrong_hash_public.state_in[0] ^= 1;
++    assert_ne!(
++        hash_challenges.input_claims(&preparation.hash_public)[1],
++        hash_challenges.input_claims(&wrong_hash_public)[1],
++        "with fixed Fiat-Shamir challenges, changing state_in must change the key-side T1 wiring claim",
++    );
+     let preamble_verifier_key = WrapVerifierKey::new(
+         &preparation.profile,
+         preamble_hash_key,
