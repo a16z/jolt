@@ -5,8 +5,11 @@ use crate::optimized::instruction_read_raf::{
     canonical_instruction_read_raf_claim, instruction_read_raf_claim_table_plus_one,
 };
 
+// The byte ledgers and count ranks below are pinned for the current lookup
+// table count; a table addition must update them deliberately.
 #[test]
 fn stage1_source_byte_ledgers_are_exact() {
+    assert_eq!(INSTRUCTION_READ_RAF_TABLES, 55);
     assert_eq!(
         instruction_read_raf_stage1_row_bytes(1 << 26).unwrap(),
         2_147_483_648
@@ -21,7 +24,7 @@ fn stage1_source_byte_ledgers_are_exact() {
     );
     assert_eq!(
         instruction_read_raf_stage1_count_bytes(1 << 26).unwrap(),
-        6_815_744
+        7_340_032
     );
     assert_eq!(
         instruction_read_raf_stage1_device_bytes(1 << 27).unwrap(),
@@ -29,7 +32,7 @@ fn stage1_source_byte_ledgers_are_exact() {
     );
     assert_eq!(
         instruction_read_raf_stage1_count_bytes(1 << 27).unwrap(),
-        13_631_488
+        14_680_064
     );
 }
 
@@ -53,11 +56,11 @@ fn physical_count_rank_is_table_major_then_none() {
     );
     assert_eq!(
         instruction_read_raf_claim_and_count_rank(0, false),
-        Some((0, 102))
+        Some((0, 110))
     );
     assert_eq!(
         instruction_read_raf_claim_and_count_rank(0, true),
-        Some((128, 103))
+        Some((128, 111))
     );
     assert_eq!(
         instruction_read_raf_claim_and_count_rank(51, false),
@@ -67,7 +70,15 @@ fn physical_count_rank_is_table_major_then_none() {
         instruction_read_raf_claim_and_count_rank(51, true),
         Some((179, 101))
     );
-    assert_eq!(instruction_read_raf_claim_and_count_rank(52, false), None);
+    assert_eq!(
+        instruction_read_raf_claim_and_count_rank(55, false),
+        Some((55, 108))
+    );
+    assert_eq!(
+        instruction_read_raf_claim_and_count_rank(55, true),
+        Some((183, 109))
+    );
+    assert_eq!(instruction_read_raf_claim_and_count_rank(56, false), None);
 }
 
 #[test]
