@@ -56,10 +56,24 @@ impl<F: JoltField> BatchPrelude<F> {
     /// Panics if a member has more rounds than `max_num_vars` (a wiring bug —
     /// `max_num_vars` is defined as the members' maximum).
     pub fn new(members: Vec<BatchMember<F>>, max_num_vars: usize, max_degree: usize) -> Self {
+        Self::new_observed(members, max_num_vars, max_degree, || {})
+    }
+
+    /// Computes the batch head while reporting each field multiplication.
+    pub fn new_observed(
+        members: Vec<BatchMember<F>>,
+        max_num_vars: usize,
+        max_degree: usize,
+        mut observe_mul: impl FnMut(),
+    ) -> Self {
         let claimed_sum = members
             .iter()
             .map(|member| {
-                member.coefficient * member.input_claim.mul_pow_2(max_num_vars - member.rounds)
+                let scaled = member
+                    .input_claim
+                    .mul_pow_2_observed(max_num_vars - member.rounds, &mut observe_mul);
+                observe_mul();
+                member.coefficient * scaled
             })
             .sum();
         Self {

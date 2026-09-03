@@ -10,7 +10,12 @@ pub trait VerifierObserver {
     fn ec_mul(&mut self, count: usize);
     fn ec_add(&mut self, count: usize);
     fn pairing_pairs(&mut self, count: usize);
-    fn fr_mul(&mut self, count: usize);
+    fn record_fr_mul(&mut self);
+
+    fn fr_mul<F: core::ops::Mul<Output = F>>(&mut self, left: F, right: F) -> F {
+        self.record_fr_mul();
+        left * right
+    }
 }
 
 pub struct NoopVerifierObserver;
@@ -19,7 +24,7 @@ impl VerifierObserver for NoopVerifierObserver {
     fn ec_mul(&mut self, _count: usize) {}
     fn ec_add(&mut self, _count: usize) {}
     fn pairing_pairs(&mut self, _count: usize) {}
-    fn fr_mul(&mut self, _count: usize) {}
+    fn record_fr_mul(&mut self) {}
 }
 
 /// Commitment to a multilinear polynomial: a single G1 element.

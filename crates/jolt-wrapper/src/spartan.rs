@@ -38,6 +38,8 @@ pub enum SpartanError {
     MalformedProof,
     #[error("public challenge does not fit the 128-bit outer-transcript encoding")]
     ChallengeOutOfRange,
+    #[error("public challenge encoding is not canonical")]
+    NonCanonicalChallenge,
     #[error("outer sumcheck final claim mismatch")]
     OuterFinalClaim,
     #[error("inner sumcheck input claim mismatch")]
@@ -89,16 +91,19 @@ impl ChallengeDecoder {
             Self::Challenge125 => scalar.to_le_bytes(),
             Self::Scalar128 => scalar.to_be_bytes(),
         };
-        (self.decode(bytes) == value)
+        (self.decode(bytes)? == value)
             .then_some(bytes)
             .ok_or(SpartanError::ChallengeOutOfRange)
     }
 
-    pub fn decode(self, bytes: [u8; 16]) -> Fr {
-        match self {
+    pub fn decode(self, bytes: [u8; 16]) -> Result<Fr, SpartanError> {
+        if self == Self::Challenge125 && bytes[15] & 0xe0 != 0 {
+            return Err(SpartanError::NonCanonicalChallenge);
+        }
+        Ok(match self {
             Self::Challenge125 => Fr::from_challenge_bytes(&bytes),
             Self::Scalar128 => Fr::from_scalar_challenge_bytes(&bytes),
-        }
+        })
     }
 }
 
@@ -316,11 +321,11 @@ fn unpack_challenges(
     if challenges.len() != decoders.len() {
         return Err(SpartanError::MalformedProof);
     }
-    Ok(challenges
+    challenges
         .iter()
         .zip(decoders)
         .map(|(&bytes, &decoder)| decoder.decode(bytes))
-        .collect())
+        .collect()
 }
 
 fn materialize_public_inputs(known: &[Fr], challenges: &[Fr]) -> Vec<Fr> {

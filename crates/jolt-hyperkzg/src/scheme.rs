@@ -247,18 +247,21 @@ where
         com.push(commitment.point);
         com.extend_from_slice(&proof.com);
 
-        let u = [r, -r, r * r];
+        let r_squared = observer.fr_mul(r, r);
+        let u = [r, -r, r_squared];
 
         let ypos = &v[0]; // evaluations at r
         let yneg = &v[1]; // evaluations at -r
-        let two_r_inverse = (P::ScalarField::from_u64(2) * r)
-            .inverse()
-            .ok_or(HyperKZGError::DegenerateChallenge)?;
+        let two_r = observer.fr_mul(P::ScalarField::from_u64(2), r);
+        let two_r_inverse = two_r.inverse().ok_or(HyperKZGError::DegenerateChallenge)?;
         let mut y_sq = Vec::with_capacity(ell + 1);
         y_sq.push(proof.p0_at_r_squared);
         for ((&y_pos, &y_neg), &x) in ypos.iter().zip(yneg).zip(point.iter().rev()).take(ell - 1) {
-            let numerator = r * (P::ScalarField::one() - x) * (y_pos + y_neg) + x * (y_pos - y_neg);
-            y_sq.push(numerator * two_r_inverse);
+            let weighted_sum = observer.fr_mul(r, P::ScalarField::one() - x);
+            let weighted_sum = observer.fr_mul(weighted_sum, y_pos + y_neg);
+            let weighted_difference = observer.fr_mul(x, y_pos - y_neg);
+            let numerator = weighted_sum + weighted_difference;
+            y_sq.push(observer.fr_mul(numerator, two_r_inverse));
         }
         y_sq.push(*claimed_eval);
 
@@ -272,7 +275,6 @@ where
         //                       + x_{ell-i-1} * (P_i(r) - P_i(-r))
         // All four iterators have exactly `ell` elements: the widths were
         // validated above and `y_sq` carries the extra `claimed_eval` entry.
-        let two = P::ScalarField::from_u64(2);
         for (level, (((&y_next, &y_pos), &y_neg), &x)) in y_sq
             .iter()
             .skip(1)
@@ -281,13 +283,15 @@ where
             .zip(point.iter().rev())
             .enumerate()
         {
-            let lhs = two * r * y_next;
-            let rhs = r * (P::ScalarField::one() - x) * (y_pos + y_neg) + x * (y_pos - y_neg);
+            let lhs = observer.fr_mul(two_r, y_next);
+            let weighted_sum = observer.fr_mul(r, P::ScalarField::one() - x);
+            let weighted_sum = observer.fr_mul(weighted_sum, y_pos + y_neg);
+            let weighted_difference = observer.fr_mul(x, y_pos - y_neg);
+            let rhs = weighted_sum + weighted_difference;
             if lhs != rhs {
                 return Err(HyperKZGError::FoldingConsistencyFailed { level });
             }
         }
-        observer.fr_mul(9 * ell - 3);
 
         // Batch KZG pairing check
         let full_evaluations = [

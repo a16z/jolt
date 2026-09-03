@@ -320,12 +320,21 @@ fn fibonacci_2_18_relation() {
             .decoder
             .pack(challenge.value)
             .expect("pack recorded challenge");
-        assert_eq!(challenge.decoder.decode(packed), challenge.value);
+        if challenge.decoder == ChallengeDecoder::Challenge125 {
+            assert_eq!(packed[15] & 0xe0, 0);
+        }
+        assert_eq!(
+            challenge.decoder.decode(packed).expect("decode challenge"),
+            challenge.value
+        );
     }
     let first = recorded_challenges.first().expect("recorded challenge");
     let mut tampered = first.decoder.pack(first.value).expect("pack challenge");
     tampered[0] ^= 1;
-    assert_ne!(first.decoder.decode(tampered), first.value);
+    assert_ne!(
+        first.decoder.decode(tampered).expect("decode tamper"),
+        first.value
+    );
     let recomputed = outsourced_inputs(
         &preprocessing,
         &public_io,

@@ -1,6 +1,9 @@
 use jolt_crypto::Bn254;
-use jolt_field::{Field, Fr};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup, VerifierObserver};
+use jolt_field::{Field, Fr, Zero};
+use jolt_hyperkzg::{
+    HyperKZGProverSetup, HyperKZGScheme, HyperKZGVerifierSetup, NoopVerifierObserver,
+    VerifierObserver,
+};
 use jolt_openings::AdditivelyHomomorphic;
 use jolt_poly::MultilinearPoly;
 use jolt_sumcheck::prover::ProveRounds;
@@ -8,9 +11,9 @@ use jolt_transcript::{AppendToTranscript, Keccak256Transcript, Transcript};
 
 use super::{
     combine_evaluations, prove_kzg_stage, prove_stage, verify_kzg_stage_observed,
-    verify_stage_with, ColumnReduction, Commitment, PackedColumns, PackingLayout, ReductionClaim,
-    StageAEncoding, StageMember, StageMemberSpec, StageProof, StageResult, StreamError,
-    TensorStreamStatement, TensorTerm, VerifierCost, WrapperProof, STREAM_LABEL,
+    verify_stage_with_observed, ColumnReduction, Commitment, PackedColumns, PackingLayout,
+    ReductionClaim, StageAEncoding, StageMember, StageMemberSpec, StageProof, StageResult,
+    StreamError, TensorStreamStatement, TensorTerm, VerifierCost, WrapperProof, STREAM_LABEL,
 };
 
 struct CountingKeccakTranscript {
@@ -254,12 +257,13 @@ fn verify_stream_observed<T: Transcript<Challenge = Fr>>(
         offset: 0,
     }];
     let row_result = match statement.stage_a_encoding {
-        StageAEncoding::Compressed => verify_stage_with(
+        StageAEncoding::Compressed => verify_stage_with_observed(
             row_stage,
             &row_shape,
             &[statement.row_input_claim],
             transcript,
-            |result| Ok(vec![single_member_output(result)?]),
+            observer,
+            |result, observer| Ok(vec![single_member_output_observed(result, observer)?]),
         )?,
         StageAEncoding::KzgCommitted => verify_kzg_stage_observed(
             row_stage,
@@ -271,9 +275,9 @@ fn verify_stream_observed<T: Transcript<Challenge = Fr>>(
             observer,
         )?,
     };
-    let row_output = single_member_output(&row_result)?;
+    let row_output = single_output_claim(&row_result)?;
     let factor_claims = proof.stage_claims.first().ok_or(StreamError::StageCount)?;
-    if tensor_value(&statement.terms, factor_claims)? != row_output {
+    if tensor_value_observed(&statement.terms, factor_claims, observer)? != row_output {
         return Err(StreamError::StageLink);
     }
     let reduced_claim = proof
@@ -290,35 +294,34 @@ fn verify_stream_observed<T: Transcript<Challenge = Fr>>(
         };
         factor_columns.len()
     ];
-    let column_result = verify_stage_with(
+    let column_result = verify_stage_with_observed(
         column_stage,
         &column_shape,
         factor_claims,
         transcript,
-        |result| {
+        observer,
+        |result, observer| {
             factor_columns
                 .iter()
                 .map(|&column| {
-                    ColumnReduction::expected_final(
+                    ColumnReduction::expected_final_observed(
                         layout.padded_column_count,
                         column,
                         &result.point,
                         reduced_claim,
+                        observer,
                     )
                 })
                 .collect()
         },
     )?;
-    let claim = canonical_reduction_claim(
+    let claim = canonical_reduction_claim_observed(
         layout,
         &row_result.point,
         &column_result.point,
         reduced_claim,
+        observer,
     )?;
-    observe_clear_stage(observer, column_stage, factor_columns.len());
-    observer.fr_mul(statement.terms.len() * tensor_arity(&statement.terms)?);
-    observer.fr_mul(factor_columns.len() * (3 * layout.column_vars() + 1));
-    observer.fr_mul(layout.padded_group_count - 1);
     verify_direct_opening(proof, &claim, setup, transcript, observer)?;
     Ok(vec![row_result, column_result])
 }
@@ -370,16 +373,6 @@ fn seed_stream_transcript<T: Transcript<Challenge = Fr>>(
     transcript
 }
 
-fn observe_clear_stage(observer: &mut VerifierCost, proof: &StageProof, members: usize) {
-    let round_multiplications: usize = proof
-        .round_polynomials
-        .round_polynomials
-        .iter()
-        .map(|round| 2 * round.coeffs_except_linear_term().len() - 1)
-        .sum();
-    observer.fr_mul(2 * members + round_multiplications);
-}
-
 pub fn absorb_commitments<T: Transcript<Challenge = Fr>>(
     commitments: &[Commitment],
     transcript: &mut T,
@@ -403,6 +396,22 @@ fn canonical_reduction_claim(
     column_batch_point: &[Fr],
     value: Fr,
 ) -> Result<ReductionClaim, StreamError> {
+    canonical_reduction_claim_observed(
+        layout,
+        row_point,
+        column_batch_point,
+        value,
+        &mut NoopVerifierObserver,
+    )
+}
+
+fn canonical_reduction_claim_observed<O: VerifierObserver>(
+    layout: PackingLayout,
+    row_point: &[Fr],
+    column_batch_point: &[Fr],
+    value: Fr,
+    observer: &mut O,
+) -> Result<ReductionClaim, StreamError> {
     if column_batch_point.len() != layout.column_vars() {
         return Err(StreamError::PointDimension {
             expected: layout.column_vars(),
@@ -410,7 +419,7 @@ fn canonical_reduction_claim(
         });
     }
     Ok(ReductionClaim {
-        polynomial_weights: layout.group_weights(column_batch_point)?,
+        polynomial_weights: layout.group_weights_observed(column_batch_point, observer)?,
         point: layout.packed_point(row_point, column_batch_point)?,
         value,
     })
@@ -424,19 +433,27 @@ fn tensor_factor_columns(terms: &[TensorTerm]) -> Vec<usize> {
 }
 
 fn tensor_value(terms: &[TensorTerm], factors: &[Fr]) -> Result<Fr, StreamError> {
+    tensor_value_observed(terms, factors, &mut NoopVerifierObserver)
+}
+
+fn tensor_value_observed<O: VerifierObserver>(
+    terms: &[TensorTerm],
+    factors: &[Fr],
+    observer: &mut O,
+) -> Result<Fr, StreamError> {
     let arity = tensor_arity(terms)?;
     if factors.len() != terms.len() * arity {
         return Err(StreamError::StageMemberCount);
     }
-    Ok(terms
-        .iter()
-        .zip(factors.chunks_exact(arity))
-        .map(|(term, values)| {
-            values
-                .iter()
-                .fold(term.coefficient, |product, value| product * *value)
-        })
-        .sum())
+    let mut sum = Fr::zero();
+    for (term, values) in terms.iter().zip(factors.chunks_exact(arity)) {
+        let mut product = term.coefficient;
+        for &value in values {
+            product = observer.fr_mul(product, value);
+        }
+        sum += product;
+    }
+    Ok(sum)
 }
 
 fn tensor_arity(terms: &[TensorTerm]) -> Result<usize, StreamError> {
@@ -448,6 +465,13 @@ fn tensor_arity(terms: &[TensorTerm]) -> Result<usize, StreamError> {
 }
 
 fn single_member_output(result: &StageResult) -> Result<Fr, StreamError> {
+    single_member_output_observed(result, &mut NoopVerifierObserver)
+}
+
+fn single_member_output_observed<O: VerifierObserver>(
+    result: &StageResult,
+    observer: &mut O,
+) -> Result<Fr, StreamError> {
     let coefficient = result
         .coefficients
         .first()
@@ -456,7 +480,19 @@ fn single_member_output(result: &StageResult) -> Result<Fr, StreamError> {
     if result.coefficients.len() != 1 {
         return Err(StreamError::StageMemberCount);
     }
-    Ok(result.final_claim * coefficient.inverse().ok_or(StreamError::StageOutputClaim)?)
+    let inverse = coefficient.inverse().ok_or(StreamError::StageOutputClaim)?;
+    Ok(observer.fr_mul(result.final_claim, inverse))
+}
+
+fn single_output_claim(result: &StageResult) -> Result<Fr, StreamError> {
+    if result.output_claims.len() != 1 {
+        return Err(StreamError::StageMemberCount);
+    }
+    result
+        .output_claims
+        .first()
+        .copied()
+        .ok_or(StreamError::StageMemberCount)
 }
 
 fn validate_statement(

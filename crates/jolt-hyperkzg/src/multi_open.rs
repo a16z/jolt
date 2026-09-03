@@ -7,7 +7,10 @@ use num_traits::{One, Zero};
 use serde::{Deserialize, Serialize};
 
 use crate::error::HyperKZGError;
-use crate::kzg::{challenge_powers, eval_univariate, kzg_commit};
+use crate::kzg::{
+    challenge_powers, challenge_powers_observed, eval_univariate, eval_univariate_observed,
+    kzg_commit,
+};
 use crate::{HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver, VerifierObserver};
 
 const SUPPORTED_DEGREE: usize = 5;
@@ -181,7 +184,7 @@ where
 {
     validate_batch(commitments, points, evaluations, degree)?;
     let rho = transcript.challenge();
-    let rho_powers = challenge_powers(rho, commitments.len());
+    let rho_powers = challenge_powers_observed(rho, commitments.len(), observer);
     transcript.append(&proof.shifted_commitment);
     let combined_commitment = P::g1_msm(commitments, &rho_powers);
     observer.ec_mul(commitments.len());
@@ -195,24 +198,12 @@ where
         return Err(HyperKZGError::DegreeBoundCheckFailed);
     }
 
-    let remainders = interpolation_remainders(points, evaluations)?;
+    let remainders = interpolation_remainders_observed(points, evaluations, observer)?;
     let union = point_union(points);
     let gamma = transcript.challenge();
-    let gamma_powers = challenge_powers(gamma, commitments.len());
+    let gamma_powers = challenge_powers_observed(gamma, commitments.len(), observer);
     transcript.append(&proof.quotient_commitment);
     let z = transcript.challenge();
-    let complement_cost: usize = points
-        .iter()
-        .map(|point_set| {
-            let terms = union
-                .iter()
-                .filter(|point| !point_set.contains(point))
-                .count();
-            (terms + 1) * (terms + 1) + 4
-        })
-        .sum();
-    observer
-        .fr_mul(17 * commitments.len() + complement_cost + (union.len() + 1) * (union.len() + 1));
     observer.ec_mul(2 * commitments.len() + 2);
     observer.ec_add(2 * commitments.len() + 2);
     observer.pairing_pairs(2);
@@ -228,11 +219,15 @@ where
             .copied()
             .filter(|point| !point_set.contains(point))
             .collect::<Vec<_>>();
-        let scale = coefficient * eval_univariate(&vanishing_polynomial(&complement), z);
-        let remainder_commitment = setup.g1.scalar_mul(&eval_univariate(remainder, z));
+        let complement_vanishing = vanishing_polynomial_observed(&complement, observer);
+        let complement_at_z = eval_univariate_observed(&complement_vanishing, z, observer);
+        let scale = observer.fr_mul(coefficient, complement_at_z);
+        let remainder_at_z = eval_univariate_observed(remainder, z, observer);
+        let remainder_commitment = setup.g1.scalar_mul(&remainder_at_z);
         folded_commitment += (commitment - remainder_commitment).scalar_mul(&scale);
     }
-    let vanishing_at_z = eval_univariate(&vanishing_polynomial(&union), z);
+    let union_vanishing = vanishing_polynomial_observed(&union, observer);
+    let vanishing_at_z = eval_univariate_observed(&union_vanishing, z, observer);
     folded_commitment -= proof.quotient_commitment.scalar_mul(&vanishing_at_z);
     transcript.append(&proof.evaluation_witness);
     folded_commitment += proof.evaluation_witness.scalar_mul(&z);
@@ -268,18 +263,34 @@ fn interpolation_remainders<F: JoltField>(
     points: &[[F; 3]],
     evaluations: &[[F; 3]],
 ) -> Result<Vec<[F; 3]>, HyperKZGError> {
+    interpolation_remainders_observed(points, evaluations, &mut NoopVerifierObserver)
+}
+
+fn interpolation_remainders_observed<F, O>(
+    points: &[[F; 3]],
+    evaluations: &[[F; 3]],
+    observer: &mut O,
+) -> Result<Vec<[F; 3]>, HyperKZGError>
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
     points
         .iter()
         .zip(evaluations)
         .map(|(&[a, b, c], &[ya, yb, yc])| {
             let mut result = [F::zero(); 3];
             for (x, y, other_a, other_b) in [(a, ya, b, c), (b, yb, a, c), (c, yc, a, b)] {
-                let scale = y
-                    * ((x - other_a) * (x - other_b))
+                let denominator = observer.fr_mul(x - other_a, x - other_b);
+                let scale = observer.fr_mul(
+                    y,
+                    denominator
                         .inverse()
-                        .ok_or(HyperKZGError::RepeatedBatchPoint)?;
-                result[0] += scale * other_a * other_b;
-                result[1] -= scale * (other_a + other_b);
+                        .ok_or(HyperKZGError::RepeatedBatchPoint)?,
+                );
+                let scale_other_a = observer.fr_mul(scale, other_a);
+                result[0] += observer.fr_mul(scale_other_a, other_b);
+                result[1] -= observer.fr_mul(scale, other_a + other_b);
                 result[2] += scale;
             }
             Ok(result)
@@ -298,8 +309,16 @@ fn point_union<F: JoltField>(points: &[[F; 3]]) -> Vec<F> {
 }
 
 fn vanishing_polynomial<F: JoltField>(points: &[F]) -> Vec<F> {
+    vanishing_polynomial_observed(points, &mut NoopVerifierObserver)
+}
+
+fn vanishing_polynomial_observed<F, O>(points: &[F], observer: &mut O) -> Vec<F>
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
     points.iter().fold(vec![F::one()], |polynomial, &point| {
-        multiply(&polynomial, &[-point, F::one()])
+        multiply_observed(&polynomial, &[-point, F::one()], observer)
     })
 }
 
@@ -312,18 +331,27 @@ fn subtract<F: JoltField>(left: &[F], right: &[F]) -> Vec<F> {
     trim(result)
 }
 
+fn multiply<F: JoltField>(left: &[F], right: &[F]) -> Vec<F> {
+    multiply_observed(left, right, &mut NoopVerifierObserver)
+}
+
 #[expect(
     clippy::indexing_slicing,
     reason = "convolution bounds pin the product index below the allocated length"
 )]
-fn multiply<F: JoltField>(left: &[F], right: &[F]) -> Vec<F> {
+fn multiply_observed<F, O>(left: &[F], right: &[F], observer: &mut O) -> Vec<F>
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
     if left.is_empty() || right.is_empty() {
         return Vec::new();
     }
     let mut product = vec![F::zero(); left.len() + right.len() - 1];
     for (left_degree, &left_coefficient) in left.iter().enumerate() {
         for (right_degree, &right_coefficient) in right.iter().enumerate() {
-            product[left_degree + right_degree] += left_coefficient * right_coefficient;
+            product[left_degree + right_degree] +=
+                observer.fr_mul(left_coefficient, right_coefficient);
         }
     }
     trim(product)

@@ -128,21 +128,30 @@ A three-point Zeromorph opening adds `3(ell+1)+1` G1 and is larger than the dele
 The ignored gate calls `verify_stream_with_cost`. Its observer sits on the executed verifier
 operations: the two two-pair committed-round checks, the four-pair HyperKZG check, every G1-side
 MSM/divisor operation, every chained-digest append/squeeze, and each verifier Fr multiplication.
-The counter therefore shares the verification branch and proof dimensions instead of replaying a
-separate size formula.
+Field arithmetic uses a multiplication shim at each operation site, including batch padding,
+compressed-round evaluation, interpolation, vanishing-polynomial construction, Gemini folds, and
+the cubic KZG check; there is no aggregate Fr formula.
 
 | `k` | ecMul | ecAdd | pairing pairs | Fr mul | Keccak | N4 gas estimate |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8 | 109 | 108 | 8 | 6,142 | 282 | 1,545,484 |
-| 16 | 95 | 94 | 8 | 6,139 | 270 | 1,423,112 |
+| 8 | 109 | 108 | 8 | 6,127 | 282 | 1,545,184 |
+| 16 | 95 | 94 | 8 | 6,123 | 270 | 1,422,792 |
 
 Gas applies the N4 constants: 21k base, 16 gas/calldata byte after expanding each G1 to 64 bytes,
-7.7k per paired ecMul+ecAdd MSM term, 114.7k per two-pair call, 183.4k for four pairs, 20 gas/Fr multiplication,
-and 100 gas per chained Keccak event. It excludes contract-code/data access and G1 decompression.
+7.7k per paired ecMul+ecAdd MSM term, 114.7k per two-pair call, 183.4k for four pairs, and 100 gas
+per chained Keccak event. The 20 gas/Fr multiplication term is the EVM-plan estimate, not an N4
+measurement. The total excludes contract-code/data access and G1 decompression.
+
+The permanent `2^12` synthetic test has an independent 3,072-multiplication trace: 90 for
+compressed A, 120 for the public tensor, 2,658 for batched B, 7 for group weights, and 197 for the
+final HyperKZG opening. It asserts that the execution observer returns the same total.
 
 ## Packed public challenges
 
-Spartan proof bytes contain the raw 16-byte transcript squeeze, not a canonical field integer.
+Spartan proof bytes contain a canonical 16-byte decoder preimage, not a field integer. For the
+125-bit decoder the prover transmits the post-mask word; the verifier rejects any word with
+`bytes[15] & 0xe0 != 0` before calling the production decoder. Thus the seven alternate words that
+the decoder would otherwise mask to the same field value are invalid.
 The statement records a decoder for each slot:
 
 ```text
@@ -150,10 +159,10 @@ Challenge125: Fr::from_challenge_bytes(raw)        # v * 2^-128, 125-bit squeeze
 Scalar128:    Fr::from_scalar_challenge_bytes(raw) # 128-bit big-endian scalar
 ```
 
-Packing recovers the raw word using the inverse of that production decoder and rejects any value
-that does not round-trip. Verification calls the same `jolt-field` decoder selected by the
+Packing recovers the canonical word using the inverse of that production decoder and rejects any
+value that does not round-trip. Verification calls the same `jolt-field` decoder selected by the
 statement. The 28 challenge slots remain 448 B. A real `RecordingTranscript` fixture covers both
-decoder kinds; flipping one packed bit changes the reconstructed public input and is rejected.
+decoder kinds; tests reject a low-bit change and all seven noncanonical high-bit aliases.
 
 ## Measured release gate
 
@@ -161,8 +170,8 @@ decoder kinds; flipping one packed bit changes the reconstructed public input an
 
 | `k` | setup | commit | proof after commit | commit + proof | verify | payload |
 |---:|---:|---:|---:|---:|---:|---:|
-| 8 | 7.398 s | 1.182 s | 1.588 s | 2.770 s | 0.007 s | 5,344 B |
-| 16 | 15.779 s | 1.444 s | 2.837 s | 4.281 s | 0.006 s | 4,960 B |
+| 8 | 7.254 s | 1.156 s | 1.669 s | 2.825 s | 0.007 s | 5,344 B |
+| 16 | 15.750 s | 1.434 s | 2.810 s | 4.244 s | 0.006 s | 4,960 B |
 
 The same run built both SRS sizes sequentially. The setup/prove spread across runs tracks concurrent
 host load; the byte and verifier-operation counts are deterministic.

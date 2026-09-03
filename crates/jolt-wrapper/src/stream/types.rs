@@ -34,8 +34,8 @@ impl VerifierObserver for VerifierCost {
         self.pairing_pairs += count;
     }
 
-    fn fr_mul(&mut self, count: usize) {
-        self.fr_mul += count;
+    fn record_fr_mul(&mut self) {
+        self.fr_mul += 1;
     }
 }
 

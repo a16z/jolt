@@ -13,8 +13,8 @@ use jolt_poly::{BindingOrder, CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::stream::{
-    commit_packed, prove_stream, verify_stream, Column, StageAEncoding, TensorStreamStatement,
-    TensorTerm,
+    commit_packed, prove_stream, verify_stream, verify_stream_with_cost, Column, StageAEncoding,
+    TensorStreamStatement, TensorTerm,
 };
 
 struct RowRelation {
@@ -179,6 +179,10 @@ fn synthetic_stream_round_trip_and_tampers() {
     let proof = prove_stream(&packed, &statement, &mut row_relation, &setup).expect("prove stream");
     let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify stream");
     assert_eq!(verified.len(), 2);
+    let (_, cost) = verify_stream_with_cost(&proof, &statement, &verifier_setup)
+        .expect("count verifier operations");
+    let hand_traced_fr_mul = 90 + 120 + 2_658 + 7 + 197;
+    assert_eq!(cost.fr_mul, hand_traced_fr_mul);
     assert_eq!(
         proof.bincode_bytes(),
         encode_to_vec(&proof, standard())

@@ -10,7 +10,9 @@ use num_traits::Zero;
 use rayon::prelude::*;
 
 use crate::error::HyperKZGError;
-use crate::types::{HyperKZGProverSetup, HyperKZGVerifierSetup, VerifierObserver};
+use crate::types::{
+    HyperKZGProverSetup, HyperKZGVerifierSetup, NoopVerifierObserver, VerifierObserver,
+};
 
 /// Commits to a polynomial (given as evaluation/coefficient vector) using MSM against SRS G1 powers.
 pub(crate) fn kzg_commit<P: PairingGroup>(
@@ -31,10 +33,7 @@ pub(crate) fn kzg_commit<P: PairingGroup>(
 ///
 /// Standard Horner evaluation: `f(u) = f[0] + f[1]*u + f[2]*u^2 + ...`
 pub(crate) fn eval_univariate<F: JoltField>(coeffs: &[F], u: F) -> F {
-    coeffs
-        .iter()
-        .rev()
-        .fold(F::zero(), |result, &coefficient| result * u + coefficient)
+    eval_univariate_observed(coeffs, u, &mut NoopVerifierObserver)
 }
 
 /// Batch KZG opening at three points with one degree-three quotient witness.
@@ -144,26 +143,25 @@ where
     transcript.append(&p0_at_r_squared);
 
     let q: P::ScalarField = transcript.challenge();
-    let q_powers = challenge_powers(q, k);
+    let q_powers = challenge_powers_observed(q, k, observer);
 
     transcript.append(&wit);
 
     // B(u_i) = sum_j q^j * v[i][j]
-    let b_u: [P::ScalarField; 3] = v.each_ref().map(|v_i| {
-        v_i.iter()
-            .zip(q_powers.iter())
-            .map(|(&a, &b)| a * b)
-            .fold(P::ScalarField::zero(), |acc, x| acc + x)
-    });
+    let mut b_u = [P::ScalarField::zero(); 3];
+    for (value, row) in b_u.iter_mut().zip(v) {
+        for (&evaluation, &coefficient) in row.iter().zip(&q_powers) {
+            *value += observer.fr_mul(evaluation, coefficient);
+        }
+    }
 
-    let Some(remainder) = interpolate_three(u, &b_u) else {
+    let Some(remainder) = interpolate_three_observed(u, &b_u, observer) else {
         return false;
     };
     let b_commitment = P::g1_msm(com, &q_powers);
     let remainder_commitment = P::g1_msm(&[vk.g1, vk.beta_g1, vk.beta_sq_g1], &remainder);
-    let divisor = vanishing_polynomial(u);
+    let divisor = vanishing_polynomial_observed(u, observer);
     let [z0, z1, z2, _] = divisor;
-    observer.fr_mul(4 * k + 20);
     observer.ec_mul(k + 6);
     observer.ec_add(k + 5);
     observer.pairing_pairs(4);
@@ -179,10 +177,31 @@ where
     result.is_identity()
 }
 
+pub(crate) fn eval_univariate_observed<F, O>(coeffs: &[F], point: F, observer: &mut O) -> F
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
+    coeffs.iter().rev().fold(F::zero(), |result, &coefficient| {
+        observer.fr_mul(result, point) + coefficient
+    })
+}
+
 fn vanishing_polynomial<F: JoltField>(u: &[F; 3]) -> [F; 4] {
+    vanishing_polynomial_observed(u, &mut NoopVerifierObserver)
+}
+
+fn vanishing_polynomial_observed<F, O>(u: &[F; 3], observer: &mut O) -> [F; 4]
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
+    let u0_u1 = observer.fr_mul(u[0], u[1]);
+    let u0_u2 = observer.fr_mul(u[0], u[2]);
+    let u1_u2 = observer.fr_mul(u[1], u[2]);
     [
-        -(u[0] * u[1] * u[2]),
-        u[0] * u[1] + u[0] * u[2] + u[1] * u[2],
+        -observer.fr_mul(u0_u1, u[2]),
+        u0_u1 + u0_u2 + u1_u2,
         -(u[0] + u[1] + u[2]),
         F::one(),
     ]
@@ -209,18 +228,29 @@ fn divide_by_monic_cubic<F: JoltField>(f: &[F], divisor: &[F; 4]) -> Vec<F> {
     quotient
 }
 
+#[cfg(test)]
+fn interpolate_three<F: JoltField>(u: &[F; 3], y: &[F; 3]) -> Option<[F; 3]> {
+    interpolate_three_observed(u, y, &mut NoopVerifierObserver)
+}
+
 #[expect(
     clippy::indexing_slicing,
     reason = "all indices are reduced modulo fixed-size three-element arrays"
 )]
-fn interpolate_three<F: JoltField>(u: &[F; 3], y: &[F; 3]) -> Option<[F; 3]> {
+fn interpolate_three_observed<F, O>(u: &[F; 3], y: &[F; 3], observer: &mut O) -> Option<[F; 3]>
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
     let mut result = [F::zero(); 3];
     for i in 0..3 {
         let j = (i + 1) % 3;
         let k = (i + 2) % 3;
-        let scale = y[i] * ((u[i] - u[j]) * (u[i] - u[k])).inverse()?;
-        result[0] += scale * u[j] * u[k];
-        result[1] -= scale * (u[j] + u[k]);
+        let denominator = observer.fr_mul(u[i] - u[j], u[i] - u[k]);
+        let scale = observer.fr_mul(y[i], denominator.inverse()?);
+        let scale_u_j = observer.fr_mul(scale, u[j]);
+        result[0] += observer.fr_mul(scale_u_j, u[k]);
+        result[1] -= observer.fr_mul(scale, u[j] + u[k]);
         result[2] += scale;
     }
     Some(result)
@@ -228,11 +258,19 @@ fn interpolate_three<F: JoltField>(u: &[F; 3], y: &[F; 3]) -> Option<[F; 3]> {
 
 /// Computes `[1, c, c^2, ..., c^{n-1}]`.
 pub(crate) fn challenge_powers<F: JoltField>(c: F, n: usize) -> Vec<F> {
+    challenge_powers_observed(c, n, &mut NoopVerifierObserver)
+}
+
+pub(crate) fn challenge_powers_observed<F, O>(c: F, n: usize, observer: &mut O) -> Vec<F>
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
     let mut powers = Vec::with_capacity(n);
-    let mut cur = F::one();
+    let mut current = F::one();
     for _ in 0..n {
-        powers.push(cur);
-        cur *= c;
+        powers.push(current);
+        current = observer.fr_mul(current, c);
     }
     powers
 }

@@ -133,11 +133,27 @@ impl PackingLayout {
     }
 
     pub fn group_weights(self, column_point: &[Fr]) -> Result<Vec<Fr>, StreamError> {
+        self.group_weights_observed(column_point, &mut NoopVerifierObserver)
+    }
+
+    fn group_weights_observed<O: VerifierObserver>(
+        self,
+        column_point: &[Fr],
+        observer: &mut O,
+    ) -> Result<Vec<Fr>, StreamError> {
         let (group_point, _) = self.split_column_point(column_point)?;
-        Ok(EqPolynomial::<Fr>::evals(group_point, None)
-            .into_iter()
-            .take(self.group_count)
-            .collect())
+        let mut evaluations = vec![Fr::one(); self.padded_group_count];
+        let mut size = 1;
+        for &challenge in group_point {
+            size *= 2;
+            for index in (0..size).rev().step_by(2) {
+                let scalar = evaluations[index / 2];
+                evaluations[index] = observer.fr_mul(scalar, challenge);
+                evaluations[index - 1] = scalar - evaluations[index];
+            }
+        }
+        evaluations.truncate(self.group_count);
+        Ok(evaluations)
     }
 
     pub fn packed_point(
@@ -610,17 +626,39 @@ where
     T: Transcript<Challenge = Fr>,
     F: FnOnce(&StageResult) -> Result<Vec<Fr>, StreamError>,
 {
-    let mut result = verify_stage_without_output(proof, members, input_claims, transcript)?;
-    let output_claims = output_claims(&result)?;
+    verify_stage_with_observed(
+        proof,
+        members,
+        input_claims,
+        transcript,
+        &mut NoopVerifierObserver,
+        |result, _| output_claims(result),
+    )
+}
+
+pub fn verify_stage_with_observed<T, F, O>(
+    proof: &StageProof,
+    members: &[StageMemberSpec],
+    input_claims: &[Fr],
+    transcript: &mut T,
+    observer: &mut O,
+    output_claims: F,
+) -> Result<StageResult, StreamError>
+where
+    T: Transcript<Challenge = Fr>,
+    F: FnOnce(&StageResult, &mut O) -> Result<Vec<Fr>, StreamError>,
+    O: VerifierObserver,
+{
+    let mut result =
+        verify_stage_without_output_observed(proof, members, input_claims, transcript, observer)?;
+    let output_claims = output_claims(&result, observer)?;
     if output_claims.len() != members.len() {
         return Err(StreamError::StageMemberCount);
     }
-    let expected: Fr = result
-        .coefficients
-        .iter()
-        .zip(&output_claims)
-        .map(|(&coefficient, &claim)| coefficient * claim)
-        .sum();
+    let mut expected = Fr::zero();
+    for (&coefficient, &claim) in result.coefficients.iter().zip(&output_claims) {
+        expected += observer.fr_mul(coefficient, claim);
+    }
     if result.final_claim != expected {
         return Err(StreamError::StageOutputClaim);
     }
@@ -635,12 +673,17 @@ fn absorb_output_claims<T: Transcript>(claims: &[Fr], transcript: &mut T) {
     }
 }
 
-fn verify_stage_without_output<T: Transcript<Challenge = Fr>>(
+fn verify_stage_without_output_observed<T, O>(
     proof: &StageProof,
     members: &[StageMemberSpec],
     input_claims: &[Fr],
     transcript: &mut T,
-) -> Result<StageResult, StreamError> {
+    observer: &mut O,
+) -> Result<StageResult, StreamError>
+where
+    T: Transcript<Challenge = Fr>,
+    O: VerifierObserver,
+{
     if proof.committed_rounds.is_some() {
         return Err(StreamError::StageEncoding);
     }
@@ -671,12 +714,15 @@ fn verify_stage_without_output<T: Transcript<Challenge = Fr>>(
             offset: member.offset,
         })
         .collect();
-    let prelude = BatchPrelude::new(descriptions, max_rounds, max_degree);
-    let evaluation = proof.round_polynomials.verify(
+    let prelude = BatchPrelude::new_observed(descriptions, max_rounds, max_degree, || {
+        observer.record_fr_mul();
+    });
+    let evaluation = proof.round_polynomials.verify_observed(
         &SumcheckClaim::new(max_rounds, max_degree, prelude.claimed_sum),
         BooleanHypercube,
         SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         transcript,
+        &mut || observer.record_fr_mul(),
     )?;
     Ok(StageResult {
         point: evaluation.point.into_vec(),
@@ -728,6 +774,22 @@ impl ColumnReduction {
         point: &[Fr],
         evaluation: Fr,
     ) -> Result<Fr, StreamError> {
+        Self::expected_final_observed(
+            column_count,
+            column,
+            point,
+            evaluation,
+            &mut NoopVerifierObserver,
+        )
+    }
+
+    pub fn expected_final_observed<O: VerifierObserver>(
+        column_count: usize,
+        column: usize,
+        point: &[Fr],
+        evaluation: Fr,
+        observer: &mut O,
+    ) -> Result<Fr, StreamError> {
         if column_count == 0 || !column_count.is_power_of_two() {
             return Err(StreamError::NoColumns);
         }
@@ -744,7 +806,8 @@ impl ColumnReduction {
                 columns: column_count,
             });
         }
-        Ok(EqPolynomial::<Fr>::mle(&boolean_point(column, log_columns), point) * evaluation)
+        let selector = eq_mle_observed(&boolean_point(column, log_columns), point, observer);
+        Ok(observer.fr_mul(selector, evaluation))
     }
 }
 
@@ -813,4 +876,14 @@ fn boolean_point(index: usize, variables: usize) -> Vec<Fr> {
     (0..variables)
         .map(|bit| Fr::from_u64(((index >> (variables - bit - 1)) & 1) as u64))
         .collect()
+}
+
+fn eq_mle_observed<O: VerifierObserver>(left: &[Fr], right: &[Fr], observer: &mut O) -> Fr {
+    let mut result = Fr::one();
+    for (&left, &right) in left.iter().zip(right) {
+        let both = observer.fr_mul(left, right);
+        let neither = observer.fr_mul(Fr::one() - left, Fr::one() - right);
+        result = observer.fr_mul(result, both + neither);
+    }
+    result
 }

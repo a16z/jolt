@@ -79,7 +79,7 @@ impl<F: JoltField> CompressedPoly<F> {
     /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     #[inline]
     pub fn evaluate_with_hint(&self, hint: F, point: F) -> F {
-        self.eval_from_hint(&hint, &point)
+        self.eval_from_hint_observed(&hint, &point, || {})
     }
 
     /// Like [`evaluate_with_hint`](Self::evaluate_with_hint) but takes hint and
@@ -89,12 +89,21 @@ impl<F: JoltField> CompressedPoly<F> {
     /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     #[inline]
     pub fn eval_from_hint(&self, hint: &F, point: &F) -> F {
+        self.eval_from_hint_observed(hint, point, || {})
+    }
+
+    /// Evaluates while calling `observe_mul` for each field multiplication.
+    #[inline]
+    pub fn eval_from_hint_observed(&self, hint: &F, point: &F, mut observe_mul: impl FnMut()) -> F {
         let linear_term = self.recover_linear_term(*hint);
 
         let mut x_pow = *point;
+        observe_mul();
         let mut sum = self.coeffs_except_linear_term[0] + *point * linear_term;
         for &c in &self.coeffs_except_linear_term[1..] {
+            observe_mul();
             x_pow *= *point;
+            observe_mul();
             sum += c * x_pow;
         }
         sum

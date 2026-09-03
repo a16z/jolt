@@ -265,6 +265,19 @@ fn spartan_round_trip_and_tampers() {
     )
     .is_err());
 
+    for high_bits in 1..8 {
+        let mut noncanonical = proof.clone();
+        noncanonical.public_challenges[0][15] |= high_bits << 5;
+        assert!(verify_spartan(
+            &key_digest,
+            &r1cs,
+            public_statement,
+            &noncanonical,
+            &verifier_setup
+        )
+        .is_err());
+    }
+
     let encoded = encode_to_vec(&proof, standard()).expect("serialize proof");
     assert_eq!(proof.payload_bytes(), 3_776);
     assert_eq!(encoded.len(), 3_827);
