@@ -1,0 +1,40 @@
+diff --git a/crates/jolt-wrapper/tests/wrap_real_t1_r.rs b/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
+index cf25ec36a..9ff6f7918 100644
+--- a/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
++++ b/crates/jolt-wrapper/tests/wrap_real_t1_r.rs
+@@ -1095,6 +1095,35 @@ fn t1_commitment_order(proof: &Proof) -> Vec<usize> {
+     order
+ }
+ 
++#[test]
++fn commitment_link_order_handles_distinct_ram_and_bytecode_families() {
++    let (_, _, mut proof) = fixture();
++    let _ = proof
++        .commitments
++        .bytecode_ra
++        .pop()
++        .expect("fixture has bytecode commitments");
++    let instruction = proof.commitments.instruction_ra.len();
++    let ram = proof.commitments.ram_ra.len();
++    let bytecode = proof.commitments.bytecode_ra.len();
++    assert_ne!(ram, bytecode);
++
++    let order = t1_commitment_order(&proof);
++    assert_eq!(&order[..2], &[1, 0]);
++    assert_eq!(
++        &order[2..2 + instruction],
++        &(2..2 + instruction).collect::<Vec<_>>()
++    );
++    assert_eq!(
++        &order[2 + instruction..2 + instruction + bytecode],
++        &(2 + instruction + ram..2 + instruction + ram + bytecode).collect::<Vec<_>>()
++    );
++    assert_eq!(
++        &order[2 + instruction + bytecode..],
++        &(2 + instruction..2 + instruction + ram).collect::<Vec<_>>()
++    );
++}
++
+ fn element_targets(
+     layout: &T2Layout,
+     commitment_order: &[usize],
