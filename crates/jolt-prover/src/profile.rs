@@ -193,6 +193,9 @@ pub enum BackendKind {
     Optimized,
     #[cfg(all(feature = "metal", target_os = "macos"))]
     Metal,
+    /// Metal commitment and opening over the CPU PIOP tier (diagnostic split).
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    MetalCommitOnly,
 }
 
 impl BackendKind {
@@ -206,6 +209,8 @@ impl BackendKind {
             Self::Optimized => "optimized",
             #[cfg(all(feature = "metal", target_os = "macos"))]
             Self::Metal => "metal",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::MetalCommitOnly => "metal-commit-only",
         }
     }
 
@@ -218,6 +223,8 @@ impl BackendKind {
             Self::Optimized => "_optimized",
             #[cfg(all(feature = "metal", target_os = "macos"))]
             Self::Metal => "_metal",
+            #[cfg(all(feature = "metal", target_os = "macos"))]
+            Self::MetalCommitOnly => "_metal_commit_only",
         }
     }
 }
@@ -239,6 +246,12 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
+
+    /// Guest input sized to this many trace cycles instead of 90% of the
+    /// padded length; `--scale` may then be omitted (derived as the next
+    /// power of two). The Akita Metal acceptance matrix pins BTreeMap this way.
+    #[clap(long)]
+    pub target_trace_size: Option<usize>,
 }
 
 /// `benchmark` subcommand arguments: a multi-scale sweep over the workload
@@ -271,12 +284,16 @@ pub struct BenchmarkArgs {
     pub backend: BackendKind,
 }
 
-/// Artifact paths of one profile run (`None` unless `--format chrome`).
+/// Artifact paths of one profile run (`None` unless `--format chrome`),
+/// plus the measured prove wall and the unpadded trace length, which every
+/// format reports.
 #[derive(Debug, Default)]
 pub struct ProfileArtifacts {
     pub trace_path: Option<PathBuf>,
     pub summary_path: Option<PathBuf>,
     pub summary: Option<ProfileSummary>,
+    pub prove_seconds: f64,
+    pub trace_length: usize,
 }
 
 /// Largest supported `--scale`: keeps `1usize << scale` (and the derived
@@ -335,7 +352,10 @@ impl Drop for RunLock {
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
-    let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
+    let scale = args.scale.unwrap_or_else(|| match args.target_trace_size {
+        Some(target) => target.next_power_of_two().trailing_zeros(),
+        None => args.name.default_scale(),
+    });
     validate_scale(scale);
     let trace_name = trace_name(args.name, scale, args.backend);
     let _run_lock = RunLock::acquire(&trace_name);
@@ -368,7 +388,13 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         )),
     };
 
-    run_workload(args.name, scale, args.backend, &run_dir);
+    let proven = run_workload(
+        args.name,
+        scale,
+        args.target_trace_size,
+        args.backend,
+        &run_dir,
+    );
 
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
@@ -381,7 +407,11 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     if args.format != OutputFormat::Chrome {
         report_stage_memory();
         update_latest_link(&trace_name, &run_dir);
-        return ProfileArtifacts::default();
+        return ProfileArtifacts {
+            prove_seconds: proven.0,
+            trace_length: proven.1,
+            ..ProfileArtifacts::default()
+        };
     }
 
     let ctx = SummaryContext {
@@ -412,6 +442,8 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         trace_path: Some(trace_path),
         summary_path: Some(summary_file),
         summary: Some(summary),
+        prove_seconds: proven.0,
+        trace_length: proven.1,
     }
 }
 
@@ -539,11 +571,19 @@ struct ProvenRun {
     proof_size: Option<usize>,
 }
 
-fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
+/// Returns `(prove seconds, unpadded trace length)`.
+fn run_workload(
+    workload: Workload,
+    scale: u32,
+    target_trace_size: Option<usize>,
+    backend: BackendKind,
+    run_dir: &Path,
+) -> (f64, usize) {
     let bench_name = workload.as_str();
     let backend_label = backend.as_str();
     let max_trace_length = 1usize << scale;
-    let bench_target = (max_trace_length as f64 * SAFETY_MARGIN) as usize;
+    let bench_target =
+        target_trace_size.unwrap_or((max_trace_length as f64 * SAFETY_MARGIN) as usize);
     tracing::info!("Running modular {bench_name} profile at scale 2^{scale}");
 
     let input = workload.input(bench_target);
@@ -645,6 +685,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     {
         eprintln!("Failed to write consolidated timing: {e}");
     }
+    (duration.as_secs_f64(), trace_length)
 }
 
 /// The homomorphic (Dory) arm. Only the proof is measured.
@@ -715,6 +756,7 @@ fn prove_workload(
         None,
     )
     .expect("modular proof verifies");
+    println!("PROOF_VERIFIED backend={} value=true", backend.as_str());
 
     ProvenRun {
         duration,
@@ -733,6 +775,7 @@ fn prove_workload(
     use crate::akita::preprocessing::{preprocess_full, AkitaTranscript, AkitaVc};
     use jolt_akita::{AkitaField, AkitaScheme};
 
+    let backend_label = backend.as_str();
     let backend = match backend {
         BackendKind::Reference => crate::akita::JoltAkitaBackend::reference(),
         BackendKind::Optimized => crate::akita::JoltAkitaBackend::optimized(),
@@ -740,6 +783,9 @@ fn prove_workload(
         BackendKind::Metal => {
             crate::akita::JoltAkitaBackend::metal().expect("the Metal backend must initialize")
         }
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        BackendKind::MetalCommitOnly => crate::akita::JoltAkitaBackend::metal_commit_only()
+            .expect("the Metal commitment backend must initialize"),
     };
 
     let memory_layout = program_preprocessing.memory_layout.clone();
@@ -792,6 +838,8 @@ fn prove_workload(
         None,
     )
     .expect("modular packed proof verifies");
+    // The acceptance-matrix scorer greps this exact line.
+    println!("PROOF_VERIFIED backend={} value=true", backend_label);
 
     ProvenRun {
         duration,

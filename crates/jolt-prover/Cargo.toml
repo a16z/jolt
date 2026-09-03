@@ -126,3 +126,10 @@ tracer.workspace = true
 name = "jolt-prover"
 path = "src/bin/jolt_prover.rs"
 required-features = ["profiling"]
+
+# The Akita Metal acceptance-matrix harness: the campaign CLI over the
+# `profile` module, emitting `benchmark-runs/results/akita_*.csv` and
+# `benchmark-runs/perfetto_traces/akita_*.json`.
+[[example]]
+name = "modular_benchmark"
+required-features = ["profiling", "akita"]

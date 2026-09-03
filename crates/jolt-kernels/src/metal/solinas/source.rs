@@ -129,7 +129,11 @@ fn assemble_library_source(offset: u32, source_fragments: &[SourceFragment]) -> 
         .filter(|fragment| fragment.applies_to(offset))
         .map(|fragment| fragment.source)
         .collect::<Vec<_>>();
-    format!("#define SOLINAS_OFFSET {offset}u\n{}", fragments.join("\n"))
+    let tables = super::instruction_read_raf::INSTRUCTION_READ_RAF_TABLES;
+    format!(
+        "#define SOLINAS_OFFSET {offset}u\n#define INSTRUCTION_READ_RAF_TABLE_COUNT {tables}u\n{}",
+        fragments.join("\n")
+    )
 }
 
 #[cfg(test)]
@@ -158,6 +162,17 @@ mod tests {
         let akita = library_source(AKITA_OFFSET_FFFFA7F7);
         assert!(akita.contains(BYTECODE_READ_RAF_ADDRESS_SOURCE));
         assert!(akita.ends_with(OUTER_REMAINDER_SOURCE));
+    }
+
+    #[test]
+    fn source_pins_the_lookup_table_count_for_the_read_raf_shader() {
+        let source = library_source(AKITA_OFFSET_FFFFA7F7);
+        let define = format!(
+            "#define INSTRUCTION_READ_RAF_TABLE_COUNT {}u\n",
+            crate::metal::solinas::instruction_read_raf::INSTRUCTION_READ_RAF_TABLES
+        );
+        assert!(source.contains(&define));
+        assert!(!INSTRUCTION_READ_RAF_SOURCE.contains("INSTRUCTION_READ_RAF_TABLES = 5"));
     }
 
     #[test]

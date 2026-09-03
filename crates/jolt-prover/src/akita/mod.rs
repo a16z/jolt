@@ -200,6 +200,14 @@ where
         let metal = jolt_kernels::metal::MetalBackend::production()?;
         Ok(Self::optimized().with_metal_compute(&metal)?)
     }
+
+    /// Metal trace commitment and opening over the optimized CPU PIOP tier:
+    /// the diagnostic split that isolates the commitment routes.
+    pub fn metal_commit_only() -> Result<Self, JoltAkitaMetalError> {
+        let mut backend = Self::optimized();
+        backend.trace_commitment = jolt_akita::TraceCommitmentBackend::metal_required()?;
+        Ok(backend)
+    }
 }
 
 /// Prove one execution using the packed Akita commitment path.

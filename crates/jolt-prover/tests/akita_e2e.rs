@@ -128,6 +128,22 @@ mod akita_tests {
         untrusted_advice: bool,
         trusted_advice: &[u8],
     ) -> ProvedGuest {
+        prove_guest_with(
+            run,
+            config,
+            untrusted_advice,
+            trusted_advice,
+            &JoltAkitaBackend::optimized(),
+        )
+    }
+
+    fn prove_guest_with(
+        run: GuestRun,
+        config: ProverConfig,
+        untrusted_advice: bool,
+        trusted_advice: &[u8],
+        backend: &JoltAkitaBackend<AkitaField, AkitaScheme>,
+    ) -> ProvedGuest {
         let has_trusted_advice = !trusted_advice.is_empty();
         let preprocessing = preprocessing::preprocess_full_with_advice(
             run.preprocessing,
@@ -150,7 +166,7 @@ mod akita_tests {
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(),
+            backend,
             &preprocessing,
             &config,
             trusted.as_ref(),
@@ -394,6 +410,144 @@ mod akita_tests {
             Some(&trusted_object.commitment),
         )
         .expect("committed advice Akita proof must verify");
+    }
+
+    /// The Metal routes at e2e scale: every family's trace cutoff is forced
+    /// below the muldiv trace so the device paths run, and the proof must
+    /// still verify against the unchanged verifier.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    mod metal {
+        use super::*;
+        use jolt_kernels::metal as km;
+
+        fn metal_backend(trace_length: usize) -> JoltAkitaBackend<AkitaField, AkitaScheme> {
+            let instruction_input_cutoff_elements = 2usize << (trace_length.ilog2() as usize / 2);
+            assert!(instruction_input_cutoff_elements < trace_length);
+            let metal = km::MetalBackend::new(km::MetalConfig {
+                spartan_outer_uniskip: km::SpartanOuterUniskipMetalConfig {
+                    trace_cutoff_elements: 2,
+                    ..Default::default()
+                },
+                spartan_outer_remainder: km::SpartanOuterRemainderMetalConfig {
+                    trace_cutoff_elements: 4,
+                    dispatch: km::solinas::OuterRemainderSequenceConfig {
+                        cpu_tail_elements: 2,
+                        product_uniskip_carrier: true,
+                        ..Default::default()
+                    },
+                },
+                spartan_product_remainder: km::SpartanProductRemainderMetalConfig {
+                    trace_cutoff_elements: 2,
+                    cpu_tail_elements: trace_length / 128,
+                    reuse_outer_state_a: true,
+                    terminal_cache_cutoff_elements: 2,
+                    ..Default::default()
+                },
+                instruction_claim_reduction: km::InstructionClaimReductionMetalConfig {
+                    trace_cutoff_elements: 2,
+                    ..Default::default()
+                },
+                instruction_input: km::InstructionInputMetalConfig {
+                    trace_cutoff_elements: 4,
+                    cutoff_elements: instruction_input_cutoff_elements,
+                    dense_storage_mode: km::InstructionInputDenseStorageMode::OuterResidual,
+                    ..Default::default()
+                },
+                registers_claim_reduction: km::RegistersClaimReductionMetalConfig {
+                    implementation:
+                        km::RegistersClaimReductionImplementation::OuterCarrierAliasHybrid,
+                    trace_cutoff_elements: 4,
+                    ..Default::default()
+                },
+                instruction_read_raf: km::InstructionReadRafMetalConfig {
+                    address_cutoff_elements: 8,
+                    cutoff_elements: 8,
+                    ..Default::default()
+                },
+                booleanity_address: km::BooleanityAddressMetalConfig {
+                    trace_cutoff_elements: 2,
+                    dispatch: km::solinas::BooleanityAddressPushforwardConfig {
+                        inner_log2: 2,
+                        selectors_per_tile: 6,
+                        tile_threads_per_threadgroup: Some(256),
+                        finalize_threads_per_threadgroup: Some(256),
+                    },
+                },
+                booleanity_cycle: km::BooleanityMetalConfig {
+                    trace_cutoff_elements: 2,
+                    cutoff_elements: 2,
+                    ..Default::default()
+                },
+                bytecode_read_raf_cycle: km::BytecodeReadRafMetalConfig {
+                    trace_cutoff_elements: 2,
+                    cutoff_elements: 2,
+                    ..Default::default()
+                },
+                instruction_ra_virtualization: km::InstructionRaVirtualizationMetalConfig {
+                    trace_cutoff_elements: 8,
+                    cutoff_elements: 2,
+                    ..Default::default()
+                },
+                hamming_weight_claim_reduction: km::HammingWeightMetalConfig {
+                    trace_cutoff_elements: 2,
+                    dispatch: km::solinas::BooleanityAddressPushforwardConfig {
+                        inner_log2: 2,
+                        selectors_per_tile: 6,
+                        tile_threads_per_threadgroup: Some(256),
+                        finalize_threads_per_threadgroup: Some(256),
+                    },
+                },
+                ..Default::default()
+            })
+            .expect("Metal backend should initialize");
+            JoltAkitaBackend::optimized()
+                .with_metal_compute(&metal)
+                .expect("Akita Metal commitment backend should initialize")
+        }
+
+        /// Diagnostic split: Metal PIOP kernels over the CPU trace commitment
+        /// and opening. Isolates the sumcheck routes from the commit/opening
+        /// routes when the full Metal proof fails to verify.
+        #[test]
+        fn muldiv_e2e_akita_metal_piop_only() {
+            let (run, config) = muldiv_run();
+            let metal = km::MetalBackend::production().expect("Metal backend should initialize");
+            let mut backend = JoltAkitaBackend::<AkitaField, AkitaScheme>::optimized();
+            backend.base = backend.base.with_metal_compute(&metal);
+            let proved = prove_guest_with(run, config, false, &[], &backend);
+            verify(&proved).expect("Metal-PIOP Akita proof must verify");
+        }
+
+        #[test]
+        fn muldiv_e2e_akita_metal() {
+            let (run, config) = muldiv_run();
+            let backend = metal_backend(config.trace_length);
+            let proved = prove_guest_with(run, config, false, &[], &backend);
+            verify(&proved).expect("Metal Akita proof must verify");
+        }
+
+        #[test]
+        fn muldiv_e2e_akita_forced_k256_metal() {
+            let (run, mut config) = muldiv_run();
+            config.one_hot_config = JoltOneHotConfig {
+                log_k_chunk: 8,
+                lookups_ra_virtual_log_k_chunk: 32,
+            };
+            let backend = metal_backend(config.trace_length);
+            let proved = prove_guest_with(run, config, false, &[], &backend);
+            verify(&proved).expect("Metal forced-K256 Akita proof must verify");
+        }
+
+        #[test]
+        fn advice_e2e_akita_metal() {
+            let inputs = postcard::to_stdvec(&5u64).expect("serialize inputs");
+            let untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+            let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &[]);
+            let config = derive_config(&run);
+            let backend = metal_backend(config.trace_length);
+            let proved = prove_guest_with(run, config, true, &[], &backend);
+            verify(&proved).expect("Metal Akita advice proof must verify");
+        }
     }
 }
 

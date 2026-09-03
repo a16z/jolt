@@ -1,8 +1,11 @@
 #include <metal_stdlib>
 using namespace metal;
 
-constant uint INSTRUCTION_READ_RAF_TABLES = 51u;
-constant uint INSTRUCTION_READ_RAF_SEGMENTS = 104u;
+// Table count injected by the host at library assembly (`source.rs`) from
+// `LookupTableKind::COUNT`, so a new lookup table cannot silently desync the
+// segment layout below.
+constant uint INSTRUCTION_READ_RAF_TABLES = INSTRUCTION_READ_RAF_TABLE_COUNT;
+constant uint INSTRUCTION_READ_RAF_SEGMENTS = 2u * INSTRUCTION_READ_RAF_TABLES + 2u;
 constant uint INSTRUCTION_READ_RAF_CHUNK_ROWS = 4096u;
 
 constant uint INSTRUCTION_READ_RAF_STATUS_GEOMETRY = 1u << 0;
