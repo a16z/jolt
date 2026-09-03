@@ -1020,6 +1020,14 @@ impl DynasmEmitter {
             K::VirtualXorRotW22(_) => Self::emit_xor_rotw(e, row, 22),
             K::VirtualXorRotW19(_) => Self::emit_xor_rotw(e, row, 19),
             K::VirtualXorRotW6(_) => Self::emit_xor_rotw(e, row, 6),
+            K::VirtualXorRotL1(_) => {
+                // Keccak theta-D: `x[rs1] ^ x[rs2].rotate_left(1)` — the rotation
+                // applies to rs2 before the xor, unlike the (a ^ b).ror(n) family.
+                e.load_reg(RAX, row.operands.rs2);
+                e.load_reg(RCX, row.operands.rs1);
+                dynasm!(e.ops ; .arch x64 ; rol rax, 1 ; xor rax, rcx);
+                e.store_rd(RAX, row.operands.rd);
+            }
             K::AssertEq(_) => {
                 // imm == 0: hard assert. imm != 0: "spoil" mode, warn-and-continue
                 // in the interpreter; a no-op here (registers unaffected).

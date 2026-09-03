@@ -4,6 +4,7 @@
 )]
 
 use jolt_akita::{AkitaField, AkitaScheme, AkitaSetupParams};
+use jolt_field::Ring;
 use jolt_openings::{CommitmentScheme, PrefixPackedClaims, PrefixPackedLayout};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};

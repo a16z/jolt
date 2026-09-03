@@ -324,26 +324,19 @@ enum StageVal {
     Complement(usize),
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct AddressKernel<F: JoltField> {
     progress: RoundProgress,
     committed_program: bool,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     stage_weights: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     entry_weight: F,
     /// Within-stage RAF `Int` weights, divided by the stage batching weight.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     raf_weights: Vec<F>,
     pushforwards: Vec<Polynomial<F>>,
     /// RAW stage-value tables — the RAF identity binds separately so
     /// committed mode can stage the raw bound `Val_s` wire claims.
     values: Vec<Polynomial<F>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     stage_values: Vec<StageVal>,
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
@@ -470,14 +463,9 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
 /// RA factors still retain their shared compact rows. The fourth bind
 /// materializes only `T / 16` field elements and releases this handle.
 #[cfg(feature = "akita")]
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum LazyFusedInc<F: JoltField> {
     Lazy {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         branch_weights: Vec<F>,
         rows: Arc<Vec<InstructionCycleRow>>,
     },
@@ -686,7 +674,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<RaChunkSelector>,
 }
 
@@ -705,11 +693,7 @@ impl ChunkIndexSource for BytecodePcChunks {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct CycleKernel<F: JoltField> {
     progress: RoundProgress,
     degree: usize,
@@ -721,7 +705,7 @@ struct CycleKernel<F: JoltField> {
     fused_combined: Polynomial<F>,
     /// The produced `BytecodeRa` opening ids, in `read_raf_output_openings`
     /// order (index-aligned with `ra`).
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,
 }
 impl<F: JoltField> CycleKernel<F> {

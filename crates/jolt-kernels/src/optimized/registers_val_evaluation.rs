@@ -50,18 +50,13 @@ use crate::{
 
 /// The write-address column: hot indices plus the address eq table until the
 /// first bind, a dense bound vector afterwards. The `K × T` grid never exists.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum WaState<F> {
     Indices {
         rd: Vec<Option<u8>>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_address: Vec<F>,
     },
-    Dense(#[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))] Vec<F>),
+    Dense(Vec<F>),
 }
 
 impl<F: JoltField> WaState<F> {
@@ -177,11 +172,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
 
 /// The increment table's lifecycle: deferred to the member's first active
 /// round on slice-backed sources, dense from prepare otherwise.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncSource<F: JoltField> {
     /// The witness plane owns these rows; it reports them itself.
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -195,11 +186,7 @@ struct RdIncRow {
     rd_inc: RdInc,
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncSource<F>,

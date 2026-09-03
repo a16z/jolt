@@ -28,7 +28,9 @@ jolt-claims = { workspace = true }
 jolt-lookup-tables = { workspace = true }
 jolt-program = { workspace = true }
 jolt-prover = { workspace = true, optional = true }
-jolt-prover-legacy = { workspace = true, optional = true, features = ["minimal"] }
+jolt-prover-legacy = { workspace = true, optional = true, features = [
+  "minimal",
+] }
 jolt-witness = { workspace = true, optional = true }
 postcard = { workspace = true, optional = true }
 tracer = { workspace = true, optional = true }
@@ -41,7 +43,9 @@ jolt-openings = { path = "../jolt-openings" }
 jolt-poly = { path = "../jolt-poly" }
 jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
-jolt-transcript = { path = "../jolt-transcript", features = ["transcript-blake3"] }
+jolt-transcript = { path = "../jolt-transcript", features = [
+  "transcript-blake3",
+] }
 jolt-verifier = { path = "../jolt-verifier" }
 rayon = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

@@ -184,53 +184,33 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F> {
     /// First half of the rounds: the four `(P, Q)` pairs over the prefix
     /// variables (outer 0/1, product 0/1 — product Qs carry the γ⁴ scale).
-    PrefixSuffix {
-        #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_scalar_pairs))]
-        pairs: [(Vec<F>, Vec<F>); 4],
-    },
+    PrefixSuffix { pairs: [(Vec<F>, Vec<F>); 4] },
     /// Remaining rounds: the two `eq+1` tables and the five columns, dense.
     Dense {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_outer: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         eq_plus_one_product: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         unexpanded_pc: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         pc: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_virtual: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_first_in_sequence: Vec<F>,
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
         is_noop: Vec<F>,
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ShiftKernel<F: JoltField> {
     log_t: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; 5],
     /// The two `eq+1` points (big-endian) the summand factors fix.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_outer: Vec<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     r_product: Vec<F>,
     /// Raw per-cycle values, kept for the phase-2 regeneration.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     rows: Vec<SpartanShiftRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,

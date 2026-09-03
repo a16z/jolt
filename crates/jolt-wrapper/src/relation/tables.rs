@@ -343,6 +343,20 @@ impl<'a> TablePoint<'a> {
             K::VirtualXORROT24(_) => self.xor_rot(24),
             K::VirtualXORROT16(_) => self.xor_rot(16),
             K::VirtualXORROT63(_) => self.xor_rot(63),
+            K::VirtualXORROTL1(_) => {
+                let bits: Vec<Lc> = (0..XLEN)
+                    .map(|i| {
+                        let y_next = self.y((i + 1) % XLEN);
+                        let xy = ctx.mul(self.x(i), y_next);
+                        self.x(i).clone() + y_next.clone() - xy.scale(Fr::from_u64(2))
+                    })
+                    .collect();
+                weighted(
+                    bits.into_iter()
+                        .enumerate()
+                        .map(|(i, b)| (b, pow2(XLEN - 1 - i))),
+                )
+            }
             K::VirtualXORROTW16(_) => self.xor_rotw(16),
             K::VirtualXORROTW12(_) => self.xor_rotw(12),
             K::VirtualXORROTW8(_) => self.xor_rotw(8),

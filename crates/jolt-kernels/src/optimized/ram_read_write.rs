@@ -55,11 +55,7 @@ use crate::{
 /// The phase state machine: cycle rounds on the cycle-major matrix, address
 /// rounds on the address-major matrix, then the fully bound values. `None`
 /// only transiently inside a transition.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F: JoltField> {
     Cycle {
         matrix: CycleMajorMatrix<F>,
@@ -79,11 +75,7 @@ enum Phase<F: JoltField> {
     },
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
     /// The committed per-cycle increment column, bound alongside phase 1;

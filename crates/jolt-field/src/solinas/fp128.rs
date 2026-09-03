@@ -19,7 +19,10 @@
 
 use super::word::mul64_wide;
 use crate::PseudoMersenne;
-use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{
+    CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator, Ring,
+    WithAccumulator,
+};
 use rand_core::RngCore;
 #[cfg(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))]
 use std::arch::asm;
@@ -1179,48 +1182,13 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
-    type Accumulator = NaiveAccumulator<Self>;
-    type SmallScalarAccumulator = NaiveAccumulator<Self>;
-    type SignedProductAccumulator = NaiveAccumulator<Self>;
+    type Accumulator = Fp128Accumulator<P>;
+    type SmallScalarAccumulator = Fp128SignedAccumulator<P>;
+    type SignedProductAccumulator = Fp128SignedAccumulator<P>;
 }
 
 impl<const P: u128> PseudoMersenne for Fp128<P> {
     const OFFSET: u128 = Self::C;
-}
-
-#[cfg(test)]
-mod wide_tests {
-    use super::*;
-    use crate::solinas::Prime128Offset275;
-    use rand_chacha::ChaCha20Rng;
-    use rand_core::RngCore;
-    use rand_core::SeedableRng;
-
-    #[test]
-    fn mul_wide_limbs_roundtrips_through_reduction() {
-        type F = Prime128Offset275;
-        let mut rng = ChaCha20Rng::seed_from_u64(0x1bad_f00d_0ddc_afe1);
-        for _ in 0..1000 {
-            let a = F::random(&mut rng);
-            let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
-            let b4 = [
-                rng.next_u64(),
-                rng.next_u64(),
-                rng.next_u64(),
-                rng.next_u64(),
-            ];
-
-            let got3_full = a.mul_wide_limbs::<3, 5>(b3);
-            let got3_trunc = a.mul_wide_limbs::<3, 4>(b3);
-            assert_eq!(got3_trunc, got3_full[..4]);
-            assert_eq!(F::solinas_reduce(&got3_full), a * F::solinas_reduce(&b3));
-
-            let got4_full = a.mul_wide_limbs::<4, 6>(b4);
-            let got4_trunc = a.mul_wide_limbs::<4, 4>(b4);
-            assert_eq!(got4_trunc, got4_full[..4]);
-            assert_eq!(F::solinas_reduce(&got4_full), a * F::solinas_reduce(&b4));
-        }
-    }
 }
 
 // Cross-check the inline-asm kernels against the portable arithmetic on every
@@ -1287,5 +1255,40 @@ mod tests {
         check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
         check::<{ u128::MAX - 274 }>(); // C = 275
         check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
+    }
+}
+
+#[cfg(test)]
+mod wide_tests {
+    use super::*;
+    use crate::solinas::Prime128Offset275;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::RngCore;
+    use rand_core::SeedableRng;
+
+    #[test]
+    fn mul_wide_limbs_roundtrips_through_reduction() {
+        type F = Prime128Offset275;
+        let mut rng = ChaCha20Rng::seed_from_u64(0x1bad_f00d_0ddc_afe1);
+        for _ in 0..1000 {
+            let a = F::random(&mut rng);
+            let b3 = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
+            let b4 = [
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+            ];
+
+            let got3_full = a.mul_wide_limbs::<3, 5>(b3);
+            let got3_trunc = a.mul_wide_limbs::<3, 4>(b3);
+            assert_eq!(got3_trunc, got3_full[..4]);
+            assert_eq!(F::solinas_reduce(&got3_full), a * F::solinas_reduce(&b3));
+
+            let got4_full = a.mul_wide_limbs::<4, 6>(b4);
+            let got4_trunc = a.mul_wide_limbs::<4, 4>(b4);
+            assert_eq!(got4_trunc, got4_full[..4]);
+            assert_eq!(F::solinas_reduce(&got4_full), a * F::solinas_reduce(&b4));
+        }
     }
 }

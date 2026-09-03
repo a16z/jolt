@@ -2368,7 +2368,7 @@ mod committed_tests {
 }
 
 use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
-use jolt_field::{CanonicalBytes, JoltField};
+use jolt_field::{CanonicalBytes, JoltField, Ring, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Debug};
 
@@ -2460,6 +2460,7 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 #[expect(clippy::unwrap_used)]
 mod advice_object_tests {
     use super::*;
+    use jolt_field::Zero;
 
     /// A couple of bytes of advice must stay provable: without the packing
     /// plan's capacity padding, the zero-variable dense domain of a one-word

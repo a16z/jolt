@@ -14,12 +14,13 @@ use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig, ResolvedS
 use akita_pcs::AkitaError;
 use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleRowDigest,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
+    GroupCommitPhaseParams, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleRowDigest,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::planning::plan_schedule;
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -179,21 +180,13 @@ fn plan_row<Cfg: CommitmentConfig>(
     precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     let policy = policy_of::<Cfg>();
-    let schedule = akita_planner::find_schedule(
-        key,
-        honest_fold_policy_of::<Cfg>(),
-        precommitted_honest_fold_policies,
-        &policy,
-        Cfg::ring_challenge_config,
-    )?
-    .schedule;
-    schedule.validate_structure()?;
+    let schedule = plan_schedule::<Cfg>(key, precommitted_honest_fold_policies)?;
     reject_setup_prefix_contributions(&schedule)?;
 
     let profiles = CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::try_from_params(
+        final_group: GroupCommitPhaseParams::try_from_params(
             key.final_group,
-            &schedule.root.params.final_group.commitment,
+            &schedule.root.params,
         )?,
         precommitteds: key.precommitteds.clone(),
     };
@@ -208,7 +201,7 @@ fn reject_setup_prefix_contributions(schedule: &FoldSchedule) -> Result<(), Akit
     if schedule
         .recursive_folds
         .iter()
-        .any(|fold| fold.params.incoming_setup_prefix.is_some())
+        .any(|fold| fold.params.setup_prefix().is_some())
     {
         return Err(AkitaError::InvalidSetup(
             "provisioned schedule carries a recursive setup-prefix contribution, which Jolt's \
@@ -221,7 +214,7 @@ fn reject_setup_prefix_contributions(schedule: &FoldSchedule) -> Result<(), Akit
 
 /// Plan and install missing grouped rows across `final_num_vars`.
 pub fn provision<Cfg: CommitmentConfig + 'static>(
-    precommitted_combinations: &[Vec<CommittedGroupProfile>],
+    precommitted_combinations: &[Vec<GroupCommitPhaseParams>],
     precommitted_honest_fold_policy: HonestFoldPolicySpec,
     final_num_vars: impl IntoIterator<Item = usize>,
 ) -> Result<RegisteredRows, AkitaError> {
@@ -312,7 +305,7 @@ fn publish<Cfg: CommitmentConfig + 'static>(
 /// Resolve the frozen profile produced by an independent dense commit.
 pub fn dense_precommit_profile(
     layout: PolynomialGroupLayout,
-) -> Result<CommittedGroupProfile, AkitaError> {
+) -> Result<GroupCommitPhaseParams, AkitaError> {
     JoltDenseBounded::profile_without_precommitted_groups(layout)
 }
 
@@ -326,11 +319,11 @@ pub struct AdvicePrecommitLayouts {
 impl AdvicePrecommitLayouts {
     /// Every distinct ordered non-empty advice presence combination.
     /// Equal profiles deduplicate because schedule keys do not encode advice roles.
-    fn precommit_combinations(self) -> Result<Vec<Vec<CommittedGroupProfile>>, AkitaError> {
+    fn precommit_combinations(self) -> Result<Vec<Vec<GroupCommitPhaseParams>>, AkitaError> {
         let untrusted = self.untrusted.map(dense_precommit_profile).transpose()?;
         let trusted = self.trusted.map(dense_precommit_profile).transpose()?;
-        let mut combinations: Vec<Vec<CommittedGroupProfile>> = Vec::with_capacity(3);
-        let mut push_unique = |combination: Vec<CommittedGroupProfile>| {
+        let mut combinations: Vec<Vec<GroupCommitPhaseParams>> = Vec::with_capacity(3);
+        let mut push_unique = |combination: Vec<GroupCommitPhaseParams>| {
             if !combinations.contains(&combination) {
                 combinations.push(combination);
             }
@@ -465,9 +458,9 @@ mod tests {
 
     fn planned_profile<Cfg: akita_config::CommitmentConfig>(
         group: PolynomialGroupLayout,
-    ) -> Result<CommittedGroupProfile, AkitaError> {
+    ) -> Result<GroupCommitPhaseParams, AkitaError> {
         let schedule = emit::regen::<Cfg>(group)?;
-        CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
+        GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
     }
 
     #[test]
@@ -563,7 +556,7 @@ mod tests {
 
         fn fixture_keys(
             final_num_vars: impl IntoIterator<Item = usize>,
-        ) -> (CommittedGroupProfile, Vec<AkitaScheduleLookupKey>) {
+        ) -> (GroupCommitPhaseParams, Vec<AkitaScheduleLookupKey>) {
             let profile = dense_precommit_profile(FIXTURE_TRUSTED_ADVICE_GROUP).unwrap();
             let keys = final_num_vars
                 .into_iter()
