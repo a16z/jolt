@@ -15,7 +15,7 @@ use super::backend::MetalBackend;
 use super::ram_cycle_family::shared_ram_cycle_family_owner;
 use super::solinas::ram_cycle_family::HostSparseRamValCheck;
 use super::solinas::{RamRafAddressPlane, RamValSequence};
-use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity};
+use crate::metal::ram_records::{RamAccessColumns, RamIncrementActivity};
 use crate::optimized::ram_val_check::prepare_optimized_ram_val_check;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,

@@ -19,7 +19,7 @@ use super::{
     RAM_RAF_SEGMENTED_HOT_FINALIZE_PIPELINE, RAM_RAF_SEGMENTED_THREADGROUP_BYTES,
     RAM_RAF_SEGMENTED_THREADS, RAM_RAF_SIMD_WIDTH,
 };
-use crate::optimized::ram_trace::ValidatedRamAccessAddresses;
+use crate::metal::ram_records::ValidatedRamAccessAddresses;
 
 #[derive(Clone)]
 pub struct RamRafAddressPlane {

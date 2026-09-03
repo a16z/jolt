@@ -18,6 +18,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::{MetalPhase, MetalRamReadWriteKernel};
+use crate::metal::ram_records::{RamAccessColumns, RamAccessValues, NO_ACCESS};
 use crate::metal::solinas::{
     MetalError, RamReadWriteDispatchTiming, RamReadWritePreparationTiming, SolinasMetal,
 };
@@ -25,7 +26,6 @@ use crate::optimized::ram_read_write::{
     run_optimized_ram_read_write_eval, OptimizedRamReadWriteEvalInputs,
     OptimizedRamReadWriteEvalResult, OptimizedRamReadWriteEvalSample,
 };
-use crate::optimized::ram_trace::{RamAccessColumns, RamAccessValues, NO_ACCESS};
 use crate::ram_access::RamAccessTape;
 use crate::reference::views::dense_view;
 use crate::{ProofSession, SumcheckKernel as _};

@@ -20,8 +20,8 @@ use super::solinas::ram_cycle_family::{
     HostSparseRamHammingBooleanity, RamCycleFamilyOwner, RamHammingSparsePlan,
 };
 use super::solinas::RamHammingSequence;
+use crate::metal::ram_records::RamAccessColumns;
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
-use crate::optimized::ram_trace::RamAccessColumns;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };

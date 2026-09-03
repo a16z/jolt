@@ -33,12 +33,12 @@ use super::{
     RAM_READ_WRITE_RECORD_PREFIX_ROUNDS, RAM_READ_WRITE_REDUCTION_PIPELINE,
     RAM_READ_WRITE_REDUCTION_WIDTH, RAM_READ_WRITE_SIMD_WIDTH, RAM_READ_WRITE_THREADS,
 };
+use crate::metal::ram_records::{
+    AlignedRamReadWriteRecordArena, RamReadWriteRecordChunks, NO_ACCESS,
+};
 use crate::metal::solinas::{
     completed_command_gpu_time, encode_column_reductions, ram_raf_split_equality, set_inline_bytes,
     Fp128, MetalError, SolinasMetal,
-};
-use crate::optimized::ram_trace::{
-    AlignedRamReadWriteRecordArena, RamReadWriteRecordChunks, NO_ACCESS,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -20,7 +20,7 @@ use super::solinas::ram_cycle_family::{
     estimated_ram_ra_claim_products, HostSparseRamRaClaimReduction,
 };
 use super::solinas::RamRaClaimReductionSequence;
-use crate::optimized::ram_trace::RamAccessColumns;
+use crate::metal::ram_records::RamAccessColumns;
 use crate::optimized::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{

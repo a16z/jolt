@@ -14,9 +14,9 @@ use jolt_witness::JoltWitnessPlane;
 
 use crate::metal::backend::{MetalBackend, MetalConfig};
 use crate::metal::ram_cycle_family::shared_ram_cycle_family_owner;
+use crate::metal::ram_records::{RamAccessColumns, RamIncrementActivity, NO_ACCESS};
 use crate::metal::solinas::ram_cycle_family::RamCycleFamilyOwner;
 use crate::metal::solinas::{DeviceInfo, MetalError};
-use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity, NO_ACCESS};
 use crate::optimized::OptimizedBackend;
 use crate::ram_access::RamAccessTape;
 use crate::{PrepareKernel, ProofSession, ProverInputs};

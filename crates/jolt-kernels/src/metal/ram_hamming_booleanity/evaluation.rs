@@ -10,9 +10,9 @@ use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
 };
 use jolt_witness::JoltWitnessPlane;
 
+use crate::metal::ram_records::{RamAccessColumns, NO_ACCESS};
 use crate::metal::solinas::SolinasMetal;
 use crate::optimized::ram_hamming_booleanity::OptimizedRamHammingBooleanity;
-use crate::optimized::ram_trace::{RamAccessColumns, NO_ACCESS};
 use crate::{PrepareKernel, ProofSession, ProverInputs};
 
 #[derive(Debug, thiserror::Error)]

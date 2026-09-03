@@ -27,7 +27,7 @@ use super::solinas::{
     MetalError, PendingRamRafSequence, RamRafAddressPlane, RamRafAffineTail, RamRafConfig,
     RamRafSegmentedAddressPlane, RamRafTailOutput, RAM_RAF_ADDRESS_DOMAIN,
 };
-use crate::optimized::ram_trace::RamAccessColumns;
+use crate::metal::ram_records::RamAccessColumns;
 use crate::optimized::OptimizedBackend;
 use crate::ram_access::RamAccessTape;
 use crate::{

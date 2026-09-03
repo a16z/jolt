@@ -78,15 +78,15 @@ use rayon::prelude::*;
 
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use super::instruction_input::prepare_instruction_input_rows;
-#[cfg(all(feature = "metal", target_os = "macos"))]
-use super::ram_trace::{
-    RamAccessBundle, RamAccessCollection, RamAccessCollectionChunkWriter,
-    RamAccessCollectionStorage, RamReadWriteRecordCollection,
-    RamReadWriteRecordCollectionChunkWriter, RamReadWriteRecordCollectionStorage,
-};
 use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
+};
+#[cfg(all(feature = "metal", target_os = "macos"))]
+use crate::metal::ram_records::{
+    RamAccessBundle, RamAccessCollection, RamAccessCollectionChunkWriter,
+    RamAccessCollectionStorage, RamReadWriteRecordCollection,
+    RamReadWriteRecordCollectionChunkWriter, RamReadWriteRecordCollectionStorage,
 };
 #[cfg(all(feature = "metal", target_os = "macos"))]
 use crate::metal::solinas::bytecode_read_raf_address::{

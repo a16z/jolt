@@ -13,9 +13,9 @@ use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
 
+use crate::metal::ram_records::{RamAccessColumns, RamIncrementActivity, NO_ACCESS};
 use crate::metal::solinas::ram_cycle_family::RamBlockTopology;
 use crate::metal::solinas::SolinasMetal;
-use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity, NO_ACCESS};
 use crate::optimized::support::SplitLt;
 use crate::optimized::OptimizedBackend;
 use crate::reference::views::eq_table;

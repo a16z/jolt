@@ -18,7 +18,7 @@ use super::super::solinas::{
     DeviceInfo, MetalError, RamRafAddressPlane, RamRafAffineTail, RamRafConfig, RamRafCounters,
     RamRafSegmentedAddressPlane, RAM_RAF_ADDRESS_DOMAIN, RAM_RAF_INNER_LENGTH, RAM_RAF_TILE_COUNT,
 };
-use crate::optimized::ram_trace::{RamAccessColumns, RamAccessValues, NO_ACCESS};
+use crate::metal::ram_records::{RamAccessColumns, RamAccessValues, NO_ACCESS};
 use crate::optimized::OptimizedBackend;
 use crate::ram_access::RamAccessTape;
 use crate::{PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};

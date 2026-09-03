@@ -8,7 +8,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::solinas::ram_cycle_family::{
     OwnerConfig, RamAccessRecord, RamCycleFamilyOwner, RamIncrementRecord,
 };
-use crate::optimized::ram_trace::{RamAccessColumns, RamIncrementActivity};
+use crate::metal::ram_records::{RamAccessColumns, RamIncrementActivity};
 use crate::ram_access::{RamAccessTape, MAX_RETAINED_RAM_ACCESSES};
 use crate::reference::views::dense_view;
 use crate::{KernelError, ProofSession};

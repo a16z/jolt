@@ -12,10 +12,10 @@ use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::metal::backend::MetalBackend;
+use crate::metal::ram_records::{RamAccessColumns, NO_ACCESS};
 use crate::metal::solinas::{
     DeviceInfo, MetalError, RamRafAddressPlane, RamRafConfig, RamRafError,
 };
-use crate::optimized::ram_trace::{RamAccessColumns, NO_ACCESS};
 use crate::optimized::OptimizedBackend;
 use crate::{PrepareKernel, ProofSession, ProverInputs};
 

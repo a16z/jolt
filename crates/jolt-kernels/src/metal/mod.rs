@@ -16,6 +16,7 @@ mod ram_ra_claim_reduction;
 mod ram_ra_virtualization;
 mod ram_raf_evaluation;
 mod ram_read_write;
+pub(crate) mod ram_records;
 mod ram_val_check;
 mod registers_claim_reduction;
 mod registers_read_write;
