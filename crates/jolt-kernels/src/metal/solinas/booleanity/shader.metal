@@ -65,7 +65,6 @@ inline void booleanity_lazy_pair(
     device const SolinasFp128* branches,
     device const SolinasFp128* rho,
     device const SolinasFp128* initial_constant,
-    device const SolinasFp128* initial_leading,
     constant BooleanityParams& params,
     uint pair,
     uint lane,
@@ -90,9 +89,17 @@ inline void booleanity_lazy_pair(
             constant_lane = solinas_add(
                 constant_lane,
                 initial_constant[poly * stride + first]);
+            // Round 0 branches are the base tables, so derive the leading
+            // coefficient here instead of gathering from a k^2 table.
+            SolinasFp128 base_0 = first < params.k
+                ? branches[poly * params.k + first]
+                : solinas_zero();
+            SolinasFp128 base_1 = second < params.k
+                ? branches[poly * params.k + second]
+                : solinas_zero();
+            SolinasFp128 pair_delta = solinas_sub(base_1, base_0);
             leading_lane = solinas_add(
-                leading_lane,
-                initial_leading[(poly * stride + first) * stride + second]);
+                leading_lane, solinas_mul_wide(pair_delta, pair_delta));
             continue;
         }
         SolinasFp128 h_0 = solinas_zero();
@@ -175,8 +182,7 @@ kernel void solinas_booleanity_lazy_message(
     device const SolinasFp128* e_out [[buffer(6)]],
     device SolinasFp128* partials [[buffer(7)]],
     device const SolinasFp128* initial_constant [[buffer(8)]],
-    device const SolinasFp128* initial_leading [[buffer(9)]],
-    constant BooleanityParams& params [[buffer(10)]],
+    constant BooleanityParams& params [[buffer(9)]],
     threadgroup SolinasFp128* shared [[threadgroup(0)]],
     uint x_out [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]],
@@ -196,7 +202,6 @@ kernel void solinas_booleanity_lazy_message(
             branches,
             rho,
             initial_constant,
-            initial_leading,
             params,
             pair,
             lane,

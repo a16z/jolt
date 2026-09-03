@@ -162,9 +162,8 @@ impl<F: Field> RoundScheduler<F> for SequentialRounds {
     }
 }
 
-/// Runs the host members and accelerator members as two concurrent serial
-/// lanes. The accelerator lane stays on the caller thread; the host lane may
-/// use its own internal parallelism from a scoped worker.
+/// Runs host members on one serial lane while accelerator members run
+/// concurrently on the caller thread and scoped workers.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TwoLaneRounds;
 
@@ -195,13 +194,33 @@ impl<F: Field> RoundScheduler<F> for TwoLaneRounds {
                 })
             });
 
+            // Members are independent until their messages are summed, so
+            // host-side setup and readback can overlap device work.
             let accelerator_result =
                 tracing::info_span!("sumcheck_accelerator_lane", members = accelerator.len())
                     .in_scope(|| {
-                        for item in accelerator.iter_mut() {
-                            item.run()?;
+                        let Some((first, rest)) = accelerator.split_first_mut() else {
+                            return Ok(());
+                        };
+                        let handles = rest
+                            .iter_mut()
+                            .map(|item| {
+                                let span = tracing::Span::current();
+                                scope.spawn(move || span.in_scope(|| item.run()))
+                            })
+                            .collect::<Vec<_>>();
+                        let mut result = first.run();
+                        for handle in handles {
+                            match handle.join() {
+                                Ok(member_result) => {
+                                    if result.is_ok() {
+                                        result = member_result;
+                                    }
+                                }
+                                Err(payload) => std::panic::resume_unwind(payload),
+                            }
                         }
-                        Ok(())
+                        result
                     });
             let host_result = match host_task.join() {
                 Ok(result) => result,

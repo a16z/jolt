@@ -4502,6 +4502,22 @@ fn checked_u64(value: usize) -> Result<u64, MetalError> {
     u64::try_from(value).map_err(|_| MetalError::InputTooLong(value))
 }
 
+fn buffer_slice<T>(buffer: &Buffer, length: usize) -> &[T] {
+    debug_assert!(length * size_of::<T>() <= buffer.length() as usize);
+    // SAFETY: callers use the allocation's element type after GPU completion.
+    unsafe { slice::from_raw_parts(buffer.contents().cast::<T>(), length) }
+}
+
+#[expect(
+    clippy::mut_from_ref,
+    reason = "Metal shared buffers provide interior-mutable mapped storage"
+)]
+fn buffer_slice_mut<T>(buffer: &Buffer, length: usize) -> &mut [T] {
+    debug_assert!(length * size_of::<T>() <= buffer.length() as usize);
+    // SAFETY: callers write shared allocations before overlapping GPU access.
+    unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<T>(), length) }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "Metal source-primer oracle setup")]
 mod tests {
@@ -4563,20 +4579,4 @@ mod tests {
             assert_eq!(actual, expected.as_slice());
         }
     }
-}
-
-fn buffer_slice<T>(buffer: &Buffer, length: usize) -> &[T] {
-    debug_assert!(length * size_of::<T>() <= buffer.length() as usize);
-    // SAFETY: callers use the allocation's element type after GPU completion.
-    unsafe { slice::from_raw_parts(buffer.contents().cast::<T>(), length) }
-}
-
-#[expect(
-    clippy::mut_from_ref,
-    reason = "Metal shared buffers provide interior-mutable mapped storage"
-)]
-fn buffer_slice_mut<T>(buffer: &Buffer, length: usize) -> &mut [T] {
-    debug_assert!(length * size_of::<T>() <= buffer.length() as usize);
-    // SAFETY: callers write shared allocations before overlapping GPU access.
-    unsafe { slice::from_raw_parts_mut(buffer.contents().cast::<T>(), length) }
 }

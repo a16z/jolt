@@ -1,6 +1,7 @@
 //! Address-major bytecode read/RAF carriers and Metal workers.
 
 pub mod carrier;
+mod resident_runtime;
 mod stage1_topology;
 pub(crate) mod worklist;
 mod worklist_owner;

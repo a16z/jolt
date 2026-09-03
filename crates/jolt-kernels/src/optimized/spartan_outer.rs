@@ -3851,8 +3851,7 @@ mod tests {
                     "rs2 index at cycle {cycle}"
                 );
                 assert_eq!(
-                    projected.register_write,
-                    expected.rd.map(|(index, pre, post)| (index, pre, post)),
+                    projected.register_write, expected.rd,
                     "rd row at cycle {cycle}"
                 );
             }

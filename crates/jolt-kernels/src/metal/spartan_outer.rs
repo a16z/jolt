@@ -458,7 +458,7 @@ impl UniskipKernel<AkitaField, OuterRemainder<AkitaField>> for MetalBackend {
         let prepare_bytecode_carrier = self.config.bytecode_read_raf_address.implementation
             == super::bytecode_read_raf::BytecodeReadRafAddressImplementation::AddressMajor
             && cycles >= self.config.bytecode_read_raf_address.trace_cutoff_elements
-            && super::bytecode_read_raf::bytecode_address_major_supported(witness);
+            && super::bytecode_read_raf::bytecode_address_stage1_topology_supported(witness);
         if prepare_bytecode_carrier && !instruction_read_raf_owner_requested {
             return Err(KernelError::InvariantViolation {
                 reason: "bytecode address-major requires the random-access Stage-1 owner",
