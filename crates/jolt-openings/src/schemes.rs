@@ -57,11 +57,6 @@ pub trait CommitmentScheme: Commitment {
 
     type SetupParams;
 
-    /// `open` calls `MultilinearPoly::fold_rows` exactly once and never reads
-    /// the polynomial afterward. Callers may use this to release a source at
-    /// that fold boundary.
-    const OPENING_FOLD_IS_TERMINAL: bool = false;
-
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;

@@ -24,11 +24,6 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
 use std::collections::BTreeMap;
-#[cfg(not(feature = "zk"))]
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
-};
 
 use jolt_kernels::committed_program::{
     build_committed_bytecode_chunk_coeffs, program_image_words_padded,
@@ -43,8 +38,6 @@ use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
     VerifierOpeningClaim, ZkOpeningScheme,
 };
-#[cfg(not(feature = "zk"))]
-use jolt_poly::MultilinearPoly;
 use jolt_poly::Point;
 use jolt_transcript::Transcript;
 use jolt_verifier::proof::JoltCommitments;
@@ -253,16 +246,10 @@ where
     // joint evaluation and blind for BlindFold.
     #[cfg(not(feature = "zk"))]
     {
-        // Dory declares its fold terminal, so each backing view can die there.
-        let polynomials: Vec<OpeningView<F>> =
-            OpeningView::wrap(polynomials, PCS::OPENING_FOLD_IS_TERMINAL, log_t);
         let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
             &preprocessing.pcs_setup,
             statement,
-            polynomials
-                .iter()
-                .map(|poly| poly as &dyn MultilinearPoly<F>)
-                .collect(),
+            polynomials.iter().map(|poly| &**poly).collect(),
             ordered_hints,
             transcript,
         )
@@ -298,118 +285,5 @@ where
             joint_evaluation: opening.joint_evaluation,
             evaluation_blind: opening.blind,
         })
-    }
-}
-
-/// Transparent opening view released when the PCS declares its fold terminal.
-#[cfg(not(feature = "zk"))]
-struct OpeningView<F: JoltField> {
-    inner: Mutex<Option<Box<dyn MultilinearPoly<F>>>>,
-    num_vars: usize,
-    remaining: Arc<AtomicUsize>,
-    terminal_fold: bool,
-    log_t: usize,
-}
-
-#[cfg(not(feature = "zk"))]
-impl<F: JoltField> OpeningView<F> {
-    fn wrap(
-        polynomials: Vec<Box<dyn MultilinearPoly<F>>>,
-        terminal_fold: bool,
-        log_t: usize,
-    ) -> Vec<Self> {
-        let remaining = Arc::new(AtomicUsize::new(polynomials.len()));
-        polynomials
-            .into_iter()
-            .map(|poly| Self {
-                num_vars: poly.num_vars(),
-                inner: Mutex::new(Some(poly)),
-                remaining: Arc::clone(&remaining),
-                terminal_fold,
-                log_t,
-            })
-            .collect()
-    }
-
-    #[expect(
-        clippy::expect_used,
-        reason = "post-fold access is an invariant violation; fail loudly, not with stale data"
-    )]
-    fn with_inner<R>(&self, read: impl FnOnce(&dyn MultilinearPoly<F>) -> R) -> R {
-        let guard = self.inner.lock().expect("fold-once view lock poisoned");
-        let poly = guard
-            .as_deref()
-            .expect("fold-once opening view read after its fold");
-        read(poly)
-    }
-}
-
-/// Only the methods Dory's `open` calls are forwarded. The structure queries
-/// (`is_one_hot`, `one_hot_*`, `dense_evaluations`, `to_dense`, `for_each_one`)
-/// fall to the trait defaults: the borrow-returning ones cannot be served
-/// through the `Mutex<Option<..>>`, and `OPENING_FOLD_IS_TERMINAL` is the
-/// PCS's promise that `open` never consults them.
-#[cfg(not(feature = "zk"))]
-impl<F: JoltField> MultilinearPoly<F> for OpeningView<F> {
-    fn num_vars(&self) -> usize {
-        self.num_vars
-    }
-
-    fn evaluate(&self, point: &[F]) -> F {
-        self.with_inner(|poly| poly.evaluate(point))
-    }
-
-    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
-        self.with_inner(|poly| poly.for_each_row(sigma, f));
-    }
-
-    #[expect(
-        clippy::expect_used,
-        reason = "a second fold is an invariant violation; fail loudly, not with stale data"
-    )]
-    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
-        if !self.terminal_fold {
-            return self.with_inner(|poly| poly.fold_rows(left, sigma));
-        }
-        let folded = {
-            let poly = self
-                .inner
-                .lock()
-                .expect("fold-once view lock poisoned")
-                .take()
-                .expect("fold-once opening view folded twice");
-            poly.fold_rows(left, sigma)
-            // Drop the view and its shared-column handles here.
-        };
-        if self.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
-            jolt_kernels::mem::purge_retained_memory(self.log_t);
-        }
-        folded
-    }
-}
-
-#[cfg(all(test, not(feature = "zk")))]
-#[expect(clippy::unwrap_used, reason = "test module")]
-mod tests {
-    use jolt_field::{Fr, Ring};
-    use jolt_poly::Polynomial;
-
-    use super::*;
-
-    #[test]
-    fn non_terminal_opening_view_remains_reusable() {
-        let polynomial = Polynomial::new(vec![
-            Fr::from_u64(1),
-            Fr::from_u64(2),
-            Fr::from_u64(3),
-            Fr::from_u64(4),
-        ]);
-        let expected = polynomial.evaluate(&[Fr::from_u64(5), Fr::from_u64(6)]);
-        let polynomials: Vec<Box<dyn MultilinearPoly<Fr>>> = vec![Box::new(polynomial)];
-        let view = OpeningView::wrap(polynomials, false, 0).pop().unwrap();
-        let left = [Fr::from_u64(7), Fr::from_u64(8)];
-
-        assert_eq!(view.fold_rows(&left, 1), view.fold_rows(&left, 1));
-        assert_eq!(view.evaluate(&[Fr::from_u64(5), Fr::from_u64(6)]), expected);
     }
 }
