@@ -1,7 +1,7 @@
-use jolt_crypto::Bn254;
+use jolt_crypto::{Bn254, Bn254G1};
 use jolt_field::Fr;
 use jolt_hyperkzg::error::HyperKZGError;
-use jolt_hyperkzg::{HyperKZGCommitment, HyperKZGProof};
+use jolt_hyperkzg::{HyperKZGCommitment, HyperKZGProof, VariableBatchKzgProof};
 use jolt_openings::OpeningsError;
 use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::prover::ProveRounds;
@@ -15,6 +15,14 @@ pub type OpeningProof = HyperKZGProof<Bn254>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StageProof {
     pub round_polynomials: CompressedSumcheckProof<Fr>,
+    pub committed_rounds: Option<CommittedStageProof>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommittedStageProof {
+    pub round_commitments: Vec<Bn254G1>,
+    pub round_evaluations: Vec<[Fr; 2]>,
+    pub opening: VariableBatchKzgProof<Bn254>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,10 +43,24 @@ impl WrapperProof {
             .flat_map(|stage| &stage.round_polynomials.round_polynomials)
             .map(|round| round.coeffs_except_linear_term().len())
             .sum::<usize>();
+        let committed_groups = self
+            .stages
+            .iter()
+            .filter_map(|stage| stage.committed_rounds.as_ref())
+            .map(|stage| stage.round_commitments.len() + 3)
+            .sum::<usize>();
+        let committed_scalars = self
+            .stages
+            .iter()
+            .filter_map(|stage| stage.committed_rounds.as_ref())
+            .map(|stage| 2 * stage.round_evaluations.len())
+            .sum::<usize>();
         let opening_scalars = self.opening.v.iter().map(Vec::len).sum::<usize>();
         let stage_claims = self.stage_claims.iter().map(Vec::len).sum::<usize>();
         32 * (self.commitments.len()
             + round_scalars
+            + committed_groups
+            + committed_scalars
             + stage_claims
             + self.reduced_claims.len()
             + self.opening.com.len()
@@ -61,11 +83,26 @@ impl WrapperProof {
                         .sum::<usize>()
             })
             .sum::<usize>();
+        let committed_prefixes = self
+            .stages
+            .iter()
+            .map(|stage| match &stage.committed_rounds {
+                Some(committed) => {
+                    varint_bytes(committed.round_commitments.len())
+                        + committed.round_commitments.len() * varint_bytes(32)
+                        + varint_bytes(committed.round_evaluations.len())
+                        + 3 * varint_bytes(32)
+                }
+                None => 0,
+            })
+            .sum::<usize>();
         self.payload_bytes()
             + (self.commitments.len() + self.opening.com.len() + 1) * varint_bytes(32)
             + varint_bytes(self.commitments.len())
             + varint_bytes(self.stages.len())
             + stage_prefixes
+            + self.stages.len()
+            + committed_prefixes
             + varint_bytes(self.stage_claims.len())
             + self
                 .stage_claims
@@ -143,7 +180,14 @@ pub struct TensorStreamStatement {
     pub k: usize,
     pub row_input_claim: Fr,
     pub row_degree: usize,
+    pub stage_a_encoding: StageAEncoding,
     pub terms: Vec<TensorTerm>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StageAEncoding {
+    Compressed,
+    KzgCommitted,
 }
 
 #[derive(Debug, Error)]
@@ -178,6 +222,8 @@ pub enum StreamError {
     StageOutputClaim,
     #[error("stage padding scale is not invertible")]
     StageScale,
+    #[error("stage proof encoding does not match the statement")]
+    StageEncoding,
     #[error("column tensor must contain at least one factor")]
     EmptyTensor,
     #[error("column tensor term {term} has arity {actual}, expected {expected}")]

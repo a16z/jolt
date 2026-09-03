@@ -4,6 +4,8 @@
     reason = "test fixtures use dimensions fixed by local constructors"
 )]
 
+use bincode::config::standard;
+use bincode::serde::encode_to_vec;
 use jolt_crypto::Bn254;
 use jolt_field::{Fr, Ring, Zero};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGVerifierSetup};
@@ -11,7 +13,8 @@ use jolt_poly::{BindingOrder, CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::stream::{
-    commit_packed, prove_stream, verify_stream, Column, TensorStreamStatement, TensorTerm,
+    commit_packed, prove_stream, verify_stream, Column, StageAEncoding, TensorStreamStatement,
+    TensorTerm,
 };
 
 struct RowRelation {
@@ -170,11 +173,18 @@ fn synthetic_stream_round_trip_and_tampers() {
         k: 8,
         row_input_claim: row_input,
         row_degree: 5,
+        stage_a_encoding: StageAEncoding::Compressed,
         terms: relation_terms,
     };
     let proof = prove_stream(&packed, &statement, &mut row_relation, &setup).expect("prove stream");
     let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify stream");
     assert_eq!(verified.len(), 3);
+    assert_eq!(
+        proof.bincode_bytes(),
+        encode_to_vec(&proof, standard())
+            .expect("serialize proof")
+            .len()
+    );
 
     let mut wrong_digest = statement.clone();
     wrong_digest.key_digest[0] ^= 1;
@@ -265,7 +275,7 @@ fn synthetic_stream_round_trip_and_tampers() {
     assert!(verify_stream(&claim_tamper, &statement, &verifier_setup).is_err());
 
     let mut swapped_claims = proof.clone();
-    swapped_claims.reduced_claims.swap(0, 1);
+    swapped_claims.stage_claims[0].swap(0, 1);
     assert!(verify_stream(&swapped_claims, &statement, &verifier_setup).is_err());
 
     let mut extra_commitment = proof.clone();
@@ -283,6 +293,78 @@ fn synthetic_stream_round_trip_and_tampers() {
     let mut opening_w = proof.clone();
     opening_w.opening.w = opening_w.opening.com[0];
     assert!(verify_stream(&opening_w, &statement, &verifier_setup).is_err());
+}
+
+#[test]
+fn committed_stage_a_round_trip_and_tampers() {
+    let rows = 1 << 8;
+    let fixture = columns(rows);
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(31),
+        rows * 8,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
+    let packed = commit_packed(&fixture, 8, &setup).expect("commit columns");
+    let relation_terms = terms();
+    let mut row_relation = RowRelation::new(dense_columns(&fixture), relation_terms.clone());
+    let statement = TensorStreamStatement {
+        key_digest: [37; 32],
+        rows,
+        column_count: fixture.len(),
+        k: 8,
+        row_input_claim: row_relation.claim,
+        row_degree: 5,
+        stage_a_encoding: StageAEncoding::KzgCommitted,
+        terms: relation_terms,
+    };
+    let proof = prove_stream(&packed, &statement, &mut row_relation, &setup).expect("prove stream");
+    let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify stream");
+    assert_eq!(verified.len(), 3);
+    assert_eq!(
+        proof.bincode_bytes(),
+        encode_to_vec(&proof, standard())
+            .expect("serialize proof")
+            .len()
+    );
+
+    let mut commitment_tamper = proof.clone();
+    commitment_tamper.stages[0]
+        .committed_rounds
+        .as_mut()
+        .expect("committed stage")
+        .round_commitments[0] += Bn254::g1_generator();
+    assert!(verify_stream(&commitment_tamper, &statement, &verifier_setup).is_err());
+
+    let mut next_claim_tamper = proof.clone();
+    next_claim_tamper.stages[0]
+        .committed_rounds
+        .as_mut()
+        .expect("committed stage")
+        .round_evaluations[0][1] += Fr::from_u64(1);
+    assert!(verify_stream(&next_claim_tamper, &statement, &verifier_setup).is_err());
+
+    let mut opening_tamper = proof.clone();
+    let committed = opening_tamper.stages[0]
+        .committed_rounds
+        .as_mut()
+        .expect("committed stage");
+    committed.opening.evaluation_witness = committed.opening.shifted_commitment;
+    assert!(verify_stream(&opening_tamper, &statement, &verifier_setup).is_err());
+
+    let mut degree_tamper = proof.clone();
+    degree_tamper.stages[0]
+        .committed_rounds
+        .as_mut()
+        .expect("committed stage")
+        .opening
+        .shifted_commitment += Bn254::g1_generator();
+    assert!(verify_stream(&degree_tamper, &statement, &verifier_setup).is_err());
+
+    let mut tensor_rlc_tamper = proof.clone();
+    tensor_rlc_tamper.stage_claims[0][0] += Fr::from_u64(1);
+    assert!(verify_stream(&tensor_rlc_tamper, &statement, &verifier_setup).is_err());
 }
 
 #[test]

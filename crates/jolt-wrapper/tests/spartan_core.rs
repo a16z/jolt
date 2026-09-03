@@ -160,6 +160,6 @@ fn spartan_round_trip_and_tampers() {
 
     let encoded = encode_to_vec(&proof, standard()).expect("serialize proof");
     assert_eq!(proof.payload_bytes(), 3_680);
-    assert_eq!(encoded.len(), 3_729);
+    assert_eq!(encoded.len(), 3_731);
     assert_eq!(encoded.len(), proof.bincode_bytes());
 }

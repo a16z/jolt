@@ -1,17 +1,20 @@
 //! Shared clear-sumcheck stages and the final packed HyperKZG opening.
 
 use jolt_crypto::ec::bn254::bit_columns::g1_bit_columns_msm;
-use jolt_crypto::Bn254;
+use jolt_crypto::{Bn254, PairingGroup};
 use jolt_field::{Field, Fr, One, Ring, Zero};
-use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme};
+use jolt_hyperkzg::{
+    open_variable_batch, verify_variable_batch, HyperKZGProverSetup, HyperKZGScheme,
+    HyperKZGVerifierSetup,
+};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::batch::{BatchMember, BatchPrelude};
 use jolt_sumcheck::prover::{prove_batch, ProveRounds, SequentialRounds};
 use jolt_sumcheck::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
 use jolt_sumcheck::{
-    BooleanHypercube, ClearProof, SumcheckClaim, SumcheckError, OPENING_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    append_sumcheck_claim, BooleanHypercube, ClearProof, CompressedSumcheckProof, SumcheckClaim,
+    SumcheckError, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
 use rayon::prelude::*;
@@ -22,6 +25,9 @@ mod protocol;
 pub use protocol::{new_stream_transcript, prove_stream, verify_stream};
 
 const STREAM_LABEL: &[u8] = b"jolt-wrapper-v1";
+const KZG_ROUND_COMMITMENT_LABEL: &[u8] = b"sumcheck_kzg_commitment";
+const KZG_ROUND_ZERO_LABEL: &[u8] = b"sumcheck_kzg_zero";
+const KZG_ROUND_NEXT_LABEL: &[u8] = b"sumcheck_kzg_next";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Column {
@@ -422,7 +428,10 @@ pub fn prove_stage<T: Transcript<Challenge = Fr>>(
             ClearProof::Full(_) => None,
         })
         .ok_or(StreamError::StageOutputClaim)?;
-    let proof = StageProof { round_polynomials };
+    let proof = StageProof {
+        round_polynomials,
+        committed_rounds: None,
+    };
     Ok((
         proof,
         StageResult {
@@ -432,6 +441,137 @@ pub fn prove_stage<T: Transcript<Challenge = Fr>>(
             final_claim: proved.final_claim,
         },
     ))
+}
+
+pub fn prove_kzg_stage<T: Transcript<Challenge = Fr>>(
+    prover: &mut dyn ProveRounds<Fr>,
+    input_claim: Fr,
+    degree: usize,
+    setup: &HyperKZGProverSetup<Bn254>,
+    transcript: &mut T,
+) -> Result<(StageProof, StageResult), StreamError> {
+    if degree != 5 || prover.num_rounds() == 0 {
+        return Err(StreamError::StageEncoding);
+    }
+    append_sumcheck_claim(transcript, &input_claim);
+    let mut polynomials = Vec::with_capacity(prover.num_rounds());
+    let mut round_commitments = Vec::with_capacity(prover.num_rounds());
+    let mut round_evaluations = Vec::with_capacity(prover.num_rounds());
+    let mut points = Vec::with_capacity(prover.num_rounds());
+    let mut opening_evaluations = Vec::with_capacity(prover.num_rounds());
+    let mut previous_bind = None;
+    let mut claim = input_claim;
+    for round in 0..prover.num_rounds() {
+        let polynomial = prover.prove_round(previous_bind, round, claim)?;
+        if polynomial.coefficients().len() > degree + 1 {
+            return Err(StreamError::StageEncoding);
+        }
+        let at_zero = polynomial.evaluate(Fr::zero());
+        let at_one = polynomial.evaluate(Fr::one());
+        if at_zero + at_one != claim {
+            return Err(StreamError::StageOutputClaim);
+        }
+        let bases = setup
+            .g1_powers()
+            .get(..polynomial.coefficients().len())
+            .ok_or(StreamError::SetupTooSmall {
+                required: polynomial.coefficients().len(),
+                actual: setup.g1_powers().len(),
+            })?;
+        let commitment = Bn254::g1_affine_msm(bases, polynomial.coefficients());
+        transcript.append_labeled(KZG_ROUND_COMMITMENT_LABEL, &commitment);
+        let challenge = transcript.challenge();
+        let next_claim = polynomial.evaluate(challenge);
+        transcript.append_labeled(KZG_ROUND_ZERO_LABEL, &at_zero);
+        transcript.append_labeled(KZG_ROUND_NEXT_LABEL, &next_claim);
+        points.push([Fr::zero(), Fr::one(), challenge]);
+        opening_evaluations.push([at_zero, at_one, next_claim]);
+        round_evaluations.push([at_zero, next_claim]);
+        round_commitments.push(commitment);
+        polynomials.push(polynomial.into_coefficients());
+        previous_bind = Some(challenge);
+        claim = next_claim;
+    }
+    let final_bind = previous_bind.ok_or(StreamError::EmptyStage)?;
+    prover.finish_rounds(final_bind)?;
+    let opening = open_variable_batch(
+        &polynomials,
+        &points,
+        &opening_evaluations,
+        degree,
+        setup,
+        transcript,
+    )?;
+    Ok((
+        StageProof {
+            round_polynomials: CompressedSumcheckProof {
+                round_polynomials: Vec::new(),
+            },
+            committed_rounds: Some(CommittedStageProof {
+                round_commitments,
+                round_evaluations,
+                opening,
+            }),
+        },
+        StageResult {
+            point: points.iter().map(|&[_, _, challenge]| challenge).collect(),
+            coefficients: vec![Fr::one()],
+            output_claims: vec![claim],
+            final_claim: claim,
+        },
+    ))
+}
+
+pub fn verify_kzg_stage<T: Transcript<Challenge = Fr>>(
+    proof: &StageProof,
+    input_claim: Fr,
+    rounds: usize,
+    degree: usize,
+    setup: &HyperKZGVerifierSetup<Bn254>,
+    transcript: &mut T,
+) -> Result<StageResult, StreamError> {
+    if degree != 5 || !proof.round_polynomials.round_polynomials.is_empty() {
+        return Err(StreamError::StageEncoding);
+    }
+    let committed = proof
+        .committed_rounds
+        .as_ref()
+        .ok_or(StreamError::StageEncoding)?;
+    if committed.round_commitments.len() != rounds || committed.round_evaluations.len() != rounds {
+        return Err(StreamError::StageCount);
+    }
+    append_sumcheck_claim(transcript, &input_claim);
+    let mut points = Vec::with_capacity(rounds);
+    let mut evaluations = Vec::with_capacity(rounds);
+    let mut claim = input_claim;
+    for (&commitment, &[at_zero, next_claim]) in committed
+        .round_commitments
+        .iter()
+        .zip(&committed.round_evaluations)
+    {
+        transcript.append_labeled(KZG_ROUND_COMMITMENT_LABEL, &commitment);
+        let challenge = transcript.challenge();
+        transcript.append_labeled(KZG_ROUND_ZERO_LABEL, &at_zero);
+        transcript.append_labeled(KZG_ROUND_NEXT_LABEL, &next_claim);
+        points.push([Fr::zero(), Fr::one(), challenge]);
+        evaluations.push([at_zero, claim - at_zero, next_claim]);
+        claim = next_claim;
+    }
+    verify_variable_batch(
+        &committed.round_commitments,
+        &points,
+        &evaluations,
+        degree,
+        &committed.opening,
+        setup,
+        transcript,
+    )?;
+    Ok(StageResult {
+        point: points.iter().map(|&[_, _, challenge]| challenge).collect(),
+        coefficients: vec![Fr::one()],
+        output_claims: vec![claim],
+        final_claim: claim,
+    })
 }
 
 pub fn verify_stage_with<T, F>(
@@ -476,6 +616,9 @@ fn verify_stage_without_output<T: Transcript<Challenge = Fr>>(
     input_claims: &[Fr],
     transcript: &mut T,
 ) -> Result<StageResult, StreamError> {
+    if proof.committed_rounds.is_some() {
+        return Err(StreamError::StageEncoding);
+    }
     if input_claims.len() != members.len() {
         return Err(StreamError::StageMemberCount);
     }
@@ -518,60 +661,30 @@ fn verify_stage_without_output<T: Transcript<Challenge = Fr>>(
     })
 }
 
-pub struct ColumnBatching {
-    terms: Vec<TensorTerm>,
-    polynomials: Vec<Polynomial<Fr>>,
-    eq_prefixes: Vec<Vec<Fr>>,
-    log_columns: usize,
-    arity: usize,
-    round: usize,
+pub struct ColumnReduction {
+    polynomial: Polynomial<Fr>,
+    eq: Polynomial<Fr>,
+    rounds: usize,
     claim: Fr,
 }
 
-impl ColumnBatching {
-    pub fn new(values: Vec<Fr>, terms: Vec<TensorTerm>) -> Result<Self, StreamError> {
+impl ColumnReduction {
+    pub fn new(values: Vec<Fr>, column: usize) -> Result<Self, StreamError> {
         if values.is_empty() || !values.len().is_power_of_two() {
             return Err(StreamError::NoColumns);
         }
-        let arity = terms
-            .first()
-            .map(|term| term.columns.len())
-            .filter(|arity| *arity > 0)
-            .ok_or(StreamError::EmptyTensor)?;
-        for (term_index, term) in terms.iter().enumerate() {
-            if term.columns.len() != arity {
-                return Err(StreamError::TensorArity {
-                    term: term_index,
-                    expected: arity,
-                    actual: term.columns.len(),
-                });
-            }
-            if let Some(&column) = term.columns.iter().find(|&&column| column >= values.len()) {
-                return Err(StreamError::ColumnOutOfRange {
-                    column,
-                    columns: values.len(),
-                });
-            }
-        }
-        let claim = terms
-            .iter()
-            .map(|term| {
-                term.columns
-                    .iter()
-                    .fold(term.coefficient, |product, &column| {
-                        product * values[column]
-                    })
-            })
-            .sum();
+        let claim = *values.get(column).ok_or(StreamError::ColumnOutOfRange {
+            column,
+            columns: values.len(),
+        })?;
+        let rounds = values.len().trailing_zeros() as usize;
         Ok(Self {
-            eq_prefixes: vec![vec![Fr::one(); arity]; terms.len()],
-            polynomials: (0..arity)
-                .map(|_| Polynomial::new(values.clone()))
-                .collect(),
-            log_columns: values.len().trailing_zeros() as usize,
-            terms,
-            arity,
-            round: 0,
+            polynomial: Polynomial::new(values),
+            eq: Polynomial::new(EqPolynomial::<Fr>::evals(
+                &boolean_point(column, rounds),
+                None,
+            )),
+            rounds,
             claim,
         })
     }
@@ -580,121 +693,39 @@ impl ColumnBatching {
         self.claim
     }
 
-    pub fn final_evaluations(&self) -> Vec<Fr> {
-        self.polynomials
-            .iter()
-            .map(|polynomial| polynomial.evals()[0])
-            .collect()
+    pub fn final_evaluation(&self) -> Fr {
+        self.polynomial.evals()[0]
     }
 
     pub fn expected_final(
         column_count: usize,
-        terms: &[TensorTerm],
+        column: usize,
         point: &[Fr],
-        evaluations: &[Fr],
+        evaluation: Fr,
     ) -> Result<Fr, StreamError> {
         if column_count == 0 || !column_count.is_power_of_two() {
             return Err(StreamError::NoColumns);
         }
-        let arity = terms
-            .first()
-            .map(|term| term.columns.len())
-            .filter(|arity| *arity > 0)
-            .ok_or(StreamError::EmptyTensor)?;
         let log_columns = column_count.trailing_zeros() as usize;
-        if point.len() != arity * log_columns {
+        if point.len() != log_columns {
             return Err(StreamError::PointDimension {
-                expected: arity * log_columns,
+                expected: log_columns,
                 actual: point.len(),
             });
         }
-        if evaluations.len() != arity {
-            return Err(StreamError::StageMemberCount);
+        if column >= column_count {
+            return Err(StreamError::ColumnOutOfRange {
+                column,
+                columns: column_count,
+            });
         }
-        let tensor_eval: Fr = terms
-            .iter()
-            .enumerate()
-            .map(|(term_index, term)| {
-                if term.columns.len() != arity {
-                    return Err(StreamError::TensorArity {
-                        term: term_index,
-                        expected: arity,
-                        actual: term.columns.len(),
-                    });
-                }
-                let mut value = term.coefficient;
-                for (factor, &column) in term.columns.iter().enumerate() {
-                    if column >= column_count {
-                        return Err(StreamError::ColumnOutOfRange {
-                            column,
-                            columns: column_count,
-                        });
-                    }
-                    let start = factor * log_columns;
-                    value *= EqPolynomial::<Fr>::mle(
-                        &boolean_point(column, log_columns),
-                        &point[start..start + log_columns],
-                    );
-                }
-                Ok(value)
-            })
-            .sum::<Result<Fr, StreamError>>()?;
-        Ok(evaluations
-            .iter()
-            .fold(tensor_eval, |value, evaluation| value * *evaluation))
-    }
-
-    fn bind_previous(&mut self, challenge: Fr) {
-        let previous = self.round - 1;
-        let block = previous / self.log_columns;
-        let bit = previous % self.log_columns;
-        for (term, prefixes) in self.terms.iter().zip(&mut self.eq_prefixes) {
-            let column_bit = (term.columns[block] >> (self.log_columns - bit - 1)) & 1;
-            prefixes[block] *= if column_bit == 0 {
-                Fr::one() - challenge
-            } else {
-                challenge
-            };
-        }
-        self.polynomials[block].bind_with_order(challenge, BindingOrder::HighToLow);
-    }
-
-    fn round_evaluation(&self, x: Fr) -> Fr {
-        let block = self.round / self.log_columns;
-        let bit = self.round % self.log_columns;
-        let remaining = self.log_columns - bit - 1;
-        self.terms
-            .iter()
-            .zip(&self.eq_prefixes)
-            .map(|(term, prefixes)| {
-                let mut product = term.coefficient;
-                for (factor, (&prefix, &column)) in prefixes.iter().zip(&term.columns).enumerate() {
-                    if factor == block {
-                        let column_bit = (column >> remaining) & 1;
-                        let eq = if column_bit == 0 { Fr::one() - x } else { x };
-                        let suffix = column & ((1usize << remaining) - 1);
-                        product *= prefix
-                            * eq
-                            * self.polynomials[factor].sumcheck_round_eval_with_order(
-                                suffix,
-                                x,
-                                BindingOrder::HighToLow,
-                            );
-                    } else {
-                        let suffix_bits = self.polynomials[factor].num_vars();
-                        let suffix = column & ((1usize << suffix_bits) - 1);
-                        product *= prefix * self.polynomials[factor].evals()[suffix];
-                    }
-                }
-                product
-            })
-            .sum()
+        Ok(EqPolynomial::<Fr>::mle(&boolean_point(column, log_columns), point) * evaluation)
     }
 }
 
-impl ProveRounds<Fr> for ColumnBatching {
+impl ProveRounds<Fr> for ColumnReduction {
     fn num_rounds(&self) -> usize {
-        self.arity * self.log_columns
+        self.rounds
     }
 
     fn prove_round(
@@ -703,15 +734,25 @@ impl ProveRounds<Fr> for ColumnBatching {
         round: usize,
         previous_claim: Fr,
     ) -> Result<UnivariatePoly<Fr>, SumcheckError<Fr>> {
-        self.round = round;
         if let Some(challenge) = bind {
-            self.bind_previous(challenge);
+            self.polynomial
+                .bind_with_order(challenge, BindingOrder::HighToLow);
+            self.eq.bind_with_order(challenge, BindingOrder::HighToLow);
         }
-        let evaluations = [
-            self.round_evaluation(Fr::zero()),
-            self.round_evaluation(Fr::one()),
-            self.round_evaluation(Fr::from_u64(2)),
-        ];
+        let half = self.polynomial.len() / 2;
+        let evaluations = [Fr::zero(), Fr::one(), Fr::from_u64(2)].map(|x| {
+            (0..half)
+                .map(|index| {
+                    self.polynomial.sumcheck_round_eval_with_order(
+                        index,
+                        x,
+                        BindingOrder::HighToLow,
+                    ) * self
+                        .eq
+                        .sumcheck_round_eval_with_order(index, x, BindingOrder::HighToLow)
+                })
+                .sum()
+        });
         if evaluations[0] + evaluations[1] != previous_claim {
             return Err(SumcheckError::RoundCheckFailed {
                 round,
@@ -723,8 +764,9 @@ impl ProveRounds<Fr> for ColumnBatching {
     }
 
     fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
-        self.round = self.num_rounds();
-        self.bind_previous(bind);
+        self.polynomial
+            .bind_with_order(bind, BindingOrder::HighToLow);
+        self.eq.bind_with_order(bind, BindingOrder::HighToLow);
         Ok(())
     }
 }

@@ -4,6 +4,7 @@
     reason = "the ignored benchmark uses dimensions fixed by its fixture"
 )]
 
+use std::fmt::Write;
 use std::time::Instant;
 
 use bincode::config::standard;
@@ -15,7 +16,8 @@ use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use jolt_wrapper::stream::{
-    commit_packed, prove_stream, verify_stream, Column, TensorStreamStatement, TensorTerm,
+    commit_packed, prove_stream, verify_stream, Column, StageAEncoding, TensorStreamStatement,
+    TensorTerm,
 };
 use rayon::prelude::*;
 
@@ -95,15 +97,6 @@ impl ProveRounds<Fr> for TimingRow {
 #[ignore = "2^17 production stream benchmark"]
 fn n3_g_shape_timing() {
     let rows = 1 << 17;
-    let k = 8;
-    let setup_start = Instant::now();
-    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
-        Fr::from_u64(23),
-        rows * k,
-        Bn254::g1_generator(),
-        Bn254::g2_generator(),
-    );
-    let setup_seconds = setup_start.elapsed().as_secs_f64();
     let bit_columns: Vec<Column> = (0..163)
         .into_par_iter()
         .map(|column| {
@@ -147,43 +140,53 @@ fn n3_g_shape_timing() {
             Column::U16(_) | Column::Fr(_) => unreachable!(),
         })
         .collect();
-    let mut row = TimingRow::new(row_columns);
-    let statement = TensorStreamStatement {
-        key_digest: [29; 32],
-        rows,
-        column_count: columns.len(),
-        k,
-        row_input_claim: row.claim,
-        row_degree: 5,
-        terms: vec![TensorTerm {
-            coefficient: Fr::from_u64(1),
-            columns: vec![0, 1, 2, 3, 4],
-        }],
-    };
-
-    let commit_start = Instant::now();
-    let packed = commit_packed(&columns, k, &setup).expect("commit G columns");
-    let commit_seconds = commit_start.elapsed().as_secs_f64();
-    let prove_start = Instant::now();
-    let proof = prove_stream(&packed, &statement, &mut row, &setup).expect("prove G stream");
-    let prove_seconds = prove_start.elapsed().as_secs_f64();
-    let verifier_setup = HyperKZGVerifierSetup::from(&setup);
-    let verify_start = Instant::now();
-    let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify G stream");
-    let verify_seconds = verify_start.elapsed().as_secs_f64();
-    let bincode_bytes = encode_to_vec(&proof, standard())
-        .expect("serialize G proof")
-        .len();
-    assert_eq!(verified.len(), 3);
-    assert_eq!(proof.bincode_bytes(), bincode_bytes);
-    std::fs::write(
-        "/tmp/w4s-stream-timing.txt",
-        format!(
-            "setup={setup_seconds:.3}s commit={commit_seconds:.3}s prove={prove_seconds:.3}s verify={verify_seconds:.3}s payload={}B bincode={bincode_bytes}B\n",
+    let mut results = String::new();
+    for k in [8, 16] {
+        let setup_start = Instant::now();
+        let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+            Fr::from_u64(23),
+            rows * k,
+            Bn254::g1_generator(),
+            Bn254::g2_generator(),
+        );
+        let setup_seconds = setup_start.elapsed().as_secs_f64();
+        let mut row = TimingRow::new(row_columns.clone());
+        let statement = TensorStreamStatement {
+            key_digest: [29; 32],
+            rows,
+            column_count: columns.len(),
+            k,
+            row_input_claim: row.claim,
+            row_degree: 5,
+            stage_a_encoding: StageAEncoding::KzgCommitted,
+            terms: vec![TensorTerm {
+                coefficient: Fr::from_u64(1),
+                columns: vec![0, 1, 2, 3, 4],
+            }],
+        };
+        let commit_start = Instant::now();
+        let packed = commit_packed(&columns, k, &setup).expect("commit G columns");
+        let commit_seconds = commit_start.elapsed().as_secs_f64();
+        let prove_start = Instant::now();
+        let proof = prove_stream(&packed, &statement, &mut row, &setup).expect("prove G stream");
+        let prove_seconds = prove_start.elapsed().as_secs_f64();
+        let verifier_setup = HyperKZGVerifierSetup::from(&setup);
+        let verify_start = Instant::now();
+        let verified = verify_stream(&proof, &statement, &verifier_setup).expect("verify G stream");
+        let verify_seconds = verify_start.elapsed().as_secs_f64();
+        let bincode_bytes = encode_to_vec(&proof, standard())
+            .expect("serialize G proof")
+            .len();
+        assert_eq!(verified.len(), 3);
+        assert_eq!(proof.bincode_bytes(), bincode_bytes);
+        writeln!(
+            results,
+            "k={k} setup={setup_seconds:.3}s commit={commit_seconds:.3}s prove={prove_seconds:.3}s verify={verify_seconds:.3}s payload={}B bincode={bincode_bytes}B",
             proof.payload_bytes(),
-        ),
-    )
-    .expect("write timing result");
+        )
+        .expect("write timing line");
+    }
+    std::fs::write("/tmp/w4s-stream-timing.txt", results).expect("write timing result");
 }
 
 fn mix(mut value: u64) -> u64 {

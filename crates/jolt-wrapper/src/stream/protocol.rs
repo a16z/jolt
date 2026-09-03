@@ -7,10 +7,11 @@ use jolt_sumcheck::prover::ProveRounds;
 use jolt_transcript::{AppendToTranscript, Blake3Transcript, Transcript};
 
 use super::{
-    absorb_output_claims, combine_evaluations, prove_stage, verify_stage_with,
-    verify_stage_without_output, ClaimReduction, ColumnBatching, Commitment, PackedColumns,
-    PackingLayout, ReductionClaim, StageMember, StageMemberSpec, StageProof, StageResult,
-    StreamError, TensorStreamStatement, TensorTerm, WrapperProof, STREAM_LABEL,
+    absorb_output_claims, combine_evaluations, prove_kzg_stage, prove_stage, verify_kzg_stage,
+    verify_stage_with, verify_stage_without_output, ClaimReduction, ColumnReduction, Commitment,
+    PackedColumns, PackingLayout, ReductionClaim, StageAEncoding, StageMember, StageMemberSpec,
+    StageProof, StageResult, StreamError, TensorStreamStatement, TensorTerm, WrapperProof,
+    STREAM_LABEL,
 };
 
 pub fn prove_stream(
@@ -31,47 +32,93 @@ pub fn prove_stream(
         &[statement.row_input_claim],
         &packed.commitments,
     );
-    let mut row_members = [StageMember {
-        prover: row_prover,
-        input_claim: statement.row_input_claim,
-        degree: statement.row_degree,
-        offset: 0,
-    }];
-    let (row_stage, row_result) = prove_stage(&mut row_members, &mut transcript)?;
+    absorb_stage_a_encoding(statement.stage_a_encoding, &mut transcript);
+    let (row_stage, row_result) = match statement.stage_a_encoding {
+        StageAEncoding::Compressed => {
+            let mut row_members = [StageMember {
+                prover: row_prover,
+                input_claim: statement.row_input_claim,
+                degree: statement.row_degree,
+                offset: 0,
+            }];
+            prove_stage(&mut row_members, &mut transcript)?
+        }
+        StageAEncoding::KzgCommitted => prove_kzg_stage(
+            row_prover,
+            statement.row_input_claim,
+            statement.row_degree,
+            setup,
+            &mut transcript,
+        )?,
+    };
     let row_output = single_member_output(&row_result)?;
     let column_values = packed.column_evaluations(&row_result.point)?;
-    let mut column_batch = ColumnBatching::new(column_values, statement.terms.clone())?;
-    let column_input = column_batch.input_claim();
-    if column_input != row_output {
+    let factor_columns = tensor_factor_columns(&statement.terms);
+    let factor_claims = factor_columns
+        .iter()
+        .map(|&column| {
+            column_values
+                .get(column)
+                .copied()
+                .ok_or(StreamError::ColumnOutOfRange {
+                    column,
+                    columns: column_values.len(),
+                })
+        })
+        .collect::<Result<Vec<_>, StreamError>>()?;
+    if tensor_value(&statement.terms, &factor_claims)? != row_output {
         return Err(StreamError::StageLink);
     }
-    let mut column_members = [StageMember {
-        prover: &mut column_batch,
-        input_claim: column_input,
-        degree: 2,
-        offset: 0,
-    }];
+    let mut reductions = factor_columns
+        .iter()
+        .map(|&column| ColumnReduction::new(column_values.clone(), column))
+        .collect::<Result<Vec<_>, StreamError>>()?;
+    let mut column_members = reductions
+        .iter_mut()
+        .zip(&factor_claims)
+        .map(|(reduction, &input_claim)| StageMember {
+            prover: reduction as &mut dyn ProveRounds<Fr>,
+            input_claim,
+            degree: 2,
+            offset: 0,
+        })
+        .collect::<Vec<_>>();
     let (column_stage, column_result) = prove_stage(&mut column_members, &mut transcript)?;
-    let reduced_claims = column_batch.final_evaluations();
-    let expected_column = ColumnBatching::expected_final(
-        packed.layout.padded_column_count,
-        &statement.terms,
-        &column_result.point,
-        &reduced_claims,
-    )?;
-    if column_result.output_claims != [expected_column] {
+    drop(column_members);
+    let reduced_claim = reductions
+        .first()
+        .map(ColumnReduction::final_evaluation)
+        .ok_or(StreamError::EmptyTensor)?;
+    if reductions
+        .iter()
+        .any(|reduction| reduction.final_evaluation() != reduced_claim)
+    {
+        return Err(StreamError::OpeningClaim);
+    }
+    let expected_column = factor_columns
+        .iter()
+        .map(|&column| {
+            ColumnReduction::expected_final(
+                packed.layout.padded_column_count,
+                column,
+                &column_result.point,
+                reduced_claim,
+            )
+        })
+        .collect::<Result<Vec<_>, StreamError>>()?;
+    if column_result.output_claims != expected_column {
         return Err(StreamError::StageOutputClaim);
     }
     let claims = canonical_reduction_claims(
         packed.layout,
         &row_result.point,
         &column_result.point,
-        &reduced_claims,
+        reduced_claim,
     )?;
     prove_reduced_opening(
         packed,
         vec![row_stage, column_stage],
-        vec![row_result.output_claims, column_result.output_claims],
+        vec![factor_claims],
         claims,
         setup,
         &mut transcript,
@@ -81,7 +128,7 @@ pub fn prove_stream(
 fn prove_reduced_opening(
     packed: &PackedColumns,
     mut stages: Vec<StageProof>,
-    mut stage_claims: Vec<Vec<Fr>>,
+    stage_claims: Vec<Vec<Fr>>,
     claims: Vec<ReductionClaim>,
     setup: &HyperKZGProverSetup<Bn254>,
     transcript: &mut Blake3Transcript<Fr>,
@@ -100,7 +147,6 @@ fn prove_reduced_opening(
     }];
     let (stage, result) = prove_stage(&mut members, transcript)?;
     stages.push(stage);
-    stage_claims.push(result.output_claims.clone());
     let weights = reduction.final_weights();
     let combined_evaluations = combine_evaluations(&packed.evaluations, &weights);
     let claimed_eval = combined_evaluations.as_slice().evaluate(&result.point);
@@ -126,11 +172,12 @@ pub fn verify_stream(
 ) -> Result<Vec<StageResult>, StreamError> {
     let layout = PackingLayout::new(statement.rows, statement.column_count, statement.k)?;
     validate_statement(layout, statement)?;
-    let arity = tensor_arity(&statement.terms)?;
+    let factor_columns = tensor_factor_columns(&statement.terms);
     if proof.stages.len() != 3
-        || proof.stage_claims.len() != 3
+        || proof.stage_claims.len() != 1
+        || proof.stage_claims.first().map(Vec::len) != Some(factor_columns.len())
         || proof.commitments.len() != layout.group_count
-        || proof.reduced_claims.len() != arity
+        || proof.reduced_claims.len() != 1
         || proof.opening.com.len() + 1 != layout.packed_vars()
     {
         return Err(StreamError::StageCount);
@@ -140,49 +187,73 @@ pub fn verify_stream(
         &[statement.row_input_claim],
         &proof.commitments,
     );
+    absorb_stage_a_encoding(statement.stage_a_encoding, &mut transcript);
     let row_stage = proof.stages.first().ok_or(StreamError::StageCount)?;
     let row_shape = [StageMemberSpec {
         rounds: layout.row_vars(),
         degree: statement.row_degree,
         offset: 0,
     }];
-    let row_result = verify_stage_with(
-        row_stage,
-        &row_shape,
-        &[statement.row_input_claim],
-        &mut transcript,
-        |result| checked_stage_claims(proof, 0, vec![single_member_output(result)?]),
-    )?;
+    let row_result = match statement.stage_a_encoding {
+        StageAEncoding::Compressed => verify_stage_with(
+            row_stage,
+            &row_shape,
+            &[statement.row_input_claim],
+            &mut transcript,
+            |result| Ok(vec![single_member_output(result)?]),
+        )?,
+        StageAEncoding::KzgCommitted => verify_kzg_stage(
+            row_stage,
+            statement.row_input_claim,
+            layout.row_vars(),
+            statement.row_degree,
+            setup,
+            &mut transcript,
+        )?,
+    };
     let row_output = single_member_output(&row_result)?;
+    let factor_claims = proof.stage_claims.first().ok_or(StreamError::StageCount)?;
+    if tensor_value(&statement.terms, factor_claims)? != row_output {
+        return Err(StreamError::StageLink);
+    }
+    let reduced_claim = proof
+        .reduced_claims
+        .first()
+        .copied()
+        .ok_or(StreamError::StageCount)?;
     let column_stage = proof.stages.get(1).ok_or(StreamError::StageCount)?;
-    let column_shape = [StageMemberSpec {
-        rounds: arity * layout.column_vars(),
-        degree: 2,
-        offset: 0,
-    }];
+    let column_shape = vec![
+        StageMemberSpec {
+            rounds: layout.column_vars(),
+            degree: 2,
+            offset: 0,
+        };
+        factor_columns.len()
+    ];
     let column_result = verify_stage_with(
         column_stage,
         &column_shape,
-        &[row_output],
+        factor_claims,
         &mut transcript,
         |result| {
-            checked_stage_claims(
-                proof,
-                1,
-                vec![ColumnBatching::expected_final(
-                    layout.padded_column_count,
-                    &statement.terms,
-                    &result.point,
-                    &proof.reduced_claims,
-                )?],
-            )
+            factor_columns
+                .iter()
+                .map(|&column| {
+                    ColumnReduction::expected_final(
+                        layout.padded_column_count,
+                        column,
+                        &result.point,
+                        reduced_claim,
+                    )
+                })
+                .collect()
         },
     )?;
     let claims = canonical_reduction_claims(
         layout,
         &row_result.point,
         &column_result.point,
-        &proof.reduced_claims,
+        reduced_claim,
     )?;
     let mut results = vec![row_result, column_result];
     results.push(verify_reduced_opening(
@@ -235,7 +306,7 @@ fn verify_reduced_opening(
         .inverse()
         .ok_or(StreamError::StageOutputClaim)?;
     let claimed_eval = final_result.final_claim * coefficient_inverse;
-    let output_claims = checked_stage_claims(proof, 2, vec![claimed_eval])?;
+    let output_claims = vec![claimed_eval];
     absorb_output_claims(&output_claims, transcript);
     final_result.output_claims = vec![claimed_eval];
     HyperKZGScheme::<Bn254>::verify(
@@ -248,17 +319,6 @@ fn verify_reduced_opening(
     )
     .map_err(StreamError::HyperKzg)?;
     Ok(final_result)
-}
-
-fn checked_stage_claims(
-    proof: &WrapperProof,
-    stage: usize,
-    expected: Vec<Fr>,
-) -> Result<Vec<Fr>, StreamError> {
-    if proof.stage_claims.get(stage) != Some(&expected) {
-        return Err(StreamError::StageOutputClaim);
-    }
-    Ok(expected)
 }
 
 pub fn new_stream_transcript(
@@ -282,6 +342,14 @@ pub fn absorb_commitments<T: Transcript<Challenge = Fr>>(
     for commitment in commitments {
         commitment.append_to_transcript(transcript);
     }
+}
+
+fn absorb_stage_a_encoding<T: Transcript>(encoding: StageAEncoding, transcript: &mut T) {
+    let tag = match encoding {
+        StageAEncoding::Compressed => 0,
+        StageAEncoding::KzgCommitted => 1,
+    };
+    transcript.append_bytes(&[tag]);
 }
 
 fn reduction_weights(
@@ -317,25 +385,42 @@ fn canonical_reduction_claims(
     layout: PackingLayout,
     row_point: &[Fr],
     column_batch_point: &[Fr],
-    values: &[Fr],
+    value: Fr,
 ) -> Result<Vec<ReductionClaim>, StreamError> {
-    if column_batch_point.len() != values.len() * layout.column_vars() {
+    if column_batch_point.len() != layout.column_vars() {
         return Err(StreamError::PointDimension {
-            expected: values.len() * layout.column_vars(),
+            expected: layout.column_vars(),
             actual: column_batch_point.len(),
         });
     }
-    column_batch_point
-        .chunks_exact(layout.column_vars())
-        .zip(values)
-        .map(|(column_point, &value)| {
-            Ok(ReductionClaim {
-                polynomial_weights: layout.group_weights(column_point)?,
-                point: layout.packed_point(row_point, column_point)?,
-                value,
-            })
-        })
+    Ok(vec![ReductionClaim {
+        polynomial_weights: layout.group_weights(column_batch_point)?,
+        point: layout.packed_point(row_point, column_batch_point)?,
+        value,
+    }])
+}
+
+fn tensor_factor_columns(terms: &[TensorTerm]) -> Vec<usize> {
+    terms
+        .iter()
+        .flat_map(|term| term.columns.iter().copied())
         .collect()
+}
+
+fn tensor_value(terms: &[TensorTerm], factors: &[Fr]) -> Result<Fr, StreamError> {
+    let arity = tensor_arity(terms)?;
+    if factors.len() != terms.len() * arity {
+        return Err(StreamError::StageMemberCount);
+    }
+    Ok(terms
+        .iter()
+        .zip(factors.chunks_exact(arity))
+        .map(|(term, values)| {
+            values
+                .iter()
+                .fold(term.coefficient, |product, value| product * *value)
+        })
+        .sum())
 }
 
 fn tensor_arity(terms: &[TensorTerm]) -> Result<usize, StreamError> {

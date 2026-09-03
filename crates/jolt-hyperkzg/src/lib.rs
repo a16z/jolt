@@ -37,8 +37,10 @@
 
 pub mod error;
 pub mod kzg;
+pub mod multi_open;
 pub mod scheme;
 pub mod types;
 
+pub use multi_open::{open_variable_batch, verify_variable_batch, VariableBatchKzgProof};
 pub use scheme::HyperKZGScheme;
 pub use types::{HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup};
