@@ -252,3 +252,9 @@ Spawned PERF-5 planner 6eb25e55 (codex xhigh, scratch worktree perf5-plan at f4f
 - da0904df landed `wrap/spartan-hyperkzg` @ f986c2e00 (fix f4fbd2ee9 + journals). Schedule 39 / 23 / 1 / 3 / 232; bytes unchanged 7,488 / 7,628 / 352; Fr mul 179,547 → 127,884 (native matrix block 87,081); gas 6,082,065 → 5,048,805; 64/64 unit, 1/1 real gate incl. preamble tamper; prover 26.8 s at load 13–23.
 - PR branch rebuilt: `wrap/spartan-hyperkzg-pr` = f986c2e00 + "chore(wrapper): drop design journals" (89f73577a), force-pushed; diff vs origin/main 138 files, no `.journals`/zeromorph. PR #1837 title → `feat(wrapper): single-layer Spartan (R1CS) wrapper … (~7.5 KB proof)`, body rewritten from `.journals/pr-body.md` (R1CS+Spartan numbers, FS-order paragraph, prover-time gap).
 - Review #4 spawned: 3eab4a96 (scratch `w5-review4`, 20-min read-only window so PERF-5 gets an idle run). PERF-5 planner 6eb25e55 running.
+
+## 17:23 — review #4 verdict: 0 blockers / 0 majors / 3 minors (FS reorder sound)
+
+A duplicate review #4 (3f73290d, spawned by a second orchestrator instance 70 s before mine) finished first: report `.journals/lanes/w5-review-4.md` (b75b1bf5e), patch `w5-review-4-tests.patch`. Reproduced 7,488 / 7,628 / 352 B, matrix 87,081 Fr mul, total 127,884, gas 5,048,805; real 1/1, unit 64/64, clippy. My 3eab4a96 stopped as redundant. Minors, to fold into the first perf lane that touches the gate (none block the draft PR): (1) the preamble negative rejects at `Spartan(OuterFinalClaim)` — the flipped `state_in` word changes the public statement before the T1 pin is reached, so the T1 initial-state pin has no isolated negative; (2) the gate pins only two of the five phase challenge counts; (3) two new public diagnostics to privatize.
+
+State: PR #1837 draft at 89f73577a (= f986c2e00 − journals) is the reviewed artifact. Waiting on PERF-5 planner 6eb25e55.
