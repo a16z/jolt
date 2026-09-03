@@ -8,7 +8,10 @@ use jolt_r1cs::Variable;
 use jolt_transcript::Blake3Transcript;
 use thiserror::Error;
 
-use crate::hash_table::{HashTable, JoltSchedule, RecordingTranscript, ScheduleError};
+use crate::hash_table::schedule::preamble;
+use crate::hash_table::{
+    HashTable, JoltSchedule, PublicInputs, RecordingTranscript, ScheduleError, SymbolicSchedule,
+};
 use crate::profile::{ProfileError, WrapperProfile};
 use crate::relation::{
     build_relation, generate_witness, Preprocessing, Proof, Relation, RelationError, Witness,
@@ -98,6 +101,10 @@ pub struct WrapPreparation {
     pub profile_digest: [u8; 32],
     pub relation: Relation,
     pub relation_witness: Witness,
+    /// The verifier-key schedule (here from this run; key generation derives
+    /// it once per profile with `SymbolicSchedule::from_reference`).
+    pub hash_key: SymbolicSchedule,
+    pub hash_public: PublicInputs,
     pub hash_schedule: JoltSchedule,
     pub hash_table: HashTable,
     pub public_known: Vec<Fr>,
@@ -132,19 +139,22 @@ impl WrapPreparation {
             RecordingTranscript<Blake3Transcript>,
         >(preprocessing, public_io, proof, None)?;
         let records = RecordingTranscript::<Blake3Transcript>::take_log();
-        let natural = JoltSchedule::new(&records, None)?;
-        if natural.symbolic.log_rows > config.common_log_rows {
+        let natural = SymbolicSchedule::from_reference(&records, None)?;
+        if natural.log_rows > config.common_log_rows {
             return Err(WrapError::CommonRowDomain {
-                required: natural.symbolic.log_rows,
+                required: natural.log_rows,
                 configured: config.common_log_rows,
             });
         }
-        let hash_schedule = if natural.symbolic.log_rows == config.common_log_rows {
+        let hash_key = if natural.log_rows == config.common_log_rows {
             natural
         } else {
-            JoltSchedule::new(&records, Some(config.common_log_rows))?
+            SymbolicSchedule::from_reference(&records, Some(config.common_log_rows))?
         };
-        let hash_table = HashTable::build(&hash_schedule);
+        let preamble = preamble(&records);
+        let hash_public = PublicInputs::from_preamble(&preamble, &hash_key)?;
+        let hash_schedule = JoltSchedule::witness(&records, &hash_key)?;
+        let hash_table = HashTable::build(&hash_schedule, &hash_public);
 
         let (public_known, public_challenges) = public_values(&relation, &relation_witness.values)?;
         let private_start = 1 + relation.public.num_public;
@@ -163,6 +173,8 @@ impl WrapPreparation {
             profile_digest,
             relation,
             relation_witness,
+            hash_key,
+            hash_public,
             hash_schedule,
             hash_table,
             public_known,

@@ -238,3 +238,95 @@ Measured on the real fibonacci 2^18 fixture (M) unless tagged (E). Commands unch
   hash_table_relation --test hash_table_fixture --test perf1_profile [--features prover-fixtures]
   -- -D warnings`, rustfmt, `check_style_invariants.py --base HEAD` clean on this lane's files
   (open findings remain in `limb_table/` — W4-T2).
+
+## Fix #2 (review #2: B1 canonical Fr words, B2 VK-time schedule, B3 FS randomizers, MAJOR shared term API), 2026-09-03
+
+Both reviewers' 3 blockers / 1 major / 2 minors, each blocker with a verifier-path negative test
+(`prove_assembly` by the honest prover code on the tampered run, statement claims taken from the
+provers = a self-consistent adversary; `verify_assembly_with_cost` with the key's statement rejects).
+
+### B1 — canonicality of every absorbed Fr word
+
+- `fr_word()` / `fr_word_shifted()` are linear in the bytes, so `x` and `x + r` (`x + 2r`) had the same
+  value column (the reviewer's alias test, now `wire_value()` in `hash_table_relation.rs`, asserts
+  the alias still holds for the value column — the constraint below is what kills it).
+- Constraint (wiring member, degree 3 with `eq`): `sel · (Σ_{k<64} 2^k canon_k + w_hi) − (r_hi − 1) · sel = 0`
+  per alignment, `sel ∈ {wire_aligned, wire_shifted}` (VK bit columns), `canon_k` 64 committed bit
+  columns (`layout::CANON..COMMITTED`, booleanity in the row relation), `w_hi` = the encoding's top
+  64 bits as a linear form (`wiring::canonicality(shifted)`): aligned `2^32 · bswap(m) + fr_next1`,
+  shifted `2^48 · bswap16(hi m) + 2^16 · fr_next1 + fr_hi2` (new wired word `WiredWord::FrHi2`,
+  `Weights::BswapHi16`, sources at positions 5/13). `r_hi = MODULUS_HI = 0x3064_4e72_e131_a029`.
+- Soundness: accepted ⇒ `w_hi ≤ r_hi − 1` ⇒ value `< r_hi · 2^192 < r` ⇒ canonical; every `x + k·r`
+  has `w_hi ≥ r_hi`. Completeness loss: canonical `x ∈ [r_hi · 2^192, r)` are rejected —
+  `(r mod 2^192) / r ≈ 2^-62` per wire; `2^-62 · 1,199 ≈ 2^-52` per proof. Every real fixture wire has
+  `top-64 < r_hi` (asserted). Witness: `d = (r_hi − 1) − w_hi` (wraps for non-canonical bytes, so the
+  sum misses by a multiple of 2^64 → wiring claim ≠ public constant).
+- Cost: committed bits 227 (+64) → 291 with wired bits = 19 groups of 16 (was 15) → +4 commitments
+  (+128 B at 32 B/G1); wired words 16 (+1, still 1 group); VK 4 bits + 2 u16 (+2 bits, still 2 groups).
+  Stream columns 352 in 22 groups (was 18). Terms 230 → 296 (+64 booleanity + 2 canonicality
+  products) → term stage 8 → 9 rounds (~+64 B). Stage A on the real 2^18 table 0.753 → 0.88–1.27 s (two runs).
+- Negatives: `noncanonical_wire_bytes_are_rejected` — synthetic runs with one element encoded as
+  `1 + r` and `1 + 2r`, at a shifted wire (round 0) and an aligned wire (round 1): value column
+  aliases `1`, `Fr::from_bytes_le_checked` rejects, the honest verifier rejects the proof; the
+  untampered run verifies (`key_schedule_is_proof_independent`). `tampered_tables_are_rejected` adds a
+  forged `canon` bit. `modulus_hi_is_the_top_word_of_the_field_modulus` pins the constant.
+
+### B2 — the verifier's schedule is the key's
+
+- `SymbolicSchedule::from_reference(log, log_rows)` (key generation; `label`, `tail_len`, cells, byte
+  identities, wires, squeezes, VK columns — no run values), `JoltSchedule::witness(log, &key)` (the
+  proof's run replayed and compared to the key: `ScheduleError::ShapeMismatch`),
+  `PublicInputs::from_preamble(preamble, &key)` (the verifier hashes the public preamble natively;
+  `ScheduleError::PreambleTail`), `schedule::preamble(log)`, `HashTable::build(&schedule, &public)`.
+  `JoltSchedule::new` / `public_inputs()` removed; `wrap.rs` ported (`hash_key`, `hash_public`).
+- Negatives: `key_schedule_is_proof_independent` — proof B (another run, other values) verifies under
+  key A's statement/exporter; B's proof under A's public inputs rejected; runs with one more
+  commitment / one more round → `ShapeMismatch`; a 24-byte tail → `PreambleTail`. Real fixture:
+  key from the reference run, witness checked against it.
+
+### B3 — randomizers from the stream transcript
+
+- `T1Challenges::from_challenges(&context.challenges[offset..offset + count], log_rows)`,
+  `count = 2 · log_rows + 2` (`τ_rows`, `τ_wiring`, relation batching γ, wiring slot γ — powers);
+  `CommitmentPhase { group_count: 22, challenge_count: 38 }` for 2^18. Prover: `Members::new(&table,
+  &relation, &challenges)` after `commit_packed` → `commitment_prefix_challenges`; verifier:
+  `StreamTermExporter { log_rows, challenge_offset, public, columns: &ids, row_member, wiring_member }`
+  derives the same from `TermContext::challenges`; `T1Challenges::input_claims(&public)` are the
+  statement's member claims.
+- Negatives: `randomizers_are_bound_to_the_commitments` — members built from randomizers not drawn
+  from the transcript → `prove_assembly` = `Err(StageLink)` (the exporter's terms don't link);
+  re-ordered commitments in an honest proof → rejected.
+
+### MAJOR + minors
+
+- `adapter.rs`: `StreamColumns` (packing order: bits incl. wired + canon, u32 words, VK bits, VK u16;
+  `ids[local] → stream::ColumnId`), `Members`, `StreamTermExporter: stream::TermExporter`
+  (`terms_observed` routes every verifier multiplication through `TermObserver::fr_mul`; 3,278 Fr
+  mults on the real table, budget 5k). `terms::terms(&ctx, &mut mul)` takes the multiplication.
+- Removed public diagnostics: `column_specs`, `members`, `kernel_counts` (test-local now),
+  `WiringProver::final_parts`; nominal imports fixed (`CanonicalEncoding`).
+- Binding order: T1's members now bind the top row variable first (`HighToLow`, the stream's
+  `column_evaluations(row_point)` convention); `eq_rounds` pairs `τ[i]` with round `i`; the verifier
+  formulas take `row_point` as the big-endian point (no reversal). T1 members ride under the stream's
+  degree-5 stage encoding (`StageMember.degree = 5`, own degree 3).
+
+### Real fibonacci 2^18 (`hash_table_fixture`)
+
+| | |
+|---|---|
+| columns | 227 committed bits + 64 wired bits + 16 wired words + 6 VK → 352 stream columns / 22 groups (k = 16) |
+| terms | T = 296, d = 2; 3,278 verifier Fr multiplications (terms), kernels 31 distinct `(slot, group, weights)`, 726 entries, 14 value forms |
+| wires | 1,199 aligned + 0 shifted (shifted alignment exercised by the synthetic profile), all canonical with slack |
+| stage A | 0.88–1.27 s over two runs (members setup 0.68–0.92 s); witness replay 0.01 s, build 0.31–0.47 s |
+| 2^18 verifier cost (synthetic, whole assembly) | `ec_mul 146, pairing_pairs 8, fr_mul 9,933, keccak 347` at 2^13 rows |
+
+### Tests / gates
+
+- `cargo nextest run -p jolt-wrapper --test hash_table_relation` (8): chain + cells, byte identities +
+  key determinism, members + terms (T, d, mults), tampers, MODULUS_HI, B1 / B2 / B3 verifier-path.
+- `cargo nextest run -p jolt-wrapper --features prover-fixtures --test hash_table_fixture --no-capture`.
+- Gates (scratch `w4t1-verify`): clippy `--lib --test hash_table_relation --test hash_table_fixture
+  --test perf1_profile` with and without `--features prover-fixtures`, rustfmt, style checker clean on
+  this lane's files. Pre-existing at HEAD: `relation_table/mod.rs` `identity_mle_observed` /
+  `eq_mle_observed` are dead code → `cargo clippy -p jolt-wrapper --lib -- -D warnings` fails on
+  main before this lane's changes (W4-R; scratch build carried a local `#[expect]`).

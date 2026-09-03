@@ -24,9 +24,7 @@ use jolt_transcript::{LabelWithCount, Transcript};
 
 use super::blake3::{Block, ByteOrigin, Chain, BLOCK_BYTES, CHUNK_START, KEYED_HASH};
 use super::recorder::{Decoder, Event, Recorded};
-use super::wiring::{
-    PublicInputs, VkColumns, CHALLENGE_POS, LOG_CELL, NEXT_FLAGS_POS, NEXT_LEN_POS,
-};
+use super::wiring::{VkColumns, CHALLENGE_POS, LOG_CELL, NEXT_FLAGS_POS, NEXT_LEN_POS};
 
 /// A group element absorbed as bytes and committed in the limb table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -120,10 +118,13 @@ impl CellIndex {
 /// included, so the padded row count is fixed).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SymbolicSchedule {
+    /// The transcript's domain label (`Transcript::new`).
+    pub label: Vec<u8>,
     pub cells: Vec<CellPlan>,
     pub log_rows: usize,
-    /// The 22-or-so preamble bytes sharing the first block (public input).
-    pub tail: Vec<u8>,
+    /// Number of preamble bytes sharing the first block (their values are
+    /// public inputs, see `PublicInputs::from_preamble`).
+    pub tail_len: usize,
     /// Block length and flags the first compression uses (profile constants).
     pub first_block_len: u32,
     pub first_flags: u32,
@@ -136,6 +137,16 @@ pub struct SymbolicSchedule {
 }
 
 impl SymbolicSchedule {
+    /// Key generation: the schedule of the profile from one recorded reference
+    /// run of the verifier. `log_rows = None` picks the smallest power of two
+    /// that fits the run.
+    pub fn from_reference(
+        log: &[Recorded],
+        log_rows: Option<usize>,
+    ) -> Result<Self, ScheduleError> {
+        JoltSchedule::replay(log, log_rows).map(|schedule| schedule.symbolic)
+    }
+
     pub fn rows(&self) -> usize {
         1 << self.log_rows
     }
@@ -177,12 +188,33 @@ impl SymbolicSchedule {
         })
     }
 
+    /// First row of every field-element wire: `(index, row, shifted)` —
+    /// `shifted` when the wire's byte 0 sits at byte 2 of its word (the wires
+    /// absorbed before the first squeeze, after the 22-byte preamble tail).
+    pub fn wire_rows(&self) -> Vec<(u32, usize, bool)> {
+        self.byte_links()
+            .filter_map(|(source, row, byte)| match (source, byte) {
+                (ByteSource::Wire { index, byte: 0 }, 0) => Some((index, row, false)),
+                (ByteSource::Wire { index, byte: 0 }, 2) => Some((index, row, true)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The verifier-key columns: half-word pins of every constant / padding
     /// half-word of the round-0 message words, and of the next cell's block
-    /// length and flags at positions 122 / 123. Public (preamble) bytes are
-    /// not pinned here — the verifier adds them from the public inputs.
+    /// length and flags at positions 122 / 123, plus the wire-row selectors
+    /// of the canonicality constraint. Public (preamble) bytes are not pinned
+    /// here — the verifier adds them from the public inputs.
     pub fn vk_columns(&self) -> VkColumns {
         let mut vk = VkColumns::zero(self.rows());
+        for (_, row, shifted) in self.wire_rows() {
+            if shifted {
+                vk.wire_shifted[row] = 1;
+            } else {
+                vk.wire_aligned[row] = 1;
+            }
+        }
         let mut pin = |row: usize, high: bool, value: u16| {
             let (is, constant) = if high {
                 (&mut vk.hi_is_const, &mut vk.hi_const)
@@ -230,6 +262,10 @@ pub enum ScheduleError {
     TooManyRows { rows: usize, log_rows: usize },
     #[error("the preamble tail sharing the first block has odd length {0}")]
     OddTail(usize),
+    #[error("the proof's transcript shape differs from the verifier key's schedule")]
+    ShapeMismatch,
+    #[error("the public preamble has {actual} bytes, the schedule expects a {expected}-byte tail")]
+    PreambleTail { expected: usize, actual: usize },
 }
 
 /// A transcript that only collects the bytes appended to it, for encoding a
@@ -255,6 +291,13 @@ impl Transcript for Capture {
     fn state(&self) -> [u8; 32] {
         [0; 32]
     }
+}
+
+/// Index of the labeled word opening the commitment segment.
+fn first_commitment_item(log: &[Recorded]) -> Option<usize> {
+    let commitment_word = label_word(b"commitment", 384);
+    log.iter()
+        .position(|r| item_bytes(r) == commitment_word.as_slice())
 }
 
 /// The 32-byte word `LabelWithCount(label, count)` absorbs.
@@ -311,7 +354,7 @@ impl JoltSchedule {
     /// (decoded challenge), so a table built from the result hashes exactly
     /// what the verifier's transcript hashed. `log_rows = None` picks the
     /// smallest power of two holding the segment's cells.
-    pub fn new(log: &[Recorded], log_rows: Option<usize>) -> Result<Self, ScheduleError> {
+    fn replay(log: &[Recorded], log_rows: Option<usize>) -> Result<Self, ScheduleError> {
         let Some(Recorded {
             event: Event::Start { label },
             ..
@@ -326,12 +369,9 @@ impl JoltSchedule {
         // Segment markers, by their labeled words: `jolt-verifier`'s
         // `b"commitment"` (count 384) and `jolt-dory`'s `b"dory_serde"`
         // (count = element length; only the label part is matched).
-        let commitment_word = label_word(b"commitment", 384);
         let dory_prefix = label_word(b"dory_serde", 0)[..24].to_vec();
-        let first_commitment_item = log
-            .iter()
-            .position(|r| item_bytes(r) == commitment_word.as_slice())
-            .ok_or(ScheduleError::MissingCommitments)?;
+        let first_commitment_item =
+            first_commitment_item(log).ok_or(ScheduleError::MissingCommitments)?;
         let dory_start_item = log
             .iter()
             .position(|r| item_bytes(r).get(..24) == Some(dory_prefix.as_slice()))
@@ -496,24 +536,22 @@ impl JoltSchedule {
                 }),
             })
             .collect();
-        let first_words = &chain.blocks[first_block].compression.block;
-        let tail: Vec<u8> = plans[0]
+        let first = &chain.blocks[first_block].compression;
+        let tail_len = plans[0]
             .bytes
             .iter()
             .take_while(|source| matches!(source, ByteSource::Public { .. }))
-            .enumerate()
-            .map(|(i, _)| first_words[i / 4].to_le_bytes()[i % 4])
-            .collect();
-        if tail.len() % 2 == 1 {
-            return Err(ScheduleError::OddTail(tail.len()));
+            .count();
+        if tail_len % 2 == 1 {
+            return Err(ScheduleError::OddTail(tail_len));
         }
-        let first = &chain.blocks[first_block].compression;
         let symbolic = SymbolicSchedule {
+            label: label.clone(),
             first_block_len: first.block_len,
             first_flags: first.flags,
             cells: plans,
             log_rows,
-            tail,
+            tail_len,
             wires,
             squeezes,
             rlc_cell: CellIndex(rlc_block - first_block),
@@ -527,18 +565,30 @@ impl JoltSchedule {
         })
     }
 
+    /// The witness view of a proof's recorded run under the verifier key
+    /// `key`: the replayed chain must have exactly the key's shape (cells,
+    /// byte identities, pins, wire rows), or the run is not of this profile.
+    pub fn witness(log: &[Recorded], key: &SymbolicSchedule) -> Result<Self, ScheduleError> {
+        let schedule = Self::replay(log, Some(key.log_rows))?;
+        if schedule.symbolic != *key {
+            return Err(ScheduleError::ShapeMismatch);
+        }
+        Ok(schedule)
+    }
+
     /// The blocks laid out as cells, padding included.
     pub fn table_blocks(&self) -> &[Block] {
         &self.chain.blocks[self.blocks.clone()]
     }
+}
 
-    /// The public inputs of the table.
-    pub fn public_inputs(&self) -> PublicInputs {
-        PublicInputs {
-            state_in: self.table_blocks()[0].compression.cv,
-            block_len: self.symbolic.first_block_len,
-            flags: self.symbolic.first_flags,
-            tail: self.symbolic.tail.clone(),
-        }
-    }
+/// The public preamble of a recorded run: every byte absorbed before the
+/// commitment segment (hashed natively by the verifier, see
+/// `PublicInputs::from_preamble`).
+pub fn preamble(log: &[Recorded]) -> Vec<u8> {
+    let end = first_commitment_item(log).unwrap_or(log.len());
+    log[..end]
+        .iter()
+        .flat_map(|r| item_bytes(r).iter().copied())
+        .collect()
 }

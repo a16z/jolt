@@ -1,8 +1,8 @@
 //! The row sumcheck `Σ_row eq(τ, row) · Q(row)` as a batch member: round 0
 //! runs on the borrowed 0/1 columns (no field multiplications), later rounds
 //! on the bound field columns; `s(X) = c · l(X) · t(X)` with `t(1)` recovered
-//! from the running claim. Row-index bits are bound LSB-first (round `i`
-//! binds bit `i` against `τ[n − 1 − i]`).
+//! from the running claim. Row-index bits are bound high-to-low like every
+//! stream column (round `i` binds the top remaining bit against `τ[i]`).
 
 use jolt_field::{Field, Fr, One, Ring, Zero};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
@@ -173,9 +173,9 @@ impl<'a> HashTableProver<'a> {
     }
 
     fn round_on_bits(&mut self) -> [Fr; 4] {
-        let n = self.tau.len();
-        let tau_v = self.tau[n - 1];
-        let e = EqPolynomial::<Fr>::evals(&self.tau[..n - 1], None);
+        let tau_v = self.tau[0];
+        let e = EqPolynomial::<Fr>::evals(&self.tau[1..], None);
+        let half = e.len();
         let (t0, t1, t2) = e
             .par_iter()
             .enumerate()
@@ -183,9 +183,9 @@ impl<'a> HashTableProver<'a> {
                 || (Fr::zero(), Fr::zero(), Fr::zero()),
                 |(s0, s1, s2), (i, &weight)| {
                     (
-                        s0 + weight * self.q_bits(2 * i),
-                        s1 + weight * self.q_bits(2 * i + 1),
-                        s2 + weight * self.q2_bits(2 * i, 2 * i + 1),
+                        s0 + weight * self.q_bits(i),
+                        s1 + weight * self.q_bits(i + half),
+                        s2 + weight * self.q2_bits(i, i + half),
                     )
                 },
             )
@@ -199,9 +199,9 @@ impl<'a> HashTableProver<'a> {
     }
 
     fn round_on_field(&self, running: Fr) -> Result<[Fr; 4], SumcheckError<Fr>> {
-        let n = self.tau.len();
-        let tau_v = self.tau[n - 1 - self.round];
-        let e = EqPolynomial::<Fr>::evals(&self.tau[..n - 1 - self.round], None);
+        let tau_v = self.tau[self.round];
+        let e = EqPolynomial::<Fr>::evals(&self.tau[self.round + 1..], None);
+        let half = e.len();
         let (nv, nw) = (self.v.len(), self.w.len());
         let (t0, t2) = e
             .par_iter()
@@ -219,12 +219,12 @@ impl<'a> HashTableProver<'a> {
                 },
                 |(mut s0, mut s2, mut v, mut w, mut dv, mut dw), (i, &weight)| {
                     for (j, column) in self.v.iter().enumerate() {
-                        v[j] = column[2 * i];
-                        dv[j] = column[2 * i + 1] - column[2 * i];
+                        v[j] = column[i];
+                        dv[j] = column[i + half] - column[i];
                     }
                     for (j, column) in self.w.iter().enumerate() {
-                        w[j] = column[2 * i];
-                        dw[j] = column[2 * i + 1] - column[2 * i];
+                        w[j] = column[i];
+                        dw[j] = column[i + half] - column[i];
                     }
                     s0 += weight * self.q(&v, &w);
                     s2 += weight * self.q2(&dv, &dw);
@@ -245,23 +245,23 @@ impl<'a> HashTableProver<'a> {
     }
 
     fn bind(&mut self, r: Fr) {
-        let n = self.tau.len();
-        let tau_v = self.tau[n - 1 - self.round];
+        let tau_v = self.tau[self.round];
         if self.round == 0 {
             let table = self.table;
             let lut = [Fr::zero(), Fr::one() - r, r, Fr::one()];
             let fold_bits = |column: &Vec<u8>| -> Vec<Fr> {
-                (0..column.len() / 2)
-                    .map(|i| lut[usize::from(column[2 * i] | (column[2 * i + 1] << 1))])
+                let half = column.len() / 2;
+                (0..half)
+                    .map(|i| lut[usize::from(column[i] | (column[i + half] << 1))])
                     .collect()
             };
             self.v = table.bits.par_iter().map(fold_bits).collect();
             let mut w: Vec<Vec<Fr>> = table.wired_bits.par_iter().map(fold_bits).collect();
             w.par_extend(table.wired_words.par_iter().map(|column| {
-                (0..column.len() / 2)
+                let half = column.len() / 2;
+                (0..half)
                     .map(|i| {
-                        let (lo, hi) =
-                            (Fr::from_u32(column[2 * i]), Fr::from_u32(column[2 * i + 1]));
+                        let (lo, hi) = (Fr::from_u32(column[i]), Fr::from_u32(column[i + half]));
                         lo + r * (hi - lo)
                     })
                     .collect()
@@ -273,8 +273,9 @@ impl<'a> HashTableProver<'a> {
                 .chain(self.w.par_iter_mut())
                 .for_each(|column| {
                     let half = column.len() / 2;
-                    for i in 0..half {
-                        column[i] = column[2 * i] + r * (column[2 * i + 1] - column[2 * i]);
+                    let (lo, hi) = column.split_at_mut(half);
+                    for (lo, hi) in lo.iter_mut().zip(hi.iter()) {
+                        *lo += r * (*hi - *lo);
                     }
                     column.truncate(half);
                 });

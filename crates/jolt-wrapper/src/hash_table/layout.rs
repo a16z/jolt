@@ -30,7 +30,11 @@ pub const CARRY_A_LO: usize = 128;
 pub const CARRY_A_HI: usize = 129;
 pub const CARRY_C: usize = 130;
 pub const MESSAGE: usize = 131;
-pub const COMMITTED: usize = 163;
+/// Canonicality witness of the field-element wires: the 64 bits of
+/// `(r_hi − 1) − w_hi` on wire rows (see `terms::canonicality`), zero elsewhere.
+pub const CANON: usize = 163;
+pub const CANON_BITS: usize = 64;
+pub const COMMITTED: usize = CANON + CANON_BITS;
 
 /// Wired word columns in column space start right after the committed bits
 /// (`din_k` is at `A_OUT + k`, `bin_k` at `C_OUT + k`).
@@ -38,8 +42,8 @@ pub const WIRED_WORD_BASE: usize = COMMITTED;
 pub const LOG_COLUMNS: usize = 8;
 
 pub const WIRED_BITS: usize = 2 * WORD_BITS;
-pub const WIRED_WORDS: usize = 15;
-/// Booleanity × 163, XOR × 64, ternary add, binary add.
+pub const WIRED_WORDS: usize = 16;
+/// Booleanity × 227, XOR × 64, ternary add, binary add.
 pub const CONSTRAINTS: usize = COMMITTED + WIRED_BITS + 2;
 /// Sumcheck degree of the row relation including the `eq` factor.
 pub const DEGREE: usize = 3;
@@ -88,6 +92,9 @@ pub enum WiredWord {
     /// Wire rows: `bswap16` of the low half-word of `m` eight rows later (the
     /// last two bytes of a field element absorbed two bytes into its word).
     FrTail,
+    /// Shifted wire rows: `bswap16` of the high half-word of `m` two rows
+    /// later (bytes 6–7 of the field element).
+    FrHi2,
 }
 
 impl WiredWord {
@@ -107,6 +114,7 @@ impl WiredWord {
         Self::FrNext(6),
         Self::FrNext(7),
         Self::FrTail,
+        Self::FrHi2,
     ];
 
     /// Index among the wired words (and offset from `WIRED_WORD_BASE`).
@@ -121,6 +129,7 @@ impl WiredWord {
             Self::ZIn => 6,
             Self::FrNext(i) => 6 + usize::from(i),
             Self::FrTail => 14,
+            Self::FrHi2 => 15,
         }
     }
 
@@ -276,7 +285,7 @@ pub fn eq_rounds(tau: &[Fr], challenges: &[Fr]) -> Fr {
         "one challenge per row variable"
     );
     let one = Fr::from_u64(1);
-    tau.iter().rev().zip(challenges).fold(one, |acc, (t, r)| {
+    tau.iter().zip(challenges).fold(one, |acc, (t, r)| {
         let tr = *t * *r;
         acc * (one - *t - *r + tr + tr)
     })

@@ -22,10 +22,12 @@
 use jolt_field::{Fr, One, Ring, Zero};
 use jolt_poly::{EqPlusOnePolynomial, EqPolynomial};
 
-use super::blake3::{last_writer, schedule, G_INDICES, HALF_STEPS, IV, ROTATIONS, ROUNDS};
+use super::blake3::{last_writer, schedule, Chain, G_INDICES, HALF_STEPS, IV, ROTATIONS, ROUNDS};
 use super::layout::{
-    ColumnEvals, WiredWord, WordColumn, MESSAGE, WIRED_BITS, WIRED_WORDS, WORD_BITS,
+    ColumnEvals, WiredWord, WordColumn, CANON, CANON_BITS, COMMITTED, MESSAGE, WIRED_BITS,
+    WIRED_WORDS, WORD_BITS,
 };
+use super::schedule::{ScheduleError, SymbolicSchedule};
 
 pub const LOG_CELL: usize = 7;
 pub const CELL_ROWS: usize = 1 << LOG_CELL;
@@ -39,8 +41,13 @@ pub const CHALLENGE_ROWS: usize = 2;
 pub const WIRE_START_POSITIONS: [usize; 4] = [0, 8, 5, 13];
 pub const SHIFTED_WIRE_START_POSITIONS: [usize; 2] = [5, 13];
 /// Batching coefficients of the wiring zero-check: one per wired slot (64
-/// bits, then the words), then the low / high half-word pins.
-pub const WIRING_TERMS: usize = WIRED_BITS + WIRED_WORDS + 2;
+/// bits, then the words), the low / high half-word pins, then the aligned /
+/// shifted wire canonicality constraints.
+pub const WIRING_TERMS: usize = WIRED_BITS + WIRED_WORDS + 4;
+/// The top 64 bits of the BN254 scalar modulus `r`; an absorbed field element
+/// is canonical when the top 64 bits of its big-endian encoding are below it
+/// (see [`canonicality`]).
+pub const MODULUS_HI: u64 = 0x3064_4e72_e131_a029;
 
 /// A wired 32-bit word: the two XOR operands are committed as bits, the rest
 /// as words.
@@ -81,6 +88,8 @@ pub enum Weights {
     Mask(u8),
     /// Byte swap of the low half-word (`bytes[0] · 2^8 + bytes[1]`).
     BswapLo16,
+    /// Byte swap of the high half-word (`bytes[2] · 2^8 + bytes[3]`).
+    BswapHi16,
 }
 
 impl Weights {
@@ -90,6 +99,7 @@ impl Weights {
             Self::Bswap => word.swap_bytes(),
             Self::Mask(n) => word & ((1u32 << n) - 1),
             Self::BswapLo16 => (word & 0xffff).swap_bytes() >> 16,
+            Self::BswapHi16 => (word >> 16).swap_bytes() >> 16,
         }
     }
 
@@ -100,6 +110,7 @@ impl Weights {
             Self::Bswap => Some(8 * (3 - j / 8) + j % 8),
             Self::Mask(n) => (j < usize::from(n)).then_some(j),
             Self::BswapLo16 => (j < 16).then(|| 8 * (1 - j / 8) + j % 8),
+            Self::BswapHi16 => (j >= 16).then(|| 8 * (3 - j / 8) + j % 8),
         }
     }
 }
@@ -114,18 +125,24 @@ pub enum VkColumn {
     LoConst,
     HiIsConst,
     HiConst,
+    /// 1 on the first row of an aligned field-element wire (canonicality).
+    WireAligned,
+    /// 1 on the first row of a two-byte-shifted field-element wire.
+    WireShifted,
 }
 
 impl VkColumn {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::LoIsConst,
         Self::LoConst,
         Self::HiIsConst,
         Self::HiConst,
+        Self::WireAligned,
+        Self::WireShifted,
     ];
 
     pub fn is_bit(self) -> bool {
-        matches!(self, Self::LoIsConst | Self::HiIsConst)
+        !matches!(self, Self::LoConst | Self::HiConst)
     }
 }
 
@@ -136,6 +153,8 @@ pub struct VkColumns {
     pub lo_const: Vec<u16>,
     pub hi_is_const: Vec<u8>,
     pub hi_const: Vec<u16>,
+    pub wire_aligned: Vec<u8>,
+    pub wire_shifted: Vec<u8>,
 }
 
 impl VkColumns {
@@ -145,6 +164,8 @@ impl VkColumns {
             lo_const: vec![0; rows],
             hi_is_const: vec![0; rows],
             hi_const: vec![0; rows],
+            wire_aligned: vec![0; rows],
+            wire_shifted: vec![0; rows],
         }
     }
 
@@ -154,6 +175,8 @@ impl VkColumns {
             VkColumn::LoConst => u32::from(self.lo_const[row]),
             VkColumn::HiIsConst => u32::from(self.hi_is_const[row]),
             VkColumn::HiConst => u32::from(self.hi_const[row]),
+            VkColumn::WireAligned => u32::from(self.wire_aligned[row]),
+            VkColumn::WireShifted => u32::from(self.wire_shifted[row]),
         }
     }
 }
@@ -176,6 +199,33 @@ pub const NEXT_LEN_POS: usize = CHALLENGE_POS + CHALLENGE_ROWS;
 pub const NEXT_FLAGS_POS: usize = NEXT_LEN_POS + 1;
 
 impl PublicInputs {
+    /// The verifier's public inputs from the natively hashed preamble (the
+    /// bytes `jolt_verifier` absorbs before the first commitment, under the
+    /// schedule's domain label): the key the first table compression starts
+    /// from, its block length / flags (profile constants) and the tail bytes
+    /// sharing its block.
+    pub fn from_preamble(
+        preamble: &[u8],
+        schedule: &SymbolicSchedule,
+    ) -> Result<Self, ScheduleError> {
+        let mut padded = [0u8; 32];
+        padded[..schedule.label.len()].copy_from_slice(&schedule.label);
+        let mut chain = Chain::new(blake3::hash(&padded).as_bytes());
+        chain.absorb(0, preamble);
+        if chain.pending().len() != schedule.tail_len {
+            return Err(ScheduleError::PreambleTail {
+                expected: schedule.tail_len,
+                actual: chain.pending().len(),
+            });
+        }
+        Ok(Self {
+            state_in: chain.key(),
+            block_len: schedule.first_block_len,
+            flags: schedule.first_flags,
+            tail: chain.pending().to_vec(),
+        })
+    }
+
     /// The word a `Previous` read of `position` yields for the first cell.
     pub fn previous_word(&self, position: usize) -> u32 {
         match position {
@@ -184,6 +234,18 @@ impl PublicInputs {
             NEXT_FLAGS_POS => self.flags,
             _ => 0,
         }
+    }
+
+    /// The public inputs as the stream statement's field elements: the key
+    /// words, block length, flags, then one element per tail byte.
+    pub fn field_elements(&self) -> Vec<Fr> {
+        self.state_in
+            .iter()
+            .copied()
+            .chain([self.block_len, self.flags])
+            .map(Fr::from_u32)
+            .chain(self.tail.iter().map(|b| Fr::from_u64(u64::from(*b))))
+            .collect()
     }
 
     /// `(word, high half, value)` of every pinned half-word of the first block.
@@ -307,6 +369,9 @@ pub fn source(p: usize, slot: WordSlot) -> Source {
             }
             WordSlot::Word(WiredWord::FrTail) if SHIFTED_WIRE_START_POSITIONS.contains(&p) => {
                 wire_word(p, 8, Weights::BswapLo16)
+            }
+            WordSlot::Word(WiredWord::FrHi2) if SHIFTED_WIRE_START_POSITIONS.contains(&p) => {
+                wire_word(p, 2, Weights::BswapHi16)
             }
             WordSlot::Word(_)
                 if !matches!(slot, WordSlot::Word(WiredWord::AIn | WiredWord::CIn)) =>
@@ -457,6 +522,8 @@ pub struct VkEvals {
     pub lo_const: Fr,
     pub hi_is_const: Fr,
     pub hi_const: Fr,
+    pub wire_aligned: Fr,
+    pub wire_shifted: Fr,
 }
 
 /// `eq(x, y)` for two big-endian points of equal length.
@@ -487,6 +554,10 @@ impl WiringStatement<'_> {
 
     fn gamma_hi(&self) -> Fr {
         self.gammas[WIRED_BITS + WIRED_WORDS + 1]
+    }
+
+    fn gamma_canon(&self, shifted: bool) -> Fr {
+        self.gammas[WIRED_BITS + WIRED_WORDS + 2 + usize::from(shifted)]
     }
 
     /// Batched weight of bit `k` of a value copied into `slot`: per-bit
@@ -581,7 +652,7 @@ impl WiringStatement<'_> {
             self.log_rows,
             "one challenge per row variable"
         );
-        let r: Vec<Fr> = challenges.iter().rev().copied().collect();
+        let r = challenges;
         let split = self.log_rows - LOG_CELL;
         let (tau_hi, tau_lo) = tau.split_at(split);
         let (r_hi, r_lo) = r.split_at(split);
@@ -625,8 +696,26 @@ impl WiringStatement<'_> {
             })
         };
         let wired = wired - self.gamma_lo() * const_lo - self.gamma_hi() * const_hi;
-        let pins =
-            self.gamma_lo() * is_lo * half(0) + self.gamma_hi() * is_hi * half(WORD_BITS / 2);
+        // Canonicality of the field-element wires (`canonicality`):
+        // sel · (Σ_k 2^k canon_k + w_hi) − (r_hi − 1) · sel per wire class.
+        let bound = Fr::from_u64(MODULUS_HI - 1);
+        let canon = (0..CANON_BITS).fold(Fr::zero(), |acc, k| {
+            acc + evals.committed[CANON + k].mul_pow_2(k)
+        });
+        let word_hi = |shifted: bool| {
+            canonicality(shifted)
+                .iter()
+                .fold(Fr::zero(), |acc, (column, weight)| {
+                    acc + *weight * column_eval(evals, *column)
+                })
+        };
+        let wired = wired
+            - self.gamma_canon(false) * bound * vk.wire_aligned
+            - self.gamma_canon(true) * bound * vk.wire_shifted;
+        let pins = self.gamma_lo() * is_lo * half(0)
+            + self.gamma_hi() * is_hi * half(WORD_BITS / 2)
+            + self.gamma_canon(false) * vk.wire_aligned * (canon + word_hi(false))
+            + self.gamma_canon(true) * vk.wire_shifted * (canon + word_hi(true));
 
         // Source side: Σ_κ K_κ(τ, r) · V_κ(r).
         let mut sources = Fr::zero();
@@ -669,5 +758,48 @@ impl WiringStatement<'_> {
             }
         }
         [eq_full, wired, pins, sources]
+    }
+}
+
+/// The top 64 bits `w_hi` of a wire's big-endian encoding as a linear form
+/// over local column ids (committed bits `< COMMITTED`, wired words at
+/// `COMMITTED + index`): aligned wires read `2^32 · bswap(m) + fr_next(1)`,
+/// shifted wires `2^48 · bswap16(hi(m)) + 2^16 · fr_next(1) + fr_hi2`. A wire
+/// is accepted iff `(r_hi − 1) − w_hi` has a 64-bit witness, i.e. `w_hi < r_hi`
+/// — sound for every non-canonical encoding (`x + r ≥ r` has `w_hi ≥ r_hi`);
+/// incomplete for the canonical values whose top 64 bits equal `r_hi`, a
+/// `≈ 2^-62` fraction of the field.
+pub fn canonicality(shifted: bool) -> Vec<(usize, Fr)> {
+    let mut form = Vec::with_capacity(WORD_BITS + 2);
+    if shifted {
+        for j in WORD_BITS / 2..WORD_BITS {
+            form.push((
+                MESSAGE + j,
+                Fr::one().mul_pow_2(48 + 8 * (3 - j / 8) + j % 8),
+            ));
+        }
+        form.push((
+            COMMITTED + WiredWord::FrNext(1).index(),
+            Fr::one().mul_pow_2(16),
+        ));
+        form.push((COMMITTED + WiredWord::FrHi2.index(), Fr::one()));
+    } else {
+        for j in 0..WORD_BITS {
+            form.push((
+                MESSAGE + j,
+                Fr::one().mul_pow_2(32 + 8 * (3 - j / 8) + j % 8),
+            ));
+        }
+        form.push((COMMITTED + WiredWord::FrNext(1).index(), Fr::one()));
+    }
+    form
+}
+
+/// A committed / wired-word evaluation by local id (see [`canonicality`]).
+fn column_eval(evals: &ColumnEvals, column: usize) -> Fr {
+    if column < COMMITTED {
+        evals.committed[column]
+    } else {
+        evals.wired_words[column - COMMITTED]
     }
 }

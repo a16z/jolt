@@ -12,14 +12,16 @@
 use rayon::prelude::*;
 
 use super::blake3::{Block, G_PER_ROUND, ROTATIONS, ROUNDS};
+use jolt_field::CanonicalEncoding;
+
 use super::layout::{
-    WiredWord, WordColumn, A_OUT, B_XOR, CARRY_A_HI, CARRY_A_LO, CARRY_C, COMMITTED, C_OUT, D_XOR,
-    MESSAGE, WORD_BITS,
+    WiredWord, WordColumn, A_OUT, B_XOR, CANON, CANON_BITS, CARRY_A_HI, CARRY_A_LO, CARRY_C,
+    COMMITTED, C_OUT, D_XOR, MESSAGE, WORD_BITS,
 };
 use super::schedule::{CellIndex, CellPlan, JoltSchedule};
 use super::wiring::{
-    materialize, word, PublicInputs, VkColumns, CHAINING_POS, CHALLENGE_POS, CHALLENGE_ROWS,
-    LOG_CELL, NEXT_FLAGS_POS, NEXT_LEN_POS,
+    canonicality, materialize, word, PublicInputs, VkColumns, CHAINING_POS, CHALLENGE_POS,
+    CHALLENGE_ROWS, LOG_CELL, MODULUS_HI, NEXT_FLAGS_POS, NEXT_LEN_POS,
 };
 
 /// The table: committed bit columns, wired columns, verifier-key columns and
@@ -90,9 +92,12 @@ fn fill_cell(bits: &mut [Vec<u8>], base: usize, block: &Block, next: (u32, u32))
 }
 
 impl HashTable {
-    /// Lay out the schedule's cells (padding included) and materialize the
-    /// wired columns through the wiring table.
-    pub fn build(schedule: &JoltSchedule) -> Self {
+    /// Lay out the schedule's cells (padding included), materialize the
+    /// wired columns through the wiring table and the canonicality witness of
+    /// every field-element wire. `public` are the verifier's public inputs
+    /// (`PublicInputs::from_preamble`); the witness's own values must agree
+    /// with them for the relation to hold.
+    pub fn build(schedule: &JoltSchedule, public: &PublicInputs) -> Self {
         let blocks = schedule.table_blocks();
         let log_rows = schedule.symbolic.log_rows;
         let rows = 1usize << log_rows;
@@ -104,8 +109,28 @@ impl HashTable {
             );
             fill_cell(&mut bits, cell << LOG_CELL, block, next);
         }
-        let public = schedule.public_inputs();
-        let (wired_bits, wired_words) = materialize(&bits, &public);
+        let (wired_bits, wired_words) = materialize(&bits, public);
+        // Canonicality witness `(r_hi − 1) − w_hi` on wire rows. A non-canonical
+        // encoding (`w_hi ≥ r_hi`) wraps and cannot satisfy the constraint; the
+        // table is still built so tampered witnesses can be proven and rejected.
+        let forms = [canonicality(false), canonicality(true)];
+        for (_, row, shifted) in schedule.symbolic.wire_rows() {
+            let word_hi =
+                forms[usize::from(shifted)]
+                    .iter()
+                    .fold(0u128, |acc, (column, weight)| {
+                        let value = if *column < COMMITTED {
+                            u128::from(bits[*column][row])
+                        } else {
+                            u128::from(wired_words[*column - COMMITTED][row])
+                        };
+                        acc + value * weight.to_u128_checked().unwrap_or(0)
+                    });
+            let d = (u128::from(MODULUS_HI) - 1).wrapping_sub(word_hi) as u64;
+            for k in 0..CANON_BITS {
+                bits[CANON + k][row] = ((d >> k) & 1) as u8;
+            }
+        }
         // Carries from the materialized operands (one owner of the add rule).
         let a_in = &wired_words[WiredWord::AIn.index()];
         let c_in = &wired_words[WiredWord::CIn.index()];
@@ -136,7 +161,7 @@ impl HashTable {
             wired_bits,
             wired_words,
             vk: schedule.symbolic.vk_columns(),
-            public,
+            public: public.clone(),
             log_rows,
         }
     }

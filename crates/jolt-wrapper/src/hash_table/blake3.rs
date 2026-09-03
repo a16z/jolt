@@ -346,6 +346,17 @@ impl Chain {
         });
     }
 
+    /// The key of the pending segment (the chaining value the next
+    /// compression starts from).
+    pub fn key(&self) -> [u32; 8] {
+        self.cv
+    }
+
+    /// The bytes absorbed since the last compression.
+    pub fn pending(&self) -> &[u8] {
+        &self.buffer
+    }
+
     /// `Blake3Transcript::state()`: the keyed digest of the pending segment.
     pub fn state(&self) -> [u8; 32] {
         let mut state = [0u8; 32];

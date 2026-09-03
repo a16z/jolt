@@ -12,10 +12,12 @@ use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
 use rayon::prelude::*;
 
-use super::layout::{WiredWord, WordColumn, WIRED_BITS, WIRED_WORDS, WORD_BITS};
+use super::layout::{
+    WiredWord, WordColumn, CANON, CANON_BITS, COMMITTED, WIRED_BITS, WIRED_WORDS, WORD_BITS,
+};
 use super::wiring::{
-    source, word, PublicInputs, Source, VkColumns, Weights, WiringStatement, WordSlot, CELL_ROWS,
-    LOG_CELL,
+    canonicality, source, word, PublicInputs, Source, VkColumns, Weights, WiringStatement,
+    WordSlot, CELL_ROWS, LOG_CELL, MODULUS_HI,
 };
 
 /// A read side: the value form `Σ_j value_weight(slot, coefficient(j)) ·
@@ -57,14 +59,12 @@ pub struct WiringProver {
     tau: Vec<Fr>,
     round: usize,
     claim: Fr,
-    /// `eq(τ, row)`, the wired-side linear part, the two pin selectors and
-    /// the two message half-words.
+    /// `eq(τ, row)`, the wired-side linear part and the `(selector, value)`
+    /// pin products: the two message half-word pins and the two wire
+    /// canonicality constraints.
     eq: Vec<Fr>,
     linear: Vec<Fr>,
-    sel_lo: Vec<Fr>,
-    sel_hi: Vec<Fr>,
-    m_lo: Vec<Fr>,
-    m_hi: Vec<Fr>,
+    pins: Vec<(Vec<Fr>, Vec<Fr>)>,
     /// `(P_t, V_t)` per read key.
     reads: Vec<(Vec<Fr>, Vec<Fr>)>,
 }
@@ -87,6 +87,12 @@ impl WiringProver {
         let gammas = statement.gammas;
         let gamma_lo = gammas[WIRED_BITS + WIRED_WORDS];
         let gamma_hi = gammas[WIRED_BITS + WIRED_WORDS + 1];
+        let gamma_canon = [
+            gammas[WIRED_BITS + WIRED_WORDS + 2],
+            gammas[WIRED_BITS + WIRED_WORDS + 3],
+        ];
+        let bound = Fr::from_u64(MODULUS_HI - 1);
+        let canon_forms = [canonicality(false), canonicality(true)];
         let eq = EqPolynomial::<Fr>::evals(&tau, None);
         let (tau_hi, tau_lo) = tau.split_at(tau.len() - LOG_CELL);
         let eq_hi = EqPolynomial::<Fr>::evals(tau_hi, None);
@@ -162,7 +168,7 @@ impl WiringProver {
         let cells = rows >> LOG_CELL;
         let tail: Vec<(usize, bool, u16)> = public.tail_halves().collect();
 
-        let per_row = |row: usize| -> (Fr, Fr, Fr, Fr, Fr, Vec<Fr>, Vec<Fr>) {
+        let per_row = |row: usize| -> (Fr, [Fr; 8], Vec<Fr>, Vec<Fr>) {
             let (cell, p) = (row >> LOG_CELL, row & (CELL_ROWS - 1));
             let mut linear = Fr::zero();
             for (k, column) in wired_bits.iter().enumerate() {
@@ -217,14 +223,59 @@ impl WiringProver {
                     acc
                 })
                 .collect();
-            (linear, sel_lo, sel_hi, m_lo, m_hi, kernels, values)
+            // Canonicality: sel · (Σ 2^k canon_k + w_hi) − (r_hi − 1) · sel.
+            let canon = (0..CANON_BITS).fold(Fr::zero(), |acc, k| {
+                acc + Fr::from_u64(u64::from(bits[CANON + k][row])).mul_pow_2(k)
+            });
+            let wire_sel = [vk.wire_aligned[row], vk.wire_shifted[row]];
+            let mut canon_pins = [Fr::zero(); 4];
+            for shifted in 0..2 {
+                let sel = gamma_canon[shifted] * Fr::from_u64(u64::from(wire_sel[shifted]));
+                linear -= sel * bound;
+                let word_hi =
+                    canon_forms[shifted]
+                        .iter()
+                        .fold(Fr::zero(), |acc, (column, weight)| {
+                            let value = if *column < COMMITTED {
+                                u64::from(bits[*column][row])
+                            } else {
+                                u64::from(wired_words[*column - COMMITTED][row])
+                            };
+                            acc + *weight * Fr::from_u64(value)
+                        });
+                canon_pins[2 * shifted] = sel;
+                canon_pins[2 * shifted + 1] = canon + word_hi;
+            }
+            (
+                linear,
+                [
+                    sel_lo,
+                    m_lo,
+                    sel_hi,
+                    m_hi,
+                    canon_pins[0],
+                    canon_pins[1],
+                    canon_pins[2],
+                    canon_pins[3],
+                ],
+                kernels,
+                values,
+            )
         };
         let columns: Vec<_> = (0..rows).into_par_iter().map(per_row).collect();
         let reads = (0..keys.len())
             .map(|t| {
                 (
-                    columns.iter().map(|c| c.5[t]).collect(),
-                    columns.iter().map(|c| c.6[t]).collect(),
+                    columns.iter().map(|c| c.2[t]).collect(),
+                    columns.iter().map(|c| c.3[t]).collect(),
+                )
+            })
+            .collect();
+        let pins = (0..4)
+            .map(|p| {
+                (
+                    columns.iter().map(|c| c.1[2 * p]).collect(),
+                    columns.iter().map(|c| c.1[2 * p + 1]).collect(),
                 )
             })
             .collect();
@@ -234,10 +285,7 @@ impl WiringProver {
             claim: Fr::zero(),
             eq,
             linear: columns.iter().map(|c| c.0).collect(),
-            sel_lo: columns.iter().map(|c| c.1).collect(),
-            sel_hi: columns.iter().map(|c| c.2).collect(),
-            m_lo: columns.iter().map(|c| c.3).collect(),
-            m_hi: columns.iter().map(|c| c.4).collect(),
+            pins,
             reads,
         };
         drop(columns);
@@ -251,47 +299,29 @@ impl WiringProver {
         self.claim
     }
 
-    /// After `finish_rounds`: the bound `(eq, linear, pins, reads)` — the
-    /// member's final claim is `eq · (linear + pins) − reads`.
-    pub fn final_parts(&self) -> [Fr; 4] {
-        [
-            self.eq[0],
-            self.linear[0],
-            self.sel_lo[0] * self.m_lo[0] + self.sel_hi[0] * self.m_hi[0],
-            self.reads.iter().map(|(p, v)| p[0] * v[0]).sum(),
-        ]
-    }
-
     /// `H(row)` on the current (bound) tables.
     fn value(&self, row: usize) -> Fr {
-        self.eq[row]
-            * (self.linear[row]
-                + self.sel_lo[row] * self.m_lo[row]
-                + self.sel_hi[row] * self.m_hi[row])
+        let pins: Fr = self.pins.iter().map(|(s, v)| s[row] * v[row]).sum();
+        self.eq[row] * (self.linear[row] + pins)
             - self.reads.iter().map(|(p, v)| p[row] * v[row]).sum::<Fr>()
     }
 
     fn tables_mut(&mut self) -> Vec<&mut Vec<Fr>> {
-        let mut tables = vec![
-            &mut self.eq,
-            &mut self.linear,
-            &mut self.sel_lo,
-            &mut self.sel_hi,
-            &mut self.m_lo,
-            &mut self.m_hi,
-        ];
-        for (p, v) in &mut self.reads {
+        let mut tables = vec![&mut self.eq, &mut self.linear];
+        for (p, v) in self.pins.iter_mut().chain(&mut self.reads) {
             tables.push(p);
             tables.push(v);
         }
         tables
     }
 
+    /// Bind the top row variable (the stream's high-to-low order).
     fn bind(&mut self, r: Fr) {
         self.tables_mut().into_par_iter().for_each(|table| {
             let half = table.len() / 2;
-            for i in 0..half {
-                table[i] = table[2 * i] + r * (table[2 * i + 1] - table[2 * i]);
+            let (lo, hi) = table.split_at_mut(half);
+            for (lo, hi) in lo.iter_mut().zip(hi.iter()) {
+                *lo += r * (*hi - *lo);
             }
             table.truncate(half);
         });
@@ -307,17 +337,14 @@ impl WiringProver {
                 || [Fr::zero(); 4],
                 |mut acc, i| {
                     let at = |table: &[Fr], x: u64| {
-                        let (lo, hi) = (table[2 * i], table[2 * i + 1]);
+                        let (lo, hi) = (table[i], table[i + half]);
                         lo + Fr::from_u64(x) * (hi - lo)
                     };
                     for (x, slot) in acc.iter_mut().enumerate() {
                         let x = x as u64;
                         let reads: Fr = self.reads.iter().map(|(p, v)| at(p, x) * at(v, x)).sum();
-                        *slot += at(&self.eq, x)
-                            * (at(&self.linear, x)
-                                + at(&self.sel_lo, x) * at(&self.m_lo, x)
-                                + at(&self.sel_hi, x) * at(&self.m_hi, x))
-                            - reads;
+                        let pins: Fr = self.pins.iter().map(|(s, v)| at(s, x) * at(v, x)).sum();
+                        *slot += at(&self.eq, x) * (at(&self.linear, x) + pins) - reads;
                     }
                     acc
                 },

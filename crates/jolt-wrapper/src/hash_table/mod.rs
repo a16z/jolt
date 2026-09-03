@@ -3,21 +3,24 @@
 //! rows over committed bit columns in 128-row compression cells, proven by two
 //! head-aligned stage-A members: the degree-3 row relation
 //! (`Σ_row eq(τ₁, row) · Σ_j γ_j C_j(row) = 0`) and the degree-3 wiring
-//! zero-check binding every wired column to the committed word it copies.
+//! zero-check binding every wired column to the committed word it copies,
+//! pinning the protocol constants and the canonicality of every absorbed
+//! field element.
 //!
 //! - [`blake3`]: the compression function with a half-step trace and the
 //!   streaming keyed chain, byte-exact with `jolt_transcript::Blake3Transcript`.
 //! - [`recorder`]: a transcript decorator logging a verifier run.
-//! - [`schedule`]: the Jolt run as cells; the symbolic schedule (byte
-//!   identities, verifier-key columns).
+//! - [`schedule`]: the symbolic schedule (verifier key: byte identities,
+//!   pins, wire rows) and the witness view of a proof's recorded run.
 //! - [`layout`]: columns, the aligned quadratic row relation, `final_check`.
 //! - [`wiring`]: the position table of the copy constraints, wired-column
-//!   materialization, the wiring statement's verifier side.
+//!   materialization, public inputs, the wiring statement's verifier side.
 //! - [`table`]: witness generation.
 //! - [`prover`] / [`wiring_prover`]: the two `jolt_sumcheck::prover::ProveRounds`
 //!   members.
-//! - [`terms`]: the exported interface — column list, batched final relation
-//!   as affine-form terms, virtual value columns, link identities.
+//! - [`terms`]: the Fiat–Shamir randomizers, the batched final relation as
+//!   affine-form terms, virtual value columns, link row maps.
+//! - [`adapter`]: T1 on the wrapper stream (columns, members, `TermExporter`).
 
 pub mod adapter;
 pub mod blake3;
@@ -30,7 +33,7 @@ pub mod terms;
 pub mod wiring;
 pub mod wiring_prover;
 
-pub use adapter::{StreamColumns, StreamTermExporter};
+pub use adapter::{Members, StreamColumns, StreamTermExporter};
 pub use layout::{
     ColumnEvals, Relation, WiredWord, WordColumn, COMMITTED, CONSTRAINTS, DEGREE, WIRED_BITS,
     WIRED_WORDS,
@@ -42,6 +45,8 @@ pub use schedule::{
     SymbolicSchedule,
 };
 pub use table::HashTable;
-pub use terms::{AffineForm, ColumnId, ColumnKind, ColumnSpec, FinalContext, Term};
-pub use wiring::{PublicInputs, VkColumn, VkColumns, VkEvals, WiringStatement, WIRING_TERMS};
+pub use terms::{AffineForm, ColumnId, FinalContext, LinkMap, T1Challenges, Term};
+pub use wiring::{
+    PublicInputs, VkColumn, VkColumns, VkEvals, WiringStatement, MODULUS_HI, WIRING_TERMS,
+};
 pub use wiring_prover::WiringProver;

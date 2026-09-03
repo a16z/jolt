@@ -20,7 +20,7 @@ use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_field::{Field, Fr, One, Ring, Zero};
+use jolt_field::{CanonicalEncoding, Field, Fr, Ring, Zero};
 use jolt_poly::EqPolynomial;
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
 use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
@@ -40,18 +40,20 @@ use jolt_verifier::proof::JoltProof;
 use jolt_verifier::JoltVerifierPreprocessing;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use jolt_wrapper::hash_table::layout::{D_XOR, MESSAGE};
+use jolt_wrapper::hash_table::schedule::preamble;
 use jolt_wrapper::hash_table::terms::{
-    challenge125, challenge_scalar128, evaluate_terms, fr_word, kernel_counts, terms, vk_id,
+    challenge125, challenge_scalar128, evaluate_terms, fr_word, fr_word_shifted, terms, vk_id,
     LinkMap, WIRED_BIT_BASE,
 };
-use jolt_wrapper::hash_table::wiring::CELL_ROWS;
+use jolt_wrapper::hash_table::wiring::{source, Source, WordSlot, CELL_ROWS};
 use jolt_wrapper::hash_table::{AffineForm, CellIndex};
 use jolt_wrapper::hash_table::{
     ByteSource, ColumnEvals, Decoder, Event, FinalContext, HashTable, HashTableProver, ItemClass,
-    JoltSchedule, Recorded, RecordingTranscript, Relation, VkColumn, VkEvals, WiringProver,
-    WiringStatement, WordColumn, COMMITTED, CONSTRAINTS, DEGREE, WIRED_BITS, WIRED_WORDS,
-    WIRING_TERMS,
+    JoltSchedule, Members, PublicInputs, Recorded, RecordingTranscript, StreamColumns,
+    StreamTermExporter, SymbolicSchedule, T1Challenges, VkColumn, VkEvals, WiringProver,
+    WordColumn, COMMITTED, CONSTRAINTS, DEGREE, MODULUS_HI, WIRED_BITS, WIRED_WORDS,
 };
+use jolt_wrapper::stream::{TermContext, TermExporter, TermObserver};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use tracer::execution_backend::TracerBackend;
@@ -195,17 +197,51 @@ fn record(
     Recording::take_log()
 }
 
-fn powers(rng: &mut StdRng, count: usize) -> Vec<Fr> {
-    let gamma = Fr::random(rng);
-    std::iter::successors(Some(Fr::one()), |g| Some(*g * gamma))
-        .take(count)
-        .collect()
+fn random_challenges(rng: &mut StdRng, log_rows: usize) -> T1Challenges {
+    let raw: Vec<Fr> = (0..T1Challenges::count(log_rows))
+        .map(|_| Fr::random(rng))
+        .collect();
+    T1Challenges::from_challenges(&raw, log_rows)
+}
+
+struct MulCounter(usize);
+
+impl TermObserver for MulCounter {
+    fn fr_mul(&mut self, left: Fr, right: Fr) -> Fr {
+        self.0 += 1;
+        left * right
+    }
+}
+
+/// Distinct wiring kernels `(slot, group, weights)`, `(position, slot)`
+/// entries and distinct value forms `(group, weights)` of the position table.
+fn kernel_counts() -> (usize, usize, usize) {
+    let mut kernels = Vec::new();
+    let mut forms = Vec::new();
+    let mut entries = 0;
+    for p in 0..CELL_ROWS {
+        for slot in WordSlot::all() {
+            let (group, weights) = match source(p, slot) {
+                Source::Cell { group, weights, .. }
+                | Source::Previous { group, weights, .. }
+                | Source::Next { group, weights, .. } => (group, weights),
+                Source::Zero | Source::Const(_) => continue,
+            };
+            entries += 1;
+            if !kernels.contains(&(slot, group, weights)) {
+                kernels.push((slot, group, weights));
+            }
+            if !forms.contains(&(group, weights)) {
+                forms.push((group, weights));
+            }
+        }
+    }
+    (kernels.len(), entries, forms.len())
 }
 
 /// Verifier-key column evaluations at the bound point (MLE of the columns).
 fn vk_evals(table: &HashTable, challenges: &[Fr]) -> VkEvals {
-    let r: Vec<Fr> = challenges.iter().rev().copied().collect();
-    let eq = EqPolynomial::<Fr>::evals(&r, None);
+    let eq = EqPolynomial::<Fr>::evals(challenges, None);
     let mle = |values: &dyn Fn(usize) -> u64| {
         eq.iter().enumerate().fold(Fr::zero(), |acc, (row, w)| {
             acc + *w * Fr::from_u64(values(row))
@@ -216,11 +252,20 @@ fn vk_evals(table: &HashTable, challenges: &[Fr]) -> VkEvals {
         lo_const: mle(&|row| u64::from(table.vk.lo_const[row])),
         hi_is_const: mle(&|row| u64::from(table.vk.hi_is_const[row])),
         hi_const: mle(&|row| u64::from(table.vk.hi_const[row])),
+        wire_aligned: mle(&|row| u64::from(table.vk.wire_aligned[row])),
+        wire_shifted: mle(&|row| u64::from(table.vk.wire_shifted[row])),
     }
 }
 
 fn column_eval<'a>(evals: &'a ColumnEvals, vk: &VkEvals) -> impl Fn(usize) -> Fr + 'a {
-    let vk = [vk.lo_is_const, vk.lo_const, vk.hi_is_const, vk.hi_const];
+    let vk = [
+        vk.lo_is_const,
+        vk.lo_const,
+        vk.hi_is_const,
+        vk.hi_const,
+        vk.wire_aligned,
+        vk.wire_shifted,
+    ];
     move |id: usize| {
         if id < COMMITTED {
             evals.committed[id]
@@ -239,12 +284,16 @@ fn fibonacci_2_18_table() {
     let (preprocessing, public_io, proof) = fixture();
     let log = record(&preprocessing, &public_io, &proof);
 
-    // (i) byte-exact chain: `JoltSchedule::new` fails on the first state or
-    // challenge that differs from the recorded transcript.
+    // (i) byte-exact chain: the replay fails on the first state or challenge
+    // that differs from the recorded transcript. The key is derived once from
+    // the reference run; the proof's run is only checked against it.
     let start = Instant::now();
-    let schedule = JoltSchedule::new(&log, None).expect("chain replays the recorded transcript");
+    let key = SymbolicSchedule::from_reference(&log, None).expect("reference run");
+    let public = PublicInputs::from_preamble(&preamble(&log), &key).expect("public inputs");
+    let schedule =
+        JoltSchedule::witness(&log, &key).expect("chain replays the recorded transcript");
     let replay_secs = start.elapsed().as_secs_f64();
-    let symbolic = &schedule.symbolic;
+    let symbolic = &key;
     let blocks = schedule.table_blocks();
     let active = symbolic.active_cells();
     let first_squeeze = symbolic
@@ -272,7 +321,7 @@ fn fibonacci_2_18_table() {
     }
     println!(
         "elements: {elements:?}; preamble tail bytes: {}",
-        symbolic.tail.len()
+        symbolic.tail_len
     );
     assert_eq!(elements["CommitmentGt"], 41);
     assert_eq!(elements["DoryGt"], 68);
@@ -282,11 +331,12 @@ fn fibonacci_2_18_table() {
     assert_eq!(symbolic.squeezes, EXPECTED_SQUEEZES);
     assert_eq!(active, EXPECTED_CELLS);
     assert_eq!(symbolic.log_rows, 18);
-    assert_eq!(symbolic.tail.len(), 22);
+    assert_eq!(symbolic.tail_len, 22);
+    assert_eq!(public.tail.len(), 22);
 
     // (iv) shape and identities.
     let start = Instant::now();
-    let table = HashTable::build(&schedule);
+    let table = HashTable::build(&schedule, &public);
     let build_secs = start.elapsed().as_secs_f64();
     let links = LinkMap::new(symbolic);
     let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
@@ -322,7 +372,7 @@ fn fibonacci_2_18_table() {
         "links: {} wires, {} challenges, {} element/public bytes {:?}; {} constant bytes → {} pinned half-words",
         links.wires.len(), links.challenges.len(), links.bytes.len(), by_kind, constants, pinned_halves
     );
-    assert_eq!(links.wires.len(), 1_199);
+    assert_eq!(links.wires.len() + links.wires_shifted.len(), 1_199);
     assert_eq!(links.challenges.len(), 376);
     assert_eq!(by_kind["CommitmentGt"], 41 * 384);
     assert_eq!(by_kind["DoryGt"], 68 * 384);
@@ -342,7 +392,8 @@ fn fibonacci_2_18_table() {
             }
         })
     };
-    let (c125, c128, fr) = (challenge125(), challenge_scalar128(), fr_word());
+    let (c125, c128) = (challenge125(), challenge_scalar128());
+    let (fr, fr_shifted) = (fr_word(), fr_word_shifted());
     let squeeze_items: Vec<usize> = log
         .iter()
         .enumerate()
@@ -364,19 +415,36 @@ fn fibonacci_2_18_table() {
         matches!(schedule.classes[*i], ItemClass::Wire { .. })
             && matches!(r.event, Event::Append { .. })
     });
-    for (index, row) in &links.wires {
+    let mut all_wires: Vec<(u32, usize, bool)> = links
+        .wires
+        .iter()
+        .map(|&(i, r)| (i, r, false))
+        .chain(links.wires_shifted.iter().map(|&(i, r)| (i, r, true)))
+        .collect();
+    all_wires.sort_unstable();
+    for (index, row, shifted) in all_wires {
         let (_, recorded) = wire_items.next().expect("wire item");
         let Event::Append { bytes, .. } = &recorded.event else {
             unreachable!()
         };
         let mut le = bytes.clone();
         le.reverse();
+        let form = if shifted { &fr_shifted } else { &fr };
         assert_eq!(
-            row_eval(&fr, *row),
-            <Fr as jolt_field::CanonicalEncoding>::from_bytes_le_reduced(&le),
+            row_eval(form, row),
+            Fr::from_bytes_le_reduced(&le),
             "wire {index}"
         );
+        // The canonicality constraint (`top 64 bits < r_hi`) is complete for
+        // every real wire.
+        let top = u64::from_be_bytes(bytes[..8].try_into().expect("eight bytes"));
+        assert!(top < MODULUS_HI, "wire {index} is canonical with slack");
     }
+    println!(
+        "wires: {} aligned + {} shifted",
+        links.wires.len(),
+        links.wires_shifted.len()
+    );
 
     // Public outputs: the chaining rows of the RLC-γ and of the final
     // compression hold the keys the transcript continued from.
@@ -403,42 +471,27 @@ fn fibonacci_2_18_table() {
     // (ii) both members at full size through the batch engine; exported
     // terms against the native final checks.
     let mut rng = StdRng::seed_from_u64(0xf1b0);
-    let relation = Relation::new(&powers(&mut rng, CONSTRAINTS));
-    let wiring_gammas = powers(&mut rng, WIRING_TERMS);
-    let wiring = WiringStatement {
-        gammas: &wiring_gammas,
-        log_rows: table.log_rows,
-    };
-    let tau_rows: Vec<Fr> = (0..table.log_rows).map(|_| Fr::random(&mut rng)).collect();
-    let tau_wiring: Vec<Fr> = (0..table.log_rows).map(|_| Fr::random(&mut rng)).collect();
+    let challenges = random_challenges(&mut rng, table.log_rows);
+    let relation = challenges.relation();
+    let wiring = challenges.wiring();
     let rho = [Fr::random(&mut rng), Fr::random(&mut rng)];
     let log_rows = table.log_rows;
     let start = Instant::now();
-    let mut rows = HashTableProver::new(&relation, &table, tau_rows.clone());
-    let rows_round0_secs = start.elapsed().as_secs_f64();
-    let start = Instant::now();
-    let mut wires = WiringProver::new(
-        &wiring,
-        &table.bits,
-        &table.wired_bits,
-        &table.wired_words,
-        &table.vk,
-        &table.public,
-        tau_wiring.clone(),
-    );
-    let wiring_setup_secs = start.elapsed().as_secs_f64();
+    let mut members = Members::new(&table, &relation, &challenges);
+    let members_secs = start.elapsed().as_secs_f64();
     assert_eq!(
-        rows.input_claim(),
+        members.rows.input_claim(),
         Fr::zero(),
         "the real table satisfies the relation"
     );
     assert_eq!(
-        wires.input_claim(),
-        wiring.input_claim(&tau_wiring, &table.public),
-        "the real table satisfies the wiring"
+        members.wiring.input_claim(),
+        challenges.input_claims(&table.public)[1],
+        "the real table satisfies the wiring, canonicality included"
     );
     let prelude = BatchPrelude::new(
-        [rows.input_claim(), wires.input_claim()]
+        members
+            .input_claims
             .into_iter()
             .zip(rho)
             .map(|(input_claim, coefficient)| BatchMember {
@@ -456,50 +509,86 @@ fn fibonacci_2_18_table() {
     let start = Instant::now();
     let proved = prove_batch(
         &prelude,
-        &mut [&mut rows, &mut wires],
+        &mut [&mut members.rows, &mut members.wiring],
         &mut SequentialRounds,
         &mut recorder,
         &mut transcript,
     )
     .expect("stage A");
     let stage_secs = start.elapsed().as_secs_f64();
-    let evals = rows.column_evals();
+    let evals = members.rows.column_evals();
     let vk = vk_evals(&table, &proved.challenges);
-    let native = rho[0] * relation.final_check(&tau_rows, &proved.challenges, &evals)
-        + rho[1] * wiring.final_check(&tau_wiring, &proved.challenges, &evals, &vk, &table.public);
+    let native = rho[0] * relation.final_check(&challenges.tau_rows, &proved.challenges, &evals)
+        + rho[1]
+            * wiring.final_check(
+                &challenges.tau_wiring,
+                &proved.challenges,
+                &evals,
+                &vk,
+                &table.public,
+            );
     assert_eq!(native, proved.final_claim);
     let ctx = FinalContext {
-        relation: &relation,
-        wiring: &wiring,
-        tau_rows: &tau_rows,
-        tau_wiring: &tau_wiring,
-        challenges: &proved.challenges,
+        challenges: &challenges,
+        row_point: &proved.challenges,
         rho_rows: rho[0],
         rho_wiring: rho[1],
         public: &table.public,
     };
     let start = Instant::now();
-    let exported = terms(&ctx);
+    let exported = terms(&ctx, &mut |a, b| a * b);
     let terms_secs = start.elapsed().as_secs_f64();
     assert_eq!(
         evaluate_terms(&exported, &column_eval(&evals, &vk)),
         proved.final_claim
     );
+    // The stream exporter's verifier work: field multiplications for the
+    // terms from the phase challenges.
+    let raw: Vec<Fr> = challenges
+        .tau_rows
+        .iter()
+        .chain(&challenges.tau_wiring)
+        .copied()
+        .chain([challenges.relation_gammas[1], challenges.wiring_gammas[1]])
+        .collect();
+    let columns = StreamColumns::new(&table, 16, 0);
+    let exporter = StreamTermExporter {
+        log_rows,
+        challenge_offset: 0,
+        public: &table.public,
+        columns: &columns.ids,
+        row_member: 0,
+        wiring_member: 1,
+    };
+    let mut counter = MulCounter(0);
+    let observed = exporter.terms_observed(
+        &TermContext {
+            row_point: &proved.challenges,
+            batching_coefficients: &rho,
+            challenges: &raw,
+        },
+        &mut counter,
+    );
+    assert_eq!(observed.len(), exported.len());
     let (kernels, entries, forms) = kernel_counts();
     println!(
-        "stage A (2 members, {} rounds, degree {}): {:.3} s (rows round 0 {:.3} s, wiring setup {:.3} s); terms: {} (max degree {}), built in {:.3} s; kernels: {} distinct, {} entries, {} value forms",
+        "stage A (2 members, {} rounds, degree {}): {:.3} s (members setup {:.3} s); terms: T = {} (max degree d = {}), built in {:.3} s, verifier Fr multiplications {}; kernels: {} distinct, {} entries, {} value forms; stream columns {} ({} groups of 16)",
         log_rows,
         DEGREE,
         stage_secs,
-        rows_round0_secs,
-        wiring_setup_secs,
+        members_secs,
         exported.len(),
         exported.iter().map(|t| t.factors.len()).max().unwrap_or(0),
         terms_secs,
+        counter.0,
         kernels,
         entries,
-        forms
+        forms,
+        columns.columns.len(),
+        columns.group_count
     );
+    assert_eq!(exported.len(), COMMITTED + WIRED_BITS + 4 + 1);
+    assert!(counter.0 <= 5_000, "Fr multiplication budget");
 
     // Any single committed bit flipped breaks a member.
     for (column, row) in [
@@ -509,7 +598,7 @@ fn fibonacci_2_18_table() {
     ] {
         let mut flipped = table.clone();
         flipped.bits[column][row] ^= 1;
-        let rows = HashTableProver::new(&relation, &flipped, tau_rows.clone());
+        let rows = HashTableProver::new(&relation, &flipped, challenges.tau_rows.clone());
         let wires = WiringProver::new(
             &wiring,
             &flipped.bits,
@@ -517,11 +606,11 @@ fn fibonacci_2_18_table() {
             &flipped.wired_words,
             &flipped.vk,
             &flipped.public,
-            tau_wiring.clone(),
+            challenges.tau_wiring.clone(),
         );
         assert!(
             rows.input_claim() != Fr::zero()
-                || wires.input_claim() != wiring.input_claim(&tau_wiring, &table.public),
+                || wires.input_claim() != challenges.input_claims(&table.public)[1],
             "flip at column {column} row {row}"
         );
     }

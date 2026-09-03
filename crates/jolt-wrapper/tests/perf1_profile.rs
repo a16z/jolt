@@ -39,9 +39,11 @@ use jolt_transcript::{
     AppendToTranscript, Blake3Transcript, Keccak256Transcript, Label, LabelWithCount, Transcript,
     U64Word,
 };
+use jolt_wrapper::hash_table::schedule::preamble;
 use jolt_wrapper::hash_table::wiring::CELL_ROWS;
 use jolt_wrapper::hash_table::{
-    HashTable, HashTableProver, JoltSchedule, Recorded, RecordingTranscript, Relation, CONSTRAINTS,
+    HashTable, HashTableProver, JoltSchedule, PublicInputs, Recorded, RecordingTranscript,
+    Relation, SymbolicSchedule, CONSTRAINTS,
 };
 use jolt_wrapper::limb_table::columns::Columns;
 use jolt_wrapper::limb_table::program::{Program, Slot};
@@ -464,8 +466,9 @@ fn synthetic_log(
 }
 
 fn t1_rows(rounds: usize) -> usize {
-    let schedule = JoltSchedule::new(&synthetic_log(1, 41, rounds, 11), None).expect("schedule");
-    schedule.symbolic.active_cells() * CELL_ROWS
+    let key = SymbolicSchedule::from_reference(&synthetic_log(1, 41, rounds, 11), None)
+        .expect("schedule");
+    key.active_cells() * CELL_ROWS
 }
 
 /// The largest synthetic schedule that fits `2^18` rows (the real fibonacci
@@ -477,9 +480,11 @@ fn t1_table() -> HashTable {
     while t1_rows(rounds) > ROWS {
         rounds -= 4;
     }
-    let schedule =
-        JoltSchedule::new(&synthetic_log(1, 41, rounds, 11), Some(ROWS_LOG)).expect("schedule");
-    HashTable::build(&schedule)
+    let log = synthetic_log(1, 41, rounds, 11);
+    let key = SymbolicSchedule::from_reference(&log, Some(ROWS_LOG)).expect("schedule");
+    let public = PublicInputs::from_preamble(&preamble(&log), &key).expect("public inputs");
+    let schedule = JoltSchedule::witness(&log, &key).expect("witness");
+    HashTable::build(&schedule, &public)
 }
 
 /// Pure sumcheck rounds through a Blake3 transcript: no round commitments.
