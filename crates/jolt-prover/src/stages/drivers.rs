@@ -135,6 +135,7 @@ mod stage6b {
 }
 
 mod stage7 {
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
     };

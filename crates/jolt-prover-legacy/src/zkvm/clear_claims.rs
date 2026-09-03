@@ -1,13 +1,15 @@
 //! Opening-claim projection for verifier-native prover proofs.
 
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 use jolt_claims::protocols::jolt::{
     self as jolt,
     geometry::{
         booleanity, bytecode,
         claim_reductions::registers as registers_claim_reduction,
         claim_reductions::{
-            advice, bytecode as bytecode_claim_reduction,
-            instruction as instruction_claim_reduction, program_image,
+            bytecode as bytecode_claim_reduction, instruction as instruction_claim_reduction,
+            program_image,
         },
         instruction, ram, registers, spartan,
         spartan::{outer_opening, product_uniskip_opening},
@@ -582,6 +584,7 @@ fn stage7_claims_from_openings<F: JoltField>(
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn advice_address_phase_claim_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
     kind: JoltAdviceKind,
@@ -641,9 +644,6 @@ mod packed {
     use jolt_verifier::stages::stage1::outputs::Stage1OutputClaims;
     use jolt_verifier::stages::stage6b::outputs::{
         RamHammingBooleanityOutputClaims, Stage6bOutputClaims,
-    };
-    use jolt_verifier::stages::stage7::advice_address_phase::{
-        TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
     };
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims;
     use jolt_verifier::stages::stage7::outputs::Stage7OutputClaims;
@@ -829,16 +829,6 @@ mod packed {
                 balanced_inc_carry: claims
                     .require(lattice_digit_zero::reduced_balanced_inc_carry_opening())?,
             },
-            trusted_advice: advice_address_phase_claim_from_openings(
-                claims,
-                JoltAdviceKind::Trusted,
-            )
-            .map(|opening| TrustedAdviceAddressPhaseOutputClaims { trusted: opening }),
-            untrusted_advice: advice_address_phase_claim_from_openings(
-                claims,
-                JoltAdviceKind::Untrusted,
-            )
-            .map(|opening| UntrustedAdviceAddressPhaseOutputClaims { untrusted: opening }),
             bytecode_address_phase: bytecode_address_phase_claims_from_openings(claims),
             program_image_address_phase: program_image_address_phase_claim_from_openings(claims),
         })

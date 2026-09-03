@@ -225,13 +225,13 @@ where
         .reduce_claims(&packed_claims, transcript)
         .map_err(batch_failed)?;
     let untrusted = advice_object::<PCS>(
-        schedule.untrusted_advice.is_some(),
+        untrusted_advice_commitment.is_some(),
         leaves.get(&JoltCommittedPolynomial::UntrustedAdvice),
         untrusted_advice_commitment,
         JoltAdviceKind::Untrusted,
     )?;
     let trusted = advice_object::<PCS>(
-        schedule.trusted_advice.is_some(),
+        trusted_advice_commitment.is_some(),
         leaves.get(&JoltCommittedPolynomial::TrustedAdvice),
         trusted_advice_commitment,
         JoltAdviceKind::Trusted,
@@ -463,13 +463,7 @@ pub fn leaf_claims<F: JoltField>(
     #[cfg(feature = "akita")]
     {
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
-            if schedule.advice(kind).is_some() {
-                let contribution = stage4
-                    .ram_val_check_init
-                    .advice_contribution(kind)
-                    .ok_or_else(|| {
-                        batch_failed(format!("missing {kind:?} advice stage-4 contribution"))
-                    })?;
+            if let Some(contribution) = stage4.ram_val_check_init.advice_contribution(kind) {
                 let polynomial = match kind {
                     JoltAdviceKind::Trusted => Poly::TrustedAdvice,
                     JoltAdviceKind::Untrusted => Poly::UntrustedAdvice,
@@ -481,14 +475,8 @@ pub fn leaf_claims<F: JoltField>(
                 )?;
             }
         }
-        let reduced_precommitted = PrecommittedSchedule {
-            trusted_advice: None,
-            untrusted_advice: None,
-            bytecode: schedule.bytecode.clone(),
-            program_image: schedule.program_image.clone(),
-        };
         for opening in precommitted_final_openings(
-            &reduced_precommitted,
+            schedule,
             &stage7.output_points,
             &stage6b.output_points,
             Some((&stage7.output_values, &stage6b.output_values)),

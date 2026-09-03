@@ -65,9 +65,6 @@ use jolt_verifier::stages::{
         RamRaVirtualizationOutputClaims, Stage6bOutputClaims,
     },
     stage7::{
-        advice_address_phase::{
-            TrustedAdviceAddressPhaseOutputClaims, UntrustedAdviceAddressPhaseOutputClaims,
-        },
         committed_reduction_address_phase::{
             BytecodeReductionAddressPhaseOutputClaims,
             ProgramImageReductionAddressPhaseOutputClaims,
@@ -468,8 +465,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
 fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn FnMut(&mut F)) {
     let Stage7OutputClaims {
         hamming_weight_claim_reduction,
-        trusted_advice,
-        untrusted_advice,
         bytecode_address_phase,
         program_image_address_phase,
     } = claims;
@@ -493,12 +488,6 @@ fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn Fn
         f(scalar);
     }
     f(balanced_inc_carry);
-    if let Some(TrustedAdviceAddressPhaseOutputClaims { trusted }) = trusted_advice {
-        f(trusted);
-    }
-    if let Some(UntrustedAdviceAddressPhaseOutputClaims { untrusted }) = untrusted_advice {
-        f(untrusted);
-    }
     if let Some(BytecodeReductionAddressPhaseOutputClaims { chunks }) = bytecode_address_phase {
         for scalar in chunks.iter_mut() {
             f(scalar);

@@ -4,19 +4,21 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-07-02 |
-| Updated | 2026-08-20 |
+| Updated | 2026-09-03 |
 | Status | implemented |
 | PR | [#1675](https://github.com/a16z/jolt/pull/1675) |
 
 > **Advice update:** The byte-one-hot trusted/untrusted advice design in this
 > document is historical. The active protocol commits dense word advice and
-> directly opens the final `AdviceClaimReduction` claims; both advice objects
-> are precommitted groups of one joint Akita opening. The old advice IDs
-> remain only as positional-codec tombstones. See
+> opens each present advice object from the corresponding Stage 4
+> `RamValCheck` advice contribution. Akita no longer runs Stage 6b/7
+> `AdviceClaimReduction` members; those reductions remain Dory-only. The old
+> advice IDs remain only as positional-codec tombstones. See
 > [a16z/jolt#1798](https://github.com/a16z/jolt/pull/1798)
-> for the current advice format, batch-opening flow, and preprocessing-time
-> schedule provisioning design. One-hot trace digit-zero reduction and direct
-> committed-program openings remain active.
+> for the dense advice format, and
+> [a16z/jolt#1829](https://github.com/a16z/jolt/pull/1829)
+> for the Stage 4 advice leaf-claim boundary. One-hot trace digit-zero
+> reduction and direct committed-program openings remain active.
 
 ## Purpose
 
@@ -192,7 +194,8 @@ increment reconstruction stage after Stage 7.
 Stage 8 first resolves one final evaluation for every semantic column:
 
 - OneHotTrace columns come from the relation DAG's final outputs;
-- advice claims come from the advice claim reductions;
+- advice claims come directly from the Stage 4 `RamValCheck` advice
+  contributions;
 - bytecode chunk claims come from the bytecode claim reduction;
 - the program-image claim comes from the program-image claim reduction.
 
@@ -223,8 +226,10 @@ ordinary single-group OneHotTrace opening remains valid.
 
 Grouped schedule rows are provisioned during preprocessing. Direct-program
 profiles are a mandatory suffix of every committed-program combination.
-Advice presence contributes only the reachable optional prefixes; direct
-objects are not power-set factors.
+Advice presence contributes only the reachable optional opening groups and no
+longer participates in the shared precommitted claim-reduction scheduling
+reference for bytecode or program-image reductions. Direct objects are not
+power-set factors.
 
 For a program with `C` bytecode chunks and `A` advice kinds with nonzero
 capacity, setup capacity is exactly:

@@ -212,8 +212,6 @@ pub fn build_stage7_sumchecks<F: JoltField>(
                 )
             },
         )?,
-        #[cfg(feature = "akita")]
-        trusted_advice: None,
         #[cfg(not(feature = "akita"))]
         untrusted_advice: address_phase_member(
             schedule.untrusted_advice.as_ref(),
@@ -227,8 +225,6 @@ pub fn build_stage7_sumchecks<F: JoltField>(
                 )
             },
         )?,
-        #[cfg(feature = "akita")]
-        untrusted_advice: None,
         bytecode_address_phase: address_phase_member(
             schedule.bytecode.as_ref(),
             stage6_points.bytecode_cycle_phase_variables(),
@@ -301,16 +297,12 @@ pub fn stage7_input_values_from_upstream<F: JoltField>(
             .as_ref()
             .map(|_| trusted_advice_input_values_from_upstream(cycle_phase))
             .transpose()?,
-        #[cfg(feature = "akita")]
-        trusted_advice: None,
         #[cfg(not(feature = "akita"))]
         untrusted_advice: sumchecks
             .untrusted_advice
             .as_ref()
             .map(|_| untrusted_advice_input_values_from_upstream(cycle_phase))
             .transpose()?,
-        #[cfg(feature = "akita")]
-        untrusted_advice: None,
         bytecode_address_phase: sumchecks
             .bytecode_address_phase
             .as_ref()
