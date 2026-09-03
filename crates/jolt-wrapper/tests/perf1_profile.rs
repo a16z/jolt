@@ -8,6 +8,8 @@
 //! ```text
 //! CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/perf1 cargo nextest run -p jolt-wrapper --release \
 //!   perf1_full_statement_profile --run-ignored ignored-only --cargo-quiet --no-capture
+//! CARGO_TARGET_DIR=/Volumes/Dev/cargo-target/perf1 cargo nextest run -p jolt-wrapper --release \
+//!   perf2_msm_profile --run-ignored ignored-only --cargo-quiet --no-capture
 //! ```
 
 #![expect(
@@ -959,4 +961,33 @@ fn perf1_full_statement_profile() {
         format!("{}\n{summary}", report.log),
     )
     .expect("write profile");
+}
+
+#[test]
+#[ignore = "PERF-2 single-MSM benchmark"]
+fn perf2_msm_profile() {
+    let max_n = 1 << 21;
+    let setup = HyperKZGScheme::<Bn254>::setup_from_secret(
+        Fr::from_u64(23),
+        max_n,
+        Bn254::g1_generator(),
+        Bn254::g2_generator(),
+    );
+    let mut rng = StdRng::seed_from_u64(0xf002);
+    let scalars: Vec<Fr> = (0..max_n).map(|_| Fr::random(&mut rng)).collect();
+    for log_n in [20, 21] {
+        let n = 1 << log_n;
+        for repeat in 0..3 {
+            let load = load_average();
+            let start = Instant::now();
+            let result = Bn254::g1_affine_msm(&setup.g1_powers()[..n], &scalars[..n]);
+            let elapsed = start.elapsed();
+            let _ = std::hint::black_box(result);
+            println!(
+                "PERF2 log_n={log_n} repeat={repeat} seconds={:.6} us_per_point={:.6} load={load:.2}",
+                elapsed.as_secs_f64(),
+                elapsed.as_secs_f64() * 1e6 / n as f64,
+            );
+        }
+    }
 }
