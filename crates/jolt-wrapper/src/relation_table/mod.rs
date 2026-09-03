@@ -20,6 +20,7 @@ use thiserror::Error;
 use crate::relation::{Relation, ScheduleEntry};
 use crate::stream::{Column, StreamError};
 
+pub use crate::stream::{AffineForm, ColumnId, Term, TermContext, TermExporter};
 pub use copy_link::{CopyLink, CopyLinkClaims, CopyLinkProver, CopyLinkSide, CopyLinkWitness};
 pub use protocol::{
     prove, setup, verify, RelationTableProof, RelationTableProverKey, RelationTableVerifierKey,
@@ -27,10 +28,10 @@ pub use protocol::{
 pub use prover::RelationTableProver;
 pub use scalar_link::{DoryScalarLink, DoryScalarLinkProver};
 pub use terms::{
-    evaluate_terms, evaluate_terms_observed, AffineForm, ColumnId, CopyLinkTermExporter,
-    CopyLinkTermSide, CopyLinkTermsContext, DoryScalarTermExporter, DoryScalarTermsContext,
-    RelationTermExporter, RelationTermsContext, Term, TermContext, TermExporter,
-    COPY_LINK_TERM_COUNT, DORY_SCALAR_TERM_COUNT, MAX_FACTORS, RELATION_TERM_COUNT,
+    evaluate_terms, evaluate_terms_observed, CopyLinkTermExporter, CopyLinkTermSide,
+    CopyLinkTermsContext, DoryScalarTermExporter, DoryScalarTermsContext, RelationTermExporter,
+    RelationTermsContext, COPY_LINK_TERM_COUNT, DORY_SCALAR_TERM_COUNT, MAX_FACTORS,
+    RELATION_TERM_COUNT,
 };
 
 pub const WIRES: usize = 3;

@@ -1,43 +1,17 @@
 use jolt_field::{Fr, One, Ring, Zero};
 use jolt_hyperkzg::{NoopVerifierObserver, VerifierObserver};
 
+use crate::stream::{AffineForm, ColumnId, Term, TermContext, TermExporter};
+
 use super::{
     CopyLink, DoryScalarLink, RelationTable, RelationTableError, ACTIVE, H_ID, H_SIGMA, Q_C, Q_L,
     Q_M, Q_O, Q_R, SIGMA_A, TOTAL_COLUMNS, WIRES, WIRE_A, WIRE_B, WIRE_C,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ColumnId {
-    pub group: usize,
-    pub slot: usize,
-}
-
 pub const RELATION_TERM_COUNT: usize = 15;
 pub const COPY_LINK_TERM_COUNT: usize = 10;
 pub const DORY_SCALAR_TERM_COUNT: usize = 1;
 pub const MAX_FACTORS: usize = 4;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AffineForm {
-    pub constant: Fr,
-    pub weights: Vec<(ColumnId, Fr)>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Term {
-    pub coefficient: Fr,
-    pub factors: Vec<AffineForm>,
-}
-
-pub struct TermContext<'a> {
-    pub row_point: &'a [Fr],
-    pub batching_coefficients: &'a [Fr],
-    pub challenges: &'a [Fr],
-}
-
-pub trait TermExporter {
-    fn terms(&self, context: &TermContext<'_>) -> Vec<Term>;
-}
 
 pub fn evaluate_terms(
     terms: &[Term],
