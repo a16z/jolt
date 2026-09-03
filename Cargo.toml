@@ -366,11 +366,9 @@ tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 inferno = { version = "0.12.3" }
 allocative = { version = "=0.3.6" }
-pprof = { version = "0.15", features = [
-  "prost-codec",
-  "flamegraph",
-  "frame-pointer",
-] }
+# No `flamegraph` feature: it pulls in inferno 0.11 (quick-xml 0.26,
+# RUSTSEC-2026-0194/0195) and only the `.pprof()` protobuf output is used.
+pprof = { version = "0.15", features = ["prost-codec", "frame-pointer"] }
 prost = "0.14"
 
 # Parsing
