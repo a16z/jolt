@@ -395,3 +395,27 @@ field elements: 15 bit groups, one u32 group, one VK-bit group, one VK-u16 group
 `hash_table::StreamTermExporter` maps T1's 230 local terms to physical `(group, slot)` IDs and
 binds its two stage-A member coefficients. The adapter is ready on top of committed T1
 `c4a218b14`; the real assembly waits for T2's phase/helper/term export.
+
+## Real T1 + relation-table gate after T1 review fixes (02:24)
+
+- `WrapVerifierKey` owns the profile-fixed T1 `SymbolicSchedule`, its `LinkMap`, the assembly
+  statement, and pinned T1/R/link VK commitments. Verification does not derive them from proof
+  bytes.
+- Phase 1 contains canonical T1 columns, R fixed/wire columns, and the T1↔R challenge-link VK
+  columns. It is absorbed before T1's 38 randomizers and both R/CopyLink `(beta, gamma)` pairs.
+  Phase 2 contains R/CopyLink inverse helpers plus the T2 stand-in, then supplies the remaining
+  `tau` and relation weights.
+- Real cached fibonacci `2^18`, k=16: T1's two members, R row member, the 376-item T1↔R challenge
+  `CopyLink`, and a synthetic-honest T2 member prove and verify together. **T=322** = T1 296 + R
+  15 + CopyLink 10 + stand-in 1; nine term rounds; maximum term degree 4.
+- Payload **5,600 B** / bincode **5,709 B**: phase-1 commitments 800; phase-2 32; stage A 1,184;
+  term stage 608; shared BDFG/shift 96; four factor evaluations 128; stage B 576; reduced claim 32;
+  HyperKZG 2,144; challenge-word IO 0. The seven known public fields are 224 external calldata
+  bytes. Margin below decimal 6 KB: **400 B** before replacing the T2 stand-in.
+- One release run at load 9.43/6.40/6.22: prepare 531 ms; SRS setup 3,164; adapters 446; phase-1
+  commit 2,451; helpers 319; phase-2 commit 198; proof 6,332; verify 12. Executed verifier:
+  **170 ecMul, 169 ecAdd, 8 pairing pairs, 12,643 Fr mul, 8 inversions, 449 Keccak; 2,175,449 N4
+  gas**. T1 term construction now routes every multiplication through the observer.
+- Tampering a T1 commitment, phase-2 commitment, stage-A aggregate, term-round commitment, factor
+  evaluation, reduced claim, or HyperKZG value is rejected. T2 remains a zero-column stand-in; the
+  missing real phase columns, two members, term exporter, and T2↔R scalar link gate full soundness.
