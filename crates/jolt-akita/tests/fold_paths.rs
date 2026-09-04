@@ -110,27 +110,24 @@ fn deep_recursive_fold_schedule_roundtrips() {
 fn proof_payloads_with_trailing_garbage_reject() {
     let fixture = fold_roundtrip(14, b"akita-fold-trailing");
 
-    for field in ["serialized_akita_proof", "serialized_akita_proof_shape"] {
-        let mut value =
-            serde_json::to_value(&fixture.proof).expect("proof should serialize to JSON");
-        value
-            .get_mut(field)
-            .expect("proof should expose the payload")
-            .as_array_mut()
-            .expect("payload should serialize as a byte array")
-            .push(serde_json::json!(0));
-        let extended: AkitaBatchProof =
-            serde_json::from_value(value).expect("extended proof should deserialize");
+    let mut value = serde_json::to_value(&fixture.proof).expect("proof should serialize to JSON");
+    value
+        .get_mut("backend_proof")
+        .expect("proof should expose the payload")
+        .as_array_mut()
+        .expect("payload should serialize as a byte array")
+        .push(serde_json::json!(0));
+    let extended: AkitaBatchProof =
+        serde_json::from_value(value).expect("extended proof should deserialize");
 
-        let err = fixture
-            .verify(&extended)
-            .expect_err("trailing payload bytes must be rejected");
-        assert!(
-            matches!(
-                &err,
-                OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")
-            ),
-            "expected a trailing-bytes rejection for {field}, got: {err}"
-        );
-    }
+    let err = fixture
+        .verify(&extended)
+        .expect_err("trailing payload bytes must be rejected");
+    assert!(
+        matches!(
+            &err,
+            OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")
+        ),
+        "expected a trailing-bytes rejection, got: {err}"
+    );
 }
