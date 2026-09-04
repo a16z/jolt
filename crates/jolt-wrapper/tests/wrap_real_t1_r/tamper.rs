@@ -188,7 +188,7 @@ fn report(
         expected_bincode,
     ) = match k {
         32 => (11, 12, 1_952, 7_104, 7_232),
-        16 => (10, 11, 1_792, 7_392, 7_534),
+        16 => (10, 11, 1_792, 7_392, 7_533),
         _ => panic!("unsupported packing factor"),
     };
     assert_eq!(proof.opening.com.len(), expected_levels);

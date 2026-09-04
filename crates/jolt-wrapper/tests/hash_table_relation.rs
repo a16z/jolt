@@ -1017,7 +1017,7 @@ fn verifier_cost_includes_statement_derivation() {
     assert_eq!(statement.0, 703);
     assert_eq!(
         cost.fr_mul,
-        9_197 + statement.0,
+        9_112 + statement.0,
         "VerifierCost must include the verifier's statement derivation"
     );
 }

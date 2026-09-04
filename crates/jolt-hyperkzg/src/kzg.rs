@@ -84,7 +84,14 @@ impl<F: JoltField> FoldPoints<F> {
 
     fn divisor<O: VerifierObserver>(&self, observer: &mut O) -> [F; 6] {
         let s = self.points[4];
-        [observer.fr_mul(s, s), -s, F::zero(), F::zero(), -s, F::one()]
+        [
+            observer.fr_mul(s, s),
+            -s,
+            F::zero(),
+            F::zero(),
+            -s,
+            F::one(),
+        ]
     }
 
     fn interpolate<O: VerifierObserver>(&self, values: [F; 5], observer: &mut O) -> Option<[F; 5]> {
@@ -350,7 +357,13 @@ fn divide_by_monic_quintic<F: JoltField>(f: &[F], divisor: &[F; 6]) -> Vec<F> {
             let mut homogeneous = state;
             for value in q.iter_mut().rev() {
                 let [a, b, c, d, e] = homogeneous;
-                homogeneous = [-divisor[4] * a - divisor[1] * d - divisor[0] * e, a, b, c, d];
+                homogeneous = [
+                    -divisor[4] * a - divisor[1] * d - divisor[0] * e,
+                    a,
+                    b,
+                    c,
+                    d,
+                ];
                 *value += homogeneous[0];
             }
         });
@@ -390,7 +403,13 @@ fn divide_block<F: JoltField>(f: &[F], divisor: &[F; 6], q: &mut [F], incoming: 
 /// `s_i = A · s_{i+1}` for five consecutive quotient coefficients.
 fn companion<F: JoltField>(divisor: &[F; 6]) -> [[F; 5]; 5] {
     [
-        [-divisor[4], -divisor[3], -divisor[2], -divisor[1], -divisor[0]],
+        [
+            -divisor[4],
+            -divisor[3],
+            -divisor[2],
+            -divisor[1],
+            -divisor[0],
+        ],
         [F::one(), F::zero(), F::zero(), F::zero(), F::zero()],
         [F::zero(), F::one(), F::zero(), F::zero(), F::zero()],
         [F::zero(), F::zero(), F::one(), F::zero(), F::zero()],
@@ -491,7 +510,9 @@ mod tests {
         }
 
         assert_eq!(divide_by_monic_quintic(&polynomial, &divisor), expected);
-        let values = points.points.map(|point| eval_univariate(&remainder, point));
+        let values = points
+            .points
+            .map(|point| eval_univariate(&remainder, point));
         assert_eq!(
             points.interpolate(values, &mut NoopVerifierObserver),
             Some(remainder)
