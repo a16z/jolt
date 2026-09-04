@@ -1,13 +1,16 @@
 # PERF-5 lane 6 — stream tail
 
-Date: 2026-09-03. Base: `dbe2a2f9e`. Fixture:
-`fibonacci_2_18_blake3.bin`, `k = 32`, `N = 2^23`. The current honest
-online baseline is **26.072 s**.
+Date: 2026-09-03. Base: `dbe2a2f9e`; rebased code: `b8cfcd247`. Fixture:
+`fibonacci_2_18_blake3.bin`, `k = 32`, `N = 2^23`. Prior landing:
+**26.072 s**; the paired canonical rerun measured **26.025 s**.
 
-## Status
+## Result
 
-Implementation compiles and passes clippy. Tests and measurements are deferred
-until lane 4 releases the machine, per the campaign's machine-sharing rule.
+Unit and real-fixture proofs are byte-identical to `dbe2a2f9e`. The wrapper
+suite passed 64/64 with `NEXTEST_TEST_THREADS=4` and `RAYON_NUM_THREADS=1`.
+The idle gate measured **26.025→25.200 s** online (**−0.825 s**).
+Column evaluation falls **371.557→1.770 ms**, packed RLC falls
+**659.126→132.695 ms**, and member construction falls **806→792 ms**.
 No `jolt-hyperkzg` files changed.
 
 ## Changes
@@ -29,37 +32,87 @@ No `jolt-hyperkzg` files changed.
    owned working columns. This removes nine temporary full-field column vectors
    and the digit clone.
 
-## Expected savings
+## Column ownership
 
-| item | prior | expected after | expected saving |
+At `k = 32`, 26 physical groups contain 832 slots: 598 live columns and
+234 padding slots. The stage-B domain pads further to 1,024 slots.
+
+| source | live columns | owner at the stage-A point |
+|---|---:|---|
+| T1 bits / wired bits / words | 307 | T1 row member |
+| T1 VK | 6 | typed VK evaluation |
+| CopyLink fixed / helpers | 120 / 20 | ten sparse CopyLink members |
+| T2 claimed columns, including VK | 144 | T2 row member |
+| Spartan witness | 1 | carry member |
+
+## Measurements
+
+All real runs used 10 Rayon threads. Each binary was compiled with
+`cargo nextest run --no-run` before the mutex. Saved nextest binary/cargo
+metadata bypassed compilation inside the mutex. The mutex was released after
+each run; acquisition retried every 60 s with one-minute load below 4.
+
+| phase | canonical idle | lane 6 idle | delta |
 |---|---:|---:|---:|
-| column evaluations at `r_A` | 1.147 s | 0.02–0.08 s | **1.07–1.13 s** |
-| packed RLC | 0.998 s | 0.35–0.65 s | **0.35–0.65 s** |
-| member setup | 0.791 s aggregate | attribution pending | **0.02–0.06 s** |
+| column evaluations at `r_A` | 371.557 ms | 1.770 ms | −369.787 ms |
+| packed RLC | 659.126 ms | 132.695 ms | −526.431 ms |
+| all member constructors | 806 ms | 792 ms | −14 ms |
+| T2 member setup | 33 ms | 19 ms | −14 ms |
+| unchanged T2 phase 2a | 6,254 ms | 6,256 ms | +2 ms |
+| unchanged T2 stage A | 2,503 ms | 2,491 ms | −12 ms |
+| proof stages/opening | 15,227 ms | 14,473 ms | −754 ms |
+| **honest online wall** | **26,025 ms** | **25,200 ms** | **−825 ms** |
+| online phase sum | 26,021 ms | 25,195 ms | −826 ms |
+| process CPU | 218.500 s | 211.700 s | −6.800 s |
+| CPU / wall | 8.396 | 8.401 | +0.005 |
+| verifier, outside online clock | 26 ms | 25 ms | −1 ms |
 
-The member bucket includes T1's precomputed first round, so its full 0.791 s
-is not setup waste. Expected total saving: **1.4–1.9 s** before any lane-5b
-4-ary-fold interaction.
+The successful candidate held the mutex at **22:03:45–22:04:26 ET**.
+Command-start load was **2.41** for the baseline and **1.90** for lane 6.
+Online-start/end loads were **3.88/6.19** and **3.22/5.73**, respectively.
+No compiler was present at candidate entry or observed during its one-second
+process sampling. The aggregate member bucket includes T1's precomputed first
+round; its 14 ms saving is entirely the T2 constructor.
 
-## Deferred gates
+Two earlier candidate attempts measured 30.281 s and 33.122 s and are
+excluded: external compilers started during their mutex-held windows.
+The second entered at 21:49:59 with no compiler present, but two nightly
+compiler processes started around 21:50:20 before it finished at 21:50:48.
+The successful retry used the same prebuilt binary; no code tuning followed
+these contaminated measurements.
 
-1. Add a temporary, uncommitted `WRAP_PROOF_OUT` hook around
-   `encode_to_vec(&wrapped, standard())` in the real fixture.
-2. Under the wrapper gate lock, run `real_wrapper` at `dbe2a2f9e` and this
-   branch with the same fixed setup secret; `cmp` the serialized proof files.
-3. Remove the hook, run wrapper nextest, then run the locked feature-enabled
-   real fixture with all tampers. Confirm **7,392 B payload / 7,529 B bincode /
-   352 B statement** and unchanged verifier counts.
-4. Record the tail split and honest online wall. Keep the RLC rewrite only if
-   it beats the prior 0.998 s pass.
+The measured tail saving is **0.896 s**, plus **14 ms** in T2 setup.
+The initial 1.4–1.9 s estimate used the planning run's 34-group timings;
+the current 26-group baseline is cheaper and replaces that estimate.
 
 If lane 5b exposes a first-fold accumulation hook, the row-block RLC can feed
 that hook without an intermediate pass. This branch leaves RLC materialized
 once because concurrent `jolt-hyperkzg` edits are out of scope.
 
-## Compile gates
+## Byte identity
+
+The synthetic `verifier_cost_includes_statement_derivation` fixture produced
+identical 4,734-byte bincode proofs:
+`380d6cee6fcc5613f419650ea92157a15758d8b74563dab4ce4c699351aaf6d9`.
+The complete real fixture produced identical 7,529-byte bincode proofs:
+`1defa055d1a9445bc58814df939611da88c011003c787a4905b7d24739365aae`.
+Both comparisons used `cmp` against a scratch checkout at `dbe2a2f9e`.
+Temporary proof-output hooks and tail timers were removed before handoff.
+Every tamper rejected; payload/bincode/statement remain **7,392/7,529/352 B**.
+Verifier counts remain **226 ecMul / 225 ecAdd / 8 pairing pairs / 123,229
+Fr mul / 10 inversions / 848 Keccak**, or **4,890,645 gas**.
+
+## Gates
 
 | command | result |
 |---|---|
 | `cargo check -p jolt-wrapper --all-targets --features prover-fixtures` | pass |
 | wrapper clippy, all targets, feature-enabled, warnings denied | pass |
+| `cargo fmt -q --message-format=short` | pass |
+| `cargo nextest run -p jolt-wrapper --cargo-quiet` | 64/64 pass |
+| feature-enabled real fixture under the mutex | baseline and three candidates pass; all tampers reject |
+| feature-enabled all-target check after rebase | pass |
+| wrapper suite after rebase | 64/64 pass |
+
+The rebase onto `f4c2dc3d4` contained only upstream journal changes;
+production sources match the measured prebuilt binary.

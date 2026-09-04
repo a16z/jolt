@@ -187,3 +187,30 @@ the honest-clock load was 4.34 -> 5.90.
 Sweep decision: `s = 6` models at 26.368 s and +64 B; `s = 9` at
 27.452 s and +160 B. Both exceed the +32 B cap, so `s = 4` remains selected.
 The model and the correctness-run ratios are in `lanes/perf5-lane5a.md`.
+
+### PERF-5 lane 6 after lane 5a
+
+Proof bytes are identical to `dbe2a2f9e` on both the synthetic unit fixture
+and the complete cached real fixture. Payload/bincode/statement stay
+**7,392 / 7,529 / 352 B**, and verifier cost stays **4,890,645 gas**.
+
+| phase | current canonical baseline | lane 6 |
+|---|---:|---:|
+| column evaluations at `r_A` | 371.557 ms | 1.770 ms |
+| packed RLC | 659.126 ms | 132.695 ms |
+| T2 member setup | 33 ms | 19 ms |
+| all member constructors | 806 ms | 792 ms |
+| proof stages/opening | 15,227 ms | 14,473 ms |
+| **honest online wall** | **26.025 s idle rerun; 26.072 s prior landing** | **25.200 s** |
+
+Tail work saves **0.896 s**, with another **14 ms** in T2 setup. The paired
+online-wall saving is **0.825 s**; process CPU falls **218.500→211.700 s**.
+All 598 live columns are supplied by stage-A bindings except six typed T1 VK
+evaluations; 234 physical padding slots are zero. RLC uses typed row blocks.
+
+The successful gate held the mutex at 22:03:45–22:04:26 ET after prebuild.
+Command-start loads were **2.41 / 1.90** for baseline/lane 6; online-start/end
+loads were **3.88→6.19 / 3.22→5.73**. No compiler overlap was observed.
+Two earlier contended candidate walls (30.281 / 33.122 s) are excluded.
+Fmt, feature-enabled all-target clippy/check, 64/64 tests before and after
+rebase, and the real tamper gate passed; see `lanes/perf5-lane6.md`.
