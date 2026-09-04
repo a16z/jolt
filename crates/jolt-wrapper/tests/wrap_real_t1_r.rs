@@ -693,6 +693,7 @@ fn real_wrapper_round_trip_and_tampers() {
 
     report(
         &wrapped,
+        k,
         wire_phase_groups,
         term_count,
         cost,

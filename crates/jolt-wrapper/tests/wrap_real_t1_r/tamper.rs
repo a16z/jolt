@@ -140,12 +140,13 @@ fn tamper_suite(
             tamper(&|candidate| candidate.opening.v[row][evaluation] += Fr::one());
         }
     }
-    tamper(&|candidate| candidate.opening.p0_at_r_squared += Fr::one());
+    tamper(&|candidate| candidate.opening.p0_at_r_fourth += Fr::one());
 }
 
 #[expect(clippy::too_many_arguments, reason = "fixture gate report")]
 fn report(
     proof: &WrapperProof,
+    k: usize,
     wire_phase_groups: [usize; 5],
     term_count: usize,
     cost: VerifierCost,
@@ -179,6 +180,41 @@ fn report(
         - reduced;
     let serialized = encode_to_vec(proof, standard()).expect("serialize wrapper");
     assert_eq!(serialized.len(), proof.bincode_bytes());
+    let (
+        expected_levels,
+        expected_polynomials,
+        expected_opening,
+        expected_payload,
+        expected_bincode,
+    ) = match k {
+        32 => (11, 12, 1_952, 7_104, 7_232),
+        16 => (10, 11, 1_792, 7_392, 7_534),
+        _ => panic!("unsupported packing factor"),
+    };
+    assert_eq!(proof.opening.com.len(), expected_levels);
+    assert!(proof
+        .opening
+        .v
+        .iter()
+        .all(|row| row.len() == expected_polynomials));
+    assert_eq!(opening, expected_opening);
+    assert_eq!(proof.payload_bytes(), expected_payload);
+    assert_eq!(proof.bincode_bytes(), expected_bincode);
+    assert_eq!(32 * statement_fields, 352);
+    if k == 32 {
+        assert_eq!(
+            cost,
+            VerifierCost {
+                ec_mul: 216,
+                ec_add: 216,
+                pairing_pairs: 8,
+                fr_mul: 123_121,
+                fr_inv: 8,
+                keccak: 839,
+            }
+        );
+        assert_eq!(estimated_gas(cost, proof), 4_800_225);
+    }
     println!(
         "uptime_start={} uptime_end={}",
         String::from_utf8_lossy(uptime.0).trim(),
@@ -252,8 +288,8 @@ fn estimated_gas(cost: VerifierCost, proof: &WrapperProof) -> usize {
         + 20 * cost.fr_mul
         + batched_inversion_gas(cost.fr_inv)
         + 100 * cost.keccak
-        + 2 * 114_700
-        + 183_400
+        + 3 * 46_000
+        + 34_350 * cost.pairing_pairs
 }
 
 fn batched_inversion_gas(inversions: usize) -> usize {

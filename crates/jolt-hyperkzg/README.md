@@ -10,10 +10,13 @@ HyperKZG reduces multilinear polynomial commitments to univariate KZG using the 
 
 This crate is generic over `PairingGroup` from `jolt-crypto` and implements `CommitmentScheme` and `AdditivelyHomomorphic` from `jolt-openings`.
 
+The four-point basis uses a canonical BN254 Fr fourth root of unity; opening and
+verification reject scalar fields in which that element is not a primitive fourth root.
+
 ### Protocol
 
 1. **Commit** — MSM of evaluations against SRS G1 powers.
-2. **Open** (Gemini reduction) — fold the multilinear polynomial `ℓ-1` times producing intermediate commitments, derive challenge `r`, batch KZG open at `[r, -r, r²]`.
+2. **Open** (Gemini reduction) — fold two variables per level, derive challenge `r`, batch KZG open at `[r, ir, -r, -ir, r⁴]`.
 3. **Verify** — evaluation consistency check, then batch KZG pairing check.
 
 ## Public API

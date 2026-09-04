@@ -12,11 +12,10 @@
 //! 1. **Commit**: MSM of evaluations against SRS G1 powers (treating the
 //!    multilinear evaluation table as univariate coefficients).
 //! 2. **Open** (Gemini reduction):
-//!    - Phase 1: Fold the multilinear polynomial `ell - 1` times, producing
-//!      intermediate polynomial commitments.
-//!    - Phase 2: Derive challenge `r` and evaluation points `[r, -r, r^2]`.
-//!    - Phase 3: Batch KZG opening of all intermediate polynomials at three points.
-//! 3. **Verify**: Check evaluation consistency across the three evaluation vectors,
+//!    - Phase 1: Fold two variables per level, producing intermediate commitments.
+//!    - Phase 2: Derive challenge `r` and points `[r, ir, -r, -ir, r^4]`.
+//!    - Phase 3: Batch KZG opening of all intermediate polynomials at five points.
+//! 3. **Verify**: Check evaluation consistency across the five evaluation vectors,
 //!    then batch KZG pairing check.
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline

@@ -21,13 +21,16 @@ pub enum HyperKZGError {
     #[error("batch KZG pairing check failed")]
     PairingCheckFailed,
 
-    #[error("degenerate Fiat-Shamir challenge: r = 0")]
+    #[error("degenerate Fiat-Shamir challenge: opening points coincide")]
     DegenerateChallenge,
+
+    #[error("scalar field does not contain the configured primitive fourth root of unity")]
+    MissingFourthRootOfUnity,
 
     #[error("variable-point KZG batch has inconsistent dimensions")]
     InvalidBatchShape,
 
-    #[error("variable-point KZG batch requires three distinct points per polynomial")]
+    #[error("variable-point KZG batch requires distinct points per polynomial")]
     RepeatedBatchPoint,
 
     #[error("variable-point KZG quotient division left a nonzero remainder")]

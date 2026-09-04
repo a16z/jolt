@@ -38,11 +38,14 @@ to R and do not enter the 173-scalar link.
 
 ## Proof bytes
 
+Four-ary opening layout, expected before the lane-5b test gate; timings below
+remain measurements of the earlier binary opening. T2 uses lane 5a's `s=4`.
+
 | section | k=32 | k=16 |
 |---|---:|---:|
 | phase 1a wire commitments | 384 | 672 |
 | T2 phase 1b wire commitments | 96 | 160 |
-| T2 phase 2a wire commitments | 96 | 160 |
+| T2 phase 2a wire commitments | 64 | 128 |
 | T2 phase 2b wire commitments | 32 | 32 |
 | T2 phase 2c + CopyLink helpers | 32 | 64 |
 | Spartan outer, 13 committed rounds | 864 | 864 |
@@ -50,15 +53,15 @@ to R and do not enter the 173-scalar link.
 | stage A, 18 committed rounds | 1,184 | 1,184 |
 | term stage, 9 committed rounds | 608 | 608 |
 | shared BDFG/degree-shift proof | 96 | 96 |
-| four factor evaluations | 128 | 128 |
+| five factor evaluations | 160 | 160 |
 | stage B clear rounds | 640 | 640 |
 | reduced claims (opening + Az/Bz/Cz/W) | 160 | 160 |
-| HyperKZG opening | 2,240 | 2,144 |
-| **proof payload** | **7,392** | **7,744** |
-| **bincode proof** | **7,530** | **7,896** |
+| HyperKZG opening | 1,952 | 1,792 |
+| **proof payload** | **7,104** | **7,392** |
+| **bincode proof** | **7,232** | **7,534** |
 | statement, 11 Fr | 352 | 352 |
-| **payload + statement** | **7,744** | **8,096** |
-| **bincode + statement** | **7,882** | **8,248** |
+| **payload + statement** | **7,456** | **7,744** |
+| **bincode + statement** | **7,584** | **7,886** |
 
 ## Geometry
 

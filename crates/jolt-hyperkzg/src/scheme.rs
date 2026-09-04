@@ -6,17 +6,17 @@
 use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, DeriveSetup, JoltGroup, PairingGroup, PedersenSetup};
-use jolt_field::{CanonicalBytes, Field, Ring};
+use jolt_field::{CanonicalBytes, Field, JoltField};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Transcript};
-use num_traits::{One, Zero};
+use num_traits::One;
 use rand_core::{OsRng, RngCore};
 use rayon::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::HyperKZGError;
-use crate::kzg::{self, kzg_open_batch, kzg_verify_batch};
+use crate::kzg::{self, kzg_open_batch, kzg_verify_batch, FoldPoints};
 use crate::types::{
     HyperKZGCommitment, HyperKZGProof, HyperKZGProverSetup, HyperKZGVerifierSetup,
     NoopVerifierObserver, VerifierObserver,
@@ -39,8 +39,8 @@ where
     /// Generates an SRS from a random generator and secret scalar.
     ///
     /// `max_degree` is the maximum polynomial length (number of evaluations).
-    /// The SRS contains `max(max_degree, 6)` G1 powers, the four low G2 powers used by
-    /// HyperKZG, and the G2 shift used to batch degree-five univariate checks.
+    /// The SRS contains `max(max_degree, 7)` G1 powers, G2 powers at exponents
+    /// 0, 1, 4, 5, and the G2 shifts for degree-five/six univariate checks.
     pub fn setup<R: RngCore>(
         rng: &mut R,
         max_degree: usize,
@@ -75,12 +75,7 @@ where
         }
         let g1_powers = P::g1_to_affine(&fixed_base_powers::<P>(g1, &scalars));
 
-        let mut g2_powers = Vec::with_capacity(4);
-        let mut cur = g2;
-        for _ in 0..4 {
-            g2_powers.push(cur);
-            cur = cur.scalar_mul(&beta);
-        }
+        let g2_powers = [0, 1, 4, 5].map(|exponent| g2.scalar_mul(&scalars[exponent]));
 
         let degree_five_shift_g2 = g2.scalar_mul(&scalars[num_powers - 6]);
         let degree_six_shift_g2 = g2.scalar_mul(&scalars[num_powers - 7]);
@@ -92,15 +87,22 @@ where
         }
     }
 
-    /// Phase 1 of the HyperKZG protocol: fold the multilinear polynomial.
+    /// Number of committed two-variable fold levels for a multilinear opening.
+    /// The final one or two variables are checked without another commitment.
+    pub const fn fold_level_count(num_vars: usize) -> usize {
+        num_vars.saturating_sub(1) / 2
+    }
+
+    /// Phase 1 of the HyperKZG protocol: fold two variables per level.
     ///
     /// Given polynomial $P$ with $2^\ell$ evaluations and opening point
-    /// $x = (x_1, \ldots, x_\ell)$, produces $\ell$ polynomials
-    /// $P_0 = P, P_1, \ldots, P_{\ell-1}$ where each $P_i$ has half
-    /// the length of $P_{i-1}$.
+    /// $x = (x_1, \ldots, x_\ell)$, each level reduces the coefficient
+    /// vector to one quarter of its prior length. The terminal check handles
+    /// the first variable for odd $\ell$ and the first two for even $\ell$.
     ///
-    /// The folding relation is:
-    /// $P_i[j] = (1 - x_{\ell-i}) \cdot P_{i-1}[2j] + x_{\ell-i} \cdot P_{i-1}[2j+1]$
+    /// For a chunk $(a_{00}, a_{01}, a_{10}, a_{11})$ and variables
+    /// $(x, y)$, the next coefficient is
+    /// $(1-x)((1-y)a_{00}+ya_{01})+x((1-y)a_{10}+ya_{11})$.
     #[expect(
         clippy::expect_used,
         reason = "polys is seeded with one element before the fold loop"
@@ -109,22 +111,26 @@ where
         evals: &[P::ScalarField],
         point: &[P::ScalarField],
     ) -> Vec<Vec<P::ScalarField>> {
-        let ell = point.len();
-        let mut polys = Vec::with_capacity(ell);
+        let levels = Self::fold_level_count(point.len());
+        let mut polys = Vec::with_capacity(levels + 1);
         polys.push(evals.to_vec());
 
-        // Fold i uses x_{ell-i}, i.e. point[1..] visited back-to-front.
-        for &xi in point.iter().skip(1).rev() {
+        for variables in point.rchunks_exact(2).take(levels) {
             let prev = polys.last().expect("polys starts with one element");
             let pi: Vec<P::ScalarField> = prev
-                .par_chunks_exact(2)
-                .map(|pair| {
-                    #[expect(
-                        clippy::indexing_slicing,
-                        reason = "par_chunks_exact(2) yields exactly-2-element slices"
-                    )]
-                    let (even, odd) = (pair[0], pair[1]);
-                    even + xi * (odd - even)
+                .par_chunks_exact(4)
+                .map(|values| {
+                    let [a00, a01, a10, a11] = values else {
+                        unreachable!("par_chunks_exact(4) fixes the chunk width")
+                    };
+                    let [x, y] = variables else {
+                        unreachable!("rchunks_exact(2) fixes the variable width")
+                    };
+                    fold_two_variables(
+                        [*a00, *a01, *a10, *a11],
+                        [*x, *y],
+                        &mut NoopVerifierObserver,
+                    )
                 })
                 .collect();
             polys.push(pi);
@@ -146,23 +152,37 @@ where
         claimed_eval: &P::ScalarField,
         transcript: &mut T,
     ) -> Result<HyperKZGProof<P>, HyperKZGError> {
-        let ell = point.len();
-        if ell == 0 {
+        let num_vars = point.len();
+        if num_vars == 0 {
             return Err(HyperKZGError::EmptyPoint);
         }
         let n = evals.len();
-        assert_eq!(n, 1 << ell, "evaluation count must be 2^ell");
+        assert_eq!(n, 1 << num_vars, "evaluation count must be 2^ell");
 
         // Phase 1: fold
         let polys = Self::fold_polynomials(evals, point);
-        assert_eq!(polys.len(), ell);
-        assert_eq!(polys.last().map(Vec::len), Some(2));
-        let Some([even, odd]) = polys.last().map(Vec::as_slice) else {
-            return Err(HyperKZGError::InvalidBatchShape);
+        let levels = Self::fold_level_count(num_vars);
+        assert_eq!(polys.len(), levels + 1);
+        let final_fold = polys.last().ok_or(HyperKZGError::InvalidBatchShape)?;
+        let derived_claim = match final_fold.as_slice() {
+            [even, odd] => {
+                let x = point.first().ok_or(HyperKZGError::EmptyPoint)?;
+                *even + *x * (*odd - *even)
+            }
+            [a00, a01, a10, a11] => {
+                let [x, y, ..] = point else {
+                    return Err(HyperKZGError::InvalidBatchShape);
+                };
+                fold_two_variables(
+                    [*a00, *a01, *a10, *a11],
+                    [*x, *y],
+                    &mut NoopVerifierObserver,
+                )
+            }
+            _ => return Err(HyperKZGError::InvalidBatchShape),
         };
-        let x = point.first().ok_or(HyperKZGError::EmptyPoint)?;
-        if *even + *x * (*odd - *even) != *claimed_eval {
-            return Err(HyperKZGError::FoldingConsistencyFailed { level: ell - 1 });
+        if derived_claim != *claimed_eval {
+            return Err(HyperKZGError::FoldingConsistencyFailed { level: levels });
         }
 
         // Commit to intermediate polynomials (skip polys[0] — already committed)
@@ -177,16 +197,15 @@ where
             transcript.append(c);
         }
         let r: P::ScalarField = transcript.challenge();
-        let u = [r, -r, r * r];
+        let points = FoldPoints::new(r, &mut NoopVerifierObserver)?;
 
-        // Phase 3: batch open all polynomials at the three points
-        let (w, v, p0_at_r_squared) = kzg_open_batch::<P, T>(&polys, &u, setup, transcript);
+        let (w, v, p0_at_r_fourth) = kzg_open_batch::<P, T>(&polys, &points, setup, transcript)?;
 
         Ok(HyperKZGProof {
             com,
             w,
             v,
-            p0_at_r_squared,
+            p0_at_r_fourth,
         })
     }
 
@@ -224,22 +243,26 @@ where
         T: Transcript<Challenge = P::ScalarField>,
         O: VerifierObserver,
     {
-        let ell = point.len();
-        if ell == 0 {
+        let num_vars = point.len();
+        if num_vars == 0 {
             return Err(HyperKZGError::EmptyPoint);
         }
+        let levels = Self::fold_level_count(num_vars);
+        let polynomial_count = levels + 1;
 
-        if proof.com.len() + 1 != ell {
+        if proof.com.len() != levels {
             return Err(HyperKZGError::WrongCommitmentCount {
-                expected: ell - 1,
+                expected: levels,
                 got: proof.com.len(),
             });
         }
 
         // Validate inner evaluation widths before mutating the transcript.
         let v = &proof.v;
-        if v[0].len() != ell || v[1].len() != ell {
-            return Err(HyperKZGError::WrongEvaluationWidth { expected: ell });
+        if v.iter().any(|row| row.len() != polynomial_count) {
+            return Err(HyperKZGError::WrongEvaluationWidth {
+                expected: polynomial_count,
+            });
         }
 
         // Absorb intermediate commitments
@@ -248,74 +271,68 @@ where
         }
         let r: P::ScalarField = transcript.challenge();
 
-        if r.is_zero() {
-            return Err(HyperKZGError::DegenerateChallenge);
-        }
-
         // Prepend the original commitment as C_0
-        let mut com = Vec::with_capacity(ell);
+        let mut com = Vec::with_capacity(polynomial_count);
         com.push(commitment.point);
         com.extend_from_slice(&proof.com);
 
-        let r_squared = observer.fr_mul(r, r);
-        let u = [r, -r, r_squared];
+        let points = FoldPoints::new(r, observer)?;
 
-        let ypos = &v[0]; // evaluations at r
-        let yneg = &v[1]; // evaluations at -r
-        let two_r = observer.fr_mul(P::ScalarField::from_u64(2), r);
-        let two_r_inverse = observer
-            .fr_inv(two_r)
-            .ok_or(HyperKZGError::DegenerateChallenge)?;
-        let mut y_sq = Vec::with_capacity(ell + 1);
-        y_sq.push(proof.p0_at_r_squared);
-        for ((&y_pos, &y_neg), &x) in ypos.iter().zip(yneg).zip(point.iter().rev()).take(ell - 1) {
-            let weighted_sum = observer.fr_mul(r, P::ScalarField::one() - x);
-            let weighted_sum = observer.fr_mul(weighted_sum, y_pos + y_neg);
-            let weighted_difference = observer.fr_mul(x, y_pos - y_neg);
-            let numerator = weighted_sum + weighted_difference;
-            y_sq.push(observer.fr_mul(numerator, two_r_inverse));
-        }
-        y_sq.push(*claimed_eval);
-
-        // Consistency check: the folding relation must hold across evaluations
-        //
-        // For each level i, the polynomial P_i is defined by:
-        //   P_i(x) = (1 - x_{ell-i}) * P_{i-1,even}(x) + x_{ell-i} * P_{i-1,odd}(x)
-        //
-        // This implies:
-        //   2*r * P_{i+1}(r^2) = r * (1 - x_{ell-i-1}) * (P_i(r) + P_i(-r))
-        //                       + x_{ell-i-1} * (P_i(r) - P_i(-r))
-        // All four iterators have exactly `ell` elements: the widths were
-        // validated above and `y_sq` carries the extra `claimed_eval` entry.
-        for (level, (((&y_next, &y_pos), &y_neg), &x)) in y_sq
-            .iter()
-            .skip(1)
-            .zip(ypos.iter())
-            .zip(yneg.iter())
-            .zip(point.iter().rev())
-            .enumerate()
+        // The 4x4 DFT at r, ir, -r, -ir is invertible because r != 0 and
+        // i^2 = -1. It determines the four residue evaluations at r^4; their
+        // two-variable fold becomes the claimed fifth-point evaluation of the
+        // next commitment. The five-point KZG batch binds those claims. The
+        // final HyperKZG path has no separate per-level degree-bound proof.
+        let mut y_fourth = Vec::with_capacity(polynomial_count);
+        y_fourth.push(proof.p0_at_r_fourth);
+        let [at_r, at_ir, at_neg_r, at_neg_ir] = v;
+        for (variables, (((&y_r, &y_ir), &y_neg_r), &y_neg_ir)) in point
+            .rchunks_exact(2)
+            .take(levels)
+            .zip(at_r.iter().zip(at_ir).zip(at_neg_r).zip(at_neg_ir))
         {
-            let lhs = observer.fr_mul(two_r, y_next);
-            let weighted_sum = observer.fr_mul(r, P::ScalarField::one() - x);
-            let weighted_sum = observer.fr_mul(weighted_sum, y_pos + y_neg);
-            let weighted_difference = observer.fr_mul(x, y_pos - y_neg);
-            let rhs = weighted_sum + weighted_difference;
-            if lhs != rhs {
-                return Err(HyperKZGError::FoldingConsistencyFailed { level });
-            }
+            let [x, y] = variables else {
+                return Err(HyperKZGError::InvalidBatchShape);
+            };
+            let residues = points.residues([y_r, y_ir, y_neg_r, y_neg_ir], observer);
+            y_fourth.push(fold_two_variables(residues, [*x, *y], observer));
+        }
+
+        let terminal_values: [P::ScalarField; 4] = [
+            *at_r.last().ok_or(HyperKZGError::InvalidBatchShape)?,
+            *at_ir.last().ok_or(HyperKZGError::InvalidBatchShape)?,
+            *at_neg_r.last().ok_or(HyperKZGError::InvalidBatchShape)?,
+            *at_neg_ir.last().ok_or(HyperKZGError::InvalidBatchShape)?,
+        ];
+        let terminal = if num_vars.is_multiple_of(2) {
+            let [x, y, ..] = point else {
+                return Err(HyperKZGError::InvalidBatchShape);
+            };
+            let residues = points.residues(terminal_values, observer);
+            fold_two_variables(residues, [*x, *y], observer)
+        } else {
+            let x = point.first().ok_or(HyperKZGError::EmptyPoint)?;
+            let [at_r, _, at_neg_r, _] = terminal_values;
+            let [even, odd] = points.binary_residues(at_r, at_neg_r, observer);
+            even + observer.fr_mul(*x, odd - even)
+        };
+        if terminal != *claimed_eval {
+            return Err(HyperKZGError::FoldingConsistencyFailed { level: levels });
         }
 
         // Batch KZG pairing check
         let full_evaluations = [
             v[0].clone(),
             v[1].clone(),
-            y_sq.iter().take(ell).copied().collect(),
+            v[2].clone(),
+            v[3].clone(),
+            y_fourth,
         ];
         if !kzg_verify_batch::<P, T, O>(
             vk,
             &com,
             proof.w,
-            &u,
+            &points,
             &full_evaluations,
             transcript,
             observer,
@@ -325,6 +342,18 @@ where
 
         Ok(())
     }
+}
+
+fn fold_two_variables<F, O>(values: [F; 4], variables: [F; 2], observer: &mut O) -> F
+where
+    F: JoltField,
+    O: VerifierObserver,
+{
+    let [a00, a01, a10, a11] = values;
+    let [x, y] = variables;
+    let low = a00 + observer.fr_mul(y, a01 - a00);
+    let high = a10 + observer.fr_mul(y, a11 - a10);
+    low + observer.fr_mul(x, high - low)
 }
 
 /// `[s · g1]` for every scalar through a fixed-base table: sixteen 16-bit
@@ -492,7 +521,7 @@ mod tests {
 
     use super::*;
     use jolt_crypto::Bn254;
-    use jolt_field::Fr;
+    use jolt_field::{Fr, Ring};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::ChaCha20Rng;
@@ -510,8 +539,30 @@ mod tests {
     }
 
     #[test]
+    fn two_variable_folds_preserve_multilinear_evaluation() {
+        assert_eq!(TestScheme::fold_level_count(23), 11);
+        assert_eq!(TestScheme::fold_level_count(22), 10);
+        let mut rng = ChaCha20Rng::seed_from_u64(87);
+        for num_vars in 1..=8 {
+            let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+            let point: Vec<_> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+            let folds = TestScheme::fold_polynomials(poly.evaluations(), &point);
+            assert_eq!(folds.len(), TestScheme::fold_level_count(num_vars) + 1);
+            for (level, coefficients) in folds.into_iter().enumerate() {
+                let remaining = num_vars - 2 * level;
+                assert_eq!(coefficients.len(), 1 << remaining);
+                let folded = Polynomial::from(coefficients);
+                assert_eq!(
+                    folded.evaluate(point.split_at(remaining).0),
+                    poly.evaluate(&point)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn commit_open_verify_roundtrip() {
-        for ell in [2, 3, 4, 6, 8] {
+        for ell in [2, 3, 4, 5, 6, 8] {
             let n = 1 << ell;
             let mut rng = ChaCha20Rng::seed_from_u64(ell as u64);
             let (pk, vk) = test_setup(n);
@@ -811,6 +862,24 @@ mod tests {
         for (power, scalar) in powers.iter().zip(&scalars) {
             assert_eq!(*power, g1.scalar_mul(scalar));
         }
+    }
+
+    #[test]
+    fn setup_opening_and_degree_shift_exponents() {
+        let beta = Fr::from_u64(3);
+        let g1 = Bn254::g1_generator();
+        let g2 = Bn254::g2_generator();
+        let setup = TestScheme::setup_from_secret(beta, 8, g1, g2);
+        let vk = TestScheme::verifier_setup(&setup);
+        assert_eq!(setup.g1_powers().len(), 8);
+        assert_eq!(vk.beta_cu_g1, g1.scalar_mul(&Fr::from_u64(27)));
+        assert_eq!(vk.beta_fourth_g1, g1.scalar_mul(&Fr::from_u64(81)));
+        assert_eq!(vk.g2, g2);
+        assert_eq!(vk.beta_g2, g2.scalar_mul(&beta));
+        assert_eq!(vk.beta_fourth_g2, g2.scalar_mul(&Fr::from_u64(81)));
+        assert_eq!(vk.beta_fifth_g2, g2.scalar_mul(&Fr::from_u64(243)));
+        assert_eq!(vk.degree_five_shift_g2, g2.scalar_mul(&Fr::from_u64(9)));
+        assert_eq!(vk.degree_six_shift_g2, g2.scalar_mul(&beta));
     }
 
     #[test]

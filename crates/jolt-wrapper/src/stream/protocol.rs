@@ -778,7 +778,8 @@ fn validate_assembly_proof(
                 .checked_sub(statement.pinned_commitments.len())
                 .ok_or(StreamError::StageCount)?
         || proof.reduced_claims.len() != reduced_claim_count
-        || proof.opening.com.len() + 1 != layout.packed_vars()
+        || proof.opening.com.len()
+            != HyperKZGScheme::<Bn254>::fold_level_count(layout.packed_vars())
     {
         return Err(StreamError::StageCount);
     }
@@ -891,6 +892,10 @@ fn prove_direct_opening(
     transcript.append(&claim.value);
     let combined_evaluations =
         packed.rlc_evaluations_skipping(&claim.polynomial_weights, zero_columns)?;
+    // HyperKZG's invertible four-root DFT fixes each level's residue
+    // evaluations, and its fifth opening binds the resulting fold. The shared
+    // shifted-commitment check has already bounded the round polynomials;
+    // fold commitments retain HyperKZG's existing SRS-wide degree bound.
     let opening = HyperKZGScheme::<Bn254>::open(
         setup,
         &combined_evaluations,
