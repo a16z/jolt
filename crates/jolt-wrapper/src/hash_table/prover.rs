@@ -318,4 +318,9 @@ impl ProveRounds<Fr> for HashTableProver<'_> {
         self.bind(bind);
         Ok(())
     }
+
+    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+        values.extend(self.v.iter().map(|column| column[0]));
+        values.extend(self.w.iter().map(|column| column[0]));
+    }
 }

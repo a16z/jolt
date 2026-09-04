@@ -15,8 +15,10 @@
 use std::ops::Range;
 
 use jolt_crypto::Bn254;
-use jolt_field::Fr;
+use jolt_field::{Fr, Ring};
 use jolt_hyperkzg::HyperKZGProverSetup;
+use jolt_poly::EqPolynomial;
+use rayon::prelude::*;
 
 use crate::stream::{
     commit_packed, AffineForm as StreamAffineForm, Column, ColumnId as StreamColumnId, Commitment,
@@ -146,6 +148,46 @@ impl HashTableKey {
             }
         }
         ids
+    }
+
+    pub(crate) fn vk_evaluations(&self, point: &[Fr]) -> Result<[Fr; 6], StreamError> {
+        if point.len() != self.schedule.log_rows {
+            return Err(StreamError::PointDimension {
+                expected: self.schedule.log_rows,
+                actual: point.len(),
+            });
+        }
+        enum Values<'a> {
+            Bits(&'a [u8]),
+            U16(&'a [u16]),
+        }
+        let weights = EqPolynomial::<Fr>::evals(point, None);
+        let columns = [
+            Values::Bits(&self.vk.lo_is_const),
+            Values::U16(&self.vk.lo_const),
+            Values::Bits(&self.vk.hi_is_const),
+            Values::U16(&self.vk.hi_const),
+            Values::Bits(&self.vk.wire_aligned),
+            Values::Bits(&self.vk.wire_shifted),
+        ];
+        columns
+            .into_par_iter()
+            .map(|column| match column {
+                Values::Bits(values) => weights
+                    .iter()
+                    .zip(values)
+                    .filter_map(|(&weight, &value)| (value == 1).then_some(weight))
+                    .sum(),
+                Values::U16(values) => weights
+                    .iter()
+                    .zip(values)
+                    .filter(|(_, value)| **value != 0)
+                    .map(|(&weight, &value)| weight.mul_u64(u64::from(value)))
+                    .sum(),
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .map_err(|_| StreamError::StageCount)
     }
 }
 

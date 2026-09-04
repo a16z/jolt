@@ -703,6 +703,15 @@ impl<L: CopyLinkValueSource, R: CopyLinkValueSource> ProveRounds<Fr> for CopyLin
         self.bind(bind);
         Ok(())
     }
+
+    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+        let claims = self.claims();
+        values.extend(claims.left_selectors);
+        values.extend(claims.left_ids);
+        values.extend(claims.right_selectors);
+        values.extend(claims.right_ids);
+        values.extend(claims.helpers);
+    }
 }
 
 fn copy_link_value(beta: Fr, gamma: Fr, weights: [Fr; 3], eq: Fr, claims: &CopyLinkClaims) -> Fr {

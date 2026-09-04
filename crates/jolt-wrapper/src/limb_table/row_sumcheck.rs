@@ -519,6 +519,10 @@ impl ProveRounds<Fr> for RowSumcheck<'_> {
         self.bind_final(bind);
         Ok(())
     }
+
+    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+        values.extend_from_slice(&self.final_row()[..Col::CLAIMED]);
+    }
 }
 
 /// `eq(τ, x)` over the rows for the big-endian `tau`.

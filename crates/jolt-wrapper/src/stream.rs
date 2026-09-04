@@ -36,8 +36,8 @@ pub(crate) use shared_rounds::{
 mod protocol;
 pub use protocol::{prove_assembly, verify_assembly, verify_assembly_with_cost};
 pub(crate) use protocol::{
-    prove_spartan_assembly, verify_spartan_assembly_from_transcript, SpartanAssembly,
-    SpartanVerifierAssembly,
+    prove_spartan_assembly, verify_spartan_assembly_from_transcript, ProverColumnPlan,
+    SpartanAssembly, SpartanVerifierAssembly,
 };
 mod transcript;
 pub use transcript::commitment_prefix_challenges;

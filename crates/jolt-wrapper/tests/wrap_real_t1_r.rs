@@ -97,6 +97,10 @@ impl<P: ProveRounds<Fr>> ProveRounds<Fr> for TimedProver<P> {
         self.elapsed += started.elapsed();
         result
     }
+
+    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+        self.inner.append_bound_values(values);
+    }
 }
 
 impl DoryLinkedProver {

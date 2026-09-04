@@ -57,6 +57,7 @@ pub fn prove_assembly(
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        None,
     )
 }
 
@@ -75,12 +76,21 @@ pub(crate) struct SpartanVerifierAssembly<'a> {
     pub carry_member: usize,
 }
 
+type RemainingColumnEvaluator<'a> = dyn Fn(&[Fr]) -> Result<Vec<(ColumnId, Fr)>, StreamError> + 'a;
+
+pub(crate) struct ProverColumnPlan<'a> {
+    pub member_columns: &'a [Vec<ColumnId>],
+    pub remaining: &'a RemainingColumnEvaluator<'a>,
+    pub zero_columns: &'a [ColumnId],
+}
+
 pub(crate) fn prove_spartan_assembly(
     packed: &PackedColumns,
     statement: &AssemblyStatement,
     mut members: Vec<StageMember<'_>>,
     exporters: &[&dyn TermExporter],
     spartan: SpartanAssembly<'_>,
+    column_plan: ProverColumnPlan<'_>,
     setup: &HyperKZGProverSetup<Bn254>,
 ) -> Result<WrapperProof, SpartanError> {
     validate_pinned_values(&packed.commitments, statement)?;
@@ -192,6 +202,7 @@ pub(crate) fn prove_spartan_assembly(
         vec![inner_proof],
         vec![outer_rounds],
         vec![az, bz, cz, witness_eval],
+        Some(column_plan),
     )?)
 }
 
@@ -210,10 +221,28 @@ fn prove_assembly_tail(
     mut stages: Vec<StageProof>,
     mut shared_stages: Vec<PendingRoundStage>,
     reduced_claims: Vec<Fr>,
+    column_plan: Option<ProverColumnPlan<'_>>,
 ) -> Result<WrapperProof, StreamError> {
     validate_assembly(packed.layout, statement, members)?;
     let (row_rounds, row_result) = prove_batch_rounds(members, setup, transcript)?;
-    let column_values = packed.column_evaluations(&row_result.point)?;
+    let column_values = if let Some(plan) = &column_plan {
+        if plan.member_columns.len() != members.len() {
+            return Err(StreamError::StageMemberCount);
+        }
+        let mut bound = Vec::new();
+        for (member, columns) in members.iter().zip(plan.member_columns) {
+            let mut values = Vec::with_capacity(columns.len());
+            member.prover.append_bound_values(&mut values);
+            if values.len() != columns.len() {
+                return Err(StreamError::StageMemberCount);
+            }
+            bound.extend(columns.iter().copied().zip(values));
+        }
+        bound.extend((plan.remaining)(&row_result.point)?);
+        packed.column_evaluations_from_bound(&bound)?
+    } else {
+        packed.column_evaluations(&row_result.point)?
+    };
     let context = TermContext {
         row_point: &row_result.point,
         batching_coefficients: &row_result.coefficients,
@@ -312,6 +341,9 @@ fn prove_assembly_tail(
         Vec::new(),
         term_evaluations,
         &claim,
+        column_plan
+            .as_ref()
+            .map_or(&[][..], |plan| plan.zero_columns),
         setup,
         transcript,
     )?;
@@ -852,11 +884,13 @@ fn prove_direct_opening(
     stage_claims: Vec<Vec<Fr>>,
     term_evaluations: Vec<Fr>,
     claim: &ReductionClaim,
+    zero_columns: &[ColumnId],
     setup: &HyperKZGProverSetup<Bn254>,
     transcript: &mut Keccak256Transcript<Fr>,
 ) -> Result<WrapperProof, StreamError> {
     transcript.append(&claim.value);
-    let combined_evaluations = packed.rlc_evaluations(&claim.polynomial_weights)?;
+    let combined_evaluations =
+        packed.rlc_evaluations_skipping(&claim.polynomial_weights, zero_columns)?;
     let opening = HyperKZGScheme::<Bn254>::open(
         setup,
         &combined_evaluations,

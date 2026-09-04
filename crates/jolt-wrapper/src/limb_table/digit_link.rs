@@ -28,7 +28,7 @@ use rayon::prelude::*;
 use super::columns::Constants;
 use super::layout::LOG_ROWS;
 use super::lookup::{link_columns, LinkColumns, LinkEvals};
-use super::relation::Col;
+use super::relation::{Col, RowMatrix};
 use super::schedule::Layout;
 use super::terms::{AffineForm, ColumnId, Term};
 
@@ -75,6 +75,34 @@ impl LinkMember {
             digit: digit_values.to_vec(),
             v: pack(0),
             v_prime: pack(WINDOW_CHUNKS),
+            size,
+            round: 0,
+        }
+    }
+
+    pub(crate) fn new_from_matrix(layout: &Layout, rho: Fr, matrix: &RowMatrix) -> Self {
+        let size = 1usize << LOG_ROWS;
+        let pow_chunk = Constants::get().pow_chunk;
+        let mut digit = vec![Fr::zero(); size];
+        let mut v = vec![Fr::zero(); size];
+        let mut v_prime = vec![Fr::zero(); size];
+        digit
+            .par_iter_mut()
+            .zip(v.par_iter_mut())
+            .zip(v_prime.par_iter_mut())
+            .enumerate()
+            .for_each(|(row, ((digit, v), v_prime))| {
+                *digit = matrix.value(Col::D, row);
+                for (chunk, &weight) in pow_chunk.iter().take(WINDOW_CHUNKS).enumerate() {
+                    *v += matrix.value(Col::CHUNKS + chunk, row) * weight;
+                    *v_prime += matrix.value(Col::CHUNKS + WINDOW_CHUNKS + chunk, row) * weight;
+                }
+            });
+        Self {
+            weights: link_columns(layout, rho),
+            digit,
+            v,
+            v_prime,
             size,
             round: 0,
         }

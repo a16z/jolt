@@ -36,9 +36,9 @@ use crate::relation::{
 use crate::stream::{
     assembly_transcript, combine_packed_phases, commit_packed, commitment_prefix_challenges,
     prove_spartan_assembly, verify_spartan_assembly_from_transcript, AssemblyStatement, Column,
-    ColumnId, Commitment, CountingKeccakTranscript, PackedColumns, SpartanAssembly,
-    SpartanVerifierAssembly, StageMember, StageResult, StreamError, Term, TermContext,
-    TermExporter, TermObserver, VerifierCost, WrapperProof,
+    ColumnId, Commitment, CountingKeccakTranscript, PackedColumns, ProverColumnPlan,
+    SpartanAssembly, SpartanVerifierAssembly, StageMember, StageResult, StreamError, Term,
+    TermContext, TermExporter, TermObserver, VerifierCost, WrapperProof,
 };
 use crate::SpartanError;
 
@@ -205,8 +205,11 @@ struct ScalarExporterPlan {
 #[derive(Clone)]
 struct WrapAssemblyPlan {
     hash_columns: Vec<ColumnId>,
+    hash_vk_columns: Vec<ColumnId>,
     witness_column: ColumnId,
     carry_member: usize,
+    member_columns: Vec<Vec<ColumnId>>,
+    zero_columns: Vec<ColumnId>,
     copies: Vec<CopyExporterPlan>,
     limb: LimbExporterPlan,
     scalar: ScalarExporterPlan,
@@ -566,6 +569,27 @@ impl WrapVerifierKey {
         }
         Ok(full)
     }
+
+    fn remaining_column_evaluations(
+        &self,
+        point: &[Fr],
+    ) -> Result<Vec<(ColumnId, Fr)>, StreamError> {
+        let mut evaluations = self
+            .assembly
+            .hash_vk_columns
+            .iter()
+            .copied()
+            .zip(self.hash.table.vk_evaluations(point)?)
+            .collect::<Vec<_>>();
+        evaluations.extend(
+            self.assembly
+                .zero_columns
+                .iter()
+                .copied()
+                .map(|column| (column, Fr::from_u64(0))),
+        );
+        Ok(evaluations)
+    }
 }
 
 fn hash_public_statement(public: &PublicInputs) -> Vec<Fr> {
@@ -699,6 +723,7 @@ pub fn wrap(
     {
         return Err(WrapError::StatementMismatch);
     }
+    let remaining = |point: &[Fr]| key.remaining_column_evaluations(point);
     Ok(prove_spartan_assembly(
         &committed.packed,
         &statement,
@@ -710,6 +735,11 @@ pub fn wrap(
             witness,
             witness_column: key.assembly.witness_column,
             carry_member: key.assembly.carry_member,
+        },
+        ProverColumnPlan {
+            member_columns: &key.assembly.member_columns,
+            remaining: &remaining,
+            zero_columns: &key.assembly.zero_columns,
         },
         setup,
     )?)

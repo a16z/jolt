@@ -110,4 +110,8 @@ impl ProveRounds<Fr> for CarryProver {
         self.bind(bind);
         Ok(())
     }
+
+    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+        values.extend_from_slice(&self.polynomial.evals()[..1]);
+    }
 }

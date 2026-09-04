@@ -69,6 +69,9 @@ pub trait ProveRounds<F: JoltField> {
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+
+    /// Append any member-owned multilinears after their final bind.
+    fn append_bound_values(&self, _values: &mut Vec<F>) {}
 }
 
 /// One active member for a single batch round.

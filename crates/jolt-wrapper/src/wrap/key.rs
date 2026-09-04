@@ -8,7 +8,7 @@ use jolt_r1cs::Variable;
 use crate::hash_table::layout::MESSAGE;
 use crate::hash_table::terms::{
     challenge125, challenge_scalar128, fr_word, fr_word_shifted, AffineForm as HashAffineForm,
-    WIRED_BIT_BASE, WIRED_WORD_BASE,
+    VK_BASE as HASH_VK_BASE, WIRED_BIT_BASE, WIRED_WORD_BASE,
 };
 use crate::hash_table::{
     ByteSource, Decoder, ElementKind as HashElementKind, HashTable, LinkMap, PublicInputs,
@@ -191,6 +191,32 @@ pub(super) fn build_key_assembly(
                 member: 2 + index,
             }
         })
+        .collect::<Vec<_>>();
+    let mut member_columns = vec![Vec::new(); carry_member + 1];
+    member_columns[0].extend_from_slice(&hash_columns[..HASH_VK_BASE]);
+    for (index, (&base, helpers)) in copy_fixed_bases
+        .iter()
+        .zip(helper_columns.chunks_exact(2))
+        .enumerate()
+    {
+        member_columns[2 + index].extend(
+            (base..base + 4 * WIRES)
+                .map(|position| physical_id(position, packing))
+                .chain(helpers.iter().copied()),
+        );
+    }
+    member_columns[t2_member].clone_from(&limb_columns);
+    member_columns[carry_member].push(witness_column);
+    let hash_vk_columns = hash_columns[HASH_VK_BASE..].to_vec();
+    let mut live_columns = vec![false; total_groups * packing];
+    for column in member_columns.iter().flatten().chain(&hash_vk_columns) {
+        live_columns[column.index(packing)?] = true;
+    }
+    let zero_columns = live_columns
+        .into_iter()
+        .enumerate()
+        .filter(|(_, live)| !live)
+        .map(|(index, _)| physical_id(index, packing))
         .collect();
     let statement = AssemblyStatement {
         key_digest: hash.profile_digest,
@@ -204,8 +230,11 @@ pub(super) fn build_key_assembly(
     };
     let plan = WrapAssemblyPlan {
         hash_columns,
+        hash_vk_columns,
         witness_column,
         carry_member,
+        member_columns,
+        zero_columns,
         copies: copy_plans,
         limb: LimbExporterPlan {
             challenge_offset: t2_challenge_offset,

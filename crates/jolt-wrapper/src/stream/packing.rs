@@ -6,7 +6,9 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::EqPolynomial;
 use rayon::prelude::*;
 
-use super::{Commitment, StreamError};
+use super::{ColumnId, Commitment, StreamError};
+
+const RLC_BLOCK_ROWS: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Column {
@@ -174,6 +176,46 @@ impl PackedPolynomial {
             Self::Fr(values) => values.len(),
         }
     }
+
+    fn accumulate_rlc(
+        &self,
+        target: &mut [Fr],
+        start: usize,
+        slots: &[usize],
+        packing: usize,
+        weight: Fr,
+    ) {
+        match self {
+            Self::Bits(values) => accumulate_rows(
+                target,
+                &values[start..start + target.len()],
+                slots,
+                packing,
+                |entry| (*entry == 1).then_some(weight),
+            ),
+            Self::U16(values) => accumulate_rows(
+                target,
+                &values[start..start + target.len()],
+                slots,
+                packing,
+                |&entry| (entry != 0).then(|| weight.mul_u64(u64::from(entry))),
+            ),
+            Self::U32(values) => accumulate_rows(
+                target,
+                &values[start..start + target.len()],
+                slots,
+                packing,
+                |&entry| (entry != 0).then(|| weight.mul_u64(u64::from(entry))),
+            ),
+            Self::Fr(values) => accumulate_rows(
+                target,
+                &values[start..start + target.len()],
+                slots,
+                packing,
+                |&entry| (!entry.is_zero()).then(|| entry * weight),
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -252,31 +294,115 @@ impl PackedColumns {
         Ok(values)
     }
 
+    pub(crate) fn column_evaluations_from_bound(
+        &self,
+        bound: &[(ColumnId, Fr)],
+    ) -> Result<Vec<Fr>, StreamError> {
+        let mut values = vec![None; self.layout.column_count];
+        for &(column, value) in bound {
+            let index = column.index(self.layout.k)?;
+            let target = values.get_mut(index).ok_or(StreamError::ColumnOutOfRange {
+                column: index,
+                columns: self.layout.column_count,
+            })?;
+            if target.is_some_and(|existing| existing != value) {
+                return Err(StreamError::OpeningClaim);
+            }
+            *target = Some(value);
+        }
+        let mut values = values
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(StreamError::OpeningClaim)?;
+        values.resize(self.layout.padded_column_count, Fr::zero());
+        Ok(values)
+    }
+
     pub fn rlc_evaluations(&self, weights: &[Fr]) -> Result<Vec<Fr>, StreamError> {
+        self.rlc_evaluations_skipping(weights, &[])
+    }
+
+    pub(crate) fn rlc_evaluations_skipping(
+        &self,
+        weights: &[Fr],
+        zero_columns: &[ColumnId],
+    ) -> Result<Vec<Fr>, StreamError> {
         if weights.len() != self.polynomials.len() {
             return Err(StreamError::OpeningClaim);
         }
-        Ok((0..self.polynomials[0].len())
-            .into_par_iter()
-            .map(|index| {
-                self.polynomials
-                    .iter()
-                    .zip(weights)
-                    .map(|(polynomial, &weight)| match polynomial {
-                        PackedPolynomial::Bits(values) => {
-                            if values[index] == 1 {
-                                weight
-                            } else {
-                                Fr::zero()
-                            }
-                        }
-                        PackedPolynomial::U16(values) => weight.mul_u64(u64::from(values[index])),
-                        PackedPolynomial::U32(values) => weight.mul_u64(u64::from(values[index])),
-                        PackedPolynomial::Fr(values) => values[index] * weight,
-                    })
-                    .sum()
+        let length = self
+            .polynomials
+            .first()
+            .ok_or(StreamError::NoColumns)?
+            .len();
+        if self
+            .polynomials
+            .iter()
+            .any(|polynomial| polynomial.len() != length)
+        {
+            return Err(StreamError::StageCount);
+        }
+        let mut active_slots = vec![vec![true; self.layout.k]; self.polynomials.len()];
+        for &column in zero_columns {
+            let index = column.index(self.layout.k)?;
+            if index >= self.layout.column_count {
+                return Err(StreamError::ColumnOutOfRange {
+                    column: index,
+                    columns: self.layout.column_count,
+                });
+            }
+            active_slots[index / self.layout.k][index % self.layout.k] = false;
+        }
+        let active_slots = active_slots
+            .into_iter()
+            .map(|slots| {
+                slots
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(slot, active)| active.then_some(slot))
+                    .collect::<Vec<_>>()
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let block_len = self
+            .layout
+            .k
+            .checked_mul(RLC_BLOCK_ROWS)
+            .ok_or(StreamError::PackedLengthOverflow)?;
+        let mut combined = vec![Fr::zero(); length];
+        combined
+            .par_chunks_mut(block_len)
+            .enumerate()
+            .for_each(|(block, target)| {
+                let start = block * block_len;
+                for ((polynomial, &weight), slots) in
+                    self.polynomials.iter().zip(weights).zip(&active_slots)
+                {
+                    if weight.is_zero() || slots.is_empty() {
+                        continue;
+                    }
+                    polynomial.accumulate_rlc(target, start, slots, self.layout.k, weight);
+                }
+            });
+        Ok(combined)
+    }
+}
+
+fn accumulate_rows<T>(
+    target: &mut [Fr],
+    source: &[T],
+    slots: &[usize],
+    packing: usize,
+    mut contribution: impl FnMut(&T) -> Option<Fr>,
+) {
+    for (target, source) in target
+        .chunks_exact_mut(packing)
+        .zip(source.chunks_exact(packing))
+    {
+        for &slot in slots {
+            if let Some(value) = contribution(&source[slot]) {
+                target[slot] += value;
+            }
+        }
     }
 }
 

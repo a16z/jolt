@@ -698,13 +698,9 @@ pub struct Members<'a> {
 impl<'a> Members<'a> {
     /// `matrix`: the row member's `Col::WIDTH` columns (claimed then public).
     pub fn new(relation: &'a RowRelation, matrix: &'a RowMatrix, layout: &Layout, rho: Fr) -> Self {
-        let digit_values = matrix.field_column(Col::D);
-        let chunks = (Col::CHUNKS..Col::CHUNKS + 8)
-            .map(|column| matrix.field_column(column))
-            .collect::<Vec<_>>();
         Self {
             rows: RowSumcheck::new_typed(relation, matrix),
-            link: LinkMember::new(layout, rho, &digit_values, &chunks),
+            link: LinkMember::new_from_matrix(layout, rho, matrix),
         }
     }
 }
