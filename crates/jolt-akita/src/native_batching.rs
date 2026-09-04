@@ -16,7 +16,8 @@
 //! embeds the backend proof bytes wholesale.
 
 use akita_config::CommitmentConfig;
-use akita_pcs::AkitaTranscript;
+use akita_pcs::{AkitaError, AkitaTranscript};
+use akita_schedules::TrustedScheduleCatalog;
 use std::sync::Arc;
 
 use akita_prover::{
@@ -334,7 +335,7 @@ impl AkitaNativeBatching {
             AKITA_ONE_HOT_K256 => setup
                 .verifier
                 .one_hot_k256_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .batched_prove(
                     backend_prover_setup,
                     opening,
@@ -345,7 +346,7 @@ impl AkitaNativeBatching {
             AKITA_ONE_HOT_K16 => setup
                 .verifier
                 .one_hot_k16_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .batched_prove(
                     backend_prover_setup,
                     opening,
@@ -413,7 +414,7 @@ impl AkitaNativeBatching {
         with_backend_pool(|| match setup.one_hot_k {
             AKITA_ONE_HOT_K256 => setup
                 .one_hot_k256_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .batched_verify(
                     &backend_proof,
                     backend_verifier,
@@ -423,7 +424,7 @@ impl AkitaNativeBatching {
                 ),
             AKITA_ONE_HOT_K16 => setup
                 .one_hot_k16_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .batched_verify(
                     &backend_proof,
                     backend_verifier,
@@ -584,7 +585,7 @@ where
 /// prover: the shared point, per-polynomial claimed values, the group
 /// commitment, and the commit-time hint.
 fn single_group_batch<'a, Cfg, P>(
-    schedules: &akita_schedules::TrustedScheduleCatalog,
+    schedules: &TrustedScheduleCatalog,
     point: &[AkitaField],
     evaluations: &[AkitaField],
     polynomials: &'a [&'a P],
@@ -592,7 +593,7 @@ fn single_group_batch<'a, Cfg, P>(
     backend_hint: AkitaBackendHint,
 ) -> Result<
     SelectedProverOpeningData<'a, AkitaField, PreparedProverGroup<'a, P>, AkitaField>,
-    akita_pcs::AkitaError,
+    AkitaError,
 >
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
@@ -655,7 +656,7 @@ where
         AKITA_ONE_HOT_K16 => setup
             .verifier
             .one_hot_k16_scheme()
-            .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
             .batched_prove(
                 backend_prover_setup,
                 opening,
@@ -666,7 +667,7 @@ where
         AKITA_ONE_HOT_K256 => setup
             .verifier
             .one_hot_k256_scheme()
-            .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
             .batched_prove(
                 backend_prover_setup,
                 opening,
@@ -750,7 +751,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                     setup
                         .verifier
                         .dense_scheme()
-                        .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                        .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                         .batched_prove(
                             backend_prover_setup,
                             opening,
@@ -849,7 +850,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         with_backend_pool(|| match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => setup
                 .dense_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .batched_verify(
                     &backend_proof,
                     backend_verifier,
@@ -860,7 +861,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             AkitaBackendFlavor::OneHot => match setup.one_hot_k {
                 AKITA_ONE_HOT_K16 => setup
                     .one_hot_k16_scheme()
-                    .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                     .batched_verify(
                         &backend_proof,
                         backend_verifier,
@@ -870,7 +871,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                     ),
                 AKITA_ONE_HOT_K256 => setup
                     .one_hot_k256_scheme()
-                    .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                     .batched_verify(
                         &backend_proof,
                         backend_verifier,
@@ -890,6 +891,8 @@ mod tests {
     use super::*;
     use jolt_field::Zero;
     use jolt_openings::PrecommittedRole;
+
+    use crate::adapters::AkitaVerifierScheduleArtifacts;
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,
@@ -925,7 +928,7 @@ mod tests {
             max_total_batch_polys: 260,
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            schedule_artifacts: crate::adapters::AkitaVerifierScheduleArtifacts::Both {
+            schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
                 dense: Vec::new(),
                 one_hot: Vec::new(),
             },

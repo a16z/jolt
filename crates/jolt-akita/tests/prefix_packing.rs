@@ -3,6 +3,8 @@
     reason = "tests exercise successful PCS operations"
 )]
 
+use std::sync::Arc;
+
 use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_field::Ring;
 use jolt_openings::{CommitmentScheme, PrefixPackedClaims, PrefixPackedLayout};
@@ -51,7 +53,7 @@ fn fixed_prefix_claim_opens_the_materialized_akita_polynomial() {
         layout.packed_num_vars(),
         1,
         digest,
-        std::sync::Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap()),
+        Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap()),
     ))
     .unwrap();
     let (commitment, hint) = AkitaScheme::commit(&physical, &prover_setup).unwrap();
@@ -111,7 +113,7 @@ fn changed_fixed_prefix_statement_rejects_the_original_proof() {
         layout.packed_num_vars(),
         1,
         digest,
-        std::sync::Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap()),
+        Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap()),
     ))
     .unwrap();
     let (commitment, hint) = AkitaScheme::commit(&physical, &prover_setup).unwrap();

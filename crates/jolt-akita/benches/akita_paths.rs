@@ -38,9 +38,10 @@ use std::time::Duration;
 use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
 use akita_prover::{
-    AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, OneHotPoly,
+    AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, GroupContext, OneHotPoly,
     PreparedProverGroup, SelectedProverOpeningData,
 };
+use akita_schedules::TrustedScheduleCatalog;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaCommitmentHint, BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
@@ -592,7 +593,7 @@ fn akita_prover_commit_dense(
             &setup.dense_prover,
             black_box(std::slice::from_ref(poly)),
             &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("Akita backend dense commit should succeed");
     (output.committed_group, output.hint)
@@ -614,14 +615,14 @@ fn akita_prover_commit_one_hot(
             &setup.one_hot_prover,
             black_box(std::slice::from_ref(poly)),
             &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("Akita backend one-hot commit should succeed");
     (output.committed_group, output.hint)
 }
 
 fn akita_prover_claims<'a, Cfg, P>(
-    schedules: &akita_schedules::TrustedScheduleCatalog,
+    schedules: &TrustedScheduleCatalog,
     point: &[AkitaField],
     evaluations: Vec<AkitaField>,
     polynomials: &'a [&'a P],

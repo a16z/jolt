@@ -1,4 +1,10 @@
-use std::{fmt, io::Cursor, path::Path, sync::Arc, sync::OnceLock};
+use std::{
+    fmt,
+    io::Cursor,
+    path::{Path, PathBuf},
+    sync::Arc,
+    sync::OnceLock,
+};
 
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
@@ -94,7 +100,7 @@ impl AkitaScheduleArtifacts {
     pub fn from_default_directory() -> Result<Self, OpeningsError> {
         let directory = std::env::var_os(Self::DIRECTORY_ENV).map_or_else(
             || Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules"),
-            std::path::PathBuf::from,
+            PathBuf::from,
         );
         Self::from_directory(directory)
     }
@@ -1037,15 +1043,15 @@ pub(crate) fn one_hot_setup_prover(
     setup: &AkitaVerifierSetup,
     max_num_vars: usize,
     max_num_polys: usize,
-) -> Result<AkitaBackendProverSetup, akita_pcs::AkitaError> {
+) -> Result<AkitaBackendProverSetup, AkitaError> {
     with_backend_pool(|| match setup.one_hot_k {
         AKITA_ONE_HOT_K16 => setup
             .one_hot_k16_scheme()
-            .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
             .setup_prover(max_num_vars, max_num_polys),
         AKITA_ONE_HOT_K256 => setup
             .one_hot_k256_scheme()
-            .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+            .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
             .setup_prover(max_num_vars, max_num_polys),
         _ => unreachable!("one-hot K is validated before backend setup"),
     })

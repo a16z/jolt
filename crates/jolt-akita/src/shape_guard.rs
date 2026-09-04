@@ -307,6 +307,9 @@ mod tests {
     use super::*;
     use akita_types::AkitaScheduleLookupKey;
     use jolt_field::Ring;
+    use std::path::Path;
+
+    use crate::AkitaScheduleArtifacts;
 
     fn dense_commitment(num_vars: usize, poly_count: usize) -> AkitaCommitment {
         AkitaCommitment {
@@ -325,8 +328,8 @@ mod tests {
     }
 
     fn dense_schedules() -> TrustedScheduleCatalog {
-        let artifacts = crate::AkitaScheduleArtifacts::from_directory(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules"),
+        let artifacts = AkitaScheduleArtifacts::from_directory(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules"),
         )
         .expect("workspace schedule artifacts");
         artifacts.dense_catalog().expect("dense schedule catalog")

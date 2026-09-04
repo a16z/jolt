@@ -8,10 +8,11 @@
 use std::path::{Path, PathBuf};
 
 use akita_config::trusted_setup_matrix_capacity;
-use akita_schedules::TrustedScheduleCatalog;
+use akita_planner::emit::MaterializationDiagnostics;
+use akita_schedules::{ResolvedScheduleRow, TrustedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    PolynomialGroupLayout,
+    FoldSchedule, PolynomialGroupLayout,
 };
 use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{
@@ -60,7 +61,7 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
-fn scalar_schedule(catalog: &TrustedScheduleCatalog, num_vars: usize) -> akita_types::FoldSchedule {
+fn scalar_schedule(catalog: &TrustedScheduleCatalog, num_vars: usize) -> FoldSchedule {
     catalog
         .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
             num_vars, 1,
@@ -70,7 +71,7 @@ fn scalar_schedule(catalog: &TrustedScheduleCatalog, num_vars: usize) -> akita_t
         .clone()
 }
 
-fn uses_setup_offloading(schedule: &akita_types::FoldSchedule) -> bool {
+fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
     schedule
         .recursive_folds
         .iter()
@@ -99,9 +100,8 @@ const TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(2
 const TRUSTED_ADVICE_K256_FINAL_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(39, 1);
 
 fn trusted_advice_grouped_key(dense: &TrustedScheduleCatalog) -> AkitaScheduleLookupKey {
-    let trusted_profile =
-        jolt_akita::schedule_registry::dense_precommit_profile(dense, TRUSTED_ADVICE_GROUP)
-            .expect("trusted advice standalone row must resolve");
+    let trusted_profile = dense_precommit_profile(dense, TRUSTED_ADVICE_GROUP)
+        .expect("trusted advice standalone row must resolve");
     AkitaScheduleLookupKey {
         final_group: TRUSTED_ADVICE_K256_FINAL_GROUP,
         precommitteds: vec![trusted_profile],
@@ -110,7 +110,7 @@ fn trusted_advice_grouped_key(dense: &TrustedScheduleCatalog) -> AkitaScheduleLo
 
 fn assert_adaptation_preserves_main_skeleton(
     base: &TrustedScheduleCatalog,
-    resolved: &akita_schedules::ResolvedScheduleRow,
+    resolved: &ResolvedScheduleRow,
     final_group: PolynomialGroupLayout,
 ) {
     let main = base
@@ -237,11 +237,8 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
         .rows()
         .all(|row| row.profiles().precommitteds.is_empty()));
 
-    let trusted_profile = jolt_akita::schedule_registry::dense_precommit_profile(
-        &dense,
-        FIXTURE_TRUSTED_ADVICE_GROUP,
-    )
-    .expect("fixture dense profile");
+    let trusted_profile = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
+        .expect("fixture dense profile");
     for precommitteds in [
         vec![trusted_profile],
         vec![trusted_profile, trusted_profile],
@@ -283,7 +280,7 @@ fn catalogs_match_planner_regeneration() {
     let specs = family_specs(output.clone()).expect("valid family specs");
     let rendered = akita_planner::emit::render_schedule_artifact_outputs_with_validation(
         &specs,
-        akita_planner::emit::MaterializationDiagnostics::default(),
+        MaterializationDiagnostics::default(),
         |_, _| Ok(()),
     )
     .expect("regenerate artifacts");

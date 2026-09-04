@@ -1,4 +1,4 @@
-use akita_pcs::{ComputeBackendSetup, CpuBackend};
+use akita_pcs::{AkitaError, ComputeBackendSetup, CpuBackend};
 use akita_prover::{GroupContext, RootPolyMeta};
 use akita_types::PrecommittedGroupProfiles;
 use jolt_crypto::Commitment;
@@ -240,7 +240,7 @@ impl AkitaScheme {
                 (AKITA_ONE_HOT_K16, None) => setup
                     .verifier
                     .one_hot_k16_scheme()
-                    .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                     .commit::<TracePackedOneHot, CpuBackend>(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
@@ -250,7 +250,7 @@ impl AkitaScheme {
                 (AKITA_ONE_HOT_K16, Some(profiles)) => setup
                     .verifier
                     .one_hot_k16_scheme()
-                    .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                     .commit::<TracePackedOneHot, CpuBackend>(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
@@ -260,7 +260,7 @@ impl AkitaScheme {
                 (AKITA_ONE_HOT_K256, None) => setup
                     .verifier
                     .one_hot_k256_scheme()
-                    .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                     .commit::<TracePackedOneHot, CpuBackend>(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
@@ -270,7 +270,7 @@ impl AkitaScheme {
                 (AKITA_ONE_HOT_K256, Some(profiles)) => setup
                     .verifier
                     .one_hot_k256_scheme()
-                    .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                     .commit::<TracePackedOneHot, CpuBackend>(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
@@ -300,7 +300,7 @@ impl AkitaScheme {
             AKITA_ONE_HOT_K16 => setup
                 .verifier
                 .one_hot_k16_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .commit(
                     backend_prover_setup,
                     polynomials,
@@ -310,7 +310,7 @@ impl AkitaScheme {
             AKITA_ONE_HOT_K256 => setup
                 .verifier
                 .one_hot_k256_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .commit(
                     backend_prover_setup,
                     polynomials,
@@ -334,7 +334,7 @@ impl AkitaScheme {
             AKITA_ONE_HOT_K16 => setup
                 .verifier
                 .one_hot_k16_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .commit(
                     backend_prover_setup,
                     polynomials,
@@ -344,7 +344,7 @@ impl AkitaScheme {
             AKITA_ONE_HOT_K256 => setup
                 .verifier
                 .one_hot_k256_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .commit(
                     backend_prover_setup,
                     polynomials,
@@ -468,7 +468,7 @@ impl AkitaScheme {
             setup
                 .verifier
                 .dense_scheme()
-                .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
                 .commit(
                     backend_prover_setup,
                     dense.as_slice(),
@@ -927,7 +927,7 @@ mod tests {
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
-        let artifacts = crate::AkitaScheduleArtifacts::from_default_directory().unwrap();
+        let artifacts = AkitaScheduleArtifacts::from_default_directory().unwrap();
         let setup = AkitaVerifierSetup {
             max_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
