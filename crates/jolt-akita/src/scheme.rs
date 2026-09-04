@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
-    invalid_batch, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
+    invalid_batch, invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
     transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackendCommitment,
     AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
@@ -525,8 +525,6 @@ impl CommitmentScheme for AkitaScheme {
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
-        let invalid_setup =
-            |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
         if params
             .precommitted_schedule
             .as_ref()
@@ -537,18 +535,12 @@ impl CommitmentScheme for AkitaScheme {
             ));
         }
         let artifacts = &params.schedule_artifacts;
-        let dense_catalog = artifacts
-            .dense_catalog()
-            .map_err(|error| invalid_setup(&error))?;
-        let dense_schedule_artifact = || {
-            dense_catalog
-                .to_artifact_bytes()
-                .map_err(|error| invalid_setup(&error))
-        };
+        let dense_catalog = artifacts.dense_catalog().map_err(invalid_setup)?;
+        let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
         let one_hot_schedule_artifact = || {
             let base = artifacts
                 .one_hot_catalog(params.one_hot_k)
-                .map_err(|error| invalid_setup(&error))?;
+                .map_err(invalid_setup)?;
             let catalog = params
                 .precommitted_schedule
                 .as_ref()
@@ -558,10 +550,8 @@ impl CommitmentScheme for AkitaScheme {
                         precommitted.extend_catalog(&dense_catalog, &base, params.one_hot_k)
                     },
                 )
-                .map_err(|error| invalid_setup(&error))?;
-            catalog
-                .to_artifact_bytes()
-                .map_err(|error| invalid_setup(&error))
+                .map_err(invalid_setup)?;
+            catalog.to_artifact_bytes().map_err(invalid_setup)
         };
         let schedule_artifacts = match params.flavor {
             AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
@@ -594,13 +584,13 @@ impl CommitmentScheme for AkitaScheme {
                 let backend_prover_setup = with_backend_pool(|| {
                     scheme.setup_prover(params.max_num_vars, params.max_total_batch_polys)
                 })
-                .map_err(|err| invalid_setup(&err))?;
+                .map_err(invalid_setup)?;
                 let prepared_backend_setup =
                     with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
-                        .map_err(|err| invalid_setup(&err))?;
+                        .map_err(invalid_setup)?;
                 let backend_verifier_setup =
                     with_backend_pool(|| scheme.setup_verifier(&backend_prover_setup))
-                        .map_err(|err| invalid_setup(&err))?;
+                        .map_err(invalid_setup)?;
                 (
                     Some(Arc::new(backend_prover_setup)),
                     Some(Arc::new(prepared_backend_setup)),
@@ -617,10 +607,10 @@ impl CommitmentScheme for AkitaScheme {
                 params.max_num_vars,
                 params.max_total_batch_polys,
             )
-            .map_err(|err| invalid_setup(&err))?;
+            .map_err(invalid_setup)?;
             let prepared_backend_setup =
                 with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
-                    .map_err(|err| invalid_setup(&err))?;
+                    .map_err(invalid_setup)?;
             let backend_verifier_setup =
                 crate::adapters::one_hot_setup_verifier(&verifier, &backend_prover_setup)?;
             (

@@ -644,17 +644,14 @@ impl AkitaVerifierSetup {
         &self,
         flavor: AkitaBackendFlavor,
     ) -> Result<AkitaBackendVerifier, OpeningsError> {
-        let invalid_setup =
-            |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
         match flavor {
             AkitaBackendFlavor::Dense => {
                 let scheme = self.dense_scheme()?;
                 let prover_setup = with_backend_pool(|| {
                     scheme.setup_prover(self.max_num_vars, self.max_total_batch_polys)
                 })
-                .map_err(|err| invalid_setup(&err))?;
-                with_backend_pool(|| scheme.setup_verifier(&prover_setup))
-                    .map_err(|err| invalid_setup(&err))
+                .map_err(invalid_setup)?;
+                with_backend_pool(|| scheme.setup_verifier(&prover_setup)).map_err(invalid_setup)
             }
             AkitaBackendFlavor::OneHot => {
                 let log_k = validate_one_hot_k(self.one_hot_k)?;
@@ -663,7 +660,7 @@ impl AkitaVerifierSetup {
                 }
                 let prover_setup =
                     one_hot_setup_prover(self, self.max_num_vars, self.max_total_batch_polys)
-                        .map_err(|err| invalid_setup(&err))?;
+                        .map_err(invalid_setup)?;
                 one_hot_setup_verifier(self, &prover_setup)
             }
         }
@@ -1095,19 +1092,18 @@ pub(crate) fn one_hot_setup_verifier(
     setup: &AkitaVerifierSetup,
     prover_setup: &AkitaBackendProverSetup,
 ) -> Result<AkitaBackendVerifier, OpeningsError> {
-    let invalid_setup = |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
     match setup.one_hot_k {
         AKITA_ONE_HOT_K16 => with_backend_pool(|| {
             setup
                 .one_hot_k16_scheme()?
                 .setup_verifier(prover_setup)
-                .map_err(|err| invalid_setup(&err))
+                .map_err(invalid_setup)
         }),
         AKITA_ONE_HOT_K256 => with_backend_pool(|| {
             setup
                 .one_hot_k256_scheme()?
                 .setup_verifier(prover_setup)
-                .map_err(|err| invalid_setup(&err))
+                .map_err(invalid_setup)
         }),
         _ => Err(invalid_batch(format!(
             "unsupported Akita one-hot K={}",
@@ -1221,6 +1217,10 @@ where
 
 pub(crate) fn invalid_batch(message: impl Into<String>) -> OpeningsError {
     OpeningsError::InvalidBatch(message.into())
+}
+
+pub(crate) fn invalid_setup(error: impl ToString) -> OpeningsError {
+    OpeningsError::InvalidSetup(error.to_string())
 }
 
 pub(crate) fn akita_error(error: impl ToString) -> OpeningsError {
