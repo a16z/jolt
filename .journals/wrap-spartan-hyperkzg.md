@@ -342,3 +342,9 @@ becbc44b failed at the provider: "flagged for possible cybersecurity risk" (revi
 ## 23:52 — lane 7 landed (1a33868d9): default k = 16
 
 Idle: **k=16 default 16.51 s** (folds 0.73, quotient 1.87); WRAP_K=32 comparison 19.79 s. Bytes at default 7,392 / 7,533 / 352; 233 ecMul, 8 pairs, 123,144 Fr mul, gas 4,944,149. Phase counts unchanged 39/23/1/3/232. pr-tables k=16 primary. Campaign: **40.3 → 16.5 s (−59 %)** at 7,392 B payload (equal to pre-4-ary), gas 5.05 → 4.94 M. Waiting on review e417b07c; then PR-branch rebuild + PR body update.
+
+## 23:52 — lane 7 landed (1a33868d9): default k=16
+
+Measured pair (idle, mutex): k=16 default **16.51 s** (folds 0.73, quotient 1.87), 7,392 / 7,533 / 352 B, 233 ecMul, 8 pairs, 123,144 Fr mul, 4,944,149 gas; WRAP_K=32 19.79 s, 7,104 / 7,232 / 352 B, 216 ecMul, 4,800,225 gas. Schedule unchanged 39/23/1/3/232. 64/64 + both real gates.
+
+**Campaign summary: 40.3 → 16.5 s (−59 %) at the same payload bytes as the campaign start (7,392) and −2 % gas.** Waiting on the independent review (e417b07c) of the 4-ary fold + MSM hybrid + stream tail; then PR-branch refresh (rebuild from canonical minus journals, force-push, PR body update with new numbers) and the user report.
