@@ -6,7 +6,7 @@
 
 pub mod support;
 
-use jolt_akita::{AkitaScheme, AkitaSetupParams};
+use jolt_akita::{AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -124,8 +124,13 @@ fn akita_commit_group_rejects_shape_pathologies() {
         Err(OpeningsError::InvalidBatch(_))
     ));
 
-    let (wrong_dimension_setup, _) =
-        AkitaScheme::setup(AkitaSetupParams::new(16, 2, layout(7))).unwrap();
+    let (wrong_dimension_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
+        16,
+        2,
+        layout(7),
+        std::sync::Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap()),
+    ))
+    .unwrap();
     assert!(matches!(
         AkitaScheme::commit_group(&wrong_dimension_setup, layout(7), &[poly_a]),
         Err(OpeningsError::InvalidBatch(_))

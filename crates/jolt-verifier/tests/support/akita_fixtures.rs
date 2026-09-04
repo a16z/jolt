@@ -11,7 +11,7 @@
     reason = "fixture generation should fail loudly when prover artifact construction breaks"
 )]
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use common::jolt_device::JoltDevice;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
@@ -20,14 +20,21 @@ use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
 use jolt_prover_legacy::host;
 use jolt_prover_legacy::zkvm::packed::{
     akita_verifier_preprocessing, commit_trusted_advice, shared_preprocessing_with_direct_program,
-    AkitaField, AkitaJoltProof, AkitaPackedProver, AkitaPackedScheme, AkitaScheme, AkitaTranscript,
-    AkitaVc,
+    AkitaField, AkitaJoltProof, AkitaPackedProver, AkitaPackedScheme, AkitaScheduleArtifacts,
+    AkitaScheme, AkitaTranscript, AkitaVc,
 };
 use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
 use jolt_prover_legacy::zkvm::program::ProgramPreprocessing;
 use jolt_prover_legacy::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
 
 type AkitaCommitmentOutput = <AkitaScheme as jolt_crypto::Commitment>::Output;
+
+fn schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
+    Arc::new(
+        AkitaScheduleArtifacts::from_default_directory()
+            .expect("the external Akita schedule artifacts must load"),
+    )
+}
 
 pub struct AkitaFixtureCase {
     pub preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
@@ -72,6 +79,7 @@ pub fn akita_committed_muldiv_case() -> &'static AkitaFixtureCase {
 }
 
 fn generate_muldiv() -> AkitaFixtureCase {
+    let schedule_artifacts = schedule_artifacts();
     let mut program = host::Program::new("muldiv-guest");
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -95,9 +103,10 @@ fn generate_muldiv() -> AkitaFixtureCase {
     )
     .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
-    let (object_setup, verifier_setup) =
-        <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
-            .expect("transparent packed setup");
+    let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+        prover.one_hot_trace_setup_params(schedule_artifacts),
+    )
+    .expect("transparent packed setup");
     let proof = prover
         .prove_packed(&object_setup, None, None)
         .expect("packed prover");
@@ -111,6 +120,7 @@ fn generate_muldiv() -> AkitaFixtureCase {
 }
 
 fn generate_advice() -> AkitaFixtureCase {
+    let schedule_artifacts = schedule_artifacts();
     // The purpose-built advice guest asserts `trusted + untrusted == public`
     // (7 + 5 == 12), exercising both advice kinds without any exotic inline
     // instruction (unlike the merkle example, which fails Jolt expansion).
@@ -128,6 +138,7 @@ fn generate_advice() -> AkitaFixtureCase {
     let prover_preprocessing = JoltProverPreprocessing::new(shared);
     let elf_contents = program.get_elf_contents().expect("elf contents");
     let trusted_object = commit_trusted_advice(
+        &schedule_artifacts,
         &trusted_advice,
         io_device.memory_layout.max_trusted_advice_size as usize,
     )
@@ -144,9 +155,10 @@ fn generate_advice() -> AkitaFixtureCase {
     )
     .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
-    let (object_setup, verifier_setup) =
-        <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
-            .expect("transparent packed setup");
+    let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+        prover.one_hot_trace_setup_params(schedule_artifacts),
+    )
+    .expect("transparent packed setup");
     let trusted_commitment = trusted_object.commitment.clone();
     let proof = prover
         .prove_packed(&object_setup, Some(&trusted_object), None)
@@ -161,6 +173,7 @@ fn generate_advice() -> AkitaFixtureCase {
 }
 
 fn generate_committed_muldiv() -> AkitaFixtureCase {
+    let schedule_artifacts = schedule_artifacts();
     let mut program = host::Program::new("muldiv-guest");
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -169,6 +182,7 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
         .expect("program preprocessing");
     let (shared, prover_data, direct_program) = shared_preprocessing_with_direct_program(
+        &schedule_artifacts,
         program_data,
         io_device.memory_layout.clone(),
         1 << 16,
@@ -190,9 +204,10 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     )
     .expect("legacy prover construction");
     let public_io = prover.program_io.clone();
-    let (object_setup, verifier_setup) =
-        <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
-            .expect("transparent packed setup");
+    let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+        prover.one_hot_trace_setup_params(schedule_artifacts),
+    )
+    .expect("transparent packed setup");
     let proof = prover
         .prove_packed(&object_setup, None, Some(&direct_program))
         .expect("packed prover");

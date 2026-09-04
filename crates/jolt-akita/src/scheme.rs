@@ -19,8 +19,9 @@ use crate::adapters::{
     transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackendCommitment,
     AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
-    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup,
-    BackendVerifierCache, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
+    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor,
+    AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -526,24 +527,25 @@ impl CommitmentScheme for AkitaScheme {
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
         let invalid_setup =
             |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
-        debug_assert!(
-            !(params.one_hot_only && params.dense_only),
-            "a setup cannot skip both backend flavors"
-        );
-        let artifacts = params
-            .schedule_artifacts
-            .clone()
-            .map_or_else(crate::AkitaScheduleArtifacts::from_default_directory, Ok)?;
+        if params
+            .precommitted_schedule
+            .as_ref()
+            .is_some_and(|request| request.final_num_vars() != params.max_num_vars)
+        {
+            return Err(OpeningsError::InvalidSetup(
+                "the grouped schedule request final arity must equal setup max_num_vars".to_owned(),
+            ));
+        }
+        let artifacts = &params.schedule_artifacts;
         let dense_catalog = artifacts
             .dense_catalog()
             .map_err(|error| invalid_setup(&error))?;
-        let dense_schedule_artifact = (!params.one_hot_only)
-            .then(|| dense_catalog.to_artifact_bytes())
-            .transpose()
-            .map_err(|error| invalid_setup(&error))?;
-        let one_hot_schedule_artifact = if params.dense_only {
-            None
-        } else {
+        let dense_schedule_artifact = || {
+            dense_catalog
+                .to_artifact_bytes()
+                .map_err(|error| invalid_setup(&error))
+        };
+        let one_hot_schedule_artifact = || {
             let base = artifacts
                 .one_hot_catalog(params.one_hot_k)
                 .map_err(|error| invalid_setup(&error))?;
@@ -557,11 +559,21 @@ impl CommitmentScheme for AkitaScheme {
                     },
                 )
                 .map_err(|error| invalid_setup(&error))?;
-            Some(
-                catalog
-                    .to_artifact_bytes()
-                    .map_err(|error| invalid_setup(&error))?,
-            )
+            catalog
+                .to_artifact_bytes()
+                .map_err(|error| invalid_setup(&error))
+        };
+        let schedule_artifacts = match params.flavor {
+            AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
+                dense: dense_schedule_artifact()?,
+                one_hot: one_hot_schedule_artifact()?,
+            },
+            AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
+                one_hot: one_hot_schedule_artifact()?,
+            },
+            AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
+                dense: dense_schedule_artifact()?,
+            },
         };
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
             .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
@@ -571,12 +583,11 @@ impl CommitmentScheme for AkitaScheme {
             max_total_batch_polys: params.max_total_batch_polys,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
-            dense_schedule_artifact,
-            one_hot_schedule_artifact,
+            schedule_artifacts,
             backend_cache: BackendVerifierCache::default(),
         };
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) =
-            if params.one_hot_only {
+            if params.flavor == AkitaSetupFlavor::OneHot {
                 (None, None, None)
             } else {
                 let scheme = verifier.dense_scheme()?;
@@ -600,7 +611,7 @@ impl CommitmentScheme for AkitaScheme {
             one_hot_backend_prover_setup,
             prepared_one_hot_backend_setup,
             one_hot_backend_verifier_setup,
-        ) = if params.max_num_vars >= one_hot_log_k && !params.dense_only {
+        ) = if params.max_num_vars >= one_hot_log_k && params.flavor != AkitaSetupFlavor::Dense {
             let backend_prover_setup = crate::adapters::one_hot_setup_prover(
                 &verifier,
                 params.max_num_vars,
@@ -626,6 +637,7 @@ impl CommitmentScheme for AkitaScheme {
             prepared_backend_setup,
             one_hot_backend_prover_setup,
             prepared_one_hot_backend_setup,
+            schedule_artifacts: params.schedule_artifacts,
             verifier: verifier.clone(),
         };
         Ok((prover, verifier))
@@ -782,15 +794,27 @@ impl CommitmentScheme for AkitaScheme {
 }
 
 impl TransparentObjectSetup for AkitaScheme {
+    type SetupContext = Arc<AkitaScheduleArtifacts>;
+
     /// The singleton commitment-object setup convention for advice and direct
     /// committed-program objects: one polynomial at `num_vars`, seeded by the
     /// object plan's layout digest. Every bounded-dense object commits through
     /// the dense flavor, so the costly one-hot backend setup is never built.
     fn transparent_object_setup(
+        context: &Self::SetupContext,
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
-        Self::setup(AkitaSetupParams::dense_only(num_vars, 1, layout_digest))
+        Self::setup(AkitaSetupParams::dense_only(
+            num_vars,
+            1,
+            layout_digest,
+            context.clone(),
+        ))
+    }
+
+    fn transparent_setup_context(setup: &Self::ProverSetup) -> &Self::SetupContext {
+        &setup.schedule_artifacts
     }
 
     fn retag_transparent_object_setup(
@@ -891,8 +915,15 @@ mod tests {
 
     use super::*;
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
+    use crate::configs::JoltDenseBounded;
+    use akita_config::{policy_of, CommitmentConfig};
+    use akita_schedules::TrustedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
+
+    fn schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
+        Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap())
+    }
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
@@ -903,20 +934,18 @@ mod tests {
             max_total_batch_polys: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
-            dense_schedule_artifact: Some(
-                artifacts
+            schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
+                dense: artifacts
                     .dense_catalog()
                     .unwrap()
                     .to_artifact_bytes()
                     .unwrap(),
-            ),
-            one_hot_schedule_artifact: Some(
-                artifacts
+                one_hot: artifacts
                     .one_hot_catalog(AKITA_ONE_HOT_K256)
                     .unwrap()
                     .to_artifact_bytes()
                     .unwrap(),
-            ),
+            },
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -964,8 +993,11 @@ mod tests {
 
     #[test]
     fn transparent_object_setup_reuses_backend_for_a_new_layout() {
-        let (base, _) =
-            <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(14, [3; 32]).unwrap();
+        let context = schedule_artifacts();
+        let (base, _) = <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
+            &context, 14, [3; 32],
+        )
+        .unwrap();
         let (retagged, verifier) =
             <AkitaScheme as TransparentObjectSetup>::retag_transparent_object_setup(&base, [4; 32])
                 .unwrap();
@@ -984,7 +1016,8 @@ mod tests {
 
     fn one_hot_roundtrip(one_hot_k: usize) {
         let num_vars = one_hot_k.ilog2() as usize + 8;
-        let setup_params = AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k);
+        let setup_params =
+            AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k, schedule_artifacts());
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let indices = (0..256usize)
             .map(|row| {
@@ -1060,10 +1093,18 @@ mod tests {
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
         let (_, verifier_setup) =
-            AkitaScheme::setup(AkitaSetupParams::new(14, 1, [3; 32])).unwrap();
+            AkitaScheme::setup(AkitaSetupParams::new(14, 1, [3; 32], schedule_artifacts()))
+                .unwrap();
         let json = serde_json::to_string(&verifier_setup).unwrap();
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
         assert_eq!(transported, verifier_setup);
+        let binary = bincode::serde::encode_to_vec(&verifier_setup, bincode::config::standard())
+            .expect("verifier setup must encode with Jolt's binary transport");
+        let (binary_transport, consumed): (AkitaVerifierSetup, usize) =
+            bincode::serde::decode_from_slice(&binary, bincode::config::standard())
+                .expect("verifier setup must decode with Jolt's binary transport");
+        assert_eq!(consumed, binary.len());
+        assert_eq!(binary_transport, verifier_setup);
         let rederived = transported
             .backend_verifier(AkitaBackendFlavor::Dense)
             .expect("shape-only setup re-derives its backend key");
@@ -1096,6 +1137,7 @@ mod tests {
             [3; 32],
             AKITA_ONE_HOT_K16,
             Some(precommitted_schedule),
+            schedule_artifacts(),
         ))
         .unwrap();
         let selection = verifier_setup
@@ -1119,8 +1161,122 @@ mod tests {
     }
 
     #[test]
+    fn grouped_setup_rejects_a_final_arity_different_from_the_main_setup() {
+        use crate::schedule_registry::PrecommittedScheduleParams;
+
+        let request = PrecommittedScheduleParams::new(None, Some(14), 15);
+        let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
+            14,
+            1,
+            2,
+            [3; 32],
+            AKITA_ONE_HOT_K16,
+            Some(request),
+            schedule_artifacts(),
+        ))
+        .expect_err("a grouped request for another final arity must fail during setup");
+        assert!(error
+            .to_string()
+            .contains("final arity must equal setup max_num_vars"));
+    }
+
+    #[test]
+    fn catalog_digest_prevents_cross_verification_with_the_same_selected_row() {
+        let artifacts = AkitaScheduleArtifacts::from_default_directory().unwrap();
+        let original_artifacts = Arc::new(artifacts.clone());
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            14,
+            1,
+            [7; 32],
+            original_artifacts,
+        ))
+        .unwrap();
+        let polynomial = Polynomial::new(
+            (0..(1u64 << 14))
+                .map(|i| AkitaField::from_u64(2 + 5 * i))
+                .collect(),
+        );
+        let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover_setup).unwrap();
+        let point = (3..17).map(AkitaField::from_u64).collect::<Vec<_>>();
+        let value = polynomial.evaluate(&point);
+        let statement = vec![VerifierOpeningClaim {
+            commitment,
+            evaluation: EvaluationClaim::new(point, value),
+        }];
+        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            statement.clone(),
+            vec![&polynomial],
+            hint,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        let selected = proof.selection();
+        let full_catalog = artifacts.dense_catalog().unwrap();
+        let omitted = full_catalog
+            .rows()
+            .find(|row| row.selection() != selected)
+            .expect("the base catalog must contain an unused row")
+            .selection();
+        let reduced_catalog = TrustedScheduleCatalog::try_new(
+            JoltDenseBounded::schedule_family_name(),
+            full_catalog
+                .rows()
+                .filter(|row| row.selection() != omitted)
+                .map(|row| (row.profiles().clone(), row.schedule().clone())),
+            &policy_of::<JoltDenseBounded>(),
+            JoltDenseBounded::ring_challenge_config,
+        )
+        .unwrap();
+        assert!(reduced_catalog.resolve_selection(selected).is_ok());
+        assert_ne!(
+            full_catalog.catalog_digest(),
+            reduced_catalog.catalog_digest()
+        );
+        let alternate_artifacts = Arc::new(AkitaScheduleArtifacts::new(
+            reduced_catalog.to_artifact_bytes().unwrap(),
+            artifacts
+                .one_hot_catalog(AKITA_ONE_HOT_K16)
+                .unwrap()
+                .to_artifact_bytes()
+                .unwrap(),
+            artifacts
+                .one_hot_catalog(AKITA_ONE_HOT_K256)
+                .unwrap()
+                .to_artifact_bytes()
+                .unwrap(),
+        ));
+        let (_, alternate_verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            14,
+            1,
+            [7; 32],
+            alternate_artifacts,
+        ))
+        .unwrap();
+        let mut verifier_transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &alternate_verifier_setup,
+            &statement,
+            &proof,
+            &mut verifier_transcript,
+        )
+        .expect_err("a proof must not replay across catalogs with different digests");
+
+        let mut original_transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &verifier_setup,
+            &statement,
+            &proof,
+            &mut original_transcript,
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn direct_opening_requires_statement_commitment_layout_digest() {
-        let setup_params = AkitaSetupParams::new(14, 1, [7; 32]);
+        let setup_params = AkitaSetupParams::new(14, 1, [7; 32], schedule_artifacts());
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let polynomial = Polynomial::new(
             (0..(1u64 << 14))

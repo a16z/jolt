@@ -85,8 +85,12 @@ impl AkitaScheduleArtifacts {
         ))
     }
 
-    /// Load from `JOLT_AKITA_SCHEDULE_DIR`, or from this crate's packaged
-    /// `schedules/` directory when the environment variable is unset.
+    /// Host/dev helper that loads from `JOLT_AKITA_SCHEDULE_DIR`, or from this
+    /// crate's packaged `schedules/` directory when the variable is unset.
+    ///
+    /// Application preprocessing should call this (or [`Self::from_directory`])
+    /// once and pass the resulting immutable bundle explicitly to every setup.
+    /// Protocol setup and verification never consult the environment.
     pub fn from_default_directory() -> Result<Self, OpeningsError> {
         let directory = std::env::var_os(Self::DIRECTORY_ENV).map_or_else(
             || Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules"),
@@ -264,21 +268,19 @@ pub struct AkitaSetupParams {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    /// When set, only the one-hot flavor's backend setup is built — the
-    /// dense-flavor setup for the same shape is large and slow, and a packed
-    /// one-hot commitment object never touches it.
-    pub(crate) one_hot_only: bool,
-    /// When set, only the dense flavor's backend setup is built — the one-hot
-    /// flavor dominates the setup cost at these shapes, and a bounded-dense
-    /// commitment object never touches it.
-    pub(crate) dense_only: bool,
-    /// Recipe for the dynamic grouped rows accepted by this setup. Unlike the
-    /// process-local row cache, this metadata survives verifier serialization.
+    pub(crate) flavor: AkitaSetupFlavor,
+    /// Recipe for the dynamic grouped rows accepted by this setup.
     #[serde(default, rename = "advice_schedule")]
     pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,
-    /// Base catalogs loaded from normal storage by the application.
-    #[serde(default)]
-    pub(crate) schedule_artifacts: Option<AkitaScheduleArtifacts>,
+    /// Immutable base catalogs loaded once by application preprocessing.
+    pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum AkitaSetupFlavor {
+    Both,
+    OneHot,
+    Dense,
 }
 
 impl AkitaSetupParams {
@@ -286,6 +288,7 @@ impl AkitaSetupParams {
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
         default_layout_digest: AkitaLayoutDigest,
+        schedule_artifacts: Arc<AkitaScheduleArtifacts>,
     ) -> Self {
         Self {
             max_num_vars,
@@ -293,10 +296,9 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_only: false,
-            dense_only: false,
+            flavor: AkitaSetupFlavor::Both,
             precommitted_schedule: None,
-            schedule_artifacts: None,
+            schedule_artifacts,
         }
     }
 
@@ -308,6 +310,7 @@ impl AkitaSetupParams {
         max_num_polys_per_commitment_group: usize,
         default_layout_digest: AkitaLayoutDigest,
         one_hot_k: usize,
+        schedule_artifacts: Arc<AkitaScheduleArtifacts>,
     ) -> Self {
         Self {
             max_num_vars,
@@ -315,10 +318,9 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k,
-            one_hot_only: true,
-            dense_only: false,
+            flavor: AkitaSetupFlavor::OneHot,
             precommitted_schedule: None,
-            schedule_artifacts: None,
+            schedule_artifacts,
         }
     }
 
@@ -331,6 +333,7 @@ impl AkitaSetupParams {
         default_layout_digest: AkitaLayoutDigest,
         one_hot_k: usize,
         precommitted_schedule: Option<PrecommittedScheduleParams>,
+        schedule_artifacts: Arc<AkitaScheduleArtifacts>,
     ) -> Self {
         Self {
             max_num_vars,
@@ -338,10 +341,9 @@ impl AkitaSetupParams {
             max_total_batch_polys,
             default_layout_digest,
             one_hot_k,
-            one_hot_only: true,
-            dense_only: false,
+            flavor: AkitaSetupFlavor::OneHot,
             precommitted_schedule,
-            schedule_artifacts: None,
+            schedule_artifacts,
         }
     }
 
@@ -351,6 +353,7 @@ impl AkitaSetupParams {
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
         default_layout_digest: AkitaLayoutDigest,
+        schedule_artifacts: Arc<AkitaScheduleArtifacts>,
     ) -> Self {
         Self {
             max_num_vars,
@@ -358,10 +361,9 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            one_hot_only: false,
-            dense_only: true,
+            flavor: AkitaSetupFlavor::Dense,
             precommitted_schedule: None,
-            schedule_artifacts: None,
+            schedule_artifacts,
         }
     }
 
@@ -372,12 +374,6 @@ impl AkitaSetupParams {
     pub fn max_total_batch_polys(&self) -> usize {
         self.max_total_batch_polys
     }
-
-    /// Attach the external base schedule artifacts used to construct setup.
-    pub fn with_schedule_artifacts(mut self, artifacts: AkitaScheduleArtifacts) -> Self {
-        self.schedule_artifacts = Some(artifacts);
-        self
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -386,6 +382,7 @@ pub struct AkitaProverSetup {
     pub(crate) prepared_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
     pub(crate) one_hot_backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
     pub(crate) prepared_one_hot_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
+    pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
     pub(crate) verifier: AkitaVerifierSetup,
 }
 
@@ -468,12 +465,33 @@ pub struct AkitaVerifierSetup {
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
     /// Exact setup-owned catalogs, including any program-specific grouped rows.
-    #[serde(default)]
-    pub(crate) dense_schedule_artifact: Option<Vec<u8>>,
-    #[serde(default)]
-    pub(crate) one_hot_schedule_artifact: Option<Vec<u8>>,
+    pub(crate) schedule_artifacts: AkitaVerifierScheduleArtifacts,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub(crate) enum AkitaVerifierScheduleArtifacts {
+    Dense { dense: Vec<u8> },
+    OneHot { one_hot: Vec<u8> },
+    Both { dense: Vec<u8>, one_hot: Vec<u8> },
+}
+
+impl AkitaVerifierScheduleArtifacts {
+    fn dense(&self) -> Option<&[u8]> {
+        match self {
+            Self::Dense { dense } | Self::Both { dense, .. } => Some(dense),
+            Self::OneHot { .. } => None,
+        }
+    }
+
+    fn one_hot(&self) -> Option<&[u8]> {
+        match self {
+            Self::OneHot { one_hot } | Self::Both { one_hot, .. } => Some(one_hot),
+            Self::Dense { .. } => None,
+        }
+    }
 }
 
 impl AkitaVerifierSetup {
@@ -514,8 +532,8 @@ impl AkitaVerifierSetup {
 
     pub(crate) fn dense_scheme(&self) -> Result<&AkitaBackendScheme, OpeningsError> {
         let result = self.backend_cache.dense_scheme.get_or_init(|| {
-            self.dense_schedule_artifact
-                .as_deref()
+            self.schedule_artifacts
+                .dense()
                 .ok_or_else(|| "Akita verifier setup has no dense schedule artifact".to_string())
                 .and_then(|bytes| {
                     AkitaBackendScheme::from_schedule_artifact(bytes)
@@ -529,8 +547,8 @@ impl AkitaVerifierSetup {
 
     pub(crate) fn one_hot_k16_scheme(&self) -> Result<&AkitaOneHotK16BackendScheme, OpeningsError> {
         let result = self.backend_cache.one_hot_k16_scheme.get_or_init(|| {
-            self.one_hot_schedule_artifact
-                .as_deref()
+            self.schedule_artifacts
+                .one_hot()
                 .ok_or_else(|| "Akita verifier setup has no one-hot schedule artifact".to_string())
                 .and_then(|bytes| {
                     AkitaOneHotK16BackendScheme::from_schedule_artifact(bytes)
@@ -546,8 +564,8 @@ impl AkitaVerifierSetup {
         &self,
     ) -> Result<&AkitaOneHotK256BackendScheme, OpeningsError> {
         let result = self.backend_cache.one_hot_k256_scheme.get_or_init(|| {
-            self.one_hot_schedule_artifact
-                .as_deref()
+            self.schedule_artifacts
+                .one_hot()
                 .ok_or_else(|| "Akita verifier setup has no one-hot schedule artifact".to_string())
                 .and_then(|bytes| {
                     AkitaOneHotK256BackendScheme::from_schedule_artifact(bytes)
@@ -633,10 +651,10 @@ impl PartialEq for BackendVerifierCache {
 
 impl Eq for BackendVerifierCache {}
 
-/// Binds the setup key for one backend flavor into the transcript, by shape
-/// only: the backend key is a deterministic function of the absorbed
-/// dimensions over a fixed internal seed, so hashing the (large) serialized
-/// key adds no binding.
+/// Binds one backend flavor's setup identity into the transcript. The backend
+/// key is determined by the absorbed dimensions and admitted catalog; binding
+/// the validated catalog digest avoids hashing the large serialized key while
+/// preventing cross-catalog replay.
 pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,

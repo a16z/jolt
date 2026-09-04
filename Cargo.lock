@@ -3221,6 +3221,7 @@ dependencies = [
  "akita-schedules",
  "akita-transcript",
  "akita-types",
+ "bincode 2.0.1",
  "criterion",
  "jolt-crypto",
  "jolt-dory",

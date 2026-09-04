@@ -59,6 +59,10 @@ impl PrecommittedScheduleParams {
         self
     }
 
+    pub(crate) fn final_num_vars(&self) -> usize {
+        self.final_arity
+    }
+
     pub(crate) fn extend_catalog(
         &self,
         dense_catalog: &TrustedScheduleCatalog,

@@ -4,10 +4,14 @@ This directory contains Jolt's base Akita schedule catalogs as canonical
 `.aks` files. They are runtime data, not generated Rust modules and not
 embedded into the executable.
 
-`AkitaScheduleArtifacts::from_default_directory` reads this directory by
-default. Set `JOLT_AKITA_SCHEDULE_DIR` to load the same three file names from a
-deployment-owned storage location, or attach bytes explicitly with
-`AkitaSetupParams::with_schedule_artifacts`.
+Application preprocessing loads the three files once, wraps the resulting
+`AkitaScheduleArtifacts` in `Arc`, and passes that immutable bundle explicitly
+to every `AkitaSetupParams` constructor. Production deployments should call
+`AkitaScheduleArtifacts::from_directory` with a versioned, deployment-owned
+path. `from_default_directory` is a host/dev helper: it reads
+`JOLT_AKITA_SCHEDULE_DIR`, falling back to this packaged source directory.
+Protocol setup and verification never discover files or consult the
+environment.
 
 During preprocessing, Jolt plans rows whose shapes depend on advice or direct
 committed-program sizes. Those rows are merged with the relevant base catalog.

@@ -932,8 +932,10 @@ mod tests {
             max_total_batch_polys: 260,
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            dense_schedule_artifact: None,
-            one_hot_schedule_artifact: None,
+            schedule_artifacts: crate::adapters::AkitaVerifierScheduleArtifacts::Both {
+                dense: Vec::new(),
+                one_hot: Vec::new(),
+            },
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);

@@ -1,6 +1,6 @@
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
-    AkitaScheme, AkitaSetupParams,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
 };
 use jolt_field::Ring;
 use jolt_openings::{CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
@@ -35,6 +35,10 @@ pub fn setup_for(
         num_vars,
         max_num_polys_per_commitment_group,
         layout_digest,
+        std::sync::Arc::new(
+            AkitaScheduleArtifacts::from_default_directory()
+                .expect("external Akita schedule artifacts"),
+        ),
     ))
     .expect("Akita setup should succeed")
 }
