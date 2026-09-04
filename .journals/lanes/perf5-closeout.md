@@ -94,3 +94,16 @@ JSON); corrected before either accepted gate.
 
 Logs and runner: `/tmp/perf5-closeout/{unit,check,clippy,default,k32}.log`,
 `gate.py`, `binaries.json`, and `cargo.json`.
+
+## Landing validation
+
+Rebased onto canonical `8ffb2204f`; code commit `9f58653bc`. The intervening
+canonical change was journal-only. Post-rebase all-target feature-enabled check
+passed, then the six-worker crypto/HyperKZG/wrapper suite passed **244/244**
+(146 / 31 / 67) in 150.219 s, zero skipped. Logs:
+`/tmp/perf5-closeout/post-rebase-{check,unit}.log`.
+
+Commit hooks also passed typos, repository style invariants, whole-workspace
+fmt, and whole-workspace all-target clippy with warnings denied. No production
+code changed after the accepted real-fixture gates. Landing uses a fast-forward
+merge; no push. Keep `perf5/closeout`, remove its worktree.
