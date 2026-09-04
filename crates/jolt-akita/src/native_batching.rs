@@ -357,7 +357,6 @@ impl AkitaNativeBatching {
         })
         .map_err(prove_failed)?;
         let proof = AkitaBatchProof::new(selection, serialize_akita(&backend_proof)?);
-        transcript.append(&proof);
         Ok(proof)
     }
 
@@ -393,7 +392,6 @@ impl AkitaNativeBatching {
             )?;
         let mut akita_transcript =
             bind_grouped_statement_transcripts(transcript, setup, selection, precommitted, main)?;
-        transcript.append(proof);
         let mut group_claims = Vec::with_capacity(precommitted.len() + 1);
         for (entry, backend) in precommitted.iter().zip(&precommitted_backend) {
             group_claims.push(
@@ -794,10 +792,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             let _span = info_span!("AkitaNativeBatching::serialize_backend_proof").entered();
             AkitaBatchProof::new(selection, serialize_akita(&backend_proof)?)
         };
-        {
-            let _span = info_span!("AkitaNativeBatching::append_proof").entered();
-            transcript.append(&proof);
-        }
         Ok(proof)
     }
 
@@ -842,7 +836,6 @@ impl BatchOpeningScheme for AkitaNativeBatching {
 
         let mut akita_transcript =
             bind_statement_transcripts(transcript, setup, statement, commitment, point)?;
-        transcript.append(proof);
 
         let backend_verifier = setup.backend_verifier(commitment.backend_flavor)?;
         let openings: Vec<AkitaField> = statement
