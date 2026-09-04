@@ -1405,7 +1405,7 @@ impl Instruction {
             }
             #[cfg(feature = "field-inline")]
             opcode if opcode == u32::from(jolt_riscv::FIELD_INLINE_OPCODE) => {
-                match jolt_riscv::FieldInlineOp::from_funct3(((instr >> 12) & 0x7) as u8) {
+                match jolt_riscv::FieldInlineOp::from_word(instr) {
                     Some(jolt_riscv::FieldInlineOp::Add) => {
                         Ok(FIELD_ADD::new(instr, address, true, compressed).into())
                     }
@@ -2020,11 +2020,16 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
-        u32::from(FIELD_INLINE_OPCODE)
-            | (u32::from(rd) << 7)
-            | (u32::from(op.funct3()) << 12)
-            | (u32::from(rs1) << 15)
-            | (u32::from(rs2_or_imm) << 20)
+        let base =
+            u32::from(FIELD_INLINE_OPCODE) | (u32::from(rd) << 7) | (u32::from(op.funct3()) << 12);
+        match op.funct7() {
+            Some(funct7) => {
+                base | (u32::from(rs1) << 15)
+                    | (u32::from(rs2_or_imm & 0x1f) << 20)
+                    | (u32::from(funct7) << 25)
+            }
+            None => base | (u32::from(rs2_or_imm & 0x0fff) << 20),
+        }
     }
 
     #[cfg(feature = "field-inline")]
@@ -2111,6 +2116,55 @@ mod tests {
             })
         );
         assert_eq!(cpu.read_register(10), 21);
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[should_panic(expected = "FIELD_INV of zero")]
+    fn field_inline_inverse_of_zero_traps_at_trace_time() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        // Fresh field registers are zero, so fr2 is a zero operand.
+        trace_one(&mut cpu, field_inline_word(FieldInlineOp::Inv, 1, 2, 0));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[should_panic(expected = "FIELD_STORE_TO_X of a value wider than 64 bits")]
+    fn field_inline_store_of_wide_value_traps_at_trace_time() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        // Build 2^64 in fr1 by repeated squaring of 2, then attempt to store it.
+        trace_one(&mut cpu, field_inline_word(FieldInlineOp::LoadImm, 1, 0, 2));
+        for _ in 0..6 {
+            trace_one(&mut cpu, field_inline_word(FieldInlineOp::Mul, 1, 1, 1));
+        }
+        trace_one(
+            &mut cpu,
+            field_inline_word(FieldInlineOp::StoreToX, 10, 1, 0),
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    #[should_panic(expected = "FIELD_LOAD_IMM with out-of-range immediate")]
+    fn field_inline_synthetic_negative_immediate_traps_at_trace_time() {
+        use super::format::format_field_inline::FormatFieldInline;
+
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        let instruction = FIELD_LOAD_IMM {
+            address: 0x8000_0000,
+            operands: FormatFieldInline {
+                op: Some(FieldInlineOp::LoadImm),
+                rd: Some(1),
+                rs1: None,
+                rs2: None,
+                imm: -1,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let mut trace = Vec::new();
+        Instruction::from(instruction).trace(&mut cpu, Some(&mut trace));
     }
 
     #[test]

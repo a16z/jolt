@@ -168,6 +168,14 @@ impl ProverConfig {
     ) -> usize {
         let mut total_vars =
             self.one_hot_config.committed_chunk_bits() + self.trace_length.ilog2() as usize;
+        // The field-inline `FieldRdInc` column is dense over the trace domain
+        // (`log_T` variables) — never wider than the one-hot main matrix, but
+        // folded in explicitly so the grid stays sized for it if the
+        // main-matrix term ever changes.
+        #[cfg(feature = "field-inline")]
+        {
+            total_vars = total_vars.max(self.trace_length.ilog2() as usize);
+        }
         if has_trusted_advice {
             total_vars = total_vars.max(advice_total_vars(memory_layout.max_trusted_advice_size));
         }

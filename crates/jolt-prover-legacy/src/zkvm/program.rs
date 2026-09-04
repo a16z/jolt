@@ -17,7 +17,7 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -45,11 +45,25 @@ impl FullProgramPreprocessing {
         memory_init: Vec<(u64, u8)>,
         entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
+        Self::preprocess_with_profile(instructions, memory_init, entry_address, RV64IMAC_JOLT)
+    }
+
+    /// [`Self::preprocess`] under an explicit instruction profile. FR-profile
+    /// guests must preprocess under the same profile they decode and trace
+    /// under: the profile legality check rejects FIELD_* rows otherwise, and
+    /// the field-inline bytecode side-table metadata is derived only for
+    /// FR-capable profiles.
+    pub fn preprocess_with_profile(
+        instructions: Vec<JoltInstructionRow>,
+        memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
+        profile: JoltInstructionProfile,
+    ) -> Result<Self, PreprocessingError> {
         Ok(Self {
             bytecode: Arc::new(BytecodePreprocessing::preprocess(
                 instructions,
                 entry_address,
-                RV64IMAC_JOLT,
+                profile,
             )?),
             ram: RAMPreprocessing::preprocess(memory_init),
         })
@@ -223,6 +237,25 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             memory_init,
             entry_address,
         )?))
+    }
+
+    /// [`Self::preprocess`] under an explicit instruction profile — required
+    /// for FR-profile guests (see
+    /// [`FullProgramPreprocessing::preprocess_with_profile`]).
+    pub fn preprocess_with_profile(
+        instructions: Vec<JoltInstructionRow>,
+        memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
+        profile: JoltInstructionProfile,
+    ) -> Result<Self, PreprocessingError> {
+        Ok(Self::Full(
+            FullProgramPreprocessing::preprocess_with_profile(
+                instructions,
+                memory_init,
+                entry_address,
+                profile,
+            )?,
+        ))
     }
 
     pub fn commit(

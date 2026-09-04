@@ -3,8 +3,7 @@
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
-    FieldSub,
+    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldSub,
 };
 use jolt_riscv::{JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionRowData};
 use std::fmt::Debug;
@@ -137,6 +136,8 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
+// `FieldStoreToX` is the one FR instruction with a lookup: its bridge is
+// range-bound through `RangeCheck` (`instructions::field_inline`).
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,
@@ -145,7 +146,6 @@ impl_field_inline_no_lookup!(
     FieldInv,
     FieldAssertEq,
     FieldLoadFromX,
-    FieldStoreToX,
     FieldLoadImm,
 );
 

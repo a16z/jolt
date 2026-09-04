@@ -19,7 +19,7 @@ use jolt_dory::DoryCommitment;
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
+use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError};
 
 use jolt_prover_legacy::{
     curve::Bn254Curve,
@@ -134,7 +134,7 @@ fn lock_exclusive(file: &fs::File) {
 type ProverField = jolt_prover_legacy::ark_bn254::Fr;
 type ProverCommitment = <DoryCommitmentScheme as ProverCommitmentScheme>::Commitment;
 type ProverOpeningHint = <DoryCommitmentScheme as ProverCommitmentScheme>::OpeningProofHint;
-type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+pub type VerifierFixtureProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 type TrustedAdviceCommitter = fn(
     &JoltProverPreprocessing<ProverField, Bn254Curve, DoryCommitmentScheme>,
@@ -261,6 +261,34 @@ pub fn standard_advice_consumer_case() -> VerifierFixtureCase {
     )
 }
 
+/// The field-inline fixture: the eq-MLE FR guest, proven by the MODULAR
+/// prover — the only FR-capable one, and the first fixture this generator
+/// produces through the modular stack (every other kind is legacy-generated).
+#[cfg(all(feature = "field-inline", not(feature = "zk")))]
+pub fn standard_field_inline_eqpoly_case() -> VerifierFixtureCase {
+    let _guard = verifier_fixture_lock();
+    case_from_accepted_fixture(
+        VerifierFixtureKind::FieldInlineEqpoly,
+        field_inline::generate_eqpoly,
+    )
+}
+
+/// The fixtures every ordinary (non-FR) tamper target runs over. FR-off: the
+/// legacy muldiv proof. FR-on: the modular eq-MLE field-inline proof — the
+/// FR-on verifier rejects legacy proofs at the protocol-config gate, and the
+/// ordinary stage payloads, claims, and commitments must also be rejected
+/// under the composed verifier (a tamper that only the FR-less pipeline
+/// catches is a hole in the composition).
+#[cfg(not(feature = "zk"))]
+pub fn ordinary_tamper_bases() -> Vec<VerifierFixtureCase> {
+    vec![
+        #[cfg(not(feature = "field-inline"))]
+        standard_muldiv_case(),
+        #[cfg(feature = "field-inline")]
+        standard_field_inline_eqpoly_case(),
+    ]
+}
+
 #[cfg(not(feature = "zk"))]
 pub fn standard_committed_muldiv_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();
@@ -329,6 +357,8 @@ enum VerifierFixtureKind {
     AdviceConsumer,
     #[cfg(not(feature = "zk"))]
     CommittedMulDivSmall,
+    #[cfg(all(feature = "field-inline", not(feature = "zk")))]
+    FieldInlineEqpoly,
     #[cfg(feature = "zk")]
     ZkMulDivSmall,
     #[cfg(feature = "zk")]
@@ -354,6 +384,8 @@ impl VerifierFixtureKind {
             Self::AdviceConsumer => "standard-advice-consumer",
             #[cfg(not(feature = "zk"))]
             Self::CommittedMulDivSmall => "standard-committed-muldiv-small",
+            #[cfg(all(feature = "field-inline", not(feature = "zk")))]
+            Self::FieldInlineEqpoly => "standard-field-inline-eqpoly",
             // ZK names carry a transcript-scheme suffix: they key the temp-dir
             // cache, so a ZK transcript change must rename them or stale cached
             // proofs fail verification instead of regenerating.
@@ -504,6 +536,193 @@ fn assert_verifier_accepts(
         result.is_ok(),
         "canonical verifier should accept generated fixture proof: {result:?}",
     );
+}
+
+/// The modular-prover generation pipeline for the field-inline fixture: the
+/// legacy host builds the FR-profile guest and profile-carrying
+/// preprocessing, the modular tracer re-traces, and `jolt_prover::prove`
+/// (with the field-inline witness view attached) produces the proof the
+/// tamper suites mutate.
+#[cfg(all(feature = "field-inline", not(feature = "zk")))]
+mod field_inline {
+    use std::sync::Arc;
+
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::{CanonicalBytes, Fr, Ring};
+    use jolt_program::execution::{
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+    };
+    use jolt_prover::{
+        JoltBackend, JoltProverPreprocessing as ModularProverPreprocessing, ProverConfig,
+    };
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+    use tracer::execution_backend::TracerBackend;
+
+    use jolt_prover_legacy::{
+        ark_bn254::Fr as LegacyFr,
+        curve::Bn254Curve,
+        host::Program,
+        poly::commitment::dory::DoryCommitmentScheme,
+        zkvm::{
+            preprocessing::JoltSharedPreprocessing, program::ProgramPreprocessing,
+            proof::verifier_preprocessing_from_prover, prover::JoltProverPreprocessing,
+        },
+    };
+
+    use super::GeneratedVerifierFixture;
+
+    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+    const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+
+    /// eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)) — the reference the
+    /// guest's FIELD_ASSERT_EQ checks against, passed as canonical
+    /// little-endian u64 limbs.
+    fn eqpoly_inputs() -> Vec<u8> {
+        let one = Fr::from_u64(1);
+        let value = EQ_PAIRS.iter().fold(one, |acc, [r, x]| {
+            let r = Fr::from_u64(*r);
+            let x = Fr::from_u64(*x);
+            acc * (r * x + (one - r) * (one - x))
+        });
+        let mut bytes = [0u8; 32];
+        value.to_bytes_le(&mut bytes);
+        let mut limbs = [0u64; 4];
+        for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
+            *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
+        }
+        let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
+        inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
+        inputs
+    }
+
+    pub(super) fn generate_eqpoly() -> GeneratedVerifierFixture {
+        let inputs = eqpoly_inputs();
+        let mut program = Program::new("eqpoly-field-guest");
+        program.enable_field_inline();
+
+        let (bytecode, memory_init, _, entry_address) = program.decode();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let elf_contents = program.get_elf_contents().expect("elf contents");
+        // The FR profile must carry into preprocessing: the classic-profile
+        // path rejects FIELD_* rows and derives no FR side-table metadata.
+        let preprocessed = ProgramPreprocessing::preprocess_with_profile(
+            bytecode,
+            memory_init,
+            entry_address,
+            program.instruction_profile(),
+        )
+        .expect("FR-profile preprocess");
+        let shared = JoltSharedPreprocessing::new(
+            preprocessed,
+            io_device.memory_layout.clone(),
+            MAX_PADDED_TRACE_LENGTH,
+        );
+        let legacy_preprocessing: JoltProverPreprocessing<
+            LegacyFr,
+            Bn254Curve,
+            DoryCommitmentScheme,
+        > = JoltProverPreprocessing::new(shared);
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes_with_profile(
+            elf_contents,
+            program.instruction_profile(),
+        ));
+        let memory_layout = io_device.memory_layout.clone();
+        let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
+        let public_io = trace_output.device.clone();
+
+        let config = ProverConfig::derive::<Fr>(
+            trace_output.trace.rows(),
+            &memory_layout,
+            verifier_preprocessing.program.min_bytecode_address(),
+            verifier_preprocessing.program.program_image_len_words(),
+            MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive config");
+        let mut rows = trace_output.trace.rows().to_vec();
+        rows.resize(config.trace_length, TraceRow::default());
+        let padded_output = TraceOutput::new(
+            OwnedTrace::new(rows),
+            trace_output.device,
+            trace_output.final_memory,
+            trace_output.advice_tape,
+        );
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full_arc()
+            .expect("full program preprocessing");
+        let witness = TraceBackend::new(
+            JoltVmWitnessConfig::new(
+                config.trace_length.ilog2() as usize,
+                config.ram_K,
+                config.one_hot_config,
+            ),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        )
+        .with_field_inline()
+        .expect("field-inline witness view");
+        let witness = Arc::new(witness);
+
+        // Sized off MAX_PADDED_TRACE_LENGTH like the legacy preprocessing's
+        // generators — a prover setup sized off the derived config would
+        // commit under a different generator set than the verifier checks.
+        let max_log_k_chunk = 4usize; // max log_t = 16 < the 25-bit threshold
+        let total_vars = max_log_k_chunk + MAX_PADDED_TRACE_LENGTH.ilog2() as usize;
+        let prover_preprocessing = ModularProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(total_vars),
+            committed_program: None,
+        };
+        let backend = JoltBackend::<Fr, DoryScheme>::reference();
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+            &backend,
+            &prover_preprocessing,
+            &config,
+            None,
+            witness.as_ref(),
+            &public_io,
+        )
+        .expect("modular FR prove");
+
+        GeneratedVerifierFixture {
+            preprocessing: prover_preprocessing.verifier,
+            public_io,
+            proof,
+            trusted_advice_commitment: None,
+        }
+    }
+
+    fn trace_modular(
+        program: &JoltProgram,
+        memory_layout: &MemoryLayout,
+        inputs: &[u8],
+    ) -> TraceOutput<OwnedTrace> {
+        let memory_config = MemoryConfig {
+            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
+            max_input_size: memory_layout.max_input_size,
+            max_output_size: memory_layout.max_output_size,
+            stack_size: memory_layout.stack_size,
+            heap_size: memory_layout.heap_size,
+            program_size: Some(memory_layout.program_size),
+        };
+        TracerBackend::new()
+            .trace(
+                program,
+                TraceInputs {
+                    inputs: inputs.to_vec(),
+                    untrusted_advice: Vec::new(),
+                    trusted_advice: Vec::new(),
+                    memory_config,
+                    advice_tape: None,
+                },
+            )
+            .expect("modular trace")
+    }
 }
 
 fn generate_muldiv() -> GeneratedVerifierFixture {

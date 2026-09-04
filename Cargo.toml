@@ -94,6 +94,8 @@ members = [
   "examples/stdlib/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
+  "examples/eqpoly-field",
+  "examples/eqpoly-field/guest",
   "examples/overflow",
   "examples/overflow/guest",
   "examples/memory-ops",
@@ -315,6 +317,7 @@ anyhow = "1.0.97"
 thiserror = "2.0.18"
 derive_more = { version = "2.0.1", features = [
   "from",
+  "try_into",
 ], default-features = false }
 strum = { version = "0.28.0", default-features = false }
 strum_macros = "0.28.0"

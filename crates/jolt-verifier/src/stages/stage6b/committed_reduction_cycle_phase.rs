@@ -54,7 +54,7 @@ pub fn trusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
         .advice_contribution(JoltAdviceKind::Trusted)
         .map(|contribution| contribution.opening_value)
         .ok_or(VerifierError::MissingOpeningClaim {
-            id: ram_val_check_advice_opening(JoltAdviceKind::Trusted),
+            id: ram_val_check_advice_opening(JoltAdviceKind::Trusted).into(),
         })?;
     Ok(TrustedAdviceCyclePhaseInputClaims { trusted })
 }
@@ -67,7 +67,7 @@ pub fn untrusted_advice_cycle_phase_input_values_from_upstream<F: JoltField>(
         .advice_contribution(JoltAdviceKind::Untrusted)
         .map(|contribution| contribution.opening_value)
         .ok_or(VerifierError::MissingOpeningClaim {
-            id: ram_val_check_advice_opening(JoltAdviceKind::Untrusted),
+            id: ram_val_check_advice_opening(JoltAdviceKind::Untrusted).into(),
         })?;
     Ok(UntrustedAdviceCyclePhaseInputClaims { untrusted })
 }

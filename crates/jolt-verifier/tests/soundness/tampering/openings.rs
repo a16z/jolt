@@ -26,7 +26,10 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 #[test]
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn tampered_opening_value_reject() {
-    tamper_final_opening_claims(&verifier_fixtures::standard_muldiv_case());
+    for base in verifier_fixtures::ordinary_tamper_bases() {
+        tamper_final_opening_claims(&base);
+    }
+    #[cfg(not(feature = "field-inline"))]
     tamper_final_opening_claims(&verifier_fixtures::standard_advice_consumer_case());
 }
 

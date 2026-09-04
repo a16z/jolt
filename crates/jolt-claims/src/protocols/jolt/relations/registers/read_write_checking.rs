@@ -1,6 +1,5 @@
 //! registers read-write checking symbolic sumcheck relation.
 
-use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::registers::{
@@ -8,11 +7,11 @@ use crate::protocols::jolt::geometry::registers::{
     rs1_ra_read_write, rs1_value_claim, rs2_ra_read_write, rs2_value_claim,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, ReadWriteDimensions, RegistersReadWriteChallenge,
-    RegistersReadWritePublic,
+    JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, ReadWriteDimensions,
+    RegistersReadWriteChallenge, RegistersReadWritePublic,
 };
-use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
+use crate::twist::memory_checking as twist;
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced register read-write openings, all sharing the single read-write
 /// opening point. Generic over the opening cell (`F` for the serialized wire
@@ -66,59 +65,31 @@ pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
 }
 
-impl SymbolicSumcheck for ReadWriteChecking {
-    type RelationId = JoltRelationId;
-    type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type DerivedId = crate::protocols::jolt::JoltDerivedId;
-    type ChallengeId = crate::protocols::jolt::JoltChallengeId;
-    type Shape = ReadWriteDimensions;
-    type Challenges<F> = RegistersReadWriteChallenges<F>;
-    type Inputs<C> = RegistersReadWriteInputClaims<C>;
-    type Outputs<C> = RegistersReadWriteOutputClaims<C>;
-
-    fn new(shape: ReadWriteDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::RegistersReadWriteChecking
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.read_write_rounds()
-    }
-
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(RegistersReadWriteChallenge::Gamma);
-        opening(rd_write_value_claim())
-            + gamma.clone() * opening(rs1_value_claim())
-            + gamma.clone().pow(2) * opening(rs2_value_claim())
-    }
-
-    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(RegistersReadWriteChallenge::Gamma);
-        let eq_cycle = derived(RegistersReadWritePublic::EqCycle);
-        eq_cycle.clone() * opening(rd_wa_read_write()) * opening(rd_inc_read_write())
-            + eq_cycle.clone() * opening(rd_wa_read_write()) * opening(registers_val_read_write())
-            + eq_cycle.clone()
-                * gamma.clone()
-                * opening(rs1_ra_read_write())
-                * opening(registers_val_read_write())
-            + eq_cycle
-                * gamma.pow(2)
-                * opening(rs2_ra_read_write())
-                * opening(registers_val_read_write())
-    }
+twist::instantiate_read_write_checking! {
+    relation = ReadWriteChecking,
+    id = JoltRelationId::RegistersReadWriteChecking,
+    ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),
+    dimensions = ReadWriteDimensions,
+    challenges = RegistersReadWriteChallenges,
+    inputs = RegistersReadWriteInputClaims,
+    outputs = RegistersReadWriteOutputClaims,
+    rd_value = rd_write_value_claim(),
+    rs1_value = rs1_value_claim(),
+    rs2_value = rs2_value_claim(),
+    registers_val = registers_val_read_write(),
+    rs1_ra = rs1_ra_read_write(),
+    rs2_ra = rs2_ra_read_write(),
+    rd_wa = rd_wa_read_write(),
+    rd_inc = rd_inc_read_write(),
+    gamma = RegistersReadWriteChallenge::Gamma,
+    eq_cycle = RegistersReadWritePublic::EqCycle,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::SymbolicSumcheck;
     use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {

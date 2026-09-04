@@ -1,4 +1,3 @@
-use crate::stages::relations::OutputAppend;
 use jolt_claims::protocols::jolt::{
     geometry::{bytecode, dimensions::JoltFormulaDimensions},
     BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId,
@@ -159,6 +158,8 @@ where
             challenges: Stage6bCarriedChallenges {
                 instruction_ra_gamma: draws.instruction_ra_gamma,
                 inc_gamma: draws.inc_gamma,
+                #[cfg(feature = "field-inline")]
+                field_registers_inc_gamma: draws.field_registers_inc_gamma,
                 bytecode_reduction_eta: draws.eta,
             },
             batch_consistency: consistency,
@@ -418,6 +419,11 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
             &stage4.output_values,
             stage5,
         ),
+        #[cfg(feature = "field-inline")]
+        field_registers_inc_claim_reduction: super::field_inline::inc_claim_reduction_inputs(
+            &stage4.output_values,
+            stage5,
+        ),
         #[cfg(not(feature = "akita"))]
         trusted_advice: sumchecks
             .trusted_advice
@@ -460,7 +466,11 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
 pub fn stage6b_input_points_from_upstream<F: JoltField>(
     sumchecks: &Stage6bSumchecks<F>,
     #[cfg_attr(feature = "akita", expect(unused_variables))] stage2: &Stage2BatchOutputPoints<F>,
-    #[cfg_attr(feature = "akita", expect(unused_variables))] stage4: &Stage4OutputPoints<F>,
+    #[cfg_attr(
+        all(feature = "akita", not(feature = "field-inline")),
+        expect(unused_variables)
+    )]
+    stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
 ) -> Stage6bInputPoints<F> {
     Stage6bInputPoints {
@@ -470,6 +480,10 @@ pub fn stage6b_input_points_from_upstream<F: JoltField>(
         ),
         #[cfg(not(feature = "akita"))]
         inc_claim_reduction: inc_claim_reduction_input_points_from_upstream(stage2, stage4, stage5),
+        #[cfg(feature = "field-inline")]
+        field_registers_inc_claim_reduction: super::field_inline::inc_claim_reduction_input_points(
+            stage4, stage5,
+        ),
         ..sumchecks.empty_input_points()
     }
 }
@@ -508,6 +522,8 @@ pub fn stage6b_opening_values<F: JoltField>(
     values.extend(claims.instruction_ra_virtualization.opening_values());
     #[cfg(not(feature = "akita"))]
     values.extend(claims.inc_claim_reduction.opening_values());
+    #[cfg(feature = "field-inline")]
+    super::field_inline::splice_inc_values(&mut values, claims);
     // Each advice member is a single-slot per-kind claims struct, so it
     // contributes exactly its own kind's opening.
     #[cfg(not(feature = "akita"))]
@@ -542,16 +558,16 @@ fn validate_bytecode_ra_aliases<F: JoltField>(
 
         let polynomial = JoltCommittedPolynomial::BytecodeRa(index);
         let source_id = JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf);
-        let source_claim = claims
-            .bytecode_read_raf
-            .bytecode_ra
-            .get(index)
-            .ok_or(VerifierError::MissingOpeningClaim { id: source_id })?;
+        let source_claim = claims.bytecode_read_raf.bytecode_ra.get(index).ok_or(
+            VerifierError::MissingOpeningClaim {
+                id: source_id.into(),
+            },
+        )?;
         if booleanity_claim != source_claim {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: format!("{:?}", JoltRelationId::Booleanity),
-                left: JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity),
-                right: source_id,
+                left: JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity).into(),
+                right: source_id.into(),
             });
         }
     }
@@ -567,56 +583,10 @@ fn append_opening_claims<F, T>(
     F: JoltField,
     T: Transcript<Challenge = F>,
 {
-    // Full relations and the optional members delegate to their derived
-    // `append_openings`, single-sourcing the per-field Fiat-Shamir order from the
-    // `OutputClaims` derive. `booleanity` stays explicit because its `bytecode_ra`
-    // openings are conditionally deduped against the bytecode-read-RAF points.
-    claims.bytecode_read_raf.append_openings(transcript);
-    for opening_claim in &claims.booleanity.instruction_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for (index, opening_claim) in claims.booleanity.bytecode_ra.iter().enumerate() {
-        if bytecode_read_raf_points
-            .get(index)
-            .is_some_and(|point| point.as_slice() == booleanity_point)
-        {
-            continue;
-        }
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    for opening_claim in &claims.booleanity.ram_ra {
-        transcript.append_labeled(b"opening_claim", opening_claim);
-    }
-    #[cfg(feature = "akita")]
-    {
-        for opening_claim in &claims.booleanity.balanced_inc_digits {
-            transcript.append_labeled(b"opening_claim", opening_claim);
-        }
-        transcript.append_labeled(b"opening_claim", &claims.booleanity.balanced_inc_carry);
-    }
-    claims.ram_hamming_booleanity.append_openings(transcript);
-    claims.ram_ra_virtualization.append_openings(transcript);
-    claims
-        .instruction_ra_virtualization
-        .append_openings(transcript);
-    #[cfg(not(feature = "akita"))]
-    claims.inc_claim_reduction.append_openings(transcript);
-    // The optional members single-source their per-field Fiat-Shamir order from the
-    // `OutputClaims` derive too. Each advice member is a single-slot per-kind claims
-    // struct, so it absorbs exactly its own kind's opening.
-    #[cfg(not(feature = "akita"))]
-    if let Some(advice) = &claims.trusted_advice {
-        advice.append_openings(transcript);
-    }
-    #[cfg(not(feature = "akita"))]
-    if let Some(advice) = &claims.untrusted_advice {
-        advice.append_openings(transcript);
-    }
-    if let Some(reduction) = &claims.bytecode_reduction {
-        reduction.append_openings(transcript);
-    }
-    if let Some(reduction) = &claims.program_image_reduction {
-        reduction.append_openings(transcript);
+    // Single-sourced with the prover-curation order: both fronts absorb the
+    // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
+    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
+        transcript.append_labeled(b"opening_claim", &value);
     }
 }
 
@@ -629,6 +599,8 @@ mod tests {
     use super::super::bytecode_read_raf::BytecodeReadRafOutputClaims;
     #[cfg(feature = "akita")]
     use super::super::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims;
+    #[cfg(feature = "field-inline")]
+    use super::super::field_registers_inc_claim_reduction::FieldRegistersIncClaimReductionOutputClaims;
     #[cfg(not(feature = "akita"))]
     use super::super::inc_claim_reduction::IncClaimReductionOutputClaims;
     use super::super::instruction_ra_virtualization::InstructionRaVirtualizationOutputClaims;
@@ -643,12 +615,17 @@ mod tests {
     }
 
     /// Per-mode sample claims with sentinel values in the canonical append
-    /// order: base interleaves the inc member after the RA virtualizations;
-    /// Akita carries the read-raf `FusedInc` cell and the lattice booleanity
-    /// digit/carry cells instead.
+    /// order: base interleaves the inc member after the RA virtualizations
+    /// (and, under `field-inline`, the FR inc member after it); Akita carries
+    /// the read-raf `FusedInc` cell and the lattice booleanity digit/carry
+    /// cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
+        #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
+        let last = 10;
+        #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
+        let last = 11;
         #[cfg(not(feature = "akita"))]
-        let (bytecode_read_raf, booleanity, last) = (
+        let (bytecode_read_raf, booleanity) = (
             BytecodeReadRafOutputClaims {
                 bytecode_ra: vec![fr(1), fr(2)],
             },
@@ -657,10 +634,13 @@ mod tests {
                 bytecode_ra: vec![fr(4)],
                 ram_ra: vec![fr(5)],
             },
-            10,
         );
+        #[cfg(all(feature = "akita", not(feature = "field-inline")))]
+        let last = 11;
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        let last = 12;
         #[cfg(feature = "akita")]
-        let (bytecode_read_raf, booleanity, last) = (
+        let (bytecode_read_raf, booleanity) = (
             LatticeBytecodeReadRafOutputClaims {
                 bytecode_ra: vec![fr(1), fr(2)],
                 fused_inc: fr(3),
@@ -672,7 +652,6 @@ mod tests {
                 balanced_inc_digits: vec![fr(7)],
                 balanced_inc_carry: fr(8),
             },
-            11,
         );
         #[cfg(not(feature = "akita"))]
         let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
@@ -695,6 +674,12 @@ mod tests {
                 inc_claim_reduction: IncClaimReductionOutputClaims {
                     ram_inc: fr(9),
                     rd_inc: fr(10),
+                },
+                #[cfg(feature = "field-inline")]
+                field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
+                    // The FR member appends last in canonical order on
+                    // both commitment axes.
+                    rd_inc: fr(last),
                 },
                 #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
@@ -787,6 +772,10 @@ mod tests {
             inc_claim_reduction: IncClaimReductionOutputClaims {
                 ram_inc: fr(11),
                 rd_inc: fr(12),
+            },
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
+                rd_inc: fr(13),
             },
             #[cfg(not(feature = "akita"))]
             trusted_advice: None,
@@ -923,9 +912,10 @@ mod tests {
             VerifierError::StageClaimOpeningMismatch { stage, left, right }
                 if stage == "Booleanity"
                     && left
-                        == JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity)
+                        == JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity).into()
                     && right
                         == JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf)
+                            .into()
         ));
 
         *claims

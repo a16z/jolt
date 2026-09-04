@@ -137,6 +137,19 @@ where
                 stage_layout.sumcheck.output_claim,
                 claim_sources,
             )?;
+
+            // Cross-row equality constraints: both operands are committed rows
+            // (validated at statement construction), so each equality is one
+            // linear R1CS row over the two hidden values.
+            for equality in &stage.output_claim_rows.opening_equalities {
+                let left = claim_sources
+                    .opening(&equality.left)?
+                    .into_linear_combination();
+                let right = claim_sources
+                    .opening(&equality.right)?
+                    .into_linear_combination();
+                builder.assert_equal(left, right);
+            }
         }
 
         for (binding, binding_layout) in self.final_openings.iter().zip(&layout.final_openings) {
@@ -410,7 +423,10 @@ fn validate_final_opening_count<F, O, P, Ch, C>(
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
+    use crate::{
+        BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias,
+        OpeningEquality, VerificationError,
+    };
     use jolt_claims::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, Ring};
     use jolt_r1cs::{ClaimLoweringError, ClaimSourceTable, R1csBuilderError};
@@ -681,6 +697,101 @@ mod tests {
 
         let witness = builder.witness().expect("witness is assigned");
         assert!(builder.into_matrices().check_witness(&witness).is_ok());
+    }
+
+    /// An opening equality between two committed rows lowers to a genuine
+    /// R1CS equality: a witness assigning the two rows the same value
+    /// satisfies the matrices, and a witness assigning different values does
+    /// not — unlike an alias, neither row's value is free.
+    #[test]
+    fn lowers_opening_equality_between_committed_rows() {
+        let equality_statement = || {
+            let input_claim: Expr<Fr, Opening, Public> = constant(Fr::from_u64(10));
+            let output_claim: Expr<Fr, Opening, Public> = opening(Opening::Output);
+            BlindFoldStatement::new(
+                vec![BlindFoldStage::new(
+                    "equality",
+                    SumcheckStatement::new(1, 1),
+                    SumcheckDomainSpec::BooleanHypercube,
+                    committed_consistency(&[(1, 2)]),
+                    CommittedClaimRows::new(
+                        vec![Opening::Output, Opening::Alias],
+                        1,
+                        CommittedOutputClaims {
+                            commitments: vec![(), ()],
+                        },
+                    )
+                    .with_equalities([OpeningEquality::new(Opening::Alias, Opening::Output)]),
+                    input_claim,
+                    output_claim,
+                )],
+                Vec::new(),
+            )
+        };
+
+        for (equal_row_value, satisfied) in [(11u64, true), (99u64, false)] {
+            let statement = equality_statement();
+            let mut builder = R1csBuilder::<Fr>::new();
+            let layout = statement
+                .build_with_sources(&mut builder, &[], &[])
+                .expect("constraints should build");
+            let stage_layout = &layout.stages[0].sumcheck;
+            assign(&mut builder, stage_layout.input_claim, 10);
+            assign_round(&mut builder, &stage_layout.rounds[0], &[3, 4], 11);
+            assign(
+                &mut builder,
+                layout.stages[0].output_claim_rows[0].variables[0],
+                11,
+            );
+            assign(
+                &mut builder,
+                layout.stages[0].output_claim_rows[1].variables[0],
+                equal_row_value,
+            );
+
+            let witness = builder.witness().expect("witness is assigned");
+            assert_eq!(
+                builder.into_matrices().check_witness(&witness).is_ok(),
+                satisfied,
+                "row value {equal_row_value} should {}satisfy the equality",
+                if satisfied { "" } else { "not " },
+            );
+        }
+    }
+
+    /// An equality operand without its own committed row is rejected at
+    /// statement validation (aliases do not qualify: they have no row).
+    #[test]
+    fn rejects_equality_operand_without_a_committed_row() {
+        let input_claim: Expr<Fr, Opening, Public> = constant(Fr::from_u64(10));
+        let output_claim: Expr<Fr, Opening, Public> = opening(Opening::Output);
+        let statement = BlindFoldStatement::new(
+            vec![BlindFoldStage::new(
+                "equality",
+                SumcheckStatement::new(1, 1),
+                SumcheckDomainSpec::BooleanHypercube,
+                committed_consistency(&[(1, 2)]),
+                CommittedClaimRows::new(
+                    vec![Opening::Output],
+                    1,
+                    CommittedOutputClaims {
+                        commitments: vec![()],
+                    },
+                )
+                .with_aliases([OpeningAlias::new(Opening::Alias, Opening::Output)])
+                .with_equalities([OpeningEquality::new(Opening::Alias, Opening::Output)]),
+                input_claim,
+                output_claim,
+            )],
+            Vec::new(),
+        );
+
+        let error = BlindFoldProtocol::<Fr, ()>::from_parts(&statement, &[], &[])
+            .expect_err("an alias operand has no committed row");
+        assert!(matches!(
+            error,
+            VerificationError::R1cs(Error::MissingOpeningEqualityOperand)
+        ));
     }
 
     #[test]

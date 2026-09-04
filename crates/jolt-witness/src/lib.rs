@@ -35,6 +35,8 @@ mod shape;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use backend::fixed::FixedBackend;
+#[cfg(all(any(test, feature = "test-utils"), feature = "field-inline"))]
+pub use backend::fixed::FixedFieldInline;
 pub use backend::trace::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 pub use backend::{
     validate_servable, BundleSource, JoltWitnessOracle, JoltWitnessPlane, ProgramSource,

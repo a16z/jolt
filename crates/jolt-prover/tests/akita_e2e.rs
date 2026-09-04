@@ -16,7 +16,11 @@
 //! harness has no analog here.
 
 #![cfg_attr(
-    all(feature = "prover-fixtures", feature = "akita"),
+    all(
+        feature = "prover-fixtures",
+        feature = "akita",
+        not(feature = "field-inline")
+    ),
     expect(
         clippy::unwrap_used,
         reason = "end-to-end fixtures fail loudly when guest construction is invalid"
@@ -25,7 +29,11 @@
 
 /// Shared scaffolding: the legacy-side guest artifacts every packed test
 /// starts from, and the modular-side trace/config/witness pipeline pieces.
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod support {
     use std::sync::Arc;
@@ -150,14 +158,18 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
     use std::sync::Arc;
 
     use jolt_field::Ring;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -234,7 +246,7 @@ mod muldiv {
             &[],
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
@@ -395,7 +407,7 @@ mod muldiv {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 32,
         };
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, trace_output),
         );
@@ -425,13 +437,17 @@ mod muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod advice {
     use std::sync::Arc;
 
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -534,7 +550,7 @@ mod advice {
             &trusted_advice,
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config)
                 .include_trusted_advice(with_trusted)
                 .include_untrusted_advice(true),
@@ -681,7 +697,7 @@ mod advice {
             &trusted_advice,
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config)
                 .include_trusted_advice(true)
                 .include_untrusted_advice(true),
@@ -719,14 +735,18 @@ mod advice {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod committed {
     use std::sync::Arc;
 
     use jolt_field::Ring;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::JoltProgram;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
     use jolt_prover::akita;
     use jolt_prover::JoltProverPreprocessing;
     use jolt_prover_legacy::host;
@@ -804,7 +824,7 @@ mod committed {
             &[],
         );
         let config = support::derive_config(&trace_output, memory_layout, &verifier_preprocessing);
-        let witness = TraceBackend::<jolt_program::execution::OwnedTrace>::from_compact(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             support::witness_config(&config),
             JoltVmWitnessInputs::new(&jolt_program, &full_program, trace_output),
         );
@@ -870,7 +890,12 @@ mod committed {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", feature = "akita")))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+)))]
 #[test]
-#[ignore = "enable --features akita,prover-fixtures to build the packed (Akita) e2e suite"]
+#[ignore = "enable --features akita,prover-fixtures (without field-inline: an FR-on packed build \
+            proves only FR-profile guests) to build the packed (Akita) e2e suite"]
 fn muldiv_e2e_akita() {}

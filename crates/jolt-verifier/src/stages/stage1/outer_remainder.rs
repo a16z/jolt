@@ -19,6 +19,10 @@
 //! in the stage-1 verifier; this relation consumes that uni-skip's reduced opening
 //! as its input claim.
 
+#[cfg(feature = "field-inline")]
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderInputClaims, OuterRemainderOutputClaims,
@@ -108,6 +112,32 @@ impl<F: JoltField> OuterRemainderCoefficients<F> {
             SpartanOuterPublic::BzConstant => Some(self.bz_constant),
         }
     }
+
+    /// The factored composed output claim
+    /// `tau_kernel · (az_c + Σ az[i]·o[i]) · (bz_c + Σ bz[i]·o[i])` over the full
+    /// selected opening vector (ordinary RV64 columns plus any appended
+    /// field-inline columns). The clear field-inline path checks this factored
+    /// form directly: the rv64 symbolic expression names only the 35 ordinary
+    /// openings, so it cannot express the composed claim.
+    #[cfg(feature = "field-inline")]
+    fn factored_output_claim(&self, openings: &[F]) -> F {
+        debug_assert_eq!(openings.len(), self.az_weights.len());
+        let az = self
+            .az_weights
+            .iter()
+            .zip(openings)
+            .fold(self.az_constant, |acc, (weight, opening)| {
+                acc + *weight * *opening
+            });
+        let bz = self
+            .bz_weights
+            .iter()
+            .zip(openings)
+            .fold(self.bz_constant, |acc, (weight, opening)| {
+                acc + *weight * *opening
+            });
+        self.tau_kernel * az * bz
+    }
 }
 
 #[derive(Clone)]
@@ -122,28 +152,66 @@ pub struct OuterRemainder<F: JoltField> {
     /// The relation's own bound point (the remainder challenges), captured by
     /// [`derive_opening_points`](ConcreteSumcheck::derive_opening_points) — the
     /// third coefficient-table input, which exists only after the batch reduces.
-    bound_point: std::sync::OnceLock<Vec<F>>,
+    bound_point: OnceLock<Vec<F>>,
     /// The expanded coefficient table, built lazily on the first
     /// `derive_output_term` call so the ZK path (which never evaluates the output
     /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
-    coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
+    coefficients: OnceLock<OuterRemainderCoefficients<F>>,
+    /// The 13 FR-local Spartan-outer opening values (appended-column order),
+    /// set by `stage1::verify` from the proof's claims before the batch check
+    /// (prove side: by the composed remainder kernel once fully bound). Behind
+    /// an `Arc` so relation clones share the cell — the prove-side kernel
+    /// clones the batch's relation instance and its write must be visible to
+    /// the driver's curation and expected-output fold.
+    #[cfg(feature = "field-inline")]
+    field_inline_outputs: Arc<OnceLock<Vec<F>>>,
 }
 
 impl<F: JoltField> OuterRemainder<F> {
     pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
-        let variable_count = dimensions.variables().len();
+        // Sized from the selected R1CS composition (jolt-r1cs), not from the
+        // rv64-only symbolic dimensions: under `field-inline` the composed
+        // coefficient table carries the appended FR columns, and the weight
+        // vectors must match it. FR-off the two sources agree (35 columns).
+        let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        debug_assert!(variable_count >= dimensions.variables().len());
         Self {
             symbolic: relations::spartan::OuterRemainder::new(dimensions),
             variable_count,
             tau,
             uniskip_challenge,
-            bound_point: std::sync::OnceLock::new(),
-            coefficients: std::sync::OnceLock::new(),
+            bound_point: OnceLock::new(),
+            coefficients: OnceLock::new(),
+            #[cfg(feature = "field-inline")]
+            field_inline_outputs: Arc::new(OnceLock::new()),
         }
     }
 
     pub fn uniskip_challenge(&self) -> F {
         self.uniskip_challenge
+    }
+
+    /// Supply the FR-local Spartan-outer opening values (appended-column
+    /// order) from the proof's stage-1 claims. Must be called before the
+    /// batch's expected-output check; rejects a second set at a different
+    /// value (one proof per relation instance).
+    #[cfg(feature = "field-inline")]
+    pub fn set_field_inline_outputs(&self, values: Vec<F>) -> Result<(), VerifierError> {
+        let stored = self.field_inline_outputs.get_or_init(|| values.clone());
+        if *stored != values {
+            return Err(public_input_failed(
+                "field-inline Spartan outer outputs already set to different values",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The FR-local Spartan-outer opening values, once supplied — read by the
+    /// prove-side driver's curated absorb and the stage-1 recipe's claim
+    /// assembly.
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_outputs(&self) -> Option<&[F]> {
+        self.field_inline_outputs.get().map(Vec::as_slice)
     }
 
     /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
@@ -257,11 +325,47 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanOuter(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         self.coefficients()?
             .resolve(*public_id)
-            .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+            .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
+    }
+
+    /// The composed expected output claim over the full selected opening
+    /// vector: the 35 ordinary openings (canonical order) followed by the 13
+    /// FR-local openings supplied via
+    /// [`set_field_inline_outputs`](OuterRemainder::set_field_inline_outputs).
+    /// The rv64 symbolic `output_expression` names only the ordinary openings,
+    /// so under `field-inline` the check evaluates the factored composed form
+    /// directly — the same `JoltSpartanOuterRemainder` coefficient source the
+    /// BlindFold constraint will lower.
+    #[cfg(feature = "field-inline")]
+    fn expected_output(
+        &self,
+        _input_points: &OuterRemainderInputClaims<Vec<F>>,
+        output_values: &OuterRemainderOutputClaims<F>,
+        _output_points: &OuterRemainderOutputClaims<Vec<F>>,
+        _challenges: &NoChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        use crate::stages::relations::OutputClaims as _;
+
+        let field_inline = self.field_inline_outputs.get().ok_or_else(|| {
+            public_input_failed(
+                "field-inline Spartan outer outputs not set (stage1::verify must supply \
+                 them before the batch check)",
+            )
+        })?;
+        let mut openings = output_values.opening_values();
+        openings.extend_from_slice(field_inline);
+        if openings.len() != self.variable_count {
+            return Err(public_input_failed(format!(
+                "composed Spartan outer opening count mismatch: got {}, selected R1CS has {}",
+                openings.len(),
+                self.variable_count,
+            )));
+        }
+        Ok(self.coefficients()?.factored_output_claim(&openings))
     }
 }
 
@@ -386,11 +490,77 @@ mod tests {
         }
     }
 
+    /// Under `field-inline` the composed coefficient table carries 48 columns
+    /// while the rv64 symbolic relation still names 35 openings; the composed
+    /// clear check therefore evaluates the factored form over the full selected
+    /// opening vector. This pins both the sizing invariant that used to panic
+    /// (weight vectors follow the composed jolt-r1cs column count) and the
+    /// composed algebra: the `expected_output` override evaluates bit-identically
+    /// to `JoltSpartanOuterRemainder::expected_output_claim` over all 48
+    /// openings (35 ordinary in canonical order, then the 13 appended FR-local
+    /// columns).
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn composed_expected_output_matches_factored_form() {
+        let log_t = 3usize;
+        let tau_len = log_t + 2;
+        let remainder_len = 1 + log_t;
+        let dimensions = SpartanOuterDimensions::rv64(log_t);
+        let tau = (0..tau_len)
+            .map(|i| Fr::from_u64(2 + i as u64))
+            .collect::<Vec<_>>();
+        let remainder_challenges = (0..remainder_len)
+            .map(|i| Fr::from_u64(100 + i as u64))
+            .collect::<Vec<_>>();
+        let uniskip_challenge = Fr::from_u64(17);
+
+        let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        let openings = (0..variable_count)
+            .map(|i| Fr::from_u64(1_000 + i as u64))
+            .collect::<Vec<_>>();
+
+        let factored = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
+            tau: &tau,
+            uniskip: uniskip_challenge,
+            remainder: &remainder_challenges,
+        })
+        .unwrap();
+        let factored_output = factored.expected_output_claim(&openings).unwrap();
+
+        let relation = OuterRemainder::<Fr>::new(dimensions, tau, uniskip_challenge);
+        assert_eq!(relation.variable_count, variable_count);
+
+        let rv64_count = SPARTAN_OUTER_R1CS_INPUTS.len();
+        let (rv64_openings, field_inline_openings) = openings.split_at(rv64_count);
+        relation
+            .set_field_inline_outputs(field_inline_openings.to_vec())
+            .unwrap();
+
+        let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        let _ = relation
+            .derive_opening_points(&remainder_challenges, &input_points)
+            .unwrap();
+        let point = vec![Fr::from_u64(7); remainder_len];
+        let output_values = output_values_from(rv64_openings);
+        let output_points = output_points_at(&point);
+        let composed_output = relation
+            .expected_output(
+                &input_points,
+                &output_values,
+                &output_points,
+                &NoChallenges::default(),
+            )
+            .unwrap();
+
+        assert_eq!(composed_output, factored_output);
+    }
+
     /// The relation's expanded `expected_output` evaluates bit-identically to the
     /// factored `JoltSpartanOuterRemainder::expected_output_claim` on the production
     /// 35-variable rv64 shape. This is the equivalence the clear stage-1 path now
     /// relies on (it switched from the factored matrix form to the expanded relation
     /// form); muldiv non-ZK is the end-to-end gate, this pins it at unit level.
+    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn expected_output_matches_factored_form_on_rv64_shape() {
         let log_t = 3usize;

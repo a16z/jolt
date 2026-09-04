@@ -1,5 +1,7 @@
 //! Stage 1 Spartan outer verifier.
 
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 pub mod outer_remainder;
 pub mod outputs;
 mod verify;

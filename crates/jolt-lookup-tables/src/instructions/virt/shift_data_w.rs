@@ -31,28 +31,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
+    use tracer::instruction::virtual_shift_data_w::VirtualShiftDataW;
 
     #[test]
     fn materialize_entry_shiftdataw() {
-        materialize_entry_test!(
-            ShiftDataW,
-            tracer::instruction::virtual_shift_data_w::VirtualShiftDataW
-        );
+        materialize_entry_test!(ShiftDataW, VirtualShiftDataW);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_shiftdataw() {
-        instruction_inputs_match_constraint_test!(
-            ShiftDataW,
-            tracer::instruction::virtual_shift_data_w::VirtualShiftDataW
-        );
+        instruction_inputs_match_constraint_test!(ShiftDataW, VirtualShiftDataW);
     }
 
     #[test]
     fn lookup_output_matches_trace_shiftdataw() {
-        lookup_output_matches_trace_test!(
-            ShiftDataW,
-            tracer::instruction::virtual_shift_data_w::VirtualShiftDataW
-        );
+        lookup_output_matches_trace_test!(ShiftDataW, VirtualShiftDataW);
     }
 }

@@ -154,7 +154,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
         challenges: &RamOutputCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamOutputCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let (eq_address, io_mask, val_io) = ram_output_check_publics(
             &self.public_memory,

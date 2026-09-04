@@ -1,6 +1,14 @@
 //! Stage 8: the final PCS opening. [`verify`] is the per-build entry point;
 //! the feature-specific statement assembly lives beside it.
 
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+pub mod field_inline;
+/// Packed-build FR seam: the limb-group resolve, the linear recomposition
+/// check against the stage-6b reduced claim, and the wire claim carrier.
+/// `packed.rs` interacts with the packed FR protocol only through this
+/// module (and the prover's packed stage-8 recipe mirrors it).
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+pub mod field_inline_packed;
 pub mod outputs;
 /// Packed-build statement assembly: per-object packings, leaf-claim
 /// resolution, and the joint opening call. Public because the prover's

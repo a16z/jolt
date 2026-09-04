@@ -18,6 +18,7 @@ use crate::poly::commitment::dory::bind_opening_inputs;
 use crate::poly::commitment::dory::bind_opening_inputs_zk;
 use crate::poly::commitment::dory::DoryContext;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_verifier::VerifierError;
 
 use crate::zkvm::config::ReadWriteConfig;
 use crate::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -252,7 +253,7 @@ impl<
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         advice_tape: Option<tracer::AdviceTape>,
-    ) -> Result<Self, jolt_verifier::VerifierError> {
+    ) -> Result<Self, VerifierError> {
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: preprocessing.shared.memory_layout.max_untrusted_advice_size,
             max_trusted_advice_size: preprocessing.shared.memory_layout.max_trusted_advice_size,
@@ -340,7 +341,7 @@ impl<
         trusted_advice_commitment: Option<PCS::Commitment>,
         trusted_advice_hint: Option<PCS::OpeningProofHint>,
         final_memory_state: Memory,
-    ) -> Result<Self, jolt_verifier::VerifierError> {
+    ) -> Result<Self, VerifierError> {
         // Truncate trailing zero bytes from outputs. Both prover and verifier
         // apply the same truncation so the proof is internally consistent.
         // See the corresponding comment in JoltVerifier::new().
@@ -365,7 +366,7 @@ impl<
                 exceeds max_trace_length ({max_padded_trace_length}) configured in MemoryConfig. \
                 Increase max_trace_length to at least {padded_trace_len}."
             );
-            return Err(jolt_verifier::VerifierError::InvalidTraceLength {
+            return Err(VerifierError::InvalidTraceLength {
                 got: padded_trace_len,
                 max: max_padded_trace_length,
             });
@@ -626,13 +627,31 @@ impl<
             >,
             Option<ProverDebugInfo<F, ProofTranscript, PCS>>,
         ),
-        jolt_verifier::VerifierError,
+        VerifierError,
     >
     where
         F: crate::zkvm::proof::ProofField,
         C: crate::zkvm::proof::ProofCurve<F>,
         PCS: crate::zkvm::proof::ProofCommitmentScheme<F>,
     {
+        // Field-inline cycles have no legacy proving semantics (no circuit flags,
+        // no lookups, no FR memory checking in this prover), so a "proof" of an
+        // FR-active trace would leave every FR effect — including StoreToX
+        // x-register writes — unconstrained. Fail closed; the modular jolt-prover
+        // owns field-inline proving.
+        #[cfg(feature = "field-inline")]
+        if self
+            .trace
+            .iter()
+            .any(|cycle| cycle.field_inline_trace().is_some())
+        {
+            return Err(VerifierError::ProtocolAxisUnimplemented {
+                axis: "field-inline",
+                pending: "the legacy prover has no field-inline semantics; the modular \
+                          jolt-prover owns FR proving",
+            });
+        }
+
         let (proof, debug_info) = self.prove_parts();
         let proof = crate::zkvm::proof::proof_parts_into_verifier(proof)?;
         Ok((proof, debug_info))
@@ -2771,6 +2790,7 @@ mod tests {
     };
     use ark_bn254::Fr;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use jolt_verifier::VerifierError;
     use serial_test::serial;
 
     use crate::curve::Bn254Curve;
@@ -2859,7 +2879,7 @@ mod tests {
         proof: VerifierRV64IMACProof,
         public_io: common::jolt_device::JoltDevice,
         trusted_advice_commitment: Option<<DoryCommitmentScheme as CommitmentScheme>::Commitment>,
-    ) -> Result<(), jolt_verifier::VerifierError> {
+    ) -> Result<(), VerifierError> {
         let preprocessing = verifier_preprocessing_from_prover(preprocessing);
         let trusted_advice_commitment = trusted_advice_commitment
             .map(<DoryCommitmentScheme as ProofCommitmentScheme<Fr>>::commitment_into_verifier);
@@ -2998,7 +3018,7 @@ mod tests {
         );
         assert!(matches!(
             result,
-            Err(jolt_verifier::VerifierError::InvalidTraceLength { .. })
+            Err(VerifierError::InvalidTraceLength { .. })
         ));
     }
 

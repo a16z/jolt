@@ -3,6 +3,8 @@
 pub mod batch;
 pub mod booleanity;
 pub mod bytecode_read_raf;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 pub mod outputs;
 pub mod verify;
 

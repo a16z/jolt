@@ -2438,6 +2438,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "eqpoly-field"
+version = "0.1.0"
+dependencies = [
+ "eqpoly-field-guest",
+ "jolt-field",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-sdk",
+ "jolt-witness",
+]
+
+[[package]]
+name = "eqpoly-field-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3219,6 +3238,7 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "criterion",
+ "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
@@ -3709,6 +3729,7 @@ dependencies = [
  "jolt-profiling",
  "jolt-program",
  "jolt-prover-legacy",
+ "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
@@ -3930,12 +3951,14 @@ dependencies = [
  "jolt-openings",
  "jolt-poly",
  "jolt-program",
+ "jolt-prover",
  "jolt-prover-legacy",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier-derive",
+ "jolt-witness",
  "num-traits",
  "postcard",
  "quote",
@@ -3943,6 +3966,7 @@ dependencies = [
  "serde_json",
  "syn 3.0.3",
  "thiserror 2.0.18",
+ "tracer",
 ]
 
 [[package]]

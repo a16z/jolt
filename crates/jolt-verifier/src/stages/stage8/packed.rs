@@ -19,6 +19,8 @@ use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, Precom
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
+#[cfg(feature = "field-inline")]
+use super::field_inline_packed::FieldIncLimbClaims;
 use super::precommitted::precommitted_final_openings;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
@@ -87,9 +89,13 @@ where
     Ok(())
 }
 
-fn validate_precommitted_metadata<C>(
+/// The commitment half of the precommitted metadata gate, shared with the FR
+/// limb seam (whose canonical plan is verifier-derived, so it hands over its
+/// digest and arity rather than a `PrefixPackedObjectPlan`).
+fn validate_precommitted_commitment_metadata<C>(
     commitment: &C,
-    plan: &PrefixPackedObjectPlan,
+    layout_digest: [u8; 32],
+    packed_num_vars: usize,
 ) -> Result<(), VerifierError>
 where
     C: OneHotTraceCommitmentMetadata,
@@ -99,8 +105,7 @@ where
             "precommitted prefix-packed commitments must use Akita's dense backend",
         ));
     }
-    let packed_num_vars = plan.packing().packed_num_vars();
-    if commitment.layout_digest() != plan.layout_digest() {
+    if commitment.layout_digest() != layout_digest {
         return Err(batch_failed(
             "precommitted commitment has a noncanonical layout digest",
         ));
@@ -116,6 +121,20 @@ where
         ));
     }
     Ok(())
+}
+
+fn validate_precommitted_metadata<C>(
+    commitment: &C,
+    plan: &PrefixPackedObjectPlan,
+) -> Result<(), VerifierError>
+where
+    C: OneHotTraceCommitmentMetadata,
+{
+    validate_precommitted_commitment_metadata(
+        commitment,
+        plan.layout_digest(),
+        plan.packing().packed_num_vars(),
+    )
 }
 
 /// One resolved commitment object and its canonical packing.
@@ -177,6 +196,10 @@ pub fn verify<PCS, VC, T>(
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
+    #[cfg(feature = "field-inline")] field_inc_limbs_commitment: Option<&PCS::Output>,
+    #[cfg(feature = "field-inline")] field_inc_limbs_claims: Option<
+        &FieldIncLimbClaims<PCS::Field>,
+    >,
     proof: &PCS::Proof,
     transcript: &mut T,
     schedule: &PrecommittedSchedule,
@@ -191,9 +214,11 @@ where
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    // Precommitted objects precede the OneHotTrace group in canonical role order.
-    // Optional objects join exactly when their direct final reductions exist;
-    // presence must agree with the proof/preprocessing commitment slots.
+    // Precommitted objects precede the OneHotTrace group in canonical role order:
+    // advice, (field-inline) the always-present FR limb group, then the direct
+    // committed-program objects. Optional objects join exactly when their direct
+    // final reductions exist; presence must agree with the proof/preprocessing
+    // commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
     let one_hot_trace_shape = OneHotTraceShape {
         ra_layout: formula_dimensions.ra_layout,
@@ -287,6 +312,29 @@ where
                 ),
             ));
         }
+    }
+    #[cfg(feature = "field-inline")]
+    {
+        use super::field_inline_packed;
+        let (commitment, claims) = field_inline_packed::resolve_proof_slots(
+            schedule,
+            field_inc_limbs_commitment,
+            field_inc_limbs_claims,
+        )?;
+        let limb_plan =
+            field_inline_packed::limb_plan::<PCS::Field>(formula_dimensions.trace.log_t())?;
+        validate_precommitted_commitment_metadata(
+            commitment,
+            limb_plan.layout_digest(),
+            limb_plan.packing().packed_num_vars(),
+        )?;
+        precommitted.push(field_inline_packed::reduced_precommitted_claim(
+            &limb_plan,
+            commitment,
+            claims,
+            field_inline_packed::reduced_field_rd_inc(stage6b),
+            transcript,
+        )?);
     }
 
     if let Some(committed) = committed {

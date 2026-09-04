@@ -1,5 +1,7 @@
 //! Typed inputs consumed and outputs produced by stage 1 verification.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
@@ -15,6 +17,27 @@ use crate::VerifierError;
 pub struct Stage1OutputClaims<F: JoltField> {
     pub uniskip_output_claim: F,
     pub outer: Stage1BatchOutputClaims<F>,
+    /// The 13 FR-local Spartan-outer openings the composed R1CS appends after
+    /// the 35 ordinary columns. Present on every field-inline proof; carried as
+    /// an `Option` for the same producer reasons as the commitment payload, and
+    /// required fail-closed by `stage1::verify`.
+    #[cfg(feature = "field-inline")]
+    pub field_inline_outer: Option<FieldRegistersSpartanOuterOutputClaims<F>>,
+}
+
+impl<F: JoltField> Stage1OutputClaims<F> {
+    /// Construct the ordinary stage-1 claims. Producers without field-inline
+    /// semantics use this regardless of the build's feature set — the FR
+    /// payload starts absent and `stage1::verify` rejects its absence on
+    /// FR-on proofs.
+    pub fn new(uniskip_output_claim: F, outer: Stage1BatchOutputClaims<F>) -> Self {
+        Self {
+            uniskip_output_claim,
+            outer,
+            #[cfg(feature = "field-inline")]
+            field_inline_outer: None,
+        }
+    }
 }
 
 /// Source-of-truth for stage 1's singleton sumcheck batch: the Spartan outer
@@ -70,6 +93,29 @@ pub struct Stage1ClearOutput<F: JoltField> {
     /// `output_values`. All 35 openings share the single remainder point; the raw
     /// reduction point is exposed by [`Stage1Output::remainder_point`].
     pub output_points: Stage1BatchOutputPoints<F>,
+    /// The 13 FR-local Spartan-outer opening values (appended-column order).
+    /// They share the remainder opening point with the ordinary openings; the
+    /// stage-2 FR claim reduction consumes them. `Some` on every verified
+    /// FR-on proof (`stage1::verify` fills it); `None` only from producers
+    /// that have not wired field-inline yet.
+    #[cfg(feature = "field-inline")]
+    pub field_inline_output_values: Option<FieldRegistersSpartanOuterOutputClaims<F>>,
+}
+
+impl<F: JoltField> Stage1ClearOutput<F> {
+    /// Construct the ordinary clear output. The FR payload starts absent;
+    /// `stage1::verify` attaches it on FR-on proofs.
+    pub fn new(
+        output_values: Stage1BatchOutputClaims<F>,
+        output_points: Stage1BatchOutputPoints<F>,
+    ) -> Self {
+        Self {
+            output_values,
+            output_points,
+            #[cfg(feature = "field-inline")]
+            field_inline_output_values: None,
+        }
+    }
 }
 
 impl<F: JoltField> Stage1ClearOutput<F> {

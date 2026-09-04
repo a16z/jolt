@@ -58,20 +58,24 @@ enum ProductUniskipVerified<F: JoltField, C> {
 /// outputs into the generated `Stage2BatchInputClaims` aggregate. Each per-relation
 /// `*_from_upstream` helper wires which upstream opening feeds which downstream
 /// input. The product-remainder input is the product uni-skip's output claim (a
-/// separate stage-2 sub-sumcheck), not an upstream stage's opening.
+/// separate stage-2 sub-sumcheck), not an upstream stage's opening. Errors only
+/// under `field-inline`, where the FR claim-reduction inputs are required
+/// fail-closed from the stage-1 FR carrier.
 pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
-) -> Stage2BatchInputClaims<F> {
-    Stage2BatchInputClaims {
+) -> Result<Stage2BatchInputClaims<F>, VerifierError> {
+    Ok(Stage2BatchInputClaims {
         ram_read_write: ram_read_write_input_values_from_upstream(stage1),
         product_remainder: product_remainder_input_values_from_uniskip_output(
             product_uniskip_output_claim,
         ),
         instruction_claim_reduction: instruction_claim_reduction_input_values_from_upstream(stage1),
+        #[cfg(feature = "field-inline")]
+        field_registers_claim_reduction: super::field_inline::claim_reduction_inputs(stage1)?,
         ram_raf_evaluation: ram_raf_evaluation_input_values_from_upstream(stage1),
         ram_output_check: RamOutputCheckInputClaims::default(),
-    }
+    })
 }
 
 #[jolt_verifier_derive::fs_scope(Stage2)]
@@ -112,7 +116,7 @@ where
     let uniskip =
         verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
 
-    // Build the five batch relations once, pre-branch; each owns its input/output
+    // Build the batch relations once, pre-branch; each owns its input/output
     // claim algebra (single-sourced with its jolt-claims formula and the BlindFold
     // constraint). The product uni-skip stays hand-coded above.
     let lowest_address = checked.public_io.memory_layout.get_lowest_address();
@@ -138,6 +142,11 @@ where
             trace_dimensions,
             uniskip.tau_low.clone(),
         ),
+        #[cfg(feature = "field-inline")]
+        field_registers_claim_reduction: super::field_inline::claim_reduction_member(
+            log_t,
+            uniskip.tau_low.clone(),
+        ),
         ram_raf_evaluation: RamRafEvaluation::new(
             read_write_dimensions,
             raf_dimensions,
@@ -149,12 +158,12 @@ where
     };
 
     // Draw each relation's challenges in declaration order: the RAM read-write
-    // gamma, then the instruction claim-reduction gamma (each a single
-    // `challenge_scalar`), then the RAM output-check address reference point
-    // (the last member's `draw_challenges` override — one raw `challenge()` per
-    // RAM address variable, landing after both gammas as the inline draw did).
-    // The drawn challenges feed the input/output claims and populate the stage
-    // aggregate carried downstream.
+    // gamma, the instruction claim-reduction gamma, under `field-inline` the FR
+    // claim-reduction gamma (each a single `challenge_scalar`), then the RAM
+    // output-check address reference point (the last member's `draw_challenges`
+    // override — one raw `challenge()` per RAM address variable, landing after
+    // the gammas as the inline draw did). The drawn challenges feed the
+    // input/output claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     // Every member's input points are empty (each derives its output points from its
@@ -168,11 +177,19 @@ where
             });
         };
         let consistency = sumchecks.verify_zk(&proof.stages.stage2_sumcheck_proof, transcript)?;
+        // The committed shell carries the curated row order: the member
+        // openings plus (under `field-inline`) the three FR product-appendage
+        // rows spliced after the product-remainder outputs — the clear absorb
+        // order exactly.
+        let output_claim_count = sumchecks.output_claim_count();
+        #[cfg(feature = "field-inline")]
+        let output_claim_count =
+            super::field_inline::composed_output_claim_count(output_claim_count)?;
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage2_sumcheck_proof,
             "stage2_sumcheck_proof",
-            sumchecks.output_claim_count(),
+            output_claim_count,
             JoltRelationId::RamReadWriteChecking,
         )?;
         let output_points =
@@ -200,8 +217,11 @@ where
     let claims = &proof.clear_claims()?.stage2;
     sumchecks.validate_output_claims(&claims.batch_outputs)?;
 
+    #[cfg(feature = "field-inline")]
+    let field_inline_product = super::field_inline::attach_product_outputs(&sumchecks, claims)?;
+
     let input_values =
-        stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
+        stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim)?;
 
     let output_points = sumchecks.verify_clear(
         &input_values,
@@ -213,7 +233,12 @@ where
         2,
     )?;
 
+    #[cfg(not(feature = "field-inline"))]
     sumchecks.append_output_claims(transcript, &claims.batch_outputs);
+    // The curated FR-on absorb: the FR product appendage splices in after the
+    // product-remainder outputs, per the spec's committed output row order.
+    #[cfg(feature = "field-inline")]
+    sumchecks.append_output_claims(transcript, &claims.batch_outputs, &field_inline_product);
 
     Ok(Stage2Output::Clear(Stage2ClearOutput {
         output_values: claims.batch_outputs.clone(),
@@ -270,6 +295,8 @@ where
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
             let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
+            #[cfg(feature = "field-inline")]
+            super::field_inline::attach_uniskip_inputs(&uniskip_relation, stage1)?;
             let uniskip_input_values = product_uniskip_input_values_from_stage1(stage1);
             let uniskip_input_claim =
                 uniskip_relation.input_claim(&uniskip_input_values, &NoChallenges::default())?;

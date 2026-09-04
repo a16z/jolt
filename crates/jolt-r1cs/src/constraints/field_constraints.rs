@@ -5,13 +5,25 @@
 //! representation for ordinary values; multi-limb bridge packing should be
 //! layered on once those bridge payloads are explicit in the trace.
 //!
-//! WARNING: the load/store/imm bridge rows are placeholder identity
-//! equalities with no range or canonical-encoding binding (spec
-//! `field-inline-protocol.md` step 5: `decode_x_register` /
-//! `encode_field_register` / `decode_immediate`). Until that lands, a bridge
-//! row can equate a full field element with a shared 64-bit RV64 column
-//! (e.g. `RdWriteValue`), so the composed matrices are unsound as a verifier
-//! statement and must not back a proof path.
+//! Bridge rows (spec `field-inline-protocol.md`, "Conversion Rows"): the
+//! x-register side of every bridge is a 64-bit RV64 column, so each row must
+//! be range-sound, not just an identity.
+//!
+//! - `FIELD_LOAD_FROM_X` reads `Rs1Value` and `FIELD_LOAD_IMM` reads the
+//!   bytecode `Imm`; both are honestly bounded inputs of the base protocol,
+//!   so `FieldRdValue = Rs1Value` / `= Imm` are exact.
+//! - `FIELD_STORE_TO_X` writes `RdWriteValue`, which the base protocol pins
+//!   only through the lookup/load/jump flags. The instruction therefore
+//!   carries the `Advice` and `WriteLookupOutputToRD` flags and the
+//!   `RangeCheck` lookup: RV64 row 12 gives `RdWriteValue = LookupOutput`,
+//!   `RangeCheck` gives `LookupOutput = RightLookupOperand mod 2^64` (the
+//!   operand is the whole non-interleaved index, bound exactly by instruction
+//!   read-RAF), and the two rows here pin `RdWriteValue` and
+//!   `RightLookupOperand` to `FieldRs1Value`. Together:
+//!   `FieldRs1Value = FieldRs1Value mod 2^64`, i.e. the store is satisfiable
+//!   exactly when the field value fits in 64 bits — the condition under which
+//!   the tracer executes it (wider values trap; `tracer`
+//!   `execute_store_to_x`).
 
 use crate::constraint::SparseRow;
 use jolt_field::JoltField;
@@ -38,9 +50,12 @@ pub const V_IS_FIELD_ASSERT_EQ: usize = 13;
 pub const V_IS_FIELD_LOAD_FROM_X: usize = 14;
 pub const V_IS_FIELD_STORE_TO_X: usize = 15;
 pub const V_IS_FIELD_LOAD_IMM: usize = 16;
+/// The shared RV64 `RightLookupOperand` column: the store bridge's
+/// non-interleaved `RangeCheck` index (see the module doc).
+pub const V_X_RIGHT_LOOKUP_OPERAND: usize = 17;
 
 pub const NUM_R1CS_INPUTS: usize = NUM_VARS_PER_CYCLE - 1;
-pub const NUM_VARS_PER_CYCLE: usize = 17;
+pub const NUM_VARS_PER_CYCLE: usize = 18;
 
 pub const ROW_FADD: usize = 0;
 pub const ROW_FSUB: usize = 1;
@@ -50,7 +65,10 @@ pub const ROW_ASSERT_EQ: usize = 4;
 pub const ROW_LOAD_FROM_X: usize = 5;
 pub const ROW_STORE_TO_X: usize = 6;
 pub const ROW_LOAD_IMM: usize = 7;
-pub const NUM_EQ_CONSTRAINTS: usize = 8;
+/// `IsFieldStoreToX · (RightLookupOperand − FieldRs1Value) = 0`: the
+/// range-binding half of the store bridge.
+pub const ROW_STORE_TO_X_LOOKUP: usize = 8;
+pub const NUM_EQ_CONSTRAINTS: usize = 9;
 
 pub const ROW_FIELD_PRODUCT: usize = NUM_EQ_CONSTRAINTS;
 pub const ROW_FIELD_INV_PRODUCT: usize = NUM_EQ_CONSTRAINTS + 1;
@@ -127,6 +145,13 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_FIELD_RD_VALUE, 1), (V_IMM, -1)]));
     c_rows.push(empty());
 
+    a_rows.push(row::<F>(&[(V_IS_FIELD_STORE_TO_X, 1)]));
+    b_rows.push(row::<F>(&[
+        (V_X_RIGHT_LOOKUP_OPERAND, 1),
+        (V_FIELD_RS1_VALUE, -1),
+    ]));
+    c_rows.push(empty());
+
     (a_rows, b_rows, c_rows)
 }
 
@@ -161,8 +186,8 @@ pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::Constrai
 
 /// Build the full native field-inline R1CS constraint matrices.
 ///
-/// Returns 10 constraints over 17 variables per cycle:
-/// - 8 equality-conditional rows: `guard * (left - right) = 0`
+/// Returns 11 constraints over 18 variables per cycle:
+/// - 9 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
 pub fn field_inline_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = field_eq_constraint_rows();
@@ -198,6 +223,7 @@ mod tests {
         witness[V_FIELD_INV_PRODUCT] = field_rs1 * field_rd;
         witness[V_X_RS1_VALUE] = field_rd;
         witness[V_X_RD_WRITE_VALUE] = field_rs1;
+        witness[V_X_RIGHT_LOOKUP_OPERAND] = field_rs1;
         witness[V_IMM] = field_rd;
         for &(index, value) in flags {
             witness[index] = value;
@@ -357,7 +383,10 @@ mod tests {
     fn input_columns_follow_const_then_inputs_layout() {
         assert_eq!(const_column(), V_CONST);
         assert_eq!(input_column(0), Some(V_FIELD_RS1_VALUE));
-        assert_eq!(input_column(NUM_R1CS_INPUTS - 1), Some(V_IS_FIELD_LOAD_IMM));
+        assert_eq!(
+            input_column(NUM_R1CS_INPUTS - 1),
+            Some(V_X_RIGHT_LOOKUP_OPERAND)
+        );
         assert_eq!(input_column(NUM_R1CS_INPUTS), None);
     }
 }

@@ -35,6 +35,8 @@ pub enum Error {
     DuplicateOpeningSource,
     #[error("opening alias refers to an unknown source")]
     MissingOpeningAliasSource,
+    #[error("opening equality refers to an opening without a committed row")]
+    MissingOpeningEqualityOperand,
     #[error("stage {stage_index}: {source}")]
     Sumcheck {
         stage_index: usize,

@@ -64,6 +64,9 @@ where
 
         sumchecks.validate_output_claims(&claims.outer)?;
 
+        #[cfg(feature = "field-inline")]
+        let field_inline_outer = super::field_inline::attach_outer_outputs(&sumchecks, claims)?;
+
         // The remainder consumes the uni-skip's reduced opening as its input claim
         // (the relation's `input_claim` is the bare consumed opening).
         let input_values = Stage1BatchInputClaims {
@@ -84,9 +87,14 @@ where
         // the prover's commitment order.
         sumchecks.append_output_claims(transcript, &claims.outer);
 
+        #[cfg(feature = "field-inline")]
+        super::field_inline::append_outer_openings(transcript, &field_inline_outer);
+
         return Ok(Stage1Output::Clear(Stage1ClearOutput {
             output_values: claims.outer.clone(),
             output_points,
+            #[cfg(feature = "field-inline")]
+            field_inline_output_values: Some(field_inline_outer),
         }));
     }
 
@@ -110,11 +118,19 @@ where
 
         let remainder_consistency =
             sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
+        // The committed shell carries the composed row order: the 35 member
+        // openings, then (under `field-inline`) the 13 FR-local appendage
+        // rows — the same rows the clear path absorbs after the member
+        // openings.
+        let output_claim_count = sumchecks.output_claim_count();
+        #[cfg(feature = "field-inline")]
+        let output_claim_count =
+            super::field_inline::composed_output_claim_count(output_claim_count)?;
         let remainder_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage1_sumcheck_proof,
             "stage1_sumcheck_proof",
-            sumchecks.output_claim_count(),
+            output_claim_count,
             JoltRelationId::SpartanOuter,
         )?;
         let output_points =

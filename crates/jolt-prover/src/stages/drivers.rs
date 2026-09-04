@@ -12,13 +12,42 @@ mod stage1 {
         Stage1BatchChallenges, Stage1BatchInputClaims, Stage1BatchInputPoints,
         Stage1BatchOutputClaims, Stage1BatchOutputPoints, Stage1BatchSumchecks,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
+    #[cfg(not(feature = "field-inline"))]
     jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover);
+
+    // The composed stage-1 committed/absorb order: the 35 member openings,
+    // then the 13 FR-local Spartan-outer appendage values the composed
+    // remainder kernel published on the (Arc-shared) relation — the
+    // verifier's composed row order, which the generated member absorb
+    // cannot express. Fail closed when a backend served no appendage, so an
+    // FR-on prover cannot emit a 35-row shell the FR-on verifier would
+    // reject at the committed count.
+    #[cfg(feature = "field-inline")]
+    jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover
+        curate = |batch, claims, points| {
+            let mut values = batch.opening_values(claims);
+            let field_inline = batch.outer_remainder.field_inline_outputs().ok_or_else(|| {
+                VerifierError::StageClaimSumcheckFailed {
+                    stage: "Stage1Batch".to_string(),
+                    reason: "the composed stage-1 absorb needs the FR Spartan-outer \
+                             appendage, but the remainder kernel published none"
+                        .to_string(),
+                }
+            })?;
+            values.extend_from_slice(field_inline);
+            Ok(values)
+        },
+    );
 }
 
 mod stage2 {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
     use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
     use jolt_verifier::stages::stage2::outputs::{
         Stage2BatchChallenges, Stage2BatchInputClaims, Stage2BatchInputPoints,
@@ -28,10 +57,34 @@ mod stage2 {
     use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
     use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
     use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
+    #[cfg(not(feature = "field-inline"))]
     jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover);
+
+    // The field-inline batch suppresses the generated absorb (the verifier's
+    // committed row order splices the FR product appendage after the
+    // product-remainder outputs), so the driver curates through the
+    // verifier's own composed `opening_values`, feeding it the appendage the
+    // composed remainder kernel published on the (Arc-shared) relation. Fail
+    // closed when a backend served no appendage.
+    #[cfg(feature = "field-inline")]
+    jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover
+        curate = |batch, claims, points| {
+            let appendage = batch.product_remainder.field_inline_outputs().ok_or_else(|| {
+                VerifierError::StageClaimSumcheckFailed {
+                    stage: "Stage2Batch".to_string(),
+                    reason: "the curated stage-2 absorb needs the FR product appendage, \
+                             but the remainder kernel published none"
+                        .to_string(),
+                }
+            })?;
+            Ok(batch.opening_values(claims, appendage))
+        },
+    );
 }
 
 mod stage3 {
@@ -47,6 +100,8 @@ mod stage3 {
 }
 
 mod stage4 {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
     use jolt_verifier::stages::stage4::outputs::{
         Stage4Challenges, Stage4InputClaims, Stage4InputPoints, Stage4OutputClaims,
         Stage4OutputPoints, Stage4Sumchecks,
@@ -56,10 +111,16 @@ mod stage4 {
 
     use crate::driver::impl_stage_prover;
 
+    // Stage 4's `no_opening_values` replacement keeps the generated
+    // signature (the claims aggregate's hand-ordered `opening_values`, which
+    // splices the FR openings under `field-inline`), so the driver's default
+    // curation serves both feature arms unchanged.
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }
 
 mod stage5 {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
     use jolt_verifier::stages::stage5::outputs::{
         Stage5Challenges, Stage5InputClaims, Stage5InputPoints, Stage5OutputClaims,
         Stage5OutputPoints, Stage5Sumchecks,
@@ -97,6 +158,8 @@ mod stage6b {
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
         TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
     // The packed batch has no inc member — the fused-inc read-raf stages
     // discharge the reduced inc claims instead.
     #[cfg(not(feature = "akita"))]
@@ -461,6 +524,9 @@ mod twin_tests {
         jolt_verifier::stages::relations::SumcheckInputClaims<Fr, R>: jolt_claims::InputClaims<Fr>,
         jolt_verifier::stages::relations::ConcreteSumcheckChallenges<Fr, R>:
             jolt_claims::SumcheckChallenges<Fr, jolt_claims::protocols::jolt::JoltChallengeId>,
+        // `log_residue` records a typed `JoltRelationId`, so the toy kernel is
+        // pinned to jolt-family relations.
+        R::Symbolic: SymbolicSumcheck<RelationId = JoltRelationId>,
     {
         type Relation = R;
 

@@ -568,6 +568,17 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
+                // FR guests decode and trace under the FR profile, and the FR
+                // bytecode side table exists only for preprocessing built under
+                // it; classic guests keep the classic profile byte-for-byte.
+                #[cfg(feature = "field-inline")]
+                let program_data = jolt::ProgramPreprocessing::preprocess_with_profile(
+                    bytecode,
+                    memory_init,
+                    e_entry,
+                    program.instruction_profile(),
+                )?;
+                #[cfg(not(feature = "field-inline"))]
                 let program_data =
                     jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
                 Ok(JoltSharedPreprocessing::new(
@@ -625,6 +636,17 @@ impl MacroBuilder {
                 };
                 let memory_layout = MemoryLayout::new(&memory_config);
 
+                // FR guests decode and trace under the FR profile, and the FR
+                // bytecode side table exists only for preprocessing built under
+                // it; classic guests keep the classic profile byte-for-byte.
+                #[cfg(feature = "field-inline")]
+                let program_data = jolt::ProgramPreprocessing::preprocess_with_profile(
+                    bytecode,
+                    memory_init,
+                    e_entry,
+                    program.instruction_profile(),
+                )?;
+                #[cfg(not(feature = "field-inline"))]
                 let program_data =
                     jolt::ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
                 let (shared_preprocessing, committed_program_prover_data, generators) =

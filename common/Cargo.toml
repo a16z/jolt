@@ -9,6 +9,10 @@ workspace = true
 [features]
 default = ["std"]
 allocative = ["dep:allocative"]
+# Selects the field-inline (FR) protocol composition's BlindFold generator
+# budget (see `constants::MAX_BLINDFOLD_GENERATORS`). Forwarded by the
+# crates that read the constant (jolt-verifier, jolt-prover-legacy).
+field-inline = []
 std = [
   "allocative",
   "dep:ark-serialize",

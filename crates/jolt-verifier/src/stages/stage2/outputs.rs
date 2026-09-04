@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
+#[cfg(feature = "field-inline")]
+pub use super::field_registers_claim_reduction::{
+    FieldRegistersClaimReduction, FieldRegistersClaimReductionOutputClaims,
+};
 pub use super::instruction_claim_reduction::{
     InstructionClaimReduction, InstructionClaimReductionOutputClaims,
 };
@@ -15,16 +19,67 @@ pub use super::ram_output_check::{RamOutputCheck, RamOutputCheckOutputClaims};
 pub use super::ram_raf_evaluation::{RamRafEvaluation, RamRafEvaluationOutputClaims};
 pub use super::ram_read_write_checking::{RamReadWriteChecking, RamReadWriteOutputClaims};
 
+#[cfg(feature = "field-inline")]
+pub use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage2OutputClaims<F: JoltField> {
     pub product_uniskip_output_claim: F,
     pub batch_outputs: Stage2BatchOutputClaims<F>,
+    /// The three FR product-row openings (`FieldRs1Value`, `FieldRs2Value`,
+    /// `FieldRdValue` at `FieldRegistersProduct`) the composed remainder's FR
+    /// lanes factor over — `FieldRdValue` is the `FieldInvProduct` lane's
+    /// right factor. Present on every field-inline proof; carried as an
+    /// `Option` for the same producer reasons as the stage-1 FR payload, and
+    /// required fail-closed by `stage2::verify`.
+    #[cfg(feature = "field-inline")]
+    pub field_inline_product: Option<FieldRegistersProductOutputClaims<F>>,
 }
 
-/// Source-of-truth for stage 2's five-instance sumcheck batch, in Fiat-Shamir
-/// batch order (RAM read-write, product remainder, instruction claim-reduction,
-/// RAM RAF evaluation, RAM output check). `#[derive(SumcheckBatch)]` generates the
+impl<F: JoltField> Stage2OutputClaims<F> {
+    /// Construct the ordinary stage-2 claims. Producers without field-inline
+    /// semantics use this regardless of the build's feature set — the FR
+    /// payload starts absent and `stage2::verify` rejects its absence on
+    /// FR-on proofs.
+    pub fn new(product_uniskip_output_claim: F, batch_outputs: Stage2BatchOutputClaims<F>) -> Self {
+        Self {
+            product_uniskip_output_claim,
+            batch_outputs,
+            #[cfg(feature = "field-inline")]
+            field_inline_product: None,
+        }
+    }
+}
+
+impl<F: JoltField> Stage2BatchOutputClaims<F> {
+    /// Construct the ordinary stage-2 batch claims. Producers without
+    /// field-inline semantics use this regardless of the build's feature set —
+    /// the FR claim-reduction slot defaults to all-zero claims, inert because
+    /// such producers' proofs never declare the FR axis.
+    pub fn new(
+        ram_read_write: RamReadWriteOutputClaims<F>,
+        product_remainder: ProductRemainderOutputClaims<F>,
+        instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
+        ram_raf_evaluation: RamRafEvaluationOutputClaims<F>,
+        ram_output_check: RamOutputCheckOutputClaims<F>,
+    ) -> Self {
+        Self {
+            ram_read_write,
+            product_remainder,
+            instruction_claim_reduction,
+            #[cfg(feature = "field-inline")]
+            field_registers_claim_reduction: Default::default(),
+            ram_raf_evaluation,
+            ram_output_check,
+        }
+    }
+}
+
+/// Source-of-truth for stage 2's sumcheck batch, in Fiat-Shamir batch order
+/// (RAM read-write, product remainder, instruction claim-reduction, the
+/// field-inline FR claim-reduction when composed, RAM RAF evaluation, RAM
+/// output check). `#[derive(SumcheckBatch)]` generates the
 /// `Stage2Batch{Input,Output}{Claims,Points}<F>` and `Stage2BatchChallenges<F>`
 /// aggregates — one field per instance, in this declaration order — plus the
 /// batched-verify drivers and the absorb plumbing. The product uni-skip is a
@@ -41,8 +96,15 @@ pub struct Stage2OutputClaims<F: JoltField> {
 /// `validate_aliases` (run by `expected_final_claim`, enforcing the aliased wire
 /// copies equal their sources) all derive from those per-member declarations.
 /// The two RAM relations slice their point at the phase-1 `instance_point_offset`.
+///
+/// Under `field-inline` the batch absorbs 18 member openings (the FR
+/// claim-reduction adds three), the FR product appendage rides beside them,
+/// and the absorb order is curated: the generated absorb is suppressed
+/// (`no_opening_values`) because the spec's committed row order splices the
+/// appendage mid-batch — see [`Stage2BatchSumchecks::opening_values`].
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
+#[cfg_attr(feature = "field-inline", sumcheck_batch(no_opening_values))]
 pub struct Stage2BatchSumchecks<F: JoltField> {
     pub ram_read_write: RamReadWriteChecking<F>,
     /// On the prove side the remainder kernel is minted from the state the
@@ -50,6 +112,13 @@ pub struct Stage2BatchSumchecks<F: JoltField> {
     /// regular universal backend slot.
     pub product_remainder: ProductRemainder<F>,
     pub instruction_claim_reduction: InstructionClaimReduction<F>,
+    /// The FR claim reduction shares the trace domain (`log_T` rounds) with the
+    /// product remainder, so both bind the same batch suffix — the spec's
+    /// `r_prod` sharing. Declaration position (after the instruction
+    /// claim-reduction, before RAM RAF evaluation) is the spec's batch order
+    /// and gamma draw order.
+    #[cfg(feature = "field-inline")]
+    pub field_registers_claim_reduction: FieldRegistersClaimReduction<F>,
     pub ram_raf_evaluation: RamRafEvaluation<F>,
     pub ram_output_check: RamOutputCheck<F>,
 }
@@ -101,9 +170,10 @@ pub struct Stage2ClearOutput<F: JoltField> {
 /// Stage 2's ZK output, carrying the Fiat-Shamir values BlindFold sources via
 /// `input.stage2.<field>`. The batch draws are the generated
 /// [`Stage2BatchChallenges`] member structs (`challenges.ram_read_write.gamma`,
-/// `challenges.instruction_claim_reduction.gamma`, and the RAM output-check
-/// address reference point `challenges.ram_output_check.output_address`; the
-/// other two batch relations draw nothing — `NoChallenges`). The remaining two
+/// `challenges.instruction_claim_reduction.gamma`, under `field-inline` the FR
+/// claim-reduction gamma, and the RAM output-check address reference point
+/// `challenges.ram_output_check.output_address`; the remaining batch relations
+/// draw nothing — `NoChallenges`). The remaining two
 /// are non-batch draws — the product uni-skip reduction challenge and its
 /// freshly-drawn `product_tau_high` scalar (a separate sub-sumcheck) — so they
 /// are not part of the per-instance aggregate. `product_tau_low` is
@@ -177,6 +247,8 @@ mod tests {
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use crate::stages::relations::ConcreteSumcheck;
     use common::jolt_device::{JoltDevice, MemoryConfig};
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::{
         dimensions::{ReadWriteDimensions, TraceDimensions},
         ram::RamRafEvaluationDimensions,
@@ -212,6 +284,11 @@ mod tests {
                 TraceDimensions::new(log_t),
                 Vec::new(),
             ),
+            #[cfg(feature = "field-inline")]
+            field_registers_claim_reduction: FieldRegistersClaimReduction::new(
+                FieldRegistersTraceDimensions::new(log_t),
+                Vec::new(),
+            ),
             ram_raf_evaluation: RamRafEvaluation::new(
                 dimensions,
                 raf_dimensions,
@@ -225,35 +302,49 @@ mod tests {
 
     /// Pins the batch's `draw_challenges` to the pre-port inline draw: the RAM
     /// read-write gamma, the instruction claim-reduction gamma (each a single
-    /// `challenge_scalar`), then the RAM output-check address reference point —
-    /// one raw `challenge()` per RAM address variable, via the last member's
-    /// `draw_challenges` override (the other two members draw nothing).
+    /// `challenge_scalar`), under `field-inline` the FR claim-reduction gamma
+    /// (the spec's draw slot: after the instruction claim-reduction gamma,
+    /// before the RAM output address challenges), then the RAM output-check
+    /// address reference point — one raw `challenge()` per RAM address
+    /// variable, via the last member's `draw_challenges` override (the other
+    /// members draw nothing).
     #[test]
     fn draw_challenges_matches_inline_draw_sequence() {
         let sumchecks = sumchecks();
         let log_k = sumchecks.ram_output_check.read_write_dimensions().log_k();
-        let (inline_events, (inline_ram_gamma, inline_instruction_gamma, inline_output_address)) =
-            record(|t| {
-                (
-                    t.challenge_scalar(),
-                    t.challenge_scalar(),
-                    (0..log_k).map(|_| t.challenge()).collect::<Vec<Fr>>(),
-                )
-            });
+        #[cfg(not(feature = "field-inline"))]
+        let gamma_draws = 2usize;
+        #[cfg(feature = "field-inline")]
+        let gamma_draws = 3usize;
+        let (inline_events, (inline_gammas, inline_output_address)) = record(|t| {
+            (
+                (0..gamma_draws)
+                    .map(|_| t.challenge_scalar())
+                    .collect::<Vec<Fr>>(),
+                (0..log_k).map(|_| t.challenge()).collect::<Vec<Fr>>(),
+            )
+        });
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
         assert_eq!(
             draw_events,
-            (1..=(2 + log_k) as u64)
+            (1..=(gamma_draws + log_k) as u64)
                 .map(DrawEvent::Squeeze)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(challenges.ram_read_write.gamma, inline_ram_gamma);
-        assert_eq!(
+        #[cfg(not(feature = "field-inline"))]
+        let drawn_gammas = vec![
+            challenges.ram_read_write.gamma,
             challenges.instruction_claim_reduction.gamma,
-            inline_instruction_gamma
-        );
+        ];
+        #[cfg(feature = "field-inline")]
+        let drawn_gammas = vec![
+            challenges.ram_read_write.gamma,
+            challenges.instruction_claim_reduction.gamma,
+            challenges.field_registers_claim_reduction.gamma,
+        ];
+        assert_eq!(drawn_gammas, inline_gammas);
         assert_eq!(
             challenges.ram_output_check.output_address,
             inline_output_address
@@ -290,6 +381,12 @@ mod tests {
                 left_instruction_input: fr(4),
                 right_instruction_input: fr(5),
             },
+            #[cfg(feature = "field-inline")]
+            field_registers_claim_reduction: FieldRegistersClaimReductionOutputClaims {
+                rd_value: fr(16),
+                rs1_value: fr(17),
+                rs2_value: fr(18),
+            },
             ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
             ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
         }
@@ -300,6 +397,7 @@ mod tests {
     /// `canonical_order`, skipping the reduction's three aliased openings
     /// (absorbed once via their product-remainder source). The aliased cells carry
     /// distinct sentinels here to prove the skip is id-driven, not value-driven.
+    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn opening_values_follow_canonical_order() {
         let mut claims = consistent_values();
@@ -313,17 +411,71 @@ mod tests {
         );
     }
 
+    /// Locks the curated field-inline absorb to the spec's committed output
+    /// row order (`specs/field-inline-protocol.md`, "Stage 2 Composition"):
+    /// member declaration order with the FR product appendage spliced after
+    /// the product-remainder outputs and before the instruction
+    /// claim-reduction non-aliased outputs. The aliased instruction cells
+    /// carry distinct sentinels to prove the id-driven skip still applies.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn opening_values_follow_curated_field_inline_order() {
+        let mut claims = consistent_values();
+        claims.instruction_claim_reduction.lookup_output = fr(101);
+        claims.instruction_claim_reduction.left_instruction_input = fr(102);
+        claims.instruction_claim_reduction.right_instruction_input = fr(103);
+        let appendage = FieldRegistersProductOutputClaims {
+            rs1_value: fr(201),
+            rs2_value: fr(202),
+            rd_value: fr(203),
+        };
+
+        let expected = (1..=11)
+            .map(fr)
+            // The FR product appendage, spliced per the spec's row order.
+            .chain([fr(201), fr(202), fr(203)])
+            // The instruction claim-reduction non-aliased outputs.
+            .chain([fr(12), fr(13)])
+            // The FR claim-reduction member outputs (equality-checked against
+            // the appendage by stage2::verify, absorbed at member position).
+            .chain([fr(16), fr(17), fr(18)])
+            // RAM RAF evaluation, RAM output check.
+            .chain([fr(14), fr(15)])
+            .collect::<Vec<_>>();
+        assert_eq!(sumchecks().opening_values(&claims, &appendage), expected);
+    }
+
     /// The generated `output_claim_count` sums the members' wire sets: 16
     /// expression-referenced openings, minus the reduction's 3 aliases, plus the
-    /// product remainder's 2 staged openings.
+    /// product remainder's 2 staged openings — plus, under `field-inline`, the
+    /// FR claim-reduction's 3 (the FR product appendage is not a member and is
+    /// counted separately by the stage).
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
-        assert_eq!(sumchecks.output_claim_count(), 15);
-        assert_eq!(
-            sumchecks.opening_values(&consistent_values()).len(),
-            sumchecks.output_claim_count(),
-        );
+        #[cfg(not(feature = "field-inline"))]
+        {
+            assert_eq!(sumchecks.output_claim_count(), 15);
+            assert_eq!(
+                sumchecks.opening_values(&consistent_values()).len(),
+                sumchecks.output_claim_count(),
+            );
+        }
+        #[cfg(feature = "field-inline")]
+        {
+            assert_eq!(sumchecks.output_claim_count(), 18);
+            let appendage = FieldRegistersProductOutputClaims {
+                rs1_value: fr(201),
+                rs2_value: fr(202),
+                rd_value: fr(203),
+            };
+            assert_eq!(
+                sumchecks
+                    .opening_values(&consistent_values(), &appendage)
+                    .len(),
+                sumchecks.output_claim_count() + 3,
+            );
+        }
     }
 
     /// Pins the reduction's alias declarations: each aliased id is distinct and
@@ -424,5 +576,41 @@ mod tests {
             product_points.right_instruction_input,
             reduction_points.right_instruction_input,
         );
+    }
+
+    /// Pins the spec's `r_prod` sharing (`specs/field-inline-protocol.md`,
+    /// "Protocol Composition And Points"): the FR claim reduction and the
+    /// product remainder are both trace-domain (`log_T` rounds, default
+    /// offsets), so they bind the same batch-point suffix and derive the same
+    /// reversed opening point. This structural agreement is what makes the
+    /// explicit stage-2 equality check between the FR claim-reduction outputs
+    /// and the FR product appendage a same-polynomial-same-point statement.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_registers_claim_reduction_shares_the_product_remainder_point() {
+        let sumchecks = sumchecks();
+        let product = &sumchecks.product_remainder;
+        let reduction = &sumchecks.field_registers_claim_reduction;
+        assert_eq!(product.rounds(), reduction.rounds());
+        let batch_num_vars = product.rounds() + 2;
+        assert_eq!(
+            product.instance_point_offset(batch_num_vars).unwrap(),
+            reduction.instance_point_offset(batch_num_vars).unwrap(),
+        );
+
+        let point: Vec<Fr> = (0..product.rounds() as u64).map(|i| fr(40 + i)).collect();
+        let input_points = sumchecks.empty_input_points();
+        let product_points = product
+            .derive_opening_points(&point, &input_points.product_remainder)
+            .unwrap();
+        let reduction_points = reduction
+            .derive_opening_points(&point, &input_points.field_registers_claim_reduction)
+            .unwrap();
+        assert_eq!(
+            product_points.left_instruction_input,
+            reduction_points.rd_value,
+        );
+        assert_eq!(reduction_points.rd_value, reduction_points.rs1_value);
+        assert_eq!(reduction_points.rd_value, reduction_points.rs2_value);
     }
 }

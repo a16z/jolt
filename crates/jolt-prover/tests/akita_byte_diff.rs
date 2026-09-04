@@ -19,7 +19,11 @@
 /// (decode + trace + preprocess + prove) and the same modular-side pipeline
 /// (trace + config + witness + prove + verify); the per-mode differences —
 /// advice, committed program — stay in the test bodies.
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod support {
     use std::sync::Arc;
@@ -236,7 +240,11 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod muldiv {
     use std::sync::Arc;
@@ -351,7 +359,11 @@ mod muldiv {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
     use std::sync::Arc;
@@ -490,7 +502,11 @@ mod advice_consumer {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
     use std::sync::Arc;
@@ -636,7 +652,12 @@ mod committed_muldiv {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", feature = "akita")))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+)))]
 #[test]
-#[ignore = "enable --features akita,prover-fixtures to build the packed (Akita) byte-diff harness"]
+#[ignore = "enable --features akita,prover-fixtures (without field-inline: legacy has no packed FR \
+            path to diff against) to build the packed (Akita) byte-diff harness"]
 fn prover_matches_legacy_on_muldiv_akita() {}

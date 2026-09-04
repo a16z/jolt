@@ -30,7 +30,10 @@
 //! legacy's Dory prove path is compiled out (the packed harness lives in
 //! `akita_byte_diff.rs`), and under the `zk` feature both provers emit
 //! randomized committed proofs (fresh Pedersen blinds), so byte equality is
-//! undefined — the ZK correctness gate is `zk_e2e.rs` instead.
+//! undefined — the ZK correctness gate is `zk_e2e.rs` instead. FR-off only:
+//! the FR-on prover proves only FR-profile guests under the composed
+//! protocol, which legacy cannot produce — the field-inline gate is
+//! `field_inline_e2e.rs`.
 
 /// Shared scaffolding for the byte-diff modules: every test runs the same
 /// legacy-side guest pipeline (decode + trace + preprocess + prove + replay)
@@ -40,7 +43,8 @@
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod support {
@@ -459,7 +463,8 @@ mod support {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used, clippy::panic)]
 mod muldiv {
@@ -1076,7 +1081,8 @@ mod muldiv {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod advice_consumer {
@@ -1277,7 +1283,8 @@ mod advice_consumer {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod committed_muldiv {
@@ -1472,7 +1479,8 @@ mod committed_muldiv {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod address_major {
@@ -1621,7 +1629,8 @@ mod address_major {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod advice_committed {
@@ -1829,7 +1838,8 @@ mod advice_committed {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod inline_sha3 {
@@ -1958,7 +1968,8 @@ mod inline_sha3 {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod chunk_boundary {
@@ -2141,7 +2152,8 @@ mod chunk_boundary {
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 ))]
 #[expect(clippy::expect_used)]
 mod wide_one_hot {
@@ -2308,7 +2320,8 @@ mod wide_one_hot {
 #[cfg(not(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
-    not(feature = "zk")
+    not(feature = "zk"),
+    not(feature = "field-inline")
 )))]
 #[test]
 #[ignore = "enable --features prover-fixtures (without akita or zk — the harness byte-compares \

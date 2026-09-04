@@ -10,8 +10,13 @@
 //! Under the `akita` feature the symbolic swaps to the lattice address phase,
 //! whose input fold additionally consumes the four reduced `Inc` claims
 
+#[cfg(feature = "field-inline")]
+use std::sync::OnceLock;
+
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
 };
@@ -25,6 +30,10 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 
+#[cfg(feature = "field-inline")]
+use super::field_inline::{FieldInlineBytecodeReadRafGeometry, FieldInlineBytecodeReadRafInputs};
+#[cfg(feature = "field-inline")]
+use crate::stages::relations::SumcheckInputClaims;
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints};
 use crate::stages::stage2::Stage2BatchOutputPoints;
 use crate::stages::stage3::outputs::Stage3OutputPoints;
@@ -222,6 +231,17 @@ pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     /// kernel reads these.
     stage_points: BytecodeStagePoints<F>,
     entry_bytecode_index: usize,
+    /// The FR opening values the composed input claim folds, set by the
+    /// stage-6a fronts from the stage-1/4/5 clear outputs before the input
+    /// claim is computed. See
+    /// [`field_inline::FieldInlineBytecodeReadRafInputs`](super::field_inline::FieldInlineBytecodeReadRafInputs).
+    #[cfg(feature = "field-inline")]
+    field_inline_inputs: OnceLock<FieldInlineBytecodeReadRafInputs<F>>,
+    /// The FR side table and opening points the address-phase kernel folds
+    /// over, set by both fronts right after the batch build. See
+    /// [`field_inline::FieldInlineBytecodeReadRafGeometry`](super::field_inline::FieldInlineBytecodeReadRafGeometry).
+    #[cfg(feature = "field-inline")]
+    field_inline_geometry: OnceLock<FieldInlineBytecodeReadRafGeometry<F>>,
 }
 
 impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
@@ -237,7 +257,63 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
             committed_program,
             stage_points,
             entry_bytecode_index,
+            #[cfg(feature = "field-inline")]
+            field_inline_inputs: OnceLock::new(),
+            #[cfg(feature = "field-inline")]
+            field_inline_geometry: OnceLock::new(),
         }
+    }
+
+    /// Supply the FR kernel geometry (rejects a second set at different
+    /// contents — one proof per relation instance).
+    #[cfg(feature = "field-inline")]
+    pub fn set_field_inline_geometry(
+        &self,
+        geometry: FieldInlineBytecodeReadRafGeometry<F>,
+    ) -> Result<(), VerifierError> {
+        let stored = self.field_inline_geometry.get_or_init(|| geometry.clone());
+        if *stored != geometry {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline bytecode read-RAF geometry already set to different \
+                         contents"
+                    .to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// The carried FR kernel geometry, fail-closed when the front never
+    /// attached one.
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_geometry(
+        &self,
+    ) -> Result<&FieldInlineBytecodeReadRafGeometry<F>, VerifierError> {
+        self.field_inline_geometry
+            .get()
+            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline bytecode read-RAF geometry was never attached".to_string(),
+            })
+    }
+
+    /// Supply the FR opening values the composed input claim folds. Must be
+    /// called before `input_claim`; rejects a second set at different values
+    /// (one proof per relation instance).
+    #[cfg(feature = "field-inline")]
+    pub fn set_field_inline_inputs(
+        &self,
+        values: FieldInlineBytecodeReadRafInputs<F>,
+    ) -> Result<(), VerifierError> {
+        let stored = self.field_inline_inputs.get_or_init(|| values.clone());
+        if *stored != values {
+            return Err(VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline bytecode read-RAF inputs already set to different values"
+                    .to_string(),
+            });
+        }
+        Ok(())
     }
 
     pub fn committed_program(&self) -> bool {
@@ -316,6 +392,44 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
             val_stages: vec![r_address; self.num_val_stages()],
         })
     }
+
+    /// The composed input claim: the ordinary gamma-folded bind (the jolt
+    /// symbolic input `Expr`) plus the FR appendage extension — the jolt
+    /// symbolic expression cannot name the FR openings, so the composed form
+    /// adds [`super::field_inline::input_claim_extension`] over the supplied
+    /// appendage (spec: `field-inline-protocol.md`, "Stage 6 Composition").
+    #[cfg(feature = "field-inline")]
+    fn input_claim(
+        &self,
+        input_values: &SumcheckInputClaims<F, Self>,
+        challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        use jolt_claims::{InputClaims as _, SumcheckChallenges as _};
+
+        let ordinary = self.symbolic().input_expression::<F>().try_evaluate(
+            |id| {
+                input_values
+                    .resolve_input(id)
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
+            },
+            |id| {
+                challenges
+                    .resolve_challenge(id)
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
+            },
+            |id| self.derive_input_term(id, challenges),
+        )?;
+
+        let field_inline = self.field_inline_inputs.get().ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::BytecodeReadRaf,
+                reason: "field-inline bytecode read-RAF inputs not set (the stage-6a front must \
+                         supply them from the stage-1/4/5 outputs before the input claim)"
+                    .to_string(),
+            }
+        })?;
+        Ok(ordinary + super::field_inline::input_claim_extension(field_inline, challenges)?)
+    }
 }
 
 #[cfg(test)]
@@ -385,5 +499,220 @@ mod tests {
             ],
             inline_gammas,
         );
+    }
+}
+
+// The dory-shaped composition pins (base input-claims struct, five stage
+// points); the packed composition is covered by the prover's FR stage
+// round-trips and the packed e2e suite.
+#[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "test code indexes its own fixed-size fixtures and uses plain arithmetic on fixture data"
+)]
+mod field_inline_tests {
+    use super::super::field_inline::FieldInlineBytecodeReadRafInputs;
+    use super::*;
+    use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
+    use jolt_claims::{InputClaims as _, SumcheckChallenges as _};
+    use jolt_field::{Fr, Ring};
+    use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
+    use jolt_riscv::NUM_CIRCUIT_FLAGS;
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    fn relation() -> BytecodeReadRafAddressPhase<Fr> {
+        BytecodeReadRafAddressPhase::new(
+            BytecodeReadRafDimensions::new(3, 4, 2),
+            false,
+            BytecodeStagePoints {
+                stage_cycle_points: Default::default(),
+                fused_inc_cycle_points: Vec::new(),
+                register_read_write_point: Vec::new(),
+                register_val_evaluation_point: Vec::new(),
+            },
+            0,
+        )
+    }
+
+    fn input_values() -> BytecodeReadRafAddressPhaseInputClaims<Fr> {
+        let mut inputs = BytecodeReadRafAddressPhaseInputClaims {
+            lookup_table_flags: vec![Fr::from_u64(0); LookupTableKind::<RISCV_XLEN>::COUNT],
+            ..Default::default()
+        };
+        // Distinct sentinels on a spread of ordinary openings so the ordinary
+        // leg of the pin is non-trivial.
+        inputs.outer_unexpanded_pc = fr(3);
+        inputs.outer_imm = fr(5);
+        inputs.outer_jump = fr(7);
+        inputs.product_branch = fr(11);
+        inputs.instruction_input_imm = fr(13);
+        inputs.rd_wa_read_write = fr(17);
+        inputs.rs1_ra = fr(19);
+        inputs.rs2_ra = fr(23);
+        inputs.rd_wa_val_evaluation = fr(29);
+        inputs.instruction_raf_flag = fr(31);
+        for (index, flag) in inputs.lookup_table_flags.iter_mut().enumerate() {
+            *flag = fr(100 + index as u64);
+        }
+        inputs
+    }
+
+    fn field_inline_inputs() -> FieldInlineBytecodeReadRafInputs<Fr> {
+        FieldInlineBytecodeReadRafInputs {
+            field_op_flags: core::array::from_fn(|index| fr(200 + index as u64)),
+            rd_wa_read_write: fr(301),
+            rs1_ra: fr(302),
+            rs2_ra: fr(303),
+            rd_wa_val_evaluation: fr(304),
+        }
+    }
+
+    fn challenges() -> BytecodeReadRafAddressPhaseChallenges<Fr> {
+        BytecodeReadRafAddressPhaseChallenges {
+            gamma: fr(401),
+            stage1_gamma: fr(402),
+            stage2_gamma: fr(403),
+            stage3_gamma: fr(404),
+            stage4_gamma: fr(405),
+            stage5_gamma: fr(406),
+        }
+    }
+
+    fn powers(gamma: Fr, len: usize) -> Vec<Fr> {
+        let mut powers = vec![Fr::from_u64(1); len];
+        for index in 1..len {
+            powers[index] = powers[index - 1] * gamma;
+        }
+        powers
+    }
+
+    /// The composed input claim equals the from-scratch fold: the ordinary
+    /// symbolic bind plus the FR terms at the extended stage-1/4/5 power
+    /// indices, each stage extension riding the same outer gamma power as its
+    /// ordinary stage claim (spec: `field-inline-protocol.md`, "Stage 6
+    /// Composition" — Stage1 powers gain the eight `FieldOpFlag`s, Stage4
+    /// powers gain `FieldRdWa`/`FieldRs1Ra`/`FieldRs2Ra`, Stage5 powers gain
+    /// the val-evaluation `FieldRdWa`).
+    #[test]
+    fn composed_input_claim_matches_from_scratch_fold() {
+        let relation = relation();
+        let inputs = input_values();
+        let challenges = challenges();
+        let field_inline = field_inline_inputs();
+        relation
+            .set_field_inline_inputs(field_inline.clone())
+            .unwrap();
+
+        let ordinary = relation
+            .symbolic()
+            .input_expression::<Fr>()
+            .try_evaluate(
+                |id| {
+                    inputs
+                        .resolve_input(id)
+                        .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
+                },
+                |id| {
+                    challenges
+                        .resolve_challenge(id)
+                        .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
+                },
+                |_| {
+                    Err(VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::BytecodeReadRaf,
+                        reason: "no input deriveds".to_string(),
+                    })
+                },
+            )
+            .unwrap();
+
+        let stage1_powers = powers(challenges.stage1_gamma, 2 + NUM_CIRCUIT_FLAGS + 8);
+        let stage4_powers = powers(challenges.stage4_gamma, 6);
+        let stage5_powers = powers(
+            challenges.stage5_gamma,
+            2 + LookupTableKind::<RISCV_XLEN>::COUNT + 1,
+        );
+        let fr_stage1: Fr = field_inline
+            .field_op_flags
+            .iter()
+            .enumerate()
+            .map(|(index, flag)| stage1_powers[2 + NUM_CIRCUIT_FLAGS + index] * *flag)
+            .sum();
+        let fr_stage4 = stage4_powers[3] * field_inline.rd_wa_read_write
+            + stage4_powers[4] * field_inline.rs1_ra
+            + stage4_powers[5] * field_inline.rs2_ra;
+        let fr_stage5 = stage5_powers[2 + LookupTableKind::<RISCV_XLEN>::COUNT]
+            * field_inline.rd_wa_val_evaluation;
+        let gamma = challenges.gamma;
+        let expected = ordinary
+            + fr_stage1
+            + gamma * gamma * gamma * fr_stage4
+            + gamma * gamma * gamma * gamma * fr_stage5;
+
+        let composed = relation.input_claim(&inputs, &challenges).unwrap();
+        assert_eq!(composed, expected);
+    }
+
+    /// With a zeroed FR appendage the composed input claim reduces to the
+    /// ordinary symbolic bind — pinning the override's ordinary leg to the
+    /// symbolic source of truth.
+    #[test]
+    fn composed_input_claim_reduces_to_symbolic_form_without_field_terms() {
+        let relation = relation();
+        let inputs = input_values();
+        let challenges = challenges();
+        relation
+            .set_field_inline_inputs(FieldInlineBytecodeReadRafInputs {
+                field_op_flags: [Fr::from_u64(0); 8],
+                rd_wa_read_write: Fr::from_u64(0),
+                rs1_ra: Fr::from_u64(0),
+                rs2_ra: Fr::from_u64(0),
+                rd_wa_val_evaluation: Fr::from_u64(0),
+            })
+            .unwrap();
+
+        let ordinary = relation
+            .symbolic()
+            .input_expression::<Fr>()
+            .try_evaluate(
+                |id| {
+                    inputs
+                        .resolve_input(id)
+                        .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
+                },
+                |id| {
+                    challenges
+                        .resolve_challenge(id)
+                        .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
+                },
+                |_| {
+                    Err(VerifierError::StageClaimPublicInputFailed {
+                        stage: JoltRelationId::BytecodeReadRaf,
+                        reason: "no input deriveds".to_string(),
+                    })
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            relation.input_claim(&inputs, &challenges).unwrap(),
+            ordinary
+        );
+    }
+
+    /// An unset FR appendage fails closed rather than computing the ordinary
+    /// claim (which would desynchronize the composed transcript).
+    #[test]
+    fn composed_input_claim_requires_the_field_inline_appendage() {
+        let relation = relation();
+        assert!(matches!(
+            relation.input_claim(&input_values(), &challenges()),
+            Err(VerifierError::StageClaimPublicInputFailed { .. })
+        ));
     }
 }

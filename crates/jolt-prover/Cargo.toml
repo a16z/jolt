@@ -15,6 +15,25 @@ workspace = true
 default = ["parallel"]
 parallel = ["jolt-kernels/parallel", "dep:rayon"]
 prover-fixtures = ["jolt-prover-legacy/host"]
+# Field-inline (FR) protocol composition: the FR-on prover — every stage
+# proves the composed protocol, and only FR-profile guests are accepted (the
+# witness plane refuses classic-profile traces). The e2e acceptance lives in
+# tests/field_inline_e2e.rs under prover-fixtures,field-inline[,zk].
+field-inline = [
+  "jolt-claims/field-inline",
+  "jolt-kernels/field-inline",
+  "jolt-r1cs/field-inline",
+  "jolt-verifier/field-inline",
+  "jolt-witness/field-inline",
+  # The packed FR limb-group schedule params (inert without `akita`).
+  "jolt-akita?/field-inline",
+  # Weak forwards: jolt-witness/field-inline turns on jolt-riscv's FR
+  # instruction variants, so any build that also compiles the tracer or the
+  # legacy prover (the profiling harness and fixtures, and this crate's test
+  # targets via the dev-dependencies) must compile them with their FR arms.
+  "tracer?/field-inline",
+  "jolt-prover-legacy?/field-inline",
+]
 # The packed (lattice/Akita) protocol. Like jolt-verifier, one compiled
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the packed envelope, so the Dory (elliptic-curve) path `src/dory` is
@@ -31,6 +50,11 @@ akita = [
   "jolt-field/solinas",
   "jolt-kernels/akita",
   "jolt-prover-legacy/akita",
+  # The packed axis proves over fp128, so FR execution and the value encoding
+  # flip with it (inert while field-inline is off; the tracer forward is the
+  # same weak edge the field-inline feature uses).
+  "jolt-program/fp128-field-inline",
+  "tracer?/fp128-field-inline",
 ]
 # Compile-time ZK mode: committed sumcheck recorders, hiding witness
 # commitments and stage-8 opening, and the BlindFold tail. One compiled
@@ -92,6 +116,7 @@ jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
 jolt-program.workspace = true
+jolt-r1cs.workspace = true
 jolt-riscv.workspace = true
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true

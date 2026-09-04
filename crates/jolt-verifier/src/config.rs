@@ -1,11 +1,18 @@
 //! Verifier-selected protocol configuration.
 //!
-//! The protocol choices are fixed at compile time: `zk` selects BlindFold,
-//! while `akita` selects packed commitments and little-endian scalar
-//! challenges. One compiled verifier therefore runs exactly one protocol. A
-//! proof self-describes these choices and [`validate_proof_config`] rejects a
-//! mismatch fail-closed.
+//! Every protocol axis is fixed at compile time — the `zk` feature selects
+//! BlindFold, the `akita` feature selects packed commitments and little-endian
+//! scalar challenges, the `field-inline` feature enables the native
+//! field-register extension — so one compiled verifier runs exactly one
+//! protocol. A proof self-describes its axes and [`validate_proof_config`]
+//! rejects a mismatch fail-closed.
 
+pub use jolt_claims::protocols::field_inline::FieldInlineConfig;
+use jolt_riscv::JoltInstructionProfile;
+#[cfg(not(feature = "field-inline"))]
+use jolt_riscv::RV64IMAC_JOLT;
+#[cfg(feature = "field-inline")]
+use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use serde::{Deserialize, Serialize};
 
 use crate::VerifierError;
@@ -46,6 +53,7 @@ pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub commitment: CommitmentConfig,
     pub scalar_challenge_endianness: ScalarChallengeEndianness,
+    pub field_inline: FieldInlineConfig,
 }
 
 impl JoltProtocolConfig {
@@ -58,9 +66,20 @@ impl JoltProtocolConfig {
             },
             commitment: SELECTED_COMMITMENT_CONFIG,
             scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
+            field_inline: SELECTED_FIELD_INLINE_CONFIG,
         }
     }
 }
+
+/// The instruction profile this build has constraints for. Input validation
+/// rejects a program whose bytecode carries any other Jolt instruction kind:
+/// the base rows pin an rd write only through the lookup/load/jump flags, so a
+/// row from an extension the verifier was not built with would verify with
+/// its write unconstrained.
+#[cfg(feature = "field-inline")]
+pub const JOLT_VERIFIER_INSTRUCTION_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
+#[cfg(not(feature = "field-inline"))]
+pub const JOLT_VERIFIER_INSTRUCTION_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT;
 
 #[cfg(feature = "zk")]
 pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::BlindFold;
@@ -82,11 +101,18 @@ pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
 pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
     ScalarChallengeEndianness::Big;
 
+#[cfg(feature = "field-inline")]
+pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::enabled();
+
+#[cfg(not(feature = "field-inline"))]
+pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::disabled();
+
 /// The one protocol this build verifies.
 pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     zk: SELECTED_ZK_CONFIG,
     commitment: SELECTED_COMMITMENT_CONFIG,
     scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
+    field_inline: SELECTED_FIELD_INLINE_CONFIG,
 };
 
 pub fn validate_proof_config(
@@ -106,6 +132,42 @@ pub fn validate_proof_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matching_protocol_config_is_accepted() {
+        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_CONFIG).is_ok());
+    }
+
+    /// A proof declaring the opposite field-inline axis rejects fail-closed, in
+    /// both FR-off builds (proof claims enabled) and FR-on builds (proof claims
+    /// disabled).
+    #[test]
+    fn mismatched_field_inline_axis_is_rejected() {
+        let mut protocol = JOLT_VERIFIER_CONFIG;
+        protocol.field_inline = if JOLT_VERIFIER_CONFIG.field_inline.enabled {
+            FieldInlineConfig::disabled()
+        } else {
+            FieldInlineConfig::enabled()
+        };
+
+        assert!(matches!(
+            validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
+
+    /// A proof declaring a different FR register-file size rejects even when the
+    /// enabled bit matches: the whole config participates in the equality gate.
+    #[test]
+    fn mismatched_field_register_log_k_is_rejected() {
+        let mut protocol = JOLT_VERIFIER_CONFIG;
+        protocol.field_inline.field_register_log_k += 1;
+
+        assert!(matches!(
+            validate_proof_config(&JOLT_VERIFIER_CONFIG, protocol),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+    }
 
     #[test]
     fn rejects_scalar_challenge_endianness_mismatch() {

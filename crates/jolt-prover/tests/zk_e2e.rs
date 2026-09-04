@@ -8,8 +8,15 @@
 //! commits the chunk/image tables through the modular hiding streaming path
 //! and carries those commitments in the verifier preprocessing, as a real
 //! ZK deployment's preprocessing would.
+//!
+//! FR-off only: these guests are classic-profile, which the FR-on prover
+//! refuses — the field-inline ZK e2e is `field_inline_e2e.rs`.
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 #[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
 mod support {
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -301,7 +308,11 @@ mod support {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 #[expect(
     clippy::expect_used,
     clippy::panic,
@@ -318,7 +329,7 @@ mod zk {
     use jolt_field::Fr;
     use jolt_program::execution::{JoltProgram, TraceRow};
     use jolt_prover::{CommittedProgramProverData, JoltBackend, JoltProverPreprocessing};
-    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::host::Program;
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
     use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
@@ -340,7 +351,7 @@ mod zk {
     const SHA3_PERMUTATIONS: usize = 3;
 
     fn prove_guest_zk(
-        mut program: host::Program,
+        mut program: Program,
         inputs: Vec<u8>,
         backend: JoltBackend<Fr, DoryScheme>,
         inspect_trace: impl FnOnce(&[TraceRow]),
@@ -408,7 +419,7 @@ mod zk {
         support::Proof,
     ) {
         prove_guest_zk(
-            host::Program::new("muldiv-guest"),
+            Program::new("muldiv-guest"),
             postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
             backend,
             |_| {},
@@ -448,7 +459,7 @@ mod zk {
         support::with_zk_stack(|| {
             let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
             let inputs = postcard::to_stdvec(&message).expect("serialize input");
-            let mut program = host::Program::new("sha3-guest");
+            let mut program = Program::new("sha3-guest");
             program.set_func("sha3");
             let (preprocessing, public_io, proof) = prove_guest_zk(
                 program,
@@ -495,7 +506,7 @@ mod zk {
     #[test]
     fn zk_advice_consumer_modular_proof_is_accepted() {
         support::with_zk_stack(|| {
-            let mut program = host::Program::new("advice-consumer-guest");
+            let mut program = Program::new("advice-consumer-guest");
             let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
             let untrusted_advice = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
             let trusted_advice = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
@@ -584,7 +595,7 @@ mod zk {
         support::with_zk_stack(|| {
             let bytecode_chunk_count = 2usize;
             let order = jolt_claims::protocols::jolt::TracePolynomialOrder::CycleMajor;
-            let mut program = host::Program::new("muldiv-guest");
+            let mut program = Program::new("muldiv-guest");
             let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
 
             let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
@@ -693,7 +704,11 @@ mod zk {
     }
 }
 
-#[cfg(not(all(feature = "prover-fixtures", feature = "zk")))]
+#[cfg(not(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+)))]
 #[test]
 #[ignore = "enable --features prover-fixtures,zk to run the modular ZK e2e"]
 fn zk_muldiv_modular_proof_is_accepted() {}

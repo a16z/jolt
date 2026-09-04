@@ -42,4 +42,5 @@ pub use prove::{
 pub use relaxed::{RelaxedInstance, RelaxedWitness};
 pub use statements::{
     BlindFoldStage, BlindFoldStatement, CommittedClaimRows, FinalOpeningBinding, OpeningAlias,
+    OpeningEquality,
 };

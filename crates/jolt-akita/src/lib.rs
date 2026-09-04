@@ -48,6 +48,8 @@ pub use adapters::{
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
+#[cfg(feature = "field-inline")]
+pub use schedule_registry::FieldIncLimbScheduleParams;
 pub use schedule_registry::PrecommittedScheduleParams;
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotRows, TracePackedOneHot};

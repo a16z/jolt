@@ -19,7 +19,10 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG},
+    config::{
+        validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG,
+        JOLT_VERIFIER_INSTRUCTION_PROFILE,
+    },
     num,
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltProof, TracePolynomialOrder},
@@ -296,8 +299,8 @@ where
         proof,
         trusted_advice_commitment.is_some(),
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
+    validate_proof_consistency(proof, checked.zk)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -354,6 +357,30 @@ where
         None
     };
     let program = &preprocessing.program;
+    // This build proves exactly one instruction profile. A full program
+    // carrying an instruction the build has no constraints for (an FR bridge
+    // row on an FR-off verifier, whose rd write no RV64 row pins) rejects here
+    // rather than verifying against the base rows alone. Committed programs
+    // carry no rows to scan; FR-on, the side-table requirement below rejects
+    // them.
+    if let Some(full) = program.as_full() {
+        if let Some(row) = full
+            .bytecode
+            .bytecode
+            .iter()
+            .find(|row| !JOLT_VERIFIER_INSTRUCTION_PROFILE.supports_jolt(row.instruction_kind))
+        {
+            return Err(VerifierError::UnsupportedInstruction {
+                kind: row.instruction_kind,
+            });
+        }
+    }
+    // The FR-on verifier anchors the FR access selectors through the bytecode
+    // side table (stage 6); preprocessing without it — a classic-profile
+    // program or committed-program mode — cannot back a proof, so reject
+    // before any stage runs.
+    #[cfg(feature = "field-inline")]
+    crate::stages::field_inline_bytecode::validate_field_inline_bytecode(program)?;
     let memory_layout = program.memory_layout();
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
@@ -520,6 +547,25 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    // An FR-on build proves every guest under the composed protocol, so the
+    // field-inline committed payload is unconditionally required (absence means
+    // a producer without FR semantics — reject before any stage logic). On the
+    // packed axis the FR limb-group slot is equally unconditional: presence is
+    // never claim-gated (an all-zero group still commits), and the stage-8
+    // resolve re-checks it against the schedule.
+    #[cfg(all(feature = "field-inline", not(feature = "akita")))]
+    if proof.commitments.field_inline.is_none() {
+        return Err(VerifierError::MissingProofPayload {
+            field: "commitments.field_inline",
+        });
+    }
+    #[cfg(all(feature = "field-inline", feature = "akita"))]
+    if proof.field_inc_limbs_commitment.is_none() {
+        return Err(VerifierError::MissingProofPayload {
+            field: "field_inc_limbs_commitment",
+        });
+    }
+
     let stage_proofs = [
         (
             &proof.stages.stage1_uni_skip_first_round_proof,
@@ -696,6 +742,8 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
+        #[cfg(feature = "field-inline")]
+        proof.field_inc_limbs_commitment.as_ref(),
         preprocessing
             .program
             .committed()
@@ -705,14 +753,15 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
 }
 
 /// Absorbs the packed commitment objects in canonical object order:
-/// `OneHotTrace`, untrusted advice, trusted advice, then direct bytecode
-/// chunks and program image. Shared verbatim by the packed
-/// prover's stage 0.
+/// `OneHotTrace`, untrusted advice, trusted advice, the FR limb group
+/// (field-inline builds), then direct bytecode chunks and program image.
+/// Shared verbatim by the packed prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_packed_commitments<C, T>(
     one_hot_trace: &C,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
+    #[cfg(feature = "field-inline")] field_inc_limbs_commitment: Option<&C>,
     direct_program_commitments: &[C],
     transcript: &mut T,
 ) where
@@ -725,6 +774,10 @@ pub fn absorb_packed_commitments<C, T>(
     }
     if let Some(commitment) = trusted_advice_commitment {
         append_length_prefixed(transcript, b"trusted_advice", commitment);
+    }
+    #[cfg(feature = "field-inline")]
+    if let Some(commitment) = field_inc_limbs_commitment {
+        append_length_prefixed(transcript, b"field_inc_limbs", commitment);
     }
     absorb_packed_program_commitments(direct_program_commitments, transcript);
 }
@@ -797,6 +850,18 @@ pub fn absorb_transcript_commitments<C, T>(
     }
     for commitment in &commitments.bytecode_ra {
         absorb_commitment(commitment);
+    }
+    // The field-inline payload absorbs after the base commitments and before
+    // advice, mirroring its appended-extension position everywhere else in the
+    // protocol. The prover's stage 0 must commit in this same order.
+    #[cfg(feature = "field-inline")]
+    if let Some(field_inline) = &commitments.field_inline {
+        append_payload_label(
+            transcript,
+            b"field_rd_inc_commitment",
+            &field_inline.field_registers.rd_inc,
+        );
+        transcript.append(&field_inline.field_registers.rd_inc);
     }
     if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
         append_payload_label(transcript, b"untrusted_advice", untrusted_advice_commitment);
@@ -1121,8 +1186,8 @@ where
         proof,
         trusted_advice_commitment.is_some(),
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof.protocol)?;
+    validate_proof_consistency(proof, checked.zk)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -1153,8 +1218,27 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 mod tests {
     use std::sync::Arc;
 
+    use common::constants::RAM_START_ADDRESS;
+
     use super::*;
+    #[cfg(not(feature = "akita"))]
+    use crate::proof::JoltCommitments;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
+    use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
+    use crate::stages::stage1::outputs::Stage1OutputClaims;
+    use crate::stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims};
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    use crate::stages::stage8::field_inline_packed::FieldIncLimbClaims;
+    #[cfg(feature = "field-inline")]
+    use crate::stages::{
+        stage2::outputs::FieldRegistersClaimReductionOutputClaims,
+        stage4::FieldRegistersReadWriteOutputClaims,
+        stage5::FieldRegistersValEvaluationOutputClaims,
+        stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims,
+    };
+    #[cfg(any(feature = "field-inline", feature = "zk"))]
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     #[cfg(feature = "zk")]
@@ -1405,6 +1489,25 @@ mod tests {
         ));
     }
 
+    /// The FR-on BlindFold generator budget must fit the largest committed
+    /// round of the composed protocol: the Spartan outer uni-skip first round
+    /// (degree `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient
+    /// more), or `commit_round` fails closed at proving time.
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
+        use jolt_r1cs::constraints::jolt::{
+            SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+        };
+
+        const {
+            assert!(MAX_BLINDFOLD_GENERATORS > SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE);
+        }
+        const {
+            assert!(MAX_BLINDFOLD_GENERATORS > SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE);
+        }
+    }
+
     #[cfg(feature = "zk")]
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
@@ -1455,6 +1558,8 @@ mod tests {
             #[cfg(feature = "akita")]
             joint_opening_proof: (),
             untrusted_advice_commitment: None,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_limbs_commitment: Some(TestCommitment),
             claims,
             trace_length: 1,
             ram_K: 4,
@@ -1473,8 +1578,24 @@ mod tests {
     }
 
     #[cfg(not(feature = "akita"))]
-    fn test_commitments() -> crate::proof::JoltCommitments<TestCommitment> {
-        crate::proof::JoltCommitments::new(
+    fn test_commitments() -> JoltCommitments<TestCommitment> {
+        #[cfg(feature = "field-inline")]
+        {
+            JoltCommitments::new(
+                TestCommitment,
+                TestCommitment,
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+                Vec::<TestCommitment>::new(),
+            )
+            .with_field_inline(FieldInlineCommitments {
+                field_registers: FieldRegistersCommitments {
+                    rd_inc: TestCommitment,
+                },
+            })
+        }
+        #[cfg(not(feature = "field-inline"))]
+        JoltCommitments::new(
             TestCommitment,
             TestCommitment,
             Vec::<TestCommitment>::new(),
@@ -1487,13 +1608,14 @@ mod tests {
         let zero = Fr::zero();
 
         JoltProofClaims::Clear(ClearProofClaims {
-            stage1: stage1::outputs::Stage1OutputClaims {
-                uniskip_output_claim: zero,
-                outer: empty_spartan_outer_claims(),
-            },
-            stage2: stage2::outputs::Stage2OutputClaims {
-                product_uniskip_output_claim: zero,
-                batch_outputs: stage2::outputs::Stage2BatchOutputClaims {
+            stage1: Stage1OutputClaims::new(zero, empty_spartan_outer_claims()),
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_limbs: Some(
+                FieldIncLimbClaims { limbs: vec![zero] },
+            ),
+            stage2: Stage2OutputClaims::new(
+                zero,
+                Stage2BatchOutputClaims {
                     ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                         val: zero,
                         ra: zero,
@@ -1517,6 +1639,13 @@ mod tests {
                             left_instruction_input: zero,
                             right_instruction_input: zero,
                         },
+                    #[cfg(feature = "field-inline")]
+                    field_registers_claim_reduction:
+                        FieldRegistersClaimReductionOutputClaims {
+                            rd_value: zero,
+                            rs1_value: zero,
+                            rs2_value: zero,
+                        },
                     ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims {
                         ram_ra: zero,
                     },
@@ -1524,7 +1653,7 @@ mod tests {
                         val_final: zero,
                     },
                 },
-            },
+            ),
             stage3: stage3::outputs::Stage3OutputClaims {
                 shift: stage3::outputs::SpartanShiftOutputClaims {
                     unexpanded_pc: zero,
@@ -1557,6 +1686,14 @@ mod tests {
                     rd_wa: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_registers_read_write: FieldRegistersReadWriteOutputClaims {
+                    registers_val: zero,
+                    rs1_ra: zero,
+                    rs2_ra: zero,
+                    rd_wa: zero,
+                    rd_inc: zero,
+                },
                 ram_val_check: stage4::RamValCheckOutputClaims {
                     untrusted_advice: None,
                     trusted_advice: None,
@@ -1573,6 +1710,11 @@ mod tests {
                 },
                 ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims { ram_ra: zero },
                 registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
+                    rd_inc: zero,
+                    rd_wa: zero,
+                },
+                #[cfg(feature = "field-inline")]
+                field_registers_val_evaluation: FieldRegistersValEvaluationOutputClaims {
                     rd_inc: zero,
                     rd_wa: zero,
                 },
@@ -1627,6 +1769,9 @@ mod tests {
                     ram_inc: zero,
                     rd_inc: zero,
                 },
+                #[cfg(feature = "field-inline")]
+                field_registers_inc_claim_reduction:
+                    FieldRegistersIncClaimReductionOutputClaims { rd_inc: zero },
                 #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
                 #[cfg(not(feature = "akita"))]
@@ -1782,19 +1927,29 @@ mod tests {
         test_preprocessing_with_layout(test_memory_layout())
     }
 
+    #[expect(clippy::unwrap_used)]
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         #[cfg(feature = "zk")]
         let vc_setup = Some(PedersenSetup::new(
-            vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
+            vec![Bn254G1::default(); MAX_BLINDFOLD_GENERATORS],
             Bn254G1::default(),
         ));
         #[cfg(not(feature = "zk"))]
         let vc_setup = None;
+        // Preprocess under the build's own instruction profile: the FR-on
+        // verifier requires the field-inline side table, which only an
+        // FR-profile preprocess derives (all-inactive for this empty program).
+        let bytecode = BytecodePreprocessing::preprocess(
+            Vec::new(),
+            RAM_START_ADDRESS,
+            JOLT_VERIFIER_INSTRUCTION_PROFILE,
+        )
+        .unwrap();
         JoltVerifierPreprocessing::new(
             ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
-                bytecode: BytecodePreprocessing::default(),
+                bytecode,
                 ram: RAMPreprocessing::default(),
                 memory_layout,
                 max_padded_trace_length: 16,

@@ -35,6 +35,10 @@ akita = [
   "dep:jolt-field",
   "jolt-field/solinas",
   "jolt-verifier/akita",
+  # The packed axis proves over fp128, so FR execution and the value encoding
+  # flip with it (inert while field-inline is off).
+  "jolt-program/fp128-field-inline",
+  "tracer/fp128-field-inline",
 ]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
 host = [
@@ -71,10 +75,13 @@ pprof = ["dep:pprof", "dep:prost"]
 test_incremental = []
 challenge-254-bit = []
 field-inline = [
+  "common/field-inline",
   "jolt-lookup-tables/field-inline",
   "jolt-program/field-inline",
   "jolt-riscv/field-inline",
   "tracer/field-inline",
+  # The packed FR limb-group schedule params (inert without `akita`).
+  "jolt-akita?/field-inline",
 ]
 transcript-poseidon = ["dep:light-poseidon", "challenge-254-bit"]
 transcript-keccak = []

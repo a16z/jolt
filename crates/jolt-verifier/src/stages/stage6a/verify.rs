@@ -75,6 +75,13 @@ where
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
+    #[cfg(feature = "field-inline")]
+    super::field_inline::attach_bytecode_geometry(
+        &address_sumchecks.bytecode_read_raf,
+        super::field_inline::preprocessed_bytecode_table(&preprocessing.program)?,
+        stage4.output_points(),
+        stage5.output_points(),
+    )?;
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -107,6 +114,14 @@ where
     // committed-program mode (the bytecode member's wire set carries the staged
     // `BytecodeValClaim` ids exactly when the program is committed).
     address_sumchecks.validate_output_claims(claims)?;
+
+    #[cfg(feature = "field-inline")]
+    super::field_inline::attach_bytecode_inputs(
+        &address_sumchecks.bytecode_read_raf,
+        stage1.clear()?,
+        &stage4.clear()?.output_values,
+        &stage5.clear()?.output_values,
+    )?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening (plus, under akita, the four reduced `Inc`

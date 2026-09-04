@@ -1,3 +1,13 @@
+//! The ordinary jolt protocol family: its id families, geometry, and relation
+//! instantiations.
+//!
+//! Ownership rule: this module owns the jolt ids and instantiates the shared
+//! Twist identities (`crate::twist`) with them; that module owns the
+//! algebra. `protocols::field_inline` is a completely separate protocol family
+//! — the two protocol modules never import each other, and their composition
+//! happens only in `jolt-verifier` (pinned by the
+//! `protocol_modules_are_import_disjoint` boundary test).
+
 pub mod geometry;
 pub mod lattice;
 pub mod relations;

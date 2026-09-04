@@ -21,8 +21,7 @@
 //!
 //! See `specs/prover-stage-drivers.md`.
 
-use jolt_claims::protocols::jolt::JoltChallengeId;
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_kernels::{
     PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -206,9 +205,6 @@ where
     F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     Ok(kernels.prepare(
         session,
@@ -244,9 +240,6 @@ where
     F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     match (relation, claims, points, challenges) {
         (Some(relation), Some(claims), Some(points), Some(challenges)) => {
@@ -282,9 +275,6 @@ pub fn validate_optional_tables<F, R>(
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     if let (
         Some(kernel),
@@ -310,9 +300,6 @@ pub fn extract_optional<F, R>(
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     match (kernel, inputs) {
         (Some(kernel), Some(inputs)) => kernel.output_claims(inputs).map(Some),

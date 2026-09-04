@@ -54,7 +54,11 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
+use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias, OpeningEquality};
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
+#[cfg(not(feature = "field-inline"))]
+use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
@@ -62,9 +66,7 @@ use jolt_claims::{
     protocols::jolt::{
         geometry::{
             booleanity::{self, BooleanityDimensions},
-            bytecode::{
-                self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafEvaluationInputs,
-            },
+            bytecode::{self, BytecodeReadRafEvaluationInputs},
             claim_reductions::{
                 advice,
                 bytecode::{self as bytecode_reduction},
@@ -88,13 +90,12 @@ use jolt_claims::{
         InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-        JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltPolynomialId,
-        JoltRelationId, JoltVirtualPolynomial, PrecommittedReductionLayout,
-        ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic,
-        RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
-        RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
-        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
-        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+        JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltRelationId,
+        PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
+        ProgramImageClaimReductionPublic, RamHammingBooleanityPublic, RamOutputCheckPublic,
+        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
+        RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge,
+        RamValCheckPublic, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanShiftChallenge, SpartanShiftPublic,
     },
@@ -129,6 +130,8 @@ use crate::stages::{
 };
 use crate::VerifierError;
 
+#[cfg(feature = "field-inline")]
+mod field_inline;
 mod stage1;
 mod stage2;
 mod stage3;
@@ -138,8 +141,14 @@ mod stage6a;
 mod stage6b;
 mod stage7;
 
-type Builder<F, C> = BlindFoldProtocolBuilder<F, JoltOpeningId, C, VerifierPublicId>;
-type VerifierExpr<F> = Expr<F, JoltOpeningId, VerifierPublicId>;
+/// The lowering's opening-id type: the composite [`VerifierOpeningId`], so
+/// hidden witness rows from either protocol family (jolt, field-inline) live
+/// in one claim-source namespace. FR-off constructs only `Jolt`-wrapped ids,
+/// so the layout is unchanged.
+use crate::stages::ids::VerifierOpeningId;
+
+type Builder<F, C> = BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId>;
+type VerifierExpr<F> = Expr<F, VerifierOpeningId, VerifierPublicId>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifierPublicId {
@@ -148,11 +157,37 @@ enum VerifierPublicId {
     /// Gamma values that remain as `JoltChallengeId` variants (not moved to Public) but are
     /// treated as public inputs in the BlindFold R1CS wiring.
     Challenge(JoltChallengeId),
+    #[cfg(feature = "field-inline")]
+    FieldInline(FieldInlineDerivedId),
+    /// Field-inline challenges, treated as public inputs exactly like the
+    /// jolt `Challenge` arm.
+    #[cfg(feature = "field-inline")]
+    FieldInlineChallenge(FieldInlineChallengeId),
 }
 
 impl From<JoltDerivedId> for VerifierPublicId {
     fn from(id: JoltDerivedId) -> Self {
         Self::Jolt(id)
+    }
+}
+
+impl From<JoltChallengeId> for VerifierPublicId {
+    fn from(id: JoltChallengeId) -> Self {
+        Self::Challenge(id)
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl From<FieldInlineDerivedId> for VerifierPublicId {
+    fn from(id: FieldInlineDerivedId) -> Self {
+        Self::FieldInline(id)
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl From<FieldInlineChallengeId> for VerifierPublicId {
+    fn from(id: FieldInlineChallengeId) -> Self {
+        Self::FieldInlineChallenge(id)
     }
 }
 
@@ -171,7 +206,7 @@ where
 {
     let mut values = SourceValues::default();
     let mut builder = BlindFoldProtocol::<PCS::Field, VC::Output>::builder::<
-        JoltOpeningId,
+        VerifierOpeningId,
         VerifierPublicId,
         usize,
     >();
@@ -189,6 +224,11 @@ where
         builder = builder.public(id, value);
     }
 
+    // The stage-8 plan carries composite ids and the lowering is
+    // composite-typed, so the plan passes through unchanged: each id (jolt or
+    // field-inline) resolves to the committed output-claim row the stages
+    // above registered, and the final-opening equation binds them all in one
+    // RLC — the composed final opening order the clear path verified.
     let protocol = builder
         .final_opening(
             input.stage8.opening_ids.clone(),
@@ -213,8 +253,9 @@ fn add_batched_stage<F, C>(
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<JoltOpeningId>,
-    aliases: Vec<OpeningAlias<JoltOpeningId>>,
+    opening_ids: Vec<VerifierOpeningId>,
+    aliases: Vec<OpeningAlias<VerifierOpeningId>>,
+    equalities: Vec<OpeningEquality<VerifierOpeningId>>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
     F: JoltField,
@@ -270,6 +311,7 @@ where
         values,
         opening_ids,
         aliases,
+        equalities,
         input_claim,
         output_claim,
     )
@@ -287,8 +329,9 @@ fn add_stage<F, C>(
     consistency: CommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<JoltOpeningId>,
-    aliases: Vec<OpeningAlias<JoltOpeningId>>,
+    opening_ids: Vec<VerifierOpeningId>,
+    aliases: Vec<OpeningAlias<VerifierOpeningId>>,
+    equalities: Vec<OpeningEquality<VerifierOpeningId>>,
     input_claim: VerifierExpr<F>,
     output_claim: VerifierExpr<F>,
 ) -> Result<Builder<F, C>, VerifierError>
@@ -318,6 +361,7 @@ where
             output_claims.commitments.clone(),
         )
         .output_claim_aliases(aliases)
+        .output_claim_equalities(equalities)
         .input_claim(input_claim)
         .output_claim(output_claim)
         .finish_stage()
@@ -325,19 +369,22 @@ where
 }
 
 /// Lower one symbolic relation into its `(rounds, input, output)` batch tuple.
+/// Generic over the relation's id family: jolt and field-inline relations both
+/// lower through [`map_expr`] into the composite-id [`VerifierExpr`], so the
+/// hidden claim algebra is single-sourced from each family's symbolic
+/// expressions.
 fn relation_claim<F, S>(relation: &S) -> (usize, VerifierExpr<F>, VerifierExpr<F>)
 where
     F: JoltField,
-    S: SymbolicSumcheck<
-        OpeningId = JoltOpeningId,
-        DerivedId = JoltDerivedId,
-        ChallengeId = JoltChallengeId,
-    >,
+    S: SymbolicSumcheck,
+    S::OpeningId: Into<VerifierOpeningId>,
+    S::DerivedId: Into<VerifierPublicId>,
+    S::ChallengeId: Into<VerifierPublicId>,
 {
     (
         relation.rounds(),
-        map_jolt_expr(relation.input_expression::<F>()),
-        map_jolt_expr(relation.output_expression::<F>()),
+        map_expr(relation.input_expression::<F>()),
+        map_expr(relation.output_expression::<F>()),
     )
 }
 
@@ -351,7 +398,16 @@ fn scale_expr<F: JoltField>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr
     expr
 }
 
-fn map_jolt_expr<F: JoltField>(expr: JoltExpr<F>) -> VerifierExpr<F> {
+/// Map a protocol-family expression into the composite-id [`VerifierExpr`]:
+/// openings become hidden witness rows named by the composite id; derived
+/// values and challenges both become baked publics.
+fn map_expr<F, O, P, C>(expr: Expr<F, O, P, C>) -> VerifierExpr<F>
+where
+    F: JoltField,
+    O: Into<VerifierOpeningId>,
+    P: Into<VerifierPublicId>,
+    C: Into<VerifierPublicId>,
+{
     Expr {
         terms: expr
             .terms
@@ -362,14 +418,29 @@ fn map_jolt_expr<F: JoltField>(expr: JoltExpr<F>) -> VerifierExpr<F> {
                     .factors
                     .into_iter()
                     .map(|source| match source {
-                        Source::Opening(id) => Source::Opening(id),
-                        Source::Derived(id) => Source::Derived(VerifierPublicId::Jolt(id)),
-                        Source::Challenge(id) => Source::Derived(VerifierPublicId::Challenge(id)),
+                        Source::Opening(id) => Source::Opening(id.into()),
+                        Source::Derived(id) => Source::Derived(id.into()),
+                        Source::Challenge(id) => Source::Derived(id.into()),
                     })
                     .collect(),
             })
             .collect(),
     }
+}
+
+/// Lift a jolt-typed opening-id list into the composite id space.
+fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<VerifierOpeningId> {
+    ids.into_iter().map(Into::into).collect()
+}
+
+/// Lift jolt-typed `(aliased, source)` pairs into composite [`OpeningAlias`] rows.
+fn composite_aliases(
+    pairs: impl IntoIterator<Item = (JoltOpeningId, JoltOpeningId)>,
+) -> Vec<OpeningAlias<VerifierOpeningId>> {
+    pairs
+        .into_iter()
+        .map(|(aliased, source)| OpeningAlias::new(aliased.into(), source.into()))
+        .collect()
 }
 
 fn require_expr_sources<F: JoltField>(
@@ -693,27 +764,36 @@ where
         })?;
     let (spartan_outer_raf, spartan_shift_raf, entry) =
         if input.checked.precommitted.bytecode.is_some() {
-            let v = bytecode::read_raf_committed_public_values::<PCS::Field>(
-                BytecodeReadRafCommittedEvaluationInputs {
-                    r_address: &bytecode_r_address,
-                    r_cycle: &bytecode_r_cycle,
-                    stage_cycle_points: [
-                        stage1_cycle.as_slice(),
-                        stage2_cycle.as_slice(),
-                        stage3_cycle.as_slice(),
-                        stage4_cycle,
-                        stage5_cycle,
-                    ],
-                    entry_bytecode_index,
-                },
-            );
-            for (index, stage_cycle_eq) in v.stage_cycle_eqs.iter().enumerate() {
-                values.public(
-                    JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(index)),
-                    *stage_cycle_eq,
-                )?;
+            // The FR extension anchors the field access selectors through the
+            // public side table, which committed-program mode cannot supply;
+            // the stage-6b batch build already rejected this combination, so
+            // this arm is FR-off only.
+            #[cfg(feature = "field-inline")]
+            return Err(crate::stages::stage6b::field_inline::committed_program_rejection());
+            #[cfg(not(feature = "field-inline"))]
+            {
+                let v = bytecode::read_raf_committed_public_values::<PCS::Field>(
+                    BytecodeReadRafCommittedEvaluationInputs {
+                        r_address: &bytecode_r_address,
+                        r_cycle: &bytecode_r_cycle,
+                        stage_cycle_points: [
+                            stage1_cycle.as_slice(),
+                            stage2_cycle.as_slice(),
+                            stage3_cycle.as_slice(),
+                            stage4_cycle,
+                            stage5_cycle,
+                        ],
+                        entry_bytecode_index,
+                    },
+                );
+                for (index, stage_cycle_eq) in v.stage_cycle_eqs.iter().enumerate() {
+                    values.public(
+                        JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(index)),
+                        *stage_cycle_eq,
+                    )?;
+                }
+                (v.spartan_outer_raf, v.spartan_shift_raf, v.entry)
             }
-            (v.spartan_outer_raf, v.spartan_shift_raf, v.entry)
         } else {
             let full_program = input.preprocessing.program.as_full().ok_or_else(|| {
                 VerifierError::StageClaimPublicInputFailed {
@@ -722,9 +802,22 @@ where
                 }
             })?;
             let stage_gamma_powers = bytecode_challenges.stage_gamma_powers();
-            let v =
+            // FR-on, the jolt fold must see the ordinary x-register slots only
+            // (the FR-operand slots ride the side table): see
+            // `field_inline_bytecode::suppress_field_operand_slots`.
+            #[cfg(feature = "field-inline")]
+            let masked_bytecode =
+                crate::stages::field_inline_bytecode::suppress_field_operand_slots(
+                    &full_program.bytecode.bytecode,
+                );
+            #[cfg(feature = "field-inline")]
+            let bytecode_rows: &[_] = &masked_bytecode;
+            #[cfg(not(feature = "field-inline"))]
+            let bytecode_rows = &full_program.bytecode.bytecode;
+            #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+            let mut v =
                 bytecode::read_raf_public_values::<PCS::Field>(BytecodeReadRafEvaluationInputs {
-                    bytecode: &full_program.bytecode.bytecode,
+                    bytecode: bytecode_rows,
                     r_address: &bytecode_r_address,
                     r_cycle: &bytecode_r_cycle,
                     stage_cycle_points: [
@@ -752,6 +845,28 @@ where
                     stage5_gammas: &stage_gamma_powers[4],
                 })
                 .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
+            // The composed publics: the FR side-table stage values (already
+            // cycle-weighted per stage) add onto the ordinary staged publics
+            // BEFORE they bake, so the same `StageValue(i)` publics the
+            // symbolic output expression references carry both families —
+            // exactly the clear composed relation's public composition.
+            #[cfg(feature = "field-inline")]
+            field_inline::extend_bytecode_stage_values(
+                &mut v.stage_values,
+                &input.preprocessing.program,
+                &bytecode_r_address,
+                &bytecode_r_cycle,
+                &stage1_cycle,
+                input
+                    .stage4
+                    .output_points
+                    .field_registers_read_write_point(),
+                input
+                    .stage5
+                    .output_points
+                    .field_registers_val_evaluation_point(),
+                bytecode_challenges,
+            )?;
             for (index, stage_value) in v.stage_values.iter().enumerate() {
                 values.public(
                     JoltDerivedId::from(BytecodeReadRafPublic::StageValue(index)),
@@ -914,6 +1029,15 @@ where
         .map_err(|error| public_error(JoltRelationId::IncClaimReduction, error))?,
     )?;
 
+    #[cfg(feature = "field-inline")]
+    field_inline::stage6b_inc_publics(
+        values,
+        &inc_opening_point,
+        input.stage6b.challenges.field_registers_inc_gamma,
+        &input.stage4.output_points,
+        &input.stage5.output_points,
+    )?;
+
     Ok(())
 }
 
@@ -930,7 +1054,7 @@ where
         .challenges
         .bytecode_reduction_eta
         .ok_or_else(|| VerifierError::MissingStageClaimChallenge {
-            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta),
+            id: JoltChallengeId::from(BytecodeClaimReductionChallenge::Eta).into(),
         })?;
     let stage_gamma_powers = input
         .stage6a
@@ -991,7 +1115,7 @@ where
         .output_points
         .bytecode_reduction_opening_point()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
         })?;
     let weights = bytecode_reduction_weights(input, layout)?;
     // The cycle scale recovered from the produced opening point equals the
@@ -1018,7 +1142,7 @@ where
         .output_points
         .bytecode_cycle_phase_variables()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: bytecode_reduction::cycle_phase_intermediate_opening(),
+            id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
         })?;
     let weights = bytecode_reduction_weights(input, layout)?;
     let chunk_weights = layout
@@ -1048,7 +1172,7 @@ where
         .output_points
         .program_image_opening_point()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
+            id: program_image::cycle_phase_program_image_opening().into(),
         })?;
     let r_addr_rw = ram_val_check_address(input)?;
     let scale = layout
@@ -1077,7 +1201,7 @@ where
         .output_points
         .program_image_cycle_phase_variables()
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: program_image::cycle_phase_program_image_opening(),
+            id: program_image::cycle_phase_program_image_opening().into(),
         })?;
     let r_addr_rw = ram_val_check_address(input)?;
     let scale = layout
@@ -1110,7 +1234,7 @@ where
         .output_points
         .advice_cycle_phase_opening_point(kind)
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_advice_opening(kind),
+            id: advice::cycle_phase_advice_opening(kind).into(),
         })?;
     let source_point = advice_source_point(input, kind)?;
     let scale = layout
@@ -1139,7 +1263,7 @@ where
         .output_points
         .advice_cycle_phase_variables(kind)
         .ok_or_else(|| VerifierError::MissingOpeningClaim {
-            id: advice::cycle_phase_advice_opening(kind),
+            id: advice::cycle_phase_advice_opening(kind).into(),
         })?;
     let scale = layout
         .address_phase_final_output_scale(&source_point, &cycle_phase_variables, sumcheck_point)
@@ -1259,5 +1383,228 @@ fn point_suffix<F: JoltField>(
 fn blindfold_error(error: impl ToString) -> VerifierError {
     VerifierError::BlindFoldConstructionFailed {
         reason: error.to_string(),
+    }
+}
+
+/// Value-parity locks for every FieldInline-family batch member lowered
+/// through the generic [`relation_claim`] / [`map_expr`]: the lowered
+/// input/output expressions, evaluated against the composite claim sources
+/// (hidden rows by composite id, challenges and deriveds as
+/// [`VerifierPublicId`] publics), reproduce the clear path's
+/// `ConcreteSumcheck::input_claim` / `expected_output` on synthetic values.
+#[cfg(all(test, feature = "field-inline"))]
+#[expect(clippy::unwrap_used)]
+#[expect(
+    clippy::as_conversions,
+    clippy::arithmetic_side_effects,
+    reason = "tests use plain arithmetic on fixture data"
+)]
+mod field_inline_relation_parity {
+    use super::*;
+    use crate::stages::relations::{
+        ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
+        SumcheckOutputClaims, SumcheckOutputPoints,
+    };
+    use jolt_claims::protocols::field_inline::{
+        FieldInlineChallengeId as FrChallengeId, FieldInlineDerivedId as FrDerivedId,
+        FieldInlineOpeningId, FieldRegistersTraceDimensions,
+    };
+    use jolt_claims::{InputClaims, SumcheckChallenges};
+    use jolt_field::{Fr, Ring};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    fn point(start: u64, len: usize) -> Vec<Fr> {
+        (0..len as u64).map(|i| fr(start + i)).collect()
+    }
+
+    /// Assert the lowered `(input, output)` expressions of `relation` evaluate
+    /// to the clear `input_claim` / `expected_output` under shared resolvers.
+    fn assert_relation_parity<S>(
+        relation: &S,
+        inputs: &SumcheckInputClaims<Fr, S>,
+        input_points: &SumcheckInputPoints<Fr, S>,
+        outputs: &SumcheckOutputClaims<Fr, S>,
+        sumcheck_point: &[Fr],
+        challenges: &ConcreteSumcheckChallenges<Fr, S>,
+    ) where
+        S: ConcreteSumcheck<Fr>,
+        S::Symbolic: SymbolicSumcheck<
+            OpeningId = FieldInlineOpeningId,
+            DerivedId = FrDerivedId,
+            ChallengeId = FrChallengeId,
+        >,
+        SumcheckInputClaims<Fr, S>: InputClaims<Fr, FieldInlineOpeningId>,
+        SumcheckOutputClaims<Fr, S>: OutputClaims<Fr, FieldInlineOpeningId>,
+        ConcreteSumcheckChallenges<Fr, S>: SumcheckChallenges<Fr, FrChallengeId>,
+    {
+        let output_points: SumcheckOutputPoints<Fr, S> = relation
+            .derive_opening_points(sumcheck_point, input_points)
+            .unwrap();
+
+        let clear_input = relation.input_claim(inputs, challenges).unwrap();
+        let (_, lowered_input_expr, lowered_output_expr) =
+            relation_claim::<Fr, S::Symbolic>(relation.symbolic());
+        let resolve_challenge = |id: &VerifierPublicId| match id {
+            VerifierPublicId::FieldInlineChallenge(id) => {
+                challenges.resolve_challenge(id).unwrap_or_else(Fr::zero)
+            }
+            VerifierPublicId::FieldInline(id) => relation
+                .derive_output_term(id, input_points, &output_points, challenges)
+                .unwrap_or_else(|_| Fr::zero()),
+            VerifierPublicId::Jolt(_)
+            | VerifierPublicId::SpartanOuter(_)
+            | VerifierPublicId::Challenge(_) => Fr::zero(),
+        };
+        let lowered_input = lowered_input_expr.evaluate(
+            |id| match id {
+                VerifierOpeningId::FieldInline(id) => {
+                    inputs.resolve_input(id).unwrap_or_else(Fr::zero)
+                }
+                VerifierOpeningId::Jolt(_) => Fr::zero(),
+            },
+            |_| Fr::zero(),
+            resolve_challenge,
+        );
+        assert_eq!(lowered_input, clear_input, "input claim parity");
+
+        let clear_output = relation
+            .expected_output(input_points, outputs, &output_points, challenges)
+            .unwrap();
+        let lowered_output = lowered_output_expr.evaluate(
+            |id| match id {
+                VerifierOpeningId::FieldInline(id) => {
+                    outputs.resolve_output(id).unwrap_or_else(Fr::zero)
+                }
+                VerifierOpeningId::Jolt(_) => Fr::zero(),
+            },
+            |_| Fr::zero(),
+            resolve_challenge,
+        );
+        assert_eq!(lowered_output, clear_output, "output claim parity");
+    }
+
+    #[test]
+    fn field_registers_claim_reduction_lowering_matches_the_clear_relation() {
+        use crate::stages::stage2::field_registers_claim_reduction::{
+            FieldRegistersClaimReduction, FieldRegistersClaimReductionChallenges,
+            FieldRegistersClaimReductionInputClaims, FieldRegistersClaimReductionOutputClaims,
+        };
+
+        let log_t = 4usize;
+        let relation = FieldRegistersClaimReduction::<Fr>::new(
+            FieldRegistersTraceDimensions::new(log_t),
+            point(50, log_t),
+        );
+        assert_relation_parity(
+            &relation,
+            &FieldRegistersClaimReductionInputClaims {
+                rd_value: fr(3),
+                rs1_value: fr(5),
+                rs2_value: fr(7),
+            },
+            &FieldRegistersClaimReductionInputClaims::default(),
+            &FieldRegistersClaimReductionOutputClaims {
+                rd_value: fr(11),
+                rs1_value: fr(13),
+                rs2_value: fr(17),
+            },
+            &point(60, log_t),
+            &FieldRegistersClaimReductionChallenges { gamma: fr(19) },
+        );
+    }
+
+    #[test]
+    fn field_registers_read_write_lowering_matches_the_clear_relation() {
+        use crate::stages::stage4::field_registers_read_write_checking::{
+            FieldRegistersReadWriteChallenges, FieldRegistersReadWriteChecking,
+            FieldRegistersReadWriteInputClaims, FieldRegistersReadWriteOutputClaims,
+        };
+        use jolt_claims::protocols::field_inline::FieldInlineConfig;
+
+        let log_t = 4usize;
+        let dimensions = FieldInlineConfig::enabled().read_write_dimensions(log_t);
+        let relation = FieldRegistersReadWriteChecking::<Fr>::new(dimensions);
+        let fixed_cycle = point(70, log_t);
+        assert_relation_parity(
+            &relation,
+            &FieldRegistersReadWriteInputClaims {
+                rd_value: fr(3),
+                rs1_value: fr(5),
+                rs2_value: fr(7),
+            },
+            &FieldRegistersReadWriteInputClaims {
+                rd_value: fixed_cycle.clone(),
+                rs1_value: fixed_cycle.clone(),
+                rs2_value: fixed_cycle,
+            },
+            &FieldRegistersReadWriteOutputClaims {
+                registers_val: fr(11),
+                rs1_ra: fr(13),
+                rs2_ra: fr(17),
+                rd_wa: fr(19),
+                rd_inc: fr(23),
+            },
+            &point(80, relation.rounds()),
+            &FieldRegistersReadWriteChallenges { gamma: fr(29) },
+        );
+    }
+
+    #[test]
+    fn field_registers_val_evaluation_lowering_matches_the_clear_relation() {
+        use crate::stages::stage5::field_registers_val_evaluation::{
+            FieldRegistersValEvaluation, FieldRegistersValEvaluationInputClaims,
+            FieldRegistersValEvaluationOutputClaims,
+        };
+        use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
+        use jolt_claims::NoChallenges;
+
+        let log_t = 4usize;
+        let relation =
+            FieldRegistersValEvaluation::<Fr>::new(FieldRegistersTraceDimensions::new(log_t));
+        assert_relation_parity(
+            &relation,
+            &FieldRegistersValEvaluationInputClaims {
+                registers_val: fr(3),
+            },
+            &FieldRegistersValEvaluationInputClaims {
+                registers_val: point(90, FIELD_REGISTERS_LOG_K + log_t),
+            },
+            &FieldRegistersValEvaluationOutputClaims {
+                rd_inc: fr(5),
+                rd_wa: fr(7),
+            },
+            &point(100, log_t),
+            &NoChallenges::default(),
+        );
+    }
+
+    #[test]
+    fn field_registers_inc_claim_reduction_lowering_matches_the_clear_relation() {
+        use crate::stages::stage6b::field_registers_inc_claim_reduction::{
+            FieldRegistersIncClaimReduction, FieldRegistersIncClaimReductionChallenges,
+            FieldRegistersIncClaimReductionInputClaims,
+            FieldRegistersIncClaimReductionOutputClaims,
+        };
+
+        let log_t = 4usize;
+        let relation = FieldRegistersIncClaimReduction::<Fr>::new(
+            FieldRegistersTraceDimensions::new(log_t),
+            point(110, log_t),
+            point(120, log_t),
+        );
+        assert_relation_parity(
+            &relation,
+            &FieldRegistersIncClaimReductionInputClaims {
+                rd_inc_read_write: fr(3),
+                rd_inc_val_evaluation: fr(5),
+            },
+            &FieldRegistersIncClaimReductionInputClaims::default(),
+            &FieldRegistersIncClaimReductionOutputClaims { rd_inc: fr(7) },
+            &point(130, log_t),
+            &FieldRegistersIncClaimReductionChallenges { gamma: fr(11) },
+        );
     }
 }

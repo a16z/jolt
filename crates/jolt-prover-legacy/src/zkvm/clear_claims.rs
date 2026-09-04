@@ -88,10 +88,10 @@ pub(crate) fn build_clear_claims<F: JoltField>(
         claims: claims.into_iter().collect(),
     };
     Ok(ClearProofClaims {
-        stage1: Stage1OutputClaims {
-            uniskip_output_claim: claims.require(outer_uniskip_opening())?,
-            outer: spartan_outer_claims_from_openings(&claims)?,
-        },
+        stage1: Stage1OutputClaims::new(
+            claims.require(outer_uniskip_opening())?,
+            spartan_outer_claims_from_openings(&claims)?,
+        ),
         stage2: stage2_claims_from_openings(&claims)?,
         stage3: stage3_claims_from_openings(&claims)?,
         stage4: stage4_claims_from_openings(&claims)?,
@@ -181,24 +181,24 @@ fn stage2_claims_from_openings<F: JoltField>(
             .get(instruction_claim_reduction::right_instruction_input_reduced())
             .unwrap_or(product_remainder.right_instruction_input),
     };
-    Ok(Stage2OutputClaims {
-        product_uniskip_output_claim: claims.require(product_uniskip_opening())?,
-        batch_outputs: Stage2BatchOutputClaims {
-            ram_read_write: RamReadWriteOutputClaims {
+    Ok(Stage2OutputClaims::new(
+        claims.require(product_uniskip_opening())?,
+        Stage2BatchOutputClaims::new(
+            RamReadWriteOutputClaims {
                 val: claims.get_or_zero(ram::ram_val()),
                 ra: claims.get_or_zero(ram::ram_ra()),
                 inc: claims.get_or_zero(ram::ram_inc()),
             },
             product_remainder,
             instruction_claim_reduction,
-            ram_raf_evaluation: RamRafEvaluationOutputClaims {
+            RamRafEvaluationOutputClaims {
                 ram_ra: claims.get_or_zero(ram::ram_ra_raf_evaluation()),
             },
-            ram_output_check: RamOutputCheckOutputClaims {
+            RamOutputCheckOutputClaims {
                 val_final: claims.get_or_zero(ram::ram_val_final()),
             },
-        },
-    })
+        ),
+    ))
 }
 
 fn stage3_claims_from_openings<F: JoltField>(
@@ -243,8 +243,8 @@ fn stage3_claims_from_openings<F: JoltField>(
 fn stage4_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage4OutputClaims<F>, VerifierError> {
-    Ok(Stage4OutputClaims {
-        registers_read_write: RegistersReadWriteOutputClaims {
+    Ok(Stage4OutputClaims::new(
+        RegistersReadWriteOutputClaims {
             registers_val: claims.require(registers::registers_val_read_write())?,
             rs1_ra: claims.require(registers::rs1_ra_read_write())?,
             rs2_ra: claims.require(registers::rs2_ra_read_write())?,
@@ -254,14 +254,14 @@ fn stage4_claims_from_openings<F: JoltField>(
         // The advice / program-image openings are produced by the RAM value-check
         // instance, so they are folded into `RamValCheckOutputClaims`. Their values
         // are sourced identically to before; only the struct shape changed.
-        ram_val_check: RamValCheckOutputClaims {
+        RamValCheckOutputClaims {
             untrusted_advice: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Untrusted)),
             trusted_advice: claims.get(ram::val_check_advice_opening(JoltAdviceKind::Trusted)),
             program_image: claims.get(program_image::ram_val_check_contribution_opening()),
             ram_ra: claims.require(ram::ram_ra_val_check())?,
             ram_inc: claims.require(ram::ram_inc_val_check())?,
         },
-    })
+    ))
 }
 
 fn stage5_claims_from_openings<F: JoltField>(
@@ -279,23 +279,23 @@ fn stage5_claims_from_openings<F: JoltField>(
     }
     if instruction_ra.is_empty() {
         return Err(VerifierError::MissingOpeningClaim {
-            id: instruction::instruction_ra(0),
+            id: instruction::instruction_ra(0).into(),
         });
     }
-    Ok(Stage5OutputClaims {
-        instruction_read_raf: InstructionReadRafOutputClaims {
+    Ok(Stage5OutputClaims::new(
+        InstructionReadRafOutputClaims {
             lookup_table_flags,
             instruction_ra,
             instruction_raf_flag: claims.require(instruction::instruction_raf_flag())?,
         },
-        ram_ra_claim_reduction: RamRaClaimReductionOutputClaims {
+        RamRaClaimReductionOutputClaims {
             ram_ra: claims.require(ram::ram_ra_claim_reduction())?,
         },
-        registers_val_evaluation: RegistersValEvaluationOutputClaims {
+        RegistersValEvaluationOutputClaims {
             rd_inc: claims.require(registers::rd_inc_val_evaluation())?,
             rd_wa: claims.require(registers::rd_wa_val_evaluation())?,
         },
-    })
+    ))
 }
 
 fn stage6a_claims_from_openings<F: JoltField>(
@@ -335,7 +335,8 @@ fn stage6b_claims_from_openings<F: JoltField>(
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::BytecodeRa(0),
                 JoltRelationId::BytecodeReadRaf,
-            ),
+            )
+            .into(),
         });
     }
 
@@ -384,7 +385,8 @@ fn stage6b_claims_from_openings<F: JoltField>(
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(0),
                 JoltRelationId::Booleanity,
-            ),
+            )
+            .into(),
         });
     }
 
@@ -407,36 +409,36 @@ fn stage6b_claims_from_openings<F: JoltField>(
     }
     if committed_instruction_ra.is_empty() {
         return Err(VerifierError::MissingOpeningClaim {
-            id: instruction::committed_instruction_ra(0),
+            id: instruction::committed_instruction_ra(0).into(),
         });
     }
 
-    Ok(Stage6bOutputClaims {
-        bytecode_read_raf: BytecodeReadRafOutputClaims { bytecode_ra },
-        booleanity: BooleanityOutputClaims {
+    Ok(Stage6bOutputClaims::new(
+        BytecodeReadRafOutputClaims { bytecode_ra },
+        BooleanityOutputClaims {
             instruction_ra: booleanity_instruction_ra,
             bytecode_ra: booleanity_bytecode_ra,
             ram_ra: booleanity_ram_ra,
         },
-        ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+        RamHammingBooleanityOutputClaims {
             ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
         },
-        ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
-        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+        RamRaVirtualizationOutputClaims { ram_ra },
+        InstructionRaVirtualizationOutputClaims {
             committed_instruction_ra,
         },
-        inc_claim_reduction: IncClaimReductionOutputClaims {
+        IncClaimReductionOutputClaims {
             ram_inc: claims.require(increments::ram_inc_reduced())?,
             rd_inc: claims.require(increments::rd_inc_reduced())?,
         },
-        trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
-        untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),
-        bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
-        program_image_reduction: claims
+        trusted_advice_cycle_phase_claim_from_openings(claims),
+        untrusted_advice_cycle_phase_claim_from_openings(claims),
+        bytecode_cycle_phase_claims_from_openings(claims),
+        claims
             .get(program_image::cycle_phase_program_image_opening())
             .or_else(|| claims.get(program_image::final_program_image_opening()))
             .map(|program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image }),
-    })
+    ))
 }
 
 #[cfg(not(feature = "akita"))]
@@ -562,7 +564,8 @@ fn stage7_claims_from_openings<F: JoltField>(
             id: JoltOpeningId::committed(
                 JoltCommittedPolynomial::InstructionRa(0),
                 JoltRelationId::HammingWeightClaimReduction,
-            ),
+            )
+            .into(),
         });
     }
 
@@ -624,7 +627,7 @@ impl<F: JoltField> OpeningClaimMap<F> {
 
     fn require(&self, id: jolt::JoltOpeningId) -> Result<F, VerifierError> {
         self.get(id)
-            .ok_or(VerifierError::MissingOpeningClaim { id })
+            .ok_or(VerifierError::MissingOpeningClaim { id: id.into() })
     }
 
     fn get_or_zero(&self, id: jolt::JoltOpeningId) -> F {
@@ -659,19 +662,22 @@ mod packed {
         let claims = OpeningClaimMap {
             claims: claims.into_iter().collect(),
         };
-        Ok(ClearProofClaims {
-            stage1: Stage1OutputClaims {
-                uniskip_output_claim: claims.require(outer_uniskip_opening())?,
-                outer: spartan_outer_claims_from_openings(&claims)?,
-            },
-            stage2: stage2_claims_from_openings(&claims)?,
-            stage3: stage3_claims_from_openings(&claims)?,
-            stage4: stage4_claims_from_openings(&claims)?,
-            stage5: stage5_claims_from_openings(&claims)?,
-            stage6a: stage6a_claims_from_openings(&claims)?,
-            stage6b: packed_stage6b_claims_from_openings(&claims)?,
-            stage7: packed_stage7_claims_from_openings(&claims)?,
-        })
+        // Legacy has no packed FR path: the verifier-owned constructors leave
+        // the FR slots empty, and an FR-on verifier rejects the converted
+        // proof fail-closed on its disabled FR config.
+        Ok(ClearProofClaims::new(
+            Stage1OutputClaims::new(
+                claims.require(outer_uniskip_opening())?,
+                spartan_outer_claims_from_openings(&claims)?,
+            ),
+            stage2_claims_from_openings(&claims)?,
+            stage3_claims_from_openings(&claims)?,
+            stage4_claims_from_openings(&claims)?,
+            stage5_claims_from_openings(&claims)?,
+            stage6a_claims_from_openings(&claims)?,
+            packed_stage6b_claims_from_openings(&claims)?,
+            packed_stage7_claims_from_openings(&claims)?,
+        ))
     }
 
     fn indexed_family<F: JoltField>(
@@ -702,7 +708,8 @@ mod packed {
                 id: JoltOpeningId::committed(
                     JoltCommittedPolynomial::BytecodeRa(0),
                     JoltRelationId::BytecodeReadRaf,
-                ),
+                )
+                .into(),
             });
         }
 
@@ -749,35 +756,35 @@ mod packed {
             indexed_family(claims, instruction::committed_instruction_ra);
         if committed_instruction_ra.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: instruction::committed_instruction_ra(0),
+                id: instruction::committed_instruction_ra(0).into(),
             });
         }
 
-        Ok(Stage6bOutputClaims {
-            bytecode_read_raf: LatticeBytecodeReadRafOutputClaims {
+        Ok(Stage6bOutputClaims::new(
+            LatticeBytecodeReadRafOutputClaims {
                 bytecode_ra,
                 fused_inc: claims.require(fused_inc_read_raf_opening())?,
             },
-            booleanity: LatticeBooleanityOutputClaims {
+            LatticeBooleanityOutputClaims {
                 instruction_ra: booleanity_instruction_ra,
                 bytecode_ra: booleanity_bytecode_ra,
                 ram_ra: booleanity_ram_ra,
                 balanced_inc_digits,
                 balanced_inc_carry,
             },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+            RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
             },
-            ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+            RamRaVirtualizationOutputClaims { ram_ra },
+            InstructionRaVirtualizationOutputClaims {
                 committed_instruction_ra,
             },
-            bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
-            program_image_reduction: claims
+            bytecode_cycle_phase_claims_from_openings(claims),
+            claims
                 .get(program_image::cycle_phase_program_image_opening())
                 .or_else(|| claims.get(program_image::final_program_image_opening()))
                 .map(|program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image }),
-        })
+        ))
     }
 
     fn packed_stage7_claims_from_openings<F: JoltField>(
@@ -806,7 +813,8 @@ mod packed {
                 id: JoltOpeningId::committed(
                     JoltCommittedPolynomial::InstructionRa(0),
                     JoltRelationId::HammingWeightClaimReduction,
-                ),
+                )
+                .into(),
             });
         }
 
@@ -816,7 +824,7 @@ mod packed {
         );
         if chunks.is_empty() {
             return Err(VerifierError::MissingOpeningClaim {
-                id: lattice_digit_zero::reduced_balanced_inc_digit_opening(0),
+                id: lattice_digit_zero::reduced_balanced_inc_digit_opening(0).into(),
             });
         }
 

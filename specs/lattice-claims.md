@@ -19,6 +19,14 @@
 > [a16z/jolt#1829](https://github.com/a16z/jolt/pull/1829)
 > for the Stage 4 advice leaf-claim boundary. One-hot trace digit-zero
 > reduction and direct committed-program openings remain active.
+>
+> **Field-inline update:** on FR-on packed builds the joint opening carries a
+> further always-present dense precommitted group — `FieldRdInc`'s u64
+> limb-word columns, role-ordered after `TrustedAdvice` (the FR-on verifier
+> rejects committed-program mode, so the direct-program roles never share a
+> batch with it) and bound to the stage-6b reduced claim by one linear
+> recomposition check (`specs/field-inline-portability.md`, the dense-group
+> status section).
 
 ## Purpose
 
