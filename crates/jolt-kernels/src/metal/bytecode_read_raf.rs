@@ -35,7 +35,18 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-const RESIDENT_RADIX_ADDRESS_LOG2: u32 = 14;
+// The resident-radix route takes the address domain as a runtime parameter and
+// indexes it through the u16 work-item ABI, so any power-of-two bytecode domain in
+// this band runs on the device. Below 2^12 the CPU pushforward is already cheap;
+// above 2^16 addresses no longer fit the work-item ABI.
+const RESIDENT_RADIX_MIN_ADDRESS_LOG2: u32 = 12;
+const RESIDENT_RADIX_MAX_ADDRESS_LOG2: u32 = 16;
+
+fn resident_radix_supports(address_elements: usize) -> bool {
+    address_elements.is_power_of_two()
+        && (RESIDENT_RADIX_MIN_ADDRESS_LOG2..=RESIDENT_RADIX_MAX_ADDRESS_LOG2)
+            .contains(&address_elements.ilog2())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BytecodeReadRafAddressImplementation {
@@ -93,14 +104,10 @@ fn select_bytecode_address_route(
     if trace_elements < config.trace_cutoff_elements {
         return BytecodeReadRafAddressRoute::Cpu("trace_cutoff");
     }
-    if address_elements == 1usize << ADDRESS_LOG2 {
-        return if has_stage1_carrier {
-            BytecodeReadRafAddressRoute::Stage1Sparse
-        } else {
-            BytecodeReadRafAddressRoute::Cpu("stage1_carrier")
-        };
+    if address_elements == 1usize << ADDRESS_LOG2 && has_stage1_carrier {
+        return BytecodeReadRafAddressRoute::Stage1Sparse;
     }
-    if address_elements == 1usize << RESIDENT_RADIX_ADDRESS_LOG2 {
+    if resident_radix_supports(address_elements) {
         return if has_resident_rows {
             BytecodeReadRafAddressRoute::ResidentRadix
         } else {
@@ -125,13 +132,7 @@ fn split_bytecode_address_eq_tables(
             reason: "bytecode address stage count is invalid",
         });
     }
-    if log_rows < INNER_LOG2 as usize
-        || !matches!(
-            address_elements,
-            value if value == 1usize << ADDRESS_LOG2
-                || value == 1usize << RESIDENT_RADIX_ADDRESS_LOG2
-        )
-    {
+    if log_rows < INNER_LOG2 as usize || !resident_radix_supports(address_elements) {
         return Err(KernelError::InvariantViolation {
             reason: "bytecode address geometry is invalid",
         });
@@ -714,19 +715,42 @@ mod tests {
     use crate::ReferenceBackend;
 
     #[test]
-    fn logk14_selects_resident_route_without_stage1_topology() {
+    fn resident_route_covers_every_supported_bytecode_domain() {
         let config = BytecodeReadRafAddressMetalConfig {
             implementation: BytecodeReadRafAddressImplementation::AddressMajor,
             trace_cutoff_elements: 1 << 26,
         };
+        let route = |address_elements: usize, carrier: bool, rows: bool| {
+            select_bytecode_address_route(1 << 28, address_elements, config, carrier, rows)
+        };
 
         assert_eq!(
-            select_bytecode_address_route(1 << 28, 1 << 14, config, false, true),
-            BytecodeReadRafAddressRoute::ResidentRadix
+            route(1 << 13, true, true),
+            BytecodeReadRafAddressRoute::Stage1Sparse
+        );
+        for log_k in RESIDENT_RADIX_MIN_ADDRESS_LOG2..=RESIDENT_RADIX_MAX_ADDRESS_LOG2 {
+            assert_eq!(
+                route(1 << log_k, false, true),
+                BytecodeReadRafAddressRoute::ResidentRadix,
+                "log_k {log_k}"
+            );
+            assert_eq!(
+                route(1 << log_k, false, false),
+                BytecodeReadRafAddressRoute::Cpu("resident_rows"),
+                "log_k {log_k}"
+            );
+        }
+        assert_eq!(
+            route(1 << 11, false, true),
+            BytecodeReadRafAddressRoute::Cpu("address_domain")
         );
         assert_eq!(
-            select_bytecode_address_route(1 << 28, 1 << 13, config, true, true),
-            BytecodeReadRafAddressRoute::Stage1Sparse
+            route(1 << 17, false, true),
+            BytecodeReadRafAddressRoute::Cpu("address_domain")
+        );
+        assert_eq!(
+            route(3 << 12, false, true),
+            BytecodeReadRafAddressRoute::Cpu("address_domain")
         );
     }
 
@@ -772,9 +796,22 @@ mod tests {
     }
 
     #[test]
+    fn logk12_resident_route_matches_reference_without_stage1_topology() {
+        resident_route_matches_reference_without_stage1_topology(12);
+    }
+
+    #[test]
     fn logk14_resident_route_matches_reference_without_stage1_topology() {
+        resident_route_matches_reference_without_stage1_topology(14);
+    }
+
+    #[test]
+    fn logk15_resident_route_matches_reference_without_stage1_topology() {
+        resident_route_matches_reference_without_stage1_topology(15);
+    }
+
+    fn resident_route_matches_reference_without_stage1_topology(log_k: usize) {
         let log_t = 15;
-        let log_k = 14;
         with_sample_backend_at_geometry(log_t, log_k, 8, |witness| {
             assert_eq!(
                 witness.program_preprocessing().bytecode.bytecode.len(),
@@ -870,11 +907,19 @@ mod tests {
     }
 
     #[test]
+    fn logk12_resident_scatter_covers_high_addresses_and_split_hot_items() {
+        resident_scatter_covers_high_addresses_and_split_hot_items(12);
+    }
+
+    #[test]
     fn logk14_resident_scatter_covers_high_addresses_and_split_hot_items() {
+        resident_scatter_covers_high_addresses_and_split_hot_items(14);
+    }
+
+    fn resident_scatter_covers_high_addresses_and_split_hot_items(log_k: usize) {
         use crate::metal::solinas::BooleanityRow;
 
         let log_t = 15;
-        let log_k = 14;
         let cycles = 1usize << log_t;
         let addresses = 1usize << log_k;
         let stage_points = (0..9)
@@ -905,7 +950,7 @@ mod tests {
             .flatten()
             .copied()
             .max()
-            .is_some_and(|pc| pc >= 1 << 13));
+            .is_some_and(|pc| pc >= addresses / 2));
 
         let backend = MetalBackend::new(Default::default()).unwrap();
         let resident = backend.context.prepare_booleanity_rows(&rows).unwrap();
