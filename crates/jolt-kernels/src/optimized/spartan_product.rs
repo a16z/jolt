@@ -1191,12 +1191,14 @@ mod tests {
             })
             .collect();
         // At integer points the centered Lagrange weights are small (signed)
-        // integers, so search pseudo-random field points for a draw whose two
-        // full-u64 lane weights are both heavy.
+        // integers, and small-integer points keep the low-degree weights
+        // structured, so walk a squaring iteration (full-field after two
+        // steps) until both full-u64 lane weights are heavy.
+        let mut r0 = Fr::from_u64(0x9E37_79B9_7F4A_7C15);
         let r0 = (1u64..=4096)
             .map(|k| {
-                let seed = Fr::from_u64(k.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-                seed * seed + seed
+                r0 = r0 * r0 + Fr::from_u64(k);
+                r0
             })
             .find(|&r0| {
                 let weights = centered_lagrange_evals::<Fr>(DOMAIN, r0).unwrap();
