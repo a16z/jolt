@@ -338,3 +338,7 @@ Campaign so far: 40.3 → 19.67 s at k=32 (−51 %), 7,488 → 7,104 B, gas 5.05
 ## 23:14 — review respawned on Claude (codex provider flagged the review prompt)
 
 becbc44b failed at the provider: "flagged for possible cybersecurity risk" (review wording: exploit/bypass/adversarial). Respawned as e417b07c on `claude` / `opus-max` with neutral wording (counterexample / failing input). Note for future review prompts on codex: avoid "exploit", "bypass", "adversarial", "attack".
+
+## 23:52 — lane 7 landed (1a33868d9): default k = 16
+
+Idle: **k=16 default 16.51 s** (folds 0.73, quotient 1.87); WRAP_K=32 comparison 19.79 s. Bytes at default 7,392 / 7,533 / 352; 233 ecMul, 8 pairs, 123,144 Fr mul, gas 4,944,149. Phase counts unchanged 39/23/1/3/232. pr-tables k=16 primary. Campaign: **40.3 → 16.5 s (−59 %)** at 7,392 B payload (equal to pre-4-ary), gas 5.05 → 4.94 M. Waiting on review e417b07c; then PR-branch rebuild + PR body update.
