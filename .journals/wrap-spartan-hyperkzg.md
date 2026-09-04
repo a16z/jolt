@@ -312,3 +312,13 @@ Orchestrator, lane 4 (657b5f94) and lane 5b (f82b3078) were stopped by the resta
 Lane 5b (f82b3078): two-variable HyperKZG folds (u = r, ir, −r, −ir), binary terminal for the odd variable, five-point KZG batch with the divisor (X⁴ − r⁴)(X − r⁴) = X⁵ − r⁴X⁴ − r⁴X + r⁸ (two zero terms dropped → pairing pairs unchanged, not +2), sparse quintic division, exact VK powers (G2 β⁴/β⁵ replace β²/β³; G1 β³/β⁴ added). Source-derived counts at ℓ = 23: 11 fold commitments + 49 Fr; fold points 8,388,606 → 2,796,202; opening 2,240 → 1,952 B; payload 7,392 → 7,104, bincode 7,529 → 7,232; 216 ecMul, 8 pairing pairs, 123,121 Fr mul, gas 4,890,645 → 4,800,225. Tests/measurement deferred until lane 4 lands; the protocol change then needs a fresh adversarial review before landing on canonical.
 
 Lane 6 (8704273d) resumed for tests now (NEXTEST_TEST_THREADS=4 untimed; mutex for the gate); byte-identity check vs dbe2a2f9e required.
+
+## 22:21 — lanes 6 and 4 landed (a43da7d18, a244203fb); lane 5b in test/land phase
+
+Lane 6 (8704273d): idle 26.03 → 25.20 s; column evaluations 372 → 2 ms (stage-A bound values reused; only six sparse T1 VK columns evaluated), packed RLC 659 → 133 ms (typed row-block, 234 padding slots skipped); proofs byte-identical to dbe2a2f9e (unit 4,734 B and real). Bytes/gas unchanged.
+
+Lane 4 (657b5f94): hybrid bucket accumulation (projective only for long carry chains, affine otherwise), size/width-aware u16/u32 dispatch at N ≥ 2^22, whole-MSM skew fallback deleted. Same-base 26.31 → 22.96 s; integrated with lane 6: **22.41 s** idle (CPU/wall 8.27, load 3.0 → 5.3). Phase 1a/1b/2a 0.88/1.09/6.32 → 0.78/0.87/5.42 s; folds 5.92 → 4.08 s (0.71 → 0.49 µs/pt); quotient unchanged 3.76 s (0.448 µs/pt). Isolated N=2^23 medians: Fr 0.413 → 0.418 (no uniform-scalar win; the gain is on the wrapper's skewed digits), u16 0.0446 → 0.0260, u32 0.102 → 0.052. Ten threads win (4P+6E). The full-Fr 0.30 µs/pt floor was not reached: tile/tree/shared-reduction/window tiers all rejected (best tile median 0.406). 234/234 + real 1/1; bytes/gas unchanged (7,392 / 7,529 / 352; 226 ecMul, 123,229 Fr mul, 4,890,645 gas).
+
+Cumulative: **40.3 → 22.41 s (−44 %)**, 7,488 → 7,392 B, gas 5.05 → 4.89 M, soundness unchanged (proofs byte-identical where the protocol was untouched; every landing re-ran the full tamper suite).
+
+Lane 5b (f82b3078) resumed: rebase onto a244203fb, gates, real gate incl. new-layout tampers, k=16 measurement, land. Then review #5 (4-ary fold soundness). Expected: −288 B, −90k gas, folds ≈ ÷3.
