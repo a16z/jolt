@@ -290,3 +290,7 @@ Lane 3 (69ab7fd6): honest online 29.8 → 27.8 s (idle). Preparation 564 → 454
 Cumulative: 40.3 → 27.8 s (−31 %), 7,488 → 7,392 B, gas 5.05 → 4.87 M. Remaining big items: phase 2a 7.4 s (67 full-Fr columns), HyperKZG 5.8 folds + 3.8 quotient, phase 1a 1.8, 1b 1.15, T1 stage A 1.3, T2 stage A 1.9, RLC 1.0, column evals 1.15.
 
 Launched: lane 5a = 5e7ac8a5 (T2 LogUp s = 3 → 4/6/9 sweep + phase-2a packing; `perf5-lane5a`), design lane db67ae11 (virtual ξ-operands: drop the 44 full-Fr phase-2a columns — soundness + cost + spec, read-only, `perf5/design`). Lane 4 (657b5f94, MSM) still running. Lane 5b (4-ary HyperKZG fold) waits for lane 4.
+
+## 20:13 — virtual ξ-operands: NO-GO (design lane db67ae11)
+
+`.journals/plan-virtual-operands.md`: T2's operand columns are not same-row linear combinations of the chunk columns — each operand pulls chunks through a row-dependent source map (other rows/cells), which is exactly what the committed operand column + its copy/fingerprint check binds today. A direct `AffineForm` substitution is unsound; a sound replacement needs a source-row sumcheck plus a two-point reduction (32–48 h) and, once the source-row proof is priced, saves ≈ 0 s. Even the unsound cost model saved only 2.6 s at 0.42 µs/pt (1.25 s at the 0.30 floor). Bytes would have been −64 B at k=32. Closed; phase 2a's remaining lever is the helper grouping (lane 5a) and the MSM rate (lane 4).
