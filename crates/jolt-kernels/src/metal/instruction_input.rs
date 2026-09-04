@@ -310,6 +310,9 @@ impl MetalBackend {
 
 impl PrepareKernel<AkitaField, InstructionInput<AkitaField>> for MetalBackend {
     fn prefetch(&self, session: &mut ProofSession) -> Result<(), KernelError<AkitaField>> {
+        // Stage 3 is the last stage with slack before the registers read-write
+        // sequence reads the read-RAF rows plane in Stage 4.
+        self.prime_instruction_read_raf_source(session)?;
         self.prefetch_instruction_input(session)
     }
 

@@ -130,8 +130,15 @@ pub(super) fn start_instruction_read_raf_scatter(
         })
 }
 
-impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend {
-    fn prefetch(&self, session: &mut ProofSession) -> Result<(), KernelError<AkitaField>> {
+impl MetalBackend {
+    /// Starts the GPU page-mapping of the Stage-1 instruction read-RAF rows well
+    /// before Stage 4 touches them. The registers read-write cycle sequence reads
+    /// that plane in its first message; without a primer the first command pays
+    /// the whole first-GPU-touch cost on the critical path (639 ms at T=2^28).
+    pub(super) fn prime_instruction_read_raf_source(
+        &self,
+        session: &mut ProofSession,
+    ) -> Result<(), KernelError<AkitaField>> {
         if session
             .state::<PendingInstructionReadRafScatter>()
             .is_some()
@@ -139,10 +146,50 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
                 .state::<PendingInstructionReadRafSourcePrimer>()
                 .is_some()
         {
+            return Ok(());
+        }
+        let Some(owner) = session
+            .state::<InstructionReadRafStage1Owner>()
+            .filter(|owner| owner.receipt().rows() >= SOURCE_PRIMER_CUTOFF_ELEMENTS)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        self.submit_source_primer(session, &owner)
+    }
+
+    fn submit_source_primer(
+        &self,
+        session: &mut ProofSession,
+        owner: &InstructionReadRafStage1Owner,
+    ) -> Result<(), KernelError<AkitaField>> {
+        let pending = self
+            .context
+            .submit_instruction_read_raf_source_primer(owner)
+            .map_err(metal_prepare_error)?;
+        let span = tracing::info_span!("MetalInstructionReadRaf::source_primer_submit",);
+        let _entered = span.enter();
+        session.park(pending);
+        Ok(())
+    }
+}
+
+impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend {
+    fn prefetch(&self, session: &mut ProofSession) -> Result<(), KernelError<AkitaField>> {
+        if session
+            .state::<PendingInstructionReadRafScatter>()
+            .is_some()
+        {
             return Err(KernelError::InvariantViolation {
                 reason: "Instruction Read-RAF prefetch was submitted more than once",
             });
         }
+        // The source primer may already be in flight from the Stage-3 hook
+        // (`prime_instruction_read_raf_source`); the scatter prefetch runs on top
+        // of it and the primer-only branch below must not submit a second one.
+        let primer_in_flight = session
+            .state::<PendingInstructionReadRafSourcePrimer>()
+            .is_some();
         let Some(owner) = session
             .state::<InstructionReadRafStage1Owner>()
             .filter(|owner| owner.receipt().rows() >= SOURCE_PRIMER_CUTOFF_ELEMENTS)
@@ -268,14 +315,10 @@ impl PrepareKernel<AkitaField, InstructionReadRaf<AkitaField>> for MetalBackend 
             return Ok(());
         }
 
-        let pending = self
-            .context
-            .submit_instruction_read_raf_source_primer(&owner)
-            .map_err(metal_prepare_error)?;
-        let span = tracing::info_span!("MetalInstructionReadRaf::source_primer_submit",);
-        let _entered = span.enter();
-        session.park(pending);
-        Ok(())
+        if primer_in_flight {
+            return Ok(());
+        }
+        self.submit_source_primer(session, &owner)
     }
 
     fn prepare(

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use metal::{
-    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer,
+    foreign_types::ForeignType, objc::rc::autoreleasepool, Buffer, CommandBuffer, CommandQueue,
     MTLResourceOptions, MTLSize,
 };
 
@@ -103,6 +103,9 @@ pub(crate) struct PendingInstructionReadRafSourcePrimer {
     command: Option<CommandBuffer>,
     checksums: Buffer,
     source_identities: [usize; 2],
+    // The primer runs on its own queue so the page mapping it triggers does not
+    // serialize behind the stage kernels on the shared queue.
+    _queue: CommandQueue,
 }
 
 #[cfg(feature = "allocative")]
@@ -515,7 +518,8 @@ impl SolinasMetal {
             .device
             .new_buffer(checksum_bytes, MTLResourceOptions::StorageModePrivate);
 
-        let command = self.queue.new_command_buffer().to_owned();
+        let queue = self.device.new_command_queue();
+        let command = queue.new_command_buffer().to_owned();
         autoreleasepool(|| {
             let encoder = command.new_compute_command_encoder();
             encoder.set_compute_pipeline_state(&pipeline);
@@ -547,6 +551,7 @@ impl SolinasMetal {
             command: Some(command),
             checksums,
             source_identities,
+            _queue: queue,
         })
     }
 }
