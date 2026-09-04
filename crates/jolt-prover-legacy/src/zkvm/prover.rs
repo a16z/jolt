@@ -3799,6 +3799,30 @@ mod tests {
         verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
     }
 
+    /// Trace-only regression harness for ZeroOS's munmap region accounting
+    /// (LayerZero-Labs/ZeroOS c572b88a, pinned in the workspace Cargo.toml):
+    /// every guest allocation is past mallocng's individual-mmap threshold,
+    /// so each `free` issues a real `munmap`, and the guest additionally
+    /// issues POSIX-legal repeated and partial unmaps that must never reach
+    /// the ZeroOS kernel heap's free. Before that revision, ZeroOS forwarded
+    /// any guest-supplied (addr, len) straight to `kfree`, corrupting the
+    /// kernel heap free list and killing the guest; this asserts the guest
+    /// runs to completion.
+    #[test]
+    #[serial]
+    fn large_alloc_munmap_trace() {
+        let mut program = host::Program::new("large-alloc-guest");
+        program.set_std(true);
+        program.set_func("large_alloc_roundtrip");
+        program.set_heap_size(16777216);
+        program.set_stack_size(1048576);
+        let (_, _, _, io_device) = program.trace(&[], &[], &[]);
+        assert!(
+            !io_device.panic,
+            "large-alloc guest panicked: a non-exact munmap corrupted the ZeroOS kernel heap"
+        );
+    }
+
     /// Test BlindFold R1CS satisfaction using real sumcheck data from muldiv proof.
     ///
     /// This test extracts sumcheck polynomials from all 6 stages of a real Jolt proof
