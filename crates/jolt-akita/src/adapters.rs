@@ -951,10 +951,10 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
     )
 }
 
-/// Ends the outer Jolt transcript at one statement-bound challenge and uses
-/// that challenge to domain-separate the nested Akita transcript. Akita is the
-/// terminal Jolt opening stage, so its proof is not reabsorbed into the outer
-/// transcript after this challenge; doing so could not affect acceptance.
+/// Ends outer Jolt challenge derivation at one statement-bound challenge and
+/// uses it to domain-separate the nested Akita transcript. No subsequent Jolt
+/// challenge consumes the terminal opening proof, so reabsorbing that proof
+/// into the outer transcript could not affect acceptance.
 pub(crate) fn bridged_akita_transcript<T>(
     jolt_transcript: &mut T,
     session_label: &[u8],
