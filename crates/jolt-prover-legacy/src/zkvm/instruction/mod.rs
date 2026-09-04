@@ -339,6 +339,67 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualXORROT63 => {
                 LookupTables::VirtualXORROT63(Default::default())
             }
+            JoltInstructionKind::VirtualXORROT2 => LookupTables::VirtualXORROT2(Default::default()),
+            JoltInstructionKind::VirtualXORROT3 => LookupTables::VirtualXORROT3(Default::default()),
+            JoltInstructionKind::VirtualXORROT8 => LookupTables::VirtualXORROT8(Default::default()),
+            JoltInstructionKind::VirtualXORROT9 => LookupTables::VirtualXORROT9(Default::default()),
+            JoltInstructionKind::VirtualXORROT19 => {
+                LookupTables::VirtualXORROT19(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT20 => {
+                LookupTables::VirtualXORROT20(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT21 => {
+                LookupTables::VirtualXORROT21(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT23 => {
+                LookupTables::VirtualXORROT23(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT25 => {
+                LookupTables::VirtualXORROT25(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT28 => {
+                LookupTables::VirtualXORROT28(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT36 => {
+                LookupTables::VirtualXORROT36(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT37 => {
+                LookupTables::VirtualXORROT37(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT39 => {
+                LookupTables::VirtualXORROT39(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT43 => {
+                LookupTables::VirtualXORROT43(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT44 => {
+                LookupTables::VirtualXORROT44(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT46 => {
+                LookupTables::VirtualXORROT46(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT49 => {
+                LookupTables::VirtualXORROT49(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT50 => {
+                LookupTables::VirtualXORROT50(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT54 => {
+                LookupTables::VirtualXORROT54(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT56 => {
+                LookupTables::VirtualXORROT56(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT58 => {
+                LookupTables::VirtualXORROT58(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT61 => {
+                LookupTables::VirtualXORROT61(Default::default())
+            }
+            JoltInstructionKind::VirtualXORROT62 => {
+                LookupTables::VirtualXORROT62(Default::default())
+            }
             JoltInstructionKind::VirtualXORROTW16 => {
                 LookupTables::VirtualXORROTW16(Default::default())
             }
@@ -537,7 +598,8 @@ define_rv64imac_trait_impls! {
         VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
         VirtualAlignAddr,
         VirtualShiftDataB, VirtualShiftDataH, VirtualShiftDataW,
-        VirtualXORROTL1
+        VirtualXORROTL1,
+        VirtualXORROT2, VirtualXORROT3, VirtualXORROT8, VirtualXORROT9, VirtualXORROT19, VirtualXORROT20, VirtualXORROT21, VirtualXORROT23, VirtualXORROT25, VirtualXORROT28, VirtualXORROT36, VirtualXORROT37, VirtualXORROT39, VirtualXORROT43, VirtualXORROT44, VirtualXORROT46, VirtualXORROT49, VirtualXORROT50, VirtualXORROT54, VirtualXORROT56, VirtualXORROT58, VirtualXORROT61, VirtualXORROT62
     ]
 }
 

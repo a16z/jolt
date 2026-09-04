@@ -158,13 +158,8 @@ impl Keccak256SequenceBuilder {
             self.asm.emit_r(Kind::VirtualXORROTL1, d, c_prev, c_next);
         }
 
-        for x in 0..5 {
-            let d = self.d_lane(x);
-            for y in 0..5 {
-                let a = self.lane(x, y);
-                self.asm.xor(Reg(a), Reg(d), a);
-            }
-        }
+        let a = self.lane(0, 0);
+        self.asm.xor(Reg(a), Reg(self.d_lane(0)), a);
     }
 
     /// Walks the 24-lane π cycle backwards from `RHO_PI_FIRST_SOURCE`: each
@@ -185,8 +180,35 @@ impl Keccak256SequenceBuilder {
 
     fn emit_rho_pi_lane(&mut self, source: (usize, usize), destination: u8) {
         let (x, y) = source;
+        let kind = match 64 - ROTATION_OFFSETS[x][y] {
+            2 => Kind::VirtualXORROT2,
+            3 => Kind::VirtualXORROT3,
+            8 => Kind::VirtualXORROT8,
+            9 => Kind::VirtualXORROT9,
+            19 => Kind::VirtualXORROT19,
+            20 => Kind::VirtualXORROT20,
+            21 => Kind::VirtualXORROT21,
+            23 => Kind::VirtualXORROT23,
+            25 => Kind::VirtualXORROT25,
+            28 => Kind::VirtualXORROT28,
+            36 => Kind::VirtualXORROT36,
+            37 => Kind::VirtualXORROT37,
+            39 => Kind::VirtualXORROT39,
+            43 => Kind::VirtualXORROT43,
+            44 => Kind::VirtualXORROT44,
+            46 => Kind::VirtualXORROT46,
+            49 => Kind::VirtualXORROT49,
+            50 => Kind::VirtualXORROT50,
+            54 => Kind::VirtualXORROT54,
+            56 => Kind::VirtualXORROT56,
+            58 => Kind::VirtualXORROT58,
+            61 => Kind::VirtualXORROT61,
+            62 => Kind::VirtualXORROT62,
+            63 => Kind::VirtualXORROT63,
+            _ => unreachable!("nonzero Keccak rho rotation"),
+        };
         self.asm
-            .rotl64(Reg(self.lane(x, y)), ROTATION_OFFSETS[x][y], destination);
+            .emit_r(kind, destination, self.lane(x, y), self.d_lane(x));
     }
 
     fn chi(&mut self) {
