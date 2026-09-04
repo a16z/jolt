@@ -67,7 +67,7 @@ prover = [
 minimal = ["ark-ec/std", "ark-ff/std", "ark-std/std", "ark-ff/asm", "rayon"]
 allocative = ["dep:inferno"]
 monitor = ["dep:sysinfo"]
-pprof = ["dep:pprof", "dep:prost"]
+pprof = ["dep:pprof"]
 test_incremental = []
 challenge-254-bit = []
 field-inline = [
@@ -141,15 +141,7 @@ jolt-inlines-keccak256 = { workspace = true, features = [
   "host",
 ], optional = true }
 sysinfo = { workspace = true, optional = true }
-pprof = { version = "0.15", features = [
-  "prost-codec",
-  "flamegraph",
-  "frame-pointer",
-], optional = true }
-prost = { version = "0.14", optional = true }
-
-[package.metadata.cargo-machete]
-ignored = ["prost"]
+pprof = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
