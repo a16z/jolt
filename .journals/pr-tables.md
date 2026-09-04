@@ -165,16 +165,16 @@ feature-enabled real gate passed 1/1 in 45.104 s.
 ### PERF-5 lane 5a after lane 3
 
 T2 grouped-inverse LogUp uses `s = 4`: 17 helpers, 62 phase-2a full-Fr
-columns, and two 32-column groups with two padding slots. The real gate was
-prebuilt before the measurement lock; command-start load was 2.77 and the
-honest-clock load was 3.95 -> 6.83.
+columns, and two 32-column groups with two padding slots. The post-rebase real
+gate was prebuilt before the measurement lock; command-start load was 2.84 and
+the honest-clock load was 4.34 -> 5.90.
 
 | measurement | s=3 | s=4 |
 |---|---:|---:|
-| T2 phase-2a commitment | 7,140 ms | 6,227 ms |
-| T2 stage-A row member | 1,910 ms | 2,700 ms |
-| honest online wall | 27,792 ms | 26,624 ms |
-| process CPU | 219.040 s | 215.430 s |
+| T2 phase-2a commitment | 7,140 ms | 6,233 ms |
+| T2 stage-A row member | 1,910 ms | 2,637 ms |
+| honest online wall | 27,792 ms | 26,072 ms |
+| process CPU | 219.040 s | 217.560 s |
 | payload / bincode / statement | 7,392 / 7,530 / 352 B | 7,392 / 7,529 / 352 B |
 | proof wire / key / full groups | 20 / 7 / 27 | 19 / 7 / 26 |
 | T2 1b / 2a / 2b / 2c groups | 3 / 3 / 1 / 2 | 3 / 2 / 1 / 2 |
@@ -184,6 +184,6 @@ honest-clock load was 3.95 -> 6.83.
 | Keccak / pairing pairs | 846 / 8 | 848 / 8 |
 | N4 gas | 4,868,177 | 4,890,645 |
 
-Sweep decision: `s = 6` models at 26.942 s and +64 B; `s = 9` at
-28.060 s and +160 B. Both exceed the +32 B cap, so `s = 4` remains selected.
+Sweep decision: `s = 6` models at 26.368 s and +64 B; `s = 9` at
+27.452 s and +160 B. Both exceed the +32 B cap, so `s = 4` remains selected.
 The model and the correctness-run ratios are in `lanes/perf5-lane5a.md`.
