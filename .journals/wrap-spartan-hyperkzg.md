@@ -294,3 +294,11 @@ Launched: lane 5a = 5e7ac8a5 (T2 LogUp s = 3 → 4/6/9 sweep + phase-2a packing;
 ## 20:13 — virtual ξ-operands: NO-GO (design lane db67ae11)
 
 `.journals/plan-virtual-operands.md`: T2's operand columns are not same-row linear combinations of the chunk columns — each operand pulls chunks through a row-dependent source map (other rows/cells), which is exactly what the committed operand column + its copy/fingerprint check binds today. A direct `AffineForm` substitution is unsound; a sound replacement needs a source-row sumcheck plus a two-point reduction (32–48 h) and, once the source-row proof is priced, saves ≈ 0 s. Even the unsound cost model saved only 2.6 s at 0.42 µs/pt (1.25 s at the 0.30 floor). Bytes would have been −64 B at k=32. Closed; phase 2a's remaining lever is the helper grouping (lane 5a) and the MSM rate (lane 4).
+
+## 20:45 — PERF-5 lane 5a landed (dbe2a2f9e); lanes 5b + 6 launched compile-only
+
+Lane 5a (5e7ac8a5): s = 3 → 4 (17 helpers; phase 2a 67 → 62 columns / 3 → 2 groups). Honest online 27.8 → 26.07 s (idle); phase 2a 7.14 → 6.23 s; T2 stage A 1.91 → 2.64 s (higher-degree helper terms). Bytes 7,392 / 7,529 / 352; gas 4,868,177 → 4,890,645. Sweep: s = 6 (E 26.4 s, +64 B) and s = 9 (E 27.5 s, +160 B) rejected by the byte cap and by wall — the helper-column saving is eaten by T2 sumcheck growth.
+
+Cumulative: 40.3 → 26.07 s (−35 %). Lane 4 (657b5f94, MSM kernels) still measuring (no commits yet after 1.6 h — it waited on the mutex most of that time; steered 20:16). To keep the machine quiet for lane 4, the next two lanes run compile-only and report "ready for tests", to be resumed after lane 4 lands: lane 5b = f82b3078 (4-ary HyperKZG fold: fold commitments ≈ N/3, −288 B model, +68k gas, jolt-hyperkzg), lane 6 = 8704273d (stream tail: reuse bound values instead of re-evaluating 27 groups at r_A −1.1 s; typed packed RLC −0.4 s; member setup).
+
+Projected end state after lanes 4/5b/6 at k=32: ≈ 15–17 s (phase 2a → ≈ 4.4, HyperKZG → ≈ 3.5, stage A ≈ 5, commits 1a/1b ≈ 2.1, tail ≈ 1, adaptation ≈ 1.1). k=16 ≈ −1.7 s at +288 B; k=8 ≈ −2.5 s at +1,088 B.
