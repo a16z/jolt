@@ -8,7 +8,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-#[cfg(feature = "allocative")]
+#[cfg(all(feature = "allocative", feature = "field-inline"))]
 use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
@@ -258,8 +258,9 @@ pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor
 }
 
 /// [`visit_heap_free_elements`] through an `Arc`: the shared buffer's bytes
-/// are reported by whichever holder the visitor reaches.
-#[cfg(feature = "allocative")]
+/// are reported by whichever holder the visitor reaches. Used by the
+/// session-shared FR register rows.
+#[cfg(all(feature = "allocative", feature = "field-inline"))]
 pub(crate) fn visit_shared_heap_free_elements<T>(values: &Arc<Vec<T>>, visitor: &mut Visitor<'_>) {
     visit_heap_free_elements(values, visitor);
 }
