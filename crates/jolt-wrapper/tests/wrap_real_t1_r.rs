@@ -166,8 +166,11 @@ const LOG_ROWS: usize = 18;
 const ROWS: usize = 1 << LOG_ROWS;
 #[test]
 fn real_wrapper_round_trip_and_tampers() {
+    assert_eq!(WrapConfig::default().packing_factor, 16);
     let k = std::env::var("WRAP_K")
-        .map_or(Ok(32), |value| value.parse())
+        .map_or(Ok(WrapConfig::default().packing_factor), |value| {
+            value.parse()
+        })
         .expect("WRAP_K is an integer");
     assert!(matches!(k, 16 | 32));
     let config = WrapConfig {
@@ -608,6 +611,13 @@ fn real_wrapper_round_trip_and_tampers() {
         t2_phases[2].group_count,
         statement.commitment_phases[4].group_count - t2_vk_groups,
     ];
+    let (expected_wire_groups, expected_total_groups) = match k {
+        16 => ([21, 5, 4, 1, 2], 44),
+        32 => ([12, 3, 2, 1, 1], 26),
+        _ => panic!("unsupported packing factor"),
+    };
+    assert_eq!(wire_phase_groups, expected_wire_groups);
+    assert_eq!(total_groups, expected_total_groups);
     tamper_suite(&wrapped, wire_phase_groups, k, |proof| {
         verify_wrapped_with_key(&verifier_key, proof, &verifier_setup).is_err()
     });

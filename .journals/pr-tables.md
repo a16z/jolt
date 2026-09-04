@@ -1,11 +1,14 @@
 # Wrapper draft PR — R1CS + Spartan final measurements
 
 Source: non-ignored `wrap_real_t1_r::real_wrapper_round_trip_and_tampers`, cached
-fibonacci `2^18` proof, Mac mini M4, 10 Rayon threads. Default `k=32`;
-`WRAP_K=16` selects the comparison.
+fibonacci `2^18` proof, Mac mini M4, 10 Rayon threads. Default `k=16`;
+`WRAP_K=32` selects the comparison.
 
-Both current columns were measured in PERF-5 lane 5b after the MSM and
+Both current columns were remeasured in PERF-5 lane 7 after the MSM and
 stream-tail lanes landed. Historical lane comparisons remain labeled below.
+Selecting k=16 saves 3.278 s online in this pair for 288 B payload and
+143,924 modeled gas (3.0%); payload matches the pre-four-ary k=32 proof at
+7,392 B. The lane-5b pair used for the decision saved 2.693 s.
 
 ## Link coverage
 
@@ -27,25 +30,29 @@ to R and do not enter the 173-scalar link.
 
 ## Fiat-Shamir challenge schedule
 
-| committed phase | challenges drawn after commitment | count |
-|---|---|---:|
-| phase 1a: T1 + W | 38 T1 randomizers, `theta` | 39 |
-| T2 phase 1b | `xi`, `alpha`, ten CopyLink `(beta, gamma)` pairs, scalar-link `rho` | 23 |
-| T2 phase 2a | `fp_root` | 1 |
-| T2 phase 2b | `beta`, `fp_combine`, `copy_root` | 3 |
-| T2 phase 2c + CopyLink helpers | T2 row/member challenges; ten CopyLink points and weights | 232 |
+| committed phase | challenges drawn after commitment | k=16 | k=32 |
+|---|---|---:|---:|
+| phase 1a: T1 + W | 38 T1 randomizers, `theta` | 39 | 39 |
+| T2 phase 1b | `xi`, `alpha`, ten CopyLink `(beta, gamma)` pairs, scalar-link `rho` | 23 | 23 |
+| T2 phase 2a | `fp_root` | 1 | 1 |
+| T2 phase 2b | `beta`, `fp_combine`, `copy_root` | 3 | 3 |
+| T2 phase 2c + CopyLink helpers | T2 row/member challenges; ten CopyLink points and weights | 232 | 232 |
+
+The final-phase count remains 232 at both packings: 22 T2 challenges plus
+ten CopyLink points and three weights per link (`10 × (18 + 3)`). Group
+counts do not enter this phase count.
 
 ## Proof bytes
 
 Measured four-ary opening layout; T2 uses lane 5a's `s=4`.
 
-| section | k=32 | k=16 |
+| section | k=16 | k=32 |
 |---|---:|---:|
-| phase 1a wire commitments | 384 | 672 |
-| T2 phase 1b wire commitments | 96 | 160 |
-| T2 phase 2a wire commitments | 64 | 128 |
+| phase 1a wire commitments | 672 | 384 |
+| T2 phase 1b wire commitments | 160 | 96 |
+| T2 phase 2a wire commitments | 128 | 64 |
 | T2 phase 2b wire commitments | 32 | 32 |
-| T2 phase 2c + CopyLink helpers | 32 | 64 |
+| T2 phase 2c + CopyLink helpers | 64 | 32 |
 | Spartan outer, 13 committed rounds | 864 | 864 |
 | Spartan inner, 13 clear rounds | 832 | 832 |
 | stage A, 18 committed rounds | 1,184 | 1,184 |
@@ -54,12 +61,12 @@ Measured four-ary opening layout; T2 uses lane 5a's `s=4`.
 | five factor evaluations | 160 | 160 |
 | stage B clear rounds | 640 | 640 |
 | reduced claims (opening + Az/Bz/Cz/W) | 160 | 160 |
-| HyperKZG opening | 1,952 | 1,792 |
-| **proof payload** | **7,104** | **7,392** |
-| **bincode proof** | **7,232** | **7,533** |
+| HyperKZG opening | 1,792 | 1,952 |
+| **proof payload** | **7,392** | **7,104** |
+| **bincode proof** | **7,533** | **7,232** |
 | statement, 11 Fr | 352 | 352 |
-| **payload + statement** | **7,456** | **7,744** |
-| **bincode + statement** | **7,584** | **7,885** |
+| **payload + statement** | **7,744** | **7,456** |
+| **bincode + statement** | **7,885** | **7,584** |
 
 ## Geometry
 
@@ -75,45 +82,48 @@ Measured four-ary opening layout; T2 uses lane 5a's `s=4`.
 | total terms / term rounds | 500 / 9 |
 | T1 / CopyLink / T2 / scalar / carry terms | 232 / 100 / 166 / 1 / 1 |
 
-| groups | k=32 | k=16 |
+| groups | k=16 | k=32 |
 |---|---:|---:|
-| proof wire / key / full | 19 / 7 / 26 | 33 / 11 / 44 |
-| T1 sent / VK | 11 / 2 | 20 / 2 |
+| proof wire / key / full | 33 / 11 / 44 | 19 / 7 / 26 |
+| T1 sent / VK | 20 / 2 | 11 / 2 |
 | Spartan W | 1 | 1 |
-| CopyLink VK | 4 | 8 |
-| T2 1b / 2a / 2b / 2c | 3 / 2 / 1 / 2 | 5 / 4 / 1 / 2 |
+| CopyLink VK | 8 | 4 |
+| T2 1b / 2a / 2b / 2c | 5 / 4 / 1 / 2 | 3 / 2 / 1 / 2 |
 | final helper groups | 0 | 0 |
+| opening variables / committed folds | 22 / 10 | 23 / 11 |
+| transmitted opening Fr evaluations | 45 | 49 |
 
 ## Timing
 
-| phase (ms) | k=32 | k=16 |
+| phase (ms) | k=16 | k=32 |
 |---|---:|---:|
-| deterministic SRS setup (offline) | 7,704 | 3,805 |
-| key/profile (offline) | 207 | 166 |
-| offline key commitments | 418 | 305 |
-| wrapper preparation | 451 | 443 |
-| T1/R stream adaptation | 75 | 65 |
-| T2 adaptation | 647 | 652 |
-| phase 1a commitment | 887 | 734 |
-| T2 phase 1b commitment | 821 | 769 |
-| T2 phase 2a commitment | 5,425 | 5,576 |
-| T2 phase 2b commitment | 91 | 66 |
-| CopyLink helpers | 34 | 35 |
-| T2 phase 2c + helpers | 341 | 325 |
-| T2 finish | 207 | 242 |
-| member construction | 780 | 792 |
-| proof stages/opening | 9,907 | 7,273 |
-| HyperKZG fold commitments, included above | 1,422.473 | 751.742 |
-| HyperKZG quotient MSM, included above | 3,713.000 | 1,963.131 |
-| HyperKZG opening total, included above | 5,693.959 | 3,042.152 |
-| **honest online total** | **19,671** | **16,978** |
-| verifier (outside online clock) | 27 | 24 |
+| deterministic SRS setup (offline) | 3,780 | 7,589 |
+| key/profile (offline) | 165 | 190 |
+| offline key commitments | 347 | 403 |
+| wrapper preparation | 457 | 439 |
+| T1/R stream adaptation | 66 | 72 |
+| T2 adaptation | 642 | 637 |
+| phase 1a commitment | 776 | 793 |
+| T2 phase 1b commitment | 745 | 807 |
+| T2 phase 2a commitment | 5,446 | 5,354 |
+| T2 phase 2b commitment | 64 | 95 |
+| CopyLink helpers | 36 | 34 |
+| T2 phase 2c + helpers | 295 | 338 |
+| T2 finish | 217 | 327 |
+| member construction | 802 | 759 |
+| proof stages/opening | 6,954 | 10,124 |
+| HyperKZG fold commitments, included above | 733.848 | 1,332.783 |
+| HyperKZG quotient MSM, included above | 1,869.708 | 3,723.125 |
+| HyperKZG opening total, included above | 2,794.118 | 5,644.792 |
+| **honest online total** | **16,507** | **19,785** |
+| verifier (outside online clock) | 27 | 25 |
 
-The prebuilt k=32/k=16 gates held the mutex and entered at one-minute loads
-3.49/3.71. Honest-clock start/end loads were 4.72/5.95 and 4.38/6.00;
-process CPU was 160.050/136.610 s. No competing compiler or test job was
-observed in either accepted window. Full loads and the matched binary-fold
-baseline (22.636 s online, 8.554 s opening) are in `lanes/perf5-lane5b.md`.
+The prebuilt k=16/k=32 gates held the mutex and entered at one-minute loads
+2.47/1.41. Honest-clock start/end loads were 3.16/5.12 and 2.25/4.66;
+process CPU was 136.600/158.380 s. No competing compiler or test job was
+observed in either accepted window. Full loads, commands, and logs are in
+`lanes/perf5-lane7.md`; the matched binary-fold baseline (22.636 s online,
+8.554 s opening) remains in `lanes/perf5-lane5b.md`.
 
 ### PERF-5 lane 3 after lane 2
 
@@ -135,19 +145,19 @@ cost remained 4,868,177 gas.
 
 ## Verifier cost
 
-| operation | k=32 | k=16 |
+| operation | k=16 | k=32 |
 |---|---:|---:|
-| ecMul | 216 | 233 |
-| ecAdd | 216 | 233 |
+| ecMul | 233 | 216 |
+| ecAdd | 233 | 216 |
 | pairing pairs | 8 | 8 |
-| Fr multiplications | 123,121 | 123,144 |
+| Fr multiplications | 123,144 | 123,121 |
 | Fr inversions | 8 | 8 |
-| Keccak | 839 | 852 |
-| **N4 gas model** | **4,800,225** | **4,944,149** |
+| Keccak | 852 | 839 |
+| **N4 gas model** | **4,944,149** | **4,800,225** |
 
 The same observer counts transcript replay, native sparse-matrix evaluation, sumchecks, links,
-term reduction, and the final opening. The k=32 native sparse-matrix block accounts for 87,081
-Fr multiplications over 35,346 nonzeros. Against the integrated binary-fold k=32
+term reduction, and the final opening. The native sparse-matrix block at both packings
+accounts for 87,081 Fr multiplications over 35,346 nonzeros. Against the integrated binary-fold k=32
 baseline, four-ary folding removes 10 ecMul and 108 Fr multiplications, lowering
 modeled gas by 90,420. The sparse quintic divisor still needs four opening
 pairing pairs, so the wrapper total remains eight.
@@ -166,8 +176,8 @@ The real gate mutates every serialized field independently and requires rejectio
   mismatch.
 
 The permanent scalar contract pins the 173-wire order and occurrence-weight formula.
-Wrapper + HyperKZG suites passed 94/94. The feature-enabled real gates passed
-1/1 at both k=32 and k=16, including all opening fields. The PCS tests reject
+Lane 5b's wrapper + HyperKZG suites passed 94/94. Lane 7's feature-enabled real gates passed
+1/1 at both k=16 and k=32, including all opening fields. The PCS tests reject
 inconsistent folds with valid standalone KZG openings and corrupt G1/G2 VK powers.
 
 ### PERF-5 lane 5a after lane 3

@@ -187,8 +187,8 @@ fn report(
         expected_payload,
         expected_bincode,
     ) = match k {
-        32 => (11, 12, 1_952, 7_104, 7_232),
         16 => (10, 11, 1_792, 7_392, 7_533),
+        32 => (11, 12, 1_952, 7_104, 7_232),
         _ => panic!("unsupported packing factor"),
     };
     assert_eq!(proof.opening.com.len(), expected_levels);
@@ -201,20 +201,23 @@ fn report(
     assert_eq!(proof.payload_bytes(), expected_payload);
     assert_eq!(proof.bincode_bytes(), expected_bincode);
     assert_eq!(32 * statement_fields, 352);
-    if k == 32 {
-        assert_eq!(
-            cost,
-            VerifierCost {
-                ec_mul: 216,
-                ec_add: 216,
-                pairing_pairs: 8,
-                fr_mul: 123_121,
-                fr_inv: 8,
-                keccak: 839,
-            }
-        );
-        assert_eq!(estimated_gas(cost, proof), 4_800_225);
-    }
+    let (ec_mul, fr_mul, keccak, gas) = match k {
+        16 => (233, 123_144, 852, 4_944_149),
+        32 => (216, 123_121, 839, 4_800_225),
+        _ => panic!("unsupported packing factor"),
+    };
+    assert_eq!(
+        cost,
+        VerifierCost {
+            ec_mul,
+            ec_add: ec_mul,
+            pairing_pairs: 8,
+            fr_mul,
+            fr_inv: 8,
+            keccak,
+        }
+    );
+    assert_eq!(estimated_gas(cost, proof), gas);
     println!(
         "uptime_start={} uptime_end={}",
         String::from_utf8_lossy(uptime.0).trim(),

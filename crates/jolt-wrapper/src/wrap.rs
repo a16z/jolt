@@ -43,7 +43,7 @@ use crate::stream::{
 use crate::SpartanError;
 
 pub const DEFAULT_COMMON_LOG_ROWS: usize = 18;
-pub const DEFAULT_PACKING_FACTOR: usize = 32;
+pub const DEFAULT_PACKING_FACTOR: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WrapConfig {
