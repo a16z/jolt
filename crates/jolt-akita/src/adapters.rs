@@ -951,21 +951,10 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
     )
 }
 
-impl AppendToTranscript for AkitaBatchProof {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            b"akita_schedule_selection",
-            SCHEDULE_SELECTION_BYTES as u64,
-        ));
-        transcript.append_bytes(&self.schedule_selection);
-        transcript.append(&LabelWithCount(
-            b"akita_proof",
-            self.backend_proof.len() as u64,
-        ));
-        transcript.append_bytes(&self.backend_proof);
-    }
-}
-
+/// Ends the outer Jolt transcript at one statement-bound challenge and uses
+/// that challenge to domain-separate the nested Akita transcript. Akita is the
+/// terminal Jolt opening stage, so its proof is not reabsorbed into the outer
+/// transcript after this challenge; doing so could not affect acceptance.
 pub(crate) fn bridged_akita_transcript<T>(
     jolt_transcript: &mut T,
     session_label: &[u8],
