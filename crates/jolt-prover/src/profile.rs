@@ -907,10 +907,7 @@ fn prove_workload(
     // Disk I/O is deployment work, not PCS setup. Load the ordinary `.aks`
     // files before entering the setup measurement; catalog admission and
     // matrix/key construction remain inside the timed setup call.
-    let schedule_artifacts = Arc::new(
-        AkitaScheduleArtifacts::from_default_directory()
-            .expect("the external Akita schedule artifacts must load"),
-    );
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only(
         setup_shape.num_vars,
         setup_shape.num_polys,

@@ -307,7 +307,6 @@ mod tests {
     use super::*;
     use akita_types::AkitaScheduleLookupKey;
     use jolt_field::Ring;
-    use std::path::Path;
 
     use crate::AkitaScheduleArtifacts;
 
@@ -328,10 +327,12 @@ mod tests {
     }
 
     fn dense_schedules() -> TrustedScheduleCatalog {
-        let artifacts = AkitaScheduleArtifacts::from_directory(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules"),
-        )
-        .expect("workspace schedule artifacts");
+        // Deliberately the packaged directory, not the default loader: this
+        // guard validates the catalogs Jolt ships, so `JOLT_AKITA_SCHEDULE_DIR`
+        // must not redirect it.
+        let artifacts =
+            AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
+                .expect("workspace schedule artifacts");
         artifacts.dense_catalog().expect("dense schedule catalog")
     }
 

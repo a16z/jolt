@@ -11,7 +11,7 @@
     reason = "fixture generation should fail loudly when prover artifact construction breaks"
 )]
 
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
@@ -28,13 +28,6 @@ use jolt_prover_legacy::zkvm::program::ProgramPreprocessing;
 use jolt_prover_legacy::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
 
 type AkitaCommitmentOutput = <AkitaScheme as jolt_crypto::Commitment>::Output;
-
-fn schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
-    Arc::new(
-        AkitaScheduleArtifacts::from_default_directory()
-            .expect("the external Akita schedule artifacts must load"),
-    )
-}
 
 pub struct AkitaFixtureCase {
     pub preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
@@ -79,7 +72,7 @@ pub fn akita_committed_muldiv_case() -> &'static AkitaFixtureCase {
 }
 
 fn generate_muldiv() -> AkitaFixtureCase {
-    let schedule_artifacts = schedule_artifacts();
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let mut program = host::Program::new("muldiv-guest");
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -120,7 +113,7 @@ fn generate_muldiv() -> AkitaFixtureCase {
 }
 
 fn generate_advice() -> AkitaFixtureCase {
-    let schedule_artifacts = schedule_artifacts();
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     // The purpose-built advice guest asserts `trusted + untrusted == public`
     // (7 + 5 == 12), exercising both advice kinds without any exotic inline
     // instruction (unlike the merkle example, which fails Jolt expansion).
@@ -173,7 +166,7 @@ fn generate_advice() -> AkitaFixtureCase {
 }
 
 fn generate_committed_muldiv() -> AkitaFixtureCase {
-    let schedule_artifacts = schedule_artifacts();
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let mut program = host::Program::new("muldiv-guest");
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");

@@ -31,7 +31,6 @@ mod support {
     use std::sync::Arc;
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-    use jolt_akita::AkitaScheduleArtifacts;
     use jolt_program::execution::{JoltProgram, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_prover::ProverConfig;
@@ -47,13 +46,6 @@ mod support {
     use tracer::execution_backend::TracerBackend;
 
     pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
-
-    pub fn schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
-        Arc::new(
-            AkitaScheduleArtifacts::from_default_directory()
-                .expect("the external Akita schedule artifacts must load"),
-        )
-    }
 
     /// The legacy-side guest artifacts every packed test starts from: the
     /// program preprocessing, the traced I/O device (for the memory layout),
@@ -174,7 +166,7 @@ mod muldiv {
     };
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, AkitaField, AkitaJoltProof, AkitaPackedProver,
-        AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
+        AkitaPackedScheme, AkitaScheduleArtifacts, AkitaScheme, AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::prover::{
@@ -218,7 +210,8 @@ mod muldiv {
         )
         .unwrap();
         let public_io = legacy_prover.program_io.clone();
-        let setup_params = legacy_prover.one_hot_trace_setup_params(support::schedule_artifacts());
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let setup_params = legacy_prover.one_hot_trace_setup_params(schedule_artifacts);
         assert_eq!(setup_params.one_hot_k(), 16);
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params)
@@ -375,8 +368,9 @@ mod muldiv {
             legacy_prover.one_hot_params.ram_k,
         );
         let public_io = legacy_prover.program_io.clone();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
-            legacy_prover.one_hot_trace_setup_params(support::schedule_artifacts()),
+            legacy_prover.one_hot_trace_setup_params(schedule_artifacts),
         )
         .expect("the transparent packed setup must derive");
         let verifier_preprocessing =
@@ -445,7 +439,8 @@ mod advice {
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, commit_trusted_advice, AkitaField, AkitaJoltProof,
-        AkitaPackedProver, AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
+        AkitaPackedProver, AkitaPackedScheme, AkitaScheduleArtifacts, AkitaScheme, AkitaTranscript,
+        AkitaVc,
     };
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::prover::{
@@ -473,7 +468,7 @@ mod advice {
     }
 
     fn run_advice_e2e_akita(with_trusted: bool) {
-        let schedule_artifacts = support::schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let mut program = host::Program::new("advice-consumer-guest");
         let inputs = postcard::to_stdvec(&(if with_trusted { 12u64 } else { 5u64 }))
             .expect("serialize inputs");
@@ -625,7 +620,7 @@ mod advice {
     /// the analog of legacy's `advice_e2e_akita_full_advice`.
     #[test]
     fn advice_e2e_akita_full_advice() {
-        let schedule_artifacts = support::schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let mut program = host::Program::new("advice-consumer-guest");
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
         let trusted_advice = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
@@ -744,8 +739,8 @@ mod committed {
     use jolt_prover_legacy::host;
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, shared_preprocessing_with_direct_program, AkitaField,
-        AkitaJoltProof, AkitaPackedProver, AkitaPackedScheme, AkitaScheme, AkitaTranscript,
-        AkitaVc,
+        AkitaJoltProof, AkitaPackedProver, AkitaPackedScheme, AkitaScheduleArtifacts, AkitaScheme,
+        AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::prover::{
         JoltCpuProver, JoltProverPreprocessing as LegacyProverPreprocessing,
@@ -759,7 +754,7 @@ mod committed {
     /// objects join the main trace in one grouped opening — the analog of
     /// legacy's `muldiv_e2e_akita_committed_program`.
     fn committed_e2e(bytecode_chunk_count: usize) {
-        let schedule_artifacts = support::schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let mut program = host::Program::new("muldiv-guest");
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
         let guest = support::packed_guest(&mut program, &inputs, &[], &[]);

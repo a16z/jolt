@@ -100,14 +100,6 @@ pub type AkitaVc = NoVectorCommitment<AkitaField>;
 /// The verifier-native proof the packed prover emits.
 pub type AkitaJoltProof = JoltProof<AkitaScheme, AkitaVc>;
 
-#[cfg(test)]
-fn test_schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
-    Arc::new(
-        AkitaScheduleArtifacts::from_default_directory()
-            .expect("the external Akita schedule artifacts must load"),
-    )
-}
-
 /// A group placeholder for the packed prover's curve parameter: the packed
 /// axis is transparent-only, so no group operation is ever performed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1759,7 +1751,8 @@ mod tests {
         )
         .unwrap();
         let io_device = prover.program_io.clone();
-        let setup_params = prover.one_hot_trace_setup_params(test_schedule_artifacts());
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let setup_params = prover.one_hot_trace_setup_params(schedule_artifacts);
         assert_eq!(setup_params.one_hot_k(), 16);
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
@@ -1861,8 +1854,9 @@ mod tests {
             prover.one_hot_params.ram_k,
         );
         let io_device = prover.program_io.clone();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
-            prover.one_hot_trace_setup_params(test_schedule_artifacts()),
+            prover.one_hot_trace_setup_params(schedule_artifacts),
         )
         .unwrap();
         let proof = prover
@@ -1921,7 +1915,7 @@ mod advice_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
-        let schedule_artifacts = test_schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let trusted_object = commit_trusted_advice(
             &schedule_artifacts,
             &trusted_advice,
@@ -2004,7 +1998,7 @@ mod advice_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
-        let schedule_artifacts = test_schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let trusted_object = commit_trusted_advice(
             &schedule_artifacts,
             &trusted_advice,
@@ -2058,7 +2052,7 @@ mod committed_tests {
     /// program image join the main trace in one native Akita batch.
     fn committed_e2e(bytecode_chunk_count: usize) {
         DoryGlobals::reset();
-        let schedule_artifacts = test_schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -2203,7 +2197,7 @@ mod committed_tests {
         .unwrap();
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
-        let schedule_artifacts = test_schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let setup_params = prover.one_hot_trace_setup_params(schedule_artifacts.clone());
         eprintln!("OneHotTrace one-hot K: {}", setup_params.one_hot_k());
         let setup_start = Instant::now();
@@ -2400,7 +2394,7 @@ mod advice_object_tests {
     fn byte_sized_advice_region_commits_and_opens() {
         let max_advice_bytes = 8;
         let advice_bytes = [5u8, 7];
-        let schedule_artifacts = test_schedule_artifacts();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
 
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
             let setup = advice_object_setup(&schedule_artifacts, kind, max_advice_bytes).unwrap();

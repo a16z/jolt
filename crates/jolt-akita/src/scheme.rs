@@ -921,13 +921,9 @@ mod tests {
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
-    fn schedule_artifacts() -> Arc<AkitaScheduleArtifacts> {
-        Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap())
-    }
-
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
-        let artifacts = AkitaScheduleArtifacts::from_default_directory().unwrap();
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let setup = AkitaVerifierSetup {
             max_num_vars: 4,
             max_num_polys_per_commitment_group: 1,
@@ -993,7 +989,7 @@ mod tests {
 
     #[test]
     fn transparent_object_setup_reuses_backend_for_a_new_layout() {
-        let context = schedule_artifacts();
+        let context = AkitaScheduleArtifacts::shared_from_default_directory();
         let (base, _) = <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
             &context, 14, [3; 32],
         )
@@ -1016,8 +1012,9 @@ mod tests {
 
     fn one_hot_roundtrip(one_hot_k: usize) {
         let num_vars = one_hot_k.ilog2() as usize + 8;
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let setup_params =
-            AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k, schedule_artifacts());
+            AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k, artifacts);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let indices = (0..256usize)
             .map(|row| {
@@ -1092,9 +1089,9 @@ mod tests {
     /// must re-derive the same backend key from its shape.
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let (_, verifier_setup) =
-            AkitaScheme::setup(AkitaSetupParams::new(14, 1, [3; 32], schedule_artifacts()))
-                .unwrap();
+            AkitaScheme::setup(AkitaSetupParams::new(14, 1, [3; 32], artifacts)).unwrap();
         let json = serde_json::to_string(&verifier_setup).unwrap();
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
         assert_eq!(transported, verifier_setup);
@@ -1136,7 +1133,7 @@ mod tests {
             [3; 32],
             AKITA_ONE_HOT_K16,
             Some(precommitted_schedule),
-            schedule_artifacts(),
+            AkitaScheduleArtifacts::shared_from_default_directory(),
         ))
         .unwrap();
         let selection = verifier_setup
@@ -1176,7 +1173,7 @@ mod tests {
             [3; 32],
             AKITA_ONE_HOT_K16,
             Some(request),
-            schedule_artifacts(),
+            AkitaScheduleArtifacts::shared_from_default_directory(),
         ))
         .expect_err("a grouped request for another final arity must fail during setup");
         assert!(error
@@ -1186,13 +1183,12 @@ mod tests {
 
     #[test]
     fn catalog_digest_prevents_cross_verification_with_the_same_selected_row() {
-        let artifacts = AkitaScheduleArtifacts::from_default_directory().unwrap();
-        let original_artifacts = Arc::new(artifacts.clone());
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
             14,
             1,
             [7; 32],
-            original_artifacts,
+            Arc::clone(&artifacts),
         ))
         .unwrap();
         let polynomial = Polynomial::new(
@@ -1280,7 +1276,8 @@ mod tests {
 
     #[test]
     fn direct_opening_requires_statement_commitment_layout_digest() {
-        let setup_params = AkitaSetupParams::new(14, 1, [7; 32], schedule_artifacts());
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let setup_params = AkitaSetupParams::new(14, 1, [7; 32], artifacts);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
         let polynomial = Polynomial::new(
             (0..(1u64 << 14))

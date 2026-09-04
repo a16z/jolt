@@ -5,8 +5,6 @@
 
 //! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
 
-use std::path::{Path, PathBuf};
-
 use akita_config::trusted_setup_matrix_capacity;
 use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, TrustedScheduleCatalog};
@@ -24,12 +22,11 @@ use jolt_akita::schedules::emit::{
 };
 use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
-fn artifact_directory() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules")
-}
-
 fn artifacts() -> AkitaScheduleArtifacts {
-    AkitaScheduleArtifacts::from_directory(artifact_directory())
+    // Deliberately the packaged directory, not the default loader: these are
+    // the coverage and regeneration guards on the checked-in artifacts, so the
+    // env override must not redirect them.
+    AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
         .expect("checked-in Jolt schedule artifacts")
 }
 
@@ -287,8 +284,8 @@ fn catalogs_match_planner_regeneration() {
     let generated = akita_planner::emit::publish_artifact_outputs(rendered)
         .expect("publish temporary artifacts");
     for generated in generated {
-        let checked_in =
-            artifact_directory().join(generated.file_name().expect("generated artifact file name"));
+        let checked_in = AkitaScheduleArtifacts::packaged_directory()
+            .join(generated.file_name().expect("generated artifact file name"));
         assert_eq!(
             std::fs::read(&generated).expect("generated artifact"),
             std::fs::read(&checked_in).expect("checked-in artifact"),

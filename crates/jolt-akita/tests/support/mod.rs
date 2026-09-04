@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use jolt_akita::{
     AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatchStatement,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
@@ -37,10 +35,7 @@ pub fn setup_for(
         num_vars,
         max_num_polys_per_commitment_group,
         layout_digest,
-        Arc::new(
-            AkitaScheduleArtifacts::from_default_directory()
-                .expect("external Akita schedule artifacts"),
-        ),
+        AkitaScheduleArtifacts::shared_from_default_directory(),
     ))
     .expect("Akita setup should succeed")
 }

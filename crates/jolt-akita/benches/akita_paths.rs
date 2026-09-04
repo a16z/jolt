@@ -32,7 +32,6 @@
 )]
 
 use std::hint::black_box;
-use std::sync::Arc;
 use std::time::Duration;
 
 use akita_config::CommitmentConfig;
@@ -320,9 +319,7 @@ fn akita_case(num_vars: usize) -> AkitaCase {
     let dense_eval = dense_poly.evaluate(&point);
     let sparse_eval =
         <OneHotPolynomial as MultilinearPoly<AkitaField>>::evaluate(&sparse_one_hot, &point);
-    let artifacts = Arc::new(
-        AkitaScheduleArtifacts::from_default_directory().expect("Jolt schedule artifacts"),
-    );
+    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let (setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
         num_vars,
         NUM_POLYS,
@@ -420,9 +417,7 @@ fn akita_batch_case(logical_num_vars: usize) -> AkitaBatchCase {
     assert_eq!(packing.packed_num_vars(), physical_num_vars);
     let packed_claims =
         PrefixPackedClaims::new(LAYOUT_DIGEST, logical_point.clone(), evaluations.clone());
-    let artifacts = Arc::new(
-        AkitaScheduleArtifacts::from_default_directory().expect("Jolt schedule artifacts"),
-    );
+    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let (native_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
         logical_num_vars,
         BATCH_POLYS,

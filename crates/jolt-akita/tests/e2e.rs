@@ -6,8 +6,6 @@
 
 pub mod support;
 
-use std::sync::Arc;
-
 use jolt_akita::{AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
@@ -130,7 +128,7 @@ fn akita_commit_group_rejects_shape_pathologies() {
         16,
         2,
         layout(7),
-        Arc::new(AkitaScheduleArtifacts::from_default_directory().unwrap()),
+        AkitaScheduleArtifacts::shared_from_default_directory(),
     ))
     .unwrap();
     assert!(matches!(
