@@ -348,3 +348,9 @@ Idle: **k=16 default 16.51 s** (folds 0.73, quotient 1.87); WRAP_K=32 comparison
 Measured pair (idle, mutex): k=16 default **16.51 s** (folds 0.73, quotient 1.87), 7,392 / 7,533 / 352 B, 233 ecMul, 8 pairs, 123,144 Fr mul, 4,944,149 gas; WRAP_K=32 19.79 s, 7,104 / 7,232 / 352 B, 216 ecMul, 4,800,225 gas. Schedule unchanged 39/23/1/3/232. 64/64 + both real gates.
 
 **Campaign summary: 40.3 → 16.5 s (−59 %) at the same payload bytes as the campaign start (7,392) and −2 % gas.** Waiting on the independent review (e417b07c) of the 4-ary fold + MSM hybrid + stream tail; then PR-branch refresh (rebuild from canonical minus journals, force-push, PR body update with new numbers) and the user report.
+
+## 00:06 — PERF-5 review: 0 blockers / 0 majors / 4 minors (70250c497); closeout lane launched
+
+Review (e417b07c, claude opus-max, zero-trust): 4-ary fold sound (root canonical 5^((p−1)/4), inverse DFT term-by-term, divisor expansion exact, degenerate-r = point-distinctness, FS order both sides); four constructed counterexamples all reject (padded-valid batch: middle/terminal degree-127 folds, predicted-challenge divisor shift, residue-order swap) — confirms no per-level degree bound exists and none is needed; verifier-side claimed-value check load-bearing (mutation kills 4 tests); MSM hybrid correct (u32 cannot reach u16 kernel; randomized differential added; 178/178); stream tail structurally cannot drop a live column (832 = 592 bound + 6 T1 VK + 234 padding; skipped RLC ≡ unskipped over 2^23). k=32 numbers reproduced exactly. Minors: ecAdd over-count (+~3), append_bound_values vacuous default, lanes 2/5a were protocol-visible (re-derived sound: β/γ moved later = stronger FS; range_group tiles [0,66) exactly), coverage gaps (patch).
+
+Closeout lane 5682e5d0: apply review patch, fix ecAdd accounting, remove the vacuous default. After it lands: rebuild PR branch (canonical − journals), force-push, rewrite pr-body for the campaign numbers, report.
