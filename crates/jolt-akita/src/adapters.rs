@@ -62,7 +62,7 @@ pub struct AkitaScheduleArtifacts {
 }
 
 impl AkitaScheduleArtifacts {
-    pub const DIRECTORY_ENV: &'static str = "JOLT_AKITA_SCHEDULE_DIR";
+    const DIRECTORY_ENV: &'static str = "JOLT_AKITA_SCHEDULE_DIR";
 
     pub fn new(dense: Vec<u8>, one_hot_k16: Vec<u8>, one_hot_k256: Vec<u8>) -> Self {
         Self {
@@ -91,30 +91,28 @@ impl AkitaScheduleArtifacts {
         ))
     }
 
-    /// The `schedules/` directory packaged with this crate: the fallback
-    /// [`Self::from_default_directory`] uses when [`Self::DIRECTORY_ENV`] is
-    /// unset, and the fixed location the checked-in catalog guards read
-    /// directly, because they validate the committed artifacts rather than
-    /// whatever an override points at.
+    /// The `schedules/` directory packaged with this crate: the fallback the
+    /// default loader uses when `JOLT_AKITA_SCHEDULE_DIR` is unset, and the
+    /// fixed location the checked-in catalog guards read directly, because
+    /// they validate the committed artifacts rather than whatever an override
+    /// points at.
     pub fn packaged_directory() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules")
     }
 
-    /// Host/dev helper that loads from `JOLT_AKITA_SCHEDULE_DIR`, or from this
-    /// crate's packaged `schedules/` directory when the variable is unset.
-    ///
-    /// Application preprocessing should call this (or [`Self::from_directory`])
-    /// once and pass the resulting immutable bundle explicitly to every setup.
-    /// Protocol setup and verification never consult the environment.
-    pub fn from_default_directory() -> Result<Self, OpeningsError> {
+    /// Loads from `JOLT_AKITA_SCHEDULE_DIR`, or from the packaged `schedules/`
+    /// directory when the variable is unset. Protocol setup and verification
+    /// never consult the environment.
+    fn from_default_directory() -> Result<Self, OpeningsError> {
         let directory = std::env::var_os(Self::DIRECTORY_ENV)
             .map_or_else(Self::packaged_directory, PathBuf::from);
         Self::from_directory(directory)
     }
 
-    /// [`Self::from_default_directory`] in the shared-handle form every setup
-    /// call takes: the one way hosts, benches, and tests load a bundle they
-    /// intend to hand to [`AkitaSetupParams`].
+    /// Host/dev loader in the shared-handle form every setup call takes: the
+    /// one way hosts, benches, and tests load a bundle they intend to hand to
+    /// [`AkitaSetupParams`]. Reads `JOLT_AKITA_SCHEDULE_DIR`, falling back to
+    /// [`Self::packaged_directory`].
     ///
     /// The handle is what is shared, not the bytes: every call re-reads the
     /// three `.aks` files, so hosts still load once at preprocessing and pass
@@ -126,8 +124,8 @@ impl AkitaScheduleArtifacts {
     /// part of the installation, so a missing or unreadable catalog is a
     /// broken deployment, not a condition any caller can act on. This is host
     /// and deployment-side only; nothing on the verify path reaches it.
-    /// Callers that do want to handle the failure use
-    /// [`Self::from_default_directory`] or [`Self::from_directory`] directly.
+    /// Deployments that must handle a missing catalog load a versioned,
+    /// deployment-owned path with [`Self::from_directory`] instead.
     #[expect(
         clippy::expect_used,
         reason = "an unreadable packaged schedule directory is a broken installation"
