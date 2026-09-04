@@ -12,7 +12,9 @@ use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
     PolynomialGroupLayout,
 };
-use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256, JoltOneHotK256Metal};
+use jolt_akita::configs::{
+    JoltDenseBounded, JoltOneHotK16, JoltOneHotK256, JoltOneHotK256Cpu, JoltOneHotK256Metal,
+};
 use jolt_akita::schedule_registry::{FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP};
 use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K256_NUM_VARS, ONE_HOT_TRACE_NUM_POLYS,
@@ -67,6 +69,25 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
                 .expect("K256 Metal catalog key must form an opening layout"),
         )
         .expect("K256 Metal catalog row must validate and resolve");
+    }
+}
+
+/// The Metal and CPU K=256 configs resolve the same catalog row for every
+/// reachable trace shape, so a proof committed on either backend has one
+/// schedule digest and one verifier path.
+#[test]
+fn metal_and_cpu_k256_configs_resolve_the_same_row() {
+    for key in keys(ONE_HOT_TRACE_NUM_POLYS, K256_NUM_VARS) {
+        let lookup = AkitaScheduleLookupKey::single(key);
+        let cpu = JoltOneHotK256Cpu::resolve_catalog_row_for_key(&lookup)
+            .expect("CPU K256 row must resolve");
+        let metal = JoltOneHotK256Metal::resolve_catalog_row_for_key(&lookup)
+            .expect("Metal K256 row must resolve");
+        assert_eq!(
+            cpu.selection().row_digest,
+            metal.selection().row_digest,
+            "K256 row digest differs between backends at {key:?}"
+        );
     }
 }
 

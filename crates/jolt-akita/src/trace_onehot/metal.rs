@@ -85,7 +85,7 @@ impl<const D: usize> RootCommitKernel<TracePackedOneHotView<'_, D>, AkitaField, 
             return commit_packed::<D>(&cpu, prepared.cpu_prepared(), source, plan)
                 .map(|witness| vec![witness]);
         }
-        if D != 512 {
+        if !matches!(D, 128 | 512) {
             let cpu = self.cpu_backend();
             return commit_packed::<D>(&cpu, prepared.cpu_prepared(), source, plan)
                 .map(|witness| vec![witness]);
@@ -123,7 +123,10 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
-        if D != 512 || source.source().one_hot_k != 256 || source.source().column_capacity != 32 {
+        if !matches!(D, 128 | 512)
+            || source.source().one_hot_k != 256
+            || source.source().column_capacity != 32
+        {
             self.record_opening_cpu_fallback(1)
                 .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
             return CpuBackend::DEFAULT.decompose_fold(None, source, plan);
@@ -143,7 +146,10 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
         source: TracePackedOneHotBatchView<'_, D>,
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
-        if D != 512 || source.source().one_hot_k != 256 || source.source().column_capacity != 32 {
+        if !matches!(D, 128 | 512)
+            || source.source().one_hot_k != 256
+            || source.source().column_capacity != 32
+        {
             self.record_opening_cpu_fallback(1)
                 .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
             return CpuBackend::DEFAULT.decompose_fold_batch(None, source, plan);

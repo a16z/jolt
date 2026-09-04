@@ -278,12 +278,15 @@ delegate_preset!(
 );
 
 delegate_preset!(
-    /// Metal-optimized K=256 schedule catalog.
+    /// K=256 schedule catalog for the Metal commitment path. The Metal packed
+    /// kernels accept the D128 rank-3 rows the CPU-optimized catalog selects
+    /// (three quarters of the D512 rank-1 accumulator volume), so both
+    /// backends resolve the same table and produce the same proof shape.
     JoltOneHotK256Metal,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    crate::schedules::jolt_fp128_onehot_k256_metal_table(),
-    <OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE
+    crate::schedules::jolt_fp128_onehot_k256_table(),
+    JOLT_K256_RING_DIMENSION_SCHEDULE_MODE
 );
 
 fn fallback_to_metal<T>(
@@ -450,7 +453,7 @@ mod tests {
 
     #[test]
     #[expect(clippy::unwrap_used)]
-    fn k256_t28_trace_uses_the_prover_optimized_root_shape() {
+    fn k256_t28_trace_shares_the_d128_rank3_root_shape() {
         let layout = akita_types::OpeningClaimsLayout::new(41, 1).unwrap();
         let cpu = JoltOneHotK256Cpu::resolve_catalog_row_for_opening(&layout).unwrap();
         let cpu_commitment = cpu.schedule().root.params.final_group();
@@ -458,11 +461,14 @@ mod tests {
         assert_eq!(cpu_commitment.profile.inner.matrix.ring_dimension(), 128);
         assert_eq!(cpu_commitment.profile.inner.matrix.output_rank(), 3);
 
+        // The Metal packed kernels accept the D128 rank-3 row, so both backends
+        // commit the T28 trace on the same catalog row and proof shape.
         let metal = JoltOneHotK256Metal::resolve_catalog_row_for_opening(&layout).unwrap();
         let metal_commitment = metal.schedule().root.params.final_group();
 
-        assert_eq!(metal_commitment.profile.inner.matrix.ring_dimension(), 512);
-        assert_eq!(metal_commitment.profile.inner.matrix.output_rank(), 1);
+        assert_eq!(metal_commitment.profile.inner.matrix.ring_dimension(), 128);
+        assert_eq!(metal_commitment.profile.inner.matrix.output_rank(), 3);
+        assert_eq!(metal.selection(), cpu.selection());
 
         let cpu_by_selection = JoltOneHotK256::resolve_schedule_selection(cpu.selection()).unwrap();
         let metal_by_selection =
