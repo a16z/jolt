@@ -49,6 +49,7 @@ mod bytecode_cycle;
 #[doc(hidden)]
 pub mod bytecode_read_raf_address;
 mod bytecode_row;
+mod hang_watchdog;
 pub mod instruction_claim_reduction;
 mod instruction_claim_reduction_successor;
 mod instruction_input;

@@ -17,3 +17,11 @@ test-group = 'dory'
 [[profile.default.overrides]]
 filter = 'package(jolt-verifier) and test(zk)'
 test-group = 'zk-core-fixtures'
+
+# A hung Metal kernel blocks wait_until_completed forever and starves WindowServer;
+# watchdogd panics the machine 120 s later. Kill Metal test processes well before
+# that so the driver can reset the GPU. Second layer behind the in-process canary
+# in jolt-kernels metal::solinas::hang_watchdog.
+[[profile.default.overrides]]
+filter = 'test(metal)'
+slow-timeout = { period = "30s", terminate-after = 2, grace-period = "5s" }

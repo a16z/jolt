@@ -213,6 +213,7 @@ impl SolinasMetal {
             return Err(MetalError::InvalidOffset);
         }
         let device = Device::system_default().ok_or(MetalError::DeviceUnavailable)?;
+        super::hang_watchdog::start(&device);
         let options = CompileOptions::new();
         let library = {
             let _span = tracing::info_span!(
