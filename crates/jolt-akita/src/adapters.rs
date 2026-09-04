@@ -1,11 +1,14 @@
-use std::{fmt, io::Cursor, sync::Arc, sync::OnceLock};
+use std::{fmt, io::Cursor, path::Path, sync::Arc, sync::OnceLock};
 
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
 
 use akita_config::CommitmentConfig;
-use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize, AkitaTranscript};
+use akita_pcs::{
+    AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaTranscript,
+};
 use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
+use akita_schedules::TrustedScheduleCatalog;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
@@ -39,6 +42,81 @@ const _: () = assert!(
 );
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
+
+/// Runtime bytes for Jolt's three base schedule families.
+///
+/// These bytes are ordinary input data. They are intentionally neither
+/// generated Rust nor embedded with `include_bytes!`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AkitaScheduleArtifacts {
+    dense: Vec<u8>,
+    one_hot_k16: Vec<u8>,
+    one_hot_k256: Vec<u8>,
+}
+
+impl AkitaScheduleArtifacts {
+    pub const DIRECTORY_ENV: &'static str = "JOLT_AKITA_SCHEDULE_DIR";
+
+    pub fn new(dense: Vec<u8>, one_hot_k16: Vec<u8>, one_hot_k256: Vec<u8>) -> Self {
+        Self {
+            dense,
+            one_hot_k16,
+            one_hot_k256,
+        }
+    }
+
+    /// Load Jolt's checked-in artifacts from a normal filesystem directory.
+    pub fn from_directory(directory: impl AsRef<Path>) -> Result<Self, OpeningsError> {
+        let directory = directory.as_ref();
+        let read = |family: &str| {
+            let path = directory.join(format!("{family}.aks"));
+            std::fs::read(&path).map_err(|error| {
+                OpeningsError::InvalidSetup(format!(
+                    "read Akita schedule artifact {}: {error}",
+                    path.display()
+                ))
+            })
+        };
+        Ok(Self::new(
+            read(JoltDenseBounded::schedule_family_name())?,
+            read(JoltOneHotK16::schedule_family_name())?,
+            read(JoltOneHotK256::schedule_family_name())?,
+        ))
+    }
+
+    /// Load from `JOLT_AKITA_SCHEDULE_DIR`, or from this crate's packaged
+    /// `schedules/` directory when the environment variable is unset.
+    pub fn from_default_directory() -> Result<Self, OpeningsError> {
+        let directory = std::env::var_os(Self::DIRECTORY_ENV).map_or_else(
+            || Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules"),
+            std::path::PathBuf::from,
+        );
+        Self::from_directory(directory)
+    }
+
+    pub fn dense_catalog(&self) -> Result<TrustedScheduleCatalog, AkitaError> {
+        akita_config::trusted_schedule_catalog_from_bytes::<JoltDenseBounded>(&self.dense)
+    }
+
+    pub fn one_hot_catalog(&self, one_hot_k: usize) -> Result<TrustedScheduleCatalog, AkitaError> {
+        match one_hot_k {
+            AKITA_ONE_HOT_K16 => {
+                akita_config::trusted_schedule_catalog_from_bytes::<JoltOneHotK16>(
+                    &self.one_hot_k16,
+                )
+            }
+            AKITA_ONE_HOT_K256 => {
+                akita_config::trusted_schedule_catalog_from_bytes::<JoltOneHotK256>(
+                    &self.one_hot_k256,
+                )
+            }
+            other => Err(AkitaError::InvalidSetup(format!(
+                "unsupported Akita one-hot K={other}"
+            ))),
+        }
+    }
+}
 
 pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtField;
 
@@ -198,6 +276,9 @@ pub struct AkitaSetupParams {
     /// process-local row cache, this metadata survives verifier serialization.
     #[serde(default, rename = "advice_schedule")]
     pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,
+    /// Base catalogs loaded from normal storage by the application.
+    #[serde(default)]
+    pub(crate) schedule_artifacts: Option<AkitaScheduleArtifacts>,
 }
 
 impl AkitaSetupParams {
@@ -215,6 +296,7 @@ impl AkitaSetupParams {
             one_hot_only: false,
             dense_only: false,
             precommitted_schedule: None,
+            schedule_artifacts: None,
         }
     }
 
@@ -236,6 +318,7 @@ impl AkitaSetupParams {
             one_hot_only: true,
             dense_only: false,
             precommitted_schedule: None,
+            schedule_artifacts: None,
         }
     }
 
@@ -258,6 +341,7 @@ impl AkitaSetupParams {
             one_hot_only: true,
             dense_only: false,
             precommitted_schedule,
+            schedule_artifacts: None,
         }
     }
 
@@ -277,6 +361,7 @@ impl AkitaSetupParams {
             one_hot_only: false,
             dense_only: true,
             precommitted_schedule: None,
+            schedule_artifacts: None,
         }
     }
 
@@ -286,6 +371,12 @@ impl AkitaSetupParams {
 
     pub fn max_total_batch_polys(&self) -> usize {
         self.max_total_batch_polys
+    }
+
+    /// Attach the external base schedule artifacts used to construct setup.
+    pub fn with_schedule_artifacts(mut self, artifacts: AkitaScheduleArtifacts) -> Self {
+        self.schedule_artifacts = Some(artifacts);
+        self
     }
 }
 
@@ -364,8 +455,10 @@ impl AkitaProverSetup {
     }
 }
 
-/// Serializable public inputs for deriving the backend keys and any dynamic
-/// grouped schedules. The derived keys and schedule rows are not serialized.
+/// Serializable public inputs for deriving backend keys.
+///
+/// The exact validated schedule artifacts are serialized; derived scheme
+/// objects, prepared keys, and caches are rebuilt lazily after transport.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
@@ -374,8 +467,11 @@ pub struct AkitaVerifierSetup {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    #[serde(default, rename = "advice_schedule")]
-    pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,
+    /// Exact setup-owned catalogs, including any program-specific grouped rows.
+    #[serde(default)]
+    pub(crate) dense_schedule_artifact: Option<Vec<u8>>,
+    #[serde(default)]
+    pub(crate) one_hot_schedule_artifact: Option<Vec<u8>>,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
@@ -416,20 +512,51 @@ impl AkitaVerifierSetup {
         }
     }
 
-    /// Restores dynamic rows before schedule resolution or lazy key derivation.
-    pub(crate) fn ensure_schedule_rows(&self) -> Result<(), OpeningsError> {
-        let result = self.backend_cache.schedule_rows.get_or_init(|| {
-            self.precommitted_schedule
-                .as_ref()
-                .map_or(Ok(()), |params| {
-                    params.provision(self.one_hot_k).map(|_| ())
+    pub(crate) fn dense_scheme(&self) -> Result<&AkitaBackendScheme, OpeningsError> {
+        let result = self.backend_cache.dense_scheme.get_or_init(|| {
+            self.dense_schedule_artifact
+                .as_deref()
+                .ok_or_else(|| "Akita verifier setup has no dense schedule artifact".to_string())
+                .and_then(|bytes| {
+                    AkitaBackendScheme::from_schedule_artifact(bytes)
+                        .map_err(|error| error.to_string())
                 })
-                .map_err(|error| error.to_string())
         });
-        match result {
-            Ok(()) => Ok(()),
-            Err(error) => Err(OpeningsError::InvalidSetup(error.clone())),
-        }
+        result
+            .as_ref()
+            .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
+    }
+
+    pub(crate) fn one_hot_k16_scheme(&self) -> Result<&AkitaOneHotK16BackendScheme, OpeningsError> {
+        let result = self.backend_cache.one_hot_k16_scheme.get_or_init(|| {
+            self.one_hot_schedule_artifact
+                .as_deref()
+                .ok_or_else(|| "Akita verifier setup has no one-hot schedule artifact".to_string())
+                .and_then(|bytes| {
+                    AkitaOneHotK16BackendScheme::from_schedule_artifact(bytes)
+                        .map_err(|error| error.to_string())
+                })
+        });
+        result
+            .as_ref()
+            .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
+    }
+
+    pub(crate) fn one_hot_k256_scheme(
+        &self,
+    ) -> Result<&AkitaOneHotK256BackendScheme, OpeningsError> {
+        let result = self.backend_cache.one_hot_k256_scheme.get_or_init(|| {
+            self.one_hot_schedule_artifact
+                .as_deref()
+                .ok_or_else(|| "Akita verifier setup has no one-hot schedule artifact".to_string())
+                .and_then(|bytes| {
+                    AkitaOneHotK256BackendScheme::from_schedule_artifact(bytes)
+                        .map_err(|error| error.to_string())
+                })
+        });
+        result
+            .as_ref()
+            .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
     }
 
     /// Backend verifier key for `flavor`, cached after the first use.
@@ -440,9 +567,6 @@ impl AkitaVerifierSetup {
         &self,
         flavor: AkitaBackendFlavor,
     ) -> Result<&AkitaBackendVerifier, OpeningsError> {
-        if flavor == AkitaBackendFlavor::OneHot {
-            self.ensure_schedule_rows()?;
-        }
         let cache = match flavor {
             AkitaBackendFlavor::Dense => &self.backend_cache.dense,
             AkitaBackendFlavor::OneHot => &self.backend_cache.one_hot,
@@ -462,11 +586,12 @@ impl AkitaVerifierSetup {
             |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
         match flavor {
             AkitaBackendFlavor::Dense => {
+                let scheme = self.dense_scheme()?;
                 let prover_setup = with_backend_pool(|| {
-                    AkitaBackendScheme::setup_prover(self.max_num_vars, self.max_total_batch_polys)
+                    scheme.setup_prover(self.max_num_vars, self.max_total_batch_polys)
                 })
                 .map_err(|err| invalid_setup(&err))?;
-                with_backend_pool(|| AkitaBackendScheme::setup_verifier(&prover_setup))
+                with_backend_pool(|| scheme.setup_verifier(&prover_setup))
                     .map_err(|err| invalid_setup(&err))
             }
             AkitaBackendFlavor::OneHot => {
@@ -474,13 +599,10 @@ impl AkitaVerifierSetup {
                 if self.max_num_vars < log_k {
                     return Err(invalid_batch("Akita verifier setup has no one-hot backend"));
                 }
-                let prover_setup = one_hot_setup_prover(
-                    self.one_hot_k,
-                    self.max_num_vars,
-                    self.max_total_batch_polys,
-                )
-                .map_err(|err| invalid_setup(&err))?;
-                one_hot_setup_verifier(self.one_hot_k, &prover_setup)
+                let prover_setup =
+                    one_hot_setup_prover(self, self.max_num_vars, self.max_total_batch_polys)
+                        .map_err(|err| invalid_setup(&err))?;
+                one_hot_setup_verifier(self, &prover_setup)
             }
         }
     }
@@ -492,16 +614,9 @@ impl AkitaVerifierSetup {
 pub(crate) struct BackendVerifierCache {
     dense: Arc<OnceLock<AkitaBackendVerifier>>,
     one_hot: Arc<OnceLock<AkitaBackendVerifier>>,
-    schedule_rows: Arc<OnceLock<Result<(), String>>>,
-}
-
-impl BackendVerifierCache {
-    pub(crate) fn with_schedule_rows() -> Self {
-        Self {
-            schedule_rows: Arc::new(OnceLock::from(Ok(()))),
-            ..Self::default()
-        }
-    }
+    dense_scheme: Arc<OnceLock<Result<AkitaBackendScheme, String>>>,
+    one_hot_k16_scheme: Arc<OnceLock<Result<AkitaOneHotK16BackendScheme, String>>>,
+    one_hot_k256_scheme: Arc<OnceLock<Result<AkitaOneHotK256BackendScheme, String>>>,
 }
 
 impl fmt::Debug for BackendVerifierCache {
@@ -526,7 +641,7 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,
     flavor: AkitaBackendFlavor,
-) {
+) -> Result<(), OpeningsError> {
     transcript.append(&Label(b"akita_setup_key"));
     transcript.append_bytes(b"akita/fp128");
     transcript.append_bytes(flavor.transcript_label());
@@ -535,6 +650,20 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append(&U64Word(setup.max_total_batch_polys as u64));
     transcript.append(&U64Word(setup.one_hot_k as u64));
     transcript.append_bytes(&setup.default_layout_digest);
+    let catalog_digest = match flavor {
+        AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
+        AkitaBackendFlavor::OneHot => match setup.one_hot_k {
+            AKITA_ONE_HOT_K16 => setup.one_hot_k16_scheme()?.schedules().catalog_digest(),
+            AKITA_ONE_HOT_K256 => setup.one_hot_k256_scheme()?.schedules().catalog_digest(),
+            other => {
+                return Err(invalid_batch(format!(
+                    "unsupported Akita one-hot K={other}"
+                )))
+            }
+        },
+    };
+    transcript.append_bytes(&catalog_digest);
+    Ok(())
 }
 
 /// Binds the batch statement (commitment group, point, per-claim data) into
@@ -883,35 +1012,44 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
 }
 
 pub(crate) fn one_hot_setup_prover(
-    one_hot_k: usize,
+    setup: &AkitaVerifierSetup,
     max_num_vars: usize,
     max_num_polys: usize,
 ) -> Result<AkitaBackendProverSetup, akita_pcs::AkitaError> {
-    with_backend_pool(|| match one_hot_k {
-        AKITA_ONE_HOT_K16 => AkitaOneHotK16BackendScheme::setup_prover(max_num_vars, max_num_polys),
-        AKITA_ONE_HOT_K256 => {
-            AkitaOneHotK256BackendScheme::setup_prover(max_num_vars, max_num_polys)
-        }
+    with_backend_pool(|| match setup.one_hot_k {
+        AKITA_ONE_HOT_K16 => setup
+            .one_hot_k16_scheme()
+            .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+            .setup_prover(max_num_vars, max_num_polys),
+        AKITA_ONE_HOT_K256 => setup
+            .one_hot_k256_scheme()
+            .map_err(|error| akita_pcs::AkitaError::InvalidSetup(error.to_string()))?
+            .setup_prover(max_num_vars, max_num_polys),
         _ => unreachable!("one-hot K is validated before backend setup"),
     })
 }
 
 pub(crate) fn one_hot_setup_verifier(
-    one_hot_k: usize,
+    setup: &AkitaVerifierSetup,
     prover_setup: &AkitaBackendProverSetup,
 ) -> Result<AkitaBackendVerifier, OpeningsError> {
     let invalid_setup = |err: &dyn std::fmt::Display| OpeningsError::InvalidSetup(err.to_string());
-    match one_hot_k {
-        AKITA_ONE_HOT_K16 => {
-            with_backend_pool(|| AkitaOneHotK16BackendScheme::setup_verifier(prover_setup))
+    match setup.one_hot_k {
+        AKITA_ONE_HOT_K16 => with_backend_pool(|| {
+            setup
+                .one_hot_k16_scheme()?
+                .setup_verifier(prover_setup)
                 .map_err(|err| invalid_setup(&err))
-        }
-        AKITA_ONE_HOT_K256 => {
-            with_backend_pool(|| AkitaOneHotK256BackendScheme::setup_verifier(prover_setup))
+        }),
+        AKITA_ONE_HOT_K256 => with_backend_pool(|| {
+            setup
+                .one_hot_k256_scheme()?
+                .setup_verifier(prover_setup)
                 .map_err(|err| invalid_setup(&err))
-        }
+        }),
         _ => Err(invalid_batch(format!(
-            "unsupported Akita one-hot K={one_hot_k}"
+            "unsupported Akita one-hot K={}",
+            setup.one_hot_k
         ))),
     }
 }

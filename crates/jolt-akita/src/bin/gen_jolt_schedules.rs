@@ -1,16 +1,19 @@
 //! Offline generator for the Jolt-owned Akita schedule catalogs.
 //!
 //! Runs akita's planner DP over every `OneHotTrace` shape reachable from Jolt and
-//! emits the checked-in table modules under `src/schedules/` through the same
-//! `akita_planner::emit` machinery that produces akita's shipped tables.
+//! emits checked-in external `.aks` artifacts through the same
+//! `akita_planner::emit` machinery that produces Akita's shipped catalogs.
 //!
 //! ```text
-//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/src/schedules [k16|k256]
+//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules [k16|k256|dense]
 //! ```
 
 use std::path::PathBuf;
 
-use akita_planner::emit::emit_family_module;
+use akita_planner::emit::{
+    publish_artifact_outputs, render_schedule_artifact_outputs_with_validation,
+    MaterializationDiagnostics,
+};
 use jolt_akita::schedules::emit::family_specs;
 
 #[expect(
@@ -22,35 +25,33 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let output_dir = PathBuf::from(
         args.next()
-            .expect("usage: gen_jolt_schedules <output-dir> [k16|k256]"),
+            .expect("usage: gen_jolt_schedules <output-dir> [k16|k256|dense]"),
     );
     let only = args.next();
+    std::fs::create_dir_all(&output_dir).expect("create artifact output directory");
 
-    for family in family_specs(output_dir).expect("every family must declare a valid contract") {
-        if only
-            .as_deref()
-            .is_some_and(|only| !family.module_name.ends_with(only))
-        {
-            continue;
-        }
+    let specs = family_specs(output_dir)
+        .expect("every family must declare a valid contract")
+        .into_iter()
+        .filter(|family| {
+            only.as_deref()
+                .is_none_or(|only| family.family_name.ends_with(only))
+        })
+        .collect::<Vec<_>>();
+    for family in &specs {
         println!(
             "generating {} ({} keys)…",
-            family.module_name,
+            family.family_name,
             family.keys.len()
         );
-        let path = family.output_dir.join(format!("{}.rs", family.module_name));
-        let source = emit_family_module(&family).expect("table generation must succeed");
-        std::fs::write(&path, source).expect("write generated table");
-        // The emitter's fixed import header is not rustfmt-stable; format the
-        // module so the checked-in file passes the workspace fmt check. The
-        // drift oracle compares schedule data only, so formatting is free.
-        let status = std::process::Command::new("rustfmt")
-            .arg("--edition")
-            .arg("2021")
-            .arg(&path)
-            .status()
-            .expect("rustfmt must be installed to emit checked-in tables");
-        assert!(status.success(), "rustfmt failed on {}", path.display());
+    }
+    let outputs = render_schedule_artifact_outputs_with_validation(
+        &specs,
+        MaterializationDiagnostics { row_progress: true },
+        |_, _| Ok(()),
+    )
+    .expect("artifact generation must succeed");
+    for path in publish_artifact_outputs(outputs).expect("publish generated artifacts") {
         println!("wrote {}", path.display());
     }
 }

@@ -437,32 +437,6 @@ fn advice_physical_num_vars(
     Ok(plan.packing().packed_num_vars())
 }
 
-pub fn provision_precommitted_schedules(
-    max_untrusted_advice_bytes: usize,
-    max_trusted_advice_bytes: usize,
-    direct_program_physical_vars: &[usize],
-    one_hot_k: usize,
-    final_num_vars: usize,
-) -> Result<(), VerifierError> {
-    let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
-        .then(|| advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes))
-        .transpose()?;
-    let trusted_physical_vars = (max_trusted_advice_bytes > 0)
-        .then(|| advice_physical_num_vars(JoltAdviceKind::Trusted, max_trusted_advice_bytes))
-        .transpose()?;
-    jolt_akita::schedule_registry::provision_precommitted_for_k(
-        untrusted_physical_vars,
-        trusted_physical_vars,
-        direct_program_physical_vars,
-        one_hot_k,
-        final_num_vars,
-    )
-    .map(|_| ())
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })
-}
-
 fn grouped_batch_poly_capacity(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
@@ -1690,37 +1664,6 @@ pub fn akita_verifier_preprocessing(
             })
         }
     };
-    let one_hot_k = akita_verifier_setup.one_hot_k();
-    let akita_verifier_final_num_vars = akita_verifier_setup.max_num_vars();
-    let layout = &preprocessing.shared.memory_layout;
-    let direct_program_plan = preprocessing.shared.program.is_committed().then(|| {
-        let bytecode_len = preprocessing.shared.bytecode_size();
-        let bytecode_chunk_count = preprocessing.shared.bytecode_chunk_count;
-        committed_program_packing_plan(
-            bytecode_len,
-            bytecode_chunk_count,
-            preprocessing.shared.program.program_image_len_words(),
-            TracePolynomialOrder::CycleMajor,
-        )
-        .expect("the canonical precommitted packing plan must exist")
-    });
-    let direct_program_physical_vars = direct_program_plan
-        .as_ref()
-        .map(|plan| {
-            plan.objects()
-                .map(|object| object.packing().packed_num_vars())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    provision_precommitted_schedules(
-        layout.max_untrusted_advice_size as usize,
-        layout.max_trusted_advice_size as usize,
-        &direct_program_physical_vars,
-        one_hot_k,
-        akita_verifier_final_num_vars,
-    )
-    .expect("precommitted grouped schedules must provision for the verifier");
-
     JoltVerifierPreprocessing::new(
         program,
         preprocessing.shared.digest(),
