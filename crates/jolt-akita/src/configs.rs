@@ -5,7 +5,8 @@
 //! instance.
 
 use akita_config::proof_optimized::fp128::{DenseBounded, OneHot};
-use akita_config::CommitmentConfig;
+use akita_config::recursive_commitment::RecursiveScheduleConfig;
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::sis::CommittedSourceClass;
 
 use crate::AKITA_ONE_HOT_K16;
@@ -77,22 +78,38 @@ macro_rules! delegate_preset {
 }
 
 delegate_preset!(
-    /// Adaptive one-hot config using the Jolt K=16 schedule artifact.
-    JoltOneHotK16,
+    /// Direct-planning policy used to generate the below-cutover K=16 rows.
+    JoltOneHotK16Direct,
     OneHot,
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    "jolt-fp128-onehot-k16"
+    "jolt-fp128-onehot-k16-direct-planner"
 );
 
 delegate_preset!(
-    /// Adaptive one-hot config using the Jolt K=256 schedule artifact.
-    JoltOneHotK256,
+    /// Direct-planning policy used to generate the below-cutover K=256 rows.
+    JoltOneHotK256Direct,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    "jolt-fp128-onehot-k256"
+    "jolt-fp128-onehot-k256-direct-planner"
 );
+
+impl RecursiveScheduleConfig for JoltOneHotK16Direct {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k16";
+}
+
+impl RecursiveScheduleConfig for JoltOneHotK256Direct {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k256";
+}
+
+/// Runtime K=16 policy. Its catalog may contain either direct or setup-offloaded
+/// rows; the exact admitted row decides the contribution mode for each shape.
+pub type JoltOneHotK16 = RecursiveCommitmentConfig<JoltOneHotK16Direct>;
+
+/// Runtime K=256 policy. Its catalog may contain either direct or setup-offloaded
+/// rows; the exact admitted row decides the contribution mode for each shape.
+pub type JoltOneHotK256 = RecursiveCommitmentConfig<JoltOneHotK256Direct>;
 
 delegate_preset!(
     /// Dense config for `u64`-bounded advice and committed-program objects.
@@ -126,5 +143,7 @@ mod tests {
             JoltOneHotK256::RING_DIMENSION_SCHEDULE_MODE,
             akita_schedules::RingDimensionScheduleMode::AdaptiveDimension { .. }
         ));
+        assert!(JoltOneHotK16::recursive_setup_planning());
+        assert!(JoltOneHotK256::recursive_setup_planning());
     }
 }

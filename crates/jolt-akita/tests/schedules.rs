@@ -7,16 +7,19 @@
 
 use std::path::{Path, PathBuf};
 
-use akita_config::{honest_fold_policy_of, trusted_setup_matrix_capacity};
+use akita_config::trusted_setup_matrix_capacity;
 use akita_schedules::TrustedScheduleCatalog;
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
     PolynomialGroupLayout,
 };
-use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK256};
-use jolt_akita::schedule_registry::{FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP};
+use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use jolt_akita::schedule_registry::{
+    dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+};
 use jolt_akita::schedules::emit::{
-    family_specs, keys, K16_NUM_VARS, K256_NUM_VARS, ONE_HOT_TRACE_NUM_POLYS,
+    family_specs, keys, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS, K256_PACKING_VARIABLES,
+    ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
 };
 use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -57,6 +60,41 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
+fn scalar_schedule(catalog: &TrustedScheduleCatalog, num_vars: usize) -> akita_types::FoldSchedule {
+    catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            num_vars, 1,
+        )))
+        .expect("cutover row must resolve")
+        .schedule()
+        .clone()
+}
+
+fn uses_setup_offloading(schedule: &akita_types::FoldSchedule) -> bool {
+    schedule
+        .recursive_folds
+        .iter()
+        .any(|fold| fold.params.setup_prefix().is_some())
+}
+
+#[test]
+fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
+    for (catalog, packing_variables) in [
+        (one_hot_catalog(AKITA_ONE_HOT_K16), K16_PACKING_VARIABLES),
+        (one_hot_catalog(AKITA_ONE_HOT_K256), K256_PACKING_VARIABLES),
+    ] {
+        let cutover_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + packing_variables;
+        assert!(!uses_setup_offloading(&scalar_schedule(
+            &catalog,
+            cutover_num_vars - 1
+        )));
+        assert!(uses_setup_offloading(&scalar_schedule(
+            &catalog,
+            cutover_num_vars
+        )));
+    }
+}
+
 const TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(20, 1);
 const TRUSTED_ADVICE_K256_FINAL_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(39, 1);
 
@@ -70,6 +108,35 @@ fn trusted_advice_grouped_key(dense: &TrustedScheduleCatalog) -> AkitaScheduleLo
     }
 }
 
+fn assert_adaptation_preserves_main_skeleton(
+    base: &TrustedScheduleCatalog,
+    resolved: &akita_schedules::ResolvedScheduleRow,
+    final_group: PolynomialGroupLayout,
+) {
+    let main = base
+        .resolve_key(&AkitaScheduleLookupKey::single(final_group))
+        .expect("main scalar row");
+    assert_eq!(
+        resolved.schedule().root.params.own_group(),
+        main.schedule().root.params.own_group(),
+        "adaptation must preserve the central trace root geometry",
+    );
+    assert_eq!(
+        resolved
+            .schedule()
+            .recursive_folds
+            .iter()
+            .map(|fold| fold.params.setup_prefix().is_some())
+            .collect::<Vec<_>>(),
+        main.schedule()
+            .recursive_folds
+            .iter()
+            .map(|fold| fold.params.setup_prefix().is_some())
+            .collect::<Vec<_>>(),
+        "adaptation must preserve the direct/setup-offloaded topology",
+    );
+}
+
 #[test]
 fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let dense = dense_catalog();
@@ -77,13 +144,12 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let key = trusted_advice_grouped_key(&dense);
     assert!(base.resolve_key(&key).is_err());
 
-    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256>(
+    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256, JoltDenseBounded>(
         &base,
         std::slice::from_ref(&key.precommitteds),
-        honest_fold_policy_of::<JoltDenseBounded>(),
         [key.final_group.num_vars()],
     )
-    .expect("preprocessing must plan the production grouped row");
+    .expect("preprocessing must adapt the production grouped row");
     assert_eq!(rows.rows().len(), 1);
 
     let setup_catalog =
@@ -93,6 +159,7 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
         .resolve_key(&key)
         .expect("setup-owned row must resolve by key");
     assert_eq!(resolved.profiles().precommitteds, key.precommitteds);
+    assert_adaptation_preserves_main_skeleton(&base, &resolved, key.final_group);
     assert_eq!(
         setup_catalog
             .resolve_selection(resolved.selection())
@@ -103,17 +170,46 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
 }
 
 #[test]
+fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
+    let dense = dense_catalog();
+    let base = one_hot_catalog(AKITA_ONE_HOT_K16);
+    let precommit = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
+        .expect("trusted advice profile");
+    for final_num_vars in [
+        RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES - 1,
+        RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES,
+    ] {
+        let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK16, JoltDenseBounded>(
+            &base,
+            &[vec![precommit]],
+            [final_num_vars],
+        )
+        .expect("adapt the grouped K=16 row");
+        let setup_catalog =
+            jolt_akita::schedule_registry::extend_catalog::<JoltOneHotK16>(&base, &rows)
+                .expect("freeze adapted K=16 catalog");
+        let final_group = PolynomialGroupLayout::new(final_num_vars, 1);
+        let resolved = setup_catalog
+            .resolve_key(&AkitaScheduleLookupKey {
+                final_group,
+                precommitteds: vec![precommit],
+            })
+            .expect("adapted K=16 row");
+        assert_adaptation_preserves_main_skeleton(&base, &resolved, final_group);
+    }
+}
+
+#[test]
 fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
     let dense = dense_catalog();
     let base = one_hot_catalog(AKITA_ONE_HOT_K256);
     let key = trusted_advice_grouped_key(&dense);
-    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256>(
+    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256, JoltDenseBounded>(
         &base,
         std::slice::from_ref(&key.precommitteds),
-        honest_fold_policy_of::<JoltDenseBounded>(),
         [key.final_group.num_vars()],
     )
-    .expect("plan grouped row");
+    .expect("adapt grouped row");
     let setup_catalog =
         jolt_akita::schedule_registry::extend_catalog::<JoltOneHotK256>(&base, &rows)
             .expect("freeze setup catalog");

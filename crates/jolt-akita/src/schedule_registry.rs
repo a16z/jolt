@@ -1,25 +1,26 @@
 //! Setup-owned grouped schedule catalog construction.
 //!
 //! Base scalar rows come from checked-in external artifacts. Program-specific
-//! advice and committed-program shapes are planned during preprocessing and
-//! merged into a new immutable catalog owned by that setup. No process-global
-//! schedule state participates in proving or verification.
+//! advice and committed-program shapes are guided from the approved scalar row
+//! during preprocessing and merged into a new immutable catalog owned by that
+//! setup. No process-global schedule state participates in proving or
+//! verification.
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
 use akita_pcs::AkitaError;
+use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
+use akita_planner::find_adapted_schedule;
 use akita_schedules::{ResolvedScheduleRow, TrustedScheduleCatalog};
-use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupCommitPhaseParams,
     PolynomialGroupLayout, ScheduleRowDigest,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
-use crate::planning::plan_schedule;
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -88,7 +89,7 @@ impl PrecommittedScheduleParams {
     }
 }
 
-/// Rows planned for one concrete setup before they are frozen into a catalog.
+/// Rows adapted for one concrete setup before they are frozen into a catalog.
 #[derive(Clone, Debug, Default)]
 pub struct RegisteredRows {
     by_digest: HashMap<ScheduleRowDigest, ResolvedScheduleRow>,
@@ -131,12 +132,30 @@ pub fn extend_catalog<Cfg: CommitmentConfig>(
     )
 }
 
-fn plan_row<Cfg: CommitmentConfig>(
+fn plan_row<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
+    base: &TrustedScheduleCatalog,
     key: &AkitaScheduleLookupKey,
-    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
 ) -> Result<ResolvedScheduleRow, AkitaError> {
-    let schedule = plan_schedule::<Cfg>(key, precommitted_honest_fold_policies)?;
-    reject_setup_prefix_contributions(&schedule)?;
+    let main_row = base.resolve_key(&AkitaScheduleLookupKey::single(key.final_group))?;
+    let producer_contract = ProducerCfg::committed_source_contract()?;
+    let producer_fold_policy = honest_fold_policy_of::<ProducerCfg>();
+    let producers = key
+        .precommitteds
+        .iter()
+        .copied()
+        .map(|profile| {
+            PrecommittedProducer::try_new(profile, producer_contract, producer_fold_policy)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let request = GroupedGenerationRequest::new(key.final_group, producers);
+    let planned = find_adapted_schedule(
+        &main_row,
+        &request,
+        honest_fold_policy_of::<Cfg>(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )?;
+    let schedule = planned.schedule;
     let profiles = CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::try_from_params(
             key.final_group,
@@ -147,25 +166,10 @@ fn plan_row<Cfg: CommitmentConfig>(
     ResolvedScheduleRow::try_new(profiles, schedule, &policy_of::<Cfg>())
 }
 
-fn reject_setup_prefix_contributions(schedule: &FoldSchedule) -> Result<(), AkitaError> {
-    if schedule
-        .recursive_folds
-        .iter()
-        .any(|fold| fold.params.setup_prefix().is_some())
-    {
-        return Err(AkitaError::InvalidSetup(
-            "provisioned schedule carries a recursive setup-prefix contribution, which Jolt's shape guard does not admit"
-                .to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-/// Plan missing grouped rows against one base catalog.
-pub fn provision<Cfg: CommitmentConfig>(
+/// Adapt missing grouped rows from the base catalog's approved scalar rows.
+pub fn provision<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
     base: &TrustedScheduleCatalog,
     precommitted_combinations: &[Vec<GroupCommitPhaseParams>],
-    precommitted_honest_fold_policy: HonestFoldPolicySpec,
     final_num_vars: impl IntoIterator<Item = usize>,
 ) -> Result<RegisteredRows, AkitaError> {
     akita_config::validate_trusted_schedule_catalog::<Cfg>(base)?;
@@ -196,8 +200,7 @@ pub fn provision<Cfg: CommitmentConfig>(
         if base.resolve_key(key).is_ok() {
             return Ok(None);
         }
-        let policies = vec![precommitted_honest_fold_policy; key.precommitteds.len()];
-        plan_row::<Cfg>(key, &policies)
+        plan_row::<Cfg, ProducerCfg>(base, key)
             .map(Some)
             .map_err(|error| error.to_string())
     })
@@ -262,7 +265,7 @@ impl AdvicePrecommitLayouts {
 pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(14, 1);
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
-/// Plan grouped rows for optional advice followed by committed-program objects.
+/// Adapt grouped rows for optional advice followed by committed-program objects.
 pub fn provision_precommitted_for_k(
     dense_catalog: &TrustedScheduleCatalog,
     one_hot_catalog: &TrustedScheduleCatalog,
@@ -309,16 +312,14 @@ pub fn provision_precommitted_for_k(
         )));
     }
     match one_hot_k {
-        AKITA_ONE_HOT_K256 => provision::<JoltOneHotK256>(
+        AKITA_ONE_HOT_K256 => provision::<JoltOneHotK256, JoltDenseBounded>(
             one_hot_catalog,
             &combinations,
-            honest_fold_policy_of::<JoltDenseBounded>(),
             [final_num_vars],
         ),
-        AKITA_ONE_HOT_K16 => provision::<JoltOneHotK16>(
+        AKITA_ONE_HOT_K16 => provision::<JoltOneHotK16, JoltDenseBounded>(
             one_hot_catalog,
             &combinations,
-            honest_fold_policy_of::<JoltDenseBounded>(),
             [final_num_vars],
         ),
         _ => unreachable!("one-hot K was validated above"),

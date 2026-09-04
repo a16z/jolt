@@ -3,9 +3,6 @@ use std::{fmt, io::Cursor, path::Path, sync::Arc, sync::OnceLock};
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
 
-#[cfg(feature = "profiling")]
-use std::{cell::Cell, num::NonZeroUsize};
-
 use akita_config::CommitmentConfig;
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaTranscript,
@@ -273,6 +270,10 @@ pub struct AkitaSetupParams {
     pub(crate) one_hot_k: usize,
     pub(crate) flavor: AkitaSetupFlavor,
     /// Recipe for the dynamic grouped rows accepted by this setup.
+    ///
+    /// Replaying serialized setup parameters intentionally reruns guided
+    /// preprocessing. Verifier transport serializes [`AkitaVerifierSetup`]
+    /// instead, which contains the finalized catalog and never replans.
     #[serde(default, rename = "advice_schedule")]
     pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,
     /// Immutable base catalogs loaded once by application preprocessing.

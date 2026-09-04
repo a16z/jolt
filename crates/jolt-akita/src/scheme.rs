@@ -1119,12 +1119,11 @@ mod tests {
     }
 
     #[test]
-    fn serde_transported_grouped_setup_restores_its_schedule_rows() {
-        use crate::schedule_registry::{
-            PrecommittedScheduleParams, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
-        };
+    fn serde_transported_recursive_grouped_setup_restores_its_schedule_rows() {
+        use crate::schedule_registry::{PrecommittedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
+        use crate::schedules::emit::{K16_PACKING_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
-        let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.0;
+        let final_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES;
         let precommitted_schedule = PrecommittedScheduleParams::new(
             None,
             Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
@@ -1158,6 +1157,11 @@ mod tests {
             .resolve_selection(selection)
             .expect("transported grouped setup must carry its schedule row");
         assert!(!resolved.profiles().precommitteds.is_empty());
+        assert!(resolved
+            .schedule()
+            .recursive_folds
+            .iter()
+            .any(|fold| fold.params.setup_prefix().is_some()));
     }
 
     #[test]
