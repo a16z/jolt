@@ -214,3 +214,42 @@ loads were **3.88→6.19 / 3.22→5.73**. No compiler overlap was observed.
 Two earlier contended candidate walls (30.281 / 33.122 s) are excluded.
 Fmt, feature-enabled all-target clippy/check, 64/64 tests before and after
 rebase, and the real tamper gate passed; see `lanes/perf5-lane6.md`.
+
+### PERF-5 lane 4 after lanes 3/5a
+
+Same base `2d8055c7f`, identical fixture and protocol. Hybrid bucket
+accumulation replaces the whole-MSM skew fallback; large, unskewed u16/u32
+inputs use 16-bit affine windows. Ten threads remain fastest in the sweep.
+
+| measurement | control | hybrid |
+|---|---:|---:|
+| phase 1a commitment | 877 ms | 798 ms |
+| T2 phase 1b commitment | 1,086 ms | 834 ms |
+| T2 phase 2a commitment | 6,318 ms | 5,214 ms |
+| fold commitments | 5.924477 s | 4.083873 s |
+| fold us/point | 0.706253 | 0.486836 |
+| quotient MSM | 3.718519 s | 3.758710 s |
+| quotient us/point | 0.443282 | 0.448073 |
+| proof stages/opening | 15,313 ms | 13,451 ms |
+| **honest online total** | **26,314 ms** | **22,959 ms** |
+| process CPU | 218.500 s | 191.250 s |
+| CPU / wall | 8.304 | 8.330 |
+| payload / bincode / statement | 7,392 / 7,529 / 352 B | unchanged |
+| N4 gas | 4,890,645 | unchanged |
+
+The mutex covered both commands. Command-start loads were 3.12 and 3.80;
+honest-clock loads were 4.18 -> 6.11 and 4.75 -> 6.22. Both gates rejected
+every tamper. Temporary MSM timers were removed after this comparison.
+Phase 2a passed 5.4 s in that comparison, but a clean repeat took 5.469 s;
+the target is not consistent across runs. Fold, quotient, and uniform
+full-Fr targets remain unmet. The 3.355 s same-base online win was approved.
+Rates, rejected candidates, final gates: `lanes/perf5-lane4.md`.
+
+Final integration on `a43da7d18` (including lane 6): **22.410 s online**,
+185.430 CPU s, CPU/wall 8.274; preparation 434 ms, T2 adaptation 652 ms,
+phase 1a/1b/2a **779/868/5,424 ms**, all members 786 ms, proof 12,679 ms.
+Command-start load 3.01; honest load 3.52 -> 5.29. Bytes and all verifier
+counts remain unchanged. Post-rebase check/fmt/clippy, 234/234 unit tests,
+and the locked real tamper gate passed. An earlier contended 30.056 s
+integrated run is excluded from idle results. The integrated result includes
+lane 6; it is not used to calculate the paired MSM saving above.
