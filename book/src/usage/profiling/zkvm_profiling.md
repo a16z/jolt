@@ -39,11 +39,12 @@ the run identity, so the files inside use fixed names:
   [Perfetto](https://ui.perfetto.dev/) or query with `trace_processor` SQL.
 - `summary.json` — schema-versioned aggregates (see below).
 
-The run also compiles and traces the guest, proves it, and **verifies the
-proof** as a correctness gate; only `prove()` is measured. The `profiling`
-feature enables the system monitor, so CPU/memory counters render as native
-Perfetto counter tracks directly from the emitted trace — no offline
-post-processing step.
+The run also compiles and traces the guest, derives the PCS setup, proves it,
+and verifies the proof. PCS setup and `prove()` are timed separately. The
+verifier is timed once under an explicit host-sized Rayon pool and once under
+an exactly one-worker pool. The `profiling` feature enables the system
+monitor, so CPU/memory counters render as native Perfetto counter tracks
+directly from the emitted trace — no offline post-processing step.
 
 ## Benchmark sweeps
 
@@ -58,11 +59,16 @@ cargo run --release -p jolt-prover --features profiling -- \
 ```
 
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
-in the run directories); render
-them with:
+in the run directories). In addition to prover throughput and proof size, the
+CSV records `setup_time_s`, `verifier_parallel_time_s`,
+`verifier_single_thread_time_s`, and the explicit parallel worker count.
+Existing CSVs using the previous header are migrated in place with empty
+values for these new fields. Render them with:
 
 ```bash
 python3 scripts/benchmark_summary.py     # per-scale table
+python3 scripts/benchmark_summary.py --protocol akita \
+    --metric verifier_single_thread_time_s
 python3 scripts/plot_benchmarks.py       # speed + proof-size plots
 python3 scripts/plot_memory_usage.py     # peak memory per run (from summary.json)
 ```
