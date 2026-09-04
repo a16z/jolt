@@ -864,6 +864,7 @@ fn prove_workload(
     trace_output: TraceOutput<Arc<Vec<JoltTraceRow>>>,
     backend: BackendKind,
 ) -> ProvenRun {
+    use jolt_akita::AkitaScheduleArtifacts;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, AkitaField, AkitaPackedScheme, AkitaScheme, AkitaTranscript,
@@ -903,12 +904,18 @@ fn prove_workload(
         legacy_preprocessing.shared.bytecode_size(),
     )
     .expect("OneHotTrace setup shape");
+    // Disk I/O is deployment work, not PCS setup. Load the ordinary `.aks`
+    // files before entering the setup measurement; catalog admission and
+    // matrix/key construction remain inside the timed setup call.
+    let schedule_artifacts = AkitaScheduleArtifacts::from_default_directory()
+        .expect("the external Akita schedule artifacts must load");
     let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only(
         setup_shape.num_vars,
         setup_shape.num_polys,
         layout_digest,
         one_hot_k,
-    );
+    )
+    .with_schedule_artifacts(schedule_artifacts);
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();

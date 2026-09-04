@@ -30,6 +30,7 @@ jolt-akita::adapters.rs::append_verifier_setup::append#6::transcript.append(&U64
 jolt-akita::adapters.rs::append_verifier_setup::append_bytes#1::transcript.append_bytes(b"akita/fp128")
 jolt-akita::adapters.rs::append_verifier_setup::append_bytes#2::transcript.append_bytes(flavor.transcript_label())
 jolt-akita::adapters.rs::append_verifier_setup::append_bytes#7::transcript.append_bytes(&setup.default_layout_digest)
+jolt-akita::adapters.rs::append_verifier_setup::append_bytes#8::transcript.append_bytes(&catalog_digest)
 jolt-akita::native_batching.rs::AkitaNativeBatching::verify_batch::append#1::transcript.append(proof)
 jolt-akita::native_batching.rs::AkitaNativeBatching::verify_batch::bind_statement_transcripts#0::bind_statement_transcripts(transcript,setup,statement,commitment,point)
 jolt-akita::native_batching.rs::AkitaNativeBatching::verify_trace_batch::append#1::transcript.append(proof)
