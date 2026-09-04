@@ -322,3 +322,7 @@ Lane 4 (657b5f94): hybrid bucket accumulation (projective only for long carry ch
 Cumulative: **40.3 → 22.41 s (−44 %)**, 7,488 → 7,392 B, gas 5.05 → 4.89 M, soundness unchanged (proofs byte-identical where the protocol was untouched; every landing re-ran the full tamper suite).
 
 Lane 5b (f82b3078) resumed: rebase onto a244203fb, gates, real gate incl. new-layout tampers, k=16 measurement, land. Then review #5 (4-ary fold soundness). Expected: −288 B, −90k gas, folds ≈ ÷3.
+
+## 22:46 — daemon restart #221; Pika MCP tools replaced by `pika-cli`
+
+Lane 5b (f82b3078) stopped mid test/land phase (rebased commit b2df289a5 on a244203fb; uncommitted kzg/scheme/test edits; baseline binary-fold gate measured 22.64 s / folds 4.07 / quotient 3.81 / opening 8.55 s; 94/94 tests incl. inconsistent-fold and wrong-VK-power negatives). Resumed via `pika-cli tasks resume` with CLI reporting instructions. Lanes 1–4, 6 all completed earlier.
