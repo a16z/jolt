@@ -110,6 +110,8 @@ where
         is_virtual: zero,
         is_first_in_sequence: zero,
         is_noop: zero,
+        #[cfg(feature = "implicit-carry")]
+        carry: zero,
     }
     .canonical_order();
     output_ids.extend(

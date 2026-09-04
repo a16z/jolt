@@ -22,6 +22,12 @@ field-inline = [
   "jolt-program/field-inline",
   "jolt-riscv/field-inline",
 ]
+implicit-carry = [
+  "jolt-claims/implicit-carry",
+  "jolt-lookup-tables/implicit-carry",
+  "jolt-program/implicit-carry",
+  "jolt-riscv/implicit-carry",
+]
 
 [dependencies]
 common.workspace = true

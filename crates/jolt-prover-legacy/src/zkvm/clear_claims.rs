@@ -24,6 +24,8 @@ use jolt_claims::protocols::jolt::{
 use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_riscv::CircuitFlags;
+#[cfg(feature = "implicit-carry")]
+use jolt_verifier::stages::stage6b::outputs::CarryClaimReductionOutputClaims;
 #[cfg(not(feature = "akita"))]
 use jolt_verifier::{
     proof::ClearProofClaims,
@@ -145,6 +147,14 @@ fn spartan_outer_claims_from_openings<F: JoltField>(
             is_compressed: flag_claim(CircuitFlags::IsCompressed)?,
             is_first_in_sequence: flag_claim(CircuitFlags::IsFirstInSequence)?,
             is_last_in_sequence: flag_claim(CircuitFlags::IsLastInSequence)?,
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: flag_claim(CircuitFlags::UsesCarry)?,
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: flag_claim(CircuitFlags::ProducesCarry)?,
+            #[cfg(feature = "implicit-carry")]
+            carry_used: outer_claim(JoltVirtualPolynomial::CarryUsed)?,
+            #[cfg(feature = "implicit-carry")]
+            next_carry: outer_claim(JoltVirtualPolynomial::NextCarry)?,
         },
     })
 }
@@ -161,6 +171,10 @@ fn stage2_claims_from_openings<F: JoltField>(
         branch_flag: claims.get_or_zero(spartan::branch_flag_product()),
         next_is_noop: claims.get_or_zero(spartan::next_is_noop_product()),
         virtual_instruction: claims.get_or_zero(spartan::virtual_instruction_product()),
+        #[cfg(feature = "implicit-carry")]
+        uses_carry: claims.get_or_zero(spartan::uses_carry_product()),
+        #[cfg(feature = "implicit-carry")]
+        carry: claims.get_or_zero(spartan::carry_product()),
     };
     // The three aliased reduced openings are deduplicated into their
     // product-remainder sources by the accumulator (never absorbed separately),
@@ -210,6 +224,8 @@ fn stage3_claims_from_openings<F: JoltField>(
         is_virtual: claims.require(spartan::is_virtual_shift())?,
         is_first_in_sequence: claims.require(spartan::is_first_in_sequence_shift())?,
         is_noop: claims.require(spartan::is_noop_shift())?,
+        #[cfg(feature = "implicit-carry")]
+        carry: claims.require(spartan::carry_shift())?,
     };
     let instruction_input = InstructionInputOutputClaims {
         left_operand_is_rs1: claims.require(instruction::left_operand_is_rs1())?,
@@ -428,6 +444,10 @@ fn stage6b_claims_from_openings<F: JoltField>(
         inc_claim_reduction: IncClaimReductionOutputClaims {
             ram_inc: claims.require(increments::ram_inc_reduced())?,
             rd_inc: claims.require(increments::rd_inc_reduced())?,
+        },
+        #[cfg(feature = "implicit-carry")]
+        carry_claim_reduction: CarryClaimReductionOutputClaims {
+            carry: claims.require(spartan::carry_reduced())?,
         },
         trusted_advice: trusted_advice_cycle_phase_claim_from_openings(claims),
         untrusted_advice: untrusted_advice_cycle_phase_claim_from_openings(claims),

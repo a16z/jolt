@@ -20,6 +20,8 @@ pub mod assert;
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
 pub mod i;
+#[cfg(feature = "implicit-carry")]
+pub mod implicit_carry;
 pub mod m;
 pub mod virt;
 
@@ -93,6 +95,8 @@ pub use i::SubW;
 pub use i::Sw;
 pub use i::Xor;
 pub use i::XorI;
+#[cfg(feature = "implicit-carry")]
+pub use implicit_carry::{AddC, MulC};
 pub use m::Div;
 pub use m::DivU;
 pub use m::DivUW;
@@ -458,6 +462,10 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     FieldStoreToX(FieldStoreToX<T>),
     #[cfg(feature = "field-inline")]
     FieldLoadImm(FieldLoadImm<T>),
+    #[cfg(feature = "implicit-carry")]
+    AddC(AddC<T>),
+    #[cfg(feature = "implicit-carry")]
+    MulC(MulC<T>),
 }
 
 macro_rules! impl_jolt_instruction_try_from_row {
@@ -682,6 +690,10 @@ impl_jolt_instructions_flags! {
     FieldStoreToX => FIELD_STORE_TO_X,
     #[cfg(feature = "field-inline")]
     FieldLoadImm => FIELD_LOAD_IMM,
+    #[cfg(feature = "implicit-carry")]
+    AddC => ADDC,
+    #[cfg(feature = "implicit-carry")]
+    MulC => MULC,
 }
 #[cfg(test)]
 mod tests {

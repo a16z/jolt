@@ -161,6 +161,7 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         let mut state = ExpansionState::new(owned_allocator, profile);
         let result = state
             .expand_source_recursive(instruction)
+            .and_then(|rows| clobber_trailing_carry(instruction, rows, profile))
             .and_then(|rows| final_rows_to_instructions(rows, profile));
         *allocator = state.into_allocator();
         result
@@ -169,6 +170,61 @@ fn expand_source_instruction_with_provider<P: InlineExpansionProvider + ?Sized>(
         allocator.release(register)?;
     }
     result
+}
+
+/// Feature-on, a guest instruction that is not a carry producer must leave
+/// carry = 0. Recipes may legitimately end in ADD/MUL rows (MULH, SLL) and may
+/// nest producer-ending helpers like SLL mid-sequence, so the guarantee is
+/// enforced once at the source-instruction boundary: append a non-producing
+/// noop and re-stamp the sequence metadata. Inline sequences are exempt — the
+/// carry contract of an inline is owned by its provider.
+#[cfg(feature = "implicit-carry")]
+fn clobber_trailing_carry(
+    source: &SourceInstruction,
+    mut rows: Vec<JoltInstructionRow>,
+    profile: JoltInstructionProfile,
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+    fn produces_carry(kind: JoltInstructionKind) -> bool {
+        kind == JoltInstructionKind::ADD
+            || kind == JoltInstructionKind::MUL
+            || kind == JoltInstructionKind::ADDC
+            || kind == JoltInstructionKind::MULC
+    }
+    let source_kind = source.kind();
+    let source_produces = source_kind == SourceInstructionKind::ADD
+        || source_kind == SourceInstructionKind::MUL
+        || source_kind == SourceInstructionKind::ADDC
+        || source_kind == SourceInstructionKind::MULC;
+    if source_produces
+        || !rows
+            .last()
+            .is_some_and(|row| produces_carry(row.instruction_kind))
+    {
+        return Ok(rows);
+    }
+    rows.push(JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::ADDI,
+        address: source.row().address,
+        operands: NormalizedOperands {
+            rd: Some(0),
+            rs1: Some(0),
+            rs2: None,
+            imm: 0,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    });
+    metadata::stamp_instruction_sequence(rows, source.row().is_compressed, profile)
+}
+
+#[cfg(not(feature = "implicit-carry"))]
+fn clobber_trailing_carry(
+    _source: &SourceInstruction,
+    rows: Vec<JoltInstructionRow>,
+    _profile: JoltInstructionProfile,
+) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
+    Ok(rows)
 }
 
 fn final_rows_to_instructions(

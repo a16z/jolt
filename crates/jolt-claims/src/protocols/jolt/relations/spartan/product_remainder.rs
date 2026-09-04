@@ -43,6 +43,14 @@ pub struct ProductRemainderOutputClaims<C> {
     pub next_is_noop: C,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
     pub virtual_instruction: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::UsesCarry))]
+    pub uses_carry: C,
+    /// The committed Carry column opened at the product cycle point (the
+    /// CarryUsed right factor; single proof-visible carry source).
+    #[cfg(feature = "implicit-carry")]
+    #[opening(committed = Carry)]
+    pub carry: C,
 }
 
 /// Consumed product-remainder input: the product uni-skip's reduced opening. The
@@ -92,12 +100,22 @@ impl SymbolicSumcheck for ProductRemainder {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let left = product_weight(0) * opening(left_instruction_input_product())
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+        let mut left = product_weight(0) * opening(left_instruction_input_product())
             + product_weight(1) * opening(lookup_output_product())
             + product_weight(2) * opening(jump_flag_product());
-        let right = product_weight(0) * opening(right_instruction_input_product())
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+        let mut right = product_weight(0) * opening(right_instruction_input_product())
             + product_weight(1) * opening(branch_flag_product())
             + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()));
+        // Weight slot 3 = the CarryUsed row's position in the legacy prover's
+        // `PRODUCT_CONSTRAINTS` table, pinned there by a const assertion.
+        #[cfg(feature = "implicit-carry")]
+        {
+            use crate::protocols::jolt::geometry::spartan::{carry_product, uses_carry_product};
+            left = left + product_weight(3) * opening(uses_carry_product());
+            right = right + product_weight(3) * opening(carry_product());
+        }
 
         product_tau_kernel() * left * right
     }
@@ -111,6 +129,9 @@ mod tests {
 
     #[test]
     fn product_remainder_evaluates_like_core_formula() {
+        #[cfg(feature = "implicit-carry")]
+        use crate::protocols::jolt::geometry::spartan::{carry_product, uses_carry_product};
+
         let relation = ProductRemainder::new(SpartanProductDimensions::new(7));
 
         let left_input = Fr::from_u64(2);
@@ -119,7 +140,17 @@ mod tests {
         let right_input = Fr::from_u64(7);
         let branch = Fr::from_u64(11);
         let next_is_noop = Fr::from_u64(13);
-        let weights = [Fr::from_u64(17), Fr::from_u64(19), Fr::from_u64(23)];
+        #[cfg(feature = "implicit-carry")]
+        let uses_carry = Fr::from_u64(31);
+        #[cfg(feature = "implicit-carry")]
+        let carry = Fr::from_u64(41);
+        let weights = [
+            Fr::from_u64(17),
+            Fr::from_u64(19),
+            Fr::from_u64(23),
+            #[cfg(feature = "implicit-carry")]
+            Fr::from_u64(37),
+        ];
         let tau_kernel = Fr::from_u64(29);
         let zero = Fr::from_u64(0);
 
@@ -131,6 +162,10 @@ mod tests {
                 id if id == right_instruction_input_product() => right_input,
                 id if id == branch_flag_product() => branch,
                 id if id == next_is_noop_product() => next_is_noop,
+                #[cfg(feature = "implicit-carry")]
+                id if id == uses_carry_product() => uses_carry,
+                #[cfg(feature = "implicit-carry")]
+                id if id == carry_product() => carry,
                 _ => zero,
             },
             |_| zero,
@@ -145,13 +180,15 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            output,
-            tau_kernel
-                * (weights[0] * left_input + weights[1] * lookup_output + weights[2] * jump)
-                * (weights[0] * right_input
-                    + weights[1] * branch
-                    + weights[2] * (Fr::from_u64(1) - next_is_noop))
-        );
+        let left_sum = weights[0] * left_input + weights[1] * lookup_output + weights[2] * jump;
+        #[cfg(feature = "implicit-carry")]
+        let left_sum = left_sum + weights[3] * uses_carry;
+        let right_sum = weights[0] * right_input
+            + weights[1] * branch
+            + weights[2] * (Fr::from_u64(1) - next_is_noop);
+        #[cfg(feature = "implicit-carry")]
+        let right_sum = right_sum + weights[3] * carry;
+
+        assert_eq!(output, tau_kernel * left_sum * right_sum);
     }
 }

@@ -161,6 +161,67 @@ jobs:
           --features host,field-inline
           --
           -D warnings
+      # Same for implicit-carry: lint every crate that defines the feature lane.
+      - name: cargo clippy --features implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p tracer
+          -p jolt-program
+          -p jolt-riscv
+          -p jolt-lookup-tables
+          -p jolt-claims
+          -p jolt-r1cs
+          -p jolt-witness
+          -p jolt-verifier
+          --all-targets
+          --features implicit-carry
+          --
+          -D warnings
+      - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p jolt-prover-legacy
+          -p jolt-sdk
+          --all-targets
+          --features host,implicit-carry
+          --
+          -D warnings
+      # Composition coverage: both additive feature lanes must coexist.
+      - name: cargo clippy --features field-inline,implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p tracer
+          -p jolt-program
+          -p jolt-riscv
+          -p jolt-lookup-tables
+          -p jolt-claims
+          -p jolt-r1cs
+          -p jolt-witness
+          -p jolt-verifier
+          --all-targets
+          --features field-inline,implicit-carry
+          --
+          -D warnings
+      # jolt-tracer-x86's native module is cfg-gated to x86_64-linux; pin the
+      # target so the implicit-carry lane covers it even if the runner
+      # architecture changes.
+      - name: cargo clippy -p jolt-tracer-x86 --features implicit-carry
+        run: >
+          cargo clippy
+          -q
+          --message-format=short
+          -p jolt-tracer-x86
+          --all-targets
+          --features implicit-carry
+          --target x86_64-unknown-linux-gnu
+          --
+          -D warnings
 
   machete:
     runs-on: ubuntu-latest
@@ -335,6 +396,65 @@ jobs:
       # The jolt-kernels unit suite in its zk flavor.
       - name: Run jolt-kernels tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
+
+  test-prover-implicit-carry:
+    runs-on: ubuntu-latest
+    name: Test jolt-prover-legacy (implicit-carry)
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      # The implicit-carry e2e (carry_chain_e2e_dory) plus the full legacy
+      # suite with the carry protocol lane enabled.
+      - name: Run jolt-prover-legacy tests with implicit-carry feature
+        run: cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features implicit-carry
+      # The package selection mirrors the implicit-carry clippy lane: selecting
+      # tracer and jolt-lookup-tables alongside the modular crates keeps the
+      # feature unified across the dev-dependency graph (jolt-verifier's dev-dep
+      # on jolt-prover-legacy pulls tracer without forwarding the feature).
+      - name: Run modular crate tests with implicit-carry feature
+        run: >
+          cargo nextest run --cargo-profile ci
+          -p tracer
+          -p jolt-program
+          -p jolt-riscv
+          -p jolt-lookup-tables
+          -p jolt-claims
+          -p jolt-r1cs
+          -p jolt-witness
+          -p jolt-verifier
+          --features implicit-carry
+      # Feature-on fixture prover: the tamper manifest's carry targets and the
+      # jolt-verifier soundness suite only execute against carry-lane proofs
+      # when prover-fixtures and implicit-carry are enabled together.
+      - name: Run jolt-verifier fixture tests with implicit-carry feature
+        run: >
+          cargo nextest run --cargo-profile ci
+          -p jolt-verifier
+          --features implicit-carry,jolt-verifier/prover-fixtures
 
   test-prover-akita:
     runs-on: ubuntu-latest
@@ -626,6 +746,14 @@ jobs:
           cargo nextest run -p jolt-claims -p jolt-r1cs \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
+      - name: Test crates with implicit-carry
+        if: matrix.shard == 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo nextest run -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
+            -p jolt-claims -p jolt-r1cs \
+            --features implicit-carry --no-tests=pass --cargo-quiet
 
   # Join gate so the check name "Test modular crates" is stable regardless of
   # shard count.
@@ -780,6 +908,8 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
+      - name: Run tracer tests with implicit-carry
+        run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,implicit-carry --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests

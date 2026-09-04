@@ -166,6 +166,10 @@ pub enum SumcheckId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
+    /// Reduces the committed `Carry` openings (product virtualization, shift,
+    /// and the `carry_init` all-zeros point) to one final opening.
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Allocative)]

@@ -206,6 +206,10 @@ macro_rules! for_each_instruction_kind {
                 FIELD_STORE_TO_X => FieldStoreToX => "field.store_to_x",
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => "field.load_imm",
+                #[cfg(feature = "implicit-carry")]
+                ADDC => AddC => "jolt.addc",
+                #[cfg(feature = "implicit-carry")]
+                MULC => MulC => "jolt.mulc",
             ]
         }
     };
@@ -321,6 +325,10 @@ macro_rules! for_each_jolt_instruction_kind {
                 FIELD_STORE_TO_X => FieldStoreToX => (0x0106, "field.store_to_x"),
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => (0x0107, "field.load_imm"),
+                #[cfg(feature = "implicit-carry")]
+                ADDC => AddC => (0x0110, "jolt.addc"),
+                #[cfg(feature = "implicit-carry")]
+                MULC => MulC => (0x0111, "jolt.mulc"),
             ]
         }
     };
@@ -344,6 +352,8 @@ pub use kind::{
 };
 #[cfg(feature = "field-inline")]
 pub use profile::RV64IMAC_JOLT_FIELD_INLINE;
+#[cfg(feature = "implicit-carry")]
+pub use profile::RV64IMAC_JOLT_IMPLICIT_CARRY;
 pub use profile::{
     jolt_target_extension, source_extension, InlineExtension, JoltInstructionProfile,
     JoltTargetExtension, ProfileInstructionIndex, SourceExtension, RV64IMAC_JOLT,
@@ -381,7 +391,7 @@ macro_rules! jolt_instruction {
     (
         $(#[$attr:meta])*
         $name:ident,
-        circuit flags: [$($circuit:ident),* $(,)?],
+        circuit flags: [$($(#[$cmeta:meta])* $circuit:ident),* $(,)?],
         instruction flags: [$($instruction:ident),* $(,)?] $(,)?
     ) => {
         $crate::jolt_instruction!(@struct $(#[$attr])* $name);
@@ -390,8 +400,13 @@ macro_rules! jolt_instruction {
             #[inline]
             fn circuit_flags(&self) -> $crate::CircuitFlagSet {
                 let instruction: $crate::JoltInstructionRow = self.0.into();
-                let mut flags = $crate::CircuitFlagSet::default()
-                    $(.set($crate::CircuitFlags::$circuit))*;
+                let mut flags = $crate::CircuitFlagSet::default();
+                $(
+                    $(#[$cmeta])*
+                    {
+                        flags = flags.set($crate::CircuitFlags::$circuit);
+                    }
+                )*
                 if let Some(virtual_sequence_remaining) = instruction.virtual_sequence_remaining {
                     flags = flags.set($crate::CircuitFlags::VirtualInstruction);
                     if virtual_sequence_remaining == 0 {

@@ -193,6 +193,10 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
         (0b000, 0x05) => Ok(SourceInstructionKind::VirtualRev8W(
             jolt_riscv::instructions::VirtualRev8W(()),
         )),
+        #[cfg(feature = "implicit-carry")]
+        (0b000, 0x06) => Ok(SourceInstructionKind::ADDC),
+        #[cfg(feature = "implicit-carry")]
+        (0b000, 0x07) => Ok(SourceInstructionKind::MULC),
         (0b001, _) => Ok(SourceInstructionKind::VirtualAssertEQ),
         (0b010, _) => Ok(SourceInstructionKind::VirtualHostIO(
             jolt_riscv::instructions::VirtualHostIO(()),
@@ -286,6 +290,8 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         SourceInstructionKind::VirtualRev8W(jolt_riscv::instructions::VirtualRev8W(())) => {
             format_t_operands(word)
         }
+        #[cfg(feature = "implicit-carry")]
+        SourceInstructionKind::ADDC | SourceInstructionKind::MULC => format_r_operands(word),
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_ADD
         | SourceInstructionKind::FIELD_SUB

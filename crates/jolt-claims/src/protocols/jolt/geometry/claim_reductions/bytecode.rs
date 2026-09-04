@@ -453,6 +453,10 @@ pub fn lane_weights<F: JoltField>(
         weights[layout.circuit_start + (CircuitFlags::WriteLookupOutputToRD as usize)] +=
             coeff * g[2];
         weights[layout.circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[3];
+        #[cfg(feature = "implicit-carry")]
+        {
+            weights[layout.circuit_start + (CircuitFlags::UsesCarry as usize)] += coeff * g[4];
+        }
     }
     {
         let coeff = eta_powers[2];
@@ -731,7 +735,7 @@ mod tests {
             (11..11 + REGISTER_ADDRESS_BITS as u64).map(fr).collect();
         let eta = fr(31);
         let stage1_gammas = gamma_powers(3, 2 + NUM_CIRCUIT_FLAGS);
-        let stage2_gammas = gamma_powers(5, 4);
+        let stage2_gammas = gamma_powers(5, BYTECODE_STAGE_GAMMA_COUNTS[1]);
         let stage3_gammas = gamma_powers(7, 9);
         let stage4_gammas = gamma_powers(11, 3);
         let stage5_gammas = gamma_powers(13, 2 + LookupTableKind::<XLEN>::COUNT);
@@ -797,10 +801,11 @@ mod tests {
         let stage5_gammas = gamma_powers(13, 2 + LookupTableKind::<XLEN>::COUNT);
         let register_point: Vec<Fr> = (1..=REGISTER_ADDRESS_BITS as u64).map(fr).collect();
 
+        let stage2_gammas = gamma_powers(1, BYTECODE_STAGE_GAMMA_COUNTS[1]);
         let result = lane_weights::<Fr>(BytecodeLaneWeightInputs {
             eta: fr(31),
             stage1_gammas: &stage1_gammas,
-            stage2_gammas: &[fr(1); 4],
+            stage2_gammas: &stage2_gammas,
             stage3_gammas: &[fr(1); 9],
             stage4_gammas: &[fr(1); 3],
             stage5_gammas: &stage5_gammas,

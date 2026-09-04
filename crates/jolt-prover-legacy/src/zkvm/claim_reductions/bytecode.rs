@@ -579,6 +579,10 @@ fn compute_lane_weights<F: JoltField>(
         weights[layout.circuit_start + (CircuitFlags::WriteLookupOutputToRD as usize)] +=
             coeff * g[2];
         weights[layout.circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[3];
+        #[cfg(feature = "implicit-carry")]
+        {
+            weights[layout.circuit_start + (CircuitFlags::UsesCarry as usize)] += coeff * g[4];
+        }
     }
     {
         let coeff = eta_powers[2];

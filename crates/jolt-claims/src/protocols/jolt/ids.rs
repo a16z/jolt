@@ -39,6 +39,10 @@ pub enum JoltRelationId {
     ProgramImageClaimReduction,
     IncClaimReduction,
     HammingWeightClaimReduction,
+    /// Reduces the committed `Carry` openings (product virtualization, shift,
+    /// and the `carry_init` all-zeros point) to one final opening.
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -117,6 +121,23 @@ pub enum BooleanityPublic {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IncClaimReductionChallenge {
     Gamma,
+}
+
+/// Fiat-Shamir challenge drawn by the carry claim reduction (implicit-carry).
+#[cfg(feature = "implicit-carry")]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CarryClaimReductionChallenge {
+    Gamma,
+}
+
+/// Public eq evaluations consumed by the carry claim reduction: the two
+/// producing points plus the all-zeros carry_init selector.
+#[cfg(feature = "implicit-carry")]
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CarryClaimReductionPublic {
+    EqCarryProduct,
+    EqCarryShift,
+    EqZeroSelector,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -315,6 +336,8 @@ pub enum JoltChallengeId {
     RamRaClaimReduction(RamRaClaimReductionChallenge),
     Booleanity(BooleanityChallenge),
     IncClaimReduction(IncClaimReductionChallenge),
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction(CarryClaimReductionChallenge),
     HammingWeightClaimReduction(HammingWeightClaimReductionChallenge),
     BytecodeReadRaf(BytecodeReadRafChallenge),
     BytecodeClaimReduction(BytecodeClaimReductionChallenge),
@@ -344,6 +367,10 @@ pub enum JoltCommittedPolynomial {
     // mode never constructs these. Appended for codec stability.
     BalancedIncDigit(usize),
     BalancedIncCarry,
+    /// The row's incoming implicit carry (previous row's carry-out); dense
+    /// u64 column. Appended last: `Ord` is protocol data (see above).
+    #[cfg(feature = "implicit-carry")]
+    Carry,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -397,6 +424,13 @@ pub enum JoltVirtualPolynomial {
     // constant folded into the chunk reconstruction). Appended for codec
     // stability.
     FusedInc,
+    /// Product-virtualized `OpFlags(UsesCarry) * Carry` (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    CarryUsed,
+    /// The row's carry-out, checked against the next row's committed `Carry`
+    /// by the shift relation (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    NextCarry,
 }
 
 #[derive(
@@ -473,6 +507,8 @@ pub enum JoltDerivedId {
     RamHammingBooleanity(RamHammingBooleanityPublic),
     Booleanity(BooleanityPublic),
     IncClaimReduction(IncClaimReductionPublic),
+    #[cfg(feature = "implicit-carry")]
+    CarryClaimReduction(CarryClaimReductionPublic),
     HammingWeightClaimReduction(HammingWeightClaimReductionPublic),
     BytecodeReadRaf(BytecodeReadRafPublic),
     AdviceClaimReduction(AdviceClaimReductionPublic),

@@ -245,6 +245,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             advice: opening_point.clone(),
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            next_carry: opening_point.clone(),
             is_last_in_sequence: opening_point,
         })
     }
@@ -341,6 +349,14 @@ mod tests {
             is_compressed: next(),
             is_first_in_sequence: next(),
             is_last_in_sequence: next(),
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: next(),
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: next(),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: next(),
+            #[cfg(feature = "implicit-carry")]
+            next_carry: next(),
         }
     }
 
@@ -383,6 +399,14 @@ mod tests {
             is_compressed: next(),
             is_first_in_sequence: next(),
             is_last_in_sequence: next(),
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: next(),
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: next(),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: next(),
+            #[cfg(feature = "implicit-carry")]
+            next_carry: next(),
         }
     }
 
@@ -396,7 +420,10 @@ mod tests {
         let log_t = 3usize;
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let variable_count = dimensions.variables().len();
-        assert_eq!(variable_count, 35);
+        assert_eq!(
+            variable_count,
+            35 + 4 * cfg!(feature = "implicit-carry") as usize
+        );
 
         // `tau` has `log_t + 2` entries; the remainder challenge vector has
         // `1 + log_t` entries (so `tau.len() == remainder.len() + 1`).

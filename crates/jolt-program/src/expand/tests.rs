@@ -67,9 +67,11 @@ fn rows(instructions: Vec<JoltInstruction>) -> Vec<JoltInstructionRow> {
 
 #[test]
 fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
+    // XOR is side-effect-free in every configuration; ADD is only
+    // feature-off (feature-on its carry-out is an observable side effect).
     let mut allocator = ExpansionAllocator::new();
     let expanded = rows(expand_instruction(
-        &instruction(SourceInstructionKind::ADD, Some(0), true),
+        &instruction(SourceInstructionKind::XOR, Some(0), true),
         &mut allocator,
         RV64IMAC_JOLT,
     )?);
@@ -81,6 +83,29 @@ fn side_effect_free_rd_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
     assert_eq!(expanded[0].operands.rs2, None);
     assert_eq!(expanded[0].operands.imm, 0);
     assert!(expanded[0].is_compressed);
+    Ok(())
+}
+
+#[cfg(feature = "implicit-carry")]
+#[test]
+fn carry_producing_rd_zero_keeps_its_row() -> Result<(), ExpansionError> {
+    // ADD/MUL rd=x0 must stay real rows feature-on: their carry-out is
+    // consumable by a following ADDC/MULC, like AddC/MulC themselves.
+    for (source_kind, jolt_kind) in [
+        (SourceInstructionKind::ADD, JoltInstructionKind::ADD),
+        (SourceInstructionKind::MUL, JoltInstructionKind::MUL),
+    ] {
+        let mut allocator = ExpansionAllocator::new();
+        let expanded = rows(expand_instruction(
+            &instruction(source_kind, Some(0), false),
+            &mut allocator,
+            RV64IMAC_JOLT,
+        )?);
+
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].instruction_kind, jolt_kind);
+        assert_eq!(expanded[0].operands.rd, Some(40));
+    }
     Ok(())
 }
 
@@ -512,6 +537,21 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     assert_eq!(cases.len(), 360);
 
     for case in cases {
+        // Feature-on, MULH/MULHSU/SLL gain a trailing carry-clobbering noop
+        // row, so their hashes are main-parity only in the base
+        // configuration. Their rd=x0 forms still lower to the same noop and
+        // stay covered.
+        #[cfg(feature = "implicit-carry")]
+        if matches!(
+            case.input.kind(),
+            SourceInstructionKind::MULH
+                | SourceInstructionKind::MULHSU
+                | SourceInstructionKind::SLL
+        ) && case.input.row().operands.rd != Some(0)
+        {
+            continue;
+        }
+
         let mut allocator = ExpansionAllocator::new();
         let expanded = rows(expand_instruction(
             &case.input,

@@ -584,6 +584,14 @@ impl DynasmEmitter {
         if matches!(row.instruction_kind, K::Noop(_)) {
             return Ok(EmitOutcome::Unsupported);
         }
+        // The AOT backend has no carry register (the `implicit-carry` feature
+        // is passthrough only), so the carry consumers cannot be compiled;
+        // declining makes `EmitterSet` fail fast rather than execute wrong
+        // semantics.
+        #[cfg(feature = "implicit-carry")]
+        if matches!(row.instruction_kind, K::AddC(_) | K::MulC(_)) {
+            return Ok(EmitOutcome::Unsupported);
+        }
 
         // Every row is one trace row.
         dynasm!(e.ops ; .arch x64 ; inc r14);
@@ -1150,6 +1158,11 @@ impl DynasmEmitter {
             // in executable bytecode and was declined before any emission (the
             // early return above), so this arm only completes the match.
             K::Noop(_) => return Ok(EmitOutcome::Unsupported),
+
+            // Declined before any emission (the early return above); these
+            // arms only complete the match.
+            #[cfg(feature = "implicit-carry")]
+            K::AddC(_) | K::MulC(_) => return Ok(EmitOutcome::Unsupported),
         }
         if record && !transfers_control {
             e.obs_rd_post(row);
