@@ -30,14 +30,21 @@ fn main() {
     let only = args.next();
     std::fs::create_dir_all(&output_dir).expect("create artifact output directory");
 
+    // Family names are `jolt-fp128-onehot-k16`, `jolt-fp128-onehot-k256`, and
+    // `jolt-fp128-dense-bounded`, so the documented selectors are infixes,
+    // not suffixes.
     let specs = family_specs(output_dir)
         .expect("every family must declare a valid contract")
         .into_iter()
         .filter(|family| {
             only.as_deref()
-                .is_none_or(|only| family.family_name.ends_with(only))
+                .is_none_or(|only| family.family_name.contains(only))
         })
         .collect::<Vec<_>>();
+    assert!(
+        !specs.is_empty(),
+        "no schedule family matches {only:?}; expected k16, k256, or dense"
+    );
     for family in &specs {
         println!(
             "generating {} ({} keys)…",
