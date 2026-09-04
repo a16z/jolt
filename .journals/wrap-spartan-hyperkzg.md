@@ -306,3 +306,9 @@ Projected end state after lanes 4/5b/6 at k=32: ≈ 15–17 s (phase 2a → ≈ 
 ## 21:07 — daemon restart #220
 
 Orchestrator, lane 4 (657b5f94) and lane 5b (f82b3078) were stopped by the restart; lane 4 auto-resumed (continuing its final full-width kernel attempt, 45-min cap, then landing), lane 5b resumed by me with its compile-only rule (uncommitted 4-ary fold edits in jolt-hyperkzg preserved). Lane 6 (8704273d) is "ready for tests" at 5b115b2ca (bound-value reuse, typed RLC, digit-link setup; expected −1.4–1.9 s) — resume for tests after lane 4 lands.
+
+## 21:19 — lane 5b ready for tests (3f46ae772); lane 6 resumed for tests
+
+Lane 5b (f82b3078): two-variable HyperKZG folds (u = r, ir, −r, −ir), binary terminal for the odd variable, five-point KZG batch with the divisor (X⁴ − r⁴)(X − r⁴) = X⁵ − r⁴X⁴ − r⁴X + r⁸ (two zero terms dropped → pairing pairs unchanged, not +2), sparse quintic division, exact VK powers (G2 β⁴/β⁵ replace β²/β³; G1 β³/β⁴ added). Source-derived counts at ℓ = 23: 11 fold commitments + 49 Fr; fold points 8,388,606 → 2,796,202; opening 2,240 → 1,952 B; payload 7,392 → 7,104, bincode 7,529 → 7,232; 216 ecMul, 8 pairing pairs, 123,121 Fr mul, gas 4,890,645 → 4,800,225. Tests/measurement deferred until lane 4 lands; the protocol change then needs a fresh adversarial review before landing on canonical.
+
+Lane 6 (8704273d) resumed for tests now (NEXTEST_TEST_THREADS=4 untimed; mutex for the gate); byte-identity check vs dbe2a2f9e required.
