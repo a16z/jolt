@@ -1,8 +1,8 @@
 //! Pre-deserialization validation of proof-controlled Akita payload shapes.
 //!
-//! The commitment length and serialized proof shape arrive inside the
-//! prover-controlled Jolt proof. Validate both against Akita's trusted
-//! schedule before a backend deserializer can reserve payload-sized buffers.
+//! Commitment lengths arrive inside the prover-controlled Jolt proof. The
+//! backend proof shape is derived from Akita's trusted schedule before a
+//! backend deserializer can reserve payload-sized buffers.
 
 use akita_config::{derive_transcript_grinding_plan, effective_batched_schedule, CommitmentConfig};
 use akita_pcs::AkitaError;
@@ -21,23 +21,6 @@ use crate::adapters::{
     AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 
-/// Honest shapes are a few hundred bytes. This cap keeps shape-descriptor
-/// parsing itself small before the descriptor is compared with the schedule.
-const MAX_PROOF_SHAPE_BYTES: usize = 16 * 1024;
-const SCHEDULE_SELECTION_BYTES: usize = 32;
-
-fn deserialize_selection(
-    proof: &AkitaBatchProof,
-) -> Result<OpeningScheduleSelection, OpeningsError> {
-    if proof.serialized_schedule_selection.len() != SCHEDULE_SELECTION_BYTES {
-        return Err(invalid_batch(format!(
-            "Akita schedule selection is {} bytes but the protocol requires {SCHEDULE_SELECTION_BYTES}",
-            proof.serialized_schedule_selection.len()
-        )));
-    }
-    deserialize_akita::<OpeningScheduleSelection>(&proof.serialized_schedule_selection, &())
-}
-
 /// Deserializes the backend commitment and proof only after their declared
 /// shapes have been derived from the trusted resolved schedule.
 pub(crate) fn deserialize_checked_backend_payload(
@@ -55,7 +38,7 @@ pub(crate) fn deserialize_checked_backend_payload(
 > {
     let layout = OpeningClaimsLayout::new(backend_point.len(), statement_len)
         .map_err(|err| invalid_batch(format!("Akita opening layout is invalid: {err}")))?;
-    let selection = deserialize_selection(proof)?;
+    let selection = proof.selection();
     match commitment.backend_flavor {
         AkitaBackendFlavor::Dense => deserialize_checked_single_payload::<AkitaConfig>(
             commitment,
@@ -103,7 +86,7 @@ pub(crate) fn deserialize_checked_grouped_backend_payload(
     ),
     OpeningsError,
 > {
-    let selection = deserialize_selection(proof)?;
+    let selection = proof.selection();
     let mut group_layouts = precommitted
         .iter()
         .map(|commitment| PolynomialGroupLayout::new(commitment.num_vars, commitment.poly_count))
@@ -218,26 +201,17 @@ fn deserialize_checked_proof<Cfg>(
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
-    if proof.serialized_akita_proof_shape.len() > MAX_PROOF_SHAPE_BYTES {
-        return Err(invalid_batch(format!(
-            "Akita proof shape blob is {} bytes but the protocol cap is {MAX_PROOF_SHAPE_BYTES}",
-            proof.serialized_akita_proof_shape.len()
-        )));
-    }
-    let proof_shape =
-        deserialize_akita::<AkitaBackendProofShape>(&proof.serialized_akita_proof_shape, &())?;
-    validate_proof_shape::<Cfg>(&proof_shape, resolved.schedule(), layout)?;
+    let proof_shape = derive_proof_shape::<Cfg>(resolved.schedule(), layout)?;
     proof_shape
         .validate_decode_budget(
-            proof.serialized_akita_proof.len(),
+            proof.backend_proof.len(),
             field_elem_bytes(),
             field_elem_bytes(),
         )
         .map_err(|err| {
             invalid_batch(format!("Akita proof shape exceeds its byte budget: {err}"))
         })?;
-    let backend_proof =
-        deserialize_akita::<AkitaBackendProof>(&proof.serialized_akita_proof, &proof_shape)?;
+    let backend_proof = deserialize_akita::<AkitaBackendProof>(&proof.backend_proof, &proof_shape)?;
     Ok(backend_proof)
 }
 
@@ -299,24 +273,17 @@ fn field_elem_bytes() -> usize {
     AkitaField::zero().compressed_size()
 }
 
-fn validate_proof_shape<Cfg>(
-    shape: &AkitaBackendProofShape,
+fn derive_proof_shape<Cfg>(
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
-) -> Result<(), OpeningsError>
+) -> Result<AkitaBackendProofShape, OpeningsError>
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, layout)
         .map_err(|err| invalid_batch(format!("Akita grinding plan is invalid: {err}")))?;
-    let expected = canonical_proof_shape(schedule, layout, Cfg::EXT_DEGREE, &grinding_plan)
-        .map_err(|err| invalid_batch(format!("Akita schedule proof shape is invalid: {err}")))?;
-    if *shape != expected {
-        return Err(invalid_batch(
-            "Akita proof shape does not match the resolved schedule",
-        ));
-    }
-    Ok(())
+    canonical_proof_shape(schedule, layout, Cfg::EXT_DEGREE, &grinding_plan)
+        .map_err(|err| invalid_batch(format!("Akita schedule proof shape is invalid: {err}")))
 }
 
 #[cfg(test)]
@@ -327,7 +294,6 @@ mod tests {
     )]
 
     use super::*;
-    use crate::adapters::serialize_akita;
     use akita_types::AkitaScheduleLookupKey;
     use jolt_field::Ring;
 
@@ -380,13 +346,7 @@ mod tests {
     fn forged_commitment_coeff_len_rejects_before_deserialization() {
         let (mut commitment, point, _, resolved) = resolved_dense(16, 2);
         commitment.backend_coeff_len = 1 << 25;
-        let proof = AkitaBatchProof {
-            statement_bridge: Vec::new(),
-            serialized_schedule_selection: serialize_akita(&resolved.selection())
-                .expect("serialize selection"),
-            serialized_akita_proof_shape: Vec::new(),
-            serialized_akita_proof: Vec::new(),
-        };
+        let proof = AkitaBatchProof::new(resolved.selection(), Vec::new());
         let err = deserialize_checked_backend_payload(&commitment, &proof, 2, &point)
             .expect_err("forged coefficient count must be rejected");
         assert_ne!(
@@ -404,64 +364,9 @@ mod tests {
             expected_commitment_coeff_len_for_profile(&resolved.profiles().final_group)
                 .expect("coefficients");
         commitment.serialized_backend_bytes = vec![0u8; field_elem_bytes()];
-        let proof = AkitaBatchProof {
-            statement_bridge: Vec::new(),
-            serialized_schedule_selection: serialize_akita(&resolved.selection())
-                .expect("serialize selection"),
-            serialized_akita_proof_shape: Vec::new(),
-            serialized_akita_proof: Vec::new(),
-        };
+        let proof = AkitaBatchProof::new(resolved.selection(), Vec::new());
         let err = deserialize_checked_backend_payload(&commitment, &proof, 2, &point)
             .expect_err("truncated commitment bytes must be rejected");
         assert!(err.to_string().contains("bytes"));
-    }
-
-    #[test]
-    fn oversized_proof_shape_blob_rejects() {
-        let (mut commitment, point, _, resolved) = resolved_dense(16, 2);
-        let coeff_len = expected_commitment_coeff_len_for_profile(&resolved.profiles().final_group)
-            .expect("coefficients");
-        commitment.backend_coeff_len = coeff_len;
-        commitment.serialized_backend_bytes = vec![0u8; coeff_len * field_elem_bytes()];
-        let proof = AkitaBatchProof {
-            statement_bridge: Vec::new(),
-            serialized_schedule_selection: serialize_akita(&resolved.selection())
-                .expect("serialize selection"),
-            serialized_akita_proof_shape: vec![0u8; MAX_PROOF_SHAPE_BYTES + 1],
-            serialized_akita_proof: Vec::new(),
-        };
-        let err = deserialize_checked_backend_payload(&commitment, &proof, 2, &point)
-            .expect_err("oversized shape must be rejected");
-        assert!(err.to_string().contains("protocol cap"));
-    }
-
-    #[test]
-    fn canonical_shape_passes_and_forged_fields_reject() {
-        let (_, _, layout, resolved) = resolved_dense(16, 2);
-        let grinding_plan =
-            derive_transcript_grinding_plan::<AkitaConfig>(resolved.schedule(), &layout)
-                .expect("grinding plan");
-        let mut shape = canonical_proof_shape(
-            resolved.schedule(),
-            &layout,
-            AkitaConfig::EXT_DEGREE,
-            &grinding_plan,
-        )
-        .expect("canonical shape");
-        validate_proof_shape::<AkitaConfig>(&shape, resolved.schedule(), &layout)
-            .expect("valid shape");
-
-        shape.nonce_stream_bits ^= 1;
-        let err = validate_proof_shape::<AkitaConfig>(&shape, resolved.schedule(), &layout)
-            .expect_err("forged grinding stream width must reject");
-        assert!(err.to_string().contains("resolved schedule"));
-
-        shape.nonce_stream_bits ^= 1;
-        shape.root.opening_payload_coeffs = 1 << 25;
-        let encoded = serialize_akita(&shape).expect("serialize shape");
-        let decoded = deserialize_akita::<AkitaBackendProofShape>(&encoded, &()).expect("shape");
-        let err = validate_proof_shape::<AkitaConfig>(&decoded, resolved.schedule(), &layout)
-            .expect_err("forged shape must reject");
-        assert!(err.to_string().contains("resolved schedule"));
     }
 }
