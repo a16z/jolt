@@ -2305,6 +2305,144 @@ mod wide_one_hot {
     }
 }
 
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
+#[expect(clippy::expect_used)]
+mod gt_compression {
+    use std::sync::Arc;
+
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::{CompressedDoryArtifacts, DoryScheme};
+    use jolt_field::Fr;
+    use jolt_program::execution::JoltProgram;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+
+    use super::support;
+
+    const TRACE_LENGTH: usize = 1 << 18;
+    const FIBONACCI_UNITS: u32 = 19_660;
+
+    #[test]
+    fn fibonacci_2_18_dory_artifacts_compress_and_verify() {
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&FIBONACCI_UNITS).expect("serialize inputs");
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
+        let memory_layout = &guest.io_device.memory_layout;
+        let shared =
+            JoltSharedPreprocessing::new(guest.program, memory_layout.clone(), TRACE_LENGTH);
+        let legacy_preprocessing = support::LegacyPreprocessing::new(shared);
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full_arc()
+            .expect("full program preprocessing");
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
+        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        let config = ProverConfig::derive::<Fr>(
+            trace_output.trace.rows(),
+            memory_layout,
+            verifier_preprocessing.program.min_bytecode_address(),
+            verifier_preprocessing.program.program_image_len_words(),
+            TRACE_LENGTH,
+        )
+        .expect("derive config");
+        assert_eq!(config.trace_length, TRACE_LENGTH);
+        assert_eq!(
+            config.trace_polynomial_order,
+            TracePolynomialOrder::CycleMajor
+        );
+
+        let public_io = trace_output.device.clone();
+        let padded_output = support::pad_trace(trace_output, config.trace_length);
+        let witness = Arc::new(TraceBackend::new(
+            support::witness_config(&config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        ));
+        let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                TRACE_LENGTH,
+            )),
+            committed_program: None,
+        };
+        let mut proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+                &JoltBackend::<Fr, DoryScheme>::optimized(),
+                &prover_preprocessing,
+                &config,
+                None,
+                witness.as_ref(),
+                &public_io,
+            )
+            .expect("prove fibonacci");
+
+        let mut commitments = Vec::new();
+        commitments.push(proof.commitments.rd_inc.clone());
+        commitments.push(proof.commitments.ram_inc.clone());
+        commitments.extend(proof.commitments.instruction_ra.iter().cloned());
+        commitments.extend(proof.commitments.ram_ra.iter().cloned());
+        commitments.extend(proof.commitments.bytecode_ra.iter().cloned());
+        assert_eq!(
+            (
+                proof.commitments.instruction_ra.len(),
+                proof.commitments.ram_ra.len(),
+                proof.commitments.bytecode_ra.len(),
+            ),
+            (32, 4, 4),
+        );
+        assert_eq!(commitments.len(), 42);
+        assert_eq!(proof.joint_opening_proof.0.sigma, 11);
+
+        let native_bytes = bincode::serde::encode_to_vec(
+            (&commitments, &proof.joint_opening_proof),
+            bincode::config::standard(),
+        )
+        .expect("encode native Dory artifacts");
+        let compressed =
+            CompressedDoryArtifacts::from_native(&commitments, &proof.joint_opening_proof)
+                .expect("compress Dory artifacts");
+        let compressed_bytes =
+            bincode::serde::encode_to_vec(compressed, bincode::config::standard())
+                .expect("encode compressed Dory artifacts");
+        assert_eq!(native_bytes.len(), 45_684);
+        assert_eq!(compressed_bytes.len(), 17_398);
+
+        let (compressed, consumed): (CompressedDoryArtifacts, usize) =
+            bincode::serde::decode_from_slice(&compressed_bytes, bincode::config::standard())
+                .expect("decode compressed Dory artifacts");
+        assert_eq!(consumed, compressed_bytes.len());
+        let (recovered_commitments, recovered_proof) =
+            compressed.into_native().expect("decompress Dory artifacts");
+
+        let mut recovered = recovered_commitments.into_iter();
+        proof.commitments.rd_inc = recovered.next().expect("rd_inc commitment");
+        proof.commitments.ram_inc = recovered.next().expect("ram_inc commitment");
+        for commitment in &mut proof.commitments.instruction_ra {
+            *commitment = recovered.next().expect("instruction_ra commitment");
+        }
+        for commitment in &mut proof.commitments.ram_ra {
+            *commitment = recovered.next().expect("ram_ra commitment");
+        }
+        for commitment in &mut proof.commitments.bytecode_ra {
+            *commitment = recovered.next().expect("bytecode_ra commitment");
+        }
+        assert!(recovered.next().is_none());
+        proof.joint_opening_proof = recovered_proof;
+        support::verify_modular(&prover_preprocessing.verifier, &public_io, &proof, None);
+    }
+}
+
 #[cfg(not(all(
     feature = "prover-fixtures",
     not(feature = "akita"),
@@ -2315,3 +2453,569 @@ mod wide_one_hot {
             clear Dory proofs; one compiled prover proves one protocol) to run the legacy \
             byte-diff harness"]
 fn prover_matches_legacy_on_muldiv() {}
+
+/// Fiat-Shamir schedule of the modular verifier on a real fibonacci proof,
+/// recorded through a forwarding transcript wrapper, and the compression
+/// counts it implies for the chained Blake2b-256 transcript versus the
+/// streaming Blake3 profile (`jolt_transcript::Blake3Transcript`).
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "akita"),
+    not(feature = "zk")
+))]
+#[expect(clippy::expect_used, clippy::panic, clippy::print_stdout)]
+mod transcript_schedule {
+    use std::any::type_name;
+    use std::cell::{Cell, RefCell};
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use jolt_claims::protocols::jolt::JoltRelationId;
+    use jolt_crypto::{Bn254G1, Pedersen};
+    use jolt_dory::DoryScheme;
+    use jolt_field::Fr;
+    use jolt_program::execution::{JoltProgram, OwnedTrace};
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
+    use jolt_prover_legacy::host;
+    use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
+    use jolt_transcript::{
+        AppendToTranscript, Blake3Transcript, LegacyBlake2bTranscript, Transcript,
+    };
+    use jolt_verifier::stages::{
+        stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
+    };
+    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+
+    use super::support;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Kind {
+        Label,
+        Scalar,
+        Bytes,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Event {
+        Append { kind: Kind, len: usize },
+        Squeeze,
+        Mark(&'static str),
+    }
+
+    thread_local! {
+        static LOG: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
+        static KIND: Cell<Kind> = const { Cell::new(Kind::Bytes) };
+    }
+
+    fn take_log() -> Vec<Event> {
+        LOG.with(|log| std::mem::take(&mut *log.borrow_mut()))
+    }
+
+    fn mark(name: &'static str) {
+        LOG.with(|log| log.borrow_mut().push(Event::Mark(name)));
+    }
+
+    /// Forwards every call to `T`, logging `(kind, byte length)` per append
+    /// and every squeeze. The kind comes from the `AppendToTranscript` type
+    /// that produced the bytes (labels vs field elements vs raw bytes).
+    #[derive(Default)]
+    struct Recording<T>(T);
+
+    impl<T: Transcript> Transcript for Recording<T> {
+        type Challenge = T::Challenge;
+
+        fn new(label: &'static [u8]) -> Self {
+            Self(T::new(label))
+        }
+
+        fn append_bytes(&mut self, bytes: &[u8]) {
+            let mut kind = KIND.replace(Kind::Bytes);
+            // Direct `value.append_to_transcript(t)` calls bypass `append`:
+            // a 32-byte word is a zero-padded ASCII label or a big-endian
+            // Fr (top byte < 0x31).
+            if kind == Kind::Bytes && bytes.len() == 32 {
+                kind = if bytes[0] >= 0x40 {
+                    Kind::Label
+                } else {
+                    Kind::Scalar
+                };
+            }
+            LOG.with(|log| {
+                log.borrow_mut().push(Event::Append {
+                    kind,
+                    len: bytes.len(),
+                });
+            });
+            self.0.append_bytes(bytes);
+        }
+
+        fn append<A: AppendToTranscript>(&mut self, value: &A) {
+            let name = type_name::<A>();
+            let kind = if name.ends_with("::Label")
+                || name.ends_with("::LabelWithCount")
+                || name.ends_with("::U64Word")
+            {
+                Kind::Label
+            } else if name.starts_with("jolt_field::") {
+                Kind::Scalar
+            } else {
+                Kind::Bytes
+            };
+            KIND.set(kind);
+            value.append_to_transcript(self);
+            KIND.set(Kind::Bytes);
+        }
+
+        fn challenge(&mut self) -> T::Challenge {
+            LOG.with(|log| log.borrow_mut().push(Event::Squeeze));
+            self.0.challenge()
+        }
+
+        fn challenge_scalar(&mut self) -> T::Challenge {
+            LOG.with(|log| log.borrow_mut().push(Event::Squeeze));
+            self.0.challenge_scalar()
+        }
+
+        fn state(&self) -> [u8; 32] {
+            self.0.state()
+        }
+    }
+
+    type Pcs = DoryScheme;
+    type Vc = Pedersen<Bn254G1>;
+
+    /// The clear-mode stage spine of `jolt_verifier::verify`, with a stage
+    /// marker pushed into the log before each stage.
+    fn replay_stages<T: Transcript<Challenge = Fr>>(
+        preprocessing: &support::VerifierPreprocessing,
+        public_io: &common::jolt_device::JoltDevice,
+        proof: &support::Proof,
+    ) -> Vec<Event> {
+        let _ = take_log();
+        mark("seed");
+        let (checked, mut transcript) = jolt_verifier::validate_and_seed_transcript::<
+            Pcs,
+            Vc,
+            Recording<T>,
+            _,
+        >(preprocessing, public_io, proof, None)
+        .expect("seed");
+        let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
+            proof,
+            preprocessing,
+            &checked,
+            checked.trace_length.ilog2() as usize,
+            JoltRelationId::InstructionReadRaf,
+        )
+        .expect("dimensions");
+        mark("stage1");
+        let stage1 = stage1::verify(&checked, proof, &mut transcript).expect("stage1");
+        mark("stage2");
+        let stage2 = stage2::verify(&checked, proof, &mut transcript, &stage1).expect("stage2");
+        mark("stage3");
+        let stage3 =
+            stage3::verify(&checked, proof, &mut transcript, &stage1, &stage2).expect("stage3");
+        mark("stage4");
+        let stage4 = stage4::verify(
+            &checked,
+            preprocessing,
+            proof,
+            &mut transcript,
+            &stage2,
+            &stage3,
+        )
+        .expect("stage4");
+        mark("stage5");
+        let stage5 = stage5::verify(
+            &checked,
+            proof,
+            &formula_dimensions,
+            &mut transcript,
+            &stage2,
+            &stage4,
+        )
+        .expect("stage5");
+        mark("stage6a");
+        let stage6a = stage6a::verify(
+            &checked,
+            preprocessing,
+            proof,
+            &formula_dimensions,
+            &mut transcript,
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+        )
+        .expect("stage6a");
+        mark("stage6b");
+        let stage6b = stage6b::verify(
+            &checked,
+            preprocessing,
+            proof,
+            &formula_dimensions,
+            &mut transcript,
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            &stage6a,
+        )
+        .expect("stage6b");
+        mark("stage7");
+        let stage7 = stage7::verify(
+            &checked,
+            proof,
+            &formula_dimensions,
+            &mut transcript,
+            &stage4,
+            &stage6b,
+        )
+        .expect("stage7");
+        mark("stage8");
+        let _stage8 = stage8::verify(
+            &checked,
+            preprocessing,
+            proof,
+            &formula_dimensions,
+            None,
+            &mut transcript,
+            &stage6b,
+            &stage7,
+        )
+        .expect("stage8");
+        mark("end");
+        take_log()
+    }
+
+    /// Streaming-Blake3 compression counter: one segment per squeeze (or per
+    /// full 1024-byte chunk), `max(1, ceil(bytes / 64))` compressions each.
+    /// Completed 64-byte blocks are charged when they fill; the finalize
+    /// charges the trailing partial (or empty) block.
+    #[derive(Default)]
+    struct Blake3Counter {
+        pending: usize,
+        charged_blocks: usize,
+    }
+
+    impl Blake3Counter {
+        fn absorb(&mut self, mut len: usize) -> usize {
+            let mut compressions = 0;
+            while len > 0 {
+                if self.pending == 1024 {
+                    self.pending = 0;
+                    self.charged_blocks = 0;
+                }
+                let take = len.min(1024 - self.pending);
+                self.pending += take;
+                len -= take;
+                let full = self.pending / 64;
+                compressions += full - self.charged_blocks;
+                self.charged_blocks = full;
+            }
+            compressions
+        }
+
+        fn squeeze(&mut self) -> usize {
+            let blocks = (self.pending.max(1)).div_ceil(64);
+            let compressions = blocks - self.charged_blocks;
+            self.pending = 0;
+            self.charged_blocks = 0;
+            compressions
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Debug)]
+    struct Row {
+        labels: usize,
+        scalars: usize,
+        raw: usize,
+        squeezes: usize,
+        legacy: usize,
+        b3: [usize; 4],
+    }
+
+    impl Row {
+        fn add(&mut self, other: Row) {
+            self.labels += other.labels;
+            self.scalars += other.scalars;
+            self.raw += other.raw;
+            self.squeezes += other.squeezes;
+            self.legacy += other.legacy;
+            for (a, b) in self.b3.iter_mut().zip(other.b3) {
+                *a += b;
+            }
+        }
+    }
+
+    /// Label byte widths compared: the legacy 32-byte word, a 4-byte tag, a
+    /// 1-byte tag, and free labels (the absorbed-bytes floor).
+    const LABEL_WIDTHS: [usize; 4] = [32, 4, 1, 0];
+
+    /// Per-stage rows over the hidden segment: stages 1–7 plus the stage-8
+    /// RLC absorb and its γ squeeze (everything before the first Dory
+    /// absorb, which is raw serialized bytes).
+    /// Index one past the stage-8 RLC γ squeeze: the last squeeze before
+    /// the first Dory GT absorb (384 raw bytes).
+    fn hidden_end(log: &[Event]) -> usize {
+        let stage8 = log
+            .iter()
+            .position(|e| *e == Event::Mark("stage8"))
+            .expect("stage8 mark");
+        let dory = log[stage8..]
+            .iter()
+            .position(|e| matches!(e, Event::Append { len: 384, .. }))
+            .expect("first Dory GT absorb")
+            + stage8;
+        log[..dory]
+            .iter()
+            .rposition(|e| *e == Event::Squeeze)
+            .expect("RLC gamma squeeze")
+            + 1
+    }
+
+    fn tabulate(log: &[Event]) -> Vec<(&'static str, Row)> {
+        let hidden = &log[..hidden_end(log)];
+
+        let mut counters: [Blake3Counter; 4] = Default::default();
+        let mut rows: Vec<(&'static str, Row)> = Vec::new();
+        for event in hidden {
+            match event {
+                Event::Mark(name) => {
+                    // The seed (preamble + commitments) is hashed natively:
+                    // start the streaming counters at stage 1.
+                    if *name == "stage1" {
+                        counters = Default::default();
+                    }
+                    rows.push((name, Row::default()));
+                }
+                Event::Append { kind, len } => {
+                    let row = &mut rows.last_mut().expect("stage row").1;
+                    match kind {
+                        Kind::Label => row.labels += 1,
+                        Kind::Scalar => row.scalars += 1,
+                        Kind::Bytes => row.raw += 1,
+                    }
+                    row.legacy += (64 + len).div_ceil(128);
+                    for (counter, width) in counters.iter_mut().zip(LABEL_WIDTHS) {
+                        let bytes = if *kind == Kind::Label { width } else { *len };
+                        row.b3[LABEL_WIDTHS
+                            .iter()
+                            .position(|w| *w == width)
+                            .expect("width")] += counter.absorb(bytes);
+                    }
+                }
+                Event::Squeeze => {
+                    let row = &mut rows.last_mut().expect("stage row").1;
+                    row.squeezes += 1;
+                    row.legacy += 1;
+                    for (slot, counter) in row.b3.iter_mut().zip(counters.iter_mut()) {
+                        *slot += counter.squeeze();
+                    }
+                }
+            }
+        }
+        rows
+    }
+
+    fn print_table(title: &str, rows: &[(&'static str, Row)]) {
+        println!("\n{title}");
+        println!(
+            "{:<8} {:>7} {:>7} {:>5} {:>8} {:>8} {:>9} {:>9} {:>9} {:>9}",
+            "stage",
+            "labels",
+            "Fr",
+            "raw",
+            "squeeze",
+            "blake2b",
+            "b3/32B",
+            "b3/4B",
+            "b3/1B",
+            "b3/0B"
+        );
+        let mut total = Row::default();
+        for (name, row) in rows {
+            if *name != "seed" {
+                total.add(*row);
+            }
+            println!(
+                "{:<8} {:>7} {:>7} {:>5} {:>8} {:>8} {:>9} {:>9} {:>9} {:>9}",
+                name,
+                row.labels,
+                row.scalars,
+                row.raw,
+                row.squeezes,
+                row.legacy,
+                row.b3[0],
+                row.b3[1],
+                row.b3[2],
+                row.b3[3]
+            );
+        }
+        println!(
+            "{:<8} {:>7} {:>7} {:>5} {:>8} {:>8} {:>9} {:>9} {:>9} {:>9}",
+            "total",
+            total.labels,
+            total.scalars,
+            total.raw,
+            total.squeezes,
+            total.legacy,
+            total.b3[0],
+            total.b3[1],
+            total.b3[2],
+            total.b3[3]
+        );
+        println!(
+            "G-steps (56/compression): blake2b n/a, b3/32B {}, b3/4B {}, b3/1B {}, b3/0B {}",
+            56 * total.b3[0],
+            56 * total.b3[1],
+            56 * total.b3[2],
+            56 * total.b3[3]
+        );
+    }
+
+    struct Fixture {
+        preprocessing: JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
+        config: ProverConfig,
+        witness: Arc<TraceBackend<OwnedTrace>>,
+        public_io: common::jolt_device::JoltDevice,
+    }
+
+    fn fixture(trace_length: usize, fibonacci_units: u32) -> Fixture {
+        let mut program = host::Program::new("fibonacci-guest");
+        let inputs = postcard::to_stdvec(&fibonacci_units).expect("serialize inputs");
+        let guest = support::legacy_guest(&mut program, &inputs, &[], &[]);
+        let memory_layout = &guest.io_device.memory_layout;
+        let shared =
+            JoltSharedPreprocessing::new(guest.program, memory_layout.clone(), trace_length);
+        let legacy_preprocessing = support::LegacyPreprocessing::new(shared);
+        let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
+        let program_preprocessing = verifier_preprocessing
+            .program
+            .as_full_arc()
+            .expect("full program preprocessing");
+        let jolt_program = Arc::new(JoltProgram::from_elf_bytes(guest.elf_contents));
+        let trace_output = support::trace_modular(&jolt_program, memory_layout, &inputs, &[], &[]);
+        println!("trace rows: {}", trace_output.trace.rows().len());
+        let config = ProverConfig::derive::<Fr>(
+            trace_output.trace.rows(),
+            memory_layout,
+            verifier_preprocessing.program.min_bytecode_address(),
+            verifier_preprocessing.program.program_image_len_words(),
+            trace_length,
+        )
+        .expect("derive config");
+        assert_eq!(config.trace_length, trace_length);
+        let public_io = trace_output.device.clone();
+        let padded_output = support::pad_trace(trace_output, config.trace_length);
+        let witness = Arc::new(TraceBackend::new(
+            support::witness_config(&config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        ));
+        let preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
+            verifier: verifier_preprocessing,
+            pcs_setup: DoryScheme::setup_prover(support::setup_total_vars(
+                memory_layout,
+                &[],
+                trace_length,
+            )),
+            committed_program: None,
+        };
+        Fixture {
+            preprocessing,
+            config,
+            witness,
+            public_io,
+        }
+    }
+
+    fn prove<T: Transcript<Challenge = Fr>>(fixture: &Fixture, name: &str) -> support::Proof {
+        let start = Instant::now();
+        let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, T, _>(
+            &JoltBackend::<Fr, DoryScheme>::optimized(),
+            &fixture.preprocessing,
+            &fixture.config,
+            None,
+            fixture.witness.as_ref(),
+            &fixture.public_io,
+        )
+        .expect("prove");
+        let bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
+            .expect("encode proof")
+            .len();
+        println!(
+            "prove[{name}] {:.3} s, proof {bytes} B",
+            start.elapsed().as_secs_f64()
+        );
+        proof
+    }
+
+    fn schedule(trace_length: usize, fibonacci_units: u32) {
+        let fixture = fixture(trace_length, fibonacci_units);
+        let proof_blake2b = prove::<LegacyBlake2bTranscript>(&fixture, "blake2b");
+        let log_blake2b = replay_stages::<LegacyBlake2bTranscript>(
+            &fixture.preprocessing.verifier,
+            &fixture.public_io,
+            &proof_blake2b,
+        );
+
+        let proof_blake3 = prove::<Blake3Transcript>(&fixture, "blake3");
+        let start = Instant::now();
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake3Transcript>(
+            &fixture.preprocessing.verifier,
+            &fixture.public_io,
+            &proof_blake3,
+            None,
+        )
+        .expect("blake3 proof verifies");
+        println!("verify[blake3] {:.3} s", start.elapsed().as_secs_f64());
+        let log_blake3 = replay_stages::<Blake3Transcript>(
+            &fixture.preprocessing.verifier,
+            &fixture.public_io,
+            &proof_blake3,
+        );
+        let end = hidden_end(&log_blake2b);
+        assert_eq!(end, hidden_end(&log_blake3));
+        if let Some(i) = (0..end).find(|&i| log_blake2b[i] != log_blake3[i]) {
+            panic!(
+                "hidden schedule differs at {i}: {:?} vs {:?}",
+                log_blake2b[i], log_blake3[i]
+            );
+        }
+        // Past the cut the Dory bytes are opaque group elements whose first
+        // byte drives the 32-byte kind heuristic: compare lengths only.
+        let lens = |log: &[Event]| -> Vec<Option<usize>> {
+            log.iter()
+                .map(|e| match e {
+                    Event::Append { len, .. } => Some(*len),
+                    Event::Squeeze => None,
+                    Event::Mark(_) => Some(usize::MAX),
+                })
+                .collect()
+        };
+        assert_eq!(
+            lens(&log_blake2b),
+            lens(&log_blake3),
+            "full schedule (lengths)"
+        );
+
+        let rows = tabulate(&log_blake2b);
+        print_table(
+            &format!("hidden segment, fibonacci 2^{}", trace_length.ilog2()),
+            &rows,
+        );
+    }
+
+    #[test]
+    fn fibonacci_2_18_schedule() {
+        schedule(1 << 18, 19_660);
+    }
+
+    #[test]
+    fn fibonacci_2_20_schedule() {
+        schedule(1 << 20, 4 * 19_660);
+    }
+}

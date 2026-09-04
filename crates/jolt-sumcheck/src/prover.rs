@@ -69,6 +69,14 @@ pub trait ProveRounds<F: JoltField> {
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+
+    /// Append member-owned multilinears after their final bind. Members used
+    /// for bound-column extraction must implement this, including empty output.
+    fn append_bound_values(&self, _values: &mut Vec<F>) -> Result<(), SumcheckError<F>> {
+        Err(SumcheckError::MissingEvaluationSource {
+            kind: "bound columns",
+        })
+    }
 }
 
 /// One active member for a single batch round.

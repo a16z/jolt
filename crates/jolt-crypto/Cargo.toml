@@ -31,7 +31,13 @@ bn254 = [
   "dep:num-traits",
   "parallel",
 ]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+parallel = [
+  "dep:rayon",
+  "jolt-poly/parallel",
+  "ark-ec/parallel",
+  "ark-ff/parallel",
+  "ark-std/parallel",
+]
 
 [dependencies]
 jolt-field = { path = "../jolt-field" }
@@ -80,5 +86,10 @@ required-features = ["bn254"]
 
 [[bench]]
 name = "crypto"
+harness = false
+required-features = ["bn254"]
+
+[[bench]]
+name = "msm_sweep"
 harness = false
 required-features = ["bn254"]

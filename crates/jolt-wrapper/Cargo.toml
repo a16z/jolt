@@ -1,0 +1,66 @@
+[package]
+name = "jolt-wrapper"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Spartan + HyperKZG wrapper of the Jolt/Dory verifier (proof-size reduction)"
+
+[lints]
+workspace = true
+
+[features]
+# Real-proof fixtures for the relation tests: the legacy host toolchain
+# compiles the guest ELF, the modular prover produces the Blake3 proof.
+prover-fixtures = [
+  "dep:jolt-prover",
+  "dep:jolt-prover-legacy",
+  "jolt-prover-legacy/host",
+  "dep:jolt-witness",
+  "dep:postcard",
+  "postcard/use-std",
+  "dep:tracer",
+]
+
+[dependencies]
+bincode = { workspace = true }
+common = { workspace = true }
+jolt-claims = { workspace = true }
+jolt-lookup-tables = { workspace = true }
+jolt-program = { workspace = true }
+jolt-prover = { workspace = true, optional = true }
+jolt-prover-legacy = { workspace = true, optional = true, features = [
+  "minimal",
+] }
+jolt-witness = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true }
+blake3 = { workspace = true }
+jolt-crypto = { path = "../jolt-crypto" }
+jolt-dory = { path = "../jolt-dory" }
+jolt-field = { path = "../jolt-field", features = ["bn254"] }
+jolt-hyperkzg = { path = "../jolt-hyperkzg" }
+jolt-openings = { path = "../jolt-openings" }
+jolt-poly = { path = "../jolt-poly" }
+jolt-r1cs = { path = "../jolt-r1cs" }
+jolt-sumcheck = { path = "../jolt-sumcheck" }
+jolt-transcript = { path = "../jolt-transcript", features = [
+  "transcript-blake3",
+] }
+jolt-verifier = { path = "../jolt-verifier" }
+rayon = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tracing.workspace = true
+ark-bn254 = { workspace = true, features = ["curve"] }
+ark-ec = { workspace = true }
+ark-ff = { workspace = true }
+dory = { workspace = true }
+num-bigint = { workspace = true, features = ["std"] }
+num-integer = { workspace = true }
+num-traits = { workspace = true }
+
+[dev-dependencies]
+bincode = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }

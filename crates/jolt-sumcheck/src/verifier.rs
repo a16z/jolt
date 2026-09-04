@@ -96,6 +96,23 @@ impl SumcheckVerifier {
         F: JoltField,
         T: Transcript<Challenge = F>,
     {
+        Self::verify_compressed_observed(claim, proof, domain, round_label, transcript, &mut || {})
+    }
+
+    /// Verifies a compressed proof while reporting each field multiplication.
+    pub fn verify_compressed_observed<F, T, M>(
+        claim: &SumcheckClaim<F>,
+        proof: &CompressedSumcheckProof<F>,
+        domain: BooleanHypercube,
+        round_label: &'static [u8],
+        transcript: &mut T,
+        observe_mul: &mut M,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: JoltField,
+        T: Transcript<Challenge = F>,
+        M: FnMut(),
+    {
         if proof.round_polynomials.len() != claim.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
                 expected: claim.num_vars,
@@ -124,7 +141,7 @@ impl SumcheckVerifier {
                 coeff.append_to_transcript(transcript);
             }
             let r: F = transcript.challenge();
-            running_sum = round_proof.evaluate_with_hint(running_sum, r);
+            running_sum = round_proof.eval_from_hint_observed(&running_sum, &r, &mut *observe_mul);
             challenges.push(r);
         }
 
@@ -189,6 +206,28 @@ where
         T: Transcript<Challenge = F>,
     {
         SumcheckVerifier::verify_compressed(claim, self, domain, round_label, transcript)
+    }
+
+    pub fn verify_observed<T, M>(
+        &self,
+        claim: &SumcheckClaim<F>,
+        domain: BooleanHypercube,
+        round_label: &'static [u8],
+        transcript: &mut T,
+        observe_mul: &mut M,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        T: Transcript<Challenge = F>,
+        M: FnMut(),
+    {
+        SumcheckVerifier::verify_compressed_observed(
+            claim,
+            self,
+            domain,
+            round_label,
+            transcript,
+            observe_mul,
+        )
     }
 }
 

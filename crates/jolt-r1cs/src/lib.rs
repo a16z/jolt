@@ -30,6 +30,7 @@ pub mod builder;
 pub mod column;
 pub mod constraint;
 pub mod constraints;
+pub mod gadgets;
 pub mod key;
 pub mod lowering;
 pub mod provider;

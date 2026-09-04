@@ -179,6 +179,49 @@ impl<F: Field> ConstraintMatrices<F> {
         })
     }
 
+    pub fn column_range_contributions(
+        &self,
+        row_weights: &[F],
+        start_col: usize,
+        column_values: &[F],
+    ) -> Result<MatrixColumnContributions<F>, ConstraintMatrixEvalError> {
+        let end_col = start_col.checked_add(column_values.len()).ok_or(
+            ConstraintMatrixEvalError::ColumnRangeOverflow {
+                start: start_col,
+                count: column_values.len(),
+            },
+        )?;
+        if end_col > self.num_vars {
+            return Err(ConstraintMatrixEvalError::ColumnOutOfBounds {
+                column: end_col - 1,
+                num_vars: self.num_vars,
+            });
+        }
+        Ok(MatrixColumnContributions {
+            a: matrix_bilinear_eval_columns(
+                &self.a,
+                row_weights,
+                column_values,
+                start_col,
+                column_values.len(),
+            )?,
+            b: matrix_bilinear_eval_columns(
+                &self.b,
+                row_weights,
+                column_values,
+                start_col,
+                column_values.len(),
+            )?,
+            c: matrix_bilinear_eval_columns(
+                &self.c,
+                row_weights,
+                column_values,
+                start_col,
+                column_values.len(),
+            )?,
+        })
+    }
+
     pub fn weighted_columns(
         &self,
         row_weights: &[F],
@@ -415,6 +458,30 @@ mod tests {
                 c: Fr::from_u64(399),
             }
         );
+    }
+
+    #[test]
+    fn column_range_contributions_projects_public_values() {
+        let matrices = ConstraintMatrices::new(
+            2,
+            4,
+            vec![
+                vec![(0, Fr::from_u64(1)), (1, Fr::from_u64(2))],
+                vec![(1, Fr::from_u64(3)), (3, Fr::from_u64(9))],
+            ],
+            vec![vec![(0, Fr::from_u64(4))], vec![(2, Fr::from_u64(5))]],
+            vec![vec![(1, Fr::from_u64(6))], vec![(0, Fr::from_u64(7))]],
+        );
+        let got = matrices
+            .column_range_contributions(
+                &[Fr::from_u64(5), Fr::from_u64(7)],
+                0,
+                &[Fr::from_u64(11), Fr::from_u64(13)],
+            )
+            .expect("valid public range");
+        assert_eq!(got.a, Fr::from_u64(458));
+        assert_eq!(got.b, Fr::from_u64(220));
+        assert_eq!(got.c, Fr::from_u64(929));
     }
 
     #[test]
