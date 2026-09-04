@@ -49,7 +49,7 @@ pub mod emit {
     pub const K256_PACKING_VARIABLES: usize = 13;
 
     /// Pure DP regeneration for `Cfg`; never consults an artifact.
-    pub(crate) fn regen<Cfg: CommitmentConfig>(
+    fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
         plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
