@@ -3,6 +3,9 @@ use std::{fmt, io::Cursor, path::Path, sync::Arc, sync::OnceLock};
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
 
+#[cfg(feature = "profiling")]
+use std::{cell::Cell, num::NonZeroUsize};
+
 use akita_config::CommitmentConfig;
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaTranscript,
