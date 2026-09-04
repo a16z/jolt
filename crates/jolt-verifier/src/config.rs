@@ -8,6 +8,11 @@
 //! rejects a mismatch fail-closed.
 
 pub use jolt_claims::protocols::field_inline::FieldInlineConfig;
+use jolt_riscv::JoltInstructionProfile;
+#[cfg(not(feature = "field-inline"))]
+use jolt_riscv::RV64IMAC_JOLT;
+#[cfg(feature = "field-inline")]
+use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use serde::{Deserialize, Serialize};
 
 use crate::VerifierError;
@@ -65,6 +70,16 @@ impl JoltProtocolConfig {
         }
     }
 }
+
+/// The instruction profile this build has constraints for. Input validation
+/// rejects a program whose bytecode carries any other Jolt instruction kind:
+/// the base rows pin an rd write only through the lookup/load/jump flags, so a
+/// row from an extension the verifier was not built with would verify with
+/// its write unconstrained.
+#[cfg(feature = "field-inline")]
+pub const JOLT_VERIFIER_INSTRUCTION_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
+#[cfg(not(feature = "field-inline"))]
+pub const JOLT_VERIFIER_INSTRUCTION_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT;
 
 #[cfg(feature = "zk")]
 pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::BlindFold;

@@ -15,12 +15,25 @@ use super::rv64;
 
 #[cfg(feature = "field-inline")]
 use super::field_constraints;
+#[cfg(feature = "field-inline")]
+use super::field_constraints::{ROW_STORE_TO_X_LOOKUP, V_X_RIGHT_LOOKUP_OPERAND};
+#[cfg(feature = "field-inline")]
+use super::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
+#[cfg(feature = "field-inline")]
+use super::rv64::V_RIGHT_LOOKUP_OPERAND;
 
 #[cfg(feature = "field-inline")]
 pub const FIELD_INLINE_COLUMN_BASE: usize = rv64::NUM_VARS_PER_CYCLE;
 
+/// The composed row index where the FR eq rows begin: after the rv64 rows.
 #[cfg(feature = "field-inline")]
-pub const FIELD_INLINE_REUSED_NONCONST_COLUMNS: usize = 3;
+pub const FIELD_INLINE_ROW_BASE: usize = RV64_NUM_EQ_CONSTRAINTS;
+
+/// FR-local variables that alias an RV64 column instead of appending one:
+/// `Rs1Value`, `RdWriteValue`, `Imm`, and the store bridge's
+/// `RightLookupOperand`.
+#[cfg(feature = "field-inline")]
+pub const FIELD_INLINE_REUSED_NONCONST_COLUMNS: usize = 4;
 
 #[cfg(feature = "field-inline")]
 pub const FIELD_INLINE_APPENDED_COLUMNS: usize =
@@ -106,6 +119,7 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
+    FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
 ];
 
 pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
@@ -340,6 +354,7 @@ pub const fn field_inline_column(local_column: usize) -> Option<usize> {
         field_constraints::V_FIELD_INV_PRODUCT => Some(FIELD_INLINE_COLUMN_BASE + 4),
         field_constraints::V_X_RS1_VALUE => Some(rv64::V_RS1_VALUE),
         field_constraints::V_X_RD_WRITE_VALUE => Some(rv64::V_RD_WRITE_VALUE),
+        V_X_RIGHT_LOOKUP_OPERAND => Some(V_RIGHT_LOOKUP_OPERAND),
         field_constraints::V_IMM => Some(rv64::V_IMM),
         field_constraints::V_IS_FIELD_ADD => Some(FIELD_INLINE_COLUMN_BASE + 5),
         field_constraints::V_IS_FIELD_SUB => Some(FIELD_INLINE_COLUMN_BASE + 6),
@@ -516,6 +531,7 @@ mod tests {
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
+                FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
             ]
         );
         assert_eq!(

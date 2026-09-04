@@ -495,7 +495,11 @@ pub fn provision_precommitted_schedules(
     })
 }
 
-fn grouped_batch_poly_capacity(
+/// The grouped packed setup's polynomial capacity: the one-hot trace group,
+/// the direct program objects, one slot per configured advice kind, and the
+/// FR limb group on FR-on builds. Public so the profile harness sizes its
+/// transparent setup by the same law.
+pub fn grouped_batch_poly_capacity(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
     direct_program_objects: usize,
@@ -1402,6 +1406,22 @@ impl AkitaPackedProver<'_> {
             !self.program_io.trusted_advice.is_empty(),
             "the precommitted dense trusted-advice object must be passed exactly when trusted advice exists"
         );
+        // Same fail-closed gate as the Dory path (`RV64IMACProver::prove`):
+        // field-inline cycles have no legacy proving semantics, so an FR-active
+        // trace must not reach the packed pipeline (which would otherwise
+        // panic on the FR kinds' lookup queries).
+        #[cfg(feature = "field-inline")]
+        if self
+            .trace
+            .iter()
+            .any(|cycle| cycle.field_inline_trace().is_some())
+        {
+            return Err(VerifierError::ProtocolAxisUnimplemented {
+                axis: "field-inline",
+                pending: "the legacy packed prover has no field-inline semantics; the modular \
+                          jolt-prover owns FR proving",
+            });
+        }
         let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
@@ -1665,31 +1685,29 @@ impl AkitaPackedProver<'_> {
             stage7_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage7_sumcheck_proof),
         };
 
-        Ok(JoltProof {
-            protocol: JoltProtocolConfig {
+        // Legacy has no packed FR path: `JoltProof::new` leaves the FR
+        // limb-group slot empty and the disabled FR config makes an FR-on
+        // verifier reject the proof fail-closed.
+        Ok(JoltProof::new(
+            JoltProtocolConfig {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
                 scalar_challenge_endianness: ScalarChallengeEndianness::Little,
                 field_inline: FieldInlineConfig::disabled(),
             },
-            commitments: commitment,
+            commitment,
             stages,
             joint_opening_proof,
-            untrusted_advice_commitment: advice_object
+            advice_object
                 .as_ref()
                 .map(|object| object.commitment.clone()),
-            // Legacy has no packed FR path (see the clear-claims slot).
-            #[cfg(feature = "field-inline")]
-            field_inc_limbs_commitment: None,
-            claims: JoltProofClaims::Clear(claims),
-            trace_length: self.trace.len(),
-            ram_K: self.one_hot_params.ram_k,
-            rw_config: crate::zkvm::proof::convert_read_write_config(self.rw_config.clone()),
-            one_hot_config: crate::zkvm::proof::convert_one_hot_config(
-                self.one_hot_params.to_config(),
-            ),
-            trace_polynomial_order: TracePolynomialOrder::CycleMajor,
-        })
+            JoltProofClaims::Clear(claims),
+            self.trace.len(),
+            self.one_hot_params.ram_k,
+            crate::zkvm::proof::convert_read_write_config(self.rw_config.clone()),
+            crate::zkvm::proof::convert_one_hot_config(self.one_hot_params.to_config()),
+            TracePolynomialOrder::CycleMajor,
+        ))
     }
 }
 

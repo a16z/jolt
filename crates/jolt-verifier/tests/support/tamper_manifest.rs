@@ -1295,6 +1295,8 @@ pub fn assert_verifier_fixture_tamper_rejects(
     mutate: impl FnOnce(&mut crate::support::verifier_fixtures::VerifierFixtureCase),
 ) {
     assert_manifest_target_is_active(target);
+    // A tamper test is vacuous unless the untampered fixture verifies.
+    crate::support::assert_accepts(base.verify());
     let mut case = base.clone();
     mutate(&mut case);
     crate::support::assert_rejects(case.verify());

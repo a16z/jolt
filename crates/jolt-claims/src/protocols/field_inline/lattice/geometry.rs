@@ -20,16 +20,41 @@ pub fn field_inc_limb_count<F: CanonicalBytes>() -> usize {
 /// The little-endian u64 limbs of `value`'s canonical representative. Exactly
 /// [`field_inc_limb_count`] limbs; a short final byte chunk zero-extends.
 pub fn canonical_limbs<F: CanonicalBytes>(value: &F) -> Vec<u64> {
-    let bytes = value.to_bytes_le_vec();
-    bytes
-        .chunks(FIELD_INC_LIMB_BITS / 8)
-        .map(|chunk| {
-            let mut limb = [0u8; 8];
-            // `chunks(8)` yields 1..=8 bytes, so the prefix slice is in range.
-            limb[..chunk.len()].copy_from_slice(chunk);
-            u64::from_le_bytes(limb)
-        })
-        .collect()
+    let mut limbs = vec![0u64; field_inc_limb_count::<F>()];
+    canonical_limbs_into(value, &mut limbs);
+    limbs
+}
+
+/// Largest canonical encoding the limb decomposition handles without a heap
+/// buffer: the 254-bit BN254 scalar field.
+const MAX_CANONICAL_BYTES: usize = 32;
+
+/// [`canonical_limbs`] written into a caller-owned buffer of exactly
+/// [`field_inc_limb_count`] limbs — the per-cycle form the packed commit
+/// loop uses (no allocation per cycle). Panics on a buffer of the wrong
+/// length or a field wider than [`MAX_CANONICAL_BYTES`]; both are
+/// compile-time facts of the instantiation.
+pub fn canonical_limbs_into<F: CanonicalBytes>(value: &F, limbs: &mut [u64]) {
+    assert!(
+        F::NUM_BYTES <= MAX_CANONICAL_BYTES,
+        "field encoding wider than the limb decomposition's byte buffer"
+    );
+    assert_eq!(
+        limbs.len(),
+        field_inc_limb_count::<F>(),
+        "limb buffer must hold exactly the field's limb count"
+    );
+    let mut bytes = [0u8; MAX_CANONICAL_BYTES];
+    value.to_bytes_le(&mut bytes[..F::NUM_BYTES]);
+    for (limb, chunk) in limbs
+        .iter_mut()
+        .zip(bytes[..F::NUM_BYTES].chunks(FIELD_INC_LIMB_BITS / 8))
+    {
+        let mut word = [0u8; 8];
+        // `chunks(8)` yields 1..=8 bytes, so the prefix slice is in range.
+        word[..chunk.len()].copy_from_slice(chunk);
+        *limb = u64::from_le_bytes(word);
+    }
 }
 
 /// The radix weight of limb `limb` in the recomposition identity

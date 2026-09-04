@@ -13,7 +13,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::JoltProtocolConfig,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
+    stages::{
+        stage1::outputs::Stage1OutputClaims, stage2::outputs::Stage2OutputClaims,
+        stage3::outputs::Stage3OutputClaims, stage4::outputs::Stage4OutputClaims,
+        stage5::outputs::Stage5OutputClaims, stage6a::outputs::Stage6aOutputClaims,
+        stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims,
+    },
     VerifierError,
 };
 
@@ -70,6 +75,58 @@ pub struct JoltProof<
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
+}
+
+impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    /// Assemble a proof without a field-inline payload. Producers with no FR
+    /// semantics (the legacy converters) build through here so they never
+    /// name the feature-gated slots; the modular FR-on provers attach theirs
+    /// with [`Self::with_field_inc_limbs_commitment`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per proof component, mirroring the wire struct"
+    )]
+    pub fn new(
+        protocol: JoltProtocolConfig,
+        commitments: ProofCommitments<PCS>,
+        stages: JoltStageProofs<PCS::Field, VC>,
+        joint_opening_proof: JointOpeningProof<PCS>,
+        untrusted_advice_commitment: Option<PCS::Output>,
+        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        trace_length: usize,
+        ram_k: usize,
+        rw_config: JoltReadWriteConfig,
+        one_hot_config: JoltOneHotConfig,
+        trace_polynomial_order: TracePolynomialOrder,
+    ) -> Self {
+        Self {
+            protocol,
+            commitments,
+            stages,
+            joint_opening_proof,
+            untrusted_advice_commitment,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_limbs_commitment: None,
+            claims,
+            trace_length,
+            ram_K: ram_k,
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
+        }
+    }
+
+    /// Attach the packed FR limb-group commitment (every FR-on packed proof
+    /// carries one).
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub fn with_field_inc_limbs_commitment(mut self, commitment: PCS::Output) -> Self {
+        self.field_inc_limbs_commitment = Some(commitment);
+        self
+    }
 }
 
 impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
@@ -210,19 +267,51 @@ where
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct ClearProofClaims<F: JoltField> {
-    pub stage1: stage1::outputs::Stage1OutputClaims<F>,
-    pub stage2: stage2::outputs::Stage2OutputClaims<F>,
-    pub stage3: stage3::outputs::Stage3OutputClaims<F>,
-    pub stage4: stage4::outputs::Stage4OutputClaims<F>,
-    pub stage5: stage5::outputs::Stage5OutputClaims<F>,
-    pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
-    pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
-    pub stage7: stage7::outputs::Stage7OutputClaims<F>,
+    pub stage1: Stage1OutputClaims<F>,
+    pub stage2: Stage2OutputClaims<F>,
+    pub stage3: Stage3OutputClaims<F>,
+    pub stage4: Stage4OutputClaims<F>,
+    pub stage5: Stage5OutputClaims<F>,
+    pub stage6a: Stage6aOutputClaims<F>,
+    pub stage6b: Stage6bOutputClaims<F>,
+    pub stage7: Stage7OutputClaims<F>,
     /// The FR limb-group evaluations at the stage-6b reduced `FieldRdInc`
     /// point. Present on every FR-on packed proof (see
     /// [`JoltProof::field_inc_limbs_commitment`] for the `Option` rationale).
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub field_inc_limbs: Option<FieldIncLimbClaims<F>>,
+}
+
+impl<F: JoltField> ClearProofClaims<F> {
+    /// Assemble the clear claims without a field-inline payload; see
+    /// [`JoltProof::new`] for who builds through here.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per stage, mirroring the wire struct"
+    )]
+    pub fn new(
+        stage1: Stage1OutputClaims<F>,
+        stage2: Stage2OutputClaims<F>,
+        stage3: Stage3OutputClaims<F>,
+        stage4: Stage4OutputClaims<F>,
+        stage5: Stage5OutputClaims<F>,
+        stage6a: Stage6aOutputClaims<F>,
+        stage6b: Stage6bOutputClaims<F>,
+        stage7: Stage7OutputClaims<F>,
+    ) -> Self {
+        Self {
+            stage1,
+            stage2,
+            stage3,
+            stage4,
+            stage5,
+            stage6a,
+            stage6b,
+            stage7,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_limbs: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -24,11 +24,11 @@ use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
 };
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
+#[cfg(feature = "field-inline")]
+use jolt_kernels::optimized::opening::DenseTraceColumnPoly;
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{
@@ -273,11 +273,11 @@ where
     // The witness-side twin of the composed plan splice above: the statement
     // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and
     // `batch_entries` emits entries 1:1 with `order`, so the polynomial and
-    // hint join at `order`'s RdInc position + 1. The table embeds exactly as
-    // its stage-0 commitment fed it (the dense trace-domain column, strided
-    // per cycle block in address-major order) — materialized here off the FR
-    // oracle rather than through the backend's joint-opening slot, which is
-    // typed over the base polynomial family.
+    // hint join at `order`'s RdInc position + 1. The column is read off the FR
+    // oracle rather than through the backend's joint-opening slot (typed over
+    // the base polynomial family) and opened as a lazy grid view placed
+    // exactly as its stage-0 commitment fed it — never the dense
+    // `2^total_vars` embedding.
     #[cfg(feature = "field-inline")]
     let (polynomials, ordered_hints) = {
         let mut polynomials = polynomials;
@@ -289,41 +289,19 @@ where
             .ok_or(ProverError::InvariantViolation {
                 reason: "the final opening order has no RdInc to anchor the FieldRdInc splice",
             })?;
-        let oracle = witness
-            .field_inline()
-            .ok_or(ProverError::Unsupported {
-                reason: "the stage-8 FieldRdInc opening requires a witness plane serving the                          field-inline oracle",
-            })?;
+        let oracle = witness.field_inline().ok_or(ProverError::Unsupported {
+            reason:
+                "the stage-8 FieldRdInc opening requires a witness plane serving the field-inline \
+                         oracle",
+        })?;
         let table = oracle.oracle_table(FieldInlinePolynomialId::Committed(
             FieldInlineCommittedPolynomial::FieldRdInc,
         ))?;
-        let embedded = match config.trace_polynomial_order {
-            TracePolynomialOrder::CycleMajor => {
-                let mut embedded: Vec<F> = vec![F::default(); 1usize << grid.total_vars];
-                let prefix =
-                    embedded
-                        .get_mut(..table.len())
-                        .ok_or(ProverError::InvariantViolation {
-                            reason: "FieldRdInc table exceeds the commitment grid",
-                        })?;
-                prefix.copy_from_slice(&table);
-                embedded
-            }
-            TracePolynomialOrder::AddressMajor => {
-                let mut embedded: Vec<F> = vec![F::default(); 1usize << grid.total_vars];
-                let stride = grid.cycle_stride();
-                for (cycle, value) in table.into_iter().enumerate() {
-                    let slot = embedded.get_mut(cycle * stride).ok_or(
-                        ProverError::InvariantViolation {
-                            reason: "FieldRdInc table exceeds the commitment grid",
-                        },
-                    )?;
-                    *slot = value;
-                }
-                embedded
-            }
-        };
-        polynomials.insert(position, Box::new(embedded) as Box<dyn MultilinearPoly<F>>);
+        let column =
+            DenseTraceColumnPoly::new(table, grid).ok_or(ProverError::InvariantViolation {
+                reason: "FieldRdInc table exceeds the commitment grid",
+            })?;
+        polynomials.insert(position, Box::new(column) as Box<dyn MultilinearPoly<F>>);
         let hint = field_inline_hints
             .iter()
             .find(|(id, _)| *id == FieldInlineCommittedPolynomial::FieldRdInc)

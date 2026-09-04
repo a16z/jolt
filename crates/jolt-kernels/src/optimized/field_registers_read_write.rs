@@ -60,9 +60,12 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 use rayon::prelude::*;
 
 use super::support::{bind_pairs, RoundChallenges};
+use std::sync::Arc;
+
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+use jolt_witness::field_inline::FieldInlineWitnessOracle;
 
 /// Entry count above which the round accumulation and the bind run over
 /// pair-aligned parallel blocks (the v2-port `DENSE_BIND_PAR_THRESHOLD`
@@ -337,6 +340,57 @@ fn bind_sparse_entries<F: JoltField>(
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedFieldRdWrites(pub(crate) Vec<(u32, u8)>);
 
+/// The decoded FR register rows of one proof, built by the first FR kernel to
+/// need them (stage 2) and shared with stages 4 and 5 through the session —
+/// one trace-sized build per proof. `Arc`-shared so a kernel can keep the
+/// rows while it parks its own carries; stage 5, the last consumer, releases
+/// them.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct SharedFieldRegisterRows<F: JoltField>(
+    #[cfg_attr(
+        feature = "allocative",
+        allocative(visit = crate::backend::visit_shared_heap_free_elements)
+    )]
+    pub(crate) Arc<Vec<FieldInlineRegisterReadWriteRow<F>>>,
+);
+
+/// The proof's FR register rows, from the session when a previous FR kernel
+/// built them for this trace arity, otherwise decoded off the oracle and
+/// parked. `release` drops the shared copy from the session (the last
+/// consumer's call).
+pub(crate) fn field_register_rows<F: JoltField>(
+    session: &mut ProofSession,
+    field_inline: &dyn FieldInlineWitnessOracle<F>,
+    cycles: usize,
+    release: bool,
+) -> Result<Arc<Vec<FieldInlineRegisterReadWriteRow<F>>>, KernelError<F>> {
+    let parked = if release {
+        session.take::<SharedFieldRegisterRows<F>>()
+    } else {
+        session
+            .state::<SharedFieldRegisterRows<F>>()
+            .map(|shared| SharedFieldRegisterRows(Arc::clone(&shared.0)))
+    };
+    if let Some(SharedFieldRegisterRows(rows)) = parked {
+        if rows.len() == cycles {
+            return Ok(rows);
+        }
+    }
+    let rows = field_inline.field_inline_register_read_write_rows()?;
+    if rows.len() != cycles {
+        return Err(KernelError::TableSizeMismatch {
+            table: "field-inline register read-write rows".to_owned(),
+            expected: cycles,
+            got: rows.len(),
+        });
+    }
+    let rows = Arc::new(rows);
+    if !release {
+        session.park(SharedFieldRegisterRows(Arc::clone(&rows)));
+    }
+    Ok(rows)
+}
+
 /// Sparse per-cycle FR access facts extracted from the oracle's decoded rows:
 /// the ≤3-entries-per-active-cycle matrix cells plus the raw read/write index
 /// lists (reads feed the final one-hot claims, writes feed stage 5).
@@ -494,14 +548,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
                 .ok_or(KernelError::Witness(WitnessError::UnavailableView {
                     label: "field-registers read-write checking field-inline oracle",
                 }))?;
-        let rows = field_inline.field_inline_register_read_write_rows()?;
-        if rows.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: "field-inline register read-write rows".to_owned(),
-                expected: cycles,
-                got: rows.len(),
-            });
-        }
+        let rows = field_register_rows(session, field_inline, cycles, false)?;
         let inc_table = field_inline.oracle_table(FieldInlinePolynomialId::Committed(
             FieldInlineCommittedPolynomial::FieldRdInc,
         ))?;

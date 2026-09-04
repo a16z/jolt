@@ -8,6 +8,8 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+#[cfg(feature = "allocative")]
+use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
 use allocative::{Allocative, Key, Visitor};
@@ -143,8 +145,6 @@ where
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
-    /// Fails closed in the reference tier: field-inline proving is pending
-    /// witness wiring (milestone 11).
     #[cfg(feature = "field-inline")]
     pub field_registers_claim_reduction: Box<dyn PrepareKernel<F, FieldRegistersClaimReduction<F>>>,
     pub ram_raf_evaluation: Box<dyn PrepareKernel<F, RamRafEvaluation<F>>>,
@@ -153,8 +153,6 @@ where
     pub instruction_input: Box<dyn PrepareKernel<F, InstructionInput<F>>>,
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
-    /// Fails closed in the reference tier: field-inline proving is pending
-    /// witness wiring (milestone 11).
     #[cfg(feature = "field-inline")]
     pub field_registers_read_write: Box<dyn PrepareKernel<F, FieldRegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
@@ -162,8 +160,6 @@ where
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
-    /// Fails closed in the reference tier: field-inline proving is pending
-    /// witness wiring (milestone 11).
     #[cfg(feature = "field-inline")]
     pub field_registers_val_evaluation: Box<dyn PrepareKernel<F, FieldRegistersValEvaluation<F>>>,
     pub bytecode_read_raf_address: Box<dyn PrepareKernel<F, BytecodeReadRafAddressPhase<F>>>,
@@ -174,8 +170,6 @@ where
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
-    /// Fails closed in the reference tier: field-inline proving is pending
-    /// witness wiring (milestone 11).
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction:
         Box<dyn PrepareKernel<F, FieldRegistersIncClaimReduction<F>>>,
@@ -261,6 +255,13 @@ fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) 
 pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor<'_>) {
     const { assert!(!std::mem::needs_drop::<T>()) };
     visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
+}
+
+/// [`visit_heap_free_elements`] through an `Arc`: the shared buffer's bytes
+/// are reported by whichever holder the visitor reaches.
+#[cfg(feature = "allocative")]
+pub(crate) fn visit_shared_heap_free_elements<T>(values: &Arc<Vec<T>>, visitor: &mut Visitor<'_>) {
+    visit_heap_free_elements(values, visitor);
 }
 
 /// [`visit_heap_free_elements`] for a table keyed by a foreign type.

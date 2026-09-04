@@ -497,7 +497,9 @@ impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlin
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
         let env = WitnessEnv::new(&self.preprocessing);
+        // Trace-sized: one parallel pass, padding rows default past the trace.
         (0..self.rows)
+            .into_par_iter()
             .map(|index| {
                 self.trace_rows.get(index).map_or_else(
                     || Ok(FieldInlineRegisterReadWriteRow::default()),

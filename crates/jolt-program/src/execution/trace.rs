@@ -258,4 +258,8 @@ impl TraceSource for OwnedTrace {
     fn rows(&self) -> Option<&[TraceRow]> {
         (self.next == 0).then(|| self.rows.as_slice())
     }
+
+    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
+        (self.next == 0).then(|| Arc::clone(&self.rows))
+    }
 }

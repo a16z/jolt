@@ -444,7 +444,14 @@ where
             id: id.into(),
             commitment,
             opening_claim,
-            scale: commitment_embedding_scale(opening_point, own_point),
+            scale: commitment_embedding_scale(opening_point, own_point).ok_or_else(|| {
+                VerifierError::FinalOpeningBatchFailed {
+                    reason: format!(
+                        "opening point of {polynomial:?} is not embedded in the unified final \
+                         opening point"
+                    ),
+                }
+            })?,
         });
     }
     Ok(entries)
@@ -594,7 +601,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             spliced.scale,
-            commitment_embedding_scale(&opening_point, &field_point)
+            commitment_embedding_scale(&opening_point, &field_point).unwrap()
         );
         assert_eq!(spliced.opening_claim, Some(Fr::from_u64(7)));
 

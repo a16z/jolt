@@ -315,20 +315,43 @@ where
                     ),
                 });
             }
-            let table = match grid.order {
-                TracePolynomialOrder::CycleMajor => values,
-                TracePolynomialOrder::AddressMajor => {
-                    let mut table: Vec<F> = unsafe_allocate_zero_vec(1usize << grid.total_vars);
-                    let stride = grid.cycle_stride();
-                    for (cycle, value) in values.into_iter().enumerate() {
-                        table[cycle * stride] = value;
-                    }
-                    table
-                }
-            };
             let mut partial = PCS::begin(setup);
-            for row in table.chunks(grid.num_columns()) {
-                PCS::feed(&mut partial, row, setup);
+            let width = grid.num_columns();
+            match grid.order {
+                TracePolynomialOrder::CycleMajor => {
+                    for row in values.chunks(width) {
+                        PCS::feed(&mut partial, row, setup);
+                    }
+                }
+                // Address-major: cycle `t` sits at grid index `t · stride`,
+                // everything else is zero. Stream the grid row by row without
+                // materializing the K·T table — the rows holding no cycle
+                // slot go through `feed_zeros`.
+                TracePolynomialOrder::AddressMajor => {
+                    let stride = grid.cycle_stride();
+                    let rows = (1usize << grid.total_vars) / width;
+                    let mut row: Vec<F> = vec![F::zero(); width];
+                    let mut zero_rows = 0usize;
+                    for row_index in 0..rows {
+                        let start = row_index * width;
+                        let first_cycle = start.div_ceil(stride).min(cycles);
+                        let end_cycle = ((start + width - 1) / stride + 1).min(cycles);
+                        if first_cycle >= end_cycle {
+                            zero_rows += 1;
+                            continue;
+                        }
+                        PCS::feed_zeros(&mut partial, width, zero_rows, setup);
+                        zero_rows = 0;
+                        for cycle in first_cycle..end_cycle {
+                            row[cycle * stride - start] = values[cycle];
+                        }
+                        PCS::feed(&mut partial, &row, setup);
+                        for cycle in first_cycle..end_cycle {
+                            row[cycle * stride - start] = F::zero();
+                        }
+                    }
+                    PCS::feed_zeros(&mut partial, width, zero_rows, setup);
+                }
             }
             let (commitment, hint) = finish_streamed::<PCS>(partial, setup);
             Ok(FieldInlineWitnessCommitment {
@@ -519,5 +542,81 @@ impl<F: JoltField> StreamConsumer for MaterializedColumn<F> {
             }
             self.cycle += 1;
         }
+    }
+}
+
+#[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
+mod field_inline_tests {
+    #![expect(clippy::unwrap_used, reason = "test module")]
+
+    use jolt_claims::protocols::field_inline::{
+        FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
+    };
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    use jolt_dory::DoryScheme;
+    use jolt_field::{Fr, Ring};
+    use jolt_openings::StreamingCommitment;
+    use jolt_witness::JoltWitnessOracle;
+
+    use super::{commit_field_inline_columns, finish_streamed};
+    use crate::commitment::CommitmentGrid;
+    use crate::optimized::field_registers_testing::structured_fr_fixture;
+
+    /// The streamed FR column commit equals the commit of the explicitly
+    /// laid-out table in both trace orders: cycle-major, the `T`-entry column
+    /// itself (no grid padding, like the jolt increment columns);
+    /// address-major, the full grid with cycle `t` at index `t · cycle_stride`
+    /// and zero elsewhere.
+    #[test]
+    fn field_inline_commit_matches_the_dense_grid_layout() {
+        let log_t = 4;
+        structured_fr_fixture(12).with_plane(log_t, |backend| {
+            let values: Vec<Fr> = JoltWitnessOracle::<Fr>::field_inline(backend)
+                .unwrap()
+                .oracle_table(FieldInlinePolynomialId::Committed(
+                    FieldInlineCommittedPolynomial::FieldRdInc,
+                ))
+                .unwrap();
+            assert!(values.iter().any(|value| *value != Fr::from_u64(0)));
+            for order in [
+                TracePolynomialOrder::CycleMajor,
+                TracePolynomialOrder::AddressMajor,
+            ] {
+                let grid = CommitmentGrid {
+                    total_vars: 3 + log_t,
+                    log_t,
+                    log_k_chunk: 3,
+                    order,
+                };
+                let setup = DoryScheme::setup_prover(grid.total_vars);
+                let streamed = commit_field_inline_columns::<Fr, DoryScheme>(
+                    backend,
+                    &[FieldInlineCommittedPolynomial::FieldRdInc],
+                    grid,
+                    &setup,
+                )
+                .unwrap();
+
+                let table = match order {
+                    TracePolynomialOrder::CycleMajor => values.clone(),
+                    TracePolynomialOrder::AddressMajor => {
+                        let mut table = vec![Fr::from_u64(0); 1 << grid.total_vars];
+                        let stride = grid.cycle_stride();
+                        for (cycle, value) in values.iter().enumerate() {
+                            table[cycle * stride] = *value;
+                        }
+                        table
+                    }
+                };
+                let mut partial = DoryScheme::begin(&setup);
+                for row in table.chunks(grid.num_columns()) {
+                    DoryScheme::feed(&mut partial, row, &setup);
+                }
+                let (commitment, hint) = finish_streamed::<DoryScheme>(partial, &setup);
+                assert_eq!(streamed.len(), 1);
+                assert_eq!(streamed[0].commitment, commitment, "{order:?} commitment");
+                assert_eq!(streamed[0].hint, hint, "{order:?} hint");
+            }
+        });
     }
 }

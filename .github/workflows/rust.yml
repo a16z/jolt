@@ -148,10 +148,21 @@ jobs:
           -p jolt-program
           -p jolt-riscv
           -p jolt-lookup-tables
+          -p jolt-kernels
+          -p jolt-akita
           --all-targets
           --features field-inline
           --
           -D warnings
+      # The profile harness under field-inline: the FR-profile guest path and
+      # the `eqpoly-field` workload, in both flamegraph modes and both
+      # protocols.
+      - name: cargo clippy -p jolt-prover --features profiling,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features profiling,field-inline
+      - name: cargo clippy -p jolt-prover --features profiling,allocative,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative,field-inline
+      - name: cargo clippy -p jolt-prover --features akita,profiling,field-inline
+        run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,field-inline
       # The field-inline fixture-driven suites: the modular prover proves the
       # FR guests end-to-end (jolt-prover e2e in both proof modes, and the
       # jolt-verifier tamper suite over modular-prover fixtures).
@@ -165,6 +176,8 @@ jobs:
       # dense-group heterogeneous batch beside advice.
       - name: cargo clippy -p jolt-verifier --features field-inline,akita
         run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
+      - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline,akita
+        run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline,akita
       - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,akita
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,akita
       - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,field-inline
@@ -178,6 +191,10 @@ jobs:
           --features host,field-inline
           --
           -D warnings
+      # The legacy packed prover with field-inline: it refuses FR traces and
+      # provisions the FR limb group in its setup.
+      - name: cargo clippy -p jolt-prover-legacy --features host,akita,field-inline
+        run: cargo clippy -p jolt-prover-legacy --all-targets --features host,akita,field-inline
 
   machete:
     runs-on: ubuntu-latest
@@ -520,6 +537,12 @@ jobs:
       # under this pair.
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
+      # The packed FR provisioning pins (the FR limb arity line against the
+      # packing law). The verifier's legacy-generated akita fixture suites
+      # cannot run FR-on (legacy proofs pin the FR axis disabled), so that
+      # combination is lint-only above.
+      - name: Run jolt-akita with field-inline
+        run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest
@@ -765,9 +788,16 @@ jobs:
         run: |
           set -euo pipefail
           cargo nextest run -p jolt-claims -p jolt-r1cs \
-            -p jolt-verifier -p jolt-witness \
+            -p jolt-verifier -p jolt-witness -p jolt-kernels \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
+          # The packed chain's two-limb value encoding: the encoding-mismatch
+          # gate must reject the BN254 form here as it rejects the two-limb
+          # form above.
+          cargo nextest run -p jolt-program \
+            --features field-inline,fp128-field-inline --cargo-quiet
+          cargo nextest run -p tracer \
+            --features test-utils,field-inline,fp128-field-inline --cargo-quiet
 
   # Join gate so the check name "Test modular crates" is stable regardless of
   # shard count.

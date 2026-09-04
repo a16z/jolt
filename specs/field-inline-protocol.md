@@ -810,6 +810,39 @@ immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(imm, F)) = 0
 ```
 
+V1 conversion semantics (`jolt-r1cs` `constraints::field_constraints`): the
+bridge is 64-bit wide on the x-register side, and every conversion function
+is the identity on values that fit it.
+
+- `decode_x_register(Rs1Value, F) := Rs1Value` and
+  `decode_immediate(imm, F) := imm`. Both inputs are bounded by the base
+  protocol (x-register values are written only by lookup outputs, loads,
+  jumps, and the range-bound store bridge below; `Imm` is a bytecode
+  constant), so the identity rows are exact.
+- `encode_field_register(FieldRs1Value, F) := FieldRs1Value`, range-bound
+  through the instruction lookup the way `VirtualAdvice` binds a
+  prover-supplied word. `FIELD_STORE_TO_X` carries the `Advice` and
+  `WriteLookupOutputToRD` circuit flags and the `RangeCheck` lookup table;
+  its lookup operand is the rd write value (non-interleaved, so the
+  committed lookup index is `RightLookupOperand` itself, bound exactly by
+  instruction read-RAF). Two FR rows pin the bridge:
+
+  ```text
+  IsFieldStoreToX * (RdWriteValue - FieldRs1Value) = 0
+  IsFieldStoreToX * (RightLookupOperand - FieldRs1Value) = 0
+  ```
+
+  With RV64 row 12 (`RdWriteValue = LookupOutput`) and
+  `LookupOutput = RangeCheck(RightLookupOperand) = RightLookupOperand mod 2^64`
+  this forces `FieldRs1Value = FieldRs1Value mod 2^64`: the store is
+  satisfiable exactly when the field value fits in 64 bits, which is the
+  condition under which the tracer executes it (wider values trap). Wide
+  values leave the field through the advice pattern (advice limbs + Horner +
+  `FIELD_ASSERT_EQ`), not through this bridge.
+
+Multi-limb bridge encodings (below) are therefore not a v1 requirement; they
+would widen the x-register side of the bridge, not change its range argument.
+
 These rows depend on canonical encoding for the active `F: JoltField`. For a
 254-bit Jolt field, host/guest encodings may use four 64-bit limbs. For a
 128-bit Jolt field, they may use two 64-bit limbs. This affects ABI,
@@ -1221,13 +1254,17 @@ Each step should be reviewed before continuing to the next.
    - Review gate: constraint tests prove native-field arithmetic and reject bad
      FieldProduct witnesses.
 
-5. Add conversion row semantics.
+5. Add conversion row semantics. **Landed** as the 64-bit identity bridge
+   with the `RangeCheck`-bound store ("Conversion Rows" above;
+   `field_constraints::ROW_STORE_TO_X_LOOKUP`).
    - Define `decode_x_register`, `encode_field_register`, and immediate
      encoding for the active `F`.
    - Keep 128-bit and 254-bit handling as field-instantiation encoding, not
      non-native arithmetic.
    - Review gate: bridge-row fixtures cover two-limb and four-limb field
-     encodings when both field instantiations exist.
+     encodings when both field instantiations exist (deferred with the
+     multi-limb bridge itself; the eq-MLE fixtures exercise the 64-bit
+     bridge on both fields).
 
 6. Wire verifier support one stage slice at a time.
    - Proof/config gate: require `proof.protocol.field_inline` to match the

@@ -24,20 +24,28 @@ const GATE: &str = "feature = \"field-inline\"";
 /// (production and test text alike — the cap is the ratchet).
 const WHITELIST: &[(&str, usize, &str)] = &[
     // Compile-time protocol selection: the FR config constant pair.
-    ("config.rs", 2, "compile-time protocol config"),
+    (
+        "config.rs",
+        6,
+        "compile-time protocol config + instruction profile",
+    ),
     // The FR commitment payload is proof shape: carrier struct/field,
     // constructor default, the homomorphic commitment slot's attach builder,
     // and the packed limb-group commitment/claims slots with their carry-over
     // lines.
-    ("proof.rs", 9, "FR commitment payload carriers"),
+    (
+        "proof.rs",
+        12,
+        "FR commitment payload carriers + FR-slot-defaulting constructors",
+    ),
     // The payload presence check, the FR commitment absorb seams, and the
     // mode-specific test fixtures. (The fail-closed
     // require_field_inline_slices gate lived here until the FR prover
     // fixtures landed.)
     (
         "verifier.rs",
-        19,
-        "commitment absorb seams + test fixtures + gated test imports",
+        20,
+        "input gates + commitment absorb seams + test fixtures + gated test imports",
     ),
     // Module registration of the shared FR bytecode side-table seam, plus
     // the packed schedule's FR presence-marker field and its constructor.
@@ -100,7 +108,11 @@ const WHITELIST: &[(&str, usize, &str)] = &[
         10,
         "FR carrier fields + test fixtures + gated test import",
     ),
-    ("stages/stage6b/outputs.rs", 6, "FR carrier fields"),
+    (
+        "stages/stage6b/outputs.rs",
+        7,
+        "FR carrier fields + FR-slot-defaulting constructor",
+    ),
     // Relation files that carry an FR appendage: the OnceLock carrier field,
     // its setter, and the composed input/expected-output override shells
     // (trait items cannot move out of the impl; their FR math lives in the

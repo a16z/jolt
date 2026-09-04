@@ -4,7 +4,7 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-08-29 |
-| Status | draft |
+| Status | closed (2026-08-29 outcome: surface at its floor, target superseded) |
 | PR | #1808 (in-branch refactor) |
 
 ## Decision
@@ -22,8 +22,9 @@ transcript byte, and fixture stays identical in every mode.
 ## Invariants (all machine-checked, all pre-existing)
 
 - Wire identity: both byte-diff ratchets, the recorded `.jvcf` fixtures, and
-  all e2e suites (dory FR-on/off, akita FR-on/off, zk) pass unmodified. A
-  regenerated fixture is a spec violation, not a fix.
+  all e2e suites (dory FR-on/off, akita FR-on/off, zk) pass unmodified. The
+  fixtures regenerate only on a `FIXTURE_MAGIC` bump, which is itself a wire
+  change, so a refactor that needs one has violated this spec.
 - The formula-pin tests are the independent ground truth for every derived
   formula; they are not rewritten to match the refactor.
 - Protocol separation stands: jolt-claims protocol modules stay

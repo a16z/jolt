@@ -611,12 +611,17 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
+    /// `eq(r_cycle, ·)` over the bound cycle point, shared by the base and
+    /// FR opening walks below (one `2^log_T` table per extraction).
+    fn cycle_weights(&self) -> Vec<F> {
+        let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
+        EqPolynomial::<F>::evals(&reversed, None)
+    }
+
     /// The eight produced opening values at the bound cycle point: one
     /// eq-weighted walk over the typed rows, in the output claims' canonical
     /// field order.
-    fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
-        let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
-        let weights = EqPolynomial::<F>::evals(&reversed, None);
+    fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
         let cycles = weights.len();
         let access = self.rows.access();
 
@@ -659,9 +664,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     /// (`selected_product_remainder_output_openings` order: rs1, rs2, rd) —
     /// one eq-weighted walk over the sparse FR rows.
     #[cfg(feature = "field-inline")]
-    fn fr_claimed_inputs(&self) -> [F; 3] {
-        let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
-        let weights = EqPolynomial::<F>::evals(&reversed, None);
+    fn fr_claimed_inputs(&self, weights: &[F]) -> [F; 3] {
         let mut values = [F::zero(); 3];
         for (cycle, row) in &self.fr_rows {
             let weight = weights[*cycle];
@@ -710,6 +713,7 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
+        let weights = self.cycle_weights();
         // Publish the FR product appendage on the Arc-shared relation cell:
         // the driver's curated absorb, its composed expected-output fold, and
         // the stage-2 recipe's claim assembly all read it from there.
@@ -717,7 +721,7 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
         {
             use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
 
-            let [rs1_value, rs2_value, rd_value] = self.fr_claimed_inputs();
+            let [rs1_value, rs2_value, rd_value] = self.fr_claimed_inputs(&weights);
             self.relation
                 .set_field_inline_outputs(FieldRegistersProductOutputClaims {
                     rs1_value,
@@ -736,14 +740,14 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
             next_is_noop_product(),
             virtual_instruction_product(),
         ];
-        let claims: BTreeMap<JoltOpeningId, F> =
-            ids.into_iter()
-                .zip(self.claimed_inputs().map_err(|_| {
-                    SumcheckKernelError::InvariantViolation {
-                        reason: "product opening walk re-extraction failed after the rounds",
-                    }
-                })?)
-                .collect();
+        let claims: BTreeMap<JoltOpeningId, F> = ids
+            .into_iter()
+            .zip(self.claimed_inputs(&weights).map_err(|_| {
+                SumcheckKernelError::InvariantViolation {
+                    reason: "product opening walk re-extraction failed after the rounds",
+                }
+            })?)
+            .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| {
             claims.get(id).copied().or_else(|| inputs.resolve_input(id))
         })
@@ -795,7 +799,7 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{CanonicalBytes, Fr, Ring};
     use jolt_program::execution::OwnedTrace;
     use jolt_verifier::stages::stage2::product_remainder::{
         product_remainder_input_values_from_uniskip_output, ProductRemainderInputClaims,
@@ -990,14 +994,46 @@ mod tests {
         scale * total
     }
 
-    fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        let rows = synthetic_rows(log_t, seed);
+    struct ParityInputs {
+        log_t: usize,
+        seed: u64,
+        rows: Vec<SpartanProductRow>,
         #[cfg(feature = "field-inline")]
-        let fr_rows = synthetic_fr_rows(log_t, seed ^ 0xF1E1D);
-        let tau_low: Vec<Fr> = (0..log_t)
-            .map(|i| Fr::from_u64(5 + seed + 11 * i as u64))
-            .collect();
-        let tau_high = Fr::from_u64(6007 + seed);
+        fr_rows: Vec<(usize, FieldInlineSpartanRow<Fr>)>,
+        tau_low: Vec<Fr>,
+        tau_high: Fr,
+        r0: Fr,
+    }
+
+    fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
+        parity_run(
+            dummy_plane,
+            ParityInputs {
+                log_t,
+                seed,
+                rows: synthetic_rows(log_t, seed),
+                #[cfg(feature = "field-inline")]
+                fr_rows: synthetic_fr_rows(log_t, seed ^ 0xF1E1D),
+                tau_low: (0..log_t)
+                    .map(|i| Fr::from_u64(5 + seed + 11 * i as u64))
+                    .collect(),
+                tau_high: Fr::from_u64(6007 + seed),
+                r0: Fr::from_u64(31337 + seed),
+            },
+        );
+    }
+
+    fn parity_run(dummy_plane: &dyn JoltWitnessPlane<Fr>, inputs: ParityInputs) {
+        let ParityInputs {
+            log_t,
+            seed,
+            rows,
+            #[cfg(feature = "field-inline")]
+            fr_rows,
+            tau_low,
+            tau_high,
+            r0,
+        } = inputs;
         let backend = fixed_backend_from_rows(
             log_t,
             &rows,
@@ -1038,7 +1074,6 @@ mod tests {
             "product uni-skip first-round polynomial, log_t = {log_t}"
         );
 
-        let r0 = Fr::from_u64(31337 + seed);
         let input_claim = true_input_claim(
             &rows,
             #[cfg(feature = "field-inline")]
@@ -1125,6 +1160,63 @@ mod tests {
             for (log_t, seed) in [(1usize, 71u64), (2, 72), (3, 73), (4, 74)] {
                 parity_case(dummy, log_t, seed);
             }
+        });
+    }
+
+    /// Canonical value at or above `0.7·p` (top limb of the BN254 scalar
+    /// modulus is `0x3064_4E72_E131_A029`).
+    fn heavy(value: Fr) -> bool {
+        let mut bytes_le = [0u8; 32];
+        value.to_bytes_le(&mut bytes_le);
+        u64::from_le_bytes(bytes_le[24..].try_into().unwrap()) >= 0x2200_0000_0000_0000
+    }
+
+    /// Round-0 materialization at the small-scalar accumulator's Barrett
+    /// boundary: both full-u64 left lanes at `u64::MAX` under uni-skip
+    /// weights whose canonical values exceed `0.7·p`, where two
+    /// `fmadd_u64` terms reach ~2^318.6 and leave the `reduce_nplus1`
+    /// window (2^318). The wide accumulator path must still match the
+    /// reference kernel's straight field arithmetic round for round.
+    #[test]
+    fn full_range_left_lanes_under_heavy_uniskip_weights_match_reference() {
+        let log_t = 2;
+        let seed = 91;
+        let rows: Vec<SpartanProductRow> = synthetic_rows(log_t, seed)
+            .into_iter()
+            .map(|row| SpartanProductRow {
+                left_instruction_input: LeftInstructionInput(u64::MAX),
+                lookup_output: LookupOutput(u64::MAX),
+                jump_flag: OpFlag(true),
+                ..row
+            })
+            .collect();
+        // At integer points the centered Lagrange weights are small (signed)
+        // integers, so search pseudo-random field points for a draw whose two
+        // full-u64 lane weights are both heavy.
+        let r0 = (1u64..=4096)
+            .map(|k| {
+                let seed = Fr::from_u64(k.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+                seed * seed + seed
+            })
+            .find(|&r0| {
+                let weights = centered_lagrange_evals::<Fr>(DOMAIN, r0).unwrap();
+                heavy(weights[0]) && heavy(weights[1])
+            })
+            .unwrap();
+        with_sample_backend(|dummy| {
+            parity_run(
+                dummy,
+                ParityInputs {
+                    log_t,
+                    seed,
+                    rows,
+                    #[cfg(feature = "field-inline")]
+                    fr_rows: Vec::new(),
+                    tau_low: vec![Fr::from_u64(5), Fr::from_u64(16)],
+                    tau_high: Fr::from_u64(6007),
+                    r0,
+                },
+            );
         });
     }
 

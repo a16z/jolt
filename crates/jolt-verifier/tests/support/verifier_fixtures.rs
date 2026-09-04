@@ -273,6 +273,22 @@ pub fn standard_field_inline_eqpoly_case() -> VerifierFixtureCase {
     )
 }
 
+/// The fixtures every ordinary (non-FR) tamper target runs over. FR-off: the
+/// legacy muldiv proof. FR-on: the modular eq-MLE field-inline proof — the
+/// FR-on verifier rejects legacy proofs at the protocol-config gate, and the
+/// ordinary stage payloads, claims, and commitments must also be rejected
+/// under the composed verifier (a tamper that only the FR-less pipeline
+/// catches is a hole in the composition).
+#[cfg(not(feature = "zk"))]
+pub fn ordinary_tamper_bases() -> Vec<VerifierFixtureCase> {
+    vec![
+        #[cfg(not(feature = "field-inline"))]
+        standard_muldiv_case(),
+        #[cfg(feature = "field-inline")]
+        standard_field_inline_eqpoly_case(),
+    ]
+}
+
 #[cfg(not(feature = "zk"))]
 pub fn standard_committed_muldiv_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();

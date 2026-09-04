@@ -37,6 +37,7 @@ use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegiste
 use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
+use super::field_registers_read_write::field_register_rows;
 use super::support::RoundChallenges;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -57,7 +58,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
 {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, FieldRegistersClaimReduction<F>>,
     ) -> Result<
@@ -85,14 +86,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
                 .ok_or(KernelError::Witness(WitnessError::UnavailableView {
                     label: "field-registers claim-reduction field-inline oracle",
                 }))?;
-        let rows = field_inline.field_inline_register_read_write_rows()?;
-        if rows.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: "field-inline register read-write rows".to_owned(),
-                expected: cycles,
-                got: rows.len(),
-            });
-        }
+        let rows = field_register_rows(session, field_inline, cycles, false)?;
         let gamma = inputs
             .challenges
             .resolve_challenge(&FieldInlineChallengeId::from(
@@ -259,7 +253,8 @@ impl<F: JoltField> ProveRounds<F> for FieldClaimReductionKernel<F> {
         let (l_zero, l_one) = self.gruen.current_linear_evals();
         #[expect(
             clippy::expect_used,
-            reason = "l(0) = eq-prefix·(1 − r_round) vanishes only on a zero                       transcript challenge — the split-eq recovery precedent"
+            reason = "l(0) = eq-prefix·(1 − r_round) vanishes only on a zero transcript challenge — \
+                      the split-eq recovery precedent"
         )]
         let q_zero = (previous_claim - l_one * q_one)
             * l_zero

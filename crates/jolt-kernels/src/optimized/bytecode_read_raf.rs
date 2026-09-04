@@ -859,7 +859,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                 .zip(scaled.iter())
                 .for_each(|(acc, term)| *acc += *term);
         }
-        // The FR stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴.
+        // The FR stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴. An
+        // FR-inactive trace folds both weights to zero (its side-table rows
+        // are all zero), so the two dense eq tables are skipped exactly.
         #[cfg(feature = "field-inline")]
         for (point, weight) in [
             (
@@ -871,6 +873,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                 gamma_powers[4] * fr_folds[4],
             ),
         ] {
+            if weight.is_zero() {
+                continue;
+            }
             let scaled = scaled_eq_table(point, weight);
             #[cfg(feature = "parallel")]
             combined
@@ -1186,9 +1191,10 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
     use jolt_field::{Fr, Ring};
+    use jolt_program::execution::OwnedTrace;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::field_inline_bytecode::{
-        FieldInlineBytecodeFold, FieldInlineBytecodeTable,
+        convert_field_inline_bytecode, FieldInlineBytecodeFold, FieldInlineBytecodeTable,
     };
     use jolt_verifier::stages::stage6a::bytecode_read_raf::{
         BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
@@ -1200,10 +1206,12 @@ mod tests {
         BytecodeReadRafInputClaims, BytecodeReadRafTableFoldInputs,
     };
     use jolt_witness::testing::with_sample_backend;
-    use jolt_witness::{JoltWitnessOracle, ProgramSource};
+    use jolt_witness::{JoltWitnessOracle, ProgramSource, TraceBackend};
 
     use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::*;
+    #[cfg(feature = "field-inline")]
+    use crate::optimized::field_registers_testing::structured_fr_fixture;
     use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
     };
@@ -1214,7 +1222,31 @@ mod tests {
     }
 
     fn run_pair(committed_program: bool) {
-        with_sample_backend(|backend| {
+        with_sample_backend(|backend| run_pair_on(backend, committed_program));
+    }
+
+    /// FR-on parity over a program whose side table is populated: the FR legs
+    /// of both phases carry non-zero terms, so a drift between the reference
+    /// and optimized FR folds surfaces here rather than only at the e2e.
+    #[cfg(feature = "field-inline")]
+    fn run_pair_with_field_inline_program(f: impl FnOnce(&TraceBackend<OwnedTrace>)) {
+        structured_fr_fixture(12).with_plane(4, |backend| {
+            let populated = backend
+                .program_preprocessing()
+                .bytecode
+                .field_inline
+                .as_ref()
+                .is_some_and(|metadata| metadata.rows.iter().any(|row| row.active));
+            assert!(
+                populated,
+                "the FR fixture must carry active side-table rows"
+            );
+            f(backend);
+        });
+    }
+
+    fn run_pair_on(backend: &TraceBackend<OwnedTrace>, committed_program: bool) {
+        {
             let log_t = JoltWitnessOracle::<Fr>::shape(
                 backend,
                 JoltPolynomialId::Committed(JoltCommittedPolynomial::RdInc),
@@ -1240,14 +1272,16 @@ mod tests {
                 register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
                 fused_inc_cycle_points: Vec::new(),
             };
-            // An all-inactive, well-formed FR geometry (the sample backend's
-            // program is FR-free): every FR row value is zero, so the
-            // reference kernels' FR legs vanish and byte-parity with the
-            // (FR-less) optimized kernels is exact.
+            // The production side table when the program carries one; an
+            // all-inactive, well-formed geometry for an FR-free program (the
+            // sample backend), whose FR legs vanish.
             #[cfg(feature = "field-inline")]
-            let field_inline_table = FieldInlineBytecodeTable {
-                rows: vec![Default::default(); bytecode_len],
-                field_register_log_k: FIELD_REGISTERS_LOG_K,
+            let field_inline_table = match program.bytecode.field_inline.as_ref() {
+                Some(metadata) => convert_field_inline_bytecode(metadata).unwrap(),
+                None => FieldInlineBytecodeTable {
+                    rows: vec![Default::default(); bytecode_len],
+                    field_register_log_k: FIELD_REGISTERS_LOG_K,
+                },
             };
             #[cfg(feature = "field-inline")]
             let field_read_write_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 41);
@@ -1347,9 +1381,6 @@ mod tests {
                         [..REGISTER_ADDRESS_BITS],
                     stage_gammas: std::array::from_fn(|s| stage_gammas[s].as_slice()),
                 }),
-                // All-inactive and well-formed: the composed reference cycle
-                // kernel folds the FR rows (all zero) at these points, so its
-                // messages stay byte-equal to the FR-less optimized kernel's.
                 #[cfg(feature = "field-inline")]
                 field_inline:
                     FieldInlineBytecodeFold {
@@ -1415,7 +1446,7 @@ mod tests {
                 reference.output_claims(&cycle_claims).unwrap(),
                 optimized.output_claims(&cycle_claims).unwrap()
             );
-        });
+        }
     }
 
     #[test]
@@ -1426,6 +1457,12 @@ mod tests {
     #[test]
     fn bytecode_phases_match_reference_in_committed_program_mode() {
         run_pair(true);
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn bytecode_phases_match_reference_with_an_active_field_inline_side_table() {
+        run_pair_with_field_inline_program(|backend| run_pair_on(backend, false));
     }
 }
 

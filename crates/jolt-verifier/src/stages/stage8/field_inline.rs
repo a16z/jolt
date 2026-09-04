@@ -67,7 +67,12 @@ where
             id: field_rd_inc_reduced().into(),
             commitment: &field_inline.field_registers.rd_inc,
             opening_claim,
-            scale: commitment_embedding_scale(opening_point, field_inline_opening_point),
+            scale: commitment_embedding_scale(opening_point, field_inline_opening_point)
+                .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+                    reason: "the FieldRdInc reduction point is not embedded in the unified \
+                             final opening point"
+                        .to_string(),
+                })?,
         },
     );
     Ok(())

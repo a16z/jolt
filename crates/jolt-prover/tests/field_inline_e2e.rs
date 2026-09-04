@@ -307,13 +307,6 @@ mod clear {
 
     use super::support::{self, Proof, VerifierPreprocessing};
 
-    /// The FR claim-reduction's gamma position in the stage-2 batch: the
-    /// `Stage2BatchSumchecks` declaration order is [ram_read_write,
-    /// product_remainder, instruction_claim_reduction,
-    /// field_registers_claim_reduction, ram_raf_evaluation,
-    /// ram_output_check], and gamma powers are assigned in that order.
-    const FR_CR_GAMMA_POSITION: usize = 3;
-
     fn prove_eqpoly(
         backend: JoltBackend<Fr, DoryScheme>,
     ) -> (VerifierPreprocessing, JoltDevice, Proof) {
@@ -434,7 +427,11 @@ mod clear {
                 }),
             ),
             (
-                "stage2 round poly at the FR CR gamma position",
+                // The composed stage-2 batch (FR claim reduction + product
+                // appendage) rejects a corrupted round polynomial like the
+                // base batch does; FR-on, no legacy-fixture suite covers the
+                // round polynomials, so this is the composed batch's guard.
+                "stage2 composed batch round polynomial corrupted",
                 Box::new(|proof| {
                     let SumcheckProof::Clear(ClearProof::Compressed(batch)) =
                         &mut proof.stages.stage2_sumcheck_proof
@@ -443,8 +440,8 @@ mod clear {
                     };
                     let round = batch
                         .round_polynomials
-                        .get_mut(FR_CR_GAMMA_POSITION)
-                        .expect("stage-2 batch has a round at the FR CR gamma position");
+                        .first_mut()
+                        .expect("stage-2 batch has a first round");
                     *round = CompressedPoly::new(vec![Fr::from_u64(7)]);
                 }),
             ),

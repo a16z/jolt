@@ -480,7 +480,16 @@ mod clear {
                 .field_inc_limbs_commitment
                 .as_ref()
                 .expect("packed FR proofs carry the limb-group commitment");
-            let mut digest = GroupCommitmentMetadata::layout_digest(honest);
+            let digest = GroupCommitmentMetadata::layout_digest(honest);
+            // The forgery path reproduces the prover's commit exactly under
+            // the honest digest, so the flipped-digest commitment below
+            // differs from the honest one only in the digest.
+            assert_eq!(
+                &support::commit_limb_words_with_digest(&output, digest),
+                honest,
+                "the test's limb commit must reproduce the prover's under the honest digest",
+            );
+            let mut digest = digest;
             digest[0] ^= 0x01;
             support::commit_limb_words_with_digest(&output, digest)
         };
@@ -608,16 +617,19 @@ mod clear {
             vec![AkitaField::from_u64(0)],
         );
         let mut transcript = AkitaTranscript::new(b"spurious-fr-group");
+        let error = <AkitaScheme as VerifierCommitmentScheme>::verify_batch(
+            &output.verifier_preprocessing.pcs_setup,
+            &[fr_claim.clone(), fr_claim],
+            &main,
+            &output.proof.joint_opening_proof,
+            &mut transcript,
+        )
+        .expect_err("a duplicated FR-role group must be rejected");
+        // The rejection must come from the canonical role-order check, not
+        // from the fake statement failing later in the batch.
         assert!(
-            <AkitaScheme as VerifierCommitmentScheme>::verify_batch(
-                &output.verifier_preprocessing.pcs_setup,
-                &[fr_claim.clone(), fr_claim],
-                &main,
-                &output.proof.joint_opening_proof,
-                &mut transcript,
-            )
-            .is_err(),
-            "a duplicated FR-role group must be rejected by the canonical order",
+            error.to_string().contains("canonical ascending order"),
+            "duplicated FR role rejected for the wrong reason: {error}",
         );
     }
 }

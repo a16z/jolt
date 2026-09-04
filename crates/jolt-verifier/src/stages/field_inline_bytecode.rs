@@ -26,6 +26,7 @@ use jolt_riscv::{
     JoltInstructionRow,
 };
 
+use crate::config::JOLT_VERIFIER_INSTRUCTION_PROFILE;
 use crate::preprocessing::ProgramPreprocessing;
 use crate::VerifierError;
 
@@ -51,6 +52,40 @@ pub fn required_field_inline_bytecode<PCS: CommitmentScheme>(
         .ok_or(VerifierError::MissingPreprocessingPayload {
             field: "program.bytecode.field_inline",
         })
+}
+
+/// Re-derive the side table from the padded ordinary bytecode under the
+/// verifier's instruction profile and require the preprocessing's copy to
+/// match it exactly. The side table is a function of the bytecode (one owner:
+/// `FieldInlineBytecodeMetadata::from_bytecode`), so a preprocessing whose
+/// stored table disagrees with its own bytecode — a stale artifact, a
+/// mis-profiled preprocess, or a tampered file — would let the FR access
+/// selectors anchor to rows the ordinary bytecode does not encode. Runs once
+/// per verification at input validation.
+pub fn validate_field_inline_bytecode<PCS: CommitmentScheme>(
+    program: &ProgramPreprocessing<PCS>,
+) -> Result<(), VerifierError> {
+    let stored = required_field_inline_bytecode(program)?;
+    let full = program
+        .as_full()
+        .ok_or(VerifierError::MissingPreprocessingPayload {
+            field: "program.bytecode",
+        })?;
+    let derived = FieldInlineBytecodeMetadata::from_bytecode(
+        &full.bytecode.bytecode,
+        JOLT_VERIFIER_INSTRUCTION_PROFILE.fingerprint(),
+    )
+    .map_err(|error| VerifierError::InvalidFieldInlineBytecode {
+        reason: error.to_string(),
+    })?;
+    if *stored != derived {
+        return Err(VerifierError::InvalidFieldInlineBytecode {
+            reason: "the preprocessing's field-inline side table does not match the table \
+                     derived from its bytecode"
+                .to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Convert the program-boundary side table (`active`/`op`/operand slots) into
@@ -404,6 +439,62 @@ mod tests {
             Err(VerifierError::MissingPreprocessingPayload {
                 field: "program.bytecode.field_inline"
             })
+        ));
+    }
+
+    /// The stored side table must equal the one derived from the bytecode:
+    /// a preprocessing whose FR rows disagree with its own instructions is
+    /// rejected at input validation.
+    #[test]
+    fn side_table_disagreeing_with_the_bytecode_is_rejected() {
+        use common::constants::RAM_START_ADDRESS;
+        use common::jolt_device::{JoltDevice, MemoryConfig};
+        use jolt_dory::DoryScheme;
+        use jolt_program::preprocess::{
+            BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
+        };
+        use jolt_riscv::{JoltInstructionKind, NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE};
+        use std::sync::Arc;
+
+        let field_add = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::FIELD_ADD,
+            address: usize::try_from(RAM_START_ADDRESS).unwrap(),
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: Some(3),
+                imm: 0,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        let mut bytecode = BytecodePreprocessing::preprocess(
+            vec![field_add],
+            RAM_START_ADDRESS,
+            RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap();
+        let program = |bytecode: BytecodePreprocessing| -> ProgramPreprocessing<DoryScheme> {
+            ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
+                bytecode,
+                ram: RAMPreprocessing::preprocess(Vec::new()),
+                memory_layout: JoltDevice::new(&MemoryConfig {
+                    program_size: Some(1024),
+                    ..Default::default()
+                })
+                .memory_layout,
+                max_padded_trace_length: 1 << 10,
+            }))
+        };
+        validate_field_inline_bytecode(&program(bytecode.clone())).unwrap();
+
+        let metadata = bytecode.field_inline.as_mut().unwrap();
+        let active = metadata.rows.iter_mut().find(|row| row.active).unwrap();
+        active.active = false;
+        assert!(matches!(
+            validate_field_inline_bytecode(&program(bytecode)),
+            Err(VerifierError::InvalidFieldInlineBytecode { .. })
         ));
     }
 

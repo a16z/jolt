@@ -43,8 +43,12 @@ use common::jolt_device::MemoryConfig;
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(not(feature = "akita"))]
 use jolt_dory::DoryScheme;
+#[cfg(feature = "field-inline")]
+use jolt_field::CanonicalBytes;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
+#[cfg(feature = "field-inline")]
+use jolt_field::Ring;
 // Keep the inline libraries linked so their host-side registrations reach the
 // tracer, exactly as the legacy harness does.
 use jolt_inlines_keccak256 as _;
@@ -62,11 +66,15 @@ use jolt_program::preprocess::BytecodePreprocessing;
 use jolt_prover_legacy::host;
 #[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+use jolt_prover_legacy::zkvm::packed::AkitaField;
 use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
 use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
 #[cfg(not(feature = "akita"))]
 use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+#[cfg(feature = "field-inline")]
+use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::{JoltTraceRow, RV64IMAC_JOLT};
 #[cfg(not(feature = "akita"))]
@@ -85,6 +93,13 @@ use crate::{JoltProverPreprocessing, ProverConfig};
 type ProfileTrace = Arc<Vec<JoltTraceRow>>;
 #[cfg(feature = "field-inline")]
 type ProfileTrace = OwnedTrace;
+
+/// The field the FR guest's expected value is pinned in: the compiled
+/// protocol's proof field.
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+type FieldInlineField = Fr;
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+type FieldInlineField = AkitaField;
 
 // Empirically measured cycles per operation for RV64IMAC — copied from the
 // legacy harness (`benches/e2e_profiling.rs`) so both harnesses construct
@@ -131,6 +146,12 @@ pub enum Workload {
     Sha3Chain,
     #[value(name = "btreemap")]
     BTreeMap,
+    /// The eq-MLE field-inline guest (`examples/eqpoly-field`): the workload
+    /// that exercises the FR columns and kernels. Fixed-size (its input does
+    /// not scale), so it is not in the default sweep list.
+    #[cfg(feature = "field-inline")]
+    #[value(name = "eqpoly-field")]
+    EqpolyField,
 }
 
 impl Workload {
@@ -141,7 +162,16 @@ impl Workload {
             Self::Sha2Chain => "sha2-chain",
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
+            #[cfg(feature = "field-inline")]
+            Self::EqpolyField => "eqpoly-field",
         }
+    }
+
+    /// Whether the guest uses the field-inline SDK surface (and so needs the
+    /// `field-inline` guest feature besides the FR instruction profile).
+    #[cfg(feature = "field-inline")]
+    const fn uses_field_inline(self) -> bool {
+        matches!(self, Self::EqpolyField)
     }
 
     /// Default log2 trace length when `--scale` is omitted.
@@ -151,6 +181,8 @@ impl Workload {
             Self::Sha2Chain => 22,
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
+            #[cfg(feature = "field-inline")]
+            Self::EqpolyField => 16,
         }
     }
 
@@ -178,8 +210,35 @@ impl Workload {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP))
                     .expect("serialize input")
             }
+            #[cfg(feature = "field-inline")]
+            Self::EqpolyField => eqpoly_inputs(),
         }
     }
+}
+
+/// The eq-MLE guest's inputs: the `(r_i, x_i)` pairs and the expected
+/// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))`, pinned in the compiled
+/// protocol's proof field as four canonical little-endian u64 limbs (the
+/// guest Horner-recomposes them in whatever field it proves over; a 16-byte
+/// field fills the low two limbs). The same shape the FR e2e and verifier
+/// fixture generators feed the guest.
+#[cfg(feature = "field-inline")]
+fn eqpoly_inputs() -> Vec<u8> {
+    const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+    let one = FieldInlineField::from_u64(1);
+    let value = EQ_PAIRS.iter().fold(one, |acc, [r, x]| {
+        let r = FieldInlineField::from_u64(*r);
+        let x = FieldInlineField::from_u64(*x);
+        acc * (r * x + (one - r) * (one - x))
+    });
+    let bytes = value.to_bytes_le_vec();
+    let mut limbs = [0u64; 4];
+    for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
+        *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
+    }
+    let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
+    inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
+    inputs
 }
 
 /// Subscriber stack selector.
@@ -564,6 +623,17 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // --- Guest (unmeasured): compiled/decoded through the legacy host
     // toolchain (the modular stack has none of its own).
     let mut program = host::Program::new(&format!("{bench_name}-guest"));
+    // An FR-on build proves every guest under the FR instruction profile (a
+    // superset of RV64IMAC: an FR-free guest derives an all-inactive side
+    // table), so the ordinary workloads measure the composed protocol's
+    // overhead and `eqpoly-field` exercises the FR columns. Only the FR guest
+    // carries the SDK's `field-inline` guest feature.
+    #[cfg(feature = "field-inline")]
+    if workload.uses_field_inline() {
+        program.enable_field_inline();
+    } else {
+        program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
+    }
     let (_, legacy_trace, _, io_device) = program.trace(&input, &[], &[]);
     assert!(
         legacy_trace.len().next_power_of_two() <= max_trace_length,
@@ -572,7 +642,10 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     drop(legacy_trace);
     let elf_contents = program.get_elf_contents().expect("elf contents");
     let memory_layout = io_device.memory_layout.clone();
-    let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
+    let jolt_program = Arc::new(JoltProgram::from_elf_bytes_with_profile(
+        elf_contents,
+        program.instruction_profile(),
+    ));
 
     // --- Modular trace (unmeasured, like legacy's `gen_from_elf` emulation).
     let trace_output = trace_modular(&mut program, &jolt_program, &memory_layout, &input);
@@ -670,9 +743,13 @@ fn prove_workload(
     backend: BackendKind,
 ) -> ProvenRun {
     let (bytecode, init_memory_state, _, entry_address) = program.decode();
-    let program_data =
-        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("legacy preprocess");
+    let program_data = LegacyProgramPreprocessing::preprocess_with_profile(
+        bytecode,
+        init_memory_state,
+        entry_address,
+        program.instruction_profile(),
+    )
+    .expect("legacy preprocess");
     let shared_preprocessing =
         JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
     let legacy_preprocessing = LegacyProverPreprocessing::<
@@ -714,38 +791,34 @@ fn prove_workload(
         ),
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     ));
-    // D1: an FR-on build proves only FR-profile guests — refuse up front
-    // rather than silently proving without the field-inline columns. The raw
-    // trace is padded and normalized through `TraceBackend::new`, which
-    // retains the raw rows the FR view walks.
+    // The raw trace is padded and normalized through `TraceBackend::new`,
+    // which retains the raw rows the FR view walks; the FR-profile
+    // preprocessing always carries the side table the view needs.
     #[cfg(feature = "field-inline")]
     let witness = {
         let padded_output = pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
-            JoltVmWitnessConfig::new(
-                config.trace_length.ilog2() as usize,
-                config.ram_K,
-                config.one_hot_config,
-            ),
-            JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, padded_output),
-        );
-        match program_preprocessing.bytecode.field_inline.as_ref() {
-            Some(_) => Arc::new(
-                witness
-                    .with_field_inline()
-                    .expect("field-inline witness view"),
-            ),
-            None => panic!(
-                "field-inline build requires an FR-profile guest: this guest has no field-inline bytecode metadata"
-            ),
-        }
+        Arc::new(
+            TraceBackend::new(
+                JoltVmWitnessConfig::new(
+                    config.trace_length.ilog2() as usize,
+                    config.ram_K,
+                    config.one_hot_config,
+                ),
+                JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, padded_output),
+            )
+            .with_field_inline()
+            .expect("field-inline witness view"),
+        )
     };
 
-    // PCS setup sized like the byte-diff harness: the main one-hot matrix
-    // maxed with both advice candidates (always included in setup sizing,
-    // present or not — the SRS is prefix-stable).
+    // PCS setup sized like the byte-diff harness: the main one-hot matrix at
+    // the preprocessing's MAX padded trace length (the verifier setup is
+    // sized by the same maximum, and Dory's matrix shape follows the setup
+    // size, so an under-filled workload must not shrink it), maxed with both
+    // advice candidates (always included in setup sizing, present or not —
+    // the SRS is prefix-stable).
     let total_vars = (config.one_hot_config.committed_chunk_bits()
-        + config.trace_length.ilog2() as usize)
+        + max_trace_length.ilog2() as usize)
         .max(advice_vars(memory_layout.max_trusted_advice_size))
         .max(advice_vars(memory_layout.max_untrusted_advice_size));
     let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
@@ -806,10 +879,16 @@ fn prove_workload(
     trace_output: TraceOutput<ProfileTrace>,
     backend: BackendKind,
 ) -> ProvenRun {
+    #[cfg(feature = "field-inline")]
+    use jolt_akita::PrecommittedScheduleParams;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, AkitaField, AkitaPackedScheme, AkitaScheme, AkitaTranscript,
         AkitaVc,
+    };
+    #[cfg(feature = "field-inline")]
+    use jolt_prover_legacy::zkvm::packed::{
+        field_inc_limb_schedule_params, grouped_batch_poly_capacity,
     };
 
     let backend = match backend {
@@ -818,9 +897,13 @@ fn prove_workload(
     };
 
     let (bytecode, init_memory_state, _, entry_address) = program.decode();
-    let program_data =
-        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("legacy preprocess");
+    let program_data = LegacyProgramPreprocessing::preprocess_with_profile(
+        bytecode,
+        init_memory_state,
+        entry_address,
+        program.instruction_profile(),
+    )
+    .expect("legacy preprocess");
     let shared_preprocessing: JoltSharedPreprocessing<AkitaPackedScheme> =
         JoltSharedPreprocessing::new(program_data, memory_layout.clone(), max_trace_length);
     let legacy_preprocessing = LegacyProverPreprocessing::new(shared_preprocessing);
@@ -862,11 +945,30 @@ fn prove_workload(
         legacy_preprocessing.shared.bytecode_size(),
     )
     .expect("OneHotTrace setup shape");
+    #[cfg(not(feature = "field-inline"))]
     let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only(
         setup_shape.num_vars,
         setup_shape.num_polys,
         layout_digest,
         one_hot_k,
+    );
+    // An FR-on prover commits the limb group on every proof, so the setup
+    // carries the FR arity line in its schedule (legacy's
+    // `one_hot_trace_setup_params` derivation, without advice or a committed
+    // program).
+    #[cfg(feature = "field-inline")]
+    let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only_grouped(
+        setup_shape.num_vars,
+        setup_shape.num_polys,
+        grouped_batch_poly_capacity(0, 0, 0),
+        layout_digest,
+        one_hot_k,
+        Some(
+            PrecommittedScheduleParams::new(None, None, setup_shape.num_vars).with_field_inc_limbs(
+                field_inc_limb_schedule_params(one_hot_k)
+                    .expect("the FR limb arity line must derive for a canonical K"),
+            ),
+        ),
     );
     let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(params)
         .expect("the transparent packed setup must derive");
@@ -887,28 +989,22 @@ fn prove_workload(
         ),
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     );
-    // D1, as in the homomorphic arm: an FR-on build proves only FR-profile
-    // guests, and the raw rows are padded through `TraceBackend::new` so the
-    // FR view can walk them.
+    // As in the homomorphic arm: the raw rows are padded through
+    // `TraceBackend::new` so the FR view can walk them, and the FR-profile
+    // preprocessing always carries the side table.
     #[cfg(feature = "field-inline")]
     let witness = {
         let padded_output = pad_trace(trace_output, config.trace_length);
-        let witness = TraceBackend::new(
+        TraceBackend::new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
                 config.one_hot_config,
             ),
             JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, padded_output),
-        );
-        match program_preprocessing.bytecode.field_inline.as_ref() {
-            Some(_) => witness
-                .with_field_inline()
-                .expect("field-inline witness view"),
-            None => panic!(
-                "field-inline build requires an FR-profile guest: this guest has no field-inline bytecode metadata"
-            ),
-        }
+        )
+        .with_field_inline()
+        .expect("field-inline witness view")
     };
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
         verifier: verifier_preprocessing,

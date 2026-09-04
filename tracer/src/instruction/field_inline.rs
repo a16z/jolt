@@ -307,13 +307,21 @@ fn execute_store_to_x<F: CanonicalEncoding>(
 ) -> FieldInlineTraceData {
     let field_register = operands.rs1.unwrap_or(0);
     let x_register = operands.rd.unwrap_or(0);
+    // x0 discards the write, which the bridge row cannot express (it equates the
+    // x-register write with the field value); preprocessing rejects the same
+    // encoding, so trap at trace time like the other guest faults.
+    assert!(
+        x_register != 0,
+        "FIELD_STORE_TO_X to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
+        cpu.read_pc(),
+    );
     let field_value = cpu.field_registers.read(field_register);
-    // store-to-x is a range-restricted bridge: the R1CS row
-    // `IsFieldStoreToX * (RdWriteValue - FieldRs1Value) = 0` equates the x-register
-    // write with the field value natively, which is satisfiable only when the field
-    // value already fits in 64 bits (x-register values are u64-range). A wider value
-    // would make an honest trace unprovable, so trap here at trace time. Full-width
-    // extraction is the advice pattern's job (advice limbs + Horner + FIELD_ASSERT_EQ).
+    // store-to-x is a range-bound bridge: the instruction carries the advice
+    // lookup flags, so the constraint system pins the x-register write to
+    // `RangeCheck(FieldRs1Value)`, satisfiable only when the field value already
+    // fits in 64 bits (`jolt-r1cs` `field_constraints` module doc). A wider
+    // value has no proof, so trap here at trace time. Full-width extraction is
+    // the advice pattern's job (advice limbs + Horner + FIELD_ASSERT_EQ).
     let x_value = decode_field::<F>(field_value)
         .to_u64_checked()
         .unwrap_or_else(|| {

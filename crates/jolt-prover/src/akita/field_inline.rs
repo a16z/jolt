@@ -4,7 +4,9 @@
 //! FR protocol only through this module (the prover half of the
 //! `jolt_verifier::stages::stage8::field_inline_packed` seam).
 
-use jolt_claims::protocols::field_inline::lattice::{canonical_limbs, FieldIncLimbPackingPlan};
+use jolt_claims::protocols::field_inline::lattice::{
+    canonical_limbs_into, FieldIncLimbPackingPlan,
+};
 use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
 };
@@ -71,18 +73,17 @@ where
 
     let plan = limb_plan::<F>(log_t).map_err(ProverError::Verifier)?;
     let limb_count = plan.packing().ids().len();
+    if limb_count != jolt_claims::protocols::field_inline::lattice::field_inc_limb_count::<F>() {
+        return Err(commit_failed(
+            "the canonical limb decomposition disagrees with the limb plan",
+        ));
+    }
     let mut evaluations = vec![F::default(); 1usize << plan.packing().packed_num_vars()];
+    let mut limbs = vec![0u64; limb_count];
     for (cycle, value) in rd_inc.iter().enumerate() {
-        // canonical_limbs allocates per cycle; a slice-writing encoder is the
-        // upgrade path if this shows in trace-scale profiles.
-        let limbs = canonical_limbs(value);
-        if limbs.len() != limb_count {
-            return Err(commit_failed(
-                "the canonical limb decomposition disagrees with the limb plan",
-            ));
-        }
-        for (limb, word) in limbs.into_iter().enumerate() {
-            evaluations[(limb << log_t) | cycle] = F::from_u64(word);
+        canonical_limbs_into(value, &mut limbs);
+        for (limb, word) in limbs.iter().enumerate() {
+            evaluations[(limb << log_t) | cycle] = F::from_u64(*word);
         }
     }
     let polynomial = Polynomial::new(evaluations);

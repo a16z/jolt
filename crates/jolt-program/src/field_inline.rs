@@ -237,7 +237,17 @@ impl FieldInlineBytecodeRow {
         };
         let bridge_x_register = match shape.bridge_x_register_role {
             Some(FieldInlineXRegisterRole::ReadRs1) => Some(x_register(row.operands.rs1, "rs1")?),
-            Some(FieldInlineXRegisterRole::WriteRd) => Some(x_register(row.operands.rd, "rd")?),
+            Some(FieldInlineXRegisterRole::WriteRd) => {
+                // x0 discards writes, so the bridge row `RdWriteValue =
+                // FieldRs1Value` could hold only for a zero field value; the
+                // tracer traps on the same encoding, keeping the two in
+                // agreement instead of leaving an honest trace unprovable.
+                let register = x_register(row.operands.rd, "rd")?;
+                if register == 0 {
+                    return Err(FieldInlineMetadataError::StoreToXZeroRegister);
+                }
+                Some(register)
+            }
             None => None,
         };
         let immediate = if shape.has_immediate {
@@ -380,6 +390,8 @@ pub enum FieldInlineMetadataError {
     InvalidFieldRegister { operand: &'static str, register: u8 },
     #[error("field-inline x-register operand {operand} is out of bounds: {register}")]
     InvalidXRegister { operand: &'static str, register: u8 },
+    #[error("field-inline store bridge targets x0, which discards the write")]
+    StoreToXZeroRegister,
     #[error("field-inline immediate must be non-negative and fit in u64: {0}")]
     InvalidImmediate(i128),
 }

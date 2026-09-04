@@ -1,6 +1,7 @@
 //! Verifier error types.
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
+use jolt_riscv::JoltInstructionKind;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId, VerifierOpeningId};
@@ -13,10 +14,7 @@ pub enum VerifierError {
         got: JoltProtocolConfig,
     },
 
-    #[error(
-        "the configured protocol axis `{axis}` is not verifiable yet: {pending} (fail-closed \
-         until the corresponding verifier stage slices land)"
-    )]
+    #[error("the protocol axis `{axis}` is not supported on this path: {pending}")]
     ProtocolAxisUnimplemented {
         axis: &'static str,
         pending: &'static str,
@@ -134,4 +132,9 @@ pub enum VerifierError {
 
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
+
+    #[error("bytecode carries {kind:?}, which this verifier build has no constraints for")]
+    UnsupportedInstruction { kind: JoltInstructionKind },
+    #[error("field-inline bytecode side table rejected: {reason}")]
+    InvalidFieldInlineBytecode { reason: String },
 }

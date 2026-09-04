@@ -19,7 +19,10 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG},
+    config::{
+        validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG,
+        JOLT_VERIFIER_INSTRUCTION_PROFILE,
+    },
     num,
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltProof, TracePolynomialOrder},
@@ -296,8 +299,8 @@ where
         proof,
         trusted_advice_commitment.is_some(),
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
+    validate_proof_consistency(proof, checked.zk)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -354,6 +357,30 @@ where
         None
     };
     let program = &preprocessing.program;
+    // This build proves exactly one instruction profile. A full program
+    // carrying an instruction the build has no constraints for (an FR bridge
+    // row on an FR-off verifier, whose rd write no RV64 row pins) rejects here
+    // rather than verifying against the base rows alone. Committed programs
+    // carry no rows to scan; FR-on, the side-table requirement below rejects
+    // them.
+    if let Some(full) = program.as_full() {
+        if let Some(row) = full
+            .bytecode
+            .bytecode
+            .iter()
+            .find(|row| !JOLT_VERIFIER_INSTRUCTION_PROFILE.supports_jolt(row.instruction_kind))
+        {
+            return Err(VerifierError::UnsupportedInstruction {
+                kind: row.instruction_kind,
+            });
+        }
+    }
+    // The FR-on verifier anchors the FR access selectors through the bytecode
+    // side table (stage 6); preprocessing without it — a classic-profile
+    // program or committed-program mode — cannot back a proof, so reject
+    // before any stage runs.
+    #[cfg(feature = "field-inline")]
+    crate::stages::field_inline_bytecode::validate_field_inline_bytecode(program)?;
     let memory_layout = program.memory_layout();
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
@@ -1159,8 +1186,8 @@ where
         proof,
         trusted_advice_commitment.is_some(),
     )?;
-    validate_proof_consistency(proof, checked.zk)?;
     validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof.protocol)?;
+    validate_proof_consistency(proof, checked.zk)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -1190,6 +1217,8 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    use common::constants::RAM_START_ADDRESS;
 
     use super::*;
     #[cfg(not(feature = "akita"))]
@@ -1898,6 +1927,7 @@ mod tests {
         test_preprocessing_with_layout(test_memory_layout())
     }
 
+    #[expect(clippy::unwrap_used)]
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
@@ -1908,9 +1938,18 @@ mod tests {
         ));
         #[cfg(not(feature = "zk"))]
         let vc_setup = None;
+        // Preprocess under the build's own instruction profile: the FR-on
+        // verifier requires the field-inline side table, which only an
+        // FR-profile preprocess derives (all-inactive for this empty program).
+        let bytecode = BytecodePreprocessing::preprocess(
+            Vec::new(),
+            RAM_START_ADDRESS,
+            JOLT_VERIFIER_INSTRUCTION_PROFILE,
+        )
+        .unwrap();
         JoltVerifierPreprocessing::new(
             ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
-                bytecode: BytecodePreprocessing::default(),
+                bytecode,
                 ram: RAMPreprocessing::default(),
                 memory_layout,
                 max_padded_trace_length: 16,

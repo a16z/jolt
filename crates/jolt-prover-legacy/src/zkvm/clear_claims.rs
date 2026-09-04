@@ -662,27 +662,22 @@ mod packed {
         let claims = OpeningClaimMap {
             claims: claims.into_iter().collect(),
         };
-        Ok(ClearProofClaims {
-            stage1: Stage1OutputClaims {
-                uniskip_output_claim: claims.require(outer_uniskip_opening())?,
-                outer: spartan_outer_claims_from_openings(&claims)?,
-                // Legacy has no packed FR path; an FR-on verifier rejects the
-                // converted proof fail-closed on its disabled FR config.
-                #[cfg(feature = "field-inline")]
-                field_inline_outer: None,
-            },
-            stage2: stage2_claims_from_openings(&claims)?,
-            stage3: stage3_claims_from_openings(&claims)?,
-            stage4: stage4_claims_from_openings(&claims)?,
-            stage5: stage5_claims_from_openings(&claims)?,
-            stage6a: stage6a_claims_from_openings(&claims)?,
-            stage6b: packed_stage6b_claims_from_openings(&claims)?,
-            stage7: packed_stage7_claims_from_openings(&claims)?,
-            // Legacy has no packed FR path; an FR-on verifier rejects the
-            // converted proof fail-closed on its disabled FR config.
-            #[cfg(feature = "field-inline")]
-            field_inc_limbs: None,
-        })
+        // Legacy has no packed FR path: the verifier-owned constructors leave
+        // the FR slots empty, and an FR-on verifier rejects the converted
+        // proof fail-closed on its disabled FR config.
+        Ok(ClearProofClaims::new(
+            Stage1OutputClaims::new(
+                claims.require(outer_uniskip_opening())?,
+                spartan_outer_claims_from_openings(&claims)?,
+            ),
+            stage2_claims_from_openings(&claims)?,
+            stage3_claims_from_openings(&claims)?,
+            stage4_claims_from_openings(&claims)?,
+            stage5_claims_from_openings(&claims)?,
+            stage6a_claims_from_openings(&claims)?,
+            packed_stage6b_claims_from_openings(&claims)?,
+            packed_stage7_claims_from_openings(&claims)?,
+        ))
     }
 
     fn indexed_family<F: JoltField>(
@@ -765,33 +760,31 @@ mod packed {
             });
         }
 
-        Ok(Stage6bOutputClaims {
-            #[cfg(feature = "field-inline")]
-            field_registers_inc_claim_reduction: Default::default(),
-            bytecode_read_raf: LatticeBytecodeReadRafOutputClaims {
+        Ok(Stage6bOutputClaims::new(
+            LatticeBytecodeReadRafOutputClaims {
                 bytecode_ra,
                 fused_inc: claims.require(fused_inc_read_raf_opening())?,
             },
-            booleanity: LatticeBooleanityOutputClaims {
+            LatticeBooleanityOutputClaims {
                 instruction_ra: booleanity_instruction_ra,
                 bytecode_ra: booleanity_bytecode_ra,
                 ram_ra: booleanity_ram_ra,
                 balanced_inc_digits,
                 balanced_inc_carry,
             },
-            ram_hamming_booleanity: RamHammingBooleanityOutputClaims {
+            RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: claims.require(ram::ram_hamming_weight())?,
             },
-            ram_ra_virtualization: RamRaVirtualizationOutputClaims { ram_ra },
-            instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims {
+            RamRaVirtualizationOutputClaims { ram_ra },
+            InstructionRaVirtualizationOutputClaims {
                 committed_instruction_ra,
             },
-            bytecode_reduction: bytecode_cycle_phase_claims_from_openings(claims),
-            program_image_reduction: claims
+            bytecode_cycle_phase_claims_from_openings(claims),
+            claims
                 .get(program_image::cycle_phase_program_image_opening())
                 .or_else(|| claims.get(program_image::final_program_image_opening()))
                 .map(|program_image| ProgramImageReductionCyclePhaseOutputClaims { program_image }),
-        })
+        ))
     }
 
     fn packed_stage7_claims_from_openings<F: JoltField>(

@@ -4,7 +4,7 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-08-19 |
-| Status | draft |
+| Status | implemented (both axes landed; see the status notes below) |
 | PR | TBD |
 
 ## Purpose
@@ -127,8 +127,10 @@ chain repoints the tracer's `ProofField` to `jolt_field::Prime128OffsetA7F7` and
 `FieldValueEncoding::ACTIVE` to `TWO_LIMB_128_CANONICAL` (inert while
 field-inline is off); Dory keeps BN254 Fr. FR guests are
 configuration-specific, and cross-configuration proofs reject fail-closed on
-the metadata encoding-equality gate (intended behavior, tested in both
-directions).
+the metadata encoding-equality gate (intended behavior; the jolt-program
+encoding-mismatch unit test rejects the foreign encoding in whichever
+configuration it compiles under, and CI runs it with `fp128-field-inline`
+both off and on).
 
 Everything above is implemented; the `field-inline x akita` compile error is
 removed. Axis 1 as landed, with two dispositions the design left open:

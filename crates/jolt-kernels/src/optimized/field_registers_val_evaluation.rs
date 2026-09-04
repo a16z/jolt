@@ -37,7 +37,9 @@ use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegister
 use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
-use super::field_registers_read_write::SharedFieldRdWrites;
+use super::field_registers_read_write::{
+    field_register_rows, SharedFieldRdWrites, SharedFieldRegisterRows,
+};
 use super::registers_val_evaluation::WaState;
 use super::support::{triple_product_round_evals, RoundProgress, SplitLt};
 use crate::{
@@ -90,7 +92,10 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
         }
 
         // Reclaim the FR write slots the stage-4 kernel parked; collect them
-        // from the oracle rows otherwise (reference-only stage 4, tests).
+        // from the shared rows otherwise (reference-only stage 4, tests). This
+        // is the rows' last consumer, so the session copy is released either
+        // way.
+        let shared_rows = session.take::<SharedFieldRegisterRows<F>>();
         let writes = match session.take::<SharedFieldRdWrites>() {
             Some(SharedFieldRdWrites(writes))
                 if writes
@@ -99,12 +104,16 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
             {
                 writes
             }
-            _ => field_inline
-                .field_inline_register_read_write_rows()?
-                .iter()
-                .enumerate()
-                .filter_map(|(cycle, row)| row.rd.map(|write| (cycle as u32, write.register)))
-                .collect(),
+            _ => {
+                let rows = match shared_rows {
+                    Some(SharedFieldRegisterRows(rows)) if rows.len() == cycles => rows,
+                    _ => field_register_rows(session, field_inline, cycles, true)?,
+                };
+                rows.iter()
+                    .enumerate()
+                    .filter_map(|(cycle, row)| row.rd.map(|write| (cycle as u32, write.register)))
+                    .collect()
+            }
         };
         let mut rd: Vec<Option<u8>> = vec![None; cycles];
         for (cycle, register) in writes {

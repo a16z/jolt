@@ -64,7 +64,7 @@ use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, 
 // `field-inline` — the same sources the reference kernel folds with.
 use jolt_r1cs::constraints::jolt::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+    SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
 use jolt_riscv::{CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -96,7 +96,7 @@ use crate::{
 };
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
-const SECOND_GROUP_LEN: usize = DOMAIN - 1;
+const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
@@ -459,9 +459,10 @@ impl SpartanOuterRow {
         // wrong t1 value.
         // First group [FADD, FSUB, FMUL, FINV]: guards zero; magnitudes
         // zero except FINV's `inv_product − 1 = −1`.
-        // Second group [ASSERT_EQ, LOAD_FROM_X, STORE_TO_X, LOAD_IMM]:
-        // guards zero; magnitudes `0`, `frd − Rs1Value = −Rs1Value`,
-        // `RdWriteValue − frs1 = RdWriteValue`, `frd − Imm = −Imm`.
+        // Second group [ASSERT_EQ, LOAD_FROM_X, STORE_TO_X, LOAD_IMM,
+        // STORE_TO_X_LOOKUP]: guards zero; magnitudes `0`,
+        // `frd − Rs1Value = −Rs1Value`, `RdWriteValue − frs1 = RdWriteValue`,
+        // `frd − Imm = −Imm`, `RightLookupOperand − frs1 = RightLookupOperand`.
         #[cfg(feature = "field-inline")]
         {
             values.b_first[DOMAIN - 1] = S192::from_i64(-1);
@@ -469,6 +470,7 @@ impl SpartanOuterRow {
                 S192::zero() - S192::from_u64(self.rs1_value.0);
             values.b_second[RV64_SECOND_GROUP_LEN + 2] = S192::from_u64(self.rd_write_value.0);
             values.b_second[RV64_SECOND_GROUP_LEN + 3] = S192::zero() - imm;
+            values.b_second[RV64_SECOND_GROUP_LEN + 4] = right_lookup;
         }
 
         values
@@ -511,6 +513,9 @@ impl SpartanOuterRow {
         values.b_second[RV64_SECOND_GROUP_LEN + 2] =
             F::from_u64(self.rd_write_value.0) - fr.rs1_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 3] = fr.rd_value - F::from_i128(self.imm.0);
+        values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::StoreToX);
+        values.b_second[RV64_SECOND_GROUP_LEN + 4] =
+            F::from_u128(self.right_lookup_operand.0) - fr.rs1_value;
         values
     }
 }

@@ -31,6 +31,8 @@ pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::BytecodeReadRafCycle;
+#[cfg(feature = "akita")]
+use super::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims;
 use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
 };
@@ -41,6 +43,8 @@ use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims;
 
 /// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
 /// Fiat-Shamir batch order. `#[derive(SumcheckBatch)]` generates the
@@ -276,6 +280,32 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
             field_registers_inc_claim_reduction: Default::default(),
             trusted_advice,
             untrusted_advice,
+            bytecode_reduction,
+            program_image_reduction,
+        }
+    }
+
+    /// The packed-shape twin of [`Self::new`]: the lattice batch has no
+    /// increment or advice members, and the FR increment-reduction slot again
+    /// defaults to the inert all-zero claim.
+    #[cfg(feature = "akita")]
+    pub fn new(
+        bytecode_read_raf: LatticeBytecodeReadRafOutputClaims<F>,
+        booleanity: LatticeBooleanityOutputClaims<F>,
+        ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
+        ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
+        instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,
+        bytecode_reduction: Option<BytecodeReductionCyclePhaseOutputClaims<F>>,
+        program_image_reduction: Option<ProgramImageReductionCyclePhaseOutputClaims<F>>,
+    ) -> Self {
+        Self {
+            bytecode_read_raf,
+            booleanity,
+            ram_hamming_booleanity,
+            ram_ra_virtualization,
+            instruction_ra_virtualization,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: Default::default(),
             bytecode_reduction,
             program_image_reduction,
         }

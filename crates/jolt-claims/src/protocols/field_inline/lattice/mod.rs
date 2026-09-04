@@ -11,7 +11,8 @@ pub mod geometry;
 pub mod packing;
 
 pub use geometry::{
-    canonical_limbs, field_inc_limb_count, limb_place_value, recompose_limbs, FIELD_INC_LIMB_BITS,
+    canonical_limbs, canonical_limbs_into, field_inc_limb_count, limb_place_value, recompose_limbs,
+    FIELD_INC_LIMB_BITS,
 };
 #[cfg(feature = "akita")]
 pub use packing::field_inc_limbs_precommitted_role;

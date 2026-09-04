@@ -1,4 +1,5 @@
 use common::jolt_device::JoltDevice;
+use std::sync::Arc;
 
 use super::{MemoryImage, TraceError, TraceInputs, TraceOutput, TraceRow};
 
@@ -21,6 +22,13 @@ pub trait TraceSource {
     /// calls would yield — a partially consumed source must return `None`
     /// rather than a slice that includes already-consumed rows.
     fn rows(&self) -> Option<&[TraceRow]> {
+        None
+    }
+
+    /// The full row sequence as a shared allocation, under the same contract
+    /// as [`Self::rows`]. Consumers that must retain the raw rows (the
+    /// field-inline witness view) hold this instead of copying the trace.
+    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
         None
     }
 }
