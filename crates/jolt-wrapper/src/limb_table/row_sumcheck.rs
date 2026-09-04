@@ -520,8 +520,9 @@ impl ProveRounds<Fr> for RowSumcheck<'_> {
         Ok(())
     }
 
-    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+    fn append_bound_values(&self, values: &mut Vec<Fr>) -> Result<(), SumcheckError<Fr>> {
         values.extend_from_slice(&self.final_row()[..Col::CLAIMED]);
+        Ok(())
     }
 }
 

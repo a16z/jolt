@@ -385,4 +385,9 @@ impl ProveRounds<Fr> for WiringProver {
         self.bind(bind);
         Ok(())
     }
+
+    fn append_bound_values(&self, _values: &mut Vec<Fr>) -> Result<(), SumcheckError<Fr>> {
+        // Wiring uses columns already supplied by the hash-row member.
+        Ok(())
+    }
 }

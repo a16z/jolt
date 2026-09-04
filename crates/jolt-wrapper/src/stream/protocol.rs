@@ -232,7 +232,7 @@ fn prove_assembly_tail(
         let mut bound = Vec::new();
         for (member, columns) in members.iter().zip(plan.member_columns) {
             let mut values = Vec::with_capacity(columns.len());
-            member.prover.append_bound_values(&mut values);
+            member.prover.append_bound_values(&mut values)?;
             if values.len() != columns.len() {
                 return Err(StreamError::StageMemberCount);
             }

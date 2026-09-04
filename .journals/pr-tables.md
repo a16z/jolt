@@ -148,12 +148,18 @@ cost remained 4,868,177 gas.
 | operation | k=16 | k=32 |
 |---|---:|---:|
 | ecMul | 233 | 216 |
-| ecAdd | 233 | 216 |
+| ecAdd | 231 | 214 |
 | pairing pairs | 8 | 8 |
 | Fr multiplications | 123,144 | 123,121 |
 | Fr inversions | 8 | 8 |
 | Keccak | 852 | 839 |
-| **N4 gas model** | **4,944,149** | **4,800,225** |
+| **N4 gas model** | **4,943,849** | **4,799,925** |
+
+The MSM gas term is `7,550 × ecMul + 150 × ecAdd`: the calibrated 7,700-gas
+paired term retains its non-addition overhead, with additions priced separately.
+The closeout corrects two excess HyperKZG additions (−300 gas at either packing);
+all other counts and bytes are unchanged. Historical measurements below retain
+their original accounting.
 
 The same observer counts transcript replay, native sparse-matrix evaluation, sumchecks, links,
 term reduction, and the final opening. The native sparse-matrix block at both packings

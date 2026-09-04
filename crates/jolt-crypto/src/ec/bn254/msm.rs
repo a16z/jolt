@@ -600,4 +600,73 @@ mod tests {
         assert!(small_scalars_are_skewed(&[u16::MAX; 128]));
         assert!(small_scalars_are_skewed(&[1u32 << 31; 128]));
     }
+
+    #[test]
+    fn hybrid_signed_chains_match_naive() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x5ef5);
+        for n in [64, 65, 129, 1025] {
+            let mut points = bases(n, &mut rng);
+            let duplicate = G1Affine::rand(&mut rng);
+            for (index, point) in points.iter_mut().enumerate() {
+                *point = match index % 7 {
+                    0 => Bn254G1Affine(G1Affine::identity()),
+                    1 => Bn254G1Affine(duplicate),
+                    2 => Bn254G1Affine(-duplicate),
+                    _ => *point,
+                };
+            }
+            let digits = (0..n)
+                .map(|index| {
+                    if index < 3 * n / 4 {
+                        if rng.next_u32() & 1 == 0 {
+                            1
+                        } else {
+                            -1
+                        }
+                    } else {
+                        (rng.next_u32() % 257) as i32 - 128
+                    }
+                })
+                .collect::<Vec<_>>();
+            let scalars = digits
+                .iter()
+                .map(|&digit| {
+                    let value = JoltFr::from(u64::from(digit.unsigned_abs()));
+                    if digit < 0 {
+                        -value
+                    } else {
+                        value
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut buckets = vec![hybrid_buckets(
+                Bn254G1Affine::as_inner_slice(&points),
+                128,
+                digits.into_iter(),
+            )];
+            assert_eq!(sum_buckets(&mut buckets), naive(&points, &scalars));
+
+            let widths = (0..n)
+                .map(|index| match index % 7 {
+                    0 => JoltFr::zero(),
+                    1 => JoltFr::from(1u64),
+                    2 => JoltFr::from(65_535u64),
+                    3 => JoltFr::from(65_536u64),
+                    4 => JoltFr::from(65_537u64),
+                    5 => JoltFr::from(u64::from(u32::MAX)),
+                    _ => JoltFr::random(&mut rng),
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(g1_msm(&points, &widths), naive(&points, &widths));
+            let small = (0..n).map(|_| rng.next_u32()).collect::<Vec<_>>();
+            let full = small
+                .iter()
+                .map(|&x| JoltFr::from(u64::from(x)))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                small_msm_16_bit(Bn254G1Affine::as_inner_slice(&points), &small),
+                naive(&points, &full)
+            );
+        }
+    }
 }

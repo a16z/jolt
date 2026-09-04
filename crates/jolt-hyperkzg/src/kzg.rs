@@ -284,7 +284,7 @@ where
     let [z0, z1, _, _, _, _] = points.divisor(observer);
     let scaled_witness = -wit.scalar_mul(&z1);
     observer.ec_mul(k + 7);
-    observer.ec_add(k + 7);
+    observer.ec_add(k + 5);
     observer.pairing_pairs(4);
     let result = P::multi_pairing(
         &[

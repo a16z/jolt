@@ -98,8 +98,8 @@ impl<P: ProveRounds<Fr>> ProveRounds<Fr> for TimedProver<P> {
         result
     }
 
-    fn append_bound_values(&self, values: &mut Vec<Fr>) {
-        self.inner.append_bound_values(values);
+    fn append_bound_values(&self, values: &mut Vec<Fr>) -> Result<(), SumcheckError<Fr>> {
+        self.inner.append_bound_values(values)
     }
 }
 
@@ -158,6 +158,11 @@ impl ProveRounds<Fr> for DoryLinkedProver {
     fn finish_rounds(&mut self, bind: Fr) -> Result<(), SumcheckError<Fr>> {
         self.digit.finish_rounds(bind)?;
         self.scalar.finish_rounds(bind)
+    }
+
+    fn append_bound_values(&self, _values: &mut Vec<Fr>) -> Result<(), SumcheckError<Fr>> {
+        // Both sides reuse columns supplied by the T2 and carry members.
+        Ok(())
     }
 }
 

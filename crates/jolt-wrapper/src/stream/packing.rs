@@ -583,3 +583,81 @@ pub fn combine_packed_phases(phases: Vec<PackedColumns>) -> Result<PackedColumns
         commitments,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #![expect(clippy::unwrap_used, reason = "tests require valid packed layouts")]
+
+    use super::*;
+
+    #[test]
+    fn bound_columns_require_complete_consistent_coverage() {
+        let packed = PackedColumns {
+            layout: PackingLayout::new(2, 3, 2).unwrap(),
+            polynomials: vec![
+                PackedPolynomial::U16(vec![1, 2, 3, 4]),
+                PackedPolynomial::Fr(vec![
+                    Fr::from_u64(5),
+                    Fr::zero(),
+                    Fr::from_u64(7),
+                    Fr::zero(),
+                ]),
+            ],
+            commitments: Vec::new(),
+        };
+        let expected = packed.column_evaluations(&[Fr::from_u64(2)]).unwrap();
+        let mut bound = vec![
+            (ColumnId { group: 0, slot: 0 }, Fr::from_u64(5)),
+            (ColumnId { group: 0, slot: 1 }, Fr::from_u64(6)),
+            (ColumnId { group: 1, slot: 0 }, Fr::from_u64(9)),
+        ];
+        assert_eq!(
+            packed.column_evaluations_from_bound(&bound).unwrap(),
+            expected
+        );
+        assert!(matches!(
+            packed.column_evaluations_from_bound(&bound[..2]),
+            Err(StreamError::OpeningClaim)
+        ));
+        bound.push((ColumnId { group: 1, slot: 0 }, Fr::from_u64(10)));
+        assert!(matches!(
+            packed.column_evaluations_from_bound(&bound),
+            Err(StreamError::OpeningClaim)
+        ));
+    }
+
+    #[test]
+    fn typed_rlc_skips_only_padding_across_row_blocks() {
+        for rows in [2, 128] {
+            let bits: Vec<_> = (0..rows).flat_map(|row| [(row % 2) as u8, 0]).collect();
+            let small: Vec<_> = (0..rows).flat_map(|row| [row as u16, 0]).collect();
+            let wide: Vec<_> = (0..rows).flat_map(|row| [65_536 + row as u32, 0]).collect();
+            let full: Vec<_> = (0..rows)
+                .flat_map(|row| [-Fr::from_u64(row as u64 + 1), Fr::zero()])
+                .collect();
+            let packed = PackedColumns {
+                layout: PackingLayout::new(rows, 8, 2).unwrap(),
+                polynomials: vec![
+                    PackedPolynomial::Bits(bits),
+                    PackedPolynomial::U16(small),
+                    PackedPolynomial::U32(wide),
+                    PackedPolynomial::Fr(full),
+                ],
+                commitments: Vec::new(),
+            };
+            let weights = [2, 3, 5, 7].map(Fr::from_u64);
+            let padding: Vec<_> = (0..4).map(|group| ColumnId { group, slot: 1 }).collect();
+            let expected: Vec<_> = (0..rows)
+                .flat_map(|row| {
+                    let value = 2 * (row % 2) + 3 * row + 5 * (65_536 + row) - 7 * (row + 1);
+                    [Fr::from_u64(value as u64), Fr::zero()]
+                })
+                .collect();
+            assert_eq!(
+                packed.rlc_evaluations_skipping(&weights, &padding).unwrap(),
+                expected
+            );
+            assert_eq!(packed.rlc_evaluations(&weights).unwrap(), expected);
+        }
+    }
+}

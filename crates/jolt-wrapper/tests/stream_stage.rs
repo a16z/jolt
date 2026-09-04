@@ -181,3 +181,14 @@ fn head_and_tail_aligned_members_share_a_stage() {
     )
     .is_err());
 }
+
+#[test]
+fn unimplemented_bound_values_reject_empty_output() {
+    let member = LinearSum::new(vec![Fr::from_u64(1), Fr::from_u64(2)]);
+    assert!(matches!(
+        member.append_bound_values(&mut Vec::new()),
+        Err(SumcheckError::MissingEvaluationSource {
+            kind: "bound columns"
+        })
+    ));
+}

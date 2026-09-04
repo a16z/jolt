@@ -511,7 +511,7 @@ mod tests {
 
     use super::*;
     use jolt_crypto::Bn254;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, Ring, Zero};
     use jolt_poly::Polynomial;
     use jolt_transcript::Blake2bTranscript;
     use rand_chacha::ChaCha20Rng;
@@ -552,66 +552,119 @@ mod tests {
 
     #[test]
     fn inconsistent_fold_with_valid_kzg_openings_rejects() {
-        let (pk, vk) = test_setup(64);
+        let (pk, vk) = test_setup(128);
         let mut rng = ChaCha20Rng::seed_from_u64(91);
         for num_vars in [5, 6] {
             let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
             let point: Vec<_> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
             let claim = poly.evaluate(&point);
-            let mut polynomials = TestScheme::fold_polynomials(poly.evaluations(), &point);
-            polynomials[1][0] += Fr::one();
-            let commitments: Vec<_> = polynomials
-                .iter()
-                .map(|polynomial| kzg::kzg_commit::<Bn254>(polynomial, &pk).unwrap())
-                .collect();
-            let com: Vec<_> = commitments.iter().skip(1).copied().collect();
-            let mut transcript = Blake2bTranscript::new(b"inconsistent-fold");
-            let mut batch_transcript = Blake2bTranscript::new(b"inconsistent-fold");
-            for commitment in &com {
-                transcript.append(commitment);
-                batch_transcript.append(commitment);
-            }
-            let r: Fr = transcript.challenge();
-            assert_eq!(r, batch_transcript.challenge());
-            let points = FoldPoints::new(r, &mut NoopVerifierObserver).unwrap();
-            let (w, v, p0_at_r_fourth) =
-                kzg_open_batch::<Bn254, _>(&polynomials, &points, &pk, &mut transcript).unwrap();
-            let full_evaluations = [
-                v[0].clone(),
-                v[1].clone(),
-                v[2].clone(),
-                v[3].clone(),
-                polynomials
+            let honest = TestScheme::fold_polynomials(poly.evaluations(), &point);
+            for (level, degree) in [(1, 0), (1, 127), (honest.len() - 1, 127)] {
+                let mut polynomials = honest.clone();
+                // Equal padding makes the batch opening valid even for oversized folds.
+                for polynomial in &mut polynomials {
+                    polynomial.resize(128, Fr::zero());
+                }
+                polynomials[level][degree] += Fr::one();
+                let commitments: Vec<_> = polynomials
                     .iter()
-                    .map(|polynomial| kzg::eval_univariate(polynomial, r.square().square()))
-                    .collect(),
-            ];
-            assert!(kzg_verify_batch::<Bn254, _, _>(
-                &vk,
-                &commitments,
-                w,
-                &points,
-                &full_evaluations,
-                &mut batch_transcript,
-                &mut NoopVerifierObserver,
-            ));
-            let proof = HyperKZGProof {
-                com,
-                w,
-                v,
-                p0_at_r_fourth,
-            };
-            let commitment = HyperKZGCommitment::new(*commitments.first().unwrap());
-            assert!(matches!(
-                TestScheme::verify(
+                    .map(|polynomial| kzg::kzg_commit::<Bn254>(polynomial, &pk).unwrap())
+                    .collect();
+                let com: Vec<_> = commitments.iter().skip(1).copied().collect();
+                let mut transcript = Blake2bTranscript::new(b"inconsistent-fold");
+                let mut batch_transcript = Blake2bTranscript::new(b"inconsistent-fold");
+                for commitment in &com {
+                    transcript.append(commitment);
+                    batch_transcript.append(commitment);
+                }
+                let r: Fr = transcript.challenge();
+                assert_eq!(r, batch_transcript.challenge());
+                let points = FoldPoints::new(r, &mut NoopVerifierObserver).unwrap();
+                let (w, v, p0_at_r_fourth) =
+                    kzg_open_batch::<Bn254, _>(&polynomials, &points, &pk, &mut transcript)
+                        .unwrap();
+                let full_evaluations = [
+                    v[0].clone(),
+                    v[1].clone(),
+                    v[2].clone(),
+                    v[3].clone(),
+                    polynomials
+                        .iter()
+                        .map(|polynomial| kzg::eval_univariate(polynomial, r.square().square()))
+                        .collect(),
+                ];
+                assert!(kzg_verify_batch::<Bn254, _, _>(
+                    &vk,
+                    &commitments,
+                    w,
+                    &points,
+                    &full_evaluations,
+                    &mut batch_transcript,
+                    &mut NoopVerifierObserver,
+                ));
+                let proof = HyperKZGProof {
+                    com,
+                    w,
+                    v,
+                    p0_at_r_fourth,
+                };
+                let commitment = HyperKZGCommitment::new(*commitments.first().unwrap());
+                let rejection = TestScheme::verify(
                     &vk,
                     &commitment,
                     &point,
                     &claim,
                     &proof,
                     &mut Blake2bTranscript::new(b"inconsistent-fold"),
+                );
+                if level == honest.len() - 1 {
+                    assert!(matches!(
+                        rejection,
+                        Err(HyperKZGError::FoldingConsistencyFailed { .. })
+                    ));
+                } else {
+                    assert!(matches!(rejection, Err(HyperKZGError::PairingCheckFailed)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn even_terminal_rechecks_claim() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x5ef6);
+        for num_vars in [2, 4, 6] {
+            let (pk, vk) = test_setup(1 << num_vars);
+            let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+            let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
+            let claim = poly.evaluate(&point);
+            let (commitment, ()) = TestScheme::commit(poly.evaluations(), &pk).unwrap();
+            let proof = TestScheme::open(
+                &pk,
+                poly.evaluations(),
+                &point,
+                &claim,
+                &mut Blake2bTranscript::new(b"terminal-claim"),
+            )
+            .unwrap();
+            TestScheme::verify(
+                &vk,
+                &commitment,
+                &point,
+                &claim,
+                &proof,
+                &mut Blake2bTranscript::new(b"terminal-claim"),
+            )
+            .unwrap();
+            assert!(matches!(
+                TestScheme::verify(
+                    &vk,
+                    &commitment,
+                    &point,
+                    &(claim + Fr::one()),
+                    &proof,
+                    &mut Blake2bTranscript::new(b"terminal-claim"),
                 ),
-                Err(HyperKZGError::PairingCheckFailed)
+                Err(HyperKZGError::FoldingConsistencyFailed { .. })
             ));
         }
     }

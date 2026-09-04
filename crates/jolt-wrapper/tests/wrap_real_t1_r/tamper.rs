@@ -202,15 +202,15 @@ fn report(
     assert_eq!(proof.bincode_bytes(), expected_bincode);
     assert_eq!(32 * statement_fields, 352);
     let (ec_mul, fr_mul, keccak, gas) = match k {
-        16 => (233, 123_144, 852, 4_944_149),
-        32 => (216, 123_121, 839, 4_800_225),
+        16 => (233, 123_144, 852, 4_943_849),
+        32 => (216, 123_121, 839, 4_799_925),
         _ => panic!("unsupported packing factor"),
     };
     assert_eq!(
         cost,
         VerifierCost {
             ec_mul,
-            ec_add: ec_mul,
+            ec_add: ec_mul - 2,
             pairing_pairs: 8,
             fr_mul,
             fr_inv: 8,
@@ -287,7 +287,8 @@ fn estimated_gas(cost: VerifierCost, proof: &WrapperProof) -> usize {
     let calldata = proof.payload_bytes() + 32 * proof_g1 + 7 * 32;
     21_000
         + 16 * calldata
-        + 7_700 * cost.ec_mul
+        + 7_550 * cost.ec_mul
+        + 150 * cost.ec_add
         + 20 * cost.fr_mul
         + batched_inversion_gas(cost.fr_inv)
         + 100 * cost.keccak

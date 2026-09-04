@@ -704,13 +704,14 @@ impl<L: CopyLinkValueSource, R: CopyLinkValueSource> ProveRounds<Fr> for CopyLin
         Ok(())
     }
 
-    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+    fn append_bound_values(&self, values: &mut Vec<Fr>) -> Result<(), SumcheckError<Fr>> {
         let claims = self.claims();
         values.extend(claims.left_selectors);
         values.extend(claims.left_ids);
         values.extend(claims.right_selectors);
         values.extend(claims.right_ids);
         values.extend(claims.helpers);
+        Ok(())
     }
 }
 

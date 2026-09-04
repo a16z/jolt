@@ -111,7 +111,8 @@ impl ProveRounds<Fr> for CarryProver {
         Ok(())
     }
 
-    fn append_bound_values(&self, values: &mut Vec<Fr>) {
+    fn append_bound_values(&self, values: &mut Vec<Fr>) -> Result<(), SumcheckError<Fr>> {
         values.extend_from_slice(&self.polynomial.evals()[..1]);
+        Ok(())
     }
 }
