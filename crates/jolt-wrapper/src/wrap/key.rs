@@ -15,7 +15,8 @@ use crate::hash_table::{
     T1Challenges, VkColumn,
 };
 use crate::limb_table::dory::{input_elements, ElementKind as LimbElementKind, InputElement};
-use crate::limb_table::relation::Col as LimbCol;
+use crate::limb_table::export::members as limb_members;
+use crate::limb_table::relation::{Col as LimbCol, RowRelation as LimbRowRelation};
 use crate::limb_table::schedule::Layout as LimbTableLayout;
 use crate::limb_table::stream::{
     commitment_phases_with_final_fill as limb_commitment_phases, LimbTableKey, T2Challenges,
@@ -117,10 +118,11 @@ pub(super) fn build_key_assembly(
         .map(|phase| phase.group_count)
         .sum::<usize>();
     public_inputs.extend(hash_public_statement(hash_public));
+    let limb_members = limb_members();
     let members = std::iter::once(3)
         .chain(std::iter::once(3))
         .chain(std::iter::repeat_n(5, copies.len()))
-        .chain([5, 2, 2])
+        .chain([limb_members[0].degree, limb_members[1].degree, 2])
         .map(|degree| AssemblyMemberStatement {
             input_claim: Fr::zero(),
             spec: StageMemberSpec {
@@ -226,7 +228,7 @@ pub(super) fn build_key_assembly(
             wire: witness_column,
             member: dory_member,
         },
-        max_factors: 4,
+        max_factors: LimbRowRelation::max_factors(),
     };
     Ok(KeyAssembly {
         statement,

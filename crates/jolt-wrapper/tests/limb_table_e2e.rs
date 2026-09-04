@@ -26,7 +26,9 @@ use jolt_field::{Field, Fr, Ring, Zero};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::prover::ProveRounds;
 use jolt_sumcheck::SumcheckError;
-use jolt_wrapper::limb_table::columns::{q_biguint, Columns, CANON_CHUNKS, GROUP_SIZE, Z_CHUNKS};
+use jolt_wrapper::limb_table::columns::{
+    q_biguint, range_group, Columns, CANON_CHUNKS, GROUP_SIZE, Z_CHUNKS,
+};
 use jolt_wrapper::limb_table::digit_link::{link_terms, LinkMember};
 use jolt_wrapper::limb_table::digits::WINDOW_BOUND;
 use jolt_wrapper::limb_table::dory::{
@@ -399,7 +401,7 @@ fn members_accept(w: &Witness) {
         final_claim,
         "terms vs final claim"
     );
-    assert!(max_degree <= 5);
+    assert_eq!(max_degree, RowRelation::max_factors());
 
     // Digit link at the same point.
     let mut link = LinkMember::new(
@@ -583,8 +585,8 @@ fn tampered_witnesses_are_rejected() {
         let invalid = 1usize << 16;
         c[Col::CHUNKS + chunk][data_row] = Fr::from_u64(invalid as u64);
         let group = chunk / GROUP_SIZE;
-        let denominator = (0..GROUP_SIZE).fold(Fr::from_u64(1), |acc, i| {
-            acc * (alpha - c[Col::CHUNKS + group * GROUP_SIZE + i][data_row])
+        let denominator = range_group(group).fold(Fr::from_u64(1), |acc, i| {
+            acc * (alpha - c[Col::CHUNKS + i][data_row])
         });
         c[Col::HELPERS + group][data_row] = Field::inverse(&denominator).unwrap();
         c[Col::MULT][0] -= Fr::from_u64(1);

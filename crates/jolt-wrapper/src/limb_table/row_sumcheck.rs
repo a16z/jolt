@@ -271,9 +271,19 @@ impl<'a> RowSumcheck<'a> {
 
     fn coefficients(evals: &[Fr], leading: Fr) -> Vec<Fr> {
         let mut coefficients = UnivariatePoly::from_evals(evals).into_coefficients();
-        coefficients.resize(6, Fr::zero());
-        for (coefficient, value) in coefficients.iter_mut().zip([0i64, 24, -50, 35, -10, 1]) {
-            *coefficient += leading * Fr::from_i64(value);
+        coefficients.resize(evals.len() + 1, Fr::zero());
+        let mut vanishing = vec![Fr::from_u64(1)];
+        for root in (0u64..).take(evals.len()) {
+            let root = Fr::from_u64(root);
+            let mut next = vec![Fr::zero(); vanishing.len() + 1];
+            for (power, coefficient) in vanishing.into_iter().enumerate() {
+                next[power] -= root * coefficient;
+                next[power + 1] += coefficient;
+            }
+            vanishing = next;
+        }
+        for (coefficient, value) in coefficients.iter_mut().zip(vanishing) {
+            *coefficient += leading * value;
         }
         while coefficients.len() > 2 && coefficients.last() == Some(&Fr::zero()) {
             let _ = coefficients.pop();

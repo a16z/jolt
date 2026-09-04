@@ -555,5 +555,5 @@ fn verifier_arithmetic_within_budget_at_fibonacci_profile() {
     assert!(cost.fr_mul <= 10_000, "{} fr_mul", cost.fr_mul);
     // The measured count at this profile; every field constant is a literal,
     // so a cold process observes the same number (update deliberately).
-    assert_eq!(cost.fr_mul, 9_973, "fr_mul at σ = 11, N = 42");
+    assert_eq!(cost.fr_mul, 9_963, "fr_mul at σ = 11, N = 42");
 }

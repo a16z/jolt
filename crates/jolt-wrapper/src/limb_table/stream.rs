@@ -788,7 +788,7 @@ impl StreamTermExporter<'_> {
 
 impl TermExporter for StreamTermExporter<'_> {
     fn max_factors(&self) -> usize {
-        4
+        RowRelation::max_factors()
     }
 
     fn terms(&self, context: &StreamTermContext<'_>) -> Vec<StreamTerm> {

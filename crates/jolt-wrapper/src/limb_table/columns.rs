@@ -6,6 +6,8 @@
 //! the row relation as their evaluations at the challenge `ξ`:
 //! `Z_ξ(v) = Σ_a ξ^a·limb_a(v)`.
 
+use std::ops::Range;
+
 use ark_bn254::{Fq, Fr as ArkFr};
 use ark_ff::{BigInteger, PrimeField};
 use jolt_field::{Fr, Ring};
@@ -37,16 +39,22 @@ pub const CARRY_OFFSET_BITS: usize = 111;
 pub const K_OFFSET_BITS: usize = 267;
 pub const CHUNK_COLUMNS: usize = Z_CHUNKS + K_CHUNKS + CARRIES * CARRY_CHUNKS;
 /// Committed digit bit columns (`zero, neg, e0, e1, e2`), range-checked with
-/// the chunks so the LogUp groups divide evenly.
+/// the chunks.
 pub const DIGIT_COLUMNS: usize = 5;
 /// Columns per LogUp helper (`h_g · Π_{i∈g}(α − c_i) = 1`).
-pub const GROUP_SIZE: usize = 3;
+pub const GROUP_SIZE: usize = 4;
 pub const RANGE_COLUMNS: usize = CHUNK_COLUMNS + DIGIT_COLUMNS;
-pub const HELPER_COLUMNS: usize = RANGE_COLUMNS / GROUP_SIZE;
+pub const HELPER_COLUMNS: usize = RANGE_COLUMNS.div_ceil(GROUP_SIZE);
 /// Range-table size (`2^CHUNK_BITS` values) as a row count.
 pub const TABLE_LOG: usize = CHUNK_BITS;
 
-const _: () = assert!(RANGE_COLUMNS.is_multiple_of(GROUP_SIZE));
+const _: () = assert!(GROUP_SIZE >= 4);
+
+/// Range-column indices covered by one grouped-inverse helper.
+pub fn range_group(group: usize) -> Range<usize> {
+    let start = group * GROUP_SIZE;
+    start..(start + GROUP_SIZE).min(RANGE_COLUMNS)
+}
 
 pub type RowChunks = [u16; CHUNK_COLUMNS];
 
@@ -383,10 +391,11 @@ impl Columns {
         (0..HELPER_COLUMNS)
             .into_par_iter()
             .map(|g| {
+                let group = range_group(g);
                 let mut products: Vec<ArkFr> = (0..self.rows())
                     .map(|row| {
-                        let product = (0..GROUP_SIZE).fold(Fr::from_u64(1), |acc, i| {
-                            acc * (alpha - Fr::from_u64(value(row, GROUP_SIZE * g + i)))
+                        let product = group.clone().fold(Fr::from_u64(1), |acc, i| {
+                            acc * (alpha - Fr::from_u64(value(row, i)))
                         });
                         ArkFr::from(product)
                     })

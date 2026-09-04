@@ -25,7 +25,7 @@ use jolt_wrapper::hash_table::{
 };
 use jolt_wrapper::limb_table::digit_link::LinkMember;
 use jolt_wrapper::limb_table::lookup::link_weights;
-use jolt_wrapper::limb_table::relation::Col as T2Col;
+use jolt_wrapper::limb_table::relation::{Col as T2Col, RowSumcheck as T2RowSumcheck};
 use jolt_wrapper::limb_table::schedule::WINDOW_ROW_BASE;
 use jolt_wrapper::limb_table::stream::{
     commitment_phases as t2_commitment_phases, link_input_claim,
@@ -541,7 +541,7 @@ fn real_wrapper_round_trip_and_tampers() {
         StageMember {
             prover: &mut timed_t2_rows,
             input_claim: input_claims[t2_member],
-            degree: 5,
+            degree: T2RowSumcheck::degree(),
             offset: 0,
         },
         StageMember {

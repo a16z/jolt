@@ -341,9 +341,10 @@ fn stream_builder_phase_slices_match_declared_geometry() {
             declared[3].group_count
         );
     }
+    assert_eq!(GROUP_SIZE, 4);
     assert_eq!(
         commitment_phases(32).map(|phase| phase.group_count),
-        [3, 3, 1, 2]
+        [3, 2, 1, 2]
     );
 }
 

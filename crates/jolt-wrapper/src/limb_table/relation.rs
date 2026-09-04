@@ -11,9 +11,9 @@
 use jolt_field::{Fr, One, Ring, Zero};
 
 use super::columns::{
-    recompose, Constants, CANON_CHUNKS, CANON_SHIFT, CARRIES, CARRY_CHUNKS, CHUNK_BITS,
-    CHUNK_COLUMNS, DIGIT_COLUMNS, GROUP_SIZE, HELPER_COLUMNS, K_CHUNKS, LIMBS, Q_HI, RANGE_COLUMNS,
-    Z_CHUNKS,
+    range_group, recompose, Constants, CANON_CHUNKS, CANON_SHIFT, CARRIES, CARRY_CHUNKS,
+    CHUNK_BITS, CHUNK_COLUMNS, DIGIT_COLUMNS, GROUP_SIZE, HELPER_COLUMNS, K_CHUNKS, LIMBS, Q_HI,
+    RANGE_COLUMNS, Z_CHUNKS,
 };
 use super::layout::LOG_ROWS;
 use super::literals::{EIGHT, NEG_KEY_OFFSET_FR, Q_HI_MINUS_ONE, SIXTEEN_POWERS};
@@ -285,9 +285,14 @@ impl RowRelation {
         }
     }
 
-    /// Round-polynomial degree: `eq · h · Π_3(α − c)`.
+    /// Round-polynomial degree: `eq · h · Π_g(α − c)`.
     pub const fn degree() -> usize {
         GROUP_SIZE + 2
+    }
+
+    /// Maximum factor count after evaluating the row-bound `eq` factor.
+    pub const fn max_factors() -> usize {
+        GROUP_SIZE + 1
     }
 
     /// Copy weight of operand column `X_s` / `Y_s` (`index < 2·SLOTS`) or of
@@ -359,8 +364,8 @@ impl RowRelation {
         phi += g[GAMMA_PIN] * v[Col::PIN] * (z_xi - pin_xi);
         // Range groups.
         for grp in 0..HELPER_COLUMNS {
-            let product = (0..GROUP_SIZE).fold(Fr::one(), |acc, i| {
-                acc * (ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i))
+            let product = range_group(grp).fold(Fr::one(), |acc, i| {
+                acc * (ch.alpha - Self::range_value(v, i))
             });
             phi += g[GAMMA_RANGE + grp] * (v[Col::HELPERS + grp] * product - Fr::one());
         }
@@ -467,13 +472,10 @@ impl RowRelation {
     /// The `Σ_x`-only part: LogUp sums, copy identities, digit constancy.
     fn linear(&self, v: &[Fr], z_xi: Fr) -> Fr {
         let ch = &self.challenges;
-        // Range LogUp: Σ_g h_g·e_{2,g} − mult·inv.
+        // Range LogUp: Σ_g h_g·e_{|g|−1,g} − mult·inv.
         let mut logup = Fr::zero();
         for grp in 0..HELPER_COLUMNS {
-            let f: [Fr; GROUP_SIZE] =
-                std::array::from_fn(|i| ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i));
-            let elementary = f[1] * f[2] + f[0] * f[2] + f[0] * f[1];
-            logup += v[Col::HELPERS + grp] * elementary;
+            logup += v[Col::HELPERS + grp] * self.range_logup_numerator(v, grp);
         }
         logup -= v[Col::MULT] * v[Col::INV];
         // Operand lookup sum.
@@ -533,34 +535,16 @@ impl RowRelation {
         let eq = delta(Col::EQ_TAU);
         let mut leading = Fr::zero();
         for grp in 0..HELPER_COLUMNS {
+            let group = range_group(grp);
+            if group.len() != GROUP_SIZE {
+                continue;
+            }
             let mut value = eq * delta(Col::HELPERS + grp) * self.gammas[GAMMA_RANGE + grp];
-            for i in 0..GROUP_SIZE {
-                value *= -delta(Self::range_column(GROUP_SIZE * grp + i).0 as usize);
+            for i in group {
+                value *= -delta(Self::range_column(i).0 as usize);
             }
             leading += value;
         }
-        leading += self.gammas[GAMMA_DIGIT_RANGE]
-            * eq
-            * -delta(Col::NEG)
-            * delta(Col::E0)
-            * delta(Col::E0 + 1)
-            * delta(Col::E0 + 2);
-        let e = delta(Col::E0)
-            + Fr::from_u64(2) * delta(Col::E0 + 1)
-            + Fr::from_u64(4) * delta(Col::E0 + 2);
-        leading -= Fr::from_u64(2)
-            * self.gammas[GAMMA_DIGIT_VALUE]
-            * eq
-            * delta(Col::SEL)
-            * delta(Col::ZERO)
-            * delta(Col::NEG)
-            * e;
-        leading += self.gammas[GAMMA_READ]
-            * eq
-            * delta(Col::H)
-            * delta(Col::IS_GT)
-            * delta(Col::ZERO)
-            * (delta(Col::COORD) - delta(Col::S0) - Fr::from_u64(16) * e);
         leading
     }
 
@@ -589,8 +573,8 @@ impl RowRelation {
         out.push(("pin", v[Col::PIN] * (z_xi - pin_xi)));
         let mut range = Fr::zero();
         for grp in 0..HELPER_COLUMNS {
-            let product = (0..GROUP_SIZE).fold(Fr::one(), |acc, i| {
-                acc * (ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i))
+            let product = range_group(grp).fold(Fr::one(), |acc, i| {
+                acc * (ch.alpha - Self::range_value(v, i))
             });
             range += v[Col::HELPERS + grp] * product - Fr::one();
         }
@@ -650,12 +634,9 @@ impl RowRelation {
     /// the rows of an honest witness): range LogUp, lookup LogUp, copies,
     /// constancy.
     pub fn linear_values(&self, v: &[Fr]) -> Vec<(&'static str, Fr)> {
-        let ch = &self.challenges;
         let mut logup = Fr::zero();
         for grp in 0..HELPER_COLUMNS {
-            let f: [Fr; GROUP_SIZE] =
-                std::array::from_fn(|i| ch.alpha - Self::range_value(v, GROUP_SIZE * grp + i));
-            logup += v[Col::HELPERS + grp] * (f[1] * f[2] + f[0] * f[2] + f[0] * f[1]);
+            logup += v[Col::HELPERS + grp] * self.range_logup_numerator(v, grp);
         }
         logup -= v[Col::MULT] * v[Col::INV];
         let lookup = v[Col::H] - v[Col::G_POS] - v[Col::G_NEG];
@@ -768,12 +749,10 @@ impl RowRelation {
         ));
         // Range groups and the LogUp sum.
         for grp in 0..HELPER_COLUMNS {
-            let f: Vec<AffineForm> = (0..GROUP_SIZE)
+            let f: Vec<AffineForm> = range_group(grp)
                 .map(|i| {
-                    AffineForm::constant(ch.alpha).plus(&AffineForm::scaled(
-                        Self::range_column(GROUP_SIZE * grp + i),
-                        -Fr::one(),
-                    ))
+                    AffineForm::constant(ch.alpha)
+                        .plus(&AffineForm::scaled(Self::range_column(i), -Fr::one()))
                 })
                 .collect();
             let g_range = mul(eq, g[GAMMA_RANGE + grp]);
@@ -781,7 +760,7 @@ impl RowRelation {
             factors.extend(f.iter().cloned());
             terms.push(Term::new(g_range, factors));
             terms.push(Term::new(-g_range, vec![]));
-            for i in 0..GROUP_SIZE {
+            for i in 0..f.len() {
                 let mut factors = vec![column(Col::HELPERS + grp)];
                 factors.extend(
                     f.iter()
@@ -968,6 +947,26 @@ impl RowRelation {
         } else {
             ColumnId((Col::DIGITS + i - CHUNK_COLUMNS) as u32)
         }
+    }
+
+    fn range_logup_numerator(&self, v: &[Fr], group: usize) -> Fr {
+        let indices = range_group(group);
+        let len = indices.len();
+        let mut factors = [Fr::one(); GROUP_SIZE];
+        for (factor, column) in factors.iter_mut().zip(indices) {
+            *factor = self.challenges.alpha - Self::range_value(v, column);
+        }
+        let mut suffix = [Fr::one(); GROUP_SIZE + 1];
+        for i in (0..len).rev() {
+            suffix[i] = factors[i] * suffix[i + 1];
+        }
+        let mut prefix = Fr::one();
+        let mut sum = Fr::zero();
+        for i in 0..len {
+            sum += prefix * suffix[i + 1];
+            prefix *= factors[i];
+        }
+        sum
     }
 
     fn e_form() -> AffineForm {
