@@ -326,3 +326,11 @@ Lane 5b (f82b3078) resumed: rebase onto a244203fb, gates, real gate incl. new-la
 ## 22:46 — daemon restart #221; Pika MCP tools replaced by `pika-cli`
 
 Lane 5b (f82b3078) stopped mid test/land phase (rebased commit b2df289a5 on a244203fb; uncommitted kzg/scheme/test edits; baseline binary-fold gate measured 22.64 s / folds 4.07 / quotient 3.81 / opening 8.55 s; 94/94 tests incl. inconsistent-fold and wrong-VK-power negatives). Resumed via `pika-cli tasks resume` with CLI reporting instructions. Lanes 1–4, 6 all completed earlier.
+
+## 23:07 — lane 5b landed (9a6643df5); lane 7 (default k=16) + PERF-5 review launched
+
+Lane 5b (f82b3078): 4-ary HyperKZG fold landed. Matched k=32 baseline 22.64 → **19.67 s** (folds 4.07 → 1.42 s; quotient 3.81 → 3.71; opening 8.55 → 5.69); bytes 7,392 → **7,104** payload / 7,232 bincode / 352; 226 → 216 ecMul, pairing pairs 8 (unchanged — two zero divisor terms), Fr mul 123,121, gas 4,890,645 → **4,800,225**. k=16 measured uncontended: **16.98 s** (folds 0.75, quotient 1.96, opening 3.04), 7,392 / 7,533 / 352 B, 233 ecMul, 123,144 Fr mul, 4,944,149 gas. 94/94 + both real gates; new negatives: inconsistent folds with valid five-point openings, odd/even geometry, each new VK power.
+
+Decision: default k = 16 — same payload as the pre-4-ary tree (7,392 B), −2.7 s vs k=32, +3 % gas. Lane 7 = bd241f13 (flip default, gate constants, pr-tables k=16 primary). Review = becbc44b (adversarial: 4-ary fold soundness incl. inconsistent-fold bypass attempts, claimed-value check on the verifier side, MSM hybrid differential, stream-tail bound-value reuse, unchanged arguments in CopyLink/T2 lanes; reproduces the k=32 numbers). Model note: after restart #221 the codex model id is `gpt-6-astra-xhigh` (`gpt-5.6-sol-xhigh` no longer accepted).
+
+Campaign so far: 40.3 → 19.67 s at k=32 (−51 %), 7,488 → 7,104 B, gas 5.05 → 4.80 M; at k=16: **16.98 s / 7,392 B / 4.94 M**.
