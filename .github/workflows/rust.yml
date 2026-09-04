@@ -793,11 +793,10 @@ jobs:
             --features field-inline --no-tests=pass --cargo-quiet
           # The packed chain's two-limb value encoding: the encoding-mismatch
           # gate must reject the BN254 form here as it rejects the two-limb
-          # form above.
+          # form above (the tracer's fp128 lane runs in the tracer job, which
+          # has the jolt CLI its guest-building tests need).
           cargo nextest run -p jolt-program \
             --features field-inline,fp128-field-inline --cargo-quiet
-          cargo nextest run -p tracer \
-            --features test-utils,field-inline,fp128-field-inline --cargo-quiet
 
   # Join gate so the check name "Test modular crates" is stable regardless of
   # shard count.
@@ -952,6 +951,9 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
+      # The packed chain's two-limb FR value encoding on the tracer side.
+      - name: Run tracer tests with field-inline,fp128-field-inline
+        run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
 
   zklean-extractor-tests:
     name: ZkLean extractor tests
