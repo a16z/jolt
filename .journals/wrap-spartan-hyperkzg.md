@@ -302,3 +302,7 @@ Lane 5a (5e7ac8a5): s = 3 → 4 (17 helpers; phase 2a 67 → 62 columns / 3 → 
 Cumulative: 40.3 → 26.07 s (−35 %). Lane 4 (657b5f94, MSM kernels) still measuring (no commits yet after 1.6 h — it waited on the mutex most of that time; steered 20:16). To keep the machine quiet for lane 4, the next two lanes run compile-only and report "ready for tests", to be resumed after lane 4 lands: lane 5b = f82b3078 (4-ary HyperKZG fold: fold commitments ≈ N/3, −288 B model, +68k gas, jolt-hyperkzg), lane 6 = 8704273d (stream tail: reuse bound values instead of re-evaluating 27 groups at r_A −1.1 s; typed packed RLC −0.4 s; member setup).
 
 Projected end state after lanes 4/5b/6 at k=32: ≈ 15–17 s (phase 2a → ≈ 4.4, HyperKZG → ≈ 3.5, stage A ≈ 5, commits 1a/1b ≈ 2.1, tail ≈ 1, adaptation ≈ 1.1). k=16 ≈ −1.7 s at +288 B; k=8 ≈ −2.5 s at +1,088 B.
+
+## 21:07 — daemon restart #220
+
+Orchestrator, lane 4 (657b5f94) and lane 5b (f82b3078) were stopped by the restart; lane 4 auto-resumed (continuing its final full-width kernel attempt, 45-min cap, then landing), lane 5b resumed by me with its compile-only rule (uncommitted 4-ary fold edits in jolt-hyperkzg preserved). Lane 6 (8704273d) is "ready for tests" at 5b115b2ca (bound-value reuse, typed RLC, digit-link setup; expected −1.4–1.9 s) — resume for tests after lane 4 lands.
