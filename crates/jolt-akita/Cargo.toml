@@ -8,6 +8,9 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 [lints]
 workspace = true
 
+[features]
+profiling = []
+
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.

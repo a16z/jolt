@@ -1,5 +1,8 @@
 use std::{fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
+#[cfg(feature = "profiling")]
+use std::{cell::Cell, num::NonZeroUsize};
+
 use akita_config::CommitmentConfig;
 use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
 use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
@@ -14,6 +17,7 @@ use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
@@ -60,6 +64,96 @@ pub(crate) type AkitaLayoutDigest = [u8; 32];
 /// so oversizing costs virtual address space only.
 const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
+#[expect(
+    clippy::expect_used,
+    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
+)]
+fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> ThreadPool {
+    let mut builder = ThreadPoolBuilder::new()
+        .thread_name(move |index| format!("{name}-{index}"))
+        .stack_size(BACKEND_WORKER_STACK_BYTES);
+    if let Some(num_threads) = num_threads {
+        builder = builder.num_threads(num_threads);
+    }
+    builder
+        .build()
+        .expect("the Akita backend thread pool must build")
+}
+
+fn backend_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| build_backend_pool("jolt-akita", None))
+}
+
+#[cfg(feature = "profiling")]
+fn host_parallel_verifier_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let num_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        build_backend_pool("jolt-akita-verify-parallel", Some(num_threads))
+    })
+}
+
+#[cfg(feature = "profiling")]
+fn single_threaded_verifier_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| build_backend_pool("jolt-akita-verify-single", Some(1)))
+}
+
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy)]
+enum ProfileBackendPool {
+    Default,
+    HostParallel,
+    SingleThreaded,
+}
+
+#[cfg(feature = "profiling")]
+thread_local! {
+    static PROFILE_BACKEND_POOL: Cell<ProfileBackendPool> = const {
+        Cell::new(ProfileBackendPool::Default)
+    };
+}
+
+#[cfg(feature = "profiling")]
+struct ProfileBackendPoolGuard(ProfileBackendPool);
+
+#[cfg(feature = "profiling")]
+impl Drop for ProfileBackendPoolGuard {
+    fn drop(&mut self) {
+        PROFILE_BACKEND_POOL.with(|pool| pool.set(self.0));
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn with_profile_backend_pool<R>(selection: ProfileBackendPool, f: impl FnOnce() -> R) -> R {
+    let previous = PROFILE_BACKEND_POOL.with(|pool| pool.replace(selection));
+    let _guard = ProfileBackendPoolGuard(previous);
+    f()
+}
+
+/// Runs verifier backend calls in `f` on an explicit host-sized pool.
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn with_host_parallel_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
+    let _ = host_parallel_verifier_pool();
+    with_profile_backend_pool(ProfileBackendPool::HostParallel, f)
+}
+
+/// Runs verifier backend calls in `f` on exactly one worker.
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn with_single_threaded_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
+    let _ = single_threaded_verifier_pool();
+    with_profile_backend_pool(ProfileBackendPool::SingleThreaded, f)
+}
+
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn host_parallel_verifier_threads() -> usize {
+    host_parallel_verifier_pool().current_num_threads()
+}
+
 /// Runs `f` with rayon parallelism on a dedicated pool whose workers have
 /// large stacks.
 ///
@@ -69,20 +163,16 @@ const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
 /// the packed prover at trace-scale shapes. Every backend setup/commit/
 /// prove/verify entry funnels through this pool. Nested calls reuse it.
-#[expect(
-    clippy::expect_used,
-    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
-)]
 pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| {
-        rayon::ThreadPoolBuilder::new()
-            .thread_name(|index| format!("jolt-akita-{index}"))
-            .stack_size(BACKEND_WORKER_STACK_BYTES)
-            .build()
-            .expect("the Akita backend thread pool must build")
-    })
-    .install(f)
+    #[cfg(feature = "profiling")]
+    match PROFILE_BACKEND_POOL.with(Cell::get) {
+        ProfileBackendPool::HostParallel => return host_parallel_verifier_pool().install(f),
+        ProfileBackendPool::SingleThreaded => {
+            return single_threaded_verifier_pool().install(f);
+        }
+        ProfileBackendPool::Default => {}
+    }
+    backend_pool().install(f)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
