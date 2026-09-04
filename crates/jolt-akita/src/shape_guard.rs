@@ -327,9 +327,6 @@ mod tests {
     }
 
     fn dense_schedules() -> TrustedScheduleCatalog {
-        // Deliberately the packaged directory, not the default loader: this
-        // guard validates the catalogs Jolt ships, so `JOLT_AKITA_SCHEDULE_DIR`
-        // must not redirect it.
         let artifacts =
             AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
                 .expect("workspace schedule artifacts");

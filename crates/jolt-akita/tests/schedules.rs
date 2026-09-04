@@ -23,9 +23,6 @@ use jolt_akita::schedules::emit::{
 use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
 fn artifacts() -> AkitaScheduleArtifacts {
-    // Deliberately the packaged directory, not the default loader: these are
-    // the coverage and regeneration guards on the checked-in artifacts, so the
-    // env override must not redirect them.
     AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
         .expect("checked-in Jolt schedule artifacts")
 }
