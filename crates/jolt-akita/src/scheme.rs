@@ -160,6 +160,18 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 
     /// Releases backend state that can be rebuilt before the opening proof.
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
+
+    /// Builds backend state the trace commit would otherwise pay for on its
+    /// critical path (device-resident matrix prefixes). Safe to run
+    /// concurrently with row assembly; a no-op for backends without such state.
+    fn prewarm_trace_commitment(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        num_vars: usize,
+    ) -> Result<(), OpeningsError> {
+        let _ = (backend, setup, num_vars);
+        Ok(())
+    }
 }
 
 /// Strictly ascending roles make the ordered precommitted group list
@@ -684,6 +696,44 @@ impl TraceOneHotCommitment for AkitaScheme {
 
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError> {
         setup.release_post_commit_ntt_residency()
+    }
+
+    fn prewarm_trace_commitment(
+        backend: &TraceCommitmentBackend,
+        setup: &Self::ProverSetup,
+        num_vars: usize,
+    ) -> Result<(), OpeningsError> {
+        #[cfg(all(feature = "metal", target_os = "macos"))]
+        if let TraceCommitmentBackendKind::MetalRequired(metal) = &backend.kind {
+            if setup.one_hot_k() != AKITA_ONE_HOT_K256
+                || !TraceCommitmentBackend::shape_is_metal_qualified(setup.one_hot_k(), num_vars)
+            {
+                return Ok(());
+            }
+            let setup_owner = setup
+                .one_hot_backend_prover_setup
+                .as_ref()
+                .ok_or_else(|| invalid_batch("Akita setup has no one-hot backend"))?;
+            let prepared = metal.prepared_setup(setup_owner)?;
+            let key = akita_types::AkitaScheduleLookupKey::single(
+                akita_types::PolynomialGroupLayout::new(num_vars, 1),
+            );
+            let row = <crate::configs::JoltOneHotK256Metal as akita_config::CommitmentConfig>::resolve_catalog_row_for_key(&key)
+                .map_err(akita_error)?;
+            let root = &row.profiles().final_group;
+            let _ = metal
+                .backend
+                .prewarm_packed_onehot_matrix(
+                    &prepared,
+                    root.inner.matrix.ring_dimension(),
+                    root.inner.matrix.output_rank(),
+                    root.blocks.positions_per_block,
+                )
+                .map_err(akita_error)?;
+        }
+        #[cfg(not(all(feature = "metal", target_os = "macos")))]
+        let _ = (backend, setup, num_vars);
+        Ok(())
     }
 }
 

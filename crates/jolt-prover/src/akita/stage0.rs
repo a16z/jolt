@@ -200,13 +200,38 @@ where
     }
     let (commitment, hint) =
         tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
-            let packed_trace_rows = assemble_one_hot_trace_rows(
-                witness,
-                &plan,
-                formula_dimensions.ra_layout,
-                log_k_chunk,
-                log_t,
-            )?;
+            // The trace group has log2(capacity) + log_t + log_k_chunk variables;
+            // the backend uses it to pick the row whose matrix prefix to build
+            // while the rows are still being assembled.
+            let trace_num_vars = plan.packing().slot_capacity().trailing_zeros() as usize
+                + log_t
+                + log_k_chunk;
+            let trace_backend = &backend.trace_commitment;
+            let pcs_setup = &preprocessing.pcs_setup;
+            let packed_trace_rows = std::thread::scope(|scope| {
+                let prewarm = scope.spawn(move || {
+                    tracing::info_span!("akita_prewarm_trace_commitment").in_scope(|| {
+                        PCS::prewarm_trace_commitment(trace_backend, pcs_setup, trace_num_vars)
+                    })
+                });
+                let rows = assemble_one_hot_trace_rows(
+                    witness,
+                    &plan,
+                    formula_dimensions.ra_layout,
+                    log_k_chunk,
+                    log_t,
+                );
+                match prewarm.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "trace commitment prewarm failed; the commit will build its own state");
+                    }
+                    Err(_) => {
+                        tracing::warn!("trace commitment prewarm thread panicked; the commit will build its own state");
+                    }
+                }
+                rows
+            })?;
             if let Some(start) = witness_prepare_start {
                 let _ = start.send(());
             }
