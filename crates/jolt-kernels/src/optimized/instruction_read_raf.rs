@@ -92,8 +92,8 @@ pub(crate) struct InstructionCycleRow {
     packed_pc_and_flags: u64,
 }
 
-const PACKED_PC_BITS: u32 = 56;
-const PACKED_TABLE_BITS: u32 = 6;
+const PACKED_PC_BITS: u32 = 55;
+const PACKED_TABLE_BITS: u32 = 7;
 const PACKED_PC_MASK: u64 = (1 << PACKED_PC_BITS) - 1;
 const PACKED_TABLE_MASK: u64 = (1 << PACKED_TABLE_BITS) - 1;
 const PACKED_TABLE_SHIFT: u32 = PACKED_PC_BITS;
@@ -1474,7 +1474,9 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{
+        build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel, PACKED_PC_MASK,
+    };
 
     /// Packs reference-typed fixture rows into the optimized kernel's shared
     /// row form (the stage-5 kernel reads no PC/RAM columns).
@@ -1566,14 +1568,14 @@ mod tests {
             lookup_index,
             Some(table),
             true,
-            u32::MAX as usize,
+            PACKED_PC_MASK as usize,
             Some(u64::MAX - 1),
             #[cfg(feature = "akita")]
             FusedInc(-123),
         );
         assert_eq!(row.lookup_index(), lookup_index);
         assert_eq!(row.table_index(), Some(table));
-        assert_eq!(row.bytecode_pc(), u32::MAX as usize);
+        assert_eq!(row.bytecode_pc(), PACKED_PC_MASK as usize);
         assert_eq!(row.remapped_ram_address(), Some(u64::MAX - 1));
         assert!(row.raf_flag());
         #[cfg(feature = "akita")]
