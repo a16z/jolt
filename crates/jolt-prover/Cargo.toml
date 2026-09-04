@@ -76,6 +76,8 @@ profiling = [
   "dep:bincode",
   "dep:chrono",
   "dep:clap",
+  "dep:rayon",
+  "jolt-akita?/profiling",
   "dep:jolt-dory",
   "dep:jolt-inlines-keccak256",
   "jolt-inlines-keccak256/host",

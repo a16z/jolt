@@ -14,6 +14,7 @@ workspace = true
 # profile. Selected by jolt-prover's `field-inline` feature; off keeps
 # provisioning and the serialized setup params byte-identical to base.
 field-inline = []
+profiling = []
 
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped

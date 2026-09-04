@@ -288,9 +288,10 @@ mod muldiv {
             .joint_opening_proof
             .unframed_payload_size()
             .expect("packed proof component sizes should fit in usize");
-        assert!(
-            unframed_payload_size >= backend_proof_body_size,
-            "the unframed Akita opening contains its headerless proof body"
+        assert_eq!(
+            unframed_payload_size,
+            backend_proof_body_size + 32,
+            "the Akita opening carries only its headerless proof body and fixed schedule identity"
         );
         assert!(
             encoded.len() > unframed_payload_size,
@@ -607,9 +608,9 @@ mod advice {
         let mut encoded_main_batch = serde_json::to_value(&tampered.joint_opening_proof)
             .expect("serialize the main batch opening");
         let schedule_selection = encoded_main_batch
-            .get_mut("serialized_schedule_selection")
+            .get_mut("schedule_selection")
             .and_then(serde_json::Value::as_array_mut)
-            .expect("main batch carries a byte-encoded schedule selection");
+            .expect("main batch carries a fixed-width schedule selection");
         let first_byte = schedule_selection[0]
             .as_u64()
             .expect("schedule selection bytes serialize as integers");

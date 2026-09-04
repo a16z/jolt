@@ -521,9 +521,9 @@ mod clear {
                     let mut value = serde_json::to_value(&proof.joint_opening_proof)
                         .expect("serialize batch proof");
                     let bytes = value
-                        .get_mut("serialized_akita_proof")
+                        .get_mut("backend_proof")
                         .and_then(Value::as_array_mut)
-                        .expect("batch proof carries the serialized backend proof");
+                        .expect("batch proof carries the headerless backend proof body");
                     let mid = bytes.len() / 2;
                     let byte = bytes.get_mut(mid).expect("nonempty backend proof");
                     let flipped = byte.as_u64().expect("byte value") ^ 0x01;

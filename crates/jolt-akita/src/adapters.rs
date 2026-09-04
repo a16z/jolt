@@ -1,19 +1,22 @@
 use std::{fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
+#[cfg(feature = "profiling")]
+use std::{cell::Cell, num::NonZeroUsize};
+
 use akita_config::CommitmentConfig;
-use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize};
+use akita_pcs::{AkitaCommitmentScheme, AkitaDeserialize, AkitaSerialize, AkitaTranscript};
 use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
-use akita_transcript::Transcript as AkitaBackendTranscript;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
-    CommittedGroup as AkitaBackendCommittedGroup,
+    CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
@@ -55,10 +58,101 @@ pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaFi
 pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
+const SCHEDULE_SELECTION_BYTES: usize = 32;
 
 /// Worker stack size for [`with_backend_pool`]. Stacks are lazily committed,
 /// so oversizing costs virtual address space only.
 const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+#[expect(
+    clippy::expect_used,
+    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
+)]
+fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> ThreadPool {
+    let mut builder = ThreadPoolBuilder::new()
+        .thread_name(move |index| format!("{name}-{index}"))
+        .stack_size(BACKEND_WORKER_STACK_BYTES);
+    if let Some(num_threads) = num_threads {
+        builder = builder.num_threads(num_threads);
+    }
+    builder
+        .build()
+        .expect("the Akita backend thread pool must build")
+}
+
+fn backend_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| build_backend_pool("jolt-akita", None))
+}
+
+#[cfg(feature = "profiling")]
+fn host_parallel_verifier_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let num_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        build_backend_pool("jolt-akita-verify-parallel", Some(num_threads))
+    })
+}
+
+#[cfg(feature = "profiling")]
+fn single_threaded_verifier_pool() -> &'static ThreadPool {
+    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| build_backend_pool("jolt-akita-verify-single", Some(1)))
+}
+
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy)]
+enum ProfileBackendPool {
+    Default,
+    HostParallel,
+    SingleThreaded,
+}
+
+#[cfg(feature = "profiling")]
+thread_local! {
+    static PROFILE_BACKEND_POOL: Cell<ProfileBackendPool> = const {
+        Cell::new(ProfileBackendPool::Default)
+    };
+}
+
+#[cfg(feature = "profiling")]
+struct ProfileBackendPoolGuard(ProfileBackendPool);
+
+#[cfg(feature = "profiling")]
+impl Drop for ProfileBackendPoolGuard {
+    fn drop(&mut self) {
+        PROFILE_BACKEND_POOL.with(|pool| pool.set(self.0));
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn with_profile_backend_pool<R>(selection: ProfileBackendPool, f: impl FnOnce() -> R) -> R {
+    let previous = PROFILE_BACKEND_POOL.with(|pool| pool.replace(selection));
+    let _guard = ProfileBackendPoolGuard(previous);
+    f()
+}
+
+/// Runs verifier backend calls in `f` on an explicit host-sized pool.
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn with_host_parallel_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
+    let _ = host_parallel_verifier_pool();
+    with_profile_backend_pool(ProfileBackendPool::HostParallel, f)
+}
+
+/// Runs verifier backend calls in `f` on exactly one worker.
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn with_single_threaded_verifier_backend<R>(f: impl FnOnce() -> R) -> R {
+    let _ = single_threaded_verifier_pool();
+    with_profile_backend_pool(ProfileBackendPool::SingleThreaded, f)
+}
+
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn host_parallel_verifier_threads() -> usize {
+    host_parallel_verifier_pool().current_num_threads()
+}
 
 /// Runs `f` with rayon parallelism on a dedicated pool whose workers have
 /// large stacks.
@@ -69,20 +163,16 @@ const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
 /// the packed prover at trace-scale shapes. Every backend setup/commit/
 /// prove/verify entry funnels through this pool. Nested calls reuse it.
-#[expect(
-    clippy::expect_used,
-    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
-)]
 pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| {
-        rayon::ThreadPoolBuilder::new()
-            .thread_name(|index| format!("jolt-akita-{index}"))
-            .stack_size(BACKEND_WORKER_STACK_BYTES)
-            .build()
-            .expect("the Akita backend thread pool must build")
-    })
-    .install(f)
+    #[cfg(feature = "profiling")]
+    match PROFILE_BACKEND_POOL.with(Cell::get) {
+        ProfileBackendPool::HostParallel => return host_parallel_verifier_pool().install(f),
+        ProfileBackendPool::SingleThreaded => {
+            return single_threaded_verifier_pool().install(f);
+        }
+        ProfileBackendPool::Default => {}
+    }
+    backend_pool().install(f)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -604,29 +694,36 @@ impl AppendToTranscript for AkitaCommitment {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaBatchProof {
-    pub(crate) statement_bridge: Vec<u8>,
     /// Fixed-width public identity of the exact generated row selected by the
     /// prover. The verifier resolves this digest under its configured catalog;
     /// the backend proof body does not encode the selection itself.
-    pub(crate) serialized_schedule_selection: Vec<u8>,
-    pub(crate) serialized_akita_proof_shape: Vec<u8>,
-    pub(crate) serialized_akita_proof: Vec<u8>,
+    pub(crate) schedule_selection: [u8; SCHEDULE_SELECTION_BYTES],
+    pub(crate) backend_proof: Vec<u8>,
 }
 
 impl AkitaBatchProof {
+    pub(crate) fn new(selection: OpeningScheduleSelection, backend_proof: Vec<u8>) -> Self {
+        Self {
+            schedule_selection: *selection.row_digest.as_bytes(),
+            backend_proof,
+        }
+    }
+
+    pub(crate) fn selection(&self) -> OpeningScheduleSelection {
+        OpeningScheduleSelection {
+            row_digest: ScheduleRowDigest::from_bytes(self.schedule_selection),
+        }
+    }
+
     /// Headerless backend proof body produced by Akita's canonical encoder.
     pub fn backend_proof_body_size(&self) -> usize {
-        self.serialized_akita_proof.len()
+        self.backend_proof.len()
     }
 
     /// Sum of the raw component bytes before the enclosing Jolt serializer
     /// adds container tags or length prefixes.
     pub fn unframed_payload_size(&self) -> Option<usize> {
-        self.statement_bridge
-            .len()
-            .checked_add(self.serialized_schedule_selection.len())?
-            .checked_add(self.serialized_akita_proof_shape.len())?
-            .checked_add(self.serialized_akita_proof.len())
+        SCHEDULE_SELECTION_BYTES.checked_add(self.backend_proof.len())
     }
 }
 
@@ -944,39 +1041,23 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
     )
 }
 
-impl AppendToTranscript for AkitaBatchProof {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            b"akita_stmt_bridge",
-            self.statement_bridge.len() as u64,
-        ));
-        transcript.append_bytes(&self.statement_bridge);
-        transcript.append(&LabelWithCount(
-            b"akita_schedule_selection",
-            self.serialized_schedule_selection.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_schedule_selection);
-        transcript.append(&LabelWithCount(
-            b"akita_proof_shape",
-            self.serialized_akita_proof_shape.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_akita_proof_shape);
-        transcript.append(&LabelWithCount(
-            b"akita_proof",
-            self.serialized_akita_proof.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_akita_proof);
-    }
-}
-
-pub(crate) fn bridge_jolt_statement_challenge<T>(
+/// Ends outer Jolt challenge derivation at one statement-bound challenge and
+/// uses it to domain-separate the nested Akita transcript. No subsequent Jolt
+/// challenge consumes the terminal opening proof, so reabsorbing that proof
+/// into the outer transcript could not affect acceptance.
+pub(crate) fn bridged_akita_transcript<T>(
     jolt_transcript: &mut T,
-    akita_transcript: &mut impl AkitaBackendTranscript<AkitaField>,
-) -> Vec<u8>
+    session_label: &[u8],
+) -> AkitaTranscript<AkitaField>
 where
     T: Transcript<Challenge = AkitaField>,
 {
     let bridge = jolt_transcript.challenge_scalar();
-    akita_transcript.append_field(b"jolt_statement_bridge", &bridge);
-    bridge.to_bytes_le_vec()
+    let bridge_bytes = bridge.to_bytes_le_vec();
+    // Akita replaces its sponge state when it binds the concrete instance but
+    // preserves the session label, so the cross-protocol bridge belongs here.
+    let mut bridged_session_label = Vec::with_capacity(session_label.len() + bridge_bytes.len());
+    bridged_session_label.extend_from_slice(session_label);
+    bridged_session_label.extend_from_slice(&bridge_bytes);
+    AkitaTranscript::new(&bridged_session_label)
 }

@@ -19,9 +19,10 @@
 //! compiled protocol's prove over the selected backend — `dory::prove`, or
 //! `akita::prove` on the packed build (artifact names gain an `_akita`
 //! suffix so the two protocols' runs never collide) — and a full
-//! `jolt_verifier::verify` as the correctness gate. Only `prove` is measured
-//! — guest compilation, tracer execution, and preprocessing are excluded
-//! from every reported metric.
+//! `jolt_verifier::verify` as the correctness gate. PCS setup, prove, and
+//! verifier latency under explicit host-parallel and single-threaded
+//! pools are measured separately; guest compilation, tracer execution, and
+//! non-PCS preprocessing remain excluded.
 
 #![expect(
     clippy::expect_used,
@@ -32,10 +33,12 @@
 )]
 
 use std::fs;
-use std::io::Write as _;
+use std::io::{Result, Write as _};
+#[cfg(not(feature = "akita"))]
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 use common::jolt_device::MemoryConfig;
@@ -80,6 +83,8 @@ use jolt_riscv::{JoltTraceRow, RV64IMAC_JOLT};
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+#[cfg(not(feature = "akita"))]
+use rayon::ThreadPoolBuilder;
 use tracer::execution_backend::TracerBackend;
 
 #[cfg(not(feature = "akita"))]
@@ -109,6 +114,8 @@ const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
+const LEGACY_TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend";
+const TIMINGS_HEADER: &str = "benchmark_name,scale,prover_time_s,trace_length,proving_hz,proof_size,proof_size_compressed,backend,setup_time_s,verifier_parallel_time_s,verifier_single_thread_time_s,verifier_parallel_threads";
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
     std::cmp::max(1, (target_cycles as f64 / cycles_per_op) as u32)
@@ -607,8 +614,72 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
 
 /// One proved workload, as the reporting tail consumes it.
 struct ProvenRun {
-    duration: std::time::Duration,
+    duration: Duration,
+    setup_duration: Duration,
+    verifier_parallel: VerificationRun,
+    verifier_single_threaded: VerificationRun,
     proof_size: usize,
+}
+
+struct VerificationRun {
+    duration: Duration,
+    threads: usize,
+}
+
+#[derive(Clone, Copy)]
+enum VerificationMode {
+    Parallel,
+    SingleThreaded,
+}
+
+impl VerificationRun {
+    fn seconds(&self) -> f64 {
+        self.duration.as_secs_f64()
+    }
+}
+
+fn measure_verifier(
+    mode: VerificationMode,
+    threads: usize,
+    verify: impl FnOnce(),
+) -> VerificationRun {
+    let span = match mode {
+        VerificationMode::Parallel => tracing::info_span!("profile_verifier_parallel", threads),
+        VerificationMode::SingleThreaded => {
+            tracing::info_span!("profile_verifier_single_threaded", threads)
+        }
+    };
+    let _guard = span.enter();
+    let now = Instant::now();
+    verify();
+    let duration = now.elapsed();
+    tracing::info!(
+        wall_time_s = duration.as_secs_f64(),
+        "verifier profile complete"
+    );
+    VerificationRun { duration, threads }
+}
+
+fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let contents = fs::read_to_string(path)?;
+    let Some((header, rows)) = contents.split_once('\n') else {
+        return Ok(());
+    };
+    if header != LEGACY_TIMINGS_HEADER {
+        return Ok(());
+    }
+    let mut migrated = String::with_capacity(contents.len() + TIMINGS_HEADER.len());
+    migrated.push_str(TIMINGS_HEADER);
+    migrated.push('\n');
+    for row in rows.lines().filter(|row| !row.is_empty()) {
+        migrated.push_str(row);
+        migrated.push_str(",,,,");
+        migrated.push('\n');
+    }
+    fs::write(path, migrated)
 }
 
 fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &Path) {
@@ -676,6 +747,16 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         padded_proving_hz / 1000.0,
     );
     println!("modular {bench_name} (2^{scale}, {backend_label}): Proof size {proof_size} bytes");
+    println!(
+        "modular {bench_name} (2^{scale}, {backend_label}): PCS setup {:.3}s",
+        run.setup_duration.as_secs_f64(),
+    );
+    println!(
+        "modular {bench_name} (2^{scale}, {backend_label}): Verifier {:.3}ms parallel ({} threads), {:.3}ms single-threaded",
+        run.verifier_parallel.seconds() * 1e3,
+        run.verifier_parallel.threads,
+        run.verifier_single_threaded.seconds() * 1e3,
+    );
     if let Some(peak) = peak_rss_bytes() {
         println!(
             "modular {} (2^{}, {backend_label}): Peak RSS {}",
@@ -684,14 +765,15 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
             format_memory_size(peak as f64 / BYTES_PER_GIB),
         );
     }
-    // The legacy harness's 7 CSV fields plus a trailing backend column, in
-    // the run directory. Field 7 (`proof_size_compressed`)
+    // The legacy harness's 7 CSV fields plus backend stay at the front for
+    // compatibility; setup and verifier measurements follow them. Field 7
+    // (`proof_size_compressed`)
     // duplicates the raw size exactly as legacy does — its
     // `prove_example_with_trace` returns `proof_size` for both fields, the
     // compressed encoding having been retired — so the columns stay
     // directly comparable across the two harnesses.
     let summary_line = format!(
-        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label}\n",
+        "{}{PROTOCOL_SUFFIX},{},{:.2},{},{:.2},{},{},{backend_label},{:.6},{:.6},{:.6},{}\n",
         bench_name,
         scale,
         duration.as_secs_f64(),
@@ -699,6 +781,10 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         padded_proving_hz,
         proof_size,
         proof_size,
+        run.setup_duration.as_secs_f64(),
+        run.verifier_parallel.seconds(),
+        run.verifier_single_threaded.seconds(),
+        run.verifier_parallel.threads,
     );
     let individual_file = run_dir.join("timings.csv");
     if let Err(e) = fs::write(&individual_file, &summary_line) {
@@ -710,14 +796,14 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // Header on creation: the summary/plot scripts read this by column name.
     // Cross-run by nature, so it lives at the benchmark-runs root rather
     // than inside any run directory.
-    let consolidated = "benchmark-runs/modular_timings.csv";
-    let line = if std::path::Path::new(consolidated).exists() {
+    let consolidated = Path::new("benchmark-runs/modular_timings.csv");
+    if let Err(e) = migrate_legacy_timings_csv(consolidated) {
+        eprintln!("Failed to migrate consolidated timing CSV: {e}");
+    }
+    let line = if consolidated.exists() {
         summary_line
     } else {
-        format!(
-            "benchmark_name,scale,prover_time_s,trace_length,proving_hz,\
-             proof_size,proof_size_compressed,backend\n{summary_line}"
-        )
+        format!("{TIMINGS_HEADER}\n{summary_line}")
     };
     if let Err(e) = fs::OpenOptions::new()
         .create(true)
@@ -732,7 +818,7 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
 /// The homomorphic (Dory) arm: legacy preprocessing → verifier
 /// preprocessing, derived config, `TraceBackend` witness, RLC setup, and
 /// `dory::prove` over the selected backend + `jolt_verifier::verify` —
-/// exactly as in the byte-diff tests. Only the prove is measured.
+/// exactly as in the byte-diff tests.
 #[cfg(not(feature = "akita"))]
 fn prove_workload(
     program: &mut host::Program,
@@ -821,9 +907,15 @@ fn prove_workload(
         + max_trace_length.ilog2() as usize)
         .max(advice_vars(memory_layout.max_trusted_advice_size))
         .max(advice_vars(memory_layout.max_untrusted_advice_size));
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "dory");
+    let setup_guard = setup_span.enter();
+    let setup_now = Instant::now();
+    let pcs_setup = DoryScheme::setup_prover(total_vars);
+    let setup_duration = setup_now.elapsed();
+    drop(setup_guard);
     let prover_preprocessing = JoltProverPreprocessing::<DoryScheme, Pedersen<Bn254G1>> {
         verifier: verifier_preprocessing,
-        pcs_setup: DoryScheme::setup_prover(total_vars),
+        pcs_setup,
         committed_program: None,
     };
     let backend = match backend {
@@ -851,25 +943,43 @@ fn prove_workload(
         .expect("serialize proof")
         .len();
 
-    // --- Correctness gate (unmeasured): the proof must verify.
-    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-        &prover_preprocessing.verifier,
-        &public_io,
-        &proof,
-        None,
-    )
-    .expect("modular proof verifies");
+    let parallel_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let parallel_pool = ThreadPoolBuilder::new()
+        .num_threads(parallel_threads)
+        .thread_name(|index| format!("jolt-verify-parallel-{index}"))
+        .build()
+        .expect("parallel verifier pool must build");
+    let single_threaded_pool = ThreadPoolBuilder::new()
+        .num_threads(1)
+        .thread_name(|_| "jolt-verify-single".to_string())
+        .build()
+        .expect("single-threaded verifier pool must build");
+    let verify = || {
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+        )
+        .expect("modular proof verifies");
+    };
+    let verifier_parallel = parallel_pool
+        .install(|| measure_verifier(VerificationMode::Parallel, parallel_threads, verify));
+    let verifier_single_threaded = single_threaded_pool
+        .install(|| measure_verifier(VerificationMode::SingleThreaded, 1, verify));
 
     ProvenRun {
         duration,
+        setup_duration,
+        verifier_parallel,
+        verifier_single_threaded,
         proof_size,
     }
 }
 
 /// The packed (Akita) arm: packed legacy preprocessing, the transparent
 /// `OneHotTrace` setup derived from the config + program shape (no legacy
-/// prover instance), and `akita::prove` + `jolt_verifier::verify`. Only the
-/// prove is measured.
+/// prover instance), and `akita::prove` + `jolt_verifier::verify`.
 #[cfg(feature = "akita")]
 fn prove_workload(
     program: &mut host::Program,
@@ -938,7 +1048,6 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
-
     // The transparent OneHotTrace setup, from the config + program shape.
     let (setup_shape, layout_digest, one_hot_k) = crate::akita::one_hot_trace_setup_shape(
         &config,
@@ -970,8 +1079,13 @@ fn prove_workload(
             ),
         ),
     );
+    let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
+    let setup_guard = setup_span.enter();
+    let setup_now = Instant::now();
     let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(params)
         .expect("the transparent packed setup must derive");
+    let setup_duration = setup_now.elapsed();
+    drop(setup_guard);
     let verifier_preprocessing =
         akita_verifier_preprocessing(&legacy_preprocessing, verifier_setup, None);
     let program_preprocessing = verifier_preprocessing
@@ -1043,17 +1157,28 @@ fn prove_workload(
         "packed proof sizes"
     );
 
-    // --- Correctness gate (unmeasured): the proof must verify.
-    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
-        &prover_preprocessing.verifier,
-        &public_io,
-        &proof,
-        None,
-    )
-    .expect("modular packed proof verifies");
+    let verify = || {
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            &prover_preprocessing.verifier,
+            &public_io,
+            &proof,
+            None,
+        )
+        .expect("modular packed proof verifies");
+    };
+    let parallel_threads = jolt_akita::host_parallel_verifier_threads();
+    let verifier_parallel = jolt_akita::with_host_parallel_verifier_backend(|| {
+        measure_verifier(VerificationMode::Parallel, parallel_threads, verify)
+    });
+    let verifier_single_threaded = jolt_akita::with_single_threaded_verifier_backend(|| {
+        measure_verifier(VerificationMode::SingleThreaded, 1, verify)
+    });
 
     ProvenRun {
         duration,
+        setup_duration,
+        verifier_parallel,
+        verifier_single_threaded,
         proof_size,
     }
 }

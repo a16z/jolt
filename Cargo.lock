@@ -4058,6 +4058,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "large-alloc"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "large-alloc-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "large-alloc-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "libc",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4266,7 +4284,7 @@ dependencies = [
 [[package]]
 name = "mini-template"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 
 [[package]]
 name = "miniz_oxide"
@@ -7836,7 +7854,7 @@ dependencies = [
 [[package]]
 name = "zeroos"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "zeroos-allocator-linked-list",
  "zeroos-arch-riscv",
@@ -7855,7 +7873,7 @@ dependencies = [
 [[package]]
 name = "zeroos-allocator-linked-list"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "linked_list_allocator",
  "zeroos-foundation",
@@ -7864,7 +7882,7 @@ dependencies = [
 [[package]]
 name = "zeroos-arch-riscv"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "memoffset",
@@ -7878,7 +7896,7 @@ dependencies = [
 [[package]]
 name = "zeroos-backtrace"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "zeroos-macros",
@@ -7887,7 +7905,7 @@ dependencies = [
 [[package]]
 name = "zeroos-build"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "anyhow",
  "clap",
@@ -7905,7 +7923,7 @@ dependencies = [
 [[package]]
 name = "zeroos-debug"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
 ]
@@ -7913,7 +7931,7 @@ dependencies = [
 [[package]]
 name = "zeroos-device-console"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "libc",
  "zeroos-vfs-core",
@@ -7922,7 +7940,7 @@ dependencies = [
 [[package]]
 name = "zeroos-foundation"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "libc",
@@ -7932,12 +7950,12 @@ dependencies = [
 [[package]]
 name = "zeroos-macros"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 
 [[package]]
 name = "zeroos-os-linux"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "libc",
@@ -7947,7 +7965,7 @@ dependencies = [
 [[package]]
 name = "zeroos-rng"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "spin 0.9.8",
  "zeroos-foundation",
@@ -7956,7 +7974,7 @@ dependencies = [
 [[package]]
 name = "zeroos-runtime-musl"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "zeroos-backtrace",
  "zeroos-debug",
@@ -7966,7 +7984,7 @@ dependencies = [
 [[package]]
 name = "zeroos-runtime-nostd"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "zeroos-backtrace",
@@ -7976,7 +7994,7 @@ dependencies = [
 [[package]]
 name = "zeroos-scheduler-cooperative"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "libc",
@@ -7987,7 +8005,7 @@ dependencies = [
 [[package]]
 name = "zeroos-vfs-core"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "libc",
  "zeroos-foundation",

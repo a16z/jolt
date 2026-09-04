@@ -36,7 +36,7 @@ use tracing::info_span;
 
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, backend_stack,
-    bridge_jolt_statement_challenge, invalid_batch, prove_failed, reverse_point, serialize_akita,
+    bridged_akita_transcript, invalid_batch, prove_failed, reverse_point, serialize_akita,
     with_backend_pool, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
     AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBackendProof, AkitaBackendScheme,
     AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintPolynomials,
@@ -158,7 +158,7 @@ fn bind_grouped_statement_transcripts<T>(
     selection: OpeningScheduleSelection,
     precommitted: &[PrecommittedClaim<AkitaField, AkitaCommitment>],
     main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
-) -> Result<(AkitaTranscript<AkitaField>, Vec<u8>), OpeningsError>
+) -> Result<AkitaTranscript<AkitaField>, OpeningsError>
 where
     T: Transcript<Challenge = AkitaField>,
 {
@@ -195,10 +195,10 @@ where
             evaluation.append_to_transcript(transcript);
         }
     }
-    let mut akita_transcript =
-        AkitaTranscript::<AkitaField>::new(b"jolt-akita/precommitted-group-batch/v3");
-    let bridge = bridge_jolt_statement_challenge(transcript, &mut akita_transcript);
-    Ok((akita_transcript, bridge))
+    Ok(bridged_akita_transcript(
+        transcript,
+        b"jolt-akita/precommitted-group-batch/v3",
+    ))
 }
 
 impl AkitaNativeBatching {
@@ -312,7 +312,7 @@ impl AkitaNativeBatching {
         }
         .map_err(akita_error)?;
         let selection = opening.selection();
-        let (mut akita_transcript, statement_bridge) = bind_grouped_statement_transcripts(
+        let mut akita_transcript = bind_grouped_statement_transcripts(
             transcript,
             &setup.verifier,
             selection,
@@ -340,13 +340,7 @@ impl AkitaNativeBatching {
             _ => unreachable!("one-hot K was validated by setup"),
         })
         .map_err(prove_failed)?;
-        let proof = AkitaBatchProof {
-            statement_bridge,
-            serialized_schedule_selection: serialize_akita(&selection)?,
-            serialized_akita_proof_shape: serialize_akita(&backend_proof.shape())?,
-            serialized_akita_proof: serialize_akita(&backend_proof)?,
-        };
-        transcript.append(&proof);
+        let proof = AkitaBatchProof::new(selection, serialize_akita(&backend_proof)?);
         Ok(proof)
     }
 
@@ -375,12 +369,8 @@ impl AkitaNativeBatching {
                 &backend_main_point,
                 setup.one_hot_k,
             )?;
-        let (mut akita_transcript, bridge) =
+        let mut akita_transcript =
             bind_grouped_statement_transcripts(transcript, setup, selection, precommitted, main)?;
-        if proof.statement_bridge != bridge {
-            return Err(OpeningsError::VerificationFailed);
-        }
-        transcript.append(proof);
         let mut group_claims = Vec::with_capacity(precommitted.len() + 1);
         for (entry, backend) in precommitted.iter().zip(&precommitted_backend) {
             group_claims.push(
@@ -550,7 +540,7 @@ fn bind_statement_transcripts<T>(
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
     commitment: &AkitaCommitment,
     point: &[AkitaField],
-) -> (AkitaTranscript<AkitaField>, Vec<u8>)
+) -> AkitaTranscript<AkitaField>
 where
     T: Transcript<Challenge = AkitaField>,
 {
@@ -559,12 +549,8 @@ where
         append_verifier_setup(transcript, verifier_setup, commitment.backend_flavor);
         append_batch_statement(transcript, statement, commitment, point);
     }
-    let mut akita_transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/batch");
-    let statement_bridge = {
-        let _span = info_span!("AkitaNativeBatching::bridge_transcripts").entered();
-        bridge_jolt_statement_challenge(transcript, &mut akita_transcript)
-    };
-    (akita_transcript, statement_bridge)
+    let _span = info_span!("AkitaNativeBatching::bridge_transcripts").entered();
+    bridged_akita_transcript(transcript, b"jolt-akita/batch")
 }
 
 /// Assembles the single-group opening data handed to Akita's native batched
@@ -697,7 +683,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             .backend
             .ok_or_else(|| invalid_batch("Akita prover hint is missing backend opening data"))?;
 
-        let (mut akita_transcript, statement_bridge) =
+        let mut akita_transcript =
             bind_statement_transcripts(transcript, &setup.verifier, &statement, commitment, point);
 
         let evaluations: Vec<AkitaField> = statement
@@ -760,18 +746,8 @@ impl BatchOpeningScheme for AkitaNativeBatching {
 
         let proof = {
             let _span = info_span!("AkitaNativeBatching::serialize_backend_proof").entered();
-            let proof_shape = backend_proof.shape();
-            AkitaBatchProof {
-                statement_bridge,
-                serialized_schedule_selection: serialize_akita(&selection)?,
-                serialized_akita_proof_shape: serialize_akita(&proof_shape)?,
-                serialized_akita_proof: serialize_akita(&backend_proof)?,
-            }
+            AkitaBatchProof::new(selection, serialize_akita(&backend_proof)?)
         };
-        {
-            let _span = info_span!("AkitaNativeBatching::append_proof").entered();
-            transcript.append(&proof);
-        }
         Ok(proof)
     }
 
@@ -805,12 +781,8 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 &backend_point,
             )?;
 
-        let (mut akita_transcript, statement_bridge) =
+        let mut akita_transcript =
             bind_statement_transcripts(transcript, setup, statement, commitment, point);
-        if proof.statement_bridge != statement_bridge {
-            return Err(OpeningsError::VerificationFailed);
-        }
-        transcript.append(proof);
 
         let backend_verifier = setup.backend_verifier(commitment.backend_flavor)?;
         let openings: Vec<AkitaField> = statement
