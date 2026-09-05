@@ -1,5 +1,10 @@
 # C2 coupled-path integration checkpoint
 
+Outcome, 2026-09-05: the final integrated matrix passed at 10.498382 MHz
+projected average. See [acceptance evidence](akita-metal-c2-acceptance-2026-09-05.md)
+for the final pin, exact samples and remaining validation limitations.
+The checkpoint below records the pre-measurement plan.
+
 2026-09-05. Accepted Jolt b160c87ea / Akita 369a1c7ff. Serial M4 Max;
 no subagents. This integrates retained components, not a new kernel design.
 

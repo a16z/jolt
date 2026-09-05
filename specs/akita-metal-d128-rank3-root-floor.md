@@ -1,5 +1,11 @@
 # Akita Metal: D128 rank-3 root commit, floor and falsification bar
 
+Outcome, 2026-09-05: C2 passes the production gates and the integrated
+three-workload matrix at 10.498382 MHz projected average. See
+[acceptance evidence](akita-metal-c2-acceptance-2026-09-05.md). Historical
+analysis and the explicitly documented accounting corrections follow;
+the acceptance note records the actual catalog-transition behavior.
+
 Status: analysis before code, 2026-09-03. Companion to
 `akita-metal-10mhz-attack-strategy.md` section 9 and the geometry re-query in
 `benchmark-runs/akita-10mhz-studies/analysis.md`.
@@ -44,8 +50,9 @@ the kernel is new. No code is written until the bar in section 5 is accepted.
 Inputs: the cycle-major lane table (1 byte per row per live column, 7.5 GiB at 30
 columns), the public matrix A (positions per block x n_a rows x D coefficients x 16 B:
 2^19 x 3 x 128 x 16 B = 3 GiB, prepared once), params. Mapping as today: local field
-= row x 256 + lane, position = field / D, shift = field mod D; with D = 128 four trace
-rows share a position instead of two. Output: one 384-coefficient fp128 accumulator per
+= row x 256 + lane, position = field / D, shift = field mod D. Corrected on
+2026-09-05: D128 spans two positions per trace row (`2 * row + lane / 128`);
+D512 packs two rows per position. Output: one 384-coefficient fp128 accumulator per
 (column, block) task, reduced from 16 position partials, read back as the inner rows.
 Tasks per column = T x 256 / (D x P) = 1,024 at 2^19 (512 today). Host keeps the
 hybrid tail, reconstruction and merge.
