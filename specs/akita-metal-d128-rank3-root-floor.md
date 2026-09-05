@@ -52,6 +52,15 @@ hybrid tail, reconstruction and merge.
 
 ## 3. Lower bound
 
+Correction, 2026-09-05 (user approved): the historical stream estimates below
+undercounted the matrix traffic by two. At T28, C30, P19 there are 1,024 tasks
+per column. The two-task layout has 64 tasks per threadgroup, so it streams
+`30 * 1024 / 64 * 3 GiB = 1440 GiB`, not 720 GiB. The one-task layout
+streams 2880 GiB. These are logical traffic volumes, not measured DRAM
+traffic; dividing them by a copy benchmark's bandwidth is a proxy, not a
+rigorous runtime lower bound. The original estimates below are retained as
+the provenance of the error, not as current predictions.
+
 Streaming. Today each threadgroup streams the full 8 KiB row of every position because
 a negacyclic rotation mixes all 512 input coefficients into each 256-coefficient output
 band; that gives `S = C T K n_a^2 D 16 / 8192` = 2.06 TB. With rank 3 the rotation acts
@@ -96,7 +105,13 @@ sweep 13 / 27 / 54%, one warm plus one sample, machine idle:
 
 1. Slope at or below 3.2 ns per hot entry (0.75 x 4.26 = 3.2; anything above means the
    D128 kernel lost per-coefficient efficiency and the geometry gain is eaten).
-2. Intercept at or below 2.9 s (one task per SIMD group) or 1.6 s (two tasks).
+2. Intercept at or below 2.9 s (one task per SIMD group) or 3.2 s (two tasks).
+   The two-task ceiling was corrected from 1.6 s with explicit user approval
+   on 2026-09-05 for the twofold traffic error documented in section 3.
+   This is an accounting correction, not a fitted hardware optimum. The
+   retained candidate's approximately 2.951 s intercept was already known;
+   independent full-proof pairs and the workload matrix remain required.
+   No other ceiling or acceptance condition changes.
 3. Commit at T=2^28 at or below 9.8 / 13.5 / 14.4 s on the production workloads with
    exact checksum parity against the CPU commit and `PROOF_VERIFIED backend=metal`.
 4. Peak RSS at or below 90 GiB on BTreeMap; the +1.4 GB setup and +1 GiB matrix must be
