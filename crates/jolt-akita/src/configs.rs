@@ -424,7 +424,22 @@ delegate_preset!(
 
 #[cfg(test)]
 mod tests {
+    use akita_types::{OpeningScheduleSelection, ScheduleRowDigest};
+
     use super::*;
+
+    #[test]
+    fn k256_rejects_retired_metal_root_selection() {
+        // Published D512/rank1 T28 Metal row at Jolt b160c87ea.
+        let selection = OpeningScheduleSelection {
+            row_digest: ScheduleRowDigest::from_bytes([
+                150, 130, 132, 170, 154, 236, 120, 96, 182, 176, 104, 22, 185, 6, 159, 198, 125,
+                98, 114, 234, 176, 113, 18, 53, 1, 250, 144, 191, 39, 30, 65, 192,
+            ]),
+        };
+        assert!(JoltOneHotK256Metal::resolve_schedule_selection(selection).is_err());
+        assert!(JoltOneHotK256Cpu::resolve_schedule_selection(selection).is_err());
+    }
 
     #[test]
     fn exact_shapes_have_setup_capacities() {
