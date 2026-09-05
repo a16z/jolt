@@ -460,3 +460,134 @@ impl Memory {
         taken
     }
 }
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "test-only assertions")]
+mod tests {
+    use std::panic::AssertUnwindSafe;
+
+    use super::*;
+
+    fn memory(capacity: u64) -> Memory {
+        let mut memory = Memory::empty();
+        memory.init(capacity);
+        memory
+    }
+
+    #[test]
+    fn misaligned_accesses_agree_with_byte_wise_composition() {
+        let mut memory = memory(64);
+        // Write a doubleword at an odd address; every read width must
+        // reassemble the same little-endian bytes.
+        memory.write_doubleword(3, 0x1122_3344_5566_7788);
+        assert_eq!(memory.read_doubleword(3), 0x1122_3344_5566_7788);
+        assert_eq!(memory.read_word(3), 0x5566_7788);
+        assert_eq!(memory.read_word(7), 0x1122_3344);
+        assert_eq!(memory.read_halfword(3), 0x7788);
+        assert_eq!(memory.read_halfword(5), 0x5566);
+        assert_eq!(memory.read_byte(3), 0x88);
+        assert_eq!(memory.read_byte(10), 0x11);
+
+        // Word-aligned (but not doubleword-aligned) doubleword access
+        memory.write_doubleword(4, 0xaabb_ccdd_eeff_0011);
+        assert_eq!(memory.read_doubleword(4), 0xaabb_ccdd_eeff_0011);
+
+        // Misaligned halfword/word writes decompose into byte writes
+        memory.write_halfword(17, 0xbeef);
+        assert_eq!(memory.read_byte(17), 0xef);
+        assert_eq!(memory.read_byte(18), 0xbe);
+        memory.write_word(21, 0xdead_beef);
+        assert_eq!(memory.read_word(21), 0xdead_beef);
+    }
+
+    #[test]
+    fn non_mutating_getters_match_written_state_without_materializing() {
+        let mut memory = memory(64);
+        memory.write_doubleword(8, 0x0102_0304_0506_0708);
+        assert_eq!(memory.get_byte(8), 0x08);
+        assert_eq!(memory.get_word(8), 0x0506_0708);
+        assert_eq!(memory.get_word(10), 0x0304_0506); // misaligned getter
+        assert_eq!(memory.get_doubleword(8), 0x0102_0304_0506_0708);
+        assert_eq!(memory.get_doubleword(12), 0x0102_0304); // word-aligned getter
+        assert_eq!(memory.get_doubleword(9), 0x0001_0203_0405_0607); // byte path
+                                                                     // Untouched addresses read as zero
+        assert_eq!(memory.get_doubleword(32), 0);
+    }
+
+    #[test]
+    fn materialized_nonzero_bytes_lists_only_written_bytes_in_order() {
+        let mut memory = memory(64);
+        memory.write_byte(9, 0xAA);
+        memory.write_byte(40, 0xBB);
+        memory.write_byte(3, 0xCC);
+        // A doubleword written then zeroed again is skipped entirely
+        memory.write_doubleword(16, 0x1234);
+        memory.write_doubleword(16, 0);
+
+        assert_eq!(
+            memory.materialized_nonzero_bytes(),
+            vec![(3, 0xCC), (9, 0xAA), (40, 0xBB)]
+        );
+    }
+
+    #[test]
+    fn checkpoints_record_the_pre_chunk_value_of_each_touched_word() {
+        let mut memory = memory(64);
+        memory.write_doubleword(0, 111);
+        memory.write_doubleword(8, 222);
+
+        assert!(!memory.data.is_saving_checkpoints());
+        memory.data.start_saving_checkpoints();
+        assert!(memory.data.is_saving_checkpoints());
+
+        // Touch index 0 (write) and index 1 (read); leave index 2 untouched
+        memory.write_doubleword(0, 999);
+        memory.write_doubleword(0, 1000); // second write must not overwrite the snapshot
+        assert_eq!(memory.read_doubleword(8), 222);
+
+        let checkpoint = memory.data.save_checkpoint();
+        let MemoryBacking::Sparse(snapshot) = &checkpoint.backing else {
+            panic!("checkpoint replay memory must have a sparse backing");
+        };
+        assert_eq!(snapshot.get(&0), Some(&111), "pre-write value");
+        assert_eq!(snapshot.get(&1), Some(&222), "read snapshot");
+        assert_eq!(snapshot.get(&2), None, "untouched word absent");
+        assert_eq!(checkpoint.get_num_doublewords(), 8);
+
+        // Saving started a fresh chunk: only new accesses are recorded
+        memory.write_doubleword(16, 5);
+        let next = memory.data.save_checkpoint();
+        let MemoryBacking::Sparse(snapshot) = &next.backing else {
+            panic!("checkpoint replay memory must have a sparse backing");
+        };
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot.get(&2), Some(&0));
+    }
+
+    #[test]
+    fn take_memory_moves_capacity_and_content_to_the_taken_memory() {
+        let mut memory = memory(64);
+        memory.write_doubleword(0, 42);
+        let taken = memory.take_memory();
+        assert_eq!(taken.data.get_num_doublewords(), 8);
+        assert_eq!(taken.data.get_u64(0), 42);
+        // The emptied source reports zero capacity, consistent with its
+        // empty backing; every address is now out of bounds.
+        assert_eq!(memory.data.get_num_doublewords(), 0);
+        assert!(!memory.validate_address(0), "content moved out");
+    }
+
+    #[test]
+    fn out_of_bounds_accesses_panic_with_the_capacity() {
+        let mut memory = memory(16); // 2 doublewords
+        assert!(memory.validate_address(15));
+        assert!(!memory.validate_address(16));
+        let err = std::panic::catch_unwind(AssertUnwindSafe(|| memory.read_byte(16)))
+            .expect_err("read beyond capacity must panic");
+        let message = err.downcast_ref::<String>().expect("panic message");
+        assert!(message.contains("Out of bounds memory access (2 >= 2)"));
+
+        let memory = self::memory(16);
+        assert!(std::panic::catch_unwind(AssertUnwindSafe(|| { memory.get_byte(24) })).is_err());
+    }
+}

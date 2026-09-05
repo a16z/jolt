@@ -397,4 +397,81 @@ mod tests {
             .expect_err("truncated commitment bytes must be rejected");
         assert!(err.to_string().contains("bytes"));
     }
+
+    #[test]
+    fn unknown_one_hot_chunk_size_rejects_before_deserialization() {
+        let (mut commitment, point, _, resolved, schedules) = resolved_dense(16, 2);
+        commitment.backend_flavor = AkitaBackendFlavor::OneHot;
+        commitment.one_hot_k = 32;
+        let proof = AkitaBatchProof::new(resolved.selection(), Vec::new());
+        let err = deserialize_checked_backend_payload(&schedules, &commitment, &proof, 2, &point)
+            .expect_err("unknown one-hot chunk size must be rejected");
+        assert!(
+            err.to_string().contains("unsupported Akita one-hot K"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A real prover run must realize exactly the fold structure the
+    /// schedule prescribes — the shape is derived from the schedule, so this
+    /// ties the derived model to actual backend prover output.
+    #[test]
+    fn real_proof_decodes_under_the_schedule_derived_shape() {
+        use crate::{AkitaScheme, AkitaSetupParams};
+        use jolt_openings::CommitmentScheme;
+        use jolt_poly::Polynomial;
+        use jolt_transcript::{Blake2bTranscript, Transcript};
+
+        let num_vars = 14;
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            num_vars, 1, [7; 32], artifacts,
+        ))
+        .expect("dense setup should build");
+        let poly = Polynomial::new(
+            (0..1u64 << num_vars)
+                .map(|index| AkitaField::from_u64(index + 1))
+                .collect(),
+        );
+        let (_, hint) =
+            AkitaScheme::commit(&poly, &prover_setup).expect("dense commit should succeed");
+        let point = point(num_vars);
+        let eval = poly.evaluate(&point);
+        let mut transcript = Blake2bTranscript::<AkitaField>::new(b"shape-guard-fixture");
+        let proof = AkitaScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut transcript,
+        )
+        .expect("open should succeed");
+
+        let layout = OpeningClaimsLayout::new(num_vars, 1).expect("layout");
+        let resolved = resolve_schedule_row::<AkitaConfig>(
+            &dense_schedules(),
+            proof.selection(),
+            &layout,
+            &point,
+        )
+        .expect("schedule");
+        let schedule = resolved.schedule();
+        let derived = derive_proof_shape::<AkitaConfig>(schedule, &layout)
+            .expect("schedule-derived shape must build");
+        derived
+            .validate_decode_budget(
+                proof.backend_proof.len(),
+                field_elem_bytes(),
+                field_elem_bytes(),
+            )
+            .expect("honest proof must fit the derived byte budget");
+        let _ = deserialize_akita::<AkitaBackendProof>(&proof.backend_proof, &derived)
+            .expect("honest proof must decode under the derived shape");
+        assert_eq!(
+            derived.recursive_folds.len(),
+            schedule.recursive_folds.len(),
+            "derived shape must realize the scheduled fold depth"
+        );
+    }
 }

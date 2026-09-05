@@ -1225,4 +1225,206 @@ mod test_mmu {
 
         assert_eq!(result, Ok(v_address));
     }
+
+    #[test]
+    fn loads_and_stores_round_trip_through_ram_and_report_word_state() {
+        let mut mmu = setup_mmu();
+        let addr = DRAM_BASE + 0x100;
+
+        // store_word reports the pre/post state of the containing region
+        let write = mmu.store_word(addr, 0xdead_beef).unwrap();
+        assert_eq!(write.address, addr);
+        assert_eq!(write.pre_value, 0);
+        assert_eq!(write.post_value, 0xdead_beef);
+
+        let (value, read) = mmu.load_word(addr).unwrap();
+        assert_eq!(value, 0xdead_beef);
+        assert_eq!(read.address, addr);
+        assert_eq!(read.value, 0xdead_beef);
+
+        let write = mmu
+            .store_doubleword(addr + 8, 0x0102_0304_0506_0708)
+            .unwrap();
+        assert_eq!(write.post_value, 0x0102_0304_0506_0708);
+        assert_eq!(
+            mmu.load_doubleword(addr + 8).unwrap().0,
+            0x0102_0304_0506_0708
+        );
+
+        let write = mmu.store_halfword(addr + 16, 0xbeef).unwrap();
+        assert_eq!(write.post_value, 0xbeef);
+        assert_eq!(mmu.load_halfword(addr + 16).unwrap().0, 0xbeef);
+
+        let _ = mmu.store(addr + 24, 0xab).unwrap();
+        assert_eq!(mmu.load(addr + 24).unwrap().0, 0xab);
+    }
+
+    #[test]
+    fn trace_store_byte_masks_the_byte_into_its_word_by_offset() {
+        let mut mmu = setup_mmu();
+        let word_addr = DRAM_BASE + 0x40;
+        mmu.store_word(word_addr, 0x8877_6655).unwrap();
+
+        for (offset, expected) in [
+            (0, 0x8877_66AA_u64),
+            (1, 0x8877_AA55),
+            (2, 0x88AA_6655),
+            (3, 0xAA77_6655),
+        ] {
+            let write = mmu.trace_store_byte(word_addr + offset, 0xAA);
+            assert_eq!(write.address, word_addr, "offset {offset}");
+            assert_eq!(write.pre_value, 0x8877_6655, "offset {offset}");
+            assert_eq!(write.post_value, expected, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn trace_store_halfword_covers_both_word_halves() {
+        let mut mmu = setup_mmu();
+        let word_addr = DRAM_BASE + 0x48;
+        mmu.store_word(word_addr, 0x8877_6655).unwrap();
+
+        let low = mmu.trace_store_halfword(word_addr, 0xBBBB);
+        assert_eq!(low.post_value, 0x8877_BBBB);
+        let high = mmu.trace_store_halfword(word_addr + 2, 0xCCCC);
+        assert_eq!(high.post_value, 0xCCCC_6655);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned store")]
+    fn trace_store_halfword_rejects_odd_offsets() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.trace_store_halfword(DRAM_BASE + 1, 0xBBBB);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned load_word")]
+    fn load_word_rejects_misaligned_addresses() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.load_word(DRAM_BASE + 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned load_halfword")]
+    fn load_halfword_rejects_misaligned_addresses() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.load_halfword(DRAM_BASE + 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Unaligned load_doubleword")]
+    fn load_doubleword_rejects_misaligned_addresses() {
+        let mut mmu = setup_mmu();
+        let _ = mmu.load_doubleword(DRAM_BASE + 4);
+    }
+
+    #[test]
+    fn fetch_word_crosses_page_boundaries_byte_by_byte() {
+        let mut mmu = setup_mmu();
+        // Instruction word straddling the page boundary at +0xffe
+        let addr = DRAM_BASE + 0xffe;
+        mmu.store_raw(addr, 0x13);
+        mmu.store_raw(addr + 1, 0x05);
+        mmu.store_raw(addr + 2, 0xc5);
+        mmu.store_raw(addr + 3, 0x00);
+        assert_eq!(mmu.fetch_word(addr).unwrap(), 0x00c5_0513);
+        // Fast path within one page must agree
+        mmu.store_word(DRAM_BASE + 0x10, 0x00c5_0513).unwrap();
+        assert_eq!(mmu.fetch_word(DRAM_BASE + 0x10).unwrap(), 0x00c5_0513);
+    }
+
+    #[test]
+    fn page_crossing_load_and_store_bytes_agree_with_the_fast_path() {
+        let mut mmu = setup_mmu();
+        let boundary = DRAM_BASE + 0x1000;
+        // A doubleword written across the boundary reads back identically
+        mmu.store_bytes(boundary - 4, 0x1122_3344_5566_7788, 8)
+            .unwrap();
+        assert_eq!(
+            mmu.load_bytes(boundary - 4, 8).unwrap(),
+            0x1122_3344_5566_7788
+        );
+        // Bytes land on both sides of the boundary
+        assert_eq!(mmu.load_bytes(boundary - 4, 4).unwrap(), 0x5566_7788);
+        assert_eq!(mmu.load_bytes(boundary, 4).unwrap(), 0x1122_3344);
+    }
+
+    #[test]
+    fn device_region_loads_read_the_jolt_device() {
+        let mut mmu = setup_mmu();
+        mmu.jolt_device.as_mut().unwrap().inputs =
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+        let input_start = mmu.jolt_device.as_ref().unwrap().memory_layout.input_start;
+
+        // Raw single-byte and multi-byte loads below DRAM_BASE hit the device
+        assert_eq!(mmu.load_raw(input_start), 0x11);
+        assert_eq!(mmu.load_halfword_raw(input_start), 0x2211);
+        assert_eq!(mmu.load_word_raw(input_start), 0x4433_2211);
+        assert_eq!(mmu.load_doubleword_raw(input_start), 0x8877_6655_4433_2211);
+
+        // The traced load reports the containing word's value
+        let (byte, read) = mmu.load(input_start).unwrap();
+        assert_eq!(byte, 0x11);
+        assert_eq!(read.address, input_start & !3);
+        assert_eq!(read.value & 0xff, 0x11);
+    }
+
+    #[test]
+    fn device_region_stores_write_the_output_buffer() {
+        let mut mmu = setup_mmu();
+        let output_start = mmu.jolt_device.as_ref().unwrap().memory_layout.output_start;
+
+        mmu.store_raw(output_start, 0xAA);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[0], 0xAA);
+
+        // Wider raw stores decompose into device byte stores
+        mmu.store_halfword_raw(output_start + 2, 0xBBCC);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[2], 0xCC);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[3], 0xBB);
+
+        mmu.store_word_raw(output_start + 4, 0x0102_0304);
+        assert_eq!(
+            mmu.jolt_device.as_ref().unwrap().outputs[4..8],
+            [4, 3, 2, 1]
+        );
+
+        mmu.store_doubleword_raw(output_start + 8, 0x1112_1314_1516_1718);
+        assert_eq!(
+            mmu.jolt_device.as_ref().unwrap().outputs[8..16],
+            [0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11]
+        );
+
+        // Traced store through the translated path also lands in outputs
+        let write = mmu.store(output_start + 16, 0x5A).unwrap();
+        assert_eq!(write.address, (output_start + 16) & !3);
+        assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[16], 0x5A);
+    }
+
+    #[test]
+    fn setup_bytecode_writes_directly_to_ram() {
+        let mut mmu = setup_mmu();
+        mmu.setup_bytecode(DRAM_BASE + 8, 0x77);
+        assert_eq!(mmu.load_raw(DRAM_BASE + 8), 0x77);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be >= DRAM_BASE")]
+    fn setup_bytecode_rejects_device_addresses() {
+        let mut mmu = setup_mmu();
+        mmu.setup_bytecode(DRAM_BASE - 1, 0x77);
+    }
+
+    #[test]
+    fn validate_address_reflects_configured_capacity() {
+        let mmu = setup_mmu();
+        let capacity = mmu
+            .jolt_device
+            .as_ref()
+            .unwrap()
+            .memory_layout
+            .get_total_memory_size();
+        assert!(mmu.memory.validate_address(DRAM_BASE));
+        assert!(mmu.memory.validate_address(DRAM_BASE + capacity - 8));
+        assert!(!mmu.memory.validate_address(DRAM_BASE + capacity + 8));
+    }
 }

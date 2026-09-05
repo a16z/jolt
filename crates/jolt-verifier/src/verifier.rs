@@ -1155,6 +1155,8 @@ mod tests {
 
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    #[cfg(feature = "zk")]
+    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     #[cfg(feature = "zk")]
@@ -1312,10 +1314,29 @@ mod tests {
         ));
     }
 
+    /// `test_preprocessing` plus a valid vector-commitment setup, so tests of
+    /// generic input validation also pass under the `zk` feature (where
+    /// `validate_inputs` unconditionally requires the setup).
+    fn test_preprocessing_with_vc_setup() -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        #[cfg_attr(
+            not(feature = "zk"),
+            expect(unused_mut, reason = "mutated only under zk")
+        )]
+        let mut preprocessing = test_preprocessing();
+        #[cfg(feature = "zk")]
+        {
+            preprocessing.vc_setup = Some(PedersenSetup::new(
+                vec![Bn254G1::default(); MAX_BLINDFOLD_GENERATORS],
+                Bn254G1::default(),
+            ));
+        }
+        preprocessing
+    }
+
     #[test]
     #[expect(clippy::unwrap_used)]
     fn validate_inputs_normalizes_public_output() {
-        let preprocessing = test_preprocessing();
+        let preprocessing = test_preprocessing_with_vc_setup();
         let mut public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             inputs: vec![1, 2],
@@ -1338,7 +1359,7 @@ mod tests {
 
     #[test]
     fn validate_inputs_rejects_public_io_layout_mismatch() {
-        let preprocessing = test_preprocessing();
+        let preprocessing = test_preprocessing_with_vc_setup();
         let public_io = JoltDevice::default();
         let proof = proof_with_zk(false, clear_claims());
 
@@ -1371,7 +1392,7 @@ mod tests {
 
     #[test]
     fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
-        let preprocessing = test_preprocessing();
+        let preprocessing = test_preprocessing_with_vc_setup();
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
@@ -1387,7 +1408,7 @@ mod tests {
 
     #[test]
     fn validate_inputs_rejects_ram_domain_above_layout_maximum() {
-        let preprocessing = test_preprocessing();
+        let preprocessing = test_preprocessing_with_vc_setup();
         let public_io = JoltDevice {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
@@ -1787,7 +1808,7 @@ mod tests {
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
         #[cfg(feature = "zk")]
         let vc_setup = Some(PedersenSetup::new(
-            vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
+            vec![Bn254G1::default(); MAX_BLINDFOLD_GENERATORS],
             Bn254G1::default(),
         ));
         #[cfg(not(feature = "zk"))]

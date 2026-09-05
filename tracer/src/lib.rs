@@ -854,6 +854,17 @@ pub(crate) mod test_utils {
                 "guest",
             ])
             .env("JOLT_FUNC_NAME", func)
+            // The riscv guest must not inherit host coverage instrumentation:
+            // cargo-llvm-cov injects `-C instrument-coverage` via RUSTC_WRAPPER
+            // (and older versions via RUSTFLAGS), which fails the cross-compile
+            // (no profiler_builtins for the guest target).
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .env_remove("LLVM_PROFILE_FILE")
+            .env_remove("RUSTC_WRAPPER")
+            .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER")
+            .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS")
+            .env_remove("__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES")
             .output()
             .expect("failed to run jolt CLI — install with: cargo install --path .");
 
@@ -973,6 +984,44 @@ mod tests {
             let ti: Vec<Cycle> = GeneralizedLazyTraceIter::new(checkpoint).collect();
             assert_eq!(trace_chunk[i], ti);
         }
+    }
+
+    use crate::emulator::elf_analyzer::test_elf::build_elf64;
+
+    /// addi x1, x0, 1 ; addi x2, x1, 2 ; j .  — terminates via PC stall.
+    fn tiny_guest_elf() -> Vec<u8> {
+        build_elf64(&[0x0010_0093, 0x0020_8113, 0x0000_006f], &[])
+    }
+
+    fn tiny_guest_config(elf: &[u8]) -> MemoryConfig {
+        MemoryConfig {
+            program_size: Some(elf.len() as u64),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn trace_of_a_tiny_guest_captures_register_semantics_and_replays() {
+        let elf = tiny_guest_elf();
+        let memory_config = tiny_guest_config(&elf);
+        let (lazy, cycles, final_memory, device, _) =
+            trace(&elf, None, &[], &[], &[], &memory_config, None);
+
+        assert!(cycles.len() >= 3, "two ADDIs plus the jump expansion");
+        // addi x1, x0, 1
+        assert_eq!(cycles[0].rd_write(), Some((1, 0, 1)));
+        // addi x2, x1, 2 observes x1 = 1
+        assert_eq!(cycles[1].rs1_read(), Some((1, 1)));
+        assert_eq!(cycles[1].rd_write(), Some((2, 0, 3)));
+
+        assert!(!device.panic);
+        assert!(device.outputs.is_empty());
+        // The final memory state contains the loaded program image
+        assert!(!final_memory.materialized_nonzero_bytes().is_empty());
+
+        // The returned lazy iterator replays the identical trace
+        let replayed: Vec<Cycle> = lazy.collect();
+        assert_eq!(replayed, cycles);
     }
 
     #[test]

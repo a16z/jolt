@@ -5,6 +5,8 @@
 
 //! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
 
+use std::path::PathBuf;
+
 use akita_config::trusted_setup_matrix_capacity;
 use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, TrustedScheduleCatalog};
@@ -262,6 +264,56 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
     )
     .expect_err("a declared reachable arity outside the family must fail setup");
     assert!(error.to_string().contains("outside the supported range"));
+}
+
+/// The emit specs are the single source of truth for what the generator
+/// writes; each checked-in one-hot catalog must be exactly its family's grid —
+/// the forward inclusion is checked above, so a length match plus a
+/// reverse-inclusion sweep rules out stale or duplicated entries.
+#[test]
+fn emit_specs_and_checked_in_catalogs_agree_exactly() {
+    let [k16_spec, k256_spec, _dense_spec] = family_specs(PathBuf::new()).expect("emit specs");
+    let cases = [
+        (
+            k16_spec,
+            "jolt-fp128-onehot-k16",
+            one_hot_catalog(AKITA_ONE_HOT_K16),
+        ),
+        (
+            k256_spec,
+            "jolt-fp128-onehot-k256",
+            one_hot_catalog(AKITA_ONE_HOT_K256),
+        ),
+    ];
+    for (spec, family_name, catalog) in cases {
+        assert_eq!(spec.family_name, family_name, "spec order regressed");
+        assert!(
+            spec.grouped_requests.is_empty(),
+            "Jolt one-hot families emit scalar single-group schedules only"
+        );
+        assert_eq!(
+            spec.keys.len(),
+            catalog.len(),
+            "{family_name}: grid and catalog must have the same key count"
+        );
+        for row in catalog.rows() {
+            assert!(
+                row.profiles().precommitteds.is_empty(),
+                "{family_name}: Jolt one-hot catalogs are scalar-only"
+            );
+            assert!(
+                spec.keys.contains(&row.profiles().final_group.group),
+                "{family_name}: stale catalog entry {:?} is not a reachable shape",
+                row.profiles().final_group.group
+            );
+        }
+        for (index, key) in spec.keys.iter().enumerate() {
+            assert!(
+                !spec.keys[..index].contains(key),
+                "{family_name}: duplicate grid key {key:?}"
+            );
+        }
+    }
 }
 
 /// Re-run every planner solve and byte-compare canonical artifacts.

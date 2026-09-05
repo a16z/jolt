@@ -20,6 +20,7 @@ use jolt_verifier::JoltProofClaims;
 #[test]
 fn missing_zk_vector_commitment_setup_rejects_now() {
     with_zk_verifier_stack(|| {
+        tamper_manifest::assert_zk_target_active("zk.vector_commitment_setup");
         let mut case = crate::support::verifier_fixtures::zk_muldiv_case();
         case.preprocessing.vc_setup = None;
 

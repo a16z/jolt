@@ -608,6 +608,100 @@ mod tests {
     }
 
     #[test]
+    fn layout_packs_io_regions_contiguously_below_ram_start() {
+        // trusted (4096) < untrusted (8192) forces the untrusted-first branch.
+        // io_region_bytes = 4096 + 8192 + 4096 + 4096 + 16 = 20496 bytes
+        //   => 2562 words => padded to 4096 words => 32768 bytes below RAM_START.
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 4096,
+            max_untrusted_advice_size: 8192,
+            max_input_size: 4096,
+            max_output_size: 4096,
+            ..Default::default()
+        });
+
+        let region_start = RAM_START_ADDRESS - 32768;
+        assert_eq!(layout.untrusted_advice_start, region_start);
+        assert_eq!(layout.untrusted_advice_end, region_start + 8192);
+        assert_eq!(layout.trusted_advice_start, region_start + 8192);
+        assert_eq!(layout.trusted_advice_end, region_start + 8192 + 4096);
+        assert_eq!(layout.input_start, layout.trusted_advice_end);
+        assert_eq!(layout.input_end, layout.input_start + 4096);
+        assert_eq!(layout.output_start, layout.input_end);
+        assert_eq!(layout.output_end, layout.output_start + 4096);
+        assert_eq!(layout.panic, layout.output_end);
+        assert_eq!(layout.termination, layout.panic + 8);
+        assert_eq!(layout.io_end, layout.termination + 8);
+        assert_eq!(layout.get_lowest_address(), region_start);
+    }
+
+    #[test]
+    fn layout_places_trusted_advice_first_when_not_smaller() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 4096,
+            max_untrusted_advice_size: 4096,
+            ..Default::default()
+        });
+        assert!(layout.trusted_advice_start < layout.untrusted_advice_start);
+        assert_eq!(layout.trusted_advice_end, layout.untrusted_advice_start);
+    }
+
+    #[test]
+    fn layout_aligns_sizes_up_to_eight_bytes_and_sizes_ram_regions() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1000),
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            max_input_size: 10,
+            max_output_size: 9,
+            stack_size: 100,
+            heap_size: 12,
+        });
+        assert_eq!(layout.max_input_size, 16);
+        assert_eq!(layout.max_output_size, 16);
+        assert_eq!(layout.stack_size, 104);
+        assert_eq!(layout.heap_size, 16);
+
+        // Stack grows down from stack_start; the canary sits between the
+        // program image and the stack.
+        assert_eq!(layout.stack_end, RAM_START_ADDRESS + 1000);
+        let stack_start = layout.stack_end + STACK_CANARY_SIZE + 104;
+        assert_eq!(layout.heap_end, stack_start + 16);
+        assert_eq!(
+            layout.get_total_memory_size(),
+            layout.heap_end - RAM_START_ADDRESS
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Trusted advice size must be a power of two")]
+    fn layout_rejects_non_power_of_two_trusted_advice() {
+        let _ = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 24,
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Untrusted advice size must be a power of two")]
+    fn layout_rejects_non_power_of_two_untrusted_advice() {
+        let _ = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_untrusted_advice_size: 40,
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "MemoryLayout requires bytecode size to be set")]
+    fn layout_requires_program_size() {
+        let _ = MemoryLayout::new(&MemoryConfig::default());
+    }
+
+    #[test]
     fn remaps_word_addresses_relative_to_lowest_reserved_address() {
         let device = JoltDevice::new(&MemoryConfig {
             program_size: Some(1024),

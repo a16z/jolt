@@ -89,6 +89,9 @@
 // wildcard_enum_match_arm is omitted: this crate matches foreign syn AST enums,
 // where wildcard fallbacks to Err/None are the correct, version-stable idiom.
 
+#[cfg(test)]
+mod tests;
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
