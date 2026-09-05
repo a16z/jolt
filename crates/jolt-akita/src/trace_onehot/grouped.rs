@@ -13,7 +13,7 @@ use akita_prover::{
     OneHotPoly, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
 };
 use akita_types::FpExtEncoding;
-use jolt_field::ExtField;
+use jolt_field::{ExtField, MulBaseUnreduced};
 
 use super::source::{TracePackedOneHot, TracePackedOneHotBatchView, TracePackedOneHotView};
 use crate::AkitaField;
@@ -390,7 +390,7 @@ impl<E, const D: usize>
     SubringCoefficientPackingBatchKernel<GroupedRootBatchView<'_, D>, AkitaField, E, D>
     for CpuBackend
 where
-    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField> + MulBaseUnreduced<AkitaField>,
 {
     fn coefficient_packing_partials_batch(
         &self,

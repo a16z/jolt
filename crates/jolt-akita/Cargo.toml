@@ -34,6 +34,7 @@ serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 
 [dev-dependencies]
+bincode.workspace = true
 criterion = { workspace = true }
 jolt-dory = { workspace = true }
 # Subscriber stack only (bench tracing setup); no summary pipeline.
