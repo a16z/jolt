@@ -88,6 +88,8 @@ members = [
   "examples/multi-function/guest",
   "examples/alloc",
   "examples/alloc/guest",
+  "examples/large-alloc",
+  "examples/large-alloc/guest",
   "examples/stdlib",
   "examples/stdlib/guest",
   "examples/muldiv",
@@ -294,17 +296,17 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Immutable upstream revision containing the shared-field and transcript-grinding cutovers.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4505404b5bd9548970f0753b0118616a373c867e", default-features = false }
+# Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -410,8 +412,8 @@ log = { version = "0.4" }
 env_logger = { version = "0.11" }
 
 # ZeroOS build system
-zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "3b132ce862ba6769a4261d151f69ff32c5f0dc30" }
-zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "3b132ce862ba6769a4261d151f69ff32c5f0dc30" }
+zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "c572b88a643474317e4b0c7e53ac722a98a0e050" }
+zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "c572b88a643474317e4b0c7e53ac722a98a0e050" }
 cfg-if = "1.0"
 riscv = { version = "0.16", default-features = false }
 

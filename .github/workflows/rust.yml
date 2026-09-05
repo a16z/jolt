@@ -698,10 +698,9 @@ jobs:
           cache-directories: ~/.cache/dory
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # Regenerates every checked-in schedule through the planner DP and
-      # compares token streams — guards the generated catalogs against
-      # planner drift. Ignored by default (minutes of DP solves), so it needs
-      # its own lane.
+      # Regenerates every external `.aks` catalog through the planner DP and
+      # compares canonical artifact bytes. Ignored by default (minutes of DP
+      # solves), so it needs its own lane.
       - name: Regenerate schedule catalogs through the planner
         run: cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
 

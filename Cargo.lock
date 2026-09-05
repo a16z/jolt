@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -117,12 +117,13 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-error",
  "akita-transcript",
  "jolt-field",
  "keccak 0.1.6",
+ "serde",
  "smallvec",
  "tracing",
 ]
@@ -130,7 +131,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -139,13 +140,12 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-field",
- "tracing",
 ]
 
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -153,7 +153,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -174,7 +174,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -186,7 +186,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -208,17 +208,19 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "jolt-field",
  "thiserror 2.0.18",
@@ -227,7 +229,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -242,7 +244,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -256,7 +258,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-serialization",
  "blake2 0.10.6",
@@ -267,7 +269,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -280,6 +282,7 @@ dependencies = [
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
+ "serde",
  "sha3 0.10.9",
  "tracing",
 ]
@@ -287,7 +290,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=4505404b5bd9548970f0753b0118616a373c867e#4505404b5bd9548970f0753b0118616a373c867e"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=ce27c705d92b2ce5327b5c590b6dd6fe86f8479f#ce27c705d92b2ce5327b5c590b6dd6fe86f8479f"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -3218,6 +3221,7 @@ dependencies = [
  "akita-schedules",
  "akita-transcript",
  "akita-types",
+ "bincode 2.0.1",
  "criterion",
  "jolt-crypto",
  "jolt-dory",
@@ -4038,6 +4042,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "large-alloc"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "large-alloc-guest",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "large-alloc-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+ "libc",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4246,7 +4268,7 @@ dependencies = [
 [[package]]
 name = "mini-template"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 
 [[package]]
 name = "miniz_oxide"
@@ -7826,7 +7848,7 @@ dependencies = [
 [[package]]
 name = "zeroos"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "zeroos-allocator-linked-list",
  "zeroos-arch-riscv",
@@ -7845,7 +7867,7 @@ dependencies = [
 [[package]]
 name = "zeroos-allocator-linked-list"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "linked_list_allocator",
  "zeroos-foundation",
@@ -7854,7 +7876,7 @@ dependencies = [
 [[package]]
 name = "zeroos-arch-riscv"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "memoffset",
@@ -7868,7 +7890,7 @@ dependencies = [
 [[package]]
 name = "zeroos-backtrace"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "zeroos-macros",
@@ -7877,7 +7899,7 @@ dependencies = [
 [[package]]
 name = "zeroos-build"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "anyhow",
  "clap",
@@ -7895,7 +7917,7 @@ dependencies = [
 [[package]]
 name = "zeroos-debug"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
 ]
@@ -7903,7 +7925,7 @@ dependencies = [
 [[package]]
 name = "zeroos-device-console"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "libc",
  "zeroos-vfs-core",
@@ -7912,7 +7934,7 @@ dependencies = [
 [[package]]
 name = "zeroos-foundation"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "libc",
@@ -7922,12 +7944,12 @@ dependencies = [
 [[package]]
 name = "zeroos-macros"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 
 [[package]]
 name = "zeroos-os-linux"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "libc",
@@ -7937,7 +7959,7 @@ dependencies = [
 [[package]]
 name = "zeroos-rng"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "spin 0.9.8",
  "zeroos-foundation",
@@ -7946,7 +7968,7 @@ dependencies = [
 [[package]]
 name = "zeroos-runtime-musl"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "zeroos-backtrace",
  "zeroos-debug",
@@ -7956,7 +7978,7 @@ dependencies = [
 [[package]]
 name = "zeroos-runtime-nostd"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "zeroos-backtrace",
@@ -7966,7 +7988,7 @@ dependencies = [
 [[package]]
 name = "zeroos-scheduler-cooperative"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "cfg-if",
  "libc",
@@ -7977,7 +7999,7 @@ dependencies = [
 [[package]]
 name = "zeroos-vfs-core"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=c572b88a643474317e4b0c7e53ac722a98a0e050#c572b88a643474317e4b0c7e53ac722a98a0e050"
 dependencies = [
  "libc",
  "zeroos-foundation",

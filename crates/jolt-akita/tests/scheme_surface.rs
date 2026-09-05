@@ -10,7 +10,8 @@
 mod support;
 
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaField, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
+    AkitaBackendFlavor, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
@@ -43,6 +44,7 @@ fn k16_setup() -> (
         1,
         layout(2),
         AKITA_ONE_HOT_K16,
+        AkitaScheduleArtifacts::shared_from_default_directory(),
     ))
     .expect("one-hot setup should build")
 }
@@ -50,10 +52,16 @@ fn k16_setup() -> (
 #[test]
 fn setup_rejects_unsupported_one_hot_chunk_sizes() {
     for bad_k in [0, 4, 32, 512] {
-        let err = AkitaScheme::setup(AkitaSetupParams::one_hot_only(6, 1, layout(1), bad_k))
-            .expect_err("only K=16 and K=256 are supported");
+        let err = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+            6,
+            1,
+            layout(1),
+            bad_k,
+            AkitaScheduleArtifacts::shared_from_default_directory(),
+        ))
+        .expect_err("only K=16 and K=256 are supported");
         assert!(
-            matches!(&err, OpeningsError::InvalidSetup(message) if message.contains("must be 16 or 256")),
+            matches!(&err, OpeningsError::InvalidSetup(message) if message.contains("unsupported Akita one-hot K")),
             "unexpected error for K={bad_k}: {err}"
         );
     }

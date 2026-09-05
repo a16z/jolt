@@ -399,7 +399,7 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
 /// prover dense witnesses for such a hint must reject.
 #[test]
 fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
-    use jolt_akita::{AkitaSetupParams, AKITA_ONE_HOT_K16};
+    use jolt_akita::{AkitaScheduleArtifacts, AkitaSetupParams, AKITA_ONE_HOT_K16};
     use jolt_poly::OneHotPolynomial;
 
     let (one_hot_setup, _) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
@@ -407,6 +407,7 @@ fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
         1,
         layout(7),
         AKITA_ONE_HOT_K16,
+        AkitaScheduleArtifacts::shared_from_default_directory(),
     ))
     .expect("one-hot setup should build");
     let one_hot_indices: Vec<_> = (0..256usize)
