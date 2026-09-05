@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788551751960,
+  "lastUpdate": 1788577458307,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -155122,6 +155122,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866572,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7de83dd18839f567e6b88e860d53b0202116654f",
+          "message": "feat(akita)!: externalize trusted schedules and guide recursive offloading (#1844)\n\n* feat(profiling): compare setup and verifier modes\n\n* fix: satisfy nominal import policy\n\n* refactor(profiling): remove one-hot override\n\n* refactor(profiling): trace one verification per mode\n\n* fix(akita)!: remove redundant opening payload\n\n* chore(fs): refresh Akita transcript inventory\n\n* feat(akita): load setup-owned schedule catalogs\n\nStack the current Akita profiling and lean-wire papercuts on Jolt main, pin the quotient-free Akita tip, and replace compiled schedule tables with canonical runtime artifacts. Build exact grouped catalogs per setup, serialize them with verifier preprocessing, bind their digest into the transcript, and resolve proof shapes through the same trusted scheme instance.\n\n* fix(akita): classify catalog setup binding\n\nRecord the validated catalog-digest absorption in the Fiat-Shamir inventory and keep external artifact file I/O outside the profiling setup measurement while retaining catalog admission and key construction inside it.\n\n* perf(akita): stop rehashing terminal opening proof\n\n* docs(akita): clarify terminal challenge boundary\n\n* refactor(akita): make schedule artifacts explicit setup context\n\n* feat(akita): add guided recursive schedule catalogs\n\n* chore(akita): refresh guided planner revision\n\n* fix(style): satisfy nominal import invariants\n\n* refactor(akita): give the schedule-artifact loaders one owner each\n\nFive identical `fn schedule_artifacts` helpers (jolt-akita's scheme tests,\nlegacy's packed tests, the jolt-verifier akita fixtures, and both modular\nprover akita suites) plus eight open-coded copies of the same expression\nall wrapped `from_default_directory()` in an `Arc` and aborted on failure.\nReplace them with `AkitaScheduleArtifacts::shared_from_default_directory()`,\nthe shared-handle form every setup call already wanted.\n\nAn inherent associated fn rather than a `test-utils` module: jolt-verifier\nhas no jolt-akita dependency and reaches the type only through legacy's\n`pub use`, and a re-exported type carries its inherent methods where a free\nfunction would not. jolt-akita's own tests and benches would also have\nneeded a self dev-dependency. This needs no manifest change anywhere, and\n`profile.rs` is a real production caller rather than test-only scaffolding.\n\nLoader call counts per file are unchanged, so the `Arc::ptr_eq` provenance\nguards on advice setup (packed.rs) still compare what they did before; the\ndoc records that constraint.\n\nExtract `AkitaScheduleArtifacts::packaged_directory()` for the second rule,\n`<jolt-akita>/schedules`, previously spelled out in the `from_default_directory`\nfallback, the shape-guard test, and the catalog regeneration guards. Those\ntwo guards deliberately keep reading the packaged directory rather than the\ndefault loader, since they validate the committed artifacts and must not be\nredirected by `JOLT_AKITA_SCHEDULE_DIR`.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* fix(akita): make the generator's dense selector match a family\n\nThe family filter compared `ends_with(selector)` against names like\n`jolt-fp128-dense-bounded`, so the documented `dense` argument matched\nnothing and the generator silently wrote no artifacts. Match the\nselector as an infix and fail loudly when it selects no family.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): give InvalidSetup construction one owner\n\n`invalid_setup` was declared as a `&dyn Display` closure in three\nfunctions, and that signature forced a wrapping closure at every one of\nits fifteen uses. Make it a free function beside `invalid_batch`,\n`akita_error`, and `commit_failed`, taking `impl ToString` like they do,\nso call sites pass the fn item directly.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): narrow visibility left over from deleted tests\n\n`emit::regen` was `pub(crate)` and `MAX_PROVISIONED_ROWS` was `pub`\nonly for tests the registry removal deleted; every remaining use is\ninside the defining module.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* docs(akita): state the packaged-directory rationale once\n\nBoth catalog guards repeated the reason they read `packaged_directory()`\ninstead of the default loader; that reason is the accessor's own doc.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n* refactor(akita): make the fallible default loader private\n\n`from_default_directory` and `DIRECTORY_ENV` were `pub` with exactly one\ncaller each, `shared_from_default_directory`. Deployments that must\nhandle a missing catalog use `from_directory` with a path they own, so\nthe fallible env-aware form has no external contract to keep.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+          "timestamp": "2026-09-04T18:55:49-07:00",
+          "tree_id": "28f1857d76135181302847c31ae7da8bc8e00688",
+          "url": "https://github.com/a16z/jolt/commit/7de83dd18839f567e6b88e860d53b0202116654f"
+        },
+        "date": 1788577451400,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.6376,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 864740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.2266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 507000,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.781,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 503132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999280,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6066,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.5432,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502644,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.8778,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 121652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.4053,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 865872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6057,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 501484,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5099,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 511352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 22.8162,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 499928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.3861,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 499232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 33.4295,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1025944,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.5928,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 641684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 82.9088,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2149672,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.3748,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 501040,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6399,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498568,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.798,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 866296,
             "unit": "KB",
             "extra": ""
           }
