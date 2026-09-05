@@ -15,11 +15,11 @@ pub(super) const SOURCE: &str = concat!(
 pub(crate) use sequence::RegistersReadWriteCycleObservation;
 pub(crate) use sequence::{
     PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteCycleFinish,
-    RegistersReadWriteCycleSequence,
+    RegistersReadWriteCycleSequence, MAX_REGISTER_BLOCK_CAPACITY,
 };
 pub(crate) use stage1::{
-    RegistersReadWriteStage1ChunkWriter, RegistersReadWriteStage1Source,
-    RegistersReadWriteStage1Storage,
+    RegistersReadWriteStage1ChunkWriter, RegistersReadWriteStage1Plan,
+    RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
 };
 
 pub const REGISTERS_READ_WRITE_FIRST_MESSAGE_PIPELINE: &str =

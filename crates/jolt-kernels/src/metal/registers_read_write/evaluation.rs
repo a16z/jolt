@@ -23,8 +23,8 @@ use rayon::prelude::*;
 
 use crate::metal::solinas::registers_claim_reduction::RegistersClaimResidentRdPlane;
 use crate::metal::solinas::{
-    DeviceInfo, MetalError, RegistersReadWriteCycleObservation, RegistersReadWriteStage1Source,
-    SolinasMetal,
+    DeviceInfo, MetalError, RegistersReadWriteCycleObservation, RegistersReadWriteStage1Plan,
+    RegistersReadWriteStage1Source, SolinasMetal,
 };
 use crate::optimized::registers_read_write::{
     AlignedPackedRegisterRows, OptimizedRegistersReadWrite, PackedRegisterCycleRow,
@@ -240,6 +240,12 @@ impl RegistersReadWriteCpuMetalEvalFixture {
                     "Stage-1 preparation returned no register source".to_owned(),
                 )
             })?;
+            let source = match source {
+                RegistersReadWriteStage1Plan::Metal(source) => source,
+                RegistersReadWriteStage1Plan::Cpu(capacity) => {
+                    return Err(RegistersReadWriteEvalError::Kernel(capacity.to_string()));
+                }
+            };
             drop(outer_rows);
             if log_t <= 20 {
                 validate_stage1_source(&source, &rows)?;

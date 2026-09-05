@@ -24,7 +24,7 @@ use super::solinas::{
 };
 use crate::optimized::registers_read_write::{
     AlignedPackedRegisterRows, AlignedPackedRegisterRowsError, OptimizedRegistersReadWrite,
-    PackedRegisterCycleRow, SharedRdIndices,
+    PackedRegisterCycleRow, RegisterCapacityExceeded, SharedRdIndices,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -386,6 +386,9 @@ impl PrepareKernel<AkitaField, RegistersReadWriteChecking<AkitaField>> for Metal
             super::instruction_read_raf::start_instruction_read_raf_scatter(session)?;
             return Ok(prepared);
         }
+        if let Some(capacity) = session.take::<RegisterCapacityExceeded>() {
+            return prepare_capacity_fallback(session, witness, inputs, capacity);
+        }
         let needs_rd_carry = self.config.registers_val_evaluation.source
             != RegistersValEvaluationSource::Stage1Resident
             || cycles < self.config.registers_val_evaluation.trace_cutoff_elements;
@@ -504,8 +507,18 @@ impl PrepareKernel<AkitaField, RegistersReadWriteChecking<AkitaField>> for Metal
             packed_owner_bytes = 0,
         )
         .entered();
-        let rows = AlignedPackedRegisterRows::collect(&access, physical_rows, log_t >= 28)
-            .map_err(packed_source_error)?;
+        let rows = match AlignedPackedRegisterRows::collect(&access, physical_rows, log_t >= 28) {
+            Ok(rows) => rows,
+            Err(AlignedPackedRegisterRowsError::Capacity(capacity)) => {
+                return prepare_capacity_fallback(session, witness, inputs, capacity);
+            }
+            Err(AlignedPackedRegisterRowsError::Witness(error)) => {
+                return Err(KernelError::Witness(error));
+            }
+            Err(AlignedPackedRegisterRowsError::Storage(reason)) => {
+                return Err(KernelError::InvariantViolation { reason });
+            }
+        };
         let source_owner = Arc::new(rows);
         let source_kind = "direct_witness";
         if needs_rd_carry {
@@ -592,13 +605,28 @@ fn record_route(
     .entered();
 }
 
-fn packed_source_error(error: AlignedPackedRegisterRowsError) -> KernelError<AkitaField> {
-    match error {
-        AlignedPackedRegisterRowsError::Witness(error) => KernelError::Witness(error),
-        AlignedPackedRegisterRowsError::Storage(_) => KernelError::InvariantViolation {
-            reason: "registers read-write packed source allocation failed",
-        },
-    }
+fn prepare_capacity_fallback(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<AkitaField>,
+    inputs: ProverInputs<'_, AkitaField, RegistersReadWriteChecking<AkitaField>>,
+    capacity: RegisterCapacityExceeded,
+) -> Result<RegistersReadWriteKernelBox, KernelError<AkitaField>> {
+    tracing::info!(
+        target: "jolt::metal",
+        active_registers = capacity.active_registers,
+        "registers read-write active domain exceeds Metal capacity; using optimized CPU"
+    );
+    record_route(
+        1usize << inputs.relation.register_dimensions().log_t(),
+        "metal_cycle_sequence_v1",
+        "optimized_cpu",
+        "active_register_capacity",
+        0,
+        "none",
+    );
+    let prepared = OptimizedRegistersReadWrite.prepare(session, witness, inputs)?;
+    super::instruction_read_raf::start_instruction_read_raf_scatter(session)?;
+    Ok(prepared)
 }
 
 fn metal_prepare_error(error: MetalError) -> KernelError<AkitaField> {
@@ -645,7 +673,9 @@ mod tests {
     use super::*;
     use crate::metal::MetalConfig;
     use crate::optimized::parity::run_lockstep;
-    use crate::optimized::registers_read_write::test_support::structured_fixture;
+    use crate::optimized::registers_read_write::test_support::{structured_fixture, TraceFixture};
+    use crate::optimized::spartan_outer::prepare_metal_spartan_outer_stage1_owner_witness_rows;
+    use crate::reference::ReferenceBackend;
 
     fn point(len: usize, seed: u64) -> Vec<AkitaField> {
         (0..len as u64)
@@ -654,9 +684,38 @@ mod tests {
     }
 
     #[test]
-    fn adapter_selects_metal_and_matches_optimized_cpu() {
+    fn adapter_selects_metal_and_matches_reference() {
+        check_fixture(structured_fixture(1 << 8), true, false);
+    }
+
+    #[test]
+    fn adapter_handles_register_capacity_boundary() {
+        for active in [64u8, 65, 72, 128] {
+            check_fixture(capacity_fixture(active), active == 64, false);
+        }
+    }
+
+    #[test]
+    fn adapter_consumes_stage1_capacity_fallback() {
+        check_fixture(capacity_fixture(72), false, true);
+    }
+
+    fn capacity_fixture(active: u8) -> TraceFixture {
+        let mut fixture = TraceFixture::new();
+        let offset = if active == 64 { 64 } else { 0 };
+        for register in 0..active {
+            fixture.op(
+                Some(offset + register),
+                Some(offset + (register + 1) % active),
+                Some(offset + (register + 2) % active),
+            );
+        }
+        fixture
+    }
+
+    fn check_fixture(fixture: TraceFixture, uses_metal: bool, prepare_stage1: bool) {
         let log_t = 8;
-        structured_fixture(1 << log_t).with_plane(log_t, |witness| {
+        fixture.with_plane(log_t, |witness| {
             let relation = RegistersReadWriteChecking::new(ReadWriteDimensions::new(
                 log_t,
                 REGISTER_ADDRESS_BITS,
@@ -695,7 +754,7 @@ mod tests {
                 + challenges.gamma * claims.rs1_value
                 + challenges.gamma * challenges.gamma * claims.rs2_value;
             let round_challenges = point(log_t + REGISTER_ADDRESS_BITS, 101);
-            let mut expected = OptimizedRegistersReadWrite
+            let mut expected = ReferenceBackend
                 .prepare(&mut ProofSession::default(), witness, inputs())
                 .unwrap();
             let metal = MetalBackend::new(MetalConfig {
@@ -706,8 +765,42 @@ mod tests {
             })
             .unwrap();
             let mut session = ProofSession::default();
+            if prepare_stage1 {
+                let (_, ready) = prepare_metal_spartan_outer_stage1_owner_witness_rows(
+                    &metal.context,
+                    witness,
+                    1 << log_t,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+                .unwrap();
+                crate::metal::spartan_outer::publish_instruction_read_raf_stage1(
+                    &metal.context,
+                    &mut session,
+                    ready,
+                )
+                .unwrap();
+                assert_eq!(
+                    session
+                        .state::<RegisterCapacityExceeded>()
+                        .unwrap()
+                        .active_registers,
+                    72
+                );
+                assert!(session.state::<RegistersReadWriteStage1Source>().is_none());
+                assert!(session
+                    .state::<PendingRegistersReadWriteStage1Pipelines>()
+                    .is_none());
+            }
             let mut actual = metal.prepare(&mut session, witness, inputs()).unwrap();
-            assert_eq!(metal.registers_read_write_metal_sequences(), 1);
+            assert!(session.state::<RegisterCapacityExceeded>().is_none());
+            assert_eq!(
+                metal.registers_read_write_metal_sequences(),
+                usize::from(uses_metal)
+            );
             assert!(session.state::<SharedRdIndices>().is_some());
             run_lockstep(
                 expected.as_mut(),

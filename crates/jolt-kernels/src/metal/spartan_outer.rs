@@ -43,13 +43,14 @@ use super::solinas::{
     spartan_outer_uniskip_row_bytes, InstructionInputRows, MetalError, OuterRemainderPhase,
     OuterRemainderSequence, OuterRemainderSequenceConfig, OuterRemainderSequenceStorage,
     PendingRegistersReadWriteStage1Pipelines, PendingSpartanStage1SourcePrimer,
-    RegistersReadWriteStage1Source, RegistersValInstructionSourceLease,
-    RegistersValInstructionSourceRequest, SolinasMetal, SpartanOuterUniskipConfig,
-    SpartanOuterUniskipRows,
+    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source,
+    RegistersValInstructionSourceLease, RegistersValInstructionSourceRequest, SolinasMetal,
+    SpartanOuterUniskipConfig, SpartanOuterUniskipRows,
 };
 use super::spartan_dense::SpartanDenseResidentOwner;
 use super::spartan_product::MetalProductUniskipEndpointCarrier;
 use crate::optimized::instruction_input::PreparedInstructionInputRows;
+use crate::optimized::registers_read_write::RegisterCapacityExceeded;
 use crate::optimized::spartan_outer::{
     prepare_metal_instruction_input_witness_rows,
     prepare_metal_spartan_outer_shift_stage1_owner_witness_rows,
@@ -369,6 +370,8 @@ pub(super) fn publish_instruction_read_raf_stage1(
         || (ready.registers_read_write.is_some()
             && session.state::<RegistersReadWriteStage1Source>().is_some())
         || (ready.registers_read_write.is_some()
+            && session.state::<RegisterCapacityExceeded>().is_some())
+        || (ready.registers_read_write.is_some()
             && session
                 .state::<PendingRegistersReadWriteStage1Pipelines>()
                 .is_some())
@@ -381,12 +384,17 @@ pub(super) fn publish_instruction_read_raf_stage1(
     if let Some(topology) = ready.bytecode_topology {
         session.park(topology);
     }
-    if let Some(source) = ready.registers_read_write {
-        let pending = context
-            .submit_registers_read_write_stage1_pipeline_warmup(&source)
-            .map_err(metal_prepare_error)?;
-        session.park(pending);
-        session.park(source);
+    if let Some(plan) = ready.registers_read_write {
+        match plan {
+            RegistersReadWriteStage1Plan::Metal(source) => {
+                let pending = context
+                    .submit_registers_read_write_stage1_pipeline_warmup(&source)
+                    .map_err(metal_prepare_error)?;
+                session.park(pending);
+                session.park(source);
+            }
+            RegistersReadWriteStage1Plan::Cpu(capacity) => session.park(capacity),
+        }
     }
     if let Some(request) = ready.registers_val {
         session.park(request);

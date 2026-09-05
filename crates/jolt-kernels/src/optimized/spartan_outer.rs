@@ -103,7 +103,7 @@ use crate::metal::solinas::{
     spartan_outer_uniskip_successor_row_bytes, BooleanityRow, InstructionInputRow,
     InstructionInputRows, InstructionReadRafStage1ChunkWriter, InstructionReadRafStage1Owner,
     InstructionReadRafStage1Storage, MetalError, RegistersReadWriteStage1ChunkWriter,
-    RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
+    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Storage,
     RegistersValInstructionSourceRequest, SolinasMetal, SpartanOuterUniskipColdRow,
     SpartanOuterUniskipConfig, SpartanOuterUniskipRow, SpartanOuterUniskipRows,
     SpartanOuterUniskipSuccessorRow, INSTRUCTION_READ_RAF_PRODUCER_CHUNK_ROWS,
@@ -1405,7 +1405,7 @@ fn record_bytecode_stage1_topology_span(
 pub(crate) struct InstructionReadRafStage1Ready {
     pub(crate) owner: InstructionReadRafStage1Owner,
     pub(crate) bytecode_topology: Option<BytecodeAddressStage1TopologyOwner>,
-    pub(crate) registers_read_write: Option<RegistersReadWriteStage1Source>,
+    pub(crate) registers_read_write: Option<RegistersReadWriteStage1Plan>,
     pub(crate) registers_val: Option<RegistersValInstructionSourceRequest>,
     pub(crate) ram_access: Option<RamAccessCollection>,
     pub(crate) ram_read_write_records: Option<RamReadWriteRecordCollection>,

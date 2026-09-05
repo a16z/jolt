@@ -187,7 +187,7 @@ pub(crate) use ram_val_sequence::RamValSequence;
 pub(crate) use registers_read_write::RegistersReadWriteCycleObservation;
 pub(crate) use registers_read_write::{
     PendingRegistersReadWriteStage1Pipelines, RegistersReadWriteStage1ChunkWriter,
-    RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
+    RegistersReadWriteStage1Plan, RegistersReadWriteStage1Source, RegistersReadWriteStage1Storage,
 };
 pub(crate) use registers_val::PendingRegistersValFirstMessage;
 pub use registers_val::{

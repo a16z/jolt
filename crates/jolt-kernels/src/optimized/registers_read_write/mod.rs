@@ -45,7 +45,8 @@ pub(crate) use packed::PackedRegisterRowsDeviceView;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) use packed::{
     AlignedCompactRegisterIndices, AlignedPackedRegisterRows, AlignedPackedRegisterRowsError,
-    BoundRegisterCycleRoot, PackedRegisterCycleRow, PACKED_REGISTER_ROWS_ALIGNMENT,
+    BoundRegisterCycleRoot, PackedRegisterCycleRow, RegisterCapacityExceeded,
+    PACKED_REGISTER_ROWS_ALIGNMENT,
 };
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 

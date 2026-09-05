@@ -13,6 +13,9 @@ use crate::metal::solinas::instruction_input::{
 };
 #[cfg(feature = "test-utils")]
 use crate::optimized::registers_read_write::PackedRegisterCycleRow;
+use crate::optimized::registers_read_write::RegisterCapacityExceeded;
+
+use super::MAX_REGISTER_BLOCK_CAPACITY;
 
 pub(crate) const REGISTERS_READ_WRITE_STAGE1_CHUNK_ROWS: usize = 1 << 12;
 
@@ -45,6 +48,11 @@ struct RegistersReadWriteStage1SourceInner {
 
 #[derive(Clone)]
 pub(crate) struct RegistersReadWriteStage1Source(Arc<RegistersReadWriteStage1SourceInner>);
+
+pub(crate) enum RegistersReadWriteStage1Plan {
+    Metal(RegistersReadWriteStage1Source),
+    Cpu(RegisterCapacityExceeded),
+}
 
 pub(crate) struct RegistersReadWriteStage1SourceView<'a> {
     pub(crate) instruction_input: &'a Buffer,
@@ -123,7 +131,7 @@ impl RegistersReadWriteStage1Storage {
         instruction_input: InstructionInputRows,
         instruction_read_raf: &InstructionReadRafStage1Owner,
         physical_rows: usize,
-    ) -> Result<RegistersReadWriteStage1Source, MetalError> {
+    ) -> Result<RegistersReadWriteStage1Plan, MetalError> {
         if instruction_input.len() != self.rows
             || instruction_input.device_registry_id() != self.device_registry_id
             || self.rd_indices.length() as usize != self.rows
@@ -147,9 +155,9 @@ impl RegistersReadWriteStage1Storage {
             .copied()
             .fold(0u128, |left, right| left | right);
         let active_registers = active_mask.count_ones() as usize;
-        if active_registers > 64 {
-            return Err(invalid_source(
-                "Stage-1 register source has more than 64 active registers",
+        if active_registers > MAX_REGISTER_BLOCK_CAPACITY {
+            return Ok(RegistersReadWriteStage1Plan::Cpu(
+                RegisterCapacityExceeded { active_registers },
             ));
         }
         let remap_registers = active_mask >> 64 != 0;
@@ -172,8 +180,8 @@ impl RegistersReadWriteStage1Storage {
                 *original = index as u8;
             }
         }
-        Ok(RegistersReadWriteStage1Source(Arc::new(
-            RegistersReadWriteStage1SourceInner {
+        Ok(RegistersReadWriteStage1Plan::Metal(
+            RegistersReadWriteStage1Source(Arc::new(RegistersReadWriteStage1SourceInner {
                 instruction_input,
                 instruction_read_raf: instruction_read_raf.booleanity_rows(),
                 rd_indices: self.rd_indices,
@@ -184,8 +192,8 @@ impl RegistersReadWriteStage1Storage {
                 physical_rows,
                 cycles: self.rows,
                 device_registry_id: self.device_registry_id,
-            },
-        )))
+            })),
+        ))
     }
 }
 

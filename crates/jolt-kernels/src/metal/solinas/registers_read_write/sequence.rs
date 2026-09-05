@@ -54,7 +54,7 @@ use crate::optimized::registers_read_write::{
     PackedRegisterCycleRow, PACKED_REGISTER_ROWS_ALIGNMENT,
 };
 
-const MAX_REGISTER_BLOCK_CAPACITY: usize = 64;
+pub(crate) const MAX_REGISTER_BLOCK_CAPACITY: usize = 64;
 const CROSS_REPRESENTATION_REUSE_LOG_T_MIN: usize = 25;
 const COMPACT_RS1_SOURCE_LOG_T_MIN: usize = 28;
 const ASYNC_SOURCE_RETIREMENT_LOG_T_MIN: usize = 28;

@@ -3,6 +3,7 @@ use jolt_witness::{RandomAccessRows, WitnessError};
 use rayon::prelude::*;
 
 use super::rows::RegisterCycleRow;
+use crate::metal::solinas::registers_read_write::MAX_REGISTER_BLOCK_CAPACITY;
 
 const COLLECT_CHUNK: usize = 1 << 16;
 
@@ -117,6 +118,15 @@ pub(crate) enum AlignedPackedRegisterRowsError {
     Witness(#[from] WitnessError),
     #[error("{0}")]
     Storage(&'static str),
+    #[error(transparent)]
+    Capacity(#[from] RegisterCapacityExceeded),
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+#[error("Metal register state supports at most 64 active registers; got {active_registers}")]
+pub(crate) struct RegisterCapacityExceeded {
+    pub(crate) active_registers: usize,
 }
 
 #[cfg(feature = "metal")]
@@ -359,10 +369,8 @@ impl AlignedPackedRegisterRows {
             ));
         }
         let active_registers = active_register_mask.count_ones() as usize;
-        if active_registers > 64 {
-            return Err(AlignedPackedRegisterRowsError::Storage(
-                "Metal sparse register state supports at most 64 active registers",
-            ));
+        if active_registers > MAX_REGISTER_BLOCK_CAPACITY {
+            return Err(RegisterCapacityExceeded { active_registers }.into());
         }
         let remap_registers = active_register_mask >> 64 != 0;
         let mut register_map = [0u8; 128];
