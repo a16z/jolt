@@ -118,6 +118,13 @@ fn main() {
     );
     let padded = artifacts.trace_length.next_power_of_two();
     let padded_hz = padded as f64 / artifacts.prove_seconds;
+    println!(
+        "MATRIX_TIMING name={} scale={scale} backend={} prove_s={:.9} trace_len={} padded_len={padded}",
+        cli.name.as_str(),
+        backend.as_str(),
+        artifacts.prove_seconds,
+        artifacts.trace_length,
+    );
     let results_dir = PathBuf::from("benchmark-runs/results");
     fs::create_dir_all(&results_dir).expect("create results directory");
     let results_path = results_dir.join(format!(

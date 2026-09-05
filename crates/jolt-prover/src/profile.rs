@@ -72,6 +72,8 @@ const CYCLES_PER_SHA256: f64 = 3396.0;
 const CYCLES_PER_SHA3: f64 = 4330.0;
 const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
+// Execute-only range probes at 64 through 32768 inputs measured 7682–7884 rows/item.
+const CYCLES_PER_COLLATZ_ITEM: f64 = 8000.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
@@ -110,6 +112,7 @@ pub enum Workload {
     Sha3Chain,
     #[value(name = "btreemap")]
     BTreeMap,
+    Collatz,
 }
 
 impl Workload {
@@ -120,6 +123,7 @@ impl Workload {
             Self::Sha2Chain => "sha2-chain",
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
+            Self::Collatz => "collatz",
         }
     }
 
@@ -130,6 +134,7 @@ impl Workload {
             Self::Sha2Chain => 22,
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
+            Self::Collatz => 20,
         }
     }
 
@@ -155,6 +160,11 @@ impl Workload {
             Self::BTreeMap => {
                 postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP))
                     .expect("serialize input")
+            }
+            Self::Collatz => {
+                let start = 1u128 << 68;
+                let count = u128::from(scale_to_target_ops(target, CYCLES_PER_COLLATZ_ITEM));
+                postcard::to_stdvec(&(start, start + count)).expect("serialize input")
             }
         }
     }
@@ -237,7 +247,7 @@ pub struct ProfileArgs {
     pub name: Workload,
 
     /// log2 of the max (padded) trace length; per-workload default when
-    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20).
+    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap/collatz 20).
     #[clap(long)]
     pub scale: Option<u32>,
 
@@ -590,6 +600,9 @@ fn run_workload(
 
     // --- Guest compilation and trace sizing (unmeasured).
     let mut program = Program::new(&format!("{bench_name}-guest"));
+    if matches!(workload, Workload::Collatz) {
+        program.set_func("collatz_convergence_range");
+    }
     let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
     assert!(
         sizing_trace.len().next_power_of_two() <= max_trace_length,
