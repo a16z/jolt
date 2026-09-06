@@ -93,3 +93,6 @@
 {"elapsed_s": 254.5104988339881, "event": "validation_complete", "exit_code": 0, "raw_sha256": "1e600f74f35ef45875280c59fb936feecf81cae365ac90379152b2dfbd72d3ac", "sampled_family_rss_bytes": 11379687424, "step": "build-resolved-cargo", "utc": "2026-09-06T09:48:36Z"}
 {"command": ["/opt/homebrew/opt/rustup/bin/cargo", "nextest", "run", "-p", "jolt-kernels", "--features", "metal", "--test-threads", "1", "--cargo-quiet"], "controller_pid": 14599, "cwd": "/private/tmp/jolt-commit-occupancy-20260906", "event": "validation_start", "step": "jolt-metal", "timeout_s": 1200, "utc": "2026-09-06T09:49:39Z"}
 {"elapsed_s": 52.925442750012735, "event": "validation_complete", "exit_code": 0, "raw_sha256": "338b5243398807dbf74295415ca452935190b3adf4daec96fd7ba84edc81a4ed", "sampled_family_rss_bytes": 2904047616, "step": "jolt-metal", "utc": "2026-09-06T09:50:32Z"}
+{"deadline_epoch": 1788690743.8433752, "event": "finalist_start", "manifest_sha256": "bd0e204853867b1140537c5f423de7d5d7c1cc50ee22b25dee644fc4893d21ed", "utc": "2026-09-06T09:52:23Z"}
+{"attempt": 1, "binary_sha256": "72417a5f0fdeed24df3ffc52eb531761ee6df25f0fa692bedac92da056bce90c", "event": "finalist_cell", "utc": "2026-09-06T09:52:23Z", "variant": "parent", "workload": "fibonacci"}
+{"event": "cooldown", "label": "t28_fibonacci_metal_r1", "seconds": 120, "utc": "2026-09-06T09:52:23Z"}

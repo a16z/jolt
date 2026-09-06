@@ -33,3 +33,8 @@ All five AOT guest SHA256 values match the original matrix manifest. Production
 normalizer and final reducer bodies exactly match the independently validated
 diagnostic after removing comments/whitespace; no diagnostic kernel is shipped.
 Jolt serial Metal nextest started09:49UTC, not yet complete at this entry.
+
+09:50UTC: Jolt Metal nextest329/329 pass,0skipped,9.659s test execution,
+52.925s total; rawSHA338b5243398807dbf74295415ca452935190b3adf4daec96fd7ba84edc81a4ed.
+The twelve-proof finalist epoch starts after this gate; its frozen manifest,
+contract and immutable per-proof logs live in finalist/.

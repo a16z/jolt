@@ -33,10 +33,11 @@ invented optimum. Exact occupancy/optimality certification is unavailable.
 
 ## Ranked mechanisms and costs
 
-Current checkpoint08:58UTC: D22 bounded radix26 is the next registered
-mechanism; full derivation/cost/claim map is in radix26.md. It keeps five
-source words/coefficient and349matrix sweeps while moving carry propagation
-to a bounded16-contribution cadence. No implementation or timing yet.
+Current checkpoint09:52UTC: D23 staged radix26 passes the full-panel gate:
+25.33% higher useful throughput,2.425s boundary saving. D22 without staging
+saved only8.97% GPU time, below gate. Derivation/cost/claim map:radix26.md.
+Production finalist7878e5ba1 passes32/32Akita Metal and329/329Jolt Metal tests;
+the frozen full-proof matrix is in flight, with no accepted e2e gain yet.
 
 D0/D1 resource-grid/reservation, D19 column grouping, D20 widened carry,
 and D21 state-halving all failed their promotion gates. Reference reuse is

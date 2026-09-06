@@ -1,4 +1,4 @@
-# Commit campaign checkpoint — 2026-09-06 09:36 UTC
+# Commit campaign checkpoint — 2026-09-06 09:52 UTC
 
 Goal active.20% higher useful root-panel throughput is a milestone, not a cap;
 the COMPONENT milestone now passes, but the full goal has NOT been achieved.
@@ -6,14 +6,18 @@ No production optimization accepted or pushed.
 Accepted Jolt554f62703/Akita d756e3a67 and parent binary remain unchanged.
 Serial M4 Max, no subagents, no Xcode/admin installation, security frozen.
 
-All processes terminal and machine lock released at this checkpoint.
-Next: isolated production integration of D23, preregistered in analysis.md.
+Finalist proof controller now owns the machine lock. Do not start another
+GPU run, build, or heavy CPU check while it runs. Follow run_finalist.py's
+frozen twelve-proof sequence,180s process/40minute epoch/120s cooling guards.
+Next: score full proofs, then remaining PCS feature-mode/clippy/fmt checks.
 D23 GPU11.994->9.570s,25.33% higher useful throughput,2.425s complete-wall
 saving. Exact arithmetic/output checks pass, parent drift0.7%, no swaps or
 watchdogs. Full proofs and transfer remain unverified. Preserve registered
-shape alignment16 while using internal8-position/20KiB tiles; remove the
-capture hook. No new mechanism before this finalist is evaluated.
-Epoch8 transaction3 integration/targeted validation; checkpoint10:05UTC.
+shape alignment16 while using internal8-position/20KiB tiles; the capture
+hook has been removed. No new mechanism before this finalist is evaluated.
+Epoch8 completed: production Akita7878e5ba1,32/32Akita Metal parity tests,
+329/329Jolt Metal tests, release build passes. Epoch9 is the reserved finalist
+matrix (see finalist/started.json for its absolute deadline).
 
 Latest complete-panel verdicts (all exact output parity, zero swaps/watchdogs):
 
@@ -26,9 +30,8 @@ Latest complete-panel verdicts (all exact output parity, zero swaps/watchdogs):
   Reuse is parked despite the exact12.27% removable-update census.
 
 Parent full-panel replay is now about12.0s, with stable cooled controls;
-this is not a newly measured full-proof baseline. No production candidate
-accepted optimization exists. D23 is a component finalist; no new full-proof
-matrix has been launched.
+this is not a newly measured full-proof baseline. No production optimization
+is accepted. D23's frozen full-proof matrix is now in flight.
 
 Important process correction: quarter-second candidate screens showed drift;
 continuous8-dispatch batches also failed as the GPU heated and downclocked.
@@ -47,8 +50,8 @@ Artifacts and recovery:
 - run_panel.py: full-panel cooled ABBA, full192MiB output equality, immutable
   binary hashes. D21 predeclares first-pair futility; acceptance gates unchanged.
 - Standalone binaries in bin/ are immutable per diagnostic.
-- Isolated Akita /private/tmp/akita-kernel-campaign-20260906 has ONLY opt-in
-  capture hook cbd3d5b6f atop d756; onehot.metal remains accepted/unmodified.
+- Isolated Akita /private/tmp/akita-kernel-campaign-20260906 is7878e5ba1;
+  only D128 shader/resource/shape-naming changes versus d756, no capture hook.
 - Isolated Jolt /private/tmp/jolt-commit-occupancy-20260906 b2f89f9b9 has ONLY
   local dependency overrides and builds against that fork.
 
@@ -60,6 +63,6 @@ macmon: /private/tmp/akita-commit-macmon-build-20260906/release/macmon.
 
 User edits remain untouched: crates/jolt-prover/Cargo.toml, its untracked
 examples/onehot_census.rs, and untracked specs/akita-metal-m5-10mhz-pathway.md.
-Production nextest/clippy/five-workload validation has not run for any finalist
-because no finalist exists. Inherited fork preflight failures are documented
-in the earlier ledger; do not claim a green tree or optimal kernel.
+Akita Metal32/32 and Jolt Metal329/329 pass. PCS feature-mode and clippy gates
+remain; the five-workload validation is in flight. Inherited fork preflight
+failures remain documented; do not claim a green tree or optimal kernel.
