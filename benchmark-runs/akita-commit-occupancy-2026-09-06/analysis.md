@@ -676,3 +676,60 @@ candidate,original; >=10% GPU-time saving, <=3% original drift; independent
 equality. If below gate, park after one layout variant unless a distinct new
 causal observation justifies another. <=15min tooling/compile,<=5min guarded
 run. Epoch4 transaction2, no production or security changes.
+
+## D11 invalid timing / drift reassessment,07:04 UTC
+
+Original280.284708/262.957792ms (6.18% drift), shared-AoS256.585625/
+256.960750ms. Timing verdict INCONCLUSIVE: parent exceeds3% guard; no gain
+claim or promotion. All parity, odd-tail and target equality checks pass;
+zero swaps/watchdog. Raw runs/d11-saturation.out SHA256
+391d083c656b71ba4f8e0750fe1882c5d9097c6baae83b6317de271fad4b4ac5.
+
+Read-only telemetry shows1572–1578MHz through measured windows, including
+both parents. That <0.4% frequency range does not explain the6% time spread.
+Temperature samples38.5→52.5C while measured frequency remains high; neither
+thermal throttling nor background contention is established as the cause.
+Current process snapshot is not historical GPU attribution. Do not kill
+user/system processes or normalize timings by an invented occupancy metric.
+Pause new GPU candidate timing; before resuming, register a parent-only
+stability check with longer fixed-work timing aggregates. The~0.26s screen
+has now shown a baseline guard failure and several4–7% candidate spreads.
+Old observations stay immutable; full-proof evaluator/cooling gates unchanged.
+
+## D12 preregistration: price row-varying column differences and a fixed block pivot
+
+CPU-only, existing capture, one bounded transaction while GPU timing is paused.
+Canonical column ownership is confirmed in jolt-claims lattice/strategy.rs:
+0..15 instruction lookup selectors,16..23 balanced increment digits,24 carry,
+25..26 bytecode,27..28 RAM for this shape. No workload/column IDs will be
+hard-coded into selection. The data may have row-varying correlations even
+though D5 found no useful constant for most dense columns.
+
+Choose a predecessor i<j for column j only when1024 fixed SplitMix row samples
+predict>=10% less work than treating j independently. For same row domain,
+F_j=F_i+sum_r(f(v_jr)-f(v_ir)); skip equal canonical symbols. Correction cost
+is H_j+H_i-2*equal_selected(i,j). Roots retain original H_j. Earlier-column
+parents form an acyclic forest; final output reconstruction in column order
+would preserve every original partial. A matching absence is not a saved hot
+update; selected-zero stays distinct. Extra costs would be reference selector
+reads, negative updates, predicates, and reading/writing the original partial
+buffer during reconstruction. No new trace-sized field buffer is implied.
+
+Freeze sample-selected parents before the full scan, then count exact H and
+correction H. Gate>=15% aggregate update removal before any shader design.
+Do not choose parents from full-data oracle counts after seeing the result.
+
+In the same CPU pass, price a simpler preprocessing implementation of D2's
+already measured full-block reuse: compare each column/block exactly to the
+same column in fixed block1 (block0 if only one block). Stop comparisons after
+the first mismatch, but count all task H. No hashes or O(number_of_blocks^2)
+search. Record nonzero duplicate H/tasks, all-zero tasks and unique64-task
+groups. This could avoid the complex histogram/dedup host path entirely; it
+is not presumed to find every duplicate. D2's>=10% removed-update gate still
+applies, whereas D4's>=20% gate concerned finer-fragment reuse specifically.
+Any later candidate must price GPU equality flags, host mapping, clearing
+unused partials and duplicate-output scatter before implementation/keep.
+
+Conserve producer H3263846381; independent two-column/four-row fixture fixes
+original H7, difference work5, fixed-pivot removable H2. <=10min tooling,
+<=180s CPU-only process under lock. Epoch4 transaction3; checkpoint afterward.
