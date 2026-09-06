@@ -264,7 +264,8 @@ mod sampling_tests {
         let mut fp32_rng = ScriptedRng::new(fp32_bytes);
         assert_eq!(
             Prime32Offset99::random(&mut fp32_rng),
-            Prime32Offset99::from_canonical_u32(42)
+            // SAFETY: 42 is below Prime32Offset99::MODULUS.
+            unsafe { Prime32Offset99::from_canonical_u32(42) }
         );
         assert_eq!(fp32_rng.cursor, 8);
 
@@ -274,7 +275,8 @@ mod sampling_tests {
         let mut fp64_rng = ScriptedRng::new(fp64_bytes);
         assert_eq!(
             Prime64Offset59::random(&mut fp64_rng),
-            Prime64Offset59::from_canonical_u64(42)
+            // SAFETY: 42 is below Prime64Offset59::MODULUS.
+            unsafe { Prime64Offset59::from_canonical_u64(42) }
         );
         assert_eq!(fp64_rng.cursor, 16);
 
@@ -282,10 +284,11 @@ mod sampling_tests {
         let mut fp128_bytes = Vec::from(fp128_modulus.to_le_bytes());
         fp128_bytes.extend_from_slice(&42u128.to_le_bytes());
         let mut fp128_rng = ScriptedRng::new(fp128_bytes);
-        // SAFETY: 42 is below the field modulus.
-        assert_eq!(Prime128OffsetA7F7::random(&mut fp128_rng), unsafe {
-            Prime128OffsetA7F7::from_canonical_u128(42)
-        });
+        assert_eq!(
+            Prime128OffsetA7F7::random(&mut fp128_rng),
+            // SAFETY: 42 is below Prime128OffsetA7F7::MODULUS.
+            unsafe { Prime128OffsetA7F7::from_canonical_u128(42) }
+        );
         assert_eq!(fp128_rng.cursor, 32);
     }
 }
