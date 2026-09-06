@@ -264,3 +264,19 @@ Whole-panel replay follows only if the bounded original/candidate observation
 improves>=10%; repeat a surprising/near-threshold result at most once. Reject
 any error, watchdog or missing parity. Keep20% as milestone, not ceiling.
 This is epoch1 transaction4; checkpoint model/results before another epoch.
+
+D3 pricing result05:44 UTC: paired max envelope4663050848 vs5838522912,
+20.1330385% lower, exact H unchanged. Balance ratio0.699937978, map89204B.
+Every per-group task set checked; map samples1024rows, no full-column counts
+used to select the mapping. Clears15% implementation bar. Raw
+runs/d3-pairing-price.out SHA256
+d0ebaf9b15320b65b075f3773ac2240a65c2c0e1b35e1f5767a2c3f9cc5c315c.
+
+GPU trial freezes first_stream=floor((349-8)/2)=170, task_offset10880,
+512tasks,384groups. Use one warmup per pipeline followed by original,
+mapped,mapped,original observations, no reruns unless the predeclared drift
+or surprising-result rule applies. Both use the captured source/zero bitmap,
+identical generated canonical A uploaded to Private storage, Private partials
+and matched readback (readback excluded from GPU panel timing). Full active
+output equality against the first original plus65 independent u128 samples
+per observation. This remains a ranking diagnostic, not a full-proof gain.
