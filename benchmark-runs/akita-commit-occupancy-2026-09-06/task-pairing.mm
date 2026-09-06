@@ -22,7 +22,9 @@ static void check_active_output(const Case &test, std::vector<U128> &reference) 
 }
 
 int main(int argc, const char **argv) {
-    require(argc == 5 || argc == 6, "usage: pairing production.metal capture-directory map.u32le archive-prefix [interleaving.metal]");
+    require(argc == 5 || argc == 6 || argc == 7, "usage: pairing production.metal capture-directory map.u32le archive-prefix [helper.metal [--cached]]");
+    const bool cached = argc == 7;
+    require(!cached || std::string(argv[6]) == "--cached", "cached variant flag");
     const bool interleaved = argc == 6;
     @autoreleasepool {
         NSError *error = nil;
@@ -35,11 +37,33 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "production shader boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-        NSString *variant_name = interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
+        NSString *variant_name = cached ? @"diagnostic_cached_commit" : interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
             withString:variant_name];
         NSString *combined;
-        if (interleaved) {
+        if (cached) {
+            NSString *helper = [NSString stringWithContentsOfFile:@(argv[5])
+                encoding:NSUTF8StringEncoding error:&error];
+            require(helper && !error, "cached helper source");
+            NSString *anchor = @"    threadgroup uint shared_matrix[PACKED_FP128_D512_PANEL_TILE_ELEMENTS * 4];";
+            require([body containsString:anchor], "shared allocation boundary");
+            body = [body stringByReplacingOccurrencesOfString:anchor withString:@""];
+            body = [body stringByReplacingOccurrencesOfString:@"    constexpr uint threads_per_threadgroup = 1024u;" withString:@""];
+            NSRange copy_start = [body rangeOfString:@"        for (uint shared_index = thread_index;"];
+            NSRange copy_end = [body rangeOfString:@"        ulong tile_rows ="];
+            require(copy_start.location != NSNotFound && copy_end.location > copy_start.location, "cooperative copy boundary");
+            body = [body stringByReplacingCharactersInRange:NSMakeRange(copy_start.location,
+                copy_end.location - copy_start.location) withString:@""];
+            body = [body stringByReplacingOccurrencesOfString:@"akita_fp128_d128_rank3_accumulate_task_tile"
+                withString:@"diagnostic_cached_task_tile"];
+            body = [body stringByReplacingOccurrencesOfString:@"accumulator_0, shared_matrix, lanes"
+                withString:@"accumulator_0, matrix, matrix_cursor, lanes"];
+            body = [body stringByReplacingOccurrencesOfString:@"accumulator_1, shared_matrix, lanes"
+                withString:@"accumulator_1, matrix, matrix_cursor, lanes"];
+            body = [body stringByReplacingOccurrencesOfString:@"threadgroup_barrier(mem_flags::mem_threadgroup)"
+                withString:@"threadgroup_barrier(mem_flags::mem_none)"];
+            combined = [[source stringByAppendingString:helper] stringByAppendingString:body];
+        } else if (interleaved) {
             NSString *helper = [NSString stringWithContentsOfFile:@(argv[5])
                 encoding:NSUTF8StringEncoding error:&error];
             require(helper && !error, "interleaved helper source");
@@ -75,24 +99,37 @@ int main(int argc, const char **argv) {
             require(pipelines[variant] && !error, "pairing pipeline");
             require(pipelines[variant].maxTotalThreadsPerThreadgroup == 1024
                 && pipelines[variant].threadExecutionWidth == 32
-                && pipelines[variant].staticThreadgroupMemoryLength == 32768, "pairing resource fingerprint");
+                && pipelines[variant].staticThreadgroupMemoryLength == (cached && variant ? 0u : 32768u), "task variant resource fingerprint");
             id<MTLBinaryArchive> archive = [device newBinaryArchiveWithDescriptor:[MTLBinaryArchiveDescriptor new] error:&error];
             MTLComputePipelineDescriptor *descriptor = [MTLComputePipelineDescriptor new];
             descriptor.computeFunction = function;
             require([archive addComputePipelineFunctionsWithDescriptor:descriptor error:&error], "pairing archive");
             NSString *path = [NSString stringWithFormat:@"%s.variant%u.bin", argv[4], variant];
             require([archive serializeToURL:[NSURL fileURLWithPath:path] error:&error], "archive serialization");
-            std::printf("PAIRING_PIPELINE variant=%u shared_bytes=32768 max_threads=1024 simd=32\n", variant);
+            std::printf("TASK_PIPELINE variant=%u shared_bytes=%lu max_threads=1024 simd=32\n", variant,
+                (unsigned long)pipelines[variant].staticThreadgroupMemoryLength);
         }
         id<MTLCommandQueue> queue = [device newCommandQueue];
         const uint32_t small_map[] = {9,0,8,1,7,2,6,3,5,4};
         for (unsigned variant = 0; variant < 2; ++variant) {
             Case small(device, 256, 2, 5, 10, 10);
             small.make_private(device, queue);
-            if (variant && !interleaved) small.task_mapping = [device newBufferWithBytes:small_map length:sizeof(small_map)
+            if (variant && !interleaved && !cached) small.task_mapping = [device newBufferWithBytes:small_map length:sizeof(small_map)
                 options:MTLResourceStorageModeShared];
             std::printf("PAIRING_CASE phase=parity variant=%u\n", variant);
             small.run(queue, pipelines[variant], variant, false, true);
+            if (cached) {
+                Case odd(device, 256, 2, 5, 9, 10);
+                odd.make_private(device, queue);
+                std::printf("TASK_CASE phase=odd_tail_parity variant=%u\n", variant);
+                odd.run(queue, pipelines[variant], variant, false, true);
+                const auto *actual = static_cast<const U128 *>(odd.output.contents);
+                for (uint64_t part = 0; part < 16; ++part)
+                    for (uint64_t element = 0; element < 3; ++element)
+                        for (uint64_t coefficient = 0; coefficient < 128; ++coefficient)
+                            require(actual[odd.output_index(9, part, element, coefficient)] == 0,
+                                "inactive odd-tail task untouched");
+            }
         }
         NSString *directory = @(argv[2]);
         NSData *metadata_bytes = [NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"metadata.json"]];
@@ -130,19 +167,19 @@ int main(int argc, const char **argv) {
         require(mapping_buffer != nil, "mapping buffer");
         std::vector<U128> reference;
         for (unsigned variant = 0; variant < 2; ++variant) {
-            target.task_mapping = variant && !interleaved ? mapping_buffer : nil;
+            target.task_mapping = variant && !interleaved && !cached ? mapping_buffer : nil;
             std::printf("PAIRING_CASE phase=warmup variant=%u task_offset=10880\n", variant);
             target.run(queue, pipelines[variant], variant, true, false);
             check_active_output(target, reference);
         }
         unsigned order = 0;
         for (unsigned variant : {0u, 1u, 1u, 0u}) {
-            target.task_mapping = variant && !interleaved ? mapping_buffer : nil;
+            target.task_mapping = variant && !interleaved && !cached ? mapping_buffer : nil;
             std::printf("PAIRING_CASE phase=measure variant=%u task_offset=10880\n", variant);
             target.run(queue, pipelines[variant], ++order, false, false);
             check_active_output(target, reference);
         }
         std::printf("%s_COMPLETE target_observations=4 parity=pass active_coefficients=%llu\n",
-            interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
+            cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
     }
 }

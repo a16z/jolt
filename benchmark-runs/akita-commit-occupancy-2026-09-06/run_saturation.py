@@ -34,10 +34,11 @@ def main():
     mode.add_argument("--shared-reservation", action="store_true")
     mode.add_argument("--task-pairing", action="store_true")
     mode.add_argument("--task-interleaving", action="store_true")
+    mode.add_argument("--cached-gathers", action="store_true")
     args = parser.parse_args()
-    real_input = args.task_pairing or args.task_interleaving
-    diagnostic = "d6" if args.task_interleaving else "d3" if args.task_pairing else "d1" if args.shared_reservation else "d0"
-    binary = ROOT / ("bin/task-interleaving" if args.task_interleaving else "bin/task-pairing" if args.task_pairing else "bin/shared-reservation" if args.shared_reservation else "bin/saturation")
+    real_input = args.task_pairing or args.task_interleaving or args.cached_gathers
+    diagnostic = "d7" if args.cached_gathers else "d6" if args.task_interleaving else "d3" if args.task_pairing else "d1" if args.shared_reservation else "d0"
+    binary = ROOT / ("bin/cached-gathers" if args.cached_gathers else "bin/task-interleaving" if args.task_interleaving else "bin/task-pairing" if args.task_pairing else "bin/shared-reservation" if args.shared_reservation else "bin/saturation")
     source = Path("/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal/src/kernels/onehot.metal")
     if hashlib.sha256(source.read_bytes()).hexdigest() != "065827662f06ed94de4974f336349abbb933f72316b0590e1e68c3f6db188c83":
         raise RuntimeError("accepted shader fingerprint mismatch")
@@ -53,6 +54,8 @@ def main():
                     str(ROOT / "runs" / (diagnostic + "-production"))]
         if args.task_interleaving:
             command.append(str(ROOT / "task-interleaving.metal"))
+        if args.cached_gathers:
+            command += [str(ROOT / "cached-gathers.metal"), "--cached"]
     elif args.shared_reservation:
         command += [str(ROOT / "shared-reservation.metal"), str(ROOT / "runs/d1-production")]
     else:
@@ -83,9 +86,9 @@ def main():
                     raise RuntimeError("telemetry exited before diagnostic completion")
                 time.sleep(1)
         raw = output.read_text()
-        complete = "INTERLEAVING_COMPLETE" if args.task_interleaving else "PAIRING_COMPLETE" if args.task_pairing else "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
+        complete = "CACHED_COMPLETE" if args.cached_gathers else "INTERLEAVING_COMPLETE" if args.task_interleaving else "PAIRING_COMPLETE" if args.task_pairing else "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
         target_observations = 4 if real_input else 6
-        expected_rows = 11 if args.shared_reservation else 8
+        expected_rows = 10 if args.cached_gathers else 11 if args.shared_reservation else 8
         if (process.returncode != 0 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]
                 or raw.count(complete + f" target_observations={target_observations} parity=pass") != 1
                 or len(re.findall(r"^SATURATION positions=", raw, re.M)) != expected_rows):
