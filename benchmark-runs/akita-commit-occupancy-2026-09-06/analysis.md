@@ -484,3 +484,45 @@ automatic no-barrier variant: inspect this result before registering a second
 variant. Add a9-task independent small oracle to cover the odd active-task tail
 before a full-panel candidate is allowed. Budget<=20min implementation plus
 <=5min guarded GPU diagnostic. Production files remain unchanged.
+
+## D7 result,06:36 UTC / D8 preregistration: uniform coefficient-sign bands
+
+Original263.195250/260.350500ms; cached304.064083/325.303833ms.
+Means261.772875→314.683958ms,20.21% slower, original drift-1.081%.
+Both candidate observations lose; no repeat. Full target equality and65
+independent samples pass;10-task and new9-task odd-tail full oracles pass,
+including untouched inactive output. Zero swaps/watchdog. Raw
+runs/d7-saturation.out SHA256
+c98e0d07c9c8fb4a3c40ed79600998038ac9191ca7917f6e3f0697e48a30657f.
+Explicit shared staging remains the selected design. This does not measure
+cache hits; it rejects replacing staging by this synchronized direct path.
+No unsupported extrapolation to an unsynchronized variant is warranted.
+
+D8 addresses sign/carry work without changing arithmetic width or traffic.
+Each selected shift s=32q+r has q in0..3,r in0..31. For SIMD lane l and
+coefficient band k in0..3, coefficient c=l+32k is positive iff
+k>q or(k==q and l>=r). Exactly one band can have mixed signs across SIMD
+lanes; the other three bands have uniform compile-time signs once q is known.
+The current generic bool4 sign expression does not explicitly specialize q.
+Use one uniform four-way branch on q, calling the unchanged existing gather/
+arithmetic helper with three constant sign components and one lane predicate.
+No inline assembly or guessed ISA deficit; ask the high-level compiler to
+exploit a proved range property, then measure the complete shader.
+
+Price: same U,40 persistent accumulator source words,32KiB shared tile,
+matrix/shared requests, selector loop order, barriers, task schedule and
+output stores. Positive bands can eliminate complement/select and first-limb
+carry-in work; negative bands can eliminate dynamic sign choices. A source
+count suggests roughly5–6 fewer scalar operations/update averaged across
+shifts (~14–17% of naive36-op tally), NOT a measured ISA saving or time bound.
+Cost: one uniform four-way branch per128-coefficient update and four copies
+of the arithmetic body, increasing instruction-cache/code-size pressure.
+The compiler may merge those bodies or otherwise erase the expected saving;
+matrix/compute proxy floors remain as previously qualified, no optimum claim.
+
+Gate: original,candidate,candidate,original at frozen real512-task window,
+one warmup per pipeline, original drift<=3%, full3145728 coefficient equality,
+65 independent samples, full10/9-task oracles with selected-zero and odd tail.
+>=10% bounded GPU-time saving unlocks full-panel replay; otherwise park after
+one variant. Budget<=15min implementation/compile and<=5min guarded run.
+Epoch3 transaction2. No production source or protocol/security changes.
