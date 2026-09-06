@@ -1117,3 +1117,57 @@ to the existing selected-zero/allzero/odd-tail oracles before target work.
 No whole-target warmup, no timing normalization/retries. <=15min tooling+
 12min cohort, percommand5s/process180s/88GiB. Epoch7 transaction2;
 checkpoint by09:00UTC. No production implementation without a cleared gate.
+
+### D20 result / D21 preregistration,08:44 UTC
+
+D20 GPU(P,C,C,P)12006.517208,12715.773792,12671.314500,11983.575875ms;
+wall12069.275375,12776.312375,12732.641167,12044.187917ms. Parent means
+11995.046542GPU/12056.731646wall, candidate12693.544146/12754.476771ms.
+GPU regresses5.8232%,wall5.7872%; parent drift0.1913%/0.2081%. Reject.
+All output hashes equal D19, all six small oracles pass, zero swaps/watchdogs.
+RawSHA256(P,C,C,P):
+92b8c4c26c4bf0ddef7cfd7b4f673d530d11ced8394bb508e31ba5e691476c5a
+201751b8802756a023a5717580794d222cd2d626402117c1379074481ac8fa7a
+4e1bacc2669486ba74f6065e0f641aa1171a8c7c0312d3a08e3d73235513f123
+44c906e90e5c278826779cec26ed623c3a5bb0254d9a9ea0068477cb606bcb90.
+
+Model audit revisited existing r4-calibration-steady.out, not a new run:
+one carry accumulator141.03/139.58/141.74Gupdates/s; two carry accumulators
+113.89/114.00/113.82. Two wide accumulators already failed badly (~48.55),
+so do NOT reopen wide64. The generic shift/xor/add issue probe~4.53 nominal
+Tops/s would put36sourceops/update at~9.96s, but this is neither the same
+instruction mix nor an ISA count and CANNOT certify a10s hardware floor.
+
+D21 tests ONE carry task per SIMD, keeping four coefficients/lane. Persistent
+source accumulator state40->20u32words/thread; actual registers/residency
+remain unknown. Same1024threads,32KiB tile,fp128 arithmetic,16position partials,
+input/output geometry and original task order.32rather than64tasks/stream;
+still512tasks/command, hence16streams/768groups instead of8/384;44commands.
+Each SIMD's second accumulator/loop/store is compile-time inactive. No matrix,
+parameter, transcript, verifier or arithmetic change. Source binding stays
+the parent's original per-command slices, including lane_row_offset.
+
+Added cost is explicit:698matrix sweeps rather than349,2094GiB logical A
+requests, twice cooperative loads/stores and tile barriers. The additional
+all-requests-hit-DRAM proxy is2.377s at measured440.545GiB/s; actual additional
+DRAM traffic may be lower through cache reuse, but cannot be assumed free.
+UsefulH/U, shared coefficient gathers and final output writes are unchanged.
+The calibration's~24% useful-rate opportunity corresponds to~2.3s at this
+12s boundary IF it transferred; the added streaming/control work can erase
+it entirely. The trial resolves this tradeoff in the production body rather
+than inferring occupancy from register-shaped source code. No optimality claim.
+
+Same full-panel real-input harness and exact parent-output artifact, small
+odd/selected-zero/allzero/extremal oracles. All costs included. Acceptance
+ranking remains>=10% panelGPU reduction AND>=1s completewall saving, final
+parent drift<=3%, all parity/resource checks. No production promotion here.
+
+Future-screen efficiency amendment, preregistered before D21 data: run cooled
+P,C first. If C saves<3% GPU OR<0.3s wall, stop and reject without remaining
+C,P. This stricter futility rule saves failed-trial time; it does NOT relax
+acceptance or allow retries. Otherwise finish the fixed C,P observations
+and score all four.120s cooling between processes,5s percommand/180s process/
+88GiB/zero swaps/watchdogs. Tooling<=10min,cohort<=12min; checkpoint09:00UTC
+or immediately afterward if the fourth fixed observation is still completing.
+Epoch7 transaction3; checkpoint regardless of result. No additional candidate
+until the epoch model/queue is updated.
