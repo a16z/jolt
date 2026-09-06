@@ -25,11 +25,12 @@ int main(int argc, const char **argv) {
     require(argc == 5 || argc == 6 || argc == 7 || argc == 8, "usage: pairing production.metal capture-directory map.u32le archive-prefix [helper.metal [--cached | --sign-bands | --deferred counts.u16le]]");
     const bool cached = argc == 7 && std::string(argv[6]) == "--cached";
     const bool sign_bands = argc == 7 && std::string(argv[6]) == "--sign-bands";
+    const bool shared_aos = argc == 7 && std::string(argv[6]) == "--shared-aos";
     const bool deferred = argc == 8 && std::string(argv[6]) == "--deferred";
-    require(argc != 7 || cached || sign_bands, "task variant flag");
+    require(argc != 7 || cached || sign_bands || shared_aos, "task variant flag");
     require(argc != 8 || deferred, "deferred variant flag");
     const bool interleaved = argc == 6;
-    const bool mapped = !cached && !sign_bands && !interleaved && !deferred;
+    const bool mapped = !cached && !sign_bands && !interleaved && !deferred && !shared_aos;
     @autoreleasepool {
         NSError *error = nil;
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -41,11 +42,35 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "production shader boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-        NSString *variant_name = deferred ? @"diagnostic_deferred_commit" : sign_bands ? @"diagnostic_sign_bands_commit" : cached ? @"diagnostic_cached_commit" : interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
+        NSString *variant_name = shared_aos ? @"diagnostic_shared_aos_commit" : deferred ? @"diagnostic_deferred_commit" : sign_bands ? @"diagnostic_sign_bands_commit" : cached ? @"diagnostic_cached_commit" : interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
             withString:variant_name];
         NSString *combined;
-        if (deferred) {
+        if (shared_aos) {
+            NSString *helper = [NSString stringWithContentsOfFile:@(argv[5])
+                encoding:NSUTF8StringEncoding error:&error];
+            require(helper && !error, "interleaved shared-record helper source");
+            helper = [helper stringByReplacingOccurrencesOfString:@"diagnostic_cached_task_tile"
+                withString:@"diagnostic_shared_aos_task_tile"];
+            helper = [helper stringByReplacingOccurrencesOfString:@"device const AkitaFp128 *matrix,"
+                withString:@"threadgroup const AkitaFp128 *matrix,"];
+            helper = [helper stringByReplacingOccurrencesOfString:@"    ulong matrix_cursor,\n" withString:@""];
+            helper = [helper stringByReplacingOccurrencesOfString:@"ulong base = matrix_cursor + (ulong)local_position * 128ul;"
+                withString:@"uint base = local_position * 128u;"];
+            helper = [helper stringByReplacingOccurrencesOfString:@"(ulong)sources" withString:@"sources"];
+            body = [body stringByReplacingOccurrencesOfString:@"threadgroup uint shared_matrix[PACKED_FP128_D512_PANEL_TILE_ELEMENTS * 4];"
+                withString:@"threadgroup AkitaFp128 shared_matrix[PACKED_FP128_D512_PANEL_TILE_ELEMENTS];"];
+            NSRange store_start = [body rangeOfString:@"            shared_matrix[shared_index] = value.limb[0];"];
+            NSRange store_end = [body rangeOfString:@"                value.limb[3];"];
+            require(store_start.location != NSNotFound && store_end.location > store_start.location,
+                "original shared plane-store boundary");
+            body = [body stringByReplacingCharactersInRange:NSMakeRange(store_start.location,
+                store_end.location + store_end.length - store_start.location)
+                withString:@"            shared_matrix[shared_index] = value;"];
+            body = [body stringByReplacingOccurrencesOfString:@"akita_fp128_d128_rank3_accumulate_task_tile"
+                withString:@"diagnostic_shared_aos_task_tile"];
+            combined = [[source stringByAppendingString:helper] stringByAppendingString:body];
+        } else if (deferred) {
             NSString *helper = [NSString stringWithContentsOfFile:@(argv[5])
                 encoding:NSUTF8StringEncoding error:&error];
             require(helper && !error, "deferred-sign helper source");
@@ -145,7 +170,7 @@ int main(int argc, const char **argv) {
                 options:MTLResourceStorageModeShared];
             std::printf("PAIRING_CASE phase=parity variant=%u\n", variant);
             small.run(queue, pipelines[variant], variant, false, true);
-            if (cached || sign_bands || deferred) {
+            if (cached || sign_bands || deferred || shared_aos) {
                 Case odd(device, 256, 2, 5, 9, 10);
                 odd.make_private(device, queue);
                 if (deferred && variant) odd.task_mapping = odd.small_negative_counts(device);
@@ -230,6 +255,6 @@ int main(int argc, const char **argv) {
             check_active_output(target, reference);
         }
         std::printf("%s_COMPLETE target_observations=4 parity=pass active_coefficients=%llu\n",
-            deferred ? "DEFERRED" : sign_bands ? "SIGN_BANDS" : cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
+            shared_aos ? "SHARED_AOS" : deferred ? "DEFERRED" : sign_bands ? "SIGN_BANDS" : cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
     }
 }

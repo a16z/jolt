@@ -38,10 +38,11 @@ def main():
     mode.add_argument("--sign-bands", action="store_true")
     mode.add_argument("--negative-counts", action="store_true")
     mode.add_argument("--deferred-sign", action="store_true")
+    mode.add_argument("--shared-aos", action="store_true")
     args = parser.parse_args()
-    real_input = args.task_pairing or args.task_interleaving or args.cached_gathers or args.sign_bands or args.deferred_sign
-    diagnostic = "d10" if args.deferred_sign else "d9" if args.negative_counts else "d8" if args.sign_bands else "d7" if args.cached_gathers else "d6" if args.task_interleaving else "d3" if args.task_pairing else "d1" if args.shared_reservation else "d0"
-    binary = ROOT / ("bin/deferred-sign" if args.deferred_sign else "bin/negative-counts" if args.negative_counts else "bin/sign-bands" if args.sign_bands else "bin/cached-gathers" if args.cached_gathers else "bin/task-interleaving" if args.task_interleaving else "bin/task-pairing" if args.task_pairing else "bin/shared-reservation" if args.shared_reservation else "bin/saturation")
+    real_input = args.task_pairing or args.task_interleaving or args.cached_gathers or args.sign_bands or args.deferred_sign or args.shared_aos
+    diagnostic = "d11" if args.shared_aos else "d10" if args.deferred_sign else "d9" if args.negative_counts else "d8" if args.sign_bands else "d7" if args.cached_gathers else "d6" if args.task_interleaving else "d3" if args.task_pairing else "d1" if args.shared_reservation else "d0"
+    binary = ROOT / ("bin/shared-aos" if args.shared_aos else "bin/deferred-sign" if args.deferred_sign else "bin/negative-counts" if args.negative_counts else "bin/sign-bands" if args.sign_bands else "bin/cached-gathers" if args.cached_gathers else "bin/task-interleaving" if args.task_interleaving else "bin/task-pairing" if args.task_pairing else "bin/shared-reservation" if args.shared_reservation else "bin/saturation")
     source = Path("/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal/src/kernels/onehot.metal")
     if hashlib.sha256(source.read_bytes()).hexdigest() != "065827662f06ed94de4974f336349abbb933f72316b0590e1e68c3f6db188c83":
         raise RuntimeError("accepted shader fingerprint mismatch")
@@ -69,6 +70,8 @@ def main():
             if hashlib.sha256(counts.read_bytes()).hexdigest() != "9cdb0c1814c681d136371990e36da357b3bd5297991d9a22378eb14cc1629448":
                 raise RuntimeError("frozen count artifact mismatch")
             command += [str(ROOT / "deferred-sign.metal"), "--deferred", str(counts)]
+        if args.shared_aos:
+            command += [str(ROOT / "cached-gathers.metal"), "--shared-aos"]
     elif args.shared_reservation:
         command += [str(ROOT / "shared-reservation.metal"), str(ROOT / "runs/d1-production")]
     else:
@@ -99,9 +102,9 @@ def main():
                     raise RuntimeError("telemetry exited before diagnostic completion")
                 time.sleep(1)
         raw = output.read_text()
-        complete = "DEFERRED_COMPLETE" if args.deferred_sign else "NEGATIVE_COUNTS_COMPLETE" if args.negative_counts else "SIGN_BANDS_COMPLETE" if args.sign_bands else "CACHED_COMPLETE" if args.cached_gathers else "INTERLEAVING_COMPLETE" if args.task_interleaving else "PAIRING_COMPLETE" if args.task_pairing else "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
+        complete = "SHARED_AOS_COMPLETE" if args.shared_aos else "DEFERRED_COMPLETE" if args.deferred_sign else "NEGATIVE_COUNTS_COMPLETE" if args.negative_counts else "SIGN_BANDS_COMPLETE" if args.sign_bands else "CACHED_COMPLETE" if args.cached_gathers else "INTERLEAVING_COMPLETE" if args.task_interleaving else "PAIRING_COMPLETE" if args.task_pairing else "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
         target_observations = 2 if args.negative_counts else 4 if real_input else 6
-        expected_rows = 12 if args.deferred_sign else 0 if args.negative_counts else 10 if args.cached_gathers or args.sign_bands else 11 if args.shared_reservation else 8
+        expected_rows = 12 if args.deferred_sign else 0 if args.negative_counts else 10 if args.cached_gathers or args.sign_bands or args.shared_aos else 11 if args.shared_reservation else 8
         if (process.returncode != 0 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]
                 or raw.count(complete + f" target_observations={target_observations} parity=pass") != 1
                 or len(re.findall(r"^SATURATION positions=", raw, re.M)) != expected_rows):
