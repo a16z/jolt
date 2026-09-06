@@ -1,4 +1,4 @@
-# Commit campaign checkpoint — 2026-09-06 10:03 UTC
+# Commit campaign checkpoint — 2026-09-06 10:11 UTC
 
 Goal active.20% higher useful root-panel throughput is a milestone, not a cap;
 the COMPONENT milestone now passes, but the full goal has NOT been achieved.
@@ -10,10 +10,16 @@ Rebased finalist proof controller now owns the machine lock. Do not start anothe
 GPU run, build, or heavy CPU check while it runs. run_rebased_finalist.py adds
 one parent-only stability condition to the unchanged twelve-proof sequence,
 180s process/40minute epoch/120s cooling guards; deadline10:40:25UTC.
-Next: score full proofs, then remaining PCS feature-mode/clippy/fmt checks.
+Next: finish/score four transfer pairs, then PCS feature-mode/clippy/fmt checks.
+Live exec session57818, controller PID15605; no other jobs may contend.
+Fibonacci ABBA passes: parent32.501577250/32.997158500s, candidate
+30.615382291/30.392947500s. Means32.749367875->30.504164896s,2.245203s
+saving (6.8557%),parent drift1.5133%,all four verified,zero swaps/watchdogs.
+BTreeMap parent cooling began10:11:06UTC. Remaining eight transfer proofs
+retain original historical5% discrepancy guards and may stop for reassessment.
 D23 GPU11.994->9.570s,25.33% higher useful throughput,2.425s complete-wall
 saving. Exact arithmetic/output checks pass, parent drift0.7%, no swaps or
-watchdogs. Full proofs and transfer remain unverified. Preserve registered
+watchdogs. Fibonacci full-proof timing passes; transfer remains unverified. Preserve registered
 shape alignment16 while using internal8-position/20KiB tiles; the capture
 hook has been removed. No new mechanism before this finalist is evaluated.
 Epoch8 completed: production Akita7878e5ba1,32/32Akita Metal parity tests,
@@ -22,7 +28,7 @@ matrix stopped after one verified parent32.835085250s,9.25% faster than the
 historical36.182954209s. No candidate proof ran. All identity/hash checks pass;
 cause unproven. The one preregistered extra parent must agree within3% before
 any candidate. That extra parent now verifies32.501577250s,1.016% from the
-calibration control:PASS. First candidate is cooling. New artifacts:
+calibration control:PASS. All four new Fibonacci pair observations now pass. New artifacts:
 finalist-rebased/; original epoch preserved.
 Combined amended reserve13proofs/45minutes measurement+cooling execution.
 

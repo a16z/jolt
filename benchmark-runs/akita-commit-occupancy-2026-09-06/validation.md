@@ -45,3 +45,18 @@ in finalist-rebased/ verifies32.501577250s,1.016% from the calibration control,
 passing its3% band. RawSHA86fe93de73c79f399432e27906eb9930a147fab9ad1a183207564437c7818835.
 All13-proof amended-budget records remain visible; the original parent is
 calibration only. The candidate comparison uses the new ABBA controls.
+
+10:11UTC Fibonacci ABBA passes:
+
+| Order | Variant | prove_s | Raw SHA256 |
+|---|---|---:|---|
+|1|Parent|32.501577250|86fe93de73c79f399432e27906eb9930a147fab9ad1a183207564437c7818835|
+|2|Candidate|30.615382291|94256c0c5453b15d19c9a8d40de9d548a0e59a19b6573e19385584bf5d82904d|
+|3|Candidate|30.392947500|912219dff619d244f474f5e6a4ae73d978c5161e1565ce9b2ba0e68b1fff262a|
+|4|Parent|32.997158500|342718713997c6a910016ecc7ecd948fe6166bccb96fa8ec9353cb6c1ee1bf62|
+
+Means32.749367875->30.504164896s, saving2.245203s (6.8557%wall,
+7.3603%throughput). Parent drift1.5133%, below3%; all four exact proof markers,
+trace_len201327593, T28, zero swaps/watchdogs. RSS~83.7GiB in both variants.
+The historical36.183s parent is not used in these gains. Four workload
+transfers and remaining PCS/clippy/fmt gates are still pending; NOT accepted.
