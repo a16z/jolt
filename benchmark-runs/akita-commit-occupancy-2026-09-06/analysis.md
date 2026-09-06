@@ -70,7 +70,60 @@ resource/barrier mechanisms. >3% control drift or mismatched oracle =>invalid;
 at most one targeted ordering repeat after explanation. Budget: <=15min
 implementation/compile, <=5min guarded run including120s initial cooling.
 
-Tooling: no-sudo macmon source fetched for inspection; frequency/power useful
-as controls, not occupancy. IORegistry coarse GPU statistics work without
-sudo. M4 IOReport bandwidth fallback may saturate and is not a roofline.
-No telemetry installation, pipeline change or candidate promotion yet.
+## D0 result / model update,05:04 UTC
+
+Full small-shape oracle passes checksum8efa303caf4f4675;65 independent
+coefficient samples pass every target observation. P19 throughput Gupdates/s:
+48groups71.554914;96groups91.062989;192groups109.811770;
+384groups112.337670 and110.904011;768groups111.085341.
+384control drift-1.2762%;768versus384mean-0.4797%, below the10% unlock.
+Deprioritize larger-dispatch tuning. This is an effective throughput plateau,
+not measured shader occupancy. Synthetic target remains~10% faster than the
+recorded real input; do not interpret that cross-session difference causally.
+
+macmon6919d7781b6c55a6e3bedff83a210435837e1dfe built locally without sudo.
+Read-only JSON telemetry succeeds; target sampling windows~1572–1578MHz
+after warmup. The first cold warmup includes338→1578MHz ramp. Coarse100ms
+samples straddle command edges; no per-instruction frequency/cycle claim.
+Peak process-family RSS6.31GiB, swaps0, no watchdog. Raw:
+runs/d0-saturation.out SHA256a710f7e48b17bf698f870be3b8196b6bd7547549dfb10975556e9e0a21970e3a.
+41telemetry samples; runs/d0-production.bin archives accepted compiled PSO.
+
+## D1 preregistration: shared reservation versus useful tile work
+
+Question: does shared-memory reservation materially restrict throughput of
+the same full commit body, and would a smaller useful tile survive its extra
+synchronization cost? Keep D0 inputs, H, output ownership,128coefficients,
+two tasks/SIMD,1024threads,384groups and forty source accumulator words/lane.
+
+Diagnostic-only MSL appended to accepted source uses its arithmetic/store
+helpers. Replace the static shared array by a dynamic threadgroup argument;
+specialize useful tile positions16 or8. Plane strides and row-loop geometry
+follow useful tile size. For tile8, only reservation changes16/24/32KiB;
+same PSO/instructions/read addresses/barriers in those three observations.
+Metal runtime allocation is explicit; unused reserved space is not a proven
+resident L1 allocation on dynamic-caching hardware. A null reservation result
+does not rule out pressure from the useful working set or registers.
+
+Price: tile8 keeps matrix requests, source selector loads and coefficient
+updates unchanged. It doubles tile iterations, ballots and TG barriers
+(2048→4096tiles,4096→8192barriers/TG). It does not double matrix sweeps.
+The conditional matrix/compute arithmetic floors above are unchanged, while
+the unmeasured control/synchronization floor rises. Tile16/dynamic32 is the
+bridge control against the original static32 PSO; a >3% bridge difference
+requires explanation before attributing results to tile size.
+
+Gate: full reduced CPU oracle for original and both tile specializations
+(selected-zero,sign,partial/tail/padding);65 target samples each and identical
+sample checksum for all variants. One warmup original; order original,
+tile16/reserve32,tile8/reserve16,tile8/reserve32,tile8/reserve24,original.
+Before measured tile8 observations run one short unreported-to-score warmup
+to avoid cold-PSO first-use effects. Falsifier for reservation pressure:
+tile8/reserve32 no >5% slowdown againstreserve16; this only rejects a
+reservation-sensitive effect at this shape. >=10% tile8 whole-panel saving
+unlocks a real-input diagnostic, >=20% unlocks production candidate pricing.
+<=3% original drift required; otherwise one justified ordering retry max.
+Budget<=20min code/build,<=5min guarded observation with120s cooling.
+
+No production kernel or protocol changes yet. The first20% improvement is a
+milestone, not a stopping ceiling; stronger supported levers remain in scope.
