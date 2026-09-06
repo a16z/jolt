@@ -1,7 +1,8 @@
 #define COMMIT_DIAGNOSTIC_LIBRARY
 #include "saturation.mm"
+#include "radix26-probe.mm"
 
-enum class PanelSchedule { RowMajor, ColumnMajor, WidenedCarry, SingleTask };
+enum class PanelSchedule { RowMajor, ColumnMajor, WidenedCarry, SingleTask, Radix26 };
 
 struct PanelReplay {
     Case &test;
@@ -109,10 +110,11 @@ struct PanelReplay {
 };
 
 int main(int argc, const char **argv) {
-    require(argc == 6 || argc == 7, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant [--widened-carry | --single-task]");
+    require(argc >= 6 && argc <= 8, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant [--widened-carry | --single-task | --radix26 helper.metal]");
     const bool widened = argc == 7 && std::string(argv[6]) == "--widened-carry";
     const bool single_task = argc == 7 && std::string(argv[6]) == "--single-task";
-    require(argc != 7 || widened || single_task, "full-panel mechanism flag");
+    const bool radix26 = argc == 8 && std::string(argv[6]) == "--radix26";
+    require(argc == 6 || widened || single_task || radix26, "full-panel mechanism flag");
     const unsigned variant = unsigned(std::stoul(argv[5]));
     require(variant < 2, "full-panel variant");
     @autoreleasepool {
@@ -125,12 +127,35 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "root kernel boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-        NSString *variant_name = single_task ? @"diagnostic_single_task_commit"
+        NSString *variant_name = radix26 ? @"diagnostic_radix26_commit" : single_task ? @"diagnostic_single_task_commit"
             : widened ? @"diagnostic_widened_carry_commit" : @"diagnostic_column_major_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
             withString:variant_name];
         NSString *combined;
-        if (widened) {
+        if (radix26) {
+            NSString *radix_source = [NSString stringWithContentsOfFile:@(argv[7]) encoding:NSUTF8StringEncoding error:&error];
+            require(radix_source && !error, "radix26 shader source");
+            NSRange tile_start = [source rangeOfString:@"inline void akita_fp128_d128_rank3_accumulate_task_tile("];
+            NSRange store_start = [source rangeOfString:@"inline void akita_store_fp128_d128_rank3("];
+            require(tile_start.location != NSNotFound && store_start.location > tile_start.location
+                && start.location > store_start.location, "radix26 original helper boundaries");
+            NSString *helpers = [source substringWithRange:NSMakeRange(tile_start.location, start.location - tile_start.location)];
+            for (NSArray<NSString *> *rename in @[
+                @[@"AkitaTransposedFp128Accumulator", @"DiagnosticRadix26"],
+                @[@"akita_transposed_fp128_zero", @"diagnostic_radix26_zero"],
+                @[@"akita_fp128_d128_rank3_accumulate_task_tile", @"diagnostic_radix26_task_tile"],
+                @[@"akita_fp128_d512_accumulate_mixed", @"diagnostic_radix26_add"],
+                @[@"akita_store_fp128_d128_rank3", @"diagnostic_radix26_store"],
+                @[@"akita_reduce_transposed_fp128", @"diagnostic_radix26_reduce"]]) {
+                helpers = [helpers stringByReplacingOccurrencesOfString:rename[0] withString:rename[1]];
+                body = [body stringByReplacingOccurrencesOfString:rename[0] withString:rename[1]];
+            }
+            NSString *anchor = @"        threadgroup_barrier(mem_flags::mem_threadgroup);\n        matrix_cursor += (ulong)PACKED_FP128_D512_PANEL_TILE_ELEMENTS;";
+            require([body containsString:anchor], "radix26 normalization cadence anchor");
+            body = [body stringByReplacingOccurrencesOfString:anchor withString:
+                @"        if ((tile & 1u) != 0u) {\n            if (active_0) diagnostic_radix26_normalize(accumulator_0);\n            if (active_1) diagnostic_radix26_normalize(accumulator_1);\n        }\n        threadgroup_barrier(mem_flags::mem_threadgroup);\n        matrix_cursor += (ulong)PACKED_FP128_D512_PANEL_TILE_ELEMENTS;"];
+            combined = [[[source stringByAppendingString:radix_source] stringByAppendingString:helpers] stringByAppendingString:body];
+        } else if (widened) {
             NSRange word_start = [source rangeOfString:@"inline uint4 akita_add_transposed_word("];
             NSRange word_end = [source rangeOfString:@"kernel void akita_packed_onehot_reduce_partials("];
             NSRange value_start = [source rangeOfString:@"inline void akita_fp128_d512_accumulate_value("];
@@ -182,11 +207,14 @@ int main(int argc, const char **argv) {
         id<MTLLibrary> library = [device newLibraryWithSource:combined options:options error:&error];
         if (error) std::fprintf(stderr, "%s\n", error.localizedDescription.UTF8String);
         require(library && !error, "full-panel library");
-        NSArray<NSString *> *names = @[@"akita_packed_onehot_commit_fp128_d128_rank3",
-            variant_name, @"akita_packed_onehot_reduce_partials"];
-        id<MTLComputePipelineState> pipelines[3];
+        NSArray<NSString *> *names = radix26
+            ? @[@"akita_packed_onehot_commit_fp128_d128_rank3", variant_name,
+                @"akita_packed_onehot_reduce_partials", @"diagnostic_radix26_probe"]
+            : @[@"akita_packed_onehot_commit_fp128_d128_rank3", variant_name,
+                @"akita_packed_onehot_reduce_partials"];
+        id<MTLComputePipelineState> pipelines[4];
         id<MTLBinaryArchive> archive = [device newBinaryArchiveWithDescriptor:[MTLBinaryArchiveDescriptor new] error:&error];
-        for (unsigned index = 0; index < 3; ++index) {
+        for (unsigned index = 0; index < names.count; ++index) {
             id<MTLFunction> function = [library newFunctionWithName:names[index]];
             pipelines[index] = [device newComputePipelineStateWithFunction:function error:&error];
             require(pipelines[index] && !error, "full-panel pipeline");
@@ -200,9 +228,10 @@ int main(int argc, const char **argv) {
         require([archive serializeToURL:[NSURL fileURLWithPath:[NSString stringWithFormat:@"%s.bin", argv[4]]]
             error:&error], "full-panel archive serialization");
         id<MTLCommandQueue> queue = [device newCommandQueue];
+        if (radix26) check_radix26_normalizer(device, queue, pipelines[3]);
         for (unsigned candidate = 0; candidate < 2; ++candidate) {
-            for (unsigned fixture = 0; fixture < (widened || single_task ? 3u : 2u); ++fixture) {
-                Case small(device, 256, 4, 5, 15, 10);
+            for (unsigned fixture = 0; fixture < (radix26 ? 5u : widened || single_task ? 3u : 2u); ++fixture) {
+                Case small(device, radix26 ? 1024 : 256, 4, 5, 15, 10);
                 small.params.full_blocks = 3;
                 small.params.tasks = 15;
                 if (fixture == 1) {
@@ -217,6 +246,16 @@ int main(int argc, const char **argv) {
                     auto *matrix_values = static_cast<U128 *>(small.matrix.contents);
                     for (size_t index = 0; index < small.matrix.length / sizeof(U128); ++index)
                         matrix_values[index] = values[index % 8];
+                }
+                if (fixture >= 3) {
+                    auto *matrix_values = static_cast<U128 *>(small.matrix.contents);
+                    std::fill_n(matrix_values, small.matrix.length / sizeof(U128), MODULUS - 1);
+                    std::memset(small.lanes.contents, 0, small.lanes.length);
+                    std::memset(small.zero_rows.contents, 0, small.zero_rows.length);
+                    const uint64_t rows_per_block = small.params.positions / 2;
+                    std::memset(small.lanes.contents, fixture == 3 ? 128 : 255,
+                        small.params.full_blocks * rows_per_block * small.params.columns);
+                    small.task_hot.assign(small.params.tasks, rows_per_block);
                 }
                 small.make_private(device, queue);
                 small.run(queue, pipelines[candidate], candidate, false, true);
@@ -257,7 +296,7 @@ int main(int argc, const char **argv) {
         finish_command(setup, setup_started);
         PanelReplay replay{target, lanes, zeros};
         const PanelSchedule schedule = variant == 0 ? PanelSchedule::RowMajor
-            : single_task ? PanelSchedule::SingleTask
+            : radix26 ? PanelSchedule::Radix26 : single_task ? PanelSchedule::SingleTask
             : widened ? PanelSchedule::WidenedCarry : PanelSchedule::ColumnMajor;
         id<MTLBuffer> result = replay.run(device, queue, pipelines[variant], pipelines[2], schedule);
         id<MTLCommandBuffer> readback = [queue commandBuffer];

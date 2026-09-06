@@ -6,8 +6,8 @@ Accepted Jolt554f62703/Akita d756e3a67 and parent binary remain unchanged.
 Serial M4 Max, no subagents, no Xcode/admin installation, security frozen.
 
 All processes terminal and machine lock released at this checkpoint.
-Next: implement D22 bounded radix26, preregistered in radix26.md. No D22 code
-or measurements yet. It retains40persistent source words/thread and all
+Next: measure D22 bounded radix26, preregistered in radix26.md. Diagnostic
+code is built, not yet measured or device-validated. It retains40persistent source words/thread and all
 349matrix sweeps, with signed26-bit digits normalized every16possible inputs.
 The spec contains the modular invariant and complete i32 bound. Independent
 normalizer/field parity must pass before timing. Epoch8 checkpoint09:45UTC.
