@@ -119,14 +119,17 @@ struct TemplateCensus {
 
 struct DependencyCensus {
     uint64_t columns, blocks, total_hot = 0, corrected_hot = 0;
+    uint64_t reference_count;
     uint64_t duplicate_hot = 0, duplicate_tasks = 0, zero_tasks = 0;
     std::vector<std::optional<uint32_t>> parents;
     std::vector<uint64_t> column_hot, column_corrected;
 
     DependencyCensus(const uint8_t *lanes, const uint64_t *zeros, uint64_t cols,
                      uint64_t block_rows, uint64_t block_count, uint64_t mask,
-                     uint64_t live_rows)
-        : columns(cols), blocks(block_count), parents(cols), column_hot(cols), column_corrected(cols) {
+                     uint64_t live_rows, uint64_t references = 1)
+        : columns(cols), blocks(block_count), reference_count(std::min(references, blocks > 1 ? blocks - 1 : 1)),
+          parents(cols), column_hot(cols), column_corrected(cols) {
+        require(references >= 1 && references <= 8, "bounded fixed reference bank");
         require(live_rows > 0 && live_rows <= block_rows * blocks, "dependency sample prefix");
         std::vector<uint64_t> sampled_hot(cols), equal_selected(cols * cols);
         std::vector<uint16_t> values(cols);
@@ -154,7 +157,7 @@ struct DependencyCensus {
                 }
             }
         }
-        std::vector<uint8_t> matches(blocks * cols, 1);
+        std::vector<uint16_t> matches(blocks * cols, uint16_t((1u << reference_count) - 1u));
         std::vector<uint64_t> task_hot(blocks * cols);
         const uint64_t pivot = blocks > 1 ? 1 : 0;
         for (uint64_t row = 0; row < block_rows * blocks; ++row) {
@@ -171,18 +174,27 @@ struct DependencyCensus {
                     if (value != reference)
                         column_corrected[column] += uint64_t(value != 0) + uint64_t(reference != 0);
                 } else column_corrected[column] += value != 0;
-                if (matches[task] && block != pivot)
-                    matches[task] = value == selected_symbol(lanes, zeros, cols, mask,
-                        pivot * block_rows + row % block_rows, column);
+                if (matches[task]) {
+                    for (uint64_t reference = 0; reference < reference_count; ++reference) {
+                        const uint16_t bit = uint16_t(1u << reference);
+                        if ((matches[task] & bit) && block != pivot + reference
+                            && value != selected_symbol(lanes, zeros, cols, mask,
+                                (pivot + reference) * block_rows + row % block_rows, column))
+                            matches[task] &= uint16_t(~bit);
+                    }
+                }
             }
         }
         total_hot = std::accumulate(column_hot.begin(), column_hot.end(), uint64_t(0));
         corrected_hot = std::accumulate(column_corrected.begin(), column_corrected.end(), uint64_t(0));
         for (uint64_t task = 0; task < task_hot.size(); ++task) {
             if (!task_hot[task]) ++zero_tasks;
-            else if (task / cols != pivot && matches[task]) {
-                duplicate_hot += task_hot[task];
-                ++duplicate_tasks;
+            else if (matches[task]) {
+                const uint64_t representative = pivot + __builtin_ctz(unsigned(matches[task]));
+                if (task / cols != representative) {
+                    duplicate_hot += task_hot[task];
+                    ++duplicate_tasks;
+                }
             }
         }
     }
@@ -204,8 +216,8 @@ struct DependencyCensus {
         const uint64_t tasks = blocks * columns;
         const uint64_t original_groups = (tasks + 63) / 64;
         const uint64_t unique_groups = (tasks - duplicate_tasks - zero_tasks + 63) / 64;
-        std::printf("PIVOT_SUMMARY hot=%llu duplicate_hot=%llu reduction=%.9f duplicate_tasks=%llu zero_tasks=%llu original_groups=%llu unique_groups=%llu matrix_group_reduction=%.9f\n",
-            (unsigned long long)total_hot, (unsigned long long)duplicate_hot,
+        std::printf("PIVOT_SUMMARY references=%llu hot=%llu duplicate_hot=%llu reduction=%.9f duplicate_tasks=%llu zero_tasks=%llu original_groups=%llu unique_groups=%llu matrix_group_reduction=%.9f\n",
+            (unsigned long long)reference_count, (unsigned long long)total_hot, (unsigned long long)duplicate_hot,
             double(duplicate_hot) / total_hot, (unsigned long long)duplicate_tasks,
             (unsigned long long)zero_tasks, (unsigned long long)original_groups,
             (unsigned long long)unique_groups, 1.0 - double(unique_groups) / original_groups);
@@ -463,6 +475,11 @@ int main(int argc, const char **argv) {
     require(dependency.total_hot == 7 && dependency.corrected_hot == 5
         && dependency.duplicate_hot == 2 && dependency.duplicate_tasks == 1
         && dependency.parents[1] == std::optional<uint32_t>(0), "hand-counted column and block reuse");
+    const uint8_t bank_fixture[] = {1,1,1,2,2,1,1,2,2,1};
+    DependencyCensus bank(bank_fixture, &dependency_zeros, 2, 1, 5, 0, 5, 8);
+    require(bank.total_hot == 10 && bank.duplicate_hot == 6 && bank.duplicate_tasks == 6
+        && bank.zero_tasks == 0 && bank.reference_count == 4,
+        "multiple reference classes retain canonical representatives");
     std::puts("CENSUS_SELFTEST pass=true");
     if (argc == 1) return 0;
     require(argc == 9 || argc == 10 || argc == 11 || argc == 12,
@@ -478,12 +495,13 @@ int main(int argc, const char **argv) {
         && blocks > 0 && blocks <= 1024, "production census envelope");
     require(lanes.size == rows * columns && zeros.size == rows / 8, "capture lengths");
     if (argc == 12) {
-        const bool dependencies = std::string(argv[9]) == "--column-deltas";
+        const bool bank = std::string(argv[9]) == "--reference-bank";
+        const bool dependencies = bank || std::string(argv[9]) == "--column-deltas";
         require(dependencies || std::string(argv[9]) == "--templates", "extended census mode flag");
         if (dependencies) {
             DependencyCensus result(static_cast<const uint8_t *>(lanes.data),
                 static_cast<const uint64_t *>(zeros.data), columns, positions / 2, blocks,
-                mask, std::stoull(argv[10]));
+                mask, std::stoull(argv[10]), bank ? 8 : 1);
             require(result.total_hot == expected_hot, "producer hot-entry count equality");
             result.print(argv[11]);
         } else {

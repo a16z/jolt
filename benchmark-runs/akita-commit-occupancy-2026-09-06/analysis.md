@@ -812,3 +812,36 @@ preprocessing design. No kernel during the current timing pause. Conserve
 producerH; add a five-block/two-column hand fixture with H10 and removableH6
 to test multiple reference equivalence classes and no self/cyclic reuse.
 <=10min tooling,<=180s CPU under lock; epoch5 transaction2.
+
+## D14 result,07:24 UTC / D15 preregistration: isolated cooled parent observations
+
+Fixed eight-block bank recovers400556032H=12.2725149% and1528 nonzero
+duplicate tasks, exactly D2's full-census removable work at this input.
+1534 zero tasks;349→301 unique matrix groups,13.7535817% lower. Both gates
+clear. This is exact work removal, not measured GPU-time savings. CPU13.01s,
+producerH and multiple-class/self-reference fixture pass, zero swaps. Raw
+runs/d14-bank.out SHA256
+e9e4fb221564f24f3440c08b5d3a7afd8142a2242a6c60acfcc9dd7bf0f216f6.
+Next reuse transaction must price GPU exact-comparison flags, CPU mapping,
+partial clearing and scatter; no expensive CPU census is proposed on the
+prover path. GPU candidate timing remains paused until stability control.
+
+D15 changes the diagnostic control from continuous batches to FOUR separate
+process observations, each under the machine lock after120s cooling. Each
+process uses the unchanged production PSO, reduced10/9-task checks, two single
+target dispatch warmups, then ONE eight-dispatch timing batch (~2.1s). This
+keeps measured batch length but limits continuous target compute to~2.7s per
+process, rather than D13's~13s heat ramp. Same real512-task window, Private
+storage, exactH and output checks. No candidate, no evaluator/goal relaxation.
+
+Retain all four observations in fixed order1..4; no retries. Gate range/mean
+<=3% across per-dispatch times, with sampled clocks/temperatures inspected
+for any residual systematic confound. No timing normalization. If it fails,
+do not refresh candidates and reassess the blocked measurement assumption;
+read-only analysis may continue. It is not proof of causality if it passes,
+only evidence that this isolated screen is adequate to resume10%-gate ranking.
+Fresh immutable artifact prefix per observation; resume only missing cells
+after interruption, never overwrite/repeat completed observations. Guard each
+process180s/5s-command/88GiB, zero swaps/watchdogs. Cohort<=12min including
+four120s cooldowns, excluding<=10min host tooling. Epoch5 transaction3;
+checkpoint afterward. Full-proof evaluator and final validation reserve unchanged.
