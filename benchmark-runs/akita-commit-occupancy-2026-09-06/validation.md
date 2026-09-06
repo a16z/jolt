@@ -24,3 +24,12 @@ the supplied modern-Python PATH omitted /opt/homebrew/opt/rustup/bin. No
 compilation or GPU work ran; preserve finalist-build.out and failure events.
 Resolve Cargo explicitly and add rustup to child PATH. The one corrected
 launch uses finalist-build-resolved-cargo.out; candidate source unchanged.
+
+09:48UTC: corrected frozen release build passes in254.51s, peak sampled
+family RSS11.38GB; rawSHA1e600f74f35ef45875280c59fb936feecf81cae365ac90379152b2dfbd72d3ac.
+Candidate binary bin/modular_benchmark_radix26_7878e5ba1 SHA256
+216737e3d08ab90b6bbdbdfce6858ae733862c6d1922f8ed65ab2ec9f2907e20.
+All five AOT guest SHA256 values match the original matrix manifest. Production
+normalizer and final reducer bodies exactly match the independently validated
+diagnostic after removing comments/whitespace; no diagnostic kernel is shipped.
+Jolt serial Metal nextest started09:49UTC, not yet complete at this entry.
