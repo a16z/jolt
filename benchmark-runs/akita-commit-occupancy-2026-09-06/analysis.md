@@ -33,15 +33,17 @@ invented optimum. Exact occupancy/optimality certification is unavailable.
 
 ## Ranked mechanisms and costs
 
-1. Resource/concurrency pressure:32KiB shared plus40 persistent source words
-per lane,32SIMDs/group. D0 tests fixed production PSO saturation at48..768
-groups (production384); controlled shared-reservation follows only if useful.
-2. Barrier imbalance: two task-specific ballots/loops per SIMD followed by
-group synchronization. Count selected iterations per SIMD on real inputs
-before changing mapping. Source-level binomial estimate is not idle time.
-3. Live-state relief: price matrix sweep growth, instructions and barriers.
-R4 already showed arithmetic-only throughput did not transfer; reshuffling
-accumulators remains closed until a new causal observation justifies it.
+Current checkpoint08:58UTC: D22 bounded radix26 is the next registered
+mechanism; full derivation/cost/claim map is in radix26.md. It keeps five
+source words/coefficient and349matrix sweeps while moving carry propagation
+to a bounded16-contribution cadence. No implementation or timing yet.
+
+D0/D1 resource-grid/reservation, D19 column grouping, D20 widened carry,
+and D21 state-halving all failed their promotion gates. Reference reuse is
+parked after D16/D17 metadata missed its cost gate. Do not relaunch those
+mechanisms without new causal evidence. Small D3/D10 signals remain parked,
+not accepted or additive savings. Physical occupancy and optimality remain
+unknown. See each registered result below for the exact scope of rejection.
 
 ## D0 preregistration: unchanged production shader saturation
 
@@ -1171,3 +1173,28 @@ and score all four.120s cooling between processes,5s percommand/180s process/
 or immediately afterward if the fourth fixed observation is still completing.
 Epoch7 transaction3; checkpoint regardless of result. No additional candidate
 until the epoch model/queue is updated.
+
+### D21 result / epoch7 checkpoint,08:58 UTC
+
+D21 GPU(P,C,C,P)12041.494542,11652.467458,11680.803042,11920.984083ms;
+wall12103.277000,11714.857125,11741.449500,11982.840209ms. Parent means
+11981.239313GPU/12043.058605wall; candidate11666.635250/11728.153313ms.
+Saving314.604063ms GPU (2.6258%) and314.905292ms wall. Parent drift1.0058%/
+1.0001%, below3%. First P,C narrowly cleared the strict futility gate, so
+all four fixed observations ran. Final ranking gate fails; REJECT.
+All final outputs match the original hash, all six reduced oracles pass,
+zero swaps/watchdogs. RawSHA256(P,C,C,P):
+a8e241fd21ae1b59ebcd2ab13084bc920c7aed6b9c75c15adbf2c92165d63b06
+d384820c9eb4e22fdc66566a4d10bf35052bd2c4fc9225a4c559d288ace9ff20
+af09e9f2f015563eda59629cef7c704209d3b7d89d237e953582b9b3104c51c9
+738bfd9f9becde0ff8ceb31a6b72871221751c2563c6679c2ec711bfe40e5466.
+
+Epoch7 three transactions complete. No processes or lock remain. No source
+optimization accepted; target milestone unmet. Next epoch's D22 design is
+radix26.md: full arithmetic invariant, i32 bound1141233817<2^31, existing
+canonical reducer reuse, priced added normalization/extraction work, and
+unchanged source-state/matrix traffic. It must pass independent arithmetic
+checks before timing; its theoretical source-op savings are not measured
+throughput. Epoch8 checkpoint09:45UTC,<=3transactions. User files and accepted
+Jolt/Akita revisions remain untouched. Goal remains active beyond20% if an
+actual validated larger gain can be obtained.
