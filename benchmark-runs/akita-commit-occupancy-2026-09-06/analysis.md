@@ -845,3 +845,81 @@ after interruption, never overwrite/repeat completed observations. Guard each
 process180s/5s-command/88GiB, zero swaps/watchdogs. Cohort<=12min including
 four120s cooldowns, excluding<=10min host tooling. Epoch5 transaction3;
 checkpoint afterward. Full-proof evaluator and final validation reserve unchanged.
+
+## D15 result / epoch5 checkpoint,07:37 UTC
+
+Isolated per-dispatch means270.975000,274.256844,268.951422,273.317609ms.
+Mean271.875219ms; range/mean1.951418%, clearing3% gate.75 telemetry samples
+strictly inside measured windows span1575–1578MHz and reach at most61.68C;
+cold warmup samples are excluded only from this window-specific frequency
+statement, not deleted from artifacts. All reduced/target oracles and full
+output checks pass, zero swaps/watchdogs. Original PSO archive identical in
+all four observations. Raw SHA256, observations1..4:
+
+-025341126b0d0c685d40a4f1271b1066f9a3613997bffec4a367896bce33c384
+-668562264167b119fcc3fab8dfe90a81b5418feb6bb886c76393da505def4006
+-7cabb98f4ce74cc5d61c92342342c264368215f59c3b096da978dfaddf60eeeb
+-da5fd412bad2b5e3c4260f36fa0ef208740d998be0491069ed7e59b584fb1ac4
+
+Resume ranking only with separately cooled observations; do not reuse the
+continuous D13 aggregate protocol. Old5% observations remain provisional
+and below their gates. No optimization accepted, no production source changed.
+Epoch5's three transactions complete; metadata producer for exact bank reuse
+is the next priced lever. First20% throughput milestone remains unmet.
+
+## Epoch6 / D16 preregistration: exact reference metadata producer
+
+Checkpoint by08:30 UTC,<=3transactions,35min/two failed variants per mechanism.
+D16 prices preprocessing only, before implementing a reuse panel/reducer.
+One128-thread group owns one original(column,block) task. Threads scan disjoint
+rows of the full block, count all canonical selected entries and AND an8-bit
+mask of still-equal fixed references. A mismatch permanently clears a bit;
+all rows are still counted so executed-work metrics can be conserved exactly.
+Reference bank1..8 is clipped as D14; selected-zero != absence. SIMD reductions
+plus4 threadgroup totals yield taskH and the least-index exactly matching
+reference block, or the original block when no reference matches. No hashes.
+
+Output two u32 words/task: true hot count and a valid representative block.
+22301tasks imply178408B. A zero task retains a valid own-block representative
+but is recognized as zero by its actual H, not an arbitrary sentinel. A
+representative must itself be canonical/nonzero with the same H; host release
+validation will reject invalid ranges/cycles/counts before any panel dispatch.
+SumH must equal3263846381; unique nonzero representatives should equal19239,
+executedH2863290349 on the frozen capture (independently established by D2/D14).
+
+Costs: one additional full5.846GB selector scan, up to8 live-reference reads
+per row, selected-zero bitmap reads, mask/count arithmetic and short reductions;
+reference checks stop after mismatches but H counting does not. Traffic/issue
+floors remain qualified because cache reuse and mask survival vary. At most
+~46.8GB reference-byte requests plus source/bitmap/output if all masks survived;
+this deliberately pessimistic count is not predicted DRAM traffic. Measure
+GPU and complete command wall, including cold source mapping, not a fake
+zero-cost preprocessing step. Routine warm overhead bar<=250ms GPU mean,
+no measured sample>300ms; require all exact checks. Cold setup is recorded
+separately and must be included in any complete-panel comparison.
+
+CPU oracle uses canonical full-row comparisons (D14) and independently checks
+every metadata pair, representative idempotence/same-column identity and H
+conservation. Reduced fixtures cover multiple equality classes, self-reference,
+no-match, all-zero, selected-zero versus absence, and a clipped bank. GPU
+preprocessing is one warmup then two observations only; at this subsecond
+scale the D13 sustained-load confound is not silently transferred into a panel
+gain claim.120s initial cooling,5s command/180s process/88GiB, no swaps/watchdogs.
+
+Integration design to price, not yet implement: compact only nonzero canonical
+tasks, keeping original task order; original panel stores representative
+partials at their original addresses. A reuse-aware final reducer reads the
+representative partials and writes EACH original final output slot; zeros and
+padding produce zero without reading unwritten scratch. This removes separate
+partial clearing/scatter, at the cost of metadata lookup/addressing in the
+~5ms reducer. It preserves the existing16-term summation order and every final
+coefficient consumed by commit/eval. No protocol, arithmetic, parameters,
+transcript or verifier changes. No whole-trace field allocation.
+
+Source integration caveat from runtime.rs6379+: production currently creates
+zero-copy selector slices per command and sets lane_row_offset. A metadata
+pass needs a whole-source or explicitly bounded source view. Never silently
+copy7.25GiB near the85.4GiB proof RSS: verify page alignment/zero-copy capability
+and retain a safe existing path when a large zero-copy view is unavailable.
+Charge all mapping and host compact-map costs in the complete boundary.
+Budget<=20min tooling/compile and<=5min guarded preprocessing diagnostic.
