@@ -170,7 +170,7 @@ int main(int argc, const char **argv) {
         NSData *lanes = [NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"lanes.u8"]
             options:NSDataReadingMappedAlways error:&error];
         require(lanes && !error && lanes.length == (1ull << 28) * 29, "captured selectors");
-        NSData *zeros = [NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"zeros.u64le"]
+        NSData *zeros = [NSData dataWithContentsOfFile:[directory stringByAppendingPathComponent:@"active_zero_rows.u64le"]
             options:NSDataReadingMappedAlways error:&error];
         require(zeros && !error && zeros.length == (1ull << 28) / 8, "captured selected-zero bits");
         id<MTLBuffer> source_buffer = [device newBufferWithBytesNoCopy:const_cast<void *>(lanes.bytes)

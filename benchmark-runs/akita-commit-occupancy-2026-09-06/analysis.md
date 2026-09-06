@@ -923,3 +923,9 @@ copy7.25GiB near the85.4GiB proof RSS: verify page alignment/zero-copy capabilit
 and retain a safe existing path when a large zero-copy view is unavailable.
 Charge all mapping and host compact-map costs in the complete boundary.
 Budget<=20min tooling/compile and<=5min guarded preprocessing diagnostic.
+
+D16 controller was deliberately stopped during cooldown at07:50:31 UTC:
+the harness used a stale summary filename `zeros.u64le` instead of the actual
+`active_zero_rows.u64le`. No shader compilation or GPU dispatch had started,
+and no output/archive was created. Corrected only the input filename and
+froze a new binary v2; fresh artifact prefix D16b, same kernel and all gates.
