@@ -1,0 +1,15 @@
+{
+  "workload": "blake2b-chain",
+  "scale": 24,
+  "prove_s": 8.789301666,
+  "trace_len": 10433678,
+  "padded_len": 16777216,
+  "padded_mhz": 1.9088224113298968,
+  "actual_mhz": 1.1870883941054162,
+  "rss_gib": 9.110610961914062,
+  "verified": true,
+  "swaps": 0,
+  "raw": "cells/t24_blake2b-chain.out",
+  "raw_sha256": "99b3d3d547667eb7c999b92387d4b2ac30301c4d27b20b527a1cdafbe09a3137",
+  "sampled_family_rss_bytes": 9732669440
+}

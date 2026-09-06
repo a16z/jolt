@@ -1,0 +1,25 @@
+BLAKE2B_CHAIN_CHECK iterations=80000 digest=d6c7a7ce7dcefc936a44d379c49bd908a0f6ae59c85eb134443d708be91aa7f09a71e2dfac6facb18646405b8142b9c6163272bf039550a2f0fb2dad5ba4e14f value=true
+PROOF_VERIFIED backend=metal value=true
+modular blake2b-chain (2^28): proof size unavailable (no packed-proof byte encoding yet); CSV carries 0
+modular blake2b-chain (2^28, metal): Prover completed in 30.70s (5435.3 kHz / padded 8742.8 kHz)
+modular blake2b-chain (2^28, metal): Peak RSS 83.42 GiB
+MATRIX_TIMING name=blake2b-chain scale=28 backend=metal prove_s=30.703561250 trace_len=166883688 padded_len=268435456
+Results: benchmark-runs/results/akita_blake2b-chain_28_metal.csv
+       36.72 real       123.85 user        25.97 sys
+         89574424576  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            11495357  page reclaims
+                1601  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   1  signals received
+                1551  voluntary context switches
+              278511  involuntary context switches
+       2219608442738  instructions retired
+        528325393317  cycles elapsed
+        106887142600  peak memory footprint

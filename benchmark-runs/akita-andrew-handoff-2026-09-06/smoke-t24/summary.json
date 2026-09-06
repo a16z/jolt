@@ -1,0 +1,11 @@
+{
+  "cells": 4,
+  "means": [
+    {
+      "scale": 24,
+      "measured_mean_mhz": 1.9357781225851234,
+      "measured_10mhz_pass": false,
+      "projected_m5_mean_mhz": 2.187429278521189
+    }
+  ]
+}

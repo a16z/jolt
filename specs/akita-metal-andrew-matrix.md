@@ -129,5 +129,9 @@ python3 scripts/akita_metal_matrix.py --output benchmark-runs/m4-smoke --max-sca
 python3 -m unittest discover -s scripts/tests -p test_akita_metal_matrix.py
 ```
 
-Validation results are recorded separately in the handoff evidence directory;
-the full 20-cell matrix is intentionally left for Andrew.
+Integration code at Jolt `63ef92c12` passed the locked build, both workspace
+clippy modes, focused Metal clippy, clean-checkout formatting, 29 script tests
+and all four guarded T24 smoke proofs. See the
+[validation record](../benchmark-runs/akita-andrew-handoff-2026-09-06/VALIDATION.md)
+for exact results and reused versus fresh checks. The full 20-cell matrix is
+intentionally left for Andrew.

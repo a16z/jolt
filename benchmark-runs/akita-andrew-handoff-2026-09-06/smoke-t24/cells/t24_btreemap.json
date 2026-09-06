@@ -1,0 +1,15 @@
+{
+  "workload": "btreemap",
+  "scale": 24,
+  "prove_s": 7.904195125,
+  "trace_len": 9650940,
+  "padded_len": 16777216,
+  "padded_mhz": 2.1225710821505053,
+  "actual_mhz": 1.2209895944338798,
+  "rss_gib": 9.295501708984375,
+  "verified": true,
+  "swaps": 0,
+  "raw": "cells/t24_btreemap.out",
+  "raw_sha256": "6b04ccf3609f3a3cf2aa8d1729e457f0843f9d0f5372ac8706f5671b9603c40d",
+  "sampled_family_rss_bytes": 9915940864
+}

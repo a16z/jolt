@@ -1,0 +1,15 @@
+{
+  "workload": "sha2-chain",
+  "scale": 24,
+  "prove_s": 9.110998,
+  "trace_len": 9444142,
+  "padded_len": 16777216,
+  "padded_mhz": 1.8414246167104855,
+  "actual_mhz": 1.036565039307439,
+  "rss_gib": 9.089859008789062,
+  "verified": true,
+  "swaps": 0,
+  "raw": "cells/t24_sha2-chain.out",
+  "raw_sha256": "9f2133f8fd786936b8af5f23b862dfc51678792d2edbc6749ce4f15a08a6b816",
+  "sampled_family_rss_bytes": 9710239744
+}

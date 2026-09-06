@@ -1,0 +1,5 @@
+{"binary_sha256": "c0d8b5ce46d2abc40c78a4175187de533cbed3124de67c773acfa8ada1c8b8b3", "event": "blake2b_cell", "utc": "2026-09-06T16:28:10Z", "variant": "candidate"}
+{"event": "cooldown", "label": "t28_blake2b-chain_metal_r1", "seconds": 120, "utc": "2026-09-06T16:28:10Z"}
+{"command": ["/usr/bin/time", "-l", "/Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt/benchmark-runs/akita-blake2b-t28-2026-09-06/bin/modular_benchmark_candidate_checked", "--name", "blake2b-chain", "--scale", "28", "--backend", "metal", "--format", "none", "--target-trace-size", "171520000"], "controller_pid": 33659, "event": "start", "label": "t28_blake2b-chain_metal_r1", "timeout_s": 180, "utc": "2026-09-06T16:30:10Z"}
+{"event": "failure", "label": "t28_blake2b-chain_metal_r1", "raw": "runs/t28_blake2b-chain_metal_r1.out", "reason": "process exit 101", "utc": "2026-09-06T16:30:12Z"}
+{"event": "blake2b_pair_stopped", "reason": "process exit 101", "utc": "2026-09-06T16:30:12Z"}
