@@ -82,3 +82,14 @@ zero swaps/watchdogs and~81.2GiB RSS. Raw parent/candidate SHA256:
 801a2a3b6363a883e6f083e7905b7e36877cdfe2397cdf5fb6e8fb74d968d9d4.
 All first three workload comparisons improve; the five-workload mean is
 still pending SHA3/Collatz. No historical-baseline gain is substituted.
+
+10:27UTC SHA3-chain one-pair transfer:42.081180541->37.023138833s,
+saving5.058042s (12.020%wall). Both verify with trace_len184846378,T28,
+zero swaps/watchdogs; reported RSS85.83/85.95GiB. Parent is3.428% above
+its historical reference, within the frozen5% band. This larger single-pair
+effect is descriptive, not independently replicated or precisely attributed
+in full to a stage-level saving. No selective retry or control exclusion.
+Raw parent/candidate SHA256:
+d606b43232c7a1073f0bcadaa3a1f417943e0da6d0b6a39233b3ad072585e85a
+4b1db840aeaa66dd336664c7395c8e70c7571795e50ee68b5b53d198718d624a.
+Only Collatz remains in the timed matrix; correctness/lint gates still follow.
