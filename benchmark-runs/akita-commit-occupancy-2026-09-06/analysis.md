@@ -337,3 +337,50 @@ or block. Compute representatives once, reproduce every original partial
 output slot, then keep the existing reduction and eval input unchanged.
 Hash equality only filters comparisons; it cannot authorize reuse.
 Budget<=10min tooling and<=180s count-only process; no GPU/proof rerun.
+
+## D4 result,06:10 UTC / D5 preregistration: constant-template corrections
+
+D4 exact H3263846381 conserved. Unique H2862798829:12.2875744% removable,
+only0.015 percentage points beyond full-block reuse. Matrix groups per rank
+5584→4816,13.7535817% lower. Both gates miss. Reject standalone fragment
+reuse: shortening fragments did not uncover materially more exact equality.
+Raw runs/d4-fragments.out SHA256
+2dd653cb82f993d5f681ed079865d6333064a127140196a1adacb55cdd970084.
+CPU count5.36s, zero swaps. Add a hand-counted domain-restriction fixture before
+reusing the fragment tool; no GPU candidate was selected by this result.
+
+D5 is a different algebraic mechanism, not another exact-repetition variant.
+For task t and row r let f_r(v) be its signed negacyclic public-A contribution
+for selected byte v, and f_r(absent)=0. For a fixed selected template b,
+sum_r f_r(v_r) = B_b + sum_{r:v_r!=b}(f_r(v_r)-f_r(b)),
+where B_b=sum_r f_r(b) depends on position partial/rank, not task block/column.
+Compute B_b once, preserve every original partial and the existing reduction.
+No protocol, field, security, transcript or verifier changes. Selected-zero
+is a distinct symbol from absence throughout.
+
+Price both sides: over N rows, original H updates; with n_b exact matches,
+corrections need (N-n_b)+(H-n_b)=N+H-2*n_b updates. This only beats H when
+n_b>N/2, excluding reusable baseline construction and lookup/control costs.
+This transformation can help near-constant columns even when whole fragments
+are all different. A baseline is indexed by actual selected byte and the same
+public-A position domain. At most29 chosen templates; their partial storage
+is29*16*3*128*16=2850816B, not a new trace-sized owner. Per-template streaming
+may read3GiB of A; its measured copy proxy is~6.81ms, not a timing guarantee.
+Baseline construction also costs one coefficient update per row per rank and
+reduction work. Corrections retain original matrix sweeps/barriers unless a
+separately registered layout intervention changes them.
+
+First CPU-only census on the frozen capture: choose each column's template
+using1024 deterministic SplitMix64 samples in the certified live prefix;
+use a selected symbol only when its sampled frequency exceeds half, otherwise
+choose absent/original. Exact full-column histogram then prices that frozen
+choice, including the padded tail of the769 dispatched blocks. Also report
+the oracle-best constant's bound separately, never silently select using it.
+Conserve producer H and validate the cost identity on a small fixture with
+absence, selected-zero, matching and differing selected bytes. No kernel code
+before this census. Gate: >=15% aggregate correction-update reduction for a
+bounded real-input shader trial; otherwise do not implement this mechanism.
+The gate ranks an operation-count intervention, not a promised walltime gain.
+Next shader trial must price baseline construction, extra selector branches,
+negative updates, unchanged40-word state and full-output parity together.
+Epoch2 transaction2,<=10min tooling/180s CPU-only observation, no GPU/proof.
