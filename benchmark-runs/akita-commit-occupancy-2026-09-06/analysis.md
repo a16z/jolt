@@ -425,3 +425,62 @@ otherwise park after this one variant. Any parity/watchdog/resource failure
 rejects. No full proof or production changes at this stage. Epoch2 transaction3,
 <=20min implement/build and<=5min guarded observation including120s cooling.
 Afterward checkpoint the epoch/model before choosing another experiment.
+
+## D6 result / epoch2 checkpoint,06:25 UTC
+
+Original264.921833/266.010750ms; interleaved273.312250/288.793542ms.
+Means265.466292→281.052896ms,5.87% slower; original drift0.411%.
+All3145728 active coefficients and independent65 samples agree, selected-zero
+small oracle passes. Candidate observations differ5.66%, but neither beats
+either original, so there is no near-threshold winner to replicate. Reject
+interleaving; no claim that added registers caused the regression. Raw
+runs/d6-saturation.out SHA256
+a7d79a8a51afd187939b10b86df49d770508db6799ee60c9746b943e0c58a396.
+Zero swaps/watchdog, peak family6.15GiB. Epoch2's three transactions complete;
+none clears its gate, and no production optimization has been accepted.
+
+The count-only experiments cheaply rejected two algebraic mechanisms instead
+of spending full-proof builds on them. Remaining evidence does not establish
+an optimal kernel: exact integer issue rate, residency and cache traffic are
+still unknown. Stop repeating accumulator or tile-size variants without a new
+mechanism. Keep20% a milestone, not a ceiling or a promised result.
+
+## Epoch3 / D7 preregistration: cached device gathers instead of shared staging
+
+Epoch3 checkpoint by07:30 UTC,<=3transactions and35min or two failed variants
+per mechanism. Same serial lock/cooling/parity/resource/security rules.
+
+Exact boundary unchanged: each task accumulates the same selected negacyclic
+public-A rows into the same canonical partials. Keep1024threads,64tasks/group,
+four coefficients per lane/task,16position tiles,16position partials, Private
+matrix/output and original task order. Replace only shared-memory staging and
+gather helpers with direct readonly device-A gathers of the four selected
+coefficients. Remove the cooperative matrix-copy loop and its first barrier.
+Retain one execution-only threadgroup barrier at each tile end, keeping all
+SIMDs within the same32KiB logical A window to preserve cache-reuse opportunity.
+No mapping, wider arithmetic, protocol or host trace changes are combined.
+
+Price: device logical coefficient-read requests rise from1047GiB cooperative
+sweeps to16U=20.053TB direct gathers; explicit20.053TB shared gathers and1.124TB
+cooperative loads/stores disappear. A fully uncached direct stream at measured
+473.03GB/s would take~42.4s, worse than the12.32s panel. To make its memory-only
+proxy fit10.267s requires>=75.8% byte reuse/hits (ignoring selector/partial
+traffic); to retain the original2.377s matrix proxy requires~94.4% hits.
+Ideal per-selected-position reuse is~17.8 tasks at this density, but actual
+cache behavior is UNKNOWN. This is a cache-versus-explicit-staging experiment,
+not an assumption that logical requests are physical DRAM traffic.
+
+U and carry arithmetic unchanged.40 persistent source accumulator words remain;
+32KiB explicit shared allocation disappears, but cached A competes for on-chip
+space and addresses/temporaries change. Barriers halve4096→2048/group. The
+compulsory traffic proxy is unchanged; the unknown compute floor cannot certify
+optimality. A poor device cache path can outweigh both removed costs.
+
+Use the frozen real-input interior512tasks and same private buffers/A, independent
+small/full and65-sample oracles, full active-output equality, original,candidate,
+candidate,original after one warmup each. >=10% time saving and<=3% parent drift
+unlocks full-panel replay. Any parity/watchdog/resource failure rejects. No
+automatic no-barrier variant: inspect this result before registering a second
+variant. Add a9-task independent small oracle to cover the odd active-task tail
+before a full-panel candidate is allowed. Budget<=20min implementation plus
+<=5min guarded GPU diagnostic. Production files remain unchanged.

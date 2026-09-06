@@ -16,3 +16,5 @@
 {"event":"epoch_checkpoint","utc":"2026-09-06T05:58:00Z","epoch":1,"transactions_complete":4,"production_accepted":false,"next_epoch_deadline":"2026-09-06T07:30:00Z","next_epoch_transactions":3}
 {"event": "d4_fragments_complete", "raw_sha256": "2dd653cb82f993d5f681ed079865d6333064a127140196a1adacb55cdd970084", "utc": "2026-09-06T06:05:39Z"}
 {"event": "d5_templates_complete", "raw_sha256": "2983a4b39109f886272b35aac1bdf8ca12f0da6465402a5443868f407698688c", "utc": "2026-09-06T06:15:19Z"}
+{"binary_sha256": "817cc8a3f9c35ee2ed0d4f9fb1e37099ec2f636393f66ff1837836ff80dad1b1", "controller_pid": 4160, "event": "d6_cooldown", "seconds": 120, "utc": "2026-09-06T06:21:27Z"}
+{"archive_sha256": "33b54d09d4943f3169443b917e1e9f787e23d3128e0488c63450f92746c8eb53", "event": "d6_complete", "raw_sha256": "a7d79a8a51afd187939b10b86df49d770508db6799ee60c9746b943e0c58a396", "sampled_family_rss_bytes": 6607781888, "utc": "2026-09-06T06:23:32Z"}
