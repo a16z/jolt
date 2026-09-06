@@ -1,6 +1,8 @@
 #define COMMIT_DIAGNOSTIC_LIBRARY
 #include "saturation.mm"
 
+enum class PanelSchedule { RowMajor, ColumnMajor, WidenedCarry };
+
 struct PanelReplay {
     Case &test;
     NSData *source;
@@ -8,7 +10,8 @@ struct PanelReplay {
 
     id<MTLBuffer> run(id<MTLDevice> device, id<MTLCommandQueue> queue,
                       id<MTLComputePipelineState> panel, id<MTLComputePipelineState> reducer,
-                      bool column_major) {
+                      PanelSchedule schedule) {
+        const bool column_major = schedule == PanelSchedule::ColumnMajor;
         const auto started = Clock::now();
         const PackedParams original = test.params;
         require(original.tasks == original.full_blocks * original.columns
@@ -91,7 +94,7 @@ struct PanelReplay {
         for (uint64_t count : test.task_hot) hot += count;
         require(commands.count == 44 && hot == 3263846381ull, "full-panel command and useful-work identity");
         std::printf("FULL_PANEL variant=%u tasks=%llu commands=%lu hot=%llu panel_gpu_ms=%.6f panel_span_ms=%.6f reduce_gpu_ms=%.6f wall_ms=%.6f giga_updates_s=%.6f epoch=%.6f zero_copy=true\n",
-            unsigned(column_major), (unsigned long long)original.tasks, (unsigned long)commands.count,
+            unsigned(schedule != PanelSchedule::RowMajor), (unsigned long long)original.tasks, (unsigned long)commands.count,
             (unsigned long long)hot, active * 1e3, panel_span * 1e3, reduction_gpu * 1e3,
             wall * 1e3, double(hot) * 384 / active / 1e9, epoch);
         std::fflush(stdout);
@@ -104,7 +107,9 @@ struct PanelReplay {
 };
 
 int main(int argc, const char **argv) {
-    require(argc == 6, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant");
+    require(argc == 6 || argc == 7, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant [--widened-carry]");
+    const bool widened = argc == 7 && std::string(argv[6]) == "--widened-carry";
+    require(argc != 7 || widened, "full-panel mechanism flag");
     const unsigned variant = unsigned(std::stoul(argv[5]));
     require(variant < 2, "full-panel variant");
     @autoreleasepool {
@@ -117,13 +122,45 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "root kernel boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
+        NSString *variant_name = widened ? @"diagnostic_widened_carry_commit" : @"diagnostic_column_major_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
-            withString:@"diagnostic_column_major_commit"];
+            withString:variant_name];
+        NSString *combined;
+        if (widened) {
+            NSRange word_start = [source rangeOfString:@"inline uint4 akita_add_transposed_word("];
+            NSRange word_end = [source rangeOfString:@"kernel void akita_packed_onehot_reduce_partials("];
+            NSRange value_start = [source rangeOfString:@"inline void akita_fp128_d512_accumulate_value("];
+            NSRange value_end = [source rangeOfString:@"inline void akita_fp128_d512_accumulate_positive("];
+            NSRange mixed_start = [source rangeOfString:@"inline void akita_fp128_d512_accumulate_mixed("];
+            NSRange mixed_end = [source rangeOfString:@"inline void akita_fp128_d512_accumulate_pair("];
+            NSRange tile_start = [source rangeOfString:@"inline void akita_fp128_d128_rank3_accumulate_task_tile("];
+            NSRange tile_end = [source rangeOfString:@"inline void akita_store_fp128_d128_rank3("];
+            require(word_start.location != NSNotFound && word_end.location > word_start.location
+                && value_start.location != NSNotFound && value_end.location > value_start.location
+                && mixed_start.location != NSNotFound && mixed_end.location > mixed_start.location
+                && tile_start.location != NSNotFound && tile_end.location > tile_start.location,
+                "widened carry helper boundaries");
+            NSString *word = @"\ninline uint4 diagnostic_widened_word(uint4 lhs, uint4 rhs, thread uint4 &carry) {\n    ulong4 wide = ulong4(lhs) + ulong4(rhs) + ulong4(carry);\n    carry = uint4(wide >> 32ul);\n    return uint4(wide);\n}\n";
+            NSString *value = [source substringWithRange:NSMakeRange(value_start.location, value_end.location - value_start.location)];
+            NSString *mixed = [source substringWithRange:NSMakeRange(mixed_start.location, mixed_end.location - mixed_start.location)];
+            NSString *tile = [source substringWithRange:NSMakeRange(tile_start.location, tile_end.location - tile_start.location)];
+            NSString *helpers = [[[word stringByAppendingString:value] stringByAppendingString:mixed] stringByAppendingString:tile];
+            for (NSArray<NSString *> *rename in @[
+                @[@"akita_add_transposed_word", @"diagnostic_widened_word"],
+                @[@"akita_fp128_d512_accumulate_value", @"diagnostic_widened_value"],
+                @[@"akita_fp128_d512_accumulate_mixed", @"diagnostic_widened_mixed"],
+                @[@"akita_fp128_d128_rank3_accumulate_task_tile", @"diagnostic_widened_tile"]]) {
+                helpers = [helpers stringByReplacingOccurrencesOfString:rename[0] withString:rename[1]];
+                body = [body stringByReplacingOccurrencesOfString:rename[0] withString:rename[1]];
+            }
+            combined = [[source stringByAppendingString:helpers] stringByAppendingString:body];
+        } else {
         NSString *anchor = @"    uint global_1 = global_0 + 1u;";
         require([body containsString:anchor], "original task index anchor");
         body = [body stringByReplacingOccurrencesOfString:anchor withString:
             @"    uint global_1 = global_0 + 1u;\n    uint column_blocks = (uint)params.full_blocks_per_column;\n    if (active_0) global_0 = (global_0 % column_blocks) * live_columns + global_0 / column_blocks;\n    if (active_1) global_1 = (global_1 % column_blocks) * live_columns + global_1 / column_blocks;"];
-        NSString *combined = [source stringByAppendingString:body];
+        combined = [source stringByAppendingString:body];
+        }
         require([combined writeToFile:[NSString stringWithFormat:@"%s.generated.metal", argv[4]]
             atomically:NO encoding:NSUTF8StringEncoding error:&error], "full-panel shader snapshot");
         MTLCompileOptions *options = [MTLCompileOptions new];
@@ -132,7 +169,7 @@ int main(int argc, const char **argv) {
         if (error) std::fprintf(stderr, "%s\n", error.localizedDescription.UTF8String);
         require(library && !error, "full-panel library");
         NSArray<NSString *> *names = @[@"akita_packed_onehot_commit_fp128_d128_rank3",
-            @"diagnostic_column_major_commit", @"akita_packed_onehot_reduce_partials"];
+            variant_name, @"akita_packed_onehot_reduce_partials"];
         id<MTLComputePipelineState> pipelines[3];
         id<MTLBinaryArchive> archive = [device newBinaryArchiveWithDescriptor:[MTLBinaryArchiveDescriptor new] error:&error];
         for (unsigned index = 0; index < 3; ++index) {
@@ -150,14 +187,22 @@ int main(int argc, const char **argv) {
             error:&error], "full-panel archive serialization");
         id<MTLCommandQueue> queue = [device newCommandQueue];
         for (unsigned candidate = 0; candidate < 2; ++candidate) {
-            for (bool all_zero : {false, true}) {
+            for (unsigned fixture = 0; fixture < (widened ? 3u : 2u); ++fixture) {
                 Case small(device, 256, 4, 5, 15, 10);
                 small.params.full_blocks = 3;
                 small.params.tasks = 15;
-                if (all_zero) {
+                if (fixture == 1) {
                     std::memset(small.lanes.contents, 0, small.lanes.length);
                     std::memset(small.zero_rows.contents, 0, small.zero_rows.length);
                     std::fill(small.task_hot.begin(), small.task_hot.end(), 0);
+                }
+                if (fixture == 2) {
+                    const U128 values[] = {0, 1, MODULUS - 1, MODULUS - 2,
+                        (U128(1) << 32) - 1, (U128(1) << 64) - 1,
+                        (U128(1) << 96) - 1, U128(1) << 127};
+                    auto *matrix_values = static_cast<U128 *>(small.matrix.contents);
+                    for (size_t index = 0; index < small.matrix.length / sizeof(U128); ++index)
+                        matrix_values[index] = values[index % 8];
                 }
                 small.make_private(device, queue);
                 small.run(queue, pipelines[candidate], candidate, false, true);
@@ -197,7 +242,9 @@ int main(int argc, const char **argv) {
         [setup commit];
         finish_command(setup, setup_started);
         PanelReplay replay{target, lanes, zeros};
-        id<MTLBuffer> result = replay.run(device, queue, pipelines[variant], pipelines[2], variant != 0);
+        const PanelSchedule schedule = variant == 0 ? PanelSchedule::RowMajor
+            : widened ? PanelSchedule::WidenedCarry : PanelSchedule::ColumnMajor;
+        id<MTLBuffer> result = replay.run(device, queue, pipelines[variant], pipelines[2], schedule);
         id<MTLCommandBuffer> readback = [queue commandBuffer];
         id<MTLBlitCommandEncoder> copy = [readback blitCommandEncoder];
         [copy copyFromBuffer:target.device_output sourceOffset:0 toBuffer:target.output destinationOffset:0

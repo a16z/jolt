@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""D19 full-cost column-major ABBA, one immutable cooled observation per call."""
+"""Full-cost panel ABBA diagnostics, one immutable cooled observation per call."""
 import argparse
 import hashlib
 import os
@@ -15,11 +15,15 @@ from run_saturation import ROOT, LOCK, matrix, record
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--observation", type=int, required=True, choices=(1, 2, 3, 4))
-    observation = parser.parse_args().observation
+    parser.add_argument("--widened-carry", action="store_true")
+    args = parser.parse_args()
+    observation = args.observation
     variant = (0, 1, 1, 0)[observation - 1]
-    prefix = f"d19-{observation}"
-    binary = ROOT / "bin/full-panel"
-    if hashlib.sha256(binary.read_bytes()).hexdigest() != "dab662ad72d0275c79ee44000e2598fa1dbb5af75fd293d29f1b950a3115625e":
+    diagnostic = "d20" if args.widened_carry else "d19"
+    prefix = f"{diagnostic}-{observation}"
+    binary = ROOT / ("bin/full-panel-widened" if args.widened_carry else "bin/full-panel")
+    binary_hash = "2f5a3cf9a5312f2994c018b39b25b80d9236b7663363a6cf8bf57fd8a934c11e" if args.widened_carry else "dab662ad72d0275c79ee44000e2598fa1dbb5af75fd293d29f1b950a3115625e"
+    if hashlib.sha256(binary.read_bytes()).hexdigest() != binary_hash:
         raise RuntimeError("frozen full-panel binary fingerprint mismatch")
     shader = Path("/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal/src/kernels/onehot.metal")
     if hashlib.sha256(shader.read_bytes()).hexdigest() != "065827662f06ed94de4974f336349abbb933f72316b0590e1e68c3f6db188c83":
@@ -32,18 +36,20 @@ def main():
     archive_prefix = ROOT / "runs" / (prefix + "-production")
     archive = Path(str(archive_prefix) + ".bin")
     generated = Path(str(archive_prefix) + ".generated.metal")
-    reference = ROOT / "runs/d19-parent-final.fp128le"
+    reference = ROOT / "runs" / (diagnostic + "-parent-final.fp128le")
     if any(path.exists() for path in (output, telemetry, archive, generated)):
         raise RuntimeError("immutable observation exists; inspect rather than repeat")
     if reference.exists() != (observation > 1):
         raise RuntimeError("first-parent reference presence/order mismatch")
     if observation > 1:
-        previous = ROOT / "runs" / (f"d19-{observation - 1}-panel.out")
+        previous = ROOT / "runs" / (f"{diagnostic}-{observation - 1}-panel.out")
         if previous.read_text().count("FULL_PANEL_COMPLETE target_observations=1 parity=pass") != 1:
             raise RuntimeError("previous observation incomplete")
     sampler = Path("/private/tmp/akita-commit-macmon-build-20260906/release/macmon")
     command = ["/usr/bin/time", "-l", str(binary), str(shader), str(ROOT / "runs/d2-capture"),
         str(reference), str(archive_prefix), str(variant)]
+    if args.widened_carry:
+        command.append("--widened-carry")
     LOCK.mkdir()
     process = monitor = None
     try:
@@ -71,7 +77,7 @@ def main():
         if (process.returncode != 0 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]
             or len(rss) != 1 or int(rss[0]) >= 88 * 2**30 or len(rows) != 1
             or raw.count("FULL_PANEL_COMPLETE target_observations=1 parity=pass") != 1
-            or len(re.findall(r"^SATURATION positions=256", raw, re.M)) != 4
+            or len(re.findall(r"^SATURATION positions=256", raw, re.M)) != (6 if args.widened_carry else 4)
             or len(re.findall(r"^PANEL_COMMAND ", raw, re.M)) != 44):
             raise RuntimeError("full-panel process/output/identity failure")
         metrics = dict(field.split("=", 1) for field in rows[0].split())
