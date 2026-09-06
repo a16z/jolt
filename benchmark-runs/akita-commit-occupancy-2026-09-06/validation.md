@@ -93,3 +93,12 @@ Raw parent/candidate SHA256:
 d606b43232c7a1073f0bcadaa3a1f417943e0da6d0b6a39233b3ad072585e85a
 4b1db840aeaa66dd336664c7395c8e70c7571795e50ee68b5b53d198718d624a.
 Only Collatz remains in the timed matrix; correctness/lint gates still follow.
+
+Post-matrix validation reserve: one40minute epoch, at most eight check steps,
+no concurrent GPU/build/CPU checks. Reuse existing caches. Seven remaining
+Cargo checks (three fork clippy,two Jolt clippy,two PCS feature modes) plus
+final fmt/diff audit; expected warm-cache turnaround20–30minutes, not a
+routine fast gate. Every Cargo process remains <=20minutes and88GiB, additionally
+capped by the common absolute epoch deadline. A failed gate is investigated,
+not silently retried; preserve inherited failures. No candidate/evaluator
+changes or accepted pin update during this validation epoch.

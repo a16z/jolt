@@ -46,7 +46,11 @@ STEPS["build-resolved-cargo"] = STEPS["build"]
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("step", choices=STEPS)
+    parser.add_argument("--deadline-epoch", type=float)
     args = parser.parse_args()
+    timeout = min(1200, args.deadline_epoch - time.time()) if args.deadline_epoch is not None else 1200
+    if timeout < 10:
+        raise RuntimeError("insufficient validation epoch reserve")
     cwd, target, command = STEPS[args.step]
     log_path = ROOT / "runs" / ("finalist-" + args.step + ".out")
     if log_path.exists():
@@ -62,13 +66,13 @@ def main():
     peak_rss = 0
     try:
         record("validation_start", step=args.step, command=command, cwd=str(cwd),
-            timeout_s=1200, controller_pid=os.getpid())
+            timeout_s=timeout, controller_pid=os.getpid())
         with log_path.open("x") as log:
             process = subprocess.Popen(command, cwd=cwd, env=environment, stdout=log,
                 stderr=subprocess.STDOUT, start_new_session=True)
             while process.poll() is None:
                 peak_rss = max(peak_rss, matrix.family_rss(process.pid))
-                if peak_rss >= 88 * 2**30 or time.monotonic() - started > 1200:
+                if peak_rss >= 88 * 2**30 or time.monotonic() - started > timeout:
                     raise RuntimeError("validation resource/time guard")
                 if re.search(r"GPU.*watchdog.*abort|watchdog.*timed out|SIGABRT", log_path.read_text(), re.I):
                     raise RuntimeError("validation device abort marker")

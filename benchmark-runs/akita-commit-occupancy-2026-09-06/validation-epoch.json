@@ -1,0 +1,19 @@
+{
+  "started_utc": "2026-09-06 10:33:48 UTC",
+  "deadline_epoch": 1788693228,
+  "max_steps": 8,
+  "order": [
+    "akita-clippy-parallel",
+    "akita-clippy-serial",
+    "akita-clippy-pcs",
+    "pcs-parallel",
+    "pcs-serial",
+    "jolt-clippy-host",
+    "jolt-clippy-zk",
+    "fmt-and-diff"
+  ],
+  "max_process_s": 1200,
+  "max_family_rss_gib": 88,
+  "parallel_jobs": false,
+  "candidate_revision": "7878e5ba14b0a9f7cc89ddbc1331a543efa11db7"
+}
