@@ -1219,3 +1219,52 @@ preregistered in radix26.md before code. It stages decoded digits in20KiB,
 removing16.56T naive source decode operations but adding25% shared traffic
 and doubling tile barriers. Neither term is hidden. Epoch8 transaction2;
 checkpoint09:45UTC (finish a cohort already in flight). No accepted gain.
+
+D22 post-hoc command-level fit audit (not candidate selection): first43
+commands have only74.104M..76.825M hot entries each. Regressing paired mean
+GPUms against hotM gives parent slope2.200/intercept110.052/R²0.120 and
+radix26 slope2.668/intercept50.157/R²0.116. This insufficient work variation
+and poor fit CANNOT separate arithmetic from fixed/barrier costs. Do not
+interpret the intercept as removable overhead or a hardware lower bound.
+All44-command totals remain the registered timing statistic; no command
+selection or altered evaluator follows from this exploratory calculation.
+
+### D23 result / component promotion,09:36UTC
+
+GPU(P,C,C,P)11952.218875,9503.671250,9636.354792,12035.520417ms;
+wall12014.557250,9564.845459,9697.983542,12098.761041ms. GPU means
+11993.869646->9570.013021ms:20.2091% time reduction,25.3276% throughput gain;
+complete wall saves2425.244645ms. Parent GPU/wall drift0.695%/0.698%; both
+candidate observations pass the gate individually as well as in mean.
+All512normalizer states,ten P1024 field-oracle checks,65target samples and
+192MiB final bytes pass in all four processes; zero swaps/watchdogs. Final
+SHA256 remains0fce4fc89b37432779b9aa794aee2dc520f2c6215ea1a2805e190602904bb8d1.
+RawSHA256(P,C,C,P):
+99b45332f1f3fc446456f8bd4b948fde37ac383bb08f16966c4a1148f39a771f
+cd220735807283d5001978436fe7df8810b787fc89522b141951a366ce1079c6
+e7b90cdeabe387a0cb7e1e0151d70d0f2e192b729f4ac30638fad0cba3c3f494
+c3d32223430672a8b4be06ade73796fdea1002f29007bc90ca1c75cd26e35e7a.
+
+Promote to isolated production integration, NOT acceptance. Component20%
+throughput milestone passes, but full-proof saving and transfer remain
+unverified. Epoch8 transaction3 is bounded integration/targeted validation;
+checkpoint by10:05UTC. No new mechanism before this finalist is evaluated.
+
+Integration preregistration: move only the D23 staged helper/accumulator/
+normalizer/final packing into the D128 kernel, retaining canonical p and
+existing reducer. Pin16-contribution, signed-bound and tile assertions.
+Keep the existing accepted partial alignment16, renamed to identify its
+API role rather than halved internal tile size8; preserve the existing
+ragged-shape rejection test. Give D128 its own20KiB PSO resource constant;
+leave D512 untouched. Remove this campaign's opt-in capture hook, with no
+other fork/Jolt production changes. Parent Jolt binary107f28a8 vs accepted
+554f62703 differs only in the matrix report document (git diff confirmed).
+
+Before real proofs: existing D128 independent CPU/Metal family tests plus
+all akita-metal tests serial under the machine lock; build the isolated
+release modular_benchmark with frozen feature flags. Diagnostic arithmetic
+checks remain permanent campaign evidence; do not install probe kernels or
+old-vs-new oracles in production. Final manifest must freeze source/binary/
+guest hashes and the twelve-proof sequence before launching. Full nextest,
+PCS serial/parallel, both Jolt clippy modes and fmt gate final integration;
+inherited failures must remain explicit. No production accepted or pushed.
