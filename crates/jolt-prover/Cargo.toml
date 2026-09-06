@@ -44,6 +44,8 @@ profiling = [
   "dep:bincode",
   "dep:chrono",
   "dep:clap",
+  "dep:jolt-inlines-blake2",
+  "jolt-inlines-blake2/host",
   "dep:jolt-inlines-keccak256",
   "jolt-inlines-keccak256/host",
   "dep:jolt-inlines-sha2",
@@ -98,6 +100,7 @@ bincode = { workspace = true, optional = true }
 blake2.workspace = true
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
+jolt-inlines-blake2 = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
 jolt-host = { workspace = true, optional = true }

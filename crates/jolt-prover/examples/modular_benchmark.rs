@@ -64,6 +64,10 @@ struct Cli {
     #[clap(long, value_enum)]
     name: Workload,
 
+    /// Compile this guest ahead of the measurement sweep, without tracing or proving.
+    #[clap(long)]
+    prepare_only: bool,
+
     /// log2 of the max (padded) trace length; derived from
     /// `--target-trace-size` when omitted.
     #[clap(short, long)]
@@ -85,6 +89,15 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
+    if cli.prepare_only {
+        let elf = cli.name.prepare_guest();
+        println!(
+            "GUEST_PREPARED name={} path={}",
+            cli.name.as_str(),
+            elf.display()
+        );
+        return;
+    }
     let scale = match (cli.scale, cli.target_trace_size) {
         (Some(scale), _) => scale,
         (None, Some(target)) => target.next_power_of_two().trailing_zeros(),

@@ -50,6 +50,21 @@ fn hashbench() -> [u8; 32] {
     [0; 32]
 }
 
+#[jolt::provable(heap_size = 32768, max_trace_length = 268435456)]
+fn blake2b_chain(input: ([u8; 32], [u8; 32]), num_iters: u32) -> ([u8; 32], [u8; 32]) {
+    let mut hash = [0u8; 64];
+    hash[..32].copy_from_slice(&input.0);
+    hash[32..].copy_from_slice(&input.1);
+    for _ in 0..num_iters {
+        hash = blake2_inline::Blake2b::digest(&hash);
+    }
+    let mut first = [0u8; 32];
+    let mut second = [0u8; 32];
+    first.copy_from_slice(&hash[..32]);
+    second.copy_from_slice(&hash[32..]);
+    (first, second)
+}
+
 fn fill(buf: &mut [u8], seed: u32) {
     let (mut s, a, c) = (seed, 1664525u32, 1013904223u32);
     for b in buf {

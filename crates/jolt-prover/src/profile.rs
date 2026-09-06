@@ -29,12 +29,14 @@
     reason = "profile harness: fail loudly and report to stdout"
 )]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use blake2::{Blake2b512, Digest as _};
 use clap::ValueEnum;
 use common::jolt_device::MemoryConfig;
 #[cfg(not(feature = "akita"))]
@@ -44,7 +46,8 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
-use jolt_host::{JoltProgramSource, Program};
+use jolt_host::{JoltProgramSource, Program, DEFAULT_TARGET_DIR};
+use jolt_inlines_blake2 as _;
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
@@ -74,6 +77,8 @@ const CYCLES_PER_BTREEMAP_OP: f64 = 1550.0;
 const CYCLES_PER_FIBONACCI_UNIT: f64 = 12.0;
 // Execute-only range probes at 64 through 32768 inputs measured 7682–7884 rows/item.
 const CYCLES_PER_COLLATZ_ITEM: f64 = 8000.0;
+// Execute-only probes at 64..4096 hashes measured 2086.90..2143.31 rows/hash.
+const CYCLES_PER_BLAKE2B: f64 = 2144.0;
 const SAFETY_MARGIN: f64 = 0.9; // Use 90% of max trace capacity
 
 fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
@@ -113,10 +118,11 @@ pub enum Workload {
     #[value(name = "btreemap")]
     BTreeMap,
     Collatz,
+    Blake2bChain,
 }
 
 impl Workload {
-    /// The canonical name, also the guest crate prefix (`{name}-guest`).
+    /// The canonical workload name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fibonacci => "fibonacci",
@@ -124,6 +130,7 @@ impl Workload {
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
             Self::Collatz => "collatz",
+            Self::Blake2bChain => "blake2b-chain",
         }
     }
 
@@ -135,7 +142,29 @@ impl Workload {
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
             Self::Collatz => 20,
+            Self::Blake2bChain => 22,
         }
+    }
+
+    fn program(self) -> Program {
+        let guest = match self {
+            Self::Blake2bChain => "hashbench-guest".to_owned(),
+            _ => format!("{}-guest", self.as_str()),
+        };
+        let mut program = Program::new(&guest);
+        match self {
+            Self::Blake2bChain => program.set_func("blake2b_chain"),
+            Self::Collatz => program.set_func("collatz_convergence_range"),
+            _ => {}
+        }
+        program
+    }
+
+    /// Compile this workload's guest without tracing or proving; return its ELF path.
+    pub fn prepare_guest(self) -> PathBuf {
+        let mut program = self.program();
+        program.build(DEFAULT_TARGET_DIR);
+        program.elf.expect("prepared guest ELF")
     }
 
     /// The guest input targeting `target` trace cycles.
@@ -166,6 +195,11 @@ impl Workload {
                 let count = u128::from(scale_to_target_ops(target, CYCLES_PER_COLLATZ_ITEM));
                 postcard::to_stdvec(&(start, start + count)).expect("serialize input")
             }
+            Self::Blake2bChain => postcard::to_stdvec(&(
+                ([5u8; 32], [5u8; 32]),
+                scale_to_target_ops(target, CYCLES_PER_BLAKE2B),
+            ))
+            .expect("serialize input"),
         }
     }
 }
@@ -599,10 +633,7 @@ fn run_workload(
     let input = workload.input(bench_target);
 
     // --- Guest compilation and trace sizing (unmeasured).
-    let mut program = Program::new(&format!("{bench_name}-guest"));
-    if matches!(workload, Workload::Collatz) {
-        program.set_func("collatz_convergence_range");
-    }
+    let mut program = workload.program();
     let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
     assert!(
         sizing_trace.len().next_power_of_two() <= max_trace_length,
@@ -629,6 +660,21 @@ fn run_workload(
         &input,
     );
     let trace_length = trace_output.trace.len();
+
+    if matches!(workload, Workload::Blake2bChain) {
+        let (_, iterations): (([u8; 32], [u8; 32]), u32) =
+            postcard::from_bytes(&input).expect("decode chain input");
+        let mut expected = [5u8; 64];
+        for _ in 0..iterations {
+            expected = Blake2b512::digest(expected).into();
+        }
+        assert_eq!(trace_output.device.outputs.as_slice(), expected.as_slice());
+        let mut digest = String::with_capacity(128);
+        for byte in expected {
+            write!(&mut digest, "{byte:02x}").expect("format BLAKE2b digest");
+        }
+        println!("BLAKE2B_CHAIN_CHECK iterations={iterations} digest={digest} value=true");
+    }
 
     // --- The compiled protocol's preprocessing + prove + verify.
     let run = prove_workload(&jolt_program, program_preprocessing, trace_output, backend);
