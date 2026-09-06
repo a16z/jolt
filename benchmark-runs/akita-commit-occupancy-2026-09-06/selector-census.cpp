@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -113,6 +114,105 @@ struct TemplateCensus {
         const size_t bytes = choices.size() * sizeof(uint32_t);
         require(write(fd, choices.data(), bytes) == ssize_t(bytes), "template choices write");
         require(fsync(fd) == 0 && close(fd) == 0, "template choices sync");
+    }
+};
+
+struct DependencyCensus {
+    uint64_t columns, blocks, total_hot = 0, corrected_hot = 0;
+    uint64_t duplicate_hot = 0, duplicate_tasks = 0, zero_tasks = 0;
+    std::vector<std::optional<uint32_t>> parents;
+    std::vector<uint64_t> column_hot, column_corrected;
+
+    DependencyCensus(const uint8_t *lanes, const uint64_t *zeros, uint64_t cols,
+                     uint64_t block_rows, uint64_t block_count, uint64_t mask,
+                     uint64_t live_rows)
+        : columns(cols), blocks(block_count), parents(cols), column_hot(cols), column_corrected(cols) {
+        require(live_rows > 0 && live_rows <= block_rows * blocks, "dependency sample prefix");
+        std::vector<uint64_t> sampled_hot(cols), equal_selected(cols * cols);
+        std::vector<uint16_t> values(cols);
+        for (uint64_t index = 0; index < 1024; ++index) {
+            uint64_t random = index + 0x9e3779b97f4a7c15ull;
+            random = (random ^ (random >> 30)) * 0xbf58476d1ce4e5b9ull;
+            random = (random ^ (random >> 27)) * 0x94d049bb133111ebull;
+            random ^= random >> 31;
+            for (uint64_t column = 0; column < cols; ++column) {
+                values[column] = selected_symbol(lanes, zeros, cols, mask, random % live_rows, column);
+                sampled_hot[column] += values[column] != 0;
+                for (uint64_t previous = 0; previous < column; ++previous)
+                    equal_selected[column * cols + previous] += values[column] != 0
+                        && values[column] == values[previous];
+            }
+        }
+        for (uint32_t column = 0; column < cols; ++column) {
+            uint64_t best = sampled_hot[column];
+            for (uint32_t previous = 0; previous < column; ++previous) {
+                const uint64_t cost = sampled_hot[column] + sampled_hot[previous]
+                    - 2 * equal_selected[column * cols + previous];
+                if (cost < best && 10 * cost <= 9 * sampled_hot[column]) {
+                    best = cost;
+                    parents[column] = previous;
+                }
+            }
+        }
+        std::vector<uint8_t> matches(blocks * cols, 1);
+        std::vector<uint64_t> task_hot(blocks * cols);
+        const uint64_t pivot = blocks > 1 ? 1 : 0;
+        for (uint64_t row = 0; row < block_rows * blocks; ++row) {
+            const uint64_t block = row / block_rows;
+            for (uint64_t column = 0; column < cols; ++column)
+                values[column] = selected_symbol(lanes, zeros, cols, mask, row, column);
+            for (uint64_t column = 0; column < cols; ++column) {
+                const uint64_t task = block * cols + column;
+                const uint16_t value = values[column];
+                task_hot[task] += value != 0;
+                column_hot[column] += value != 0;
+                if (parents[column]) {
+                    const uint16_t reference = values[*parents[column]];
+                    if (value != reference)
+                        column_corrected[column] += uint64_t(value != 0) + uint64_t(reference != 0);
+                } else column_corrected[column] += value != 0;
+                if (matches[task] && block != pivot)
+                    matches[task] = value == selected_symbol(lanes, zeros, cols, mask,
+                        pivot * block_rows + row % block_rows, column);
+            }
+        }
+        total_hot = std::accumulate(column_hot.begin(), column_hot.end(), uint64_t(0));
+        corrected_hot = std::accumulate(column_corrected.begin(), column_corrected.end(), uint64_t(0));
+        for (uint64_t task = 0; task < task_hot.size(); ++task) {
+            if (!task_hot[task]) ++zero_tasks;
+            else if (task / cols != pivot && matches[task]) {
+                duplicate_hot += task_hot[task];
+                ++duplicate_tasks;
+            }
+        }
+    }
+
+    void print(const char *path) const {
+        std::string encoded = "[";
+        for (uint64_t column = 0; column < columns; ++column) {
+            const std::string parent = parents[column] ? std::to_string(*parents[column]) : "null";
+            if (column) encoded += ",";
+            encoded += parent;
+            std::printf("COLUMN_DELTA column=%llu parent=%s hot=%llu corrected_hot=%llu\n",
+                (unsigned long long)column, parent.c_str(), (unsigned long long)column_hot[column],
+                (unsigned long long)column_corrected[column]);
+        }
+        encoded += "]\n";
+        std::printf("COLUMN_DELTA_SUMMARY hot=%llu corrected_hot=%llu reduction=%.9f\n",
+            (unsigned long long)total_hot, (unsigned long long)corrected_hot,
+            1.0 - double(corrected_hot) / total_hot);
+        const uint64_t tasks = blocks * columns;
+        const uint64_t original_groups = (tasks + 63) / 64;
+        const uint64_t unique_groups = (tasks - duplicate_tasks - zero_tasks + 63) / 64;
+        std::printf("PIVOT_SUMMARY hot=%llu duplicate_hot=%llu reduction=%.9f duplicate_tasks=%llu zero_tasks=%llu original_groups=%llu unique_groups=%llu matrix_group_reduction=%.9f\n",
+            (unsigned long long)total_hot, (unsigned long long)duplicate_hot,
+            double(duplicate_hot) / total_hot, (unsigned long long)duplicate_tasks,
+            (unsigned long long)zero_tasks, (unsigned long long)original_groups,
+            (unsigned long long)unique_groups, 1.0 - double(unique_groups) / original_groups);
+        const int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+        require(fd >= 0, "fresh column-parent artifact");
+        require(write(fd, encoded.data(), encoded.size()) == ssize_t(encoded.size()), "column-parent write");
+        require(fsync(fd) == 0 && close(fd) == 0, "column-parent sync");
     }
 };
 
@@ -357,6 +457,12 @@ int main(int argc, const char **argv) {
         && templates.cost(1, 3) == 3 && templates.cost(1, 256) == 5
         && templates.histogram[1][0] == 1 && templates.histogram[1][256] == 1,
         "template correction additions and subtractions independently counted");
+    const uint8_t dependency_fixture[] = {1,1,1,1,1,0,1,1};
+    const uint64_t dependency_zeros = 0;
+    DependencyCensus dependency(dependency_fixture, &dependency_zeros, 2, 2, 2, 0, 4);
+    require(dependency.total_hot == 7 && dependency.corrected_hot == 5
+        && dependency.duplicate_hot == 2 && dependency.duplicate_tasks == 1
+        && dependency.parents[1] == std::optional<uint32_t>(0), "hand-counted column and block reuse");
     std::puts("CENSUS_SELFTEST pass=true");
     if (argc == 1) return 0;
     require(argc == 9 || argc == 10 || argc == 11 || argc == 12,
@@ -372,12 +478,21 @@ int main(int argc, const char **argv) {
         && blocks > 0 && blocks <= 1024, "production census envelope");
     require(lanes.size == rows * columns && zeros.size == rows / 8, "capture lengths");
     if (argc == 12) {
-        require(std::string(argv[9]) == "--templates", "template mode flag");
-        TemplateCensus result(static_cast<const uint8_t *>(lanes.data),
-            static_cast<const uint64_t *>(zeros.data), columns, blocks * positions / 2,
-            mask, std::stoull(argv[10]));
-        require(result.total_hot == expected_hot, "producer hot-entry count equality");
-        result.print(argv[11]);
+        const bool dependencies = std::string(argv[9]) == "--column-deltas";
+        require(dependencies || std::string(argv[9]) == "--templates", "extended census mode flag");
+        if (dependencies) {
+            DependencyCensus result(static_cast<const uint8_t *>(lanes.data),
+                static_cast<const uint64_t *>(zeros.data), columns, positions / 2, blocks,
+                mask, std::stoull(argv[10]));
+            require(result.total_hot == expected_hot, "producer hot-entry count equality");
+            result.print(argv[11]);
+        } else {
+            TemplateCensus result(static_cast<const uint8_t *>(lanes.data),
+                static_cast<const uint64_t *>(zeros.data), columns, blocks * positions / 2,
+                mask, std::stoull(argv[10]));
+            require(result.total_hot == expected_hot, "producer hot-entry count equality");
+            result.print(argv[11]);
+        }
         std::printf("CENSUS_COMPLETE elapsed_s=%.6f producer_hot_match=true\n",
             std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
         return 0;

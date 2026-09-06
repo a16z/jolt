@@ -733,3 +733,49 @@ unused partials and duplicate-output scatter before implementation/keep.
 Conserve producer H3263846381; independent two-column/four-row fixture fixes
 original H7, difference work5, fixed-pivot removable H2. <=10min tooling,
 <=180s CPU-only process under lock. Epoch4 transaction3; checkpoint afterward.
+
+## D12 result / epoch4 checkpoint,07:13 UTC
+
+No sample-selected predecessor clears the10% per-column rule, so the frozen
+forest has only roots: exact correction work equals original H3263846381.
+Reject this column-difference selection mechanism, not a universal bound on
+all algebraic relationships. Fixed block1 recovers919 duplicate tasks,
+240910336H=7.3811788%, plus1534 zero tasks;349→311 groups (10.8883% lower).
+It misses D2's10% removed-update gate. The all-block exact census had1528
+duplicates and12.27% removedH, so one representative does not cover every
+repeated sequence. A small fixed bank of reference blocks is a distinct
+preprocessing option to price, not evidence that it already reaches that bound.
+Raw runs/d12-dependencies.out SHA256
+e5b9b01885ee33f6180167c1c781e551f536d14f6dcdeeb7fa1eb2066b7cf5f6.
+7.59s CPU, producerH/fixture pass, zero swaps. No GPU run during drift audit.
+
+Epoch4 complete: deferred correction has a~5% local observation below its
+gate; AoS timing is invalid from parent drift; column/pivot census rejects
+the registered choices. No production optimization accepted. Original source,
+binary and user edits remain untouched; no pushes or watchdogs.
+
+## Epoch5 / D13 preregistration: longer unchanged-kernel stability control
+
+Checkpoint by08:00 UTC,<=3transactions, no candidate GPU timing until this
+control resolves the short-window drift concern. Full-proof evaluator and
+120s separate-process cooling remain frozen. This changes only diagnostic
+timing granularity, not a candidate's acceptance threshold.
+
+Use the unmodified production PSO and same captured512-task interior window.
+Each observation encodes8 sequential compute encoders in one command buffer,
+all using the same pipeline, params, buffers and384-group dispatch. Tracked
+buffer hazards order the repeated writes; final output is independently checked.
+No extra in-kernel loop or greater per-dispatch grid concurrency. Each batch
+is expected~2.1s, below the5s command watchdog, followed by the existing matched
+readback/CPU checks. GPU timestamps cover all8 dispatches; divide by8 only
+when reporting per-dispatch latency, and count useful work8 times explicitly.
+
+Two fixed warmup batches, then four measured batches of the SAME original PSO
+(not two different shader bodies). Full small10/9-task parity,65 target samples
+and full active-output equality remain. Gate:(max-min)/mean<=3% across four
+per-dispatch means. If it fails, do not refresh candidates under this screen;
+reassess full-panel/isolated observations and named external contention checks.
+If it passes, future candidate screens may use this documented granularity
+but old gains are not silently promoted or combined. Do not rerun until lucky.
+One guarded process,120s initial cooling,<=180s and88GiB/zero-swap guards.
+Budget<=10min host tooling/compile and<=5min observation. No kernel edits.

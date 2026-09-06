@@ -12,11 +12,11 @@ import time
 from run_saturation import LOCK, ROOT, matrix, record
 
 
-def census(pairing=False, fragments=False, templates=False):
+def census(pairing=False, fragments=False, templates=False, dependencies=False):
     capture = ROOT / "runs/d2-capture"
-    output = ROOT / ("runs/d5-templates.out" if templates else "runs/d4-fragments.out" if fragments else "runs/d3-pairing-price.out" if pairing else "runs/d2-census.out")
+    output = ROOT / ("runs/d12-dependencies.out" if dependencies else "runs/d5-templates.out" if templates else "runs/d4-fragments.out" if fragments else "runs/d3-pairing-price.out" if pairing else "runs/d2-census.out")
     metadata = json.loads((capture / "metadata.json").read_text())
-    command = ["/usr/bin/time", "-l", str(ROOT / ("bin/selector-templates" if templates else "bin/selector-fragments" if fragments else "bin/selector-pairing" if pairing else "bin/selector-census")),
+    command = ["/usr/bin/time", "-l", str(ROOT / ("bin/selector-dependencies" if dependencies else "bin/selector-templates" if templates else "bin/selector-fragments" if fragments else "bin/selector-pairing" if pairing else "bin/selector-census")),
         str(capture / "lanes.u8"), str(capture / "active_zero_rows.u64le")]
     command += [str(metadata[key]) for key in
         ("rows", "columns", "positions", "full_blocks", "zero_mask", "hot_entries")]
@@ -26,6 +26,8 @@ def census(pairing=False, fragments=False, templates=False):
         command += ["--fragments"]
     if templates:
         command += ["--templates", str(metadata["zero_suffix_start"]), str(ROOT / "runs/d5-templates.u32le")]
+    if dependencies:
+        command += ["--column-deltas", str(metadata["zero_suffix_start"]), str(ROOT / "runs/d12-column-parents.json")]
     if output.exists():
         raise RuntimeError("immutable census output exists")
     LOCK.mkdir()
@@ -35,10 +37,10 @@ def census(pairing=False, fragments=False, templates=False):
         raw = output.read_text()
         if raw.count("producer_hot_match=true") != 1 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]:
             raise RuntimeError("census identity/resource failure")
-        record("d5_templates_complete" if templates else "d4_fragments_complete" if fragments else "d3_pairing_price_complete" if pairing else "d2_census_complete",
+        record("d12_dependencies_complete" if dependencies else "d5_templates_complete" if templates else "d4_fragments_complete" if fragments else "d3_pairing_price_complete" if pairing else "d2_census_complete",
                raw_sha256=hashlib.sha256(output.read_bytes()).hexdigest())
     except BaseException as error:
-        record("d5_templates_failure" if templates else "d4_fragments_failure" if fragments else "d3_pairing_price_failure" if pairing else "d2_census_failure", reason=str(error))
+        record("d12_dependencies_failure" if dependencies else "d5_templates_failure" if templates else "d4_fragments_failure" if fragments else "d3_pairing_price_failure" if pairing else "d2_census_failure", reason=str(error))
         raise
     finally:
         LOCK.rmdir()
@@ -112,5 +114,6 @@ if __name__ == "__main__":
     mode.add_argument("--price-pairing", action="store_true")
     mode.add_argument("--fragments", action="store_true")
     mode.add_argument("--templates", action="store_true")
+    mode.add_argument("--column-deltas", action="store_true")
     args = parser.parse_args()
-    census(args.price_pairing, args.fragments, args.templates) if args.census or args.price_pairing or args.fragments or args.templates else main()
+    census(args.price_pairing, args.fragments, args.templates, args.column_deltas) if args.census or args.price_pairing or args.fragments or args.templates or args.column_deltas else main()
