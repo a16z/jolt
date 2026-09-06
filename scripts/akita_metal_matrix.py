@@ -172,7 +172,7 @@ class Study:
         with (self.output / "results.csv").open("w", newline="") as stream:
             keys = ["scale", "workload", "prove_s", "trace_len", "padded_len", "padded_mhz",
                     "actual_mhz", "rss_gib", "verified", "swaps", "raw", "raw_sha256"]
-            writer = csv.DictWriter(stream, fieldnames=keys, extrasaction="ignore")
+            writer = csv.DictWriter(stream, fieldnames=keys, extrasaction="ignore", lineterminator="\n")
             writer.writeheader()
             writer.writerows(results)
         (self.output / "summary.json").write_text(json.dumps(dict(cells=len(results), means=means), indent=2) + "\n")

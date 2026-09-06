@@ -78,6 +78,11 @@ The full T24–T28 sweep remains Andrew's independent measurement. Existing
 four-workload T28 observations average 9.3269 MHz measured on M4; 10.5394 MHz
 is the separate 1.13x M5 projection, not an M4 pass.
 
+Post-smoke report formatting: Python's default CSV CRLF endings triggered
+the staged Git whitespace check. Set the report writer's line terminator
+to LF and regenerate only derived reports from the same raw logs. The
+measurement path and all raw evidence are unchanged; no proof was rerun.
+
 Could not verify here: Andrew's independent 20-cell sweep, actual M5 speeds,
 physical occupancy/register/spill measurements, or a new independent security
 audit. The inherited Akita preflight line-cap, recursive_commit error-owner,
