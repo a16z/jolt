@@ -71,3 +71,12 @@ here, isolated Jolt integration only if justified. Evaluator, accepted source,
 raw logs and past events are frozen. Analysis and contract are controller
 owned; candidate code cannot revise its own bar. Commit preregistrations
 before corresponding kernel changes. State: analysis.md, events.jsonl,runs/.
+
+09:59UTC parent-drift amendment: initial finalist epoch stopped after one
+verified parent and no candidate proofs, on a9.25% faster historical baseline.
+Allow exactly one additional parent stability control before any candidate;
+combined budget13proofs/45minutes of measurement and cooling, otherwise the
+same twelve-proof paired sequence and unchanged acceptance thresholds. The
+additional parent must agree with32.835085250s within3%, else timing remains
+paused. Details and immutable recovery artifacts:finalist-rebased/CONTRACT.md.
+No more refreshes or candidate timing retries are authorized by this amendment.
