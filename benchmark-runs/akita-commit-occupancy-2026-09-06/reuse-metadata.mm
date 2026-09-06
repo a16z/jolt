@@ -7,10 +7,11 @@ static_assert(sizeof(ReuseParams) == 32 && sizeof(ReuseEntry) == 8);
 
 struct ReuseCase {
     ReuseParams params;
-    id<MTLBuffer> lanes, zeros, metadata;
+    id<MTLBuffer> lanes, zeros, metadata, hot_counts = nil;
     std::vector<ReuseEntry> reference;
 
-    ReuseCase(id<MTLDevice> device, id<MTLBuffer> source, id<MTLBuffer> zero_rows, ReuseParams shape)
+    ReuseCase(id<MTLDevice> device, id<MTLBuffer> source, id<MTLBuffer> zero_rows, ReuseParams shape,
+              bool short_mode = false)
         : params(shape), lanes(source), zeros(zero_rows) {
         require(params.columns > 0 && params.columns <= 32 && params.blocks > 0
             && params.rows_per_block > 0 && params.rows_per_block <= 262144,
@@ -21,6 +22,11 @@ struct ReuseCase {
         metadata = [device newBufferWithLength:params.columns * params.blocks * sizeof(ReuseEntry)
             options:MTLResourceStorageModeShared];
         require(metadata != nil, "reuse metadata allocation");
+        if (short_mode) {
+            hot_counts = [device newBufferWithLength:params.columns * params.blocks * sizeof(uint32_t)
+                options:MTLResourceStorageModePrivate];
+            require(hot_counts != nil, "reuse intermediate hot counts");
+        }
     }
 
     uint16_t symbol(uint64_t row, uint64_t column) const {
@@ -85,15 +91,29 @@ struct ReuseCase {
         std::fflush(stdout);
     }
 
-    void run(id<MTLCommandQueue> queue, id<MTLComputePipelineState> pipeline, unsigned order, bool warmup) {
+    void run(id<MTLCommandQueue> queue, id<MTLComputePipelineState> pipeline, unsigned order, bool warmup,
+             id<MTLComputePipelineState> count_pipeline = nil) {
         const auto start = Clock::now();
         id<MTLCommandBuffer> command = [queue commandBuffer];
+        if (count_pipeline) {
+            require(hot_counts != nil, "two-pass metadata storage");
+            id<MTLComputeCommandEncoder> counts = [command computeCommandEncoder];
+            [counts setComputePipelineState:count_pipeline];
+            [counts setBuffer:lanes offset:0 atIndex:0];
+            [counts setBuffer:zeros offset:0 atIndex:1];
+            [counts setBuffer:hot_counts offset:0 atIndex:2];
+            [counts setBytes:&params length:sizeof(params) atIndex:3];
+            [counts dispatchThreadgroups:MTLSizeMake(params.columns * params.blocks, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
+            [counts endEncoding];
+        }
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
         [encoder setBuffer:lanes offset:0 atIndex:0];
         [encoder setBuffer:zeros offset:0 atIndex:1];
         [encoder setBuffer:metadata offset:0 atIndex:2];
         [encoder setBytes:&params length:sizeof(params) atIndex:3];
+        if (hot_counts) [encoder setBuffer:hot_counts offset:0 atIndex:4];
         [encoder dispatchThreadgroups:MTLSizeMake(params.columns * params.blocks, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
         [encoder endEncoding];
@@ -112,19 +132,26 @@ struct ReuseCase {
 };
 
 int main(int argc, const char **argv) {
-    require(argc == 4, "usage: reuse-metadata shader.metal capture-directory archive.bin");
+    require(argc == 4 || argc == 5, "usage: reuse-metadata shader.metal capture-directory archive.bin [short-helper.metal]");
+    const bool short_mode = argc == 5;
     @autoreleasepool {
         NSError *error = nil;
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         require(device != nil, "Metal device");
         NSString *source = [NSString stringWithContentsOfFile:@(argv[1]) encoding:NSUTF8StringEncoding error:&error];
         require(source && !error, "reuse shader source");
+        if (short_mode) {
+            NSString *helper = [NSString stringWithContentsOfFile:@(argv[4]) encoding:NSUTF8StringEncoding error:&error];
+            require(helper && !error, "short-circuit reuse source");
+            source = [source stringByAppendingString:helper];
+        }
         MTLCompileOptions *options = [MTLCompileOptions new];
         options.mathMode = MTLMathModeSafe;
         id<MTLLibrary> library = [device newLibraryWithSource:source options:options error:&error];
         if (error) std::fprintf(stderr, "%s\n", error.localizedDescription.UTF8String);
         require(library && !error, "reuse library");
-        id<MTLFunction> function = [library newFunctionWithName:@"diagnostic_reuse_metadata"];
+        id<MTLFunction> function = [library newFunctionWithName:short_mode
+            ? @"diagnostic_short_reuse_metadata" : @"diagnostic_reuse_metadata"];
         id<MTLComputePipelineState> pipeline = [device newComputePipelineStateWithFunction:function error:&error];
         require(pipeline && !error && pipeline.maxTotalThreadsPerThreadgroup >= 128
             && pipeline.threadExecutionWidth == 32, "reuse pipeline");
@@ -132,6 +159,15 @@ int main(int argc, const char **argv) {
         MTLComputePipelineDescriptor *descriptor = [MTLComputePipelineDescriptor new];
         descriptor.computeFunction = function;
         require([archive addComputePipelineFunctionsWithDescriptor:descriptor error:&error], "reuse archive");
+        id<MTLComputePipelineState> count_pipeline = nil;
+        if (short_mode) {
+            id<MTLFunction> count_function = [library newFunctionWithName:@"diagnostic_reuse_hot_counts"];
+            count_pipeline = [device newComputePipelineStateWithFunction:count_function error:&error];
+            require(count_pipeline && !error && count_pipeline.maxTotalThreadsPerThreadgroup >= 128
+                && count_pipeline.threadExecutionWidth == 32, "reuse count pipeline");
+            descriptor.computeFunction = count_function;
+            require([archive addComputePipelineFunctionsWithDescriptor:descriptor error:&error], "count archive");
+        }
         require([archive serializeToURL:[NSURL fileURLWithPath:@(argv[3])] error:&error], "archive serialization");
         id<MTLCommandQueue> queue = [device newCommandQueue];
         for (uint64_t blocks : {10ull, 3ull, 1ull}) {
@@ -147,8 +183,8 @@ int main(int argc, const char **argv) {
             }
             ReuseCase small(device, [device newBufferWithBytes:fixture.data() length:fixture.size()
                 options:MTLResourceStorageModeShared], [device newBufferWithBytes:zero_bits.data()
-                length:zero_bits.size() * 8 options:MTLResourceStorageModeShared], {3, block_rows, blocks, 2});
-            small.run(queue, pipeline, 0, false);
+                length:zero_bits.size() * 8 options:MTLResourceStorageModeShared], {3, block_rows, blocks, 2}, short_mode);
+            small.run(queue, pipeline, 0, false, count_pipeline);
             small.validate(false);
             if (blocks == 10) {
                 const auto *actual = static_cast<const ReuseEntry *>(small.metadata.contents);
@@ -178,14 +214,14 @@ int main(int argc, const char **argv) {
         id<MTLBuffer> zero_buffer = [device newBufferWithBytesNoCopy:const_cast<void *>(zeros.bytes)
             length:zeros.length options:MTLResourceStorageModeShared deallocator:nil];
         require(source_buffer && zero_buffer, "zero-copy capture buffers, no fallback copy");
-        ReuseCase target(device, source_buffer, zero_buffer, {29, 262144, 769, 402653184});
+        ReuseCase target(device, source_buffer, zero_buffer, {29, 262144, 769, 402653184}, short_mode);
         std::printf("REUSE_SETUP wall_ms=%.6f zero_copy=true\n",
             std::chrono::duration<double>(Clock::now() - setup_start).count() * 1e3);
-        target.run(queue, pipeline, 0, true);
+        target.run(queue, pipeline, 0, true, count_pipeline);
         const auto *warm = static_cast<const ReuseEntry *>(target.metadata.contents);
         target.reference.assign(warm, warm + target.params.columns * target.params.blocks);
-        target.run(queue, pipeline, 1, false);
-        target.run(queue, pipeline, 2, false);
+        target.run(queue, pipeline, 1, false, count_pipeline);
+        target.run(queue, pipeline, 2, false, count_pipeline);
         target.validate(true);
         NSString *output = [NSString stringWithFormat:@"%s.metadata.u32le", argv[3]];
         require(![[NSFileManager defaultManager] fileExistsAtPath:output], "fresh reuse metadata artifact");
