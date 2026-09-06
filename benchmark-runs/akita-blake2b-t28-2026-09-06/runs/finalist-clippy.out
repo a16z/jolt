@@ -1,0 +1,74 @@
+warning: /private/tmp/jolt-blake2b-t28-20260906/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-kernels, since `default-features` was not specified for `workspace.dependencies.jolt-kernels`, this could become a hard error in the future
+warning: /private/tmp/jolt-blake2b-t28-20260906/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-poly, since `default-features` was not specified for `workspace.dependencies.jolt-poly`, this could become a hard error in the future
+warning: /private/tmp/jolt-blake2b-t28-20260906/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-profiling, since `default-features` was not specified for `workspace.dependencies.jolt-profiling`, this could become a hard error in the future
+warning: /private/tmp/jolt-blake2b-t28-20260906/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-profiling, since `default-features` was not specified for `workspace.dependencies.jolt-profiling`, this could become a hard error in the future
+warning: /private/tmp/jolt-blake2b-t28-20260906/crates/jolt-kernels/Cargo.toml: `default-features` is ignored for jolt-poly, since `default-features` was not specified for `workspace.dependencies.jolt-poly`, this could become a hard error in the future
+   Compiling jolt-field v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-field)
+    Checking jolt-riscv v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-riscv)
+    Checking akita-error v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-error)
+    Checking jolt-utils v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-utils)
+    Checking common v0.2.0 (/private/tmp/jolt-blake2b-t28-20260906/common)
+   Compiling jolt-claims-derive v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-claims-derive)
+    Checking jolt-platform v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/jolt-platform)
+   Compiling jolt-verifier-derive v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-verifier-derive)
+   Compiling jolt-witness-derive v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-witness-derive)
+   Compiling jolt-kernels-derive v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-kernels-derive)
+    Checking jolt-profiling v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-profiling)
+    Checking jolt-program v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-program)
+    Checking tracer v0.2.0 (/private/tmp/jolt-blake2b-t28-20260906/tracer)
+    Checking akita-serialization v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-serialization)
+    Checking jolt-poly v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-poly)
+    Checking jolt-transcript v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-transcript)
+    Checking jolt-lookup-tables v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-lookup-tables)
+    Checking akita-transcript v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-transcript)
+    Checking akita-algebra v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-algebra)
+    Checking akita-challenges v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-challenges)
+    Checking jolt-crypto v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-crypto)
+    Checking jolt-openings v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-openings)
+    Checking jolt-inlines-sdk v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/jolt-inlines/sdk)
+    Checking jolt-host v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-host)
+    Checking akita-sumcheck v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-sumcheck)
+    Checking jolt-inlines-keccak256 v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/jolt-inlines/keccak256)
+    Checking jolt-inlines-blake2 v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/jolt-inlines/blake2)
+    Checking jolt-inlines-sha2 v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/jolt-inlines/sha2)
+    Checking jolt-claims v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-claims)
+    Checking jolt-dory v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-dory)
+    Checking akita-types v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-types)
+    Checking jolt-r1cs v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-r1cs)
+    Checking jolt-witness v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-witness)
+    Checking akita-schedules v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-schedules)
+    Checking jolt-sumcheck v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-sumcheck)
+    Checking akita-config v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-config)
+    Checking akita-planner v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-planner)
+    Checking jolt-blindfold v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-blindfold)
+    Checking akita-prover v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-prover)
+    Checking akita-verifier v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-verifier)
+    Checking jolt-verifier v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-verifier)
+    Checking jolt-kernels v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-kernels)
+    Checking akita-setup v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-setup)
+    Checking akita-metal v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal)
+    Checking akita-pcs v0.1.0 (/private/tmp/akita-kernel-campaign-20260906/crates/akita-pcs)
+    Checking jolt-akita v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-akita)
+    Checking jolt-prover v0.1.0 (/private/tmp/jolt-blake2b-t28-20260906/crates/jolt-prover)
+error: use of `format!` to build up a string from an iterator
+   --> crates/jolt-prover/src/profile.rs:661:30
+    |
+661 |         let digest: String = expected.iter().map(|byte| format!("{byte:02x}")).collect();
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: call `fold` instead
+   --> crates/jolt-prover/src/profile.rs:661:46
+    |
+661 |         let digest: String = expected.iter().map(|byte| format!("{byte:02x}")).collect();
+    |                                              ^^^
+help: ... and use the `write!` macro here
+   --> crates/jolt-prover/src/profile.rs:661:57
+    |
+661 |         let digest: String = expected.iter().map(|byte| format!("{byte:02x}")).collect();
+    |                                                         ^^^^^^^^^^^^^^^^^^^^^
+    = note: this can be written more efficiently by appending to a `String` directly
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#format_collect
+    = note: `-D clippy::format-collect` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::format_collect)]`
+
+error: could not compile `jolt-prover` (lib) due to 1 previous error

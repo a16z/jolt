@@ -1,0 +1,23 @@
+{
+  "status": "resource_stopped",
+  "workload": "blake2b-chain",
+  "requested_scale": 28,
+  "iterations": 112682,
+  "verified": false,
+  "prove_seconds": null,
+  "actual_trace_length": null,
+  "sampled_family_rss_bytes": 97354645504,
+  "stop_threshold_bytes": 94489280512,
+  "controller_exit_code": 1,
+  "benchmark_exit_code": null,
+  "controller_session": 91310,
+  "raw": "runs/t28_blake2b-chain_metal_r1.out",
+  "raw_sha256": "7c0565e11182d39febe2dc0820642fd01c2f262e2dd99f080b5b759de970cb29",
+  "benchmark_process_remaining": false,
+  "machine_lock_remaining": false,
+  "frozen_fingerprints": "pass",
+  "parent_comparison_run": false,
+  "new_default_production_pin": false,
+  "projected_m5_mhz_for_blake": null,
+  "three_workload_projected_m5_mean_mhz": 10.759380565888799
+}
