@@ -30,21 +30,26 @@ def record(event, **fields):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--shared-reservation", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--shared-reservation", action="store_true")
+    mode.add_argument("--task-pairing", action="store_true")
     args = parser.parse_args()
-    diagnostic = "d1" if args.shared_reservation else "d0"
-    binary = ROOT / ("bin/shared-reservation" if args.shared_reservation else "bin/saturation")
+    diagnostic = "d3" if args.task_pairing else "d1" if args.shared_reservation else "d0"
+    binary = ROOT / ("bin/task-pairing" if args.task_pairing else "bin/shared-reservation" if args.shared_reservation else "bin/saturation")
     source = Path("/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal/src/kernels/onehot.metal")
     if hashlib.sha256(source.read_bytes()).hexdigest() != "065827662f06ed94de4974f336349abbb933f72316b0590e1e68c3f6db188c83":
         raise RuntimeError("accepted shader fingerprint mismatch")
     output = ROOT / "runs" / (diagnostic + "-saturation.out")
     telemetry = ROOT / "runs" / (diagnostic + "-telemetry.jsonl")
-    archive = ROOT / "runs" / ("d1-production.variant0.bin" if args.shared_reservation else "d0-production.bin")
+    archive = ROOT / "runs" / (diagnostic + "-production.variant0.bin" if args.shared_reservation or args.task_pairing else "d0-production.bin")
     output.parent.mkdir(exist_ok=True)
     if any(path.exists() for path in (output, telemetry, archive)):
         raise RuntimeError("immutable diagnostic output exists; inspect instead of overwriting")
     command = ["/usr/bin/time", "-l", str(binary), str(source)]
-    if args.shared_reservation:
+    if args.task_pairing:
+        command += [str(ROOT / "runs/d2-capture"), str(ROOT / "runs/d3-task-map.u32le"),
+                    str(ROOT / "runs/d3-production")]
+    elif args.shared_reservation:
         command += [str(ROOT / "shared-reservation.metal"), str(ROOT / "runs/d1-production")]
     else:
         command.append(str(archive))
@@ -74,10 +79,11 @@ def main():
                     raise RuntimeError("telemetry exited before diagnostic completion")
                 time.sleep(1)
         raw = output.read_text()
-        complete = "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
+        complete = "PAIRING_COMPLETE" if args.task_pairing else "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
+        target_observations = 4 if args.task_pairing else 6
         expected_rows = 11 if args.shared_reservation else 8
         if (process.returncode != 0 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]
-                or raw.count(complete + " target_observations=6 parity=pass") != 1
+                or raw.count(complete + f" target_observations={target_observations} parity=pass") != 1
                 or len(re.findall(r"^SATURATION positions=", raw, re.M)) != expected_rows):
             raise RuntimeError("diagnostic process/output failure")
         record(diagnostic + "_complete", sampled_family_rss_bytes=sampled_rss,

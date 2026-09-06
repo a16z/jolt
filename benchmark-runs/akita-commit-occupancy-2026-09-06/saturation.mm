@@ -47,9 +47,23 @@ static U128 sub(U128 a, U128 b) {
     return a >= b ? a - b : MODULUS - (b - a);
 }
 
+static void finish_command(id<MTLCommandBuffer> command, Clock::time_point started) {
+    while (command.status != MTLCommandBufferStatusCompleted
+        && command.status != MTLCommandBufferStatusError) {
+        if (std::chrono::duration<double>(Clock::now() - started).count() > 5) {
+            std::fprintf(stderr, "DIAGNOSTIC_WATCHDOG five-second command limit\n");
+            std::_Exit(124);
+        }
+        usleep(1000);
+    }
+    if (command.error) std::fprintf(stderr, "%s\n", command.error.localizedDescription.UTF8String);
+    require(command.status == MTLCommandBufferStatusCompleted && !command.error, "command completion");
+}
+
 struct Case {
     PackedParams params;
     id<MTLBuffer> matrix, lanes, output, zero_rows;
+    id<MTLBuffer> device_matrix = nil, device_output = nil, task_mapping = nil;
     std::vector<uint64_t> task_hot;
 
     Case(id<MTLDevice> device, uint64_t positions, uint64_t blocks,
@@ -92,6 +106,20 @@ struct Case {
         }
     }
 
+    void make_private(id<MTLDevice> device, id<MTLCommandQueue> queue) {
+        device_matrix = [device newBufferWithLength:matrix.length options:MTLResourceStorageModePrivate];
+        device_output = [device newBufferWithLength:output.length options:MTLResourceStorageModePrivate];
+        require(device_matrix && device_output, "production-mode private buffers");
+        const auto start = Clock::now();
+        id<MTLCommandBuffer> command = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+        [blit copyFromBuffer:matrix sourceOffset:0 toBuffer:device_matrix destinationOffset:0 size:matrix.length];
+        [blit copyFromBuffer:output sourceOffset:0 toBuffer:device_output destinationOffset:0 size:output.length];
+        [blit endEncoding];
+        [command commit];
+        finish_command(command, start);
+    }
+
     U128 oracle(uint64_t task, uint64_t part, uint64_t element, uint64_t coefficient) const {
         const uint64_t block = task / params.columns, column = task % params.columns;
         const auto *values = static_cast<const U128 *>(matrix.contents);
@@ -132,7 +160,7 @@ struct Case {
                 hash = (hash ^ uint8_t(value >> (byte * 8))) * 1099511628211ull;
         };
         if (full) {
-            for (uint64_t task = 0; task < params.dispatch_tasks; ++task)
+            for (uint64_t task = params.task_offset; task < params.task_offset + params.dispatch_tasks; ++task)
                 for (uint64_t part = 0; part < 16; ++part)
                     for (uint64_t element = 0; element < 3; ++element)
                         for (uint64_t coefficient = 0; coefficient < 128; ++coefficient)
@@ -147,8 +175,8 @@ struct Case {
                                     + coefficient] == 0, "padding untouched");
         } else {
             for (uint64_t sample = 0; sample < 65; ++sample) {
-                const uint64_t task = sample < 2 ? sample * (params.dispatch_tasks - 1)
-                    : mix(sample) % params.dispatch_tasks;
+                const uint64_t task = params.task_offset + (sample < 2 ? sample * (params.dispatch_tasks - 1)
+                    : mix(sample) % params.dispatch_tasks);
                 check(task, sample < 2 ? sample * 15 : sample % 16,
                     sample < 2 ? sample * 2 : sample % 3,
                     sample < 2 ? sample * 127 : mix(sample + 7) % 128);
@@ -163,11 +191,12 @@ struct Case {
         id<MTLCommandBuffer> command = [queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
-        [encoder setBuffer:matrix offset:0 atIndex:0];
+        [encoder setBuffer:device_matrix ? device_matrix : matrix offset:0 atIndex:0];
         [encoder setBuffer:lanes offset:0 atIndex:1];
-        [encoder setBuffer:output offset:0 atIndex:2];
+        [encoder setBuffer:device_output ? device_output : output offset:0 atIndex:2];
         [encoder setBytes:&params length:sizeof(params) atIndex:3];
         [encoder setBuffer:zero_rows offset:0 atIndex:4];
+        if (task_mapping) [encoder setBuffer:task_mapping offset:0 atIndex:5];
         if (shared_bytes) [encoder setThreadgroupMemoryLength:shared_bytes atIndex:0];
         const uint64_t streams = (params.dispatch_tasks + 63) / 64;
         [encoder dispatchThreadgroups:MTLSizeMake(streams * 48, 1, 1)
@@ -175,21 +204,22 @@ struct Case {
         [encoder endEncoding];
         const double epoch = [[NSDate date] timeIntervalSince1970];
         [command commit];
-        while (command.status != MTLCommandBufferStatusCompleted
-            && command.status != MTLCommandBufferStatusError) {
-            if (std::chrono::duration<double>(Clock::now() - started).count() > 5) {
-                std::fprintf(stderr, "DIAGNOSTIC_WATCHDOG five-second command limit\n");
-                std::_Exit(124);
-            }
-            usleep(1000);
-        }
-        if (command.error) std::fprintf(stderr, "%s\n", command.error.localizedDescription.UTF8String);
-        require(command.status == MTLCommandBufferStatusCompleted && !command.error, "command completion");
+        finish_command(command, started);
         const double wall = std::chrono::duration<double>(Clock::now() - started).count();
         const double gpu = command.GPUEndTime - command.GPUStartTime;
         require(std::isfinite(gpu) && gpu > 0, "GPU timestamp");
         uint64_t hot = 0;
-        for (uint64_t task = 0; task < params.dispatch_tasks; ++task) hot += task_hot[task];
+        for (uint64_t task = params.task_offset; task < params.task_offset + params.dispatch_tasks; ++task)
+            hot += task_hot[task];
+        if (device_output) {
+            const auto readback_start = Clock::now();
+            id<MTLCommandBuffer> readback = [queue commandBuffer];
+            id<MTLBlitCommandEncoder> blit = [readback blitCommandEncoder];
+            [blit copyFromBuffer:device_output sourceOffset:0 toBuffer:output destinationOffset:0 size:output.length];
+            [blit endEncoding];
+            [readback commit];
+            finish_command(readback, readback_start);
+        }
         const uint64_t hash = verify(full);
         std::printf("SATURATION positions=%llu order=%u warmup=%u streams=%llu groups=%llu tasks=%llu hot=%llu gpu_ms=%.6f wall_ms=%.6f giga_updates_s=%.6f oracle=%s checksum=%016llx epoch=%.6f\n",
             (unsigned long long)params.positions, order, unsigned(warmup),
