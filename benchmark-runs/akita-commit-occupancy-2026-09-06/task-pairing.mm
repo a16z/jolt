@@ -29,7 +29,8 @@ int main(int argc, const char **argv) {
     const bool deferred = argc == 8 && std::string(argv[6]) == "--deferred";
     require(argc != 7 || cached || sign_bands || shared_aos, "task variant flag");
     require(argc != 8 || deferred, "deferred variant flag");
-    const bool stability = argc == 6 && std::string(argv[5]) == "--stability";
+    const bool isolated = argc == 6 && std::string(argv[5]) == "--isolated";
+    const bool stability = isolated || (argc == 6 && std::string(argv[5]) == "--stability");
     const bool interleaved = argc == 6 && !stability;
     const bool mapped = !cached && !sign_bands && !interleaved && !deferred && !shared_aos && !stability;
     @autoreleasepool {
@@ -248,7 +249,7 @@ int main(int argc, const char **argv) {
         for (unsigned variant = 0; variant < 2; ++variant) {
             target.task_mapping = variant && deferred ? counts_buffer : variant && mapped ? mapping_buffer : nil;
             std::printf("PAIRING_CASE phase=warmup variant=%u task_offset=10880\n", variant);
-            target.run(queue, pipelines[variant], variant, true, false, 0, stability ? 8 : 1);
+            target.run(queue, pipelines[variant], variant, true, false, 0, stability && !isolated ? 8 : 1);
             check_active_output(target, reference);
         }
         unsigned order = 0;
@@ -257,8 +258,10 @@ int main(int argc, const char **argv) {
             std::printf("PAIRING_CASE phase=measure variant=%u task_offset=10880\n", variant);
             target.run(queue, pipelines[variant], ++order, false, false, 0, stability ? 8 : 1);
             check_active_output(target, reference);
+            if (isolated) break;
         }
-        std::printf("%s_COMPLETE target_observations=4 parity=pass active_coefficients=%llu\n",
-            stability ? "STABILITY" : shared_aos ? "SHARED_AOS" : deferred ? "DEFERRED" : sign_bands ? "SIGN_BANDS" : cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
+        std::printf("%s_COMPLETE target_observations=%u parity=pass active_coefficients=%llu\n",
+            isolated ? "ISOLATED" : stability ? "STABILITY" : shared_aos ? "SHARED_AOS" : deferred ? "DEFERRED" : sign_bands ? "SIGN_BANDS" : cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING",
+            order, (unsigned long long)reference.size());
     }
 }

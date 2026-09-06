@@ -40,10 +40,14 @@ def main():
     mode.add_argument("--deferred-sign", action="store_true")
     mode.add_argument("--shared-aos", action="store_true")
     mode.add_argument("--stability", action="store_true")
+    mode.add_argument("--isolated-stability", action="store_true")
+    parser.add_argument("--observation", type=int, choices=(1, 2, 3, 4))
     args = parser.parse_args()
-    real_input = args.task_pairing or args.task_interleaving or args.cached_gathers or args.sign_bands or args.deferred_sign or args.shared_aos or args.stability
-    diagnostic = "d13" if args.stability else "d11" if args.shared_aos else "d10" if args.deferred_sign else "d9" if args.negative_counts else "d8" if args.sign_bands else "d7" if args.cached_gathers else "d6" if args.task_interleaving else "d3" if args.task_pairing else "d1" if args.shared_reservation else "d0"
-    binary = ROOT / ("bin/stability" if args.stability else "bin/shared-aos" if args.shared_aos else "bin/deferred-sign" if args.deferred_sign else "bin/negative-counts" if args.negative_counts else "bin/sign-bands" if args.sign_bands else "bin/cached-gathers" if args.cached_gathers else "bin/task-interleaving" if args.task_interleaving else "bin/task-pairing" if args.task_pairing else "bin/shared-reservation" if args.shared_reservation else "bin/saturation")
+    if args.isolated_stability != (args.observation is not None):
+        parser.error("isolated stability requires exactly one observation index")
+    real_input = args.task_pairing or args.task_interleaving or args.cached_gathers or args.sign_bands or args.deferred_sign or args.shared_aos or args.stability or args.isolated_stability
+    diagnostic = f"d15-{args.observation}" if args.isolated_stability else "d13" if args.stability else "d11" if args.shared_aos else "d10" if args.deferred_sign else "d9" if args.negative_counts else "d8" if args.sign_bands else "d7" if args.cached_gathers else "d6" if args.task_interleaving else "d3" if args.task_pairing else "d1" if args.shared_reservation else "d0"
+    binary = ROOT / ("bin/isolated-stability" if args.isolated_stability else "bin/stability" if args.stability else "bin/shared-aos" if args.shared_aos else "bin/deferred-sign" if args.deferred_sign else "bin/negative-counts" if args.negative_counts else "bin/sign-bands" if args.sign_bands else "bin/cached-gathers" if args.cached_gathers else "bin/task-interleaving" if args.task_interleaving else "bin/task-pairing" if args.task_pairing else "bin/shared-reservation" if args.shared_reservation else "bin/saturation")
     source = Path("/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal/src/kernels/onehot.metal")
     if hashlib.sha256(source.read_bytes()).hexdigest() != "065827662f06ed94de4974f336349abbb933f72316b0590e1e68c3f6db188c83":
         raise RuntimeError("accepted shader fingerprint mismatch")
@@ -75,6 +79,8 @@ def main():
             command += [str(ROOT / "cached-gathers.metal"), "--shared-aos"]
         if args.stability:
             command.append("--stability")
+        if args.isolated_stability:
+            command.append("--isolated")
     elif args.shared_reservation:
         command += [str(ROOT / "shared-reservation.metal"), str(ROOT / "runs/d1-production")]
     else:
@@ -105,9 +111,9 @@ def main():
                     raise RuntimeError("telemetry exited before diagnostic completion")
                 time.sleep(1)
         raw = output.read_text()
-        complete = "STABILITY_COMPLETE" if args.stability else "SHARED_AOS_COMPLETE" if args.shared_aos else "DEFERRED_COMPLETE" if args.deferred_sign else "NEGATIVE_COUNTS_COMPLETE" if args.negative_counts else "SIGN_BANDS_COMPLETE" if args.sign_bands else "CACHED_COMPLETE" if args.cached_gathers else "INTERLEAVING_COMPLETE" if args.task_interleaving else "PAIRING_COMPLETE" if args.task_pairing else "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
-        target_observations = 2 if args.negative_counts else 4 if real_input else 6
-        expected_rows = 12 if args.deferred_sign else 0 if args.negative_counts else 10 if args.cached_gathers or args.sign_bands or args.shared_aos or args.stability else 11 if args.shared_reservation else 8
+        complete = "ISOLATED_COMPLETE" if args.isolated_stability else "STABILITY_COMPLETE" if args.stability else "SHARED_AOS_COMPLETE" if args.shared_aos else "DEFERRED_COMPLETE" if args.deferred_sign else "NEGATIVE_COUNTS_COMPLETE" if args.negative_counts else "SIGN_BANDS_COMPLETE" if args.sign_bands else "CACHED_COMPLETE" if args.cached_gathers else "INTERLEAVING_COMPLETE" if args.task_interleaving else "PAIRING_COMPLETE" if args.task_pairing else "RESERVATION_COMPLETE" if args.shared_reservation else "SATURATION_COMPLETE"
+        target_observations = 1 if args.isolated_stability else 2 if args.negative_counts else 4 if real_input else 6
+        expected_rows = 7 if args.isolated_stability else 12 if args.deferred_sign else 0 if args.negative_counts else 10 if args.cached_gathers or args.sign_bands or args.shared_aos or args.stability else 11 if args.shared_reservation else 8
         if (process.returncode != 0 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]
                 or raw.count(complete + f" target_observations={target_observations} parity=pass") != 1
                 or len(re.findall(r"^SATURATION positions=", raw, re.M)) != expected_rows):
