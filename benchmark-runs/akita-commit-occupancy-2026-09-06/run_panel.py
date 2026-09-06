@@ -19,22 +19,30 @@ def main():
     mode.add_argument("--widened-carry", action="store_true")
     mode.add_argument("--single-task", action="store_true")
     mode.add_argument("--radix26", action="store_true")
+    mode.add_argument("--staged-radix26", action="store_true")
     args = parser.parse_args()
+    radix26 = args.radix26 or args.staged_radix26
     observation = args.observation
     variant = (0, 1, 1, 0)[observation - 1]
-    diagnostic = "d22" if args.radix26 else "d21" if args.single_task else "d20" if args.widened_carry else "d19"
+    diagnostic = "d23" if args.staged_radix26 else "d22" if args.radix26 else "d21" if args.single_task else "d20" if args.widened_carry else "d19"
     prefix = f"{diagnostic}-{observation}"
     binary = ROOT / ("bin/full-panel-widened" if args.widened_carry else "bin/full-panel")
     binary_hash = "2f5a3cf9a5312f2994c018b39b25b80d9236b7663363a6cf8bf57fd8a934c11e" if args.widened_carry else "dab662ad72d0275c79ee44000e2598fa1dbb5af75fd293d29f1b950a3115625e"
     if args.single_task:
         binary = ROOT / "bin/full-panel-single"
         binary_hash = "b2d4eb47df07a7327fc160d6b32845ec102bf73094bb72099408d32dc589d7ac"
-    if args.radix26:
+    if radix26:
         binary = ROOT / "bin/full-panel-radix26"
         binary_hash = "70e3121c276f78690446728f58924dc8233918a4f96547ae47e10b799f7aaa44"
         helper = ROOT / "radix26.metal"
         if hashlib.sha256(helper.read_bytes()).hexdigest() != "bd2ac0cb54b92e551bf37cd93afe0f7449557547303b7498883eb4277e82123e":
             raise RuntimeError("frozen radix26 source fingerprint mismatch")
+    if args.staged_radix26:
+        binary = ROOT / "bin/full-panel-radix26-staged"
+        binary_hash = "171679b5928cddf41b22904064609a63626ad4ef45531cd7e4913d72b9ef8677"
+        staged_helper = ROOT / "radix26-staged.metal"
+        if hashlib.sha256(staged_helper.read_bytes()).hexdigest() != "62410357dac7dd4041246cd3d24e709bef6fc6c918b9c603c88d241e44cd50b3":
+            raise RuntimeError("frozen staged radix26 source fingerprint mismatch")
     if hashlib.sha256(binary.read_bytes()).hexdigest() != binary_hash:
         raise RuntimeError("frozen full-panel binary fingerprint mismatch")
     shader = Path("/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal/src/kernels/onehot.metal")
@@ -53,7 +61,7 @@ def main():
         raise RuntimeError("immutable observation exists; inspect rather than repeat")
     if reference.exists() != (observation > 1):
         raise RuntimeError("first-parent reference presence/order mismatch")
-    if (args.single_task or args.radix26) and observation > 2 and f'"event": "{diagnostic}_futility_stop"' in (ROOT / "events.jsonl").read_text():
+    if (args.single_task or radix26) and observation > 2 and f'"event": "{diagnostic}_futility_stop"' in (ROOT / "events.jsonl").read_text():
         raise RuntimeError("preregistered futility stop already reached")
     if observation > 1:
         previous = ROOT / "runs" / (f"{diagnostic}-{observation - 1}-panel.out")
@@ -68,6 +76,8 @@ def main():
         command.append("--single-task")
     if args.radix26:
         command += ["--radix26", str(helper)]
+    if args.staged_radix26:
+        command += ["--staged-radix26", str(helper), str(staged_helper)]
     LOCK.mkdir()
     process = monitor = None
     try:
@@ -92,15 +102,15 @@ def main():
         raw = output.read_text()
         rss = re.findall(r"(\d+)\s+maximum resident set size", raw)
         rows = re.findall(r"^FULL_PANEL (.+)$", raw, re.M)
-        parity_positions = 1024 if args.radix26 else 256
-        parity_cases = 10 if args.radix26 else 6 if args.widened_carry or args.single_task else 4
+        parity_positions = 1024 if radix26 else 256
+        parity_cases = 10 if radix26 else 6 if args.widened_carry or args.single_task else 4
         if (process.returncode != 0 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]
             or len(rss) != 1 or int(rss[0]) >= 88 * 2**30 or len(rows) != 1
             or raw.count("FULL_PANEL_COMPLETE target_observations=1 parity=pass") != 1
             or len(re.findall(rf"^SATURATION positions={parity_positions}", raw, re.M)) != parity_cases
             or len(re.findall(r"^PANEL_COMMAND ", raw, re.M)) != 44):
             raise RuntimeError("full-panel process/output/identity failure")
-        if args.radix26 and raw.count("RADIX26_NORMALIZER states=512 corners=32 modular_sum=pass post_bounds=pass") != 1:
+        if radix26 and raw.count("RADIX26_NORMALIZER states=512 corners=32 modular_sum=pass post_bounds=pass") != 1:
             raise RuntimeError("radix26 normalization invariant check missing")
         metrics = dict(field.split("=", 1) for field in rows[0].split())
         if (metrics["variant"] != str(variant) or metrics["tasks"] != "22301"
@@ -110,7 +120,7 @@ def main():
             raw_sha256=hashlib.sha256(output.read_bytes()).hexdigest(),
             archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
             reference_sha256=hashlib.sha256(reference.read_bytes()).hexdigest())
-        if (args.single_task or args.radix26) and observation == 2:
+        if (args.single_task or radix26) and observation == 2:
             parent_raw = (ROOT / "runs" / (diagnostic + "-1-panel.out")).read_text()
             parent = dict(field.split("=", 1) for field in re.search(r"^FULL_PANEL (.+)$", parent_raw, re.M)[1].split())
             gpu_saving = 1 - float(metrics["panel_gpu_ms"]) / float(parent["panel_gpu_ms"])

@@ -2,7 +2,7 @@
 #include "saturation.mm"
 #include "radix26-probe.mm"
 
-enum class PanelSchedule { RowMajor, ColumnMajor, WidenedCarry, SingleTask, Radix26 };
+enum class PanelSchedule { RowMajor, ColumnMajor, WidenedCarry, SingleTask, Radix26, Radix26Staged };
 
 struct PanelReplay {
     Case &test;
@@ -110,10 +110,11 @@ struct PanelReplay {
 };
 
 int main(int argc, const char **argv) {
-    require(argc >= 6 && argc <= 8, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant [--widened-carry | --single-task | --radix26 helper.metal]");
+    require(argc >= 6 && argc <= 9, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant [--widened-carry | --single-task | --radix26 helper.metal | --staged-radix26 helper.metal staged.metal]");
     const bool widened = argc == 7 && std::string(argv[6]) == "--widened-carry";
     const bool single_task = argc == 7 && std::string(argv[6]) == "--single-task";
-    const bool radix26 = argc == 8 && std::string(argv[6]) == "--radix26";
+    const bool staged_radix26 = argc == 9 && std::string(argv[6]) == "--staged-radix26";
+    const bool radix26 = staged_radix26 || (argc == 8 && std::string(argv[6]) == "--radix26");
     require(argc == 6 || widened || single_task || radix26, "full-panel mechanism flag");
     const unsigned variant = unsigned(std::stoul(argv[5]));
     require(variant < 2, "full-panel variant");
@@ -127,7 +128,8 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "root kernel boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-        NSString *variant_name = radix26 ? @"diagnostic_radix26_commit" : single_task ? @"diagnostic_single_task_commit"
+        NSString *variant_name = staged_radix26 ? @"diagnostic_radix26_staged_commit"
+            : radix26 ? @"diagnostic_radix26_commit" : single_task ? @"diagnostic_single_task_commit"
             : widened ? @"diagnostic_widened_carry_commit" : @"diagnostic_column_major_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
             withString:variant_name];
@@ -154,6 +156,28 @@ int main(int argc, const char **argv) {
             require([body containsString:anchor], "radix26 normalization cadence anchor");
             body = [body stringByReplacingOccurrencesOfString:anchor withString:
                 @"        if ((tile & 1u) != 0u) {\n            if (active_0) diagnostic_radix26_normalize(accumulator_0);\n            if (active_1) diagnostic_radix26_normalize(accumulator_1);\n        }\n        threadgroup_barrier(mem_flags::mem_threadgroup);\n        matrix_cursor += (ulong)PACKED_FP128_D512_PANEL_TILE_ELEMENTS;"];
+            if (staged_radix26) {
+                NSString *staged_source = [NSString stringWithContentsOfFile:@(argv[8])
+                    encoding:NSUTF8StringEncoding error:&error];
+                require(staged_source && !error, "staged radix26 shader source");
+                NSString *stores = @"            shared_matrix[shared_index] = value.limb[0];\n            shared_matrix[PACKED_FP128_D512_PANEL_TILE_ELEMENTS + shared_index] = value.limb[1];\n            shared_matrix[PACKED_FP128_D512_PANEL_TILE_ELEMENTS * 2u + shared_index] =\n                value.limb[2];\n            shared_matrix[PACKED_FP128_D512_PANEL_TILE_ELEMENTS * 3u + shared_index] =\n                value.limb[3];";
+                require([body containsString:stores], "staged radix26 cooperative-copy anchor");
+                body = [body stringByReplacingOccurrencesOfString:stores
+                    withString:@"            diagnostic_radix26_stage(shared_matrix, shared_index, value);"];
+                for (NSArray<NSString *> *replacement in @[
+                    @[@"PACKED_FP128_D512_PANEL_TILE_ELEMENTS * 4", @"DIAGNOSTIC_RADIX26_TILE_ELEMENTS * 5"],
+                    @[@"PACKED_FP128_D512_PANEL_TILE_ELEMENTS", @"DIAGNOSTIC_RADIX26_TILE_ELEMENTS"],
+                    @[@"PACKED_FP128_D128_RANK3_TILE_POSITIONS", @"DIAGNOSTIC_RADIX26_TILE_POSITIONS"],
+                    @[@"PACKED_FP128_D128_RANK3_ROWS_PER_TILE", @"DIAGNOSTIC_RADIX26_ROWS_PER_TILE"],
+                    @[@"diagnostic_radix26_add", @"diagnostic_radix26_staged_add"],
+                    @[@"(tile & 1u) != 0u", @"(tile & 3u) == 3u"]]) {
+                    require([body containsString:replacement[0]] || [helpers containsString:replacement[0]],
+                        "staged radix26 geometry/cadence anchor");
+                    helpers = [helpers stringByReplacingOccurrencesOfString:replacement[0] withString:replacement[1]];
+                    body = [body stringByReplacingOccurrencesOfString:replacement[0] withString:replacement[1]];
+                }
+                radix_source = [radix_source stringByAppendingString:staged_source];
+            }
             combined = [[[source stringByAppendingString:radix_source] stringByAppendingString:helpers] stringByAppendingString:body];
         } else if (widened) {
             NSRange word_start = [source rangeOfString:@"inline uint4 akita_add_transposed_word("];
@@ -220,7 +244,8 @@ int main(int argc, const char **argv) {
             require(pipelines[index] && !error, "full-panel pipeline");
             if (index < 2) require(pipelines[index].maxTotalThreadsPerThreadgroup == 1024
                 && pipelines[index].threadExecutionWidth == 32
-                && pipelines[index].staticThreadgroupMemoryLength == 32768, "unchanged panel resource fingerprint");
+                && pipelines[index].staticThreadgroupMemoryLength == (staged_radix26 && index == 1 ? 20480 : 32768),
+                "preregistered panel resource fingerprint");
             MTLComputePipelineDescriptor *descriptor = [MTLComputePipelineDescriptor new];
             descriptor.computeFunction = function;
             require([archive addComputePipelineFunctionsWithDescriptor:descriptor error:&error], "full-panel archive");
@@ -296,6 +321,7 @@ int main(int argc, const char **argv) {
         finish_command(setup, setup_started);
         PanelReplay replay{target, lanes, zeros};
         const PanelSchedule schedule = variant == 0 ? PanelSchedule::RowMajor
+            : staged_radix26 ? PanelSchedule::Radix26Staged
             : radix26 ? PanelSchedule::Radix26 : single_task ? PanelSchedule::SingleTask
             : widened ? PanelSchedule::WidenedCarry : PanelSchedule::ColumnMajor;
         id<MTLBuffer> result = replay.run(device, queue, pipelines[variant], pipelines[2], schedule);
