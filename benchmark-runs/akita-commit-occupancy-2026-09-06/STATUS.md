@@ -1,4 +1,4 @@
-# Commit campaign checkpoint — 2026-09-06 08:58 UTC
+# Commit campaign checkpoint — 2026-09-06 09:24 UTC
 
 Goal active.20% higher useful root-panel throughput is a milestone, not a cap;
 it has NOT been achieved. No production optimization accepted or pushed.
@@ -6,17 +6,19 @@ Accepted Jolt554f62703/Akita d756e3a67 and parent binary remain unchanged.
 Serial M4 Max, no subagents, no Xcode/admin installation, security frozen.
 
 All processes terminal and machine lock released at this checkpoint.
-Next: measure D22 bounded radix26, preregistered in radix26.md. Diagnostic
-code is built, not yet measured or device-validated. It retains40persistent source words/thread and all
-349matrix sweeps, with signed26-bit digits normalized every16possible inputs.
-The spec contains the modular invariant and complete i32 bound. Independent
-normalizer/field parity must pass before timing. Epoch8 checkpoint09:45UTC.
+Next: implement D23 staged radix26, preregistered in radix26.md. D22 passes
+all arithmetic/output checks and saves1.077s boundary wall, but its8.97% GPU
+reduction misses the fixed10% component gate. D23 amortizes digit decoding
+at the explicit cost of25% more shared traffic and doubled tile barriers.
+Same40persistent source words/thread,349matrix sweeps,16-input bound.
+Epoch8 checkpoint09:45UTC or after an already-running fixed cohort.
 
 Latest complete-panel verdicts (all exact output parity, zero swaps/watchdogs):
 
 - D19 column-major: GPU improves1.72%, wall regresses0.253s. Reject.
 - D20 explicit widened carry: GPU regresses5.82%. Reject.
 - D21 one task/SIMD: GPU improves2.63%, wall saves0.315s. Reject below gate.
+- D22 radix26: GPU improves8.97%, wall saves1.077s. Reject below gate.
 - D16/D17 exact reuse preprocessing:683ms then289ms, both miss250ms gate.
   Reuse is parked despite the exact12.27% removable-update census.
 

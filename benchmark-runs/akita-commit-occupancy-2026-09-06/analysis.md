@@ -1198,3 +1198,24 @@ checks before timing; its theoretical source-op savings are not measured
 throughput. Epoch8 checkpoint09:45UTC,<=3transactions. User files and accepted
 Jolt/Akita revisions remain untouched. Goal remains active beyond20% if an
 actual validated larger gain can be obtained.
+
+### D22 result and D23 preregistration,09:24UTC
+
+D22 GPU(P,C,C,P)11956.137417,10888.848167,10953.412708,12038.310583ms;
+wall12018.127209,10950.597250,11013.208584,12099.974250ms. GPU means
+11997.224000->10921.130438ms:8.9695% time reduction,9.8533% throughput gain.
+Complete boundary saves1077.147812ms. Parent drift0.685%GPU/0.679%wall.
+Reject below fixed10% component gate; retain arithmetic evidence as a parent
+mechanism for D23, not a production promotion. All512normalizer states,ten
+P1024 field-oracle checks,65target samples and192MiB final bytes pass in all
+four observations; zero swaps/watchdogs. RawSHA256(P,C,C,P):
+e9dbf9dc10f901b963ec0c8b7ebbd3379328236f4ea28724386d4973a0c295dc
+138bf622acb32a872a3c6001df528f5b5bc72f4a98ab2f5bf295e619dc762b09
+c8386fb03f53c4a5623b94f0a68f907d5700948f3bb980fa0c39a41ab91db5e4
+c07e645d51d6ffa7f2577d00243a8c898314646d5e8ea00fa6799dafa1928e90.
+
+D23 cost, arithmetic reuse, layout, exact checks and frozen gates are now
+preregistered in radix26.md before code. It stages decoded digits in20KiB,
+removing16.56T naive source decode operations but adding25% shared traffic
+and doubling tile barriers. Neither term is hidden. Epoch8 transaction2;
+checkpoint09:45UTC (finish a cohort already in flight). No accepted gain.

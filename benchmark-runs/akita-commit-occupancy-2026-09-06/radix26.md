@@ -107,8 +107,12 @@ enough to warrant one production-body test, not a predicted wall gain.
 | Same work/output ownership | original root body and reducer | ExactH,65target samples,192MiB parent-output comparison |
 | Performance and resources | full-panel controller | Frozen paired gates, watchdog/RSS/cooling checks |
 
-All code/measurement claims above are initially UNVERIFIED; the arithmetic
-argument is the preregistered design, not a claim that a kernel has passed.
+Verification update09:24UTC: all four D22 observations passed512 scalar
+normalizer states (32 corner combinations), ten P1024 field-oracle fixtures,
+65 independent target partial samples and all192MiB final-output bytes.
+The generated cadence is every two eight-row tiles. GPU reduction8.9695%
+and complete-boundary saving1.077148s miss the fixed10% component gate;
+no production promotion or full-proof gain is established.
 Use P1024 reduced fixtures so periodic normalization actually executes, plus
 allzero, selected-zero, odd-task tail, extremal matrix words, and dense p-1
 inputs with shifts0 and127. CPU state-probe ground truth is a weighted modular
@@ -126,3 +130,44 @@ or witness storage is introduced.
 
 Remaining unknowns: M4 lowering, physical register allocation, issue mix and
 actual speed. Resolve through the frozen diagnostic, not invented counters.
+
+## D23 preregistration: decode during shared staging
+
+Keep the D22 arithmetic, final reducer, original selector slices,64tasks/group,
+1024threads,16position partials,349matrix streams and44commands. Decode the
+five digits once during cooperative global-to-shared copying. The hot loop
+gathers five decoded digits and performs five signed multiply-add expressions.
+Use8positions/4rows per tile and five1024-word planes:20480shared bytes.
+Global A remains raw128-bit and3GiB; no expanded matrix or extra global pass.
+Normalize every FOUR tiles, retaining the proved16-contribution bound exactly.
+The original P19 geometry and P1024 fixtures divide this tile size exactly.
+Compile-time constraints pin the digit/cadence and signed-intermediate bounds.
+
+For U=1253317010304 useful coefficient updates,349*3*524288*128=
+70262980608 matrix fields are staged. Thus each staged field supplies17.8375
+useful updates on average. Moving approximately14 source decode operations
+out of the hot loop avoids14*(U-70262980608)=16562756415744 source operations.
+This is NOT an ISA count or a predicted proportional speedup. It adds4U=
+5013268041216 bytes of logical shared reads and281051922432 shared-store
+bytes,25% above D22. Shared storage drops32->20KiB, but no residency credit
+is assumed. Tile count/barriers/control double2048->4096 per partial; D1's
+raw half-tile experiment cost approximately10%, a qualified~1.2s penalty
+proxy, not a transferable constant. Global matrix requests remain1047GiB.
+These competing terms make this a discriminating experiment, not a promised
+gain. There is no new measured occupancy or issue-rate floor.
+
+Claim/code mapping: a new staged helper owns digit extraction and five-plane
+gather; the existing D22 normalizer/final reducer are unchanged. Generated
+candidate tile constants are distinct from accepted D128/D512 constants.
+Resource checks require parent32768 and candidate20480 shared bytes. The
+same512-state probe, ten P1024 independent field oracles,65target samples,
+all final bytes and original padding checks must pass before any ranking.
+
+Epoch8 transaction2; tooling<=15min,cooled cohort<=12min; checkpoint09:45UTC
+or immediately after its in-flight fixed cohort completes. P,C,C,P with120s
+cooling and immutable binaries/artifacts. Stop after first P,C if GPU saving
+<3% OR wall saving<0.3s. Full ranking remains>=10% GPU reduction AND>=1s wall
+saving, <=3% parent drift, zero swaps/watchdogs,5s command/180s process/88GiB.
+No production/final-proof change before this gate. No protocol, parameter,
+field, transcript, verifier or security change. A12-position tile or different
+normalization cadence would require a separate bound and preregistration.
