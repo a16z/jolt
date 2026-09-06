@@ -1064,3 +1064,56 @@ production candidate; it does not itself promote it or certify optimality.
 No repeats beyond the four preregistered observations. Cohort<=12min including
 cooling, tooling<=25min. If complete-panel evidence clears, freeze a narrow
 isolated-fork production candidate next; final12-proof reserve remains separate.
+
+### D19 result / D20 preregistration,08:28 UTC
+
+D19 GPU(P,C,C,P)11926.750875,11766.565250,11739.698333,11990.337042ms.
+Complete wall11986.594916,12286.507750,12258.947625,12051.991792ms.
+Parent means11958.5439585GPU/12019.293354wall; candidate means11753.1317915/
+12272.7276875ms. GPU improves1.7177%; wall REGRESSES253.434334ms.
+Parent GPU drift0.5317%,wall0.5441%, both clear3%. All192MiB final outputs
+match SHA2560fce4fc89b37432779b9aa794aee2dc520f2c6215ea1a2805e190602904bb8d1;
+all independent oracles,zero swaps/watchdogs. Reject column-major scheduling.
+Raw SHA256 P,C,C,P:
+e0cf9295499452cd967e95e6f1eec7d9be29260dcb217b8b2b3aa3e516e784f5
+b9f398594e5e9cc84d0d06de3a5d124c7faa6cdeec8d38ffaef8b5676da2ff9b
+6d2b801228ab9078b147073b96bc124405b346ab50fa56ea343949b681eaa2b8
+692e489854cc4a7035c8c38ad4ab1052107aabd8217f25593b0d66d00a690e0d.
+
+Model update: a39.4% smaller exact max-iteration envelope did not produce a
+large GPU gain.32 SIMD groups/threadgroup are not32 independently issuing
+physical units; scheduling overlaps their instructions. Total arithmetic,
+shared gather/staging issue, and/or the changed selector locality can dominate.
+The trial does not distinguish these explanations, nor prove the kernel
+optimal. Whole-source cold binding adds about0.46s relative to sliced parent
+binding in this replay. Do not transfer that file-backed cost unqualified to
+resident-prover input; the GPU-only gain already misses the10% gate anyway.
+
+D20 tests a different code-generation question: explicit widened limb sums
+instead of manual u32 overflow detection. For each limb, form
+wide=u64(lhs)+u64(rhs)+u64(carry), outputlow=u32(wide), carry=u32(wide>>32).
+Since lhs,rhs<=2^32-1 and carry<=1, wide<=2^33-1 exactly. Preserve existing
+complement/initial-carry sign handling, signed wrap count and final fp128
+reduction. No signed16-bit wide accumulator (R4), no extra metadata (D10),
+no schedule/grouping/layout changes. Both variants use original slice binding.
+
+Price: usefulU1.253317T updates,16B shared requests/update,1047GiB logical
+matrix requests,40persistent sourceu32words/thread stay unchanged. Original
+limb helper spells two adds,two compares,OR,select. Widened form spells two
+u64 adds and low/high extraction; Metal may lower it better, equivalently,
+or worse. No claim of native64-bit issue or fewer machine instructions.
+If even one source-equivalent op/limb were eliminated, that is4U=5.013T ops,
+11.1% of the naive36op/update accounting; two would be22.2%. These are
+conditional opportunity estimates, NOT measured floors or expected speedups.
+Temporary widened state/compiler expansion could erase all benefit. The
+traffic floor is unchanged and an actual issue-rate floor is still unknown.
+
+Use the D19 complete-panel harness and frozen real input, four separately
+cooled P,C,C,P observations, original44-command slice schedule for BOTH.
+Gate unchanged: >=10% panelGPU mean reduction AND>=1s completewall saving,
+parent drift<=3%, exact fullfinal output equality,zero swaps/watchdogs.
+Add small independent extremal-field fixtures (0,1,p-1,p-2,word boundaries)
+to the existing selected-zero/allzero/odd-tail oracles before target work.
+No whole-target warmup, no timing normalization/retries. <=15min tooling+
+12min cohort, percommand5s/process180s/88GiB. Epoch7 transaction2;
+checkpoint by09:00UTC. No production implementation without a cleared gate.
