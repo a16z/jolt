@@ -127,3 +127,62 @@ Budget<=20min code/build,<=5min guarded observation with120s cooling.
 
 No production kernel or protocol changes yet. The first20% improvement is a
 milestone, not a stopping ceiling; stronger supported levers remain in scope.
+
+## D1 result / model update,05:12 UTC
+
+Full reduced oracle checksum8efa303caf4f4675 for all three pipelines;
+every P19 sampled checksum34ba807bf9e37a5e. Original258.491250/262.292000ms;
+dynamic32KiB/full tile259.004125ms (bridge difference-0.53% vs originalmean).
+Half tile at16/32/24KiB reservation285.436500/286.463000/289.138625ms.
+Original drift1.4704%; reserve32 vs16 penalty0.3596%; half tile16 vs
+originalmean9.6197% slower. Frequency~1573–1578MHz after warmup.
+Reject smaller-tile candidate; no meaningful reservation-sensitive effect.
+Unused dynamic reservation may not consume resident L1, so this does not
+rule out register or useful-working-set pressure. Extra tile/control work
+is expensive enough to erase this resource-relief attempt.
+
+Raw runs/d1-saturation.out SHA256
+fe6233e4522c0c0eb6639ef41cda083623648b9d0cb5b92ddb3ab582d7240529.
+Peak family RSS6.18GiB, swaps0, no watchdog. D0 oracle reused unchanged;
+host harness only gained optional dynamic reservation and an include guard.
+Further source inspection: production public A uses Private storage while
+D0/D1 used Shared storage. These matched diagnostic controls remain valid
+for their stated resource intervention, but production transfer additionally
+requires matching storage mode. Do not promote their raw speed as real-input
+commit speed. Exact occupancy/physical traffic remain unavailable.
+
+## D2 preregistration: capture real selectors, count imbalance and repetition
+
+Question: how much real Fibonacci root work is concentrated on the busiest
+SIMD at each barrier, and how much comes from byte-identical selector blocks?
+These decide between scheduling work more evenly and removing redundant work.
+
+One isolated diagnostic build adds an opt-in host-only capture before the
+existing root commit; no shader/protocol/arithmetic/evaluator changes. Capture
+the canonical row-major selectors, selected-zero bitmap, shape/H/suffix metadata
+to fresh files (~7.3GiB;200GiB disk free). No matrix readback needed for these
+questions. Complete the full proof and require verification. Capture/IO time
+invalidates this run as a performance baseline. Retain accepted binary.
+
+Then a bounded offline CPU census computes per-column/block exact H and
+per-eight-row selector counts. Reconstruct the actual two-task SIMD mapping,
+including cross-block pairs and inactive tails. Report sum actual iterations
+and sum32*max iterations per barrier, not a claimed GPU-idle percentage.
+Also hash each column/block's canonical selector sequence, with selected-zero
+distinct from absence; any hash match requires full equality comparison before
+counting reusable work. Matrix indexing in the shader is independent of task
+block/column, so equal full block sequences imply equal partials at every
+rank/position. Retaining every original output slot leaves the commitment
+and downstream eval unchanged. Hashes alone must never authorize reuse.
+
+Falsifiers: if imbalance-only ideal gain<10%, deprioritize task balancing;
+if exact duplicate elimination removes<10% updates, deprioritize deduplication.
+Any production reuse candidate must additionally price fingerprinting/exact
+comparison, matrix traffic, metadata construction and output replication.
+No gain promised merely from a high duplicate count or imbalance ratio.
+
+Budget<=25min implementation/build, one180s guarded full proof after120s
+cooling,<=180s offline census. One production input capture is the explicit
+exception allowed by the contract to replace the synthetic proxy. No other
+workload matrix or CPU proof run. Inspect captured metadata/byte counts and
+compare census H exactly to captured producer H before interpreting results.
