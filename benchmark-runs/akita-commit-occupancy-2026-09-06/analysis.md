@@ -1147,9 +1147,9 @@ Each SIMD's second accumulator/loop/store is compile-time inactive. No matrix,
 parameter, transcript, verifier or arithmetic change. Source binding stays
 the parent's original per-command slices, including lane_row_offset.
 
-Added cost is explicit:698matrix sweeps rather than349,2094GiB logical A
+Added cost is explicit:697matrix sweeps rather than349,2091GiB logical A
 requests, twice cooperative loads/stores and tile barriers. The additional
-all-requests-hit-DRAM proxy is2.377s at measured440.545GiB/s; actual additional
+all-requests-hit-DRAM proxy is2.370s at measured440.545GiB/s; actual additional
 DRAM traffic may be lower through cache reuse, but cannot be assumed free.
 UsefulH/U, shared coefficient gathers and final output writes are unchanged.
 The calibration's~24% useful-rate opportunity corresponds to~2.3s at this

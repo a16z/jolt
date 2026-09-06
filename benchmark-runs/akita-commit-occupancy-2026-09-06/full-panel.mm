@@ -1,7 +1,7 @@
 #define COMMIT_DIAGNOSTIC_LIBRARY
 #include "saturation.mm"
 
-enum class PanelSchedule { RowMajor, ColumnMajor, WidenedCarry };
+enum class PanelSchedule { RowMajor, ColumnMajor, WidenedCarry, SingleTask };
 
 struct PanelReplay {
     Case &test;
@@ -12,6 +12,7 @@ struct PanelReplay {
                       id<MTLComputePipelineState> panel, id<MTLComputePipelineState> reducer,
                       PanelSchedule schedule) {
         const bool column_major = schedule == PanelSchedule::ColumnMajor;
+        const uint64_t tasks_per_stream = schedule == PanelSchedule::SingleTask ? 32 : 64;
         const auto started = Clock::now();
         const PackedParams original = test.params;
         require(original.tasks == original.full_blocks * original.columns
@@ -60,7 +61,8 @@ struct PanelReplay {
             [encoder setBuffer:test.device_output offset:0 atIndex:2];
             [encoder setBytes:&params length:sizeof(params) atIndex:3];
             [encoder setBuffer:test.zero_rows offset:0 atIndex:4];
-            [encoder dispatchThreadgroups:MTLSizeMake(((params.dispatch_tasks + 63) / 64) * 48, 1, 1)
+            [encoder dispatchThreadgroups:MTLSizeMake(((params.dispatch_tasks + tasks_per_stream - 1)
+                / tasks_per_stream) * 48, 1, 1)
                 threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
             [encoder endEncoding];
             [command commit];
@@ -107,9 +109,10 @@ struct PanelReplay {
 };
 
 int main(int argc, const char **argv) {
-    require(argc == 6 || argc == 7, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant [--widened-carry]");
+    require(argc == 6 || argc == 7, "usage: full-panel production.metal capture-directory reference.fp128le archive-prefix variant [--widened-carry | --single-task]");
     const bool widened = argc == 7 && std::string(argv[6]) == "--widened-carry";
-    require(argc != 7 || widened, "full-panel mechanism flag");
+    const bool single_task = argc == 7 && std::string(argv[6]) == "--single-task";
+    require(argc != 7 || widened || single_task, "full-panel mechanism flag");
     const unsigned variant = unsigned(std::stoul(argv[5]));
     require(variant < 2, "full-panel variant");
     @autoreleasepool {
@@ -122,7 +125,8 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "root kernel boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-        NSString *variant_name = widened ? @"diagnostic_widened_carry_commit" : @"diagnostic_column_major_commit";
+        NSString *variant_name = single_task ? @"diagnostic_single_task_commit"
+            : widened ? @"diagnostic_widened_carry_commit" : @"diagnostic_column_major_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
             withString:variant_name];
         NSString *combined;
@@ -154,6 +158,16 @@ int main(int argc, const char **argv) {
                 body = [body stringByReplacingOccurrencesOfString:rename[0] withString:rename[1]];
             }
             combined = [[source stringByAppendingString:helpers] stringByAppendingString:body];
+        } else if (single_task) {
+            for (NSArray<NSString *> *replacement in @[
+                @[@"constexpr uint tasks_per_stream = PACKED_FP128_D128_RANK3_TASKS_PER_STREAM;",
+                    @"constexpr uint tasks_per_stream = 32u;"],
+                @[@"simdgroup * PACKED_FP128_D128_RANK3_TASKS_PER_SIMDGROUP", @"simdgroup"],
+                @[@"bool active_1 = dispatch_task_0 + 1u < num_tasks;", @"bool active_1 = false;"]]) {
+                require([body containsString:replacement[0]], "single-task production mapping anchor");
+                body = [body stringByReplacingOccurrencesOfString:replacement[0] withString:replacement[1]];
+            }
+            combined = [source stringByAppendingString:body];
         } else {
         NSString *anchor = @"    uint global_1 = global_0 + 1u;";
         require([body containsString:anchor], "original task index anchor");
@@ -187,7 +201,7 @@ int main(int argc, const char **argv) {
             error:&error], "full-panel archive serialization");
         id<MTLCommandQueue> queue = [device newCommandQueue];
         for (unsigned candidate = 0; candidate < 2; ++candidate) {
-            for (unsigned fixture = 0; fixture < (widened ? 3u : 2u); ++fixture) {
+            for (unsigned fixture = 0; fixture < (widened || single_task ? 3u : 2u); ++fixture) {
                 Case small(device, 256, 4, 5, 15, 10);
                 small.params.full_blocks = 3;
                 small.params.tasks = 15;
@@ -243,6 +257,7 @@ int main(int argc, const char **argv) {
         finish_command(setup, setup_started);
         PanelReplay replay{target, lanes, zeros};
         const PanelSchedule schedule = variant == 0 ? PanelSchedule::RowMajor
+            : single_task ? PanelSchedule::SingleTask
             : widened ? PanelSchedule::WidenedCarry : PanelSchedule::ColumnMajor;
         id<MTLBuffer> result = replay.run(device, queue, pipelines[variant], pipelines[2], schedule);
         id<MTLCommandBuffer> readback = [queue commandBuffer];

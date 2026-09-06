@@ -15,14 +15,19 @@ from run_saturation import ROOT, LOCK, matrix, record
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--observation", type=int, required=True, choices=(1, 2, 3, 4))
-    parser.add_argument("--widened-carry", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--widened-carry", action="store_true")
+    mode.add_argument("--single-task", action="store_true")
     args = parser.parse_args()
     observation = args.observation
     variant = (0, 1, 1, 0)[observation - 1]
-    diagnostic = "d20" if args.widened_carry else "d19"
+    diagnostic = "d21" if args.single_task else "d20" if args.widened_carry else "d19"
     prefix = f"{diagnostic}-{observation}"
     binary = ROOT / ("bin/full-panel-widened" if args.widened_carry else "bin/full-panel")
     binary_hash = "2f5a3cf9a5312f2994c018b39b25b80d9236b7663363a6cf8bf57fd8a934c11e" if args.widened_carry else "dab662ad72d0275c79ee44000e2598fa1dbb5af75fd293d29f1b950a3115625e"
+    if args.single_task:
+        binary = ROOT / "bin/full-panel-single"
+        binary_hash = "b2d4eb47df07a7327fc160d6b32845ec102bf73094bb72099408d32dc589d7ac"
     if hashlib.sha256(binary.read_bytes()).hexdigest() != binary_hash:
         raise RuntimeError("frozen full-panel binary fingerprint mismatch")
     shader = Path("/private/tmp/akita-kernel-campaign-20260906/crates/akita-metal/src/kernels/onehot.metal")
@@ -41,6 +46,8 @@ def main():
         raise RuntimeError("immutable observation exists; inspect rather than repeat")
     if reference.exists() != (observation > 1):
         raise RuntimeError("first-parent reference presence/order mismatch")
+    if args.single_task and observation > 2 and '"event": "d21_futility_stop"' in (ROOT / "events.jsonl").read_text():
+        raise RuntimeError("preregistered D21 futility stop already reached")
     if observation > 1:
         previous = ROOT / "runs" / (f"{diagnostic}-{observation - 1}-panel.out")
         if previous.read_text().count("FULL_PANEL_COMPLETE target_observations=1 parity=pass") != 1:
@@ -50,6 +57,8 @@ def main():
         str(reference), str(archive_prefix), str(variant)]
     if args.widened_carry:
         command.append("--widened-carry")
+    if args.single_task:
+        command.append("--single-task")
     LOCK.mkdir()
     process = monitor = None
     try:
@@ -77,7 +86,7 @@ def main():
         if (process.returncode != 0 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]
             or len(rss) != 1 or int(rss[0]) >= 88 * 2**30 or len(rows) != 1
             or raw.count("FULL_PANEL_COMPLETE target_observations=1 parity=pass") != 1
-            or len(re.findall(r"^SATURATION positions=256", raw, re.M)) != (6 if args.widened_carry else 4)
+            or len(re.findall(r"^SATURATION positions=256", raw, re.M)) != (6 if args.widened_carry or args.single_task else 4)
             or len(re.findall(r"^PANEL_COMMAND ", raw, re.M)) != 44):
             raise RuntimeError("full-panel process/output/identity failure")
         metrics = dict(field.split("=", 1) for field in rows[0].split())
@@ -88,6 +97,15 @@ def main():
             raw_sha256=hashlib.sha256(output.read_bytes()).hexdigest(),
             archive_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
             reference_sha256=hashlib.sha256(reference.read_bytes()).hexdigest())
+        if args.single_task and observation == 2:
+            parent_raw = (ROOT / "runs/d21-1-panel.out").read_text()
+            parent = dict(field.split("=", 1) for field in re.search(r"^FULL_PANEL (.+)$", parent_raw, re.M)[1].split())
+            gpu_saving = 1 - float(metrics["panel_gpu_ms"]) / float(parent["panel_gpu_ms"])
+            wall_saving_ms = float(parent["wall_ms"]) - float(metrics["wall_ms"])
+            if gpu_saving < 0.03 or wall_saving_ms < 300:
+                record("d21_futility_stop", gpu_saving=gpu_saving, wall_saving_ms=wall_saving_ms,
+                    verdict="discard", remaining_observations="not_launched")
+                return 2
     except BaseException as error:
         record(prefix + "_failure", reason=str(error))
         raise
@@ -103,4 +121,4 @@ if __name__ == "__main__":
     def stop(_signum, _frame):
         raise KeyboardInterrupt("full-panel controller interrupted")
     signal.signal(signal.SIGTERM, stop)
-    main()
+    raise SystemExit(main() or 0)
