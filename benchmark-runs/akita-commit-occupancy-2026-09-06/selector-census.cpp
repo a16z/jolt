@@ -240,6 +240,45 @@ struct Census {
     std::vector<uint64_t> column_hot, column_unique_hot;
     std::vector<uint64_t> domain_unique_tasks;
 
+    void price_column_major() const {
+        require(domain_count == 1, "whole-block schedule pricing");
+        std::vector<uint64_t> mapping(hot.size());
+        std::vector<bool> seen(hot.size());
+        for (uint64_t task = 0; task < hot.size(); ++task) {
+            const uint64_t mapped = (task % blocks) * columns + task / blocks;
+            require(mapped < hot.size() && !seen[mapped], "column-major bijection");
+            seen[mapped] = true;
+            mapping[task] = mapped;
+        }
+        const uint64_t tiles = (rows_per_block + 7) / 8;
+        uint64_t work = 0, maximum_sum = 0;
+        for (uint64_t first = 0; first < hot.size(); first += 64) {
+            for (uint64_t tile = 0; tile < tiles; ++tile) {
+                uint64_t maximum = 0;
+                for (uint64_t simd = 0; simd < 32; ++simd) {
+                    uint64_t iterations = 0;
+                    for (uint64_t offset = 0; offset < 2; ++offset) {
+                        const uint64_t logical = first + simd * 2 + offset;
+                        if (logical < mapping.size()) {
+                            const uint64_t task = mapping[logical];
+                            iterations += tile_counts[((task / columns) * tiles + tile)
+                                * columns + task % columns];
+                        }
+                    }
+                    work += iterations;
+                    maximum = std::max(maximum, iterations);
+                }
+                maximum_sum += maximum * 32;
+            }
+        }
+        require(work == total_hot, "column-major exact selected work conservation");
+        std::printf("COLUMN_MAJOR_PRICE tasks=%llu groups=%llu original_max_times32=%llu mapped_max_times32=%llu conserved_hot=%llu envelope_reduction=%.9f original_balance=%.9f mapped_balance=%.9f\n",
+            (unsigned long long)hot.size(), (unsigned long long)((hot.size() + 63) / 64),
+            (unsigned long long)barrier_max_sum, (unsigned long long)maximum_sum,
+            (unsigned long long)work, 1.0 - double(maximum_sum) / barrier_max_sum,
+            double(total_hot) / barrier_max_sum, double(total_hot) / maximum_sum);
+    }
+
     uint16_t symbol(uint64_t row, uint64_t column) const {
         return selected_symbol(lanes, zeros, columns, zero_mask, row, column);
     }
@@ -484,7 +523,8 @@ int main(int argc, const char **argv) {
     if (argc == 1) return 0;
     require(argc == 9 || argc == 10 || argc == 11 || argc == 12,
         "usage: census lanes zeros rows columns positions full_blocks zero_mask expected_hot [--fragments | live_rows map_path | --templates live_rows choices_path]");
-    const bool fragments = argc == 10;
+    const bool column_major = argc == 10 && std::string(argv[9]) == "--column-major";
+    const bool fragments = argc == 10 && !column_major;
     require(!fragments || std::string(argv[9]) == "--fragments", "fragment mode flag");
     const auto start = std::chrono::steady_clock::now();
     Mapping lanes(argv[1]), zeros(argv[2]);
@@ -520,6 +560,7 @@ int main(int argc, const char **argv) {
         blocks * (fragments ? 16 : 1), mask, fragments ? 16 : 1);
     require(result.total_hot == expected_hot, "producer hot-entry count equality");
     result.print();
+    if (column_major) result.price_column_major();
     if (argc == 11) result.price_pairing(std::stoull(argv[9]), argv[10]);
     std::printf("CENSUS_COMPLETE elapsed_s=%.6f producer_hot_match=true\n",
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
