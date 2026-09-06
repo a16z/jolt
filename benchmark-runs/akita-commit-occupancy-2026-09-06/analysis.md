@@ -929,3 +929,47 @@ the harness used a stale summary filename `zeros.u64le` instead of the actual
 `active_zero_rows.u64le`. No shader compilation or GPU dispatch had started,
 and no output/archive was created. Corrected only the input filename and
 froze a new binary v2; fresh artifact prefix D16b, same kernel and all gates.
+
+### D16b result / D17 preregistration,07:56 UTC
+
+D16b passes every metadata pair against the serial CPU oracle and all reduced
+fixtures. OriginalH3263846381,executedH2863290349,19239 unique nonzero tasks,
+1534 zeros. Warm GPU678.294083/688.456500ms,mean683.375292ms: REJECT above
+250ms gate. Setup7.772667ms; cold command1170.537375ms vs691.855208ms GPU.
+CPU validation72.336s is diagnostic-only, never a proposed prover step.
+75.23s process,5.49GiB RSS,zero swaps/watchdogs. Raw SHA256
+5c4464699f1a0871243a3ec2d596ae54f6af0bbb24a05a14340ebedbed6afdad.
+
+New causal evidence: zero columns27/28 keep all eight comparison masks alive
+for the whole block despite having no commitment work. Column25's eight bank
+references are exactly identical; all eight are compared for every row.
+The kernel also continues full hot counting after all references mismatch.
+These are source-level redundant work terms, not inferred occupancy counters.
+
+D17 is the second/final preprocessing variant for this mechanism. Split into
+two dependent encoders in one command buffer: first count trueH for each task
+(same128-thread group scan/reduction, no reference comparison); then exact
+reuse comparison. H0 writes own valid representative immediately. For H>0,
+try bank references in increasing order, skipping references whose H differs.
+Equality implies equalH, so this filter cannot discard a valid match. Compare
+one reference at a time; a thread stops at its first mismatching row. Uniform
+group reductions decide equality; after the first full match, stop trying
+later references. Self-reference ends successfully without rereading input.
+All group barriers remain uniform; no hash or sampled equality authorization.
+
+Added costs: second dispatch,178408B metadata plus89204B hot-count buffer,
+up to8 group mismatch reductions per task. Removed costs: all reference work
+for zero tasks; repeated full scans of equivalent bank references; counting
+inside the exact-comparison scan. Traffic floor remains at least5.846GB for
+counting (~12.36ms at measured473GB/s, conditional streaming model), plus
+exact comparison reads and bitmap traffic. One full duplicate comparison
+costs2*262144 bytes/task, about801MB for1528duplicates, excluding bitmaps;
+other comparisons can reject at first mismatch. No certified issue-rate floor.
+This prices the added pass explicitly; it is not an occupancy improvement claim.
+
+Same frozen capture, complete independent CPU metadata oracle and reduced
+fixtures, one warmup/two overhead observations,250ms mean/300ms max GPU gate.
+Every timing charges both encoders.120s cooling,5s GPUcommand/180s process/
+88GiB/zero swaps/watchdogs. <=15min tooling+5min run; if gate fails again,
+park reference reuse rather than extending the search. No reuse panel code
+until this gate clears. Epoch6 transaction2, checkpoint remains08:30 UTC.
