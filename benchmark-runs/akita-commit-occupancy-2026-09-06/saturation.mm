@@ -158,7 +158,7 @@ struct Case {
     }
 
     void run(id<MTLCommandQueue> queue, id<MTLComputePipelineState> pipeline,
-             unsigned order, bool warmup, bool full) {
+             unsigned order, bool warmup, bool full, size_t shared_bytes = 0) {
         const auto started = Clock::now();
         id<MTLCommandBuffer> command = [queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
@@ -168,6 +168,7 @@ struct Case {
         [encoder setBuffer:output offset:0 atIndex:2];
         [encoder setBytes:&params length:sizeof(params) atIndex:3];
         [encoder setBuffer:zero_rows offset:0 atIndex:4];
+        if (shared_bytes) [encoder setThreadgroupMemoryLength:shared_bytes atIndex:0];
         const uint64_t streams = (params.dispatch_tasks + 63) / 64;
         [encoder dispatchThreadgroups:MTLSizeMake(streams * 48, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
@@ -200,6 +201,7 @@ struct Case {
     }
 };
 
+#ifndef COMMIT_DIAGNOSTIC_LIBRARY
 int main(int argc, const char **argv) {
     require(argc == 3, "usage: saturation accepted-onehot.metal archive.bin");
     @autoreleasepool {
@@ -242,3 +244,4 @@ int main(int argc, const char **argv) {
         std::puts("SATURATION_COMPLETE target_observations=6 parity=pass");
     }
 }
+#endif
