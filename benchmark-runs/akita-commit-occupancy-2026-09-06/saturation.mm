@@ -150,6 +150,28 @@ struct Case {
             + ((column * params.blocks + block) * 3 + element) * 128 + coefficient;
     }
 
+    id<MTLBuffer> small_negative_counts(id<MTLDevice> device) const {
+        require(params.positions <= 256, "small direct-comparison metadata only");
+        id<MTLBuffer> result = [device newBufferWithLength:params.tasks * 16 * 128 * 2
+            options:MTLResourceStorageModeShared];
+        require(result != nil, "small negative counts");
+        auto *counts = static_cast<uint16_t *>(result.contents);
+        const auto *source = static_cast<const uint8_t *>(lanes.contents);
+        const uint64_t rows_per_partial = params.positions_per_partial / 2;
+        for (uint64_t fragment = 0; fragment < params.blocks * 16; ++fragment) {
+            for (uint64_t column = 0; column < params.columns; ++column) {
+                for (uint64_t coefficient = 0; coefficient < 128; ++coefficient) {
+                    uint16_t count = 0;
+                    for (uint64_t row = 0; row < rows_per_partial; ++row)
+                        count += (source[(fragment * rows_per_partial + row) * params.columns + column] & 127)
+                            > coefficient;
+                    counts[(fragment * params.columns + column) * 128 + coefficient] = count;
+                }
+            }
+        }
+        return result;
+    }
+
     uint64_t verify(bool full) const {
         const auto *actual = static_cast<const U128 *>(output.contents);
         uint64_t hash = 14695981039346656037ull;
