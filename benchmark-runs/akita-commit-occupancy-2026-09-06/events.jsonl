@@ -15,3 +15,4 @@
 {"event":"d3_verdict","utc":"2026-09-06T05:58:00Z","verdict":"discard","reason":"parked below10percent whole-panel replay gate","observed_time_saving_fraction":0.0509240294,"observed_throughput_gain":0.0536564311,"full_active_output_coefficients":3145728,"next":"D4 exact repetition within existing position partials"}
 {"event":"epoch_checkpoint","utc":"2026-09-06T05:58:00Z","epoch":1,"transactions_complete":4,"production_accepted":false,"next_epoch_deadline":"2026-09-06T07:30:00Z","next_epoch_transactions":3}
 {"event": "d4_fragments_complete", "raw_sha256": "2dd653cb82f993d5f681ed079865d6333064a127140196a1adacb55cdd970084", "utc": "2026-09-06T06:05:39Z"}
+{"event": "d5_templates_complete", "raw_sha256": "2983a4b39109f886272b35aac1bdf8ca12f0da6465402a5443868f407698688c", "utc": "2026-09-06T06:15:19Z"}

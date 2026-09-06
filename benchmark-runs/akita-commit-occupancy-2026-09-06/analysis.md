@@ -384,3 +384,44 @@ The gate ranks an operation-count intervention, not a promised walltime gain.
 Next shader trial must price baseline construction, extra selector branches,
 negative updates, unchanged40-word state and full-output parity together.
 Epoch2 transaction2,<=10min tooling/180s CPU-only observation, no GPU/proof.
+
+## D5 result,06:16 UTC / D6 preregistration: interleave independent task loops
+
+Sampled and oracle-best constant-template choices both remove only6.1603563%
+of updates:3263846381→3062781815, one selected template(byte4, column25).
+The other dense columns are not dominated by one selected byte. This falsifies
+the suggested near-constant-column mechanism at this input; no shader written.
+Raw runs/d5-templates.out SHA256
+2983a4b39109f886272b35aac1bdf8ca12f0da6465402a5443868f407698688c.
+2.78s CPU census, zero swaps, producer H and independent correction-count
+fixture pass. New fragment fixture also passes: identical symbols in16
+different A domains retain16 distinct representatives, including selected-zero.
+
+D6 returns to the original shader's dependency/control structure. Two fully
+independent task accumulators already occupy40 persistent source words/lane,
+but every tile runs all of task0's selected rows before task1's rows. Interleave
+one selected row from each task inside a common while(mask0|mask1) loop. Keep
+the original per-task update order, arithmetic helpers, coefficients, matrix
+tile, task mapping, Private storage, number of groups and output addresses.
+This is not the failed R4 widening: U, matrix sweeps and accumulator width do
+not increase. It tests loop/control and instruction scheduling only.
+
+Costs: retain two local selector values/masks instead of one and two active
+predicates; two conditional update bodies per iteration. Loop iterations
+drop from n0+n1 to max(n0,n1), but both update bodies still execute when both
+are selected. Carry dependency within each coefficient is unchanged; there
+is an opportunity to schedule independent task work, not a claim the compiler
+will do so or that physical registers are unchanged. More temporary live state
+can regress. Compulsory traffic, conditional2.377s matrix-copy proxy and U
+are unchanged; effective integer issue/physical registers remain unmeasured,
+so no bottomed-out/optimality percentage is available.
+
+Use D3's frozen real-input interior8-stream command, independent small/full
+oracle and65 target samples, full3145728 active-coefficient equality, Private
+A/partials, one warmup per pipeline and original,candidate,candidate,original.
+Prediction5–15% less bounded-command GPU time if serialized loop/control is
+material. >=10% time saving with <=3% original drift unlocks full-panel replay;
+otherwise park after this one variant. Any parity/watchdog/resource failure
+rejects. No full proof or production changes at this stage. Epoch2 transaction3,
+<=20min implement/build and<=5min guarded observation including120s cooling.
+Afterward checkpoint the epoch/model before choosing another experiment.
