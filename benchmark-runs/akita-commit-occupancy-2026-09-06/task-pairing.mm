@@ -29,8 +29,9 @@ int main(int argc, const char **argv) {
     const bool deferred = argc == 8 && std::string(argv[6]) == "--deferred";
     require(argc != 7 || cached || sign_bands || shared_aos, "task variant flag");
     require(argc != 8 || deferred, "deferred variant flag");
-    const bool interleaved = argc == 6;
-    const bool mapped = !cached && !sign_bands && !interleaved && !deferred && !shared_aos;
+    const bool stability = argc == 6 && std::string(argv[5]) == "--stability";
+    const bool interleaved = argc == 6 && !stability;
+    const bool mapped = !cached && !sign_bands && !interleaved && !deferred && !shared_aos && !stability;
     @autoreleasepool {
         NSError *error = nil;
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -42,11 +43,13 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "production shader boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-        NSString *variant_name = shared_aos ? @"diagnostic_shared_aos_commit" : deferred ? @"diagnostic_deferred_commit" : sign_bands ? @"diagnostic_sign_bands_commit" : cached ? @"diagnostic_cached_commit" : interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
+        NSString *variant_name = stability ? @"akita_packed_onehot_commit_fp128_d128_rank3" : shared_aos ? @"diagnostic_shared_aos_commit" : deferred ? @"diagnostic_deferred_commit" : sign_bands ? @"diagnostic_sign_bands_commit" : cached ? @"diagnostic_cached_commit" : interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
             withString:variant_name];
         NSString *combined;
-        if (shared_aos) {
+        if (stability) {
+            combined = source;
+        } else if (shared_aos) {
             NSString *helper = [NSString stringWithContentsOfFile:@(argv[5])
                 encoding:NSUTF8StringEncoding error:&error];
             require(helper && !error, "interleaved shared-record helper source");
@@ -145,7 +148,8 @@ int main(int argc, const char **argv) {
         id<MTLComputePipelineState> pipelines[2];
         for (unsigned variant = 0; variant < 2; ++variant) {
             id<MTLFunction> function = [library newFunctionWithName:names[variant]];
-            pipelines[variant] = [device newComputePipelineStateWithFunction:function error:&error];
+            pipelines[variant] = stability && variant ? pipelines[0]
+                : [device newComputePipelineStateWithFunction:function error:&error];
             if (error) std::fprintf(stderr, "%s\n", error.localizedDescription.UTF8String);
             require(pipelines[variant] && !error, "pairing pipeline");
             require(pipelines[variant].maxTotalThreadsPerThreadgroup == 1024
@@ -170,7 +174,7 @@ int main(int argc, const char **argv) {
                 options:MTLResourceStorageModeShared];
             std::printf("PAIRING_CASE phase=parity variant=%u\n", variant);
             small.run(queue, pipelines[variant], variant, false, true);
-            if (cached || sign_bands || deferred || shared_aos) {
+            if (cached || sign_bands || deferred || shared_aos || stability) {
                 Case odd(device, 256, 2, 5, 9, 10);
                 odd.make_private(device, queue);
                 if (deferred && variant) odd.task_mapping = odd.small_negative_counts(device);
@@ -244,17 +248,17 @@ int main(int argc, const char **argv) {
         for (unsigned variant = 0; variant < 2; ++variant) {
             target.task_mapping = variant && deferred ? counts_buffer : variant && mapped ? mapping_buffer : nil;
             std::printf("PAIRING_CASE phase=warmup variant=%u task_offset=10880\n", variant);
-            target.run(queue, pipelines[variant], variant, true, false);
+            target.run(queue, pipelines[variant], variant, true, false, 0, stability ? 8 : 1);
             check_active_output(target, reference);
         }
         unsigned order = 0;
         for (unsigned variant : {0u, 1u, 1u, 0u}) {
             target.task_mapping = variant && deferred ? counts_buffer : variant && mapped ? mapping_buffer : nil;
             std::printf("PAIRING_CASE phase=measure variant=%u task_offset=10880\n", variant);
-            target.run(queue, pipelines[variant], ++order, false, false);
+            target.run(queue, pipelines[variant], ++order, false, false, 0, stability ? 8 : 1);
             check_active_output(target, reference);
         }
         std::printf("%s_COMPLETE target_observations=4 parity=pass active_coefficients=%llu\n",
-            shared_aos ? "SHARED_AOS" : deferred ? "DEFERRED" : sign_bands ? "SIGN_BANDS" : cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
+            stability ? "STABILITY" : shared_aos ? "SHARED_AOS" : deferred ? "DEFERRED" : sign_bands ? "SIGN_BANDS" : cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
     }
 }

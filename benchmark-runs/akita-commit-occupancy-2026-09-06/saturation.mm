@@ -208,9 +208,13 @@ struct Case {
     }
 
     void run(id<MTLCommandQueue> queue, id<MTLComputePipelineState> pipeline,
-             unsigned order, bool warmup, bool full, size_t shared_bytes = 0) {
+             unsigned order, bool warmup, bool full, size_t shared_bytes = 0,
+             uint64_t repeats = 1) {
+        require(repeats >= 1 && repeats <= 8, "bounded diagnostic dispatch aggregate");
         const auto started = Clock::now();
         id<MTLCommandBuffer> command = [queue commandBuffer];
+        const uint64_t streams = (params.dispatch_tasks + 63) / 64;
+        for (uint64_t repeat = 0; repeat < repeats; ++repeat) {
         id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
         [encoder setComputePipelineState:pipeline];
         [encoder setBuffer:device_matrix ? device_matrix : matrix offset:0 atIndex:0];
@@ -220,10 +224,10 @@ struct Case {
         [encoder setBuffer:zero_rows offset:0 atIndex:4];
         if (task_mapping) [encoder setBuffer:task_mapping offset:0 atIndex:5];
         if (shared_bytes) [encoder setThreadgroupMemoryLength:shared_bytes atIndex:0];
-        const uint64_t streams = (params.dispatch_tasks + 63) / 64;
         [encoder dispatchThreadgroups:MTLSizeMake(streams * 48, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
         [encoder endEncoding];
+        }
         const double epoch = [[NSDate date] timeIntervalSince1970];
         [command commit];
         finish_command(command, started);
@@ -243,12 +247,13 @@ struct Case {
             finish_command(readback, readback_start);
         }
         const uint64_t hash = verify(full);
-        std::printf("SATURATION positions=%llu order=%u warmup=%u streams=%llu groups=%llu tasks=%llu hot=%llu gpu_ms=%.6f wall_ms=%.6f giga_updates_s=%.6f oracle=%s checksum=%016llx epoch=%.6f\n",
+        std::printf("SATURATION positions=%llu order=%u warmup=%u streams=%llu groups=%llu tasks=%llu hot=%llu gpu_ms=%.6f wall_ms=%.6f giga_updates_s=%.6f oracle=%s checksum=%016llx epoch=%.6f repeats=%llu per_dispatch_ms=%.6f\n",
             (unsigned long long)params.positions, order, unsigned(warmup),
             (unsigned long long)streams, (unsigned long long)(streams * 48),
             (unsigned long long)params.dispatch_tasks, (unsigned long long)hot,
-            gpu * 1e3, wall * 1e3, double(hot) * 384 / gpu / 1e9,
-            full ? "full" : "65_samples", (unsigned long long)hash, epoch);
+            gpu * 1e3, wall * 1e3, double(hot) * 384 * repeats / gpu / 1e9,
+            full ? "full" : "65_samples", (unsigned long long)hash, epoch,
+            (unsigned long long)repeats, gpu * 1e3 / repeats);
         std::fflush(stdout);
     }
 };
