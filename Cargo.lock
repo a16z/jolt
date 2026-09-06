@@ -3802,6 +3802,7 @@ dependencies = [
  "jolt-claims",
  "jolt-field",
  "jolt-poly",
+ "jolt-riscv",
  "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",

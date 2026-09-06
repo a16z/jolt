@@ -1,10 +1,13 @@
 //! Compile-time Jolt R1CS composition.
 
+use jolt_claims::protocols::jolt::geometry::{dimensions, spartan::SPARTAN_OUTER_R1CS_INPUTS};
+use jolt_claims::protocols::jolt::JoltVirtualPolynomial;
 use jolt_field::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
     EqPolynomial,
 };
+use jolt_riscv::CircuitFlags;
 use thiserror::Error as ThisError;
 
 #[cfg(feature = "field-inline")]
@@ -46,24 +49,35 @@ pub const SPARTAN_OUTER_ROW_COUNT: usize =
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_OUTER_ROW_COUNT: usize = rv64::NUM_EQ_CONSTRAINTS;
 
-pub const SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_OUTER_ROW_COUNT.div_ceil(2);
-pub const SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize =
-    3 * SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE - 3;
+#[cfg(feature = "field-inline")]
+pub const SPARTAN_PRODUCT_LANES: usize =
+    rv64::NUM_PRODUCT_CONSTRAINTS + field_constraints::NUM_PRODUCT_CONSTRAINTS;
+
+#[cfg(not(feature = "field-inline"))]
+pub const SPARTAN_PRODUCT_LANES: usize = rv64::NUM_PRODUCT_CONSTRAINTS;
+
+// The uni-skip geometry is owned by `jolt-claims` (it cannot depend on this
+// crate). These assertions pin the constraint tables built here to the row and
+// lane counts that geometry was derived from.
+const _: () = assert!(
+    SPARTAN_OUTER_ROW_COUNT == dimensions::SPARTAN_OUTER_ROW_COUNT,
+    "Spartan outer eq-constraint row count diverges from jolt-claims geometry"
+);
+const _: () = assert!(
+    SPARTAN_PRODUCT_LANES == dimensions::SPARTAN_PRODUCT_LANES,
+    "Spartan product lane count diverges from jolt-claims geometry"
+);
+
+pub use dimensions::{
+    OUTER_UNISKIP_DOMAIN_SIZE as SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+    OUTER_UNISKIP_FIRST_ROUND_DEGREE as SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
+    PRODUCT_UNISKIP_DOMAIN_SIZE as SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+    PRODUCT_UNISKIP_FIRST_ROUND_DEGREE as SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+};
+
 pub const SPARTAN_OUTER_REMAINDER_DEGREE: usize = 3;
 pub const SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT: usize =
     SPARTAN_OUTER_ROW_COUNT - SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
-pub const SPARTAN_PRODUCT_BASE_LANES: usize = 3;
-
-#[cfg(feature = "field-inline")]
-pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = field_constraints::NUM_PRODUCT_CONSTRAINTS;
-
-#[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = 0;
-
-pub const SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE: usize =
-    SPARTAN_PRODUCT_BASE_LANES + SPARTAN_PRODUCT_FIELD_INLINE_LANES;
-pub const SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize =
-    3 * (SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE - 1);
 
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] =
@@ -107,6 +121,127 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
 ];
+
+/// Bitmask of `rows`, panicking at compile time on a repeated row.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "const evaluation: `index < rows.len()` is the loop bound, and a failure would be a compile error"
+)]
+const fn row_group_mask(rows: &[usize]) -> u64 {
+    let mut mask = 0u64;
+    let mut index = 0;
+    while index < rows.len() {
+        let bit = 1u64 << rows[index];
+        assert!(mask & bit == 0, "Spartan outer row group repeats a row");
+        mask |= bit;
+        index += 1;
+    }
+    mask
+}
+
+// The two row groups must partition `0..SPARTAN_OUTER_ROW_COUNT`: a dropped
+// row silently unweights its constraint and a duplicated one double-weights
+// it, and the prover shares `spartan_outer_row_weights`, so such proofs would
+// still verify.
+const _: () = {
+    assert!(SPARTAN_OUTER_ROW_COUNT <= u64::BITS as usize);
+    let first = row_group_mask(&SPARTAN_OUTER_FIRST_GROUP_ROWS);
+    let second = row_group_mask(&SPARTAN_OUTER_SECOND_GROUP_ROWS);
+    assert!(first & second == 0, "Spartan outer row groups overlap");
+    assert!(
+        first | second == (1u64 << SPARTAN_OUTER_ROW_COUNT) - 1,
+        "Spartan outer row groups do not cover every constraint row"
+    );
+};
+
+/// The RV64 witness column each Spartan outer R1CS input is opened as, by
+/// name. `None` for virtual polynomials that are not R1CS inputs.
+const fn rv64_input_column(input: JoltVirtualPolynomial) -> Option<usize> {
+    match input {
+        JoltVirtualPolynomial::LeftInstructionInput => Some(rv64::V_LEFT_INSTRUCTION_INPUT),
+        JoltVirtualPolynomial::RightInstructionInput => Some(rv64::V_RIGHT_INSTRUCTION_INPUT),
+        JoltVirtualPolynomial::Product => Some(rv64::V_PRODUCT),
+        JoltVirtualPolynomial::ShouldBranch => Some(rv64::V_SHOULD_BRANCH),
+        JoltVirtualPolynomial::PC => Some(rv64::V_PC),
+        JoltVirtualPolynomial::UnexpandedPC => Some(rv64::V_UNEXPANDED_PC),
+        JoltVirtualPolynomial::Imm => Some(rv64::V_IMM),
+        JoltVirtualPolynomial::RamAddress => Some(rv64::V_RAM_ADDRESS),
+        JoltVirtualPolynomial::Rs1Value => Some(rv64::V_RS1_VALUE),
+        JoltVirtualPolynomial::Rs2Value => Some(rv64::V_RS2_VALUE),
+        JoltVirtualPolynomial::RdWriteValue => Some(rv64::V_RD_WRITE_VALUE),
+        JoltVirtualPolynomial::RamReadValue => Some(rv64::V_RAM_READ_VALUE),
+        JoltVirtualPolynomial::RamWriteValue => Some(rv64::V_RAM_WRITE_VALUE),
+        JoltVirtualPolynomial::LeftLookupOperand => Some(rv64::V_LEFT_LOOKUP_OPERAND),
+        JoltVirtualPolynomial::RightLookupOperand => Some(rv64::V_RIGHT_LOOKUP_OPERAND),
+        JoltVirtualPolynomial::NextUnexpandedPC => Some(rv64::V_NEXT_UNEXPANDED_PC),
+        JoltVirtualPolynomial::NextPC => Some(rv64::V_NEXT_PC),
+        JoltVirtualPolynomial::NextIsVirtual => Some(rv64::V_NEXT_IS_VIRTUAL),
+        JoltVirtualPolynomial::NextIsFirstInSequence => Some(rv64::V_NEXT_IS_FIRST_IN_SEQUENCE),
+        JoltVirtualPolynomial::LookupOutput => Some(rv64::V_LOOKUP_OUTPUT),
+        JoltVirtualPolynomial::ShouldJump => Some(rv64::V_SHOULD_JUMP),
+        JoltVirtualPolynomial::OpFlags(flag) => Some(match flag {
+            CircuitFlags::AddOperands => rv64::V_FLAG_ADD_OPERANDS,
+            CircuitFlags::SubtractOperands => rv64::V_FLAG_SUBTRACT_OPERANDS,
+            CircuitFlags::MultiplyOperands => rv64::V_FLAG_MULTIPLY_OPERANDS,
+            CircuitFlags::Load => rv64::V_FLAG_LOAD,
+            CircuitFlags::Store => rv64::V_FLAG_STORE,
+            CircuitFlags::Jump => rv64::V_FLAG_JUMP,
+            CircuitFlags::WriteLookupOutputToRD => rv64::V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD,
+            CircuitFlags::VirtualInstruction => rv64::V_FLAG_VIRTUAL_INSTRUCTION,
+            CircuitFlags::Assert => rv64::V_FLAG_ASSERT,
+            CircuitFlags::DoNotUpdateUnexpandedPC => rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC,
+            CircuitFlags::Advice => rv64::V_FLAG_ADVICE,
+            CircuitFlags::IsCompressed => rv64::V_FLAG_IS_COMPRESSED,
+            CircuitFlags::IsFirstInSequence => rv64::V_FLAG_IS_FIRST_IN_SEQUENCE,
+            CircuitFlags::IsLastInSequence => rv64::V_FLAG_IS_LAST_IN_SEQUENCE,
+        }),
+        JoltVirtualPolynomial::NextIsNoop
+        | JoltVirtualPolynomial::Rd
+        | JoltVirtualPolynomial::Rs1Ra
+        | JoltVirtualPolynomial::Rs2Ra
+        | JoltVirtualPolynomial::RdWa
+        | JoltVirtualPolynomial::InstructionRaf
+        | JoltVirtualPolynomial::InstructionRafFlag
+        | JoltVirtualPolynomial::InstructionRa(_)
+        | JoltVirtualPolynomial::RegistersVal
+        | JoltVirtualPolynomial::RamRa
+        | JoltVirtualPolynomial::RamVal
+        | JoltVirtualPolynomial::RamValInit
+        | JoltVirtualPolynomial::RamValFinal
+        | JoltVirtualPolynomial::RamHammingWeight
+        | JoltVirtualPolynomial::UnivariateSkip
+        | JoltVirtualPolynomial::InstructionFlags(_)
+        | JoltVirtualPolynomial::LookupTableFlag(_)
+        | JoltVirtualPolynomial::BytecodeValClaim(_)
+        | JoltVirtualPolynomial::BytecodeReadRafAddrClaim
+        | JoltVirtualPolynomial::BooleanityAddrClaim
+        | JoltVirtualPolynomial::BytecodeClaimReductionIntermediate
+        | JoltVirtualPolynomial::ProgramImageInitContributionRw
+        | JoltVirtualPolynomial::FusedInc => None,
+    }
+}
+
+// `SPARTAN_OUTER_R1CS_INPUTS` (the opening order) and the `rv64::V_*` columns
+// (the constraint tables) are otherwise tied only by position: a reorder of
+// either relabels the constraint system identically for prover and verifier.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "const evaluation: `index < NUM_R1CS_INPUTS` is the loop bound, and a failure would be a compile error"
+)]
+const _: () = {
+    assert!(SPARTAN_OUTER_R1CS_INPUTS.len() == rv64::NUM_R1CS_INPUTS);
+    let mut index = 0;
+    while index < rv64::NUM_R1CS_INPUTS {
+        match rv64_input_column(SPARTAN_OUTER_R1CS_INPUTS[index]) {
+            Some(column) => assert!(
+                column == rv64::V_LEFT_INSTRUCTION_INPUT + index,
+                "SPARTAN_OUTER_R1CS_INPUTS order disagrees with the rv64 column layout"
+            ),
+            None => panic!("SPARTAN_OUTER_R1CS_INPUTS names a polynomial without an rv64 column"),
+        }
+        index += 1;
+    }
+};
 
 pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let constraints = rv64::rv64_spartan_outer_constraints();

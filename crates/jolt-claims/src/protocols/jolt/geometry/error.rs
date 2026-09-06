@@ -22,9 +22,13 @@ pub enum JoltFormulaPointError {
     #[error("stage 6 cycle challenges ({got}) shorter than native cycle vars ({expected})")]
     CycleChallengesShorterThanNativeCycle { expected: usize, got: usize },
     #[error(
-        "cycle-major final opening expects the stage 6 cycle prefix to equal the native cycle vars"
+        "final opening expects the stage 6 cycle challenges to start with the hamming-weight cycle vars"
     )]
-    CycleMajorCyclePrefixMismatch,
+    CyclePrefixMismatch,
+    #[error(
+        "dominant precommitted anchor {anchor} does not contain native opening challenge {native_index}"
+    )]
+    DominantAnchorMissingNativeChallenge { anchor: usize, native_index: usize },
     #[error(
         "cycle-phase final opening requested with {active_address_rounds} active address-phase rounds remaining"
     )]

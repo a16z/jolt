@@ -12,10 +12,38 @@ use super::{
 };
 
 pub const REGISTER_ADDRESS_BITS: usize = 7;
-pub const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
-pub const OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize = 27;
-pub const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = 3;
-pub const PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize = 6;
+
+/// Spartan outer eq-constraint rows per cycle in the RV64 R1CS.
+const RV64_SPARTAN_OUTER_ROW_COUNT: usize = 19;
+/// Spartan product-constraint lanes per cycle in the RV64 R1CS.
+const RV64_SPARTAN_PRODUCT_LANES: usize = 3;
+/// Eq-constraint rows and product lanes the `field-inline` extension appends.
+#[cfg(feature = "field-inline")]
+const FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT: usize = 8;
+#[cfg(not(feature = "field-inline"))]
+const FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT: usize = 0;
+#[cfg(feature = "field-inline")]
+const FIELD_INLINE_SPARTAN_PRODUCT_LANES: usize = 2;
+#[cfg(not(feature = "field-inline"))]
+const FIELD_INLINE_SPARTAN_PRODUCT_LANES: usize = 0;
+
+/// Row and lane counts of the composed Spartan R1CS. `jolt-r1cs` builds the
+/// constraint tables and depends on this crate, so it cannot be the owner of
+/// the uni-skip geometry below; instead it statically asserts its table sizes
+/// against these counts (`jolt_r1cs::constraints::jolt`).
+pub const SPARTAN_OUTER_ROW_COUNT: usize =
+    RV64_SPARTAN_OUTER_ROW_COUNT + FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT;
+pub const SPARTAN_PRODUCT_LANES: usize =
+    RV64_SPARTAN_PRODUCT_LANES + FIELD_INLINE_SPARTAN_PRODUCT_LANES;
+
+/// Uni-skip geometry: the outer first round skips over half the constraint
+/// rows (each row group is one Lagrange node), the product first round over one
+/// node per lane; both have a cubic per-node relation, so the first-round
+/// degree is `3 * (domain_size - 1)`.
+pub const OUTER_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_OUTER_ROW_COUNT.div_ceil(2);
+pub const OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize = 3 * (OUTER_UNISKIP_DOMAIN_SIZE - 1);
+pub const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_PRODUCT_LANES;
+pub const PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize = 3 * (PRODUCT_UNISKIP_DOMAIN_SIZE - 1);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TracePolynomialOrder {

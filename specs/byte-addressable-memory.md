@@ -416,10 +416,12 @@ Verified shape of the blast radius:
 - **Three hand-duplicated constraint catalogs move in lockstep**: legacy
   (`zkvm/r1cs/{inputs,constraints}.rs` plus the *positionally index-addressed* evaluators in
   `r1cs/evaluation.rs` with hand-picked accumulator widths), `crates/jolt-claims`
-  (`geometry/spartan.rs` — `SPARTAN_OUTER_RV64_ROW_COUNT`, `FIRST_GROUP_ROWS`, and the bare
-  `OUTER_UNISKIP_DOMAIN_SIZE = 10` literal), and `crates/jolt-r1cs` (`constraints/rv64.rs`
-  `V_*` column indices + all rows re-implemented by integer index). Only tests, not types,
-  enforce agreement.
+  (`geometry/spartan.rs` — `SPARTAN_OUTER_R1CS_INPUTS`; `geometry/dimensions.rs` — the row
+  and lane counts the uni-skip geometry derives from), and `crates/jolt-r1cs`
+  (`constraints/rv64.rs` `V_*` column indices + all rows re-implemented by integer index).
+  `crates/jolt-r1cs/src/constraints/jolt.rs` statically asserts its table sizes against the
+  jolt-claims counts, the row-group partition, and the `SPARTAN_OUTER_R1CS_INPUTS` ↔ `V_*`
+  binding; the legacy catalog is still only test-checked.
 - **BlindFold is mostly generic** (the outer output-claim constraint scans constraint groups at
   runtime); the hand-enumerated exceptions are `spartan/product.rs` factor openings,
   `spartan/shift.rs` shifted-poly vectors, and `spartan/instruction_input.rs`'s output

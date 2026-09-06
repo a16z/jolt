@@ -19,7 +19,10 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
 use crate::{
-    config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG},
+    config::{
+        is_admissible_one_hot_config, read_write_config_policy, validate_proof_config,
+        JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG, MIN_TRACE_LENGTH,
+    },
     num,
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltProof, TracePolynomialOrder},
@@ -341,6 +344,7 @@ where
     let trace_length = proof.trace_length;
     let ram_k = proof.ram_K;
     let trace_polynomial_order = proof.trace_polynomial_order;
+    let rw_config = proof.rw_config;
     let one_hot_config = proof.one_hot_config;
     #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
@@ -376,32 +380,15 @@ where
         });
     }
 
-    if !trace_length.is_power_of_two() || trace_length > program.max_padded_trace_length() {
-        return Err(VerifierError::InvalidTraceLength {
-            got: trace_length,
-            max: program.max_padded_trace_length(),
-        });
-    }
-
-    let min_ram_k = compute_min_ram_k(
-        program.min_bytecode_address(),
-        program.program_image_len_words(),
-        memory_layout,
-    )
-    .map_err(|error| VerifierError::InvalidMemoryLayout {
-        reason: error.to_string(),
-    })?;
-    let max_ram_k =
-        compute_max_ram_k(memory_layout).map_err(|error| VerifierError::InvalidMemoryLayout {
-            reason: error.to_string(),
-        })?;
-    if !ram_k.is_power_of_two() || ram_k < min_ram_k || ram_k > max_ram_k {
-        return Err(VerifierError::InvalidRamK {
-            got: ram_k,
-            min: min_ram_k,
-            max: max_ram_k,
-        });
-    }
+    validate_proof_shape(
+        program,
+        ProofShape {
+            trace_length,
+            ram_k,
+            rw_config,
+            one_hot_config,
+        },
+    )?;
 
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(
@@ -483,6 +470,81 @@ where
         vc_capacity,
         precommitted,
     })
+}
+
+/// The prover-chosen geometry a proof carries on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProofShape {
+    trace_length: usize,
+    ram_k: usize,
+    rw_config: JoltReadWriteConfig,
+    one_hot_config: JoltOneHotConfig,
+}
+
+/// Rejects a wire geometry outside the preprocessing's bounds or off the
+/// prover's derivation policy. Every in-bounds geometry proves the same
+/// statement (stage 8 pins commitment counts and claim lengths to the derived
+/// layout), so this closes prover degrees of freedom in the Fiat-Shamir
+/// statement rather than a soundness gap.
+fn validate_proof_shape<PCS: CommitmentScheme>(
+    program: &crate::preprocessing::ProgramPreprocessing<PCS>,
+    shape: ProofShape,
+) -> Result<(), VerifierError> {
+    let memory_layout = program.memory_layout();
+    let max_trace_length = program.max_padded_trace_length();
+    if !shape.trace_length.is_power_of_two()
+        || shape.trace_length < MIN_TRACE_LENGTH
+        || shape.trace_length > max_trace_length
+    {
+        return Err(VerifierError::InvalidTraceLength {
+            got: shape.trace_length,
+            min: MIN_TRACE_LENGTH,
+            max: max_trace_length,
+        });
+    }
+
+    let min_ram_k = compute_min_ram_k(
+        program.min_bytecode_address(),
+        program.program_image_len_words(),
+        memory_layout,
+    )
+    .map_err(|error| VerifierError::InvalidMemoryLayout {
+        reason: error.to_string(),
+    })?;
+    let max_ram_k =
+        compute_max_ram_k(memory_layout).map_err(|error| VerifierError::InvalidMemoryLayout {
+            reason: error.to_string(),
+        })?;
+    if !shape.ram_k.is_power_of_two() || shape.ram_k < min_ram_k || shape.ram_k > max_ram_k {
+        return Err(VerifierError::InvalidRamK {
+            got: shape.ram_k,
+            min: min_ram_k,
+            max: max_ram_k,
+        });
+    }
+
+    // `ilog2` of a `usize` is below 64, so the policy's round counts always
+    // fit the wire's `u8`; the fallback keeps this path panic-free.
+    let expected_rw_config =
+        read_write_config_policy(num::ilog2(shape.trace_length), num::ilog2(shape.ram_k)).ok_or(
+            VerifierError::InvalidTraceLength {
+                got: shape.trace_length,
+                min: MIN_TRACE_LENGTH,
+                max: max_trace_length,
+            },
+        )?;
+    if shape.rw_config != expected_rw_config {
+        return Err(VerifierError::InvalidReadWriteConfig {
+            expected: expected_rw_config,
+            got: shape.rw_config,
+        });
+    }
+    if !is_admissible_one_hot_config(shape.one_hot_config) {
+        return Err(VerifierError::InvalidOneHotConfig {
+            got: shape.one_hot_config,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "akita"))]
@@ -948,6 +1010,7 @@ pub fn validate_inputs_from_parts<PCS, VC>(
     trace_length: usize,
     ram_k: usize,
     trace_polynomial_order: TracePolynomialOrder,
+    rw_config: JoltReadWriteConfig,
     one_hot_config: JoltOneHotConfig,
     trusted_advice_commitment_present: bool,
     #[cfg(not(feature = "akita"))] untrusted_advice_commitment_present: bool,
@@ -979,34 +1042,15 @@ where
         });
     }
 
-    if !trace_length.is_power_of_two()
-        || trace_length > preprocessing.program.max_padded_trace_length()
-    {
-        return Err(VerifierError::InvalidTraceLength {
-            got: trace_length,
-            max: preprocessing.program.max_padded_trace_length(),
-        });
-    }
-
-    let min_ram_k = compute_min_ram_k(
-        preprocessing.program.min_bytecode_address(),
-        preprocessing.program.program_image_len_words(),
-        memory_layout,
-    )
-    .map_err(|error| VerifierError::InvalidMemoryLayout {
-        reason: error.to_string(),
-    })?;
-    let max_ram_k =
-        compute_max_ram_k(memory_layout).map_err(|error| VerifierError::InvalidMemoryLayout {
-            reason: error.to_string(),
-        })?;
-    if !ram_k.is_power_of_two() || ram_k < min_ram_k || ram_k > max_ram_k {
-        return Err(VerifierError::InvalidRamK {
-            got: ram_k,
-            min: min_ram_k,
-            max: max_ram_k,
-        });
-    }
+    validate_proof_shape(
+        &preprocessing.program,
+        ProofShape {
+            trace_length,
+            ram_k,
+            rw_config,
+            one_hot_config,
+        },
+    )?;
 
     let vc_capacity = if zk {
         Some(validate_zk_vector_commitment_setup::<PCS, VC>(
@@ -1156,7 +1200,7 @@ mod tests {
     use super::*;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryConfig};
-    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+    use jolt_claims::protocols::jolt::JoltReadWriteConfig;
     #[cfg(feature = "zk")]
     use jolt_crypto::PedersenSetup;
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, VectorCommitmentOpening};
@@ -1349,6 +1393,57 @@ mod tests {
     }
 
     #[test]
+    fn validate_inputs_rejects_single_cycle_trace() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        proof.trace_length = 1;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidTraceLength { got: 1, min: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_off_policy_read_write_config() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        // Still a valid phase split (phase1 <= log_t), just not the policy's.
+        proof.rw_config.ram_rw_phase1_num_rounds = 0;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidReadWriteConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_inadmissible_one_hot_config() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let mut proof = proof_with_zk(false, clear_claims());
+        // Passes every structural chunking check (nonzero, 2 | 16) but is not a
+        // policy regime.
+        proof.one_hot_config.log_k_chunk = 2;
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidOneHotConfig { .. })
+        ));
+    }
+
+    #[test]
     fn validate_inputs_rejects_zero_based_ram_remap() {
         let mut memory_layout = test_memory_layout();
         // A layout whose remap is zero-based: `unmap(0) = lowest_address = 0`
@@ -1456,18 +1551,15 @@ mod tests {
             joint_opening_proof: (),
             untrusted_advice_commitment: None,
             claims,
-            trace_length: 1,
+            trace_length: 2,
             ram_K: 4,
             rw_config: JoltReadWriteConfig {
-                ram_rw_phase1_num_rounds: 0,
-                ram_rw_phase2_num_rounds: 0,
-                registers_rw_phase1_num_rounds: 0,
-                registers_rw_phase2_num_rounds: 0,
+                ram_rw_phase1_num_rounds: 1,
+                ram_rw_phase2_num_rounds: 2,
+                registers_rw_phase1_num_rounds: 1,
+                registers_rw_phase2_num_rounds: 7,
             },
-            one_hot_config: JoltOneHotConfig {
-                log_k_chunk: 0,
-                lookups_ra_virtual_log_k_chunk: 0,
-            },
+            one_hot_config: crate::config::NARROW_ONE_HOT_CONFIG,
             trace_polynomial_order: crate::proof::TracePolynomialOrder::CycleMajor,
         }
     }

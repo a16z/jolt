@@ -23,6 +23,34 @@ use crate::routines::{JoltG1Routines, JoltG2Routines};
 use crate::transcript::JoltToDoryTranscript;
 use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
+/// The balanced Dory matrix split every commitment and opening in this crate
+/// uses: `sigma = ceil(num_vars / 2)` column variables, the rest rows.
+pub(crate) const fn balanced_split(num_vars: usize) -> DoryMatrixSplit {
+    let sigma = num_vars.div_ceil(2);
+    DoryMatrixSplit {
+        nu: num_vars - sigma,
+        sigma,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DoryMatrixSplit {
+    pub(crate) nu: usize,
+    pub(crate) sigma: usize,
+}
+
+/// Pins the proof's `(nu, sigma)` to the split the commitment was formed
+/// over. `dory::verify` only checks `nu + sigma == point.len()` and
+/// `nu <= sigma`, so without this gate the split is a free prover degree of
+/// freedom in the Fiat-Shamir statement.
+fn require_balanced_split(proof: &DoryProof, point_len: usize) -> Result<(), OpeningsError> {
+    let expected = balanced_split(point_len);
+    if proof.0.nu != expected.nu || proof.0.sigma != expected.sigma {
+        return Err(OpeningsError::VerificationFailed);
+    }
+    Ok(())
+}
+
 // All jolt types below are #[repr(transparent)] over the same arkworks
 // inner type as their dory-pcs counterpart, guaranteeing identical layout.
 
@@ -237,10 +265,8 @@ impl CommitmentScheme for DoryScheme {
         hint: Option<Self::OpeningHint>,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
-        let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let DoryMatrixSplit { nu, sigma } = balanced_split(point.len());
 
         let (row_commitments, commit_blind) = match hint {
             Some(h) => h.into_ark_parts(),
@@ -282,6 +308,7 @@ impl CommitmentScheme for DoryScheme {
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
+        require_balanced_split(proof, point.len())?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
@@ -384,10 +411,8 @@ impl ZkOpeningScheme for DoryScheme {
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
-        let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let DoryMatrixSplit { nu, sigma } = balanced_split(point.len());
         let (row_commitments, commit_blind) = hint.into_ark_parts();
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -425,6 +450,7 @@ impl ZkOpeningScheme for DoryScheme {
         setup: &Self::VerifierSetup,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
+        require_balanced_split(proof, point.len())?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
         // so the caller-side eval is unused here.
@@ -516,14 +542,13 @@ fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
     setup: &DoryProverSetup,
 ) -> Result<Vec<ArkG1>, OpeningsError> {
     let num_vars = poly.num_vars();
-    let sigma = num_vars.div_ceil(2);
+    let DoryMatrixSplit { nu, sigma } = balanced_split(num_vars);
     let max_cols = setup.0.g1_vec.len();
     let max_rows = setup.0.g2_vec.len();
     // An oversized polynomial must surface as the commit API's Err, not as an
     // out-of-bounds slice panic on the SRS below.
-    let fits = sigma < usize::BITS as usize
-        && (1usize << sigma) <= max_cols
-        && (1usize << (num_vars - sigma)) <= max_rows;
+    let fits =
+        sigma < usize::BITS as usize && (1usize << sigma) <= max_cols && (1usize << nu) <= max_rows;
     if !fits {
         return Err(OpeningsError::PolynomialTooLarge {
             poly_size: num_vars,
@@ -531,7 +556,7 @@ fn compute_row_commitments<P: MultilinearPoly<Fr> + ?Sized>(
         });
     }
     let num_cols = 1usize << sigma;
-    let num_rows = 1usize << (num_vars - sigma);
+    let num_rows = 1usize << nu;
 
     Ok(if poly.is_one_hot() {
         commit_rows_one_hot(poly, num_rows, num_cols, &setup.0)
