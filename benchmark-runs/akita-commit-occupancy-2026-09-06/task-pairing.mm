@@ -22,10 +22,12 @@ static void check_active_output(const Case &test, std::vector<U128> &reference) 
 }
 
 int main(int argc, const char **argv) {
-    require(argc == 5 || argc == 6 || argc == 7, "usage: pairing production.metal capture-directory map.u32le archive-prefix [helper.metal [--cached]]");
-    const bool cached = argc == 7;
-    require(!cached || std::string(argv[6]) == "--cached", "cached variant flag");
+    require(argc == 5 || argc == 6 || argc == 7, "usage: pairing production.metal capture-directory map.u32le archive-prefix [helper.metal [--cached | --sign-bands]]");
+    const bool cached = argc == 7 && std::string(argv[6]) == "--cached";
+    const bool sign_bands = argc == 7 && std::string(argv[6]) == "--sign-bands";
+    require(argc != 7 || cached || sign_bands, "task variant flag");
     const bool interleaved = argc == 6;
+    const bool mapped = !cached && !sign_bands && !interleaved;
     @autoreleasepool {
         NSError *error = nil;
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -37,11 +39,18 @@ int main(int argc, const char **argv) {
         NSRange end = [source rangeOfString:@"// Packed decompose-fold for the D128 rank-3 row."];
         require(start.location != NSNotFound && end.location > start.location, "production shader boundary");
         NSString *body = [source substringWithRange:NSMakeRange(start.location, end.location - start.location)];
-        NSString *variant_name = cached ? @"diagnostic_cached_commit" : interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
+        NSString *variant_name = sign_bands ? @"diagnostic_sign_bands_commit" : cached ? @"diagnostic_cached_commit" : interleaved ? @"diagnostic_interleaved_commit" : @"diagnostic_paired_commit";
         body = [body stringByReplacingOccurrencesOfString:@"akita_packed_onehot_commit_fp128_d128_rank3"
             withString:variant_name];
         NSString *combined;
-        if (cached) {
+        if (sign_bands) {
+            NSString *helper = [NSString stringWithContentsOfFile:@(argv[5])
+                encoding:NSUTF8StringEncoding error:&error];
+            require(helper && !error, "sign-band helper source");
+            body = [body stringByReplacingOccurrencesOfString:@"akita_fp128_d128_rank3_accumulate_task_tile"
+                withString:@"diagnostic_sign_bands_task_tile"];
+            combined = [[source stringByAppendingString:helper] stringByAppendingString:body];
+        } else if (cached) {
             NSString *helper = [NSString stringWithContentsOfFile:@(argv[5])
                 encoding:NSUTF8StringEncoding error:&error];
             require(helper && !error, "cached helper source");
@@ -114,11 +123,11 @@ int main(int argc, const char **argv) {
         for (unsigned variant = 0; variant < 2; ++variant) {
             Case small(device, 256, 2, 5, 10, 10);
             small.make_private(device, queue);
-            if (variant && !interleaved && !cached) small.task_mapping = [device newBufferWithBytes:small_map length:sizeof(small_map)
+            if (variant && mapped) small.task_mapping = [device newBufferWithBytes:small_map length:sizeof(small_map)
                 options:MTLResourceStorageModeShared];
             std::printf("PAIRING_CASE phase=parity variant=%u\n", variant);
             small.run(queue, pipelines[variant], variant, false, true);
-            if (cached) {
+            if (cached || sign_bands) {
                 Case odd(device, 256, 2, 5, 9, 10);
                 odd.make_private(device, queue);
                 std::printf("TASK_CASE phase=odd_tail_parity variant=%u\n", variant);
@@ -167,19 +176,19 @@ int main(int argc, const char **argv) {
         require(mapping_buffer != nil, "mapping buffer");
         std::vector<U128> reference;
         for (unsigned variant = 0; variant < 2; ++variant) {
-            target.task_mapping = variant && !interleaved && !cached ? mapping_buffer : nil;
+            target.task_mapping = variant && mapped ? mapping_buffer : nil;
             std::printf("PAIRING_CASE phase=warmup variant=%u task_offset=10880\n", variant);
             target.run(queue, pipelines[variant], variant, true, false);
             check_active_output(target, reference);
         }
         unsigned order = 0;
         for (unsigned variant : {0u, 1u, 1u, 0u}) {
-            target.task_mapping = variant && !interleaved && !cached ? mapping_buffer : nil;
+            target.task_mapping = variant && mapped ? mapping_buffer : nil;
             std::printf("PAIRING_CASE phase=measure variant=%u task_offset=10880\n", variant);
             target.run(queue, pipelines[variant], ++order, false, false);
             check_active_output(target, reference);
         }
         std::printf("%s_COMPLETE target_observations=4 parity=pass active_coefficients=%llu\n",
-            cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
+            sign_bands ? "SIGN_BANDS" : cached ? "CACHED" : interleaved ? "INTERLEAVING" : "PAIRING", (unsigned long long)reference.size());
     }
 }
