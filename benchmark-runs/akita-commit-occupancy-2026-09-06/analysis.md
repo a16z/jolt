@@ -1016,3 +1016,51 @@ Diagnostic census may reuse its existing729MB tile counts, but no such
 storage belongs on the prover path. <=10min tooling,180s CPU process under
 machine lock,zero swaps, no GPU overlap. Epoch6 transaction3; checkpoint
 after census, before any next-epoch GPU experiment.
+
+## Epoch6 checkpoint / Epoch7 D19 preregistration,08:10 UTC
+
+D18 exact envelope5838522912 ->3537163936 (39.4168013% reduction), conserved
+H3263846381,349groups; balance proxy0.559019195 ->0.922729746. This is source
+work accounting, NOT measured occupancy. Clears15% census gate.7.67s process,
+zero swaps. Raw SHA25669ffc61bcb11d897c5e4545190e11d2cf34fe118d15137308ed5e48346279a9c.
+D17 raw SHA256cc424cfdba06e07900c69545f9c843c6c00d7c8cf013a8c1075e5bfc36351013;
+75.19s process,zero swaps. Reuse metadata remains parked; no accepted changes.
+Epoch6 three transactions complete; source security/protocol still frozen.
+
+Epoch7 checkpoint by09:00 UTC,<=3transactions. D19 compares the COMPLETE
+P19root panel and original partial reducer, parent/candidate/candidate/parent
+in four separately120s-cooled processes. No full-target warmup; reduced
+independent arithmetic fixtures precede each observation. Same deterministic
+public-A values as prior diagnostics,3GiB Private A and3GiB Private partials,
+real captured selectors and selected-zero bits; all22301tasks,349streams,
+44commands of up to8streams. Candidate changes only originaltask indexing
+to the D18 column-major bijection. Arithmetic/staging/reducer unchanged.
+
+Timer includes output/scratch allocation, selected-zero binding, selector
+buffer creation, all44panel commands and reduction. Parent reproduces current
+per-command zero-copy selector slices and lane_row_offset; candidate uses
+one validated whole-source zero-copy view. No fallback copy. Public-A setup
+and shader compilation are outside the root boundary for both. File-backed
+capture differs from the prover's already-resident host input, so preserve
+cold mapping/wall metrics and require later uninstrumented full-proof transfer.
+
+Enqueue all commands as production does; wait in order with a fresh5s wait
+deadline per command (earlier queued commands have finished before moving
+to the next). This retains the per-command hang guard without imposing a
+false5s limit on the entire~12s panel.180s process/88GiB/zero swaps/watchdogs.
+Per-command timestamps, summed activeGPU, panel span, reducer and complete
+wall recorded. No telemetry frequency normalization or post-hoc exclusions.
+
+Correctness: unchanged independent fp128 oracle on reduced shapes including
+odd15-task tail, selected zero, zero inputs; target65independent partial
+samples. Compare every192MiB final coefficient byte against the first parent
+artifact in the other three observations, including padding. Each original
+task writes its own partial addresses, so there is no reconstruction change.
+
+Gate: complete-boundary meanwall saving>=1.0s AND >=10% lower panelGPU mean,
+parent wall and panelGPU drift each<=3%, all parity/resource gates. Otherwise
+reject/inconclusive without a full proof. This diagnostic gate ranks a
+production candidate; it does not itself promote it or certify optimality.
+No repeats beyond the four preregistered observations. Cohort<=12min including
+cooling, tooling<=25min. If complete-panel evidence clears, freeze a narrow
+isolated-fork production candidate next; final12-proof reserve remains separate.
