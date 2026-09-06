@@ -1,0 +1,1 @@
+{"event":"campaign_started","utc":"2026-09-06T04:52:39Z","parent_jolt":"554f6270309a734d5bc8541d89d7f0b78f42fd00","parent_akita":"d756e3a67954fb39efa03809ec59971b15303860","scope":"root_commit_resource_pressure","first_milestone_throughput_ratio":1.2,"milestone_is_not_ceiling":true,"next":"D0 production-PSO saturation and no-sudo telemetry"}
