@@ -526,3 +526,56 @@ one warmup per pipeline, original drift<=3%, full3145728 coefficient equality,
 >=10% bounded GPU-time saving unlocks full-panel replay; otherwise park after
 one variant. Budget<=15min implementation/compile and<=5min guarded run.
 Epoch3 transaction2. No production source or protocol/security changes.
+
+## D8 result,06:42 UTC / D9 preregistration: price deferred-sign metadata
+
+Original265.400375/261.669958ms; sign-specialized280.053250/268.925750ms.
+Means263.535167→274.489500ms,4.16% slower. Original drift-1.406%.
+Correct outputs, all independent oracles/odd-tail checks pass; zero swaps or
+watchdog. Reject; high-level constant signs did not yield a useful whole-body
+gain. Raw runs/d8-saturation.out SHA256
+adc55c74f25efedc5c7d84484c32fd4b2cbc16b8a23d4f4425f7cd6044ed9277.
+
+D9 prices an exact arithmetic reformulation before changing the accumulator.
+For a negative contribution -a, accumulate the unsigned128-bit complement
+~a=2^128-1-a without the hot-loop +1. With m negative contributions and
+p=2^128-OFFSET, the final result is the unsigned wide sum minus
+m*(OFFSET-1) modulo p. Thus unsigned carries can accumulate normally with
+initial carry0 and no per-update negative wrap decrement. The existing four
+u32 limbs plus one wrap word suffice; no accumulator widening is required.
+The correction is exact even for a=0. At16384rows/partial, unsigned wraps
+fit i32 and m*(OFFSET-1)<2^46 fits u64. This changes only honest computation
+of the same field sum, not commitment semantics, security or verification.
+
+m for coefficient c equals count of selected shifts>c. Selected shift is
+raw_byte&127; absence, selected-zero and byte128 all have shift0 and never
+contribute to m. m depends on(column,block,position-partial,c), not rank or A.
+A128-bin local histogram followed by a suffix sum computes all128 counts.
+Store u16 counts (<=16384) for356816 fragments:91344896B (~87.1MiB), reused
+across3ranks. This is bounded fragment metadata, not a trace-sized field table.
+The final correction reads~274MB, and ~137M coefficient corrections are small
+compared with1.253T hot coefficient updates. Original matrix traffic, tile
+geometry and40 persistent accumulator source words would remain unchanged.
+
+Both costs: proposed hot loop saves dynamic first-limb carry and signed-wrap
+adjustment, approximately6/36 source ops per update before compiler effects.
+New preprocessing reads201588736*29=5846073344 selector bytes, writes91.3MB,
+and performs up to3.264B shared atomics plus356816 short prefix reductions.
+Traffic-only copy proxy is~12.55ms at473GB/s; atomic issue/contention floor
+is UNKNOWN and must be timed. It must not be hidden outside end-to-end timing.
+
+D9 implements only this metadata producer as a diagnostic:128threads/fragment,
+128 relaxed threadgroup atomic counters, inclusive SIMD prefix and4 SIMD
+totals, independent suffix counts. Validate a reduced hand-counted fixture,
+all target counts' range/monotonicity/last-zero, the full per-fragment identity
+sum_c m_c=sum_rows(raw_byte&127), and129 direct count-by-comparison samples
+including boundaries. Selection-zero does not require a special count because
+its shift is0, but its nonzero commitment contribution remains in the main
+kernel. No arithmetic/production shader changes before this price clears.
+
+One warmup then two target GPU observations under existing120s initial cooling,
+5s-command/180s-process/88GiB guards, same read-only capture. Gate<=150ms mean
+including metadata dispatch, no sample>200ms, all checks pass. Otherwise
+reject this preprocessing choice before implementing the accumulator. This is
+an overhead gate, not a performance win. Epoch3 transaction3,<=20min tooling
+and<=5min guarded observation. Checkpoint the epoch afterward.
