@@ -41,13 +41,14 @@ struct Mapping {
 struct Census {
     const uint8_t *lanes;
     const uint64_t *zeros;
-    uint64_t columns, rows_per_block, blocks, zero_mask;
+    uint64_t columns, rows_per_block, blocks, zero_mask, domain_count;
     std::vector<uint64_t> hot, fingerprints;
     std::vector<uint8_t> tile_counts;
     uint64_t total_hot = 0, unique_hot = 0, duplicate_tasks = 0, zero_tasks = 0;
     uint64_t barrier_sum = 0, barrier_max_sum = 0;
     std::array<uint64_t, 17> maximum_histogram{};
     std::vector<uint64_t> column_hot, column_unique_hot;
+    std::vector<uint64_t> domain_unique_tasks;
 
     uint16_t symbol(uint64_t row, uint64_t column) const {
         const uint8_t value = lanes[row * columns + column];
@@ -66,13 +67,14 @@ struct Census {
     }
 
     Census(const uint8_t *source, const uint64_t *active_zero, uint64_t cols,
-           uint64_t block_rows, uint64_t full_blocks, uint64_t mask)
+           uint64_t block_rows, uint64_t full_blocks, uint64_t mask, uint64_t domains = 1)
         : lanes(source), zeros(active_zero), columns(cols), rows_per_block(block_rows),
-          blocks(full_blocks), zero_mask(mask), hot(cols * full_blocks),
+          blocks(full_blocks), zero_mask(mask), domain_count(domains), hot(cols * full_blocks),
           fingerprints(cols * full_blocks, 14695981039346656037ull),
-          tile_counts(((block_rows + 7) / 8) * cols * full_blocks),
-          column_hot(cols), column_unique_hot(cols) {
-        require(cols > 0 && cols <= 32 && block_rows > 0 && full_blocks > 0,
+          tile_counts(domains == 1 ? ((block_rows + 7) / 8) * cols * full_blocks : 0),
+          column_hot(cols), column_unique_hot(cols), domain_unique_tasks(domains) {
+        require(cols > 0 && cols <= 32 && block_rows > 0 && full_blocks > 0
+            && (domains == 1 || domains == 16) && full_blocks % domains == 0,
             "bounded census shape");
         const uint64_t tiles = (rows_per_block + 7) / 8;
         for (uint64_t block = 0; block < blocks; ++block) {
@@ -84,18 +86,20 @@ struct Census {
                     fingerprints[task] = (fingerprints[task] ^ value) * 1099511628211ull;
                     if (value) {
                         ++hot[task];
-                        ++tile_counts[(block * tiles + row / 8) * columns + column];
+                        if (domains == 1)
+                            ++tile_counts[(block * tiles + row / 8) * columns + column];
                     }
                 }
             }
         }
-        std::map<uint64_t, std::vector<uint64_t>> representatives;
+        std::map<std::pair<uint64_t, uint64_t>, std::vector<uint64_t>> representatives;
         for (uint64_t task = 0; task < hot.size(); ++task) {
             total_hot += hot[task];
             column_hot[task % columns] += hot[task];
             if (!hot[task]) { ++zero_tasks; continue; }
             bool duplicate = false;
-            auto &bucket = representatives[fingerprints[task]];
+            const uint64_t domain = (task / columns) % domains;
+            auto &bucket = representatives[{domain, fingerprints[task]}];
             for (uint64_t previous : bucket) {
                 if (hot[previous] == hot[task] && equal(previous, task)) {
                     duplicate = true;
@@ -108,8 +112,10 @@ struct Census {
                 bucket.push_back(task);
                 unique_hot += hot[task];
                 column_unique_hot[task % columns] += hot[task];
+                ++domain_unique_tasks[domain];
             }
         }
+        if (domains != 1) return;
         for (uint64_t first = 0; first < hot.size(); first += 64) {
             for (uint64_t tile = 0; tile < tiles; ++tile) {
                 uint64_t sum = 0, maximum = 0;
@@ -133,6 +139,27 @@ struct Census {
     }
 
     void print() const {
+        if (domain_count != 1) {
+            const uint64_t original_tasks = blocks / domain_count * columns;
+            const uint64_t original_groups = ((original_tasks + 63) / 64) * domain_count;
+            uint64_t unique_groups = 0;
+            for (uint64_t count : domain_unique_tasks) unique_groups += (count + 63) / 64;
+            std::printf("FRAGMENT_SUMMARY domains=%llu rows_per_fragment=%llu fragments=%llu hot=%llu unique_hot=%llu duplicate_fragments=%llu zero_fragments=%llu removable_update_fraction=%.9f original_groups_per_rank=%llu unique_groups_per_rank=%llu matrix_group_reduction=%.9f\n",
+                (unsigned long long)domain_count, (unsigned long long)rows_per_block,
+                (unsigned long long)hot.size(), (unsigned long long)total_hot,
+                (unsigned long long)unique_hot, (unsigned long long)duplicate_tasks,
+                (unsigned long long)zero_tasks, 1.0 - double(unique_hot) / total_hot,
+                (unsigned long long)original_groups, (unsigned long long)unique_groups,
+                1.0 - double(unique_groups) / original_groups);
+            for (uint64_t domain = 0; domain < domain_count; ++domain)
+                std::printf("FRAGMENT_DOMAIN partial=%llu unique_tasks=%llu\n",
+                    (unsigned long long)domain, (unsigned long long)domain_unique_tasks[domain]);
+            for (uint64_t column = 0; column < columns; ++column)
+                std::printf("FRAGMENT_COLUMN column=%llu hot=%llu representative_hot=%llu\n",
+                    (unsigned long long)column, (unsigned long long)column_hot[column],
+                    (unsigned long long)column_unique_hot[column]);
+            return;
+        }
         std::printf("CENSUS_SUMMARY tasks=%llu hot=%llu unique_hot=%llu duplicate_tasks=%llu zero_tasks=%llu removable_update_fraction=%.9f barrier_work=%llu barrier_max_times32=%llu selector_balance_ratio=%.9f\n",
             (unsigned long long)hot.size(), (unsigned long long)total_hot,
             (unsigned long long)unique_hot, (unsigned long long)duplicate_tasks,
@@ -149,6 +176,7 @@ struct Census {
     }
 
     void price_pairing(uint64_t live_rows, const char *map_path) const {
+        require(domain_count == 1, "pairing uses full original task groups");
         require(live_rows > 0 && live_rows <= blocks * rows_per_block, "live prefix bounds");
         std::vector<uint64_t> sampled_hot(columns), score(hot.size());
         std::vector<uint32_t> mapping(hot.size());
@@ -241,8 +269,10 @@ int main(int argc, const char **argv) {
         && test.zero_tasks == 0 && test.barrier_max_sum == 128, "independent hand-counted fixture");
     std::puts("CENSUS_SELFTEST pass=true");
     if (argc == 1) return 0;
-    require(argc == 9 || argc == 11,
-        "usage: census lanes zeros rows columns positions full_blocks zero_mask expected_hot [live_rows map_path]");
+    require(argc == 9 || argc == 10 || argc == 11,
+        "usage: census lanes zeros rows columns positions full_blocks zero_mask expected_hot [--fragments | live_rows map_path]");
+    const bool fragments = argc == 10;
+    require(!fragments || std::string(argv[9]) == "--fragments", "fragment mode flag");
     const auto start = std::chrono::steady_clock::now();
     Mapping lanes(argv[1]), zeros(argv[2]);
     const uint64_t rows = std::stoull(argv[3]), columns = std::stoull(argv[4]);
@@ -252,7 +282,8 @@ int main(int argc, const char **argv) {
         && blocks > 0 && blocks <= 1024, "production census envelope");
     require(lanes.size == rows * columns && zeros.size == rows / 8, "capture lengths");
     Census result(static_cast<const uint8_t *>(lanes.data),
-        static_cast<const uint64_t *>(zeros.data), columns, positions / 2, blocks, mask);
+        static_cast<const uint64_t *>(zeros.data), columns, positions / (fragments ? 32 : 2),
+        blocks * (fragments ? 16 : 1), mask, fragments ? 16 : 1);
     require(result.total_hot == expected_hot, "producer hot-entry count equality");
     result.print();
     if (argc == 11) result.price_pairing(std::stoull(argv[9]), argv[10]);
