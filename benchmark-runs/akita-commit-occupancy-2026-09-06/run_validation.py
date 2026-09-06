@@ -35,8 +35,8 @@ STEPS = {
         "--release", "--no-default-features", "--features",
         "parallel,schedules-default,response-model-diagnostics,transcript-blake2b", "--", "-D", "warnings"]),
 }
-for mode, features in (("parallel", "parallel,disk-persistence,schedules-default,catalog-gen,transcript-blake2b"),
-                       ("serial", "disk-persistence,schedules-default,catalog-gen,transcript-blake2b")):
+for mode, features in (("parallel", "parallel,disk-persistence,schedules-default,akita-planner/catalog-gen,transcript-blake2b"),
+                       ("serial", "disk-persistence,schedules-default,akita-planner/catalog-gen,transcript-blake2b")):
     STEPS["pcs-" + mode] = (AKITA, AKITA_TARGET, ["cargo", "nextest", "run", "-p", "akita-pcs",
         *PCS_TESTS, "--profile", "ci", "--cargo-profile", "ci-test", "--no-default-features",
         "--features", features, "--test-threads", "1"])

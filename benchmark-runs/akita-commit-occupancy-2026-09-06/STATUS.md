@@ -1,4 +1,4 @@
-# Commit campaign checkpoint — 2026-09-06 10:17 UTC
+# Commit campaign checkpoint — 2026-09-06 10:22 UTC
 
 Goal active.20% higher useful root-panel throughput is a milestone, not a cap;
 the COMPONENT milestone now passes, but the full goal has NOT been achieved.
@@ -10,13 +10,14 @@ Rebased finalist proof controller now owns the machine lock. Do not start anothe
 GPU run, build, or heavy CPU check while it runs. run_rebased_finalist.py adds
 one parent-only stability condition to the unchanged twelve-proof sequence,
 180s process/40minute epoch/120s cooling guards; deadline10:40:25UTC.
-Next: finish/score three transfer pairs, then PCS feature-mode/clippy/fmt checks.
+Next: finish/score two transfer pairs, then PCS feature-mode/clippy/fmt checks.
 Live exec session57818, controller PID15605; no other jobs may contend.
 Fibonacci ABBA passes: parent32.501577250/32.997158500s, candidate
 30.615382291/30.392947500s. Means32.749367875->30.504164896s,2.245203s
 saving (6.8557%),parent drift1.5133%,all four verified,zero swaps/watchdogs.
-BTreeMap pair verifies27.610286->27.089531s,0.520755s saving. SHA2 parent
-cooling began10:16:22UTC. Remaining six transfer proofs
+BTreeMap pair verifies27.610286->27.089531s,0.520755s saving. SHA2 pair
+verifies29.383833->27.236926s,2.146907s saving. SHA3 parent cooling began
+10:21:31UTC. Remaining four transfer proofs
 retain original historical5% discrepancy guards and may stop for reassessment.
 D23 GPU11.994->9.570s,25.33% higher useful throughput,2.425s complete-wall
 saving. Exact arithmetic/output checks pass, parent drift0.7%, no swaps or

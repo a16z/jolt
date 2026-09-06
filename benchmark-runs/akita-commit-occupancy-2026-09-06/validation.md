@@ -68,3 +68,17 @@ not a confidence interval. Smaller than Fibonacci; do not extrapolate the
 Fibonacci saving uniformly. Raw parent/candidate SHA256:
 327517ef697788f4adc9da5bea342cca43099c03b26ef86184c31d837933695a
 6a9faf4a8cb52df7c534a988e2c27ec0406e1606e7999482db83ca293f8328d8.
+
+Pre-launch PCS command audit: catalog-gen is owned by akita-planner, not
+akita-pcs. The package-scoped nextest commands now spell it
+akita-planner/catalog-gen, preserving the intended CI feature graph. This
+was corrected from Cargo.toml inspection before any PCS invocation; no
+failed test/run is hidden. Proof evaluator and candidate sources unchanged.
+
+10:21UTC SHA2-chain one-pair transfer:29.383833042->27.236926333s,
+saving2.146907s (7.306%wall). Both verify with trace_len151102206,T28,
+zero swaps/watchdogs and~81.2GiB RSS. Raw parent/candidate SHA256:
+73be8b98028615f30b2a645b332da9e5833a0fac62ebd4a2e968fd543d1f5a82
+801a2a3b6363a883e6f083e7905b7e36877cdfe2397cdf5fb6e8fb74d968d9d4.
+All first three workload comparisons improve; the five-workload mean is
+still pending SHA3/Collatz. No historical-baseline gain is substituted.
