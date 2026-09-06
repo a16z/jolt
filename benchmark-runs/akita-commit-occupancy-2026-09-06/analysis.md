@@ -135,7 +135,7 @@ every P19 sampled checksum34ba807bf9e37a5e. Original258.491250/262.292000ms;
 dynamic32KiB/full tile259.004125ms (bridge difference-0.53% vs originalmean).
 Half tile at16/32/24KiB reservation285.436500/286.463000/289.138625ms.
 Original drift1.4704%; reserve32 vs16 penalty0.3596%; half tile16 vs
-originalmean9.6197% slower. Frequency~1573–1578MHz after warmup.
+originalmean9.6182% slower. Frequency~1573–1578MHz after warmup.
 Reject smaller-tile candidate; no meaningful reservation-sensitive effect.
 Unused dynamic reservation may not consume resident L1, so this does not
 rule out register or useful-working-set pressure. Extra tile/control work
@@ -186,3 +186,81 @@ cooling,<=180s offline census. One production input capture is the explicit
 exception allowed by the contract to replace the synthetic proxy. No other
 workload matrix or CPU proof run. Inspect captured metadata/byte counts and
 compare census H exactly to captured producer H before interpreting results.
+
+## D2 result / model update,05:35 UTC
+
+Capture binary65867b284f32fe746045892ae67ec3ef69387240d96e6617a1a9da03b39730d8,
+isolated Jolt b2f89f9b9 / Akita cbd3d5b6f. Full Fibonacci proof verified,
+85.44GiB RSS, swaps0, no watchdog. Its37.513090875s includes capture IO
+and is not a parent performance observation. Metadata exactly matches the
+prior real-input geometry/H. Captured lanes SHA256
+a13d07771432eb1e21fcdef3196bdba9f0b61d9ad6649775c5777978fad5abb4;
+zero bitmap e3ba30fece63b0f8a183e1d3238851cc10addb7339067c9df0dd4c2789027ca6.
+
+CPU-only, count-only census completed11.18s immediately after capture; its
+elapsed time is not a cooled production-preprocessing benchmark. Exact H
+matches3263846381. Of22301tasks,1534 are zero and1528 are nonzero exact
+duplicates. Unique hot work2863290349; removable fraction12.2725149%.
+Duplicates are overwhelmingly bytecode columns25/26: their combined
+402655160hot entries reduce to2099128 representative entries. This offers
+~1.512s only under proportional panel scaling, before fingerprint/comparison
+and replication costs; not enough alone to establish the20% milestone.
+
+Barrier selected-work sum3263846381; sum32*max5838522912 =>ratio0.559019195.
+99.7135% of tile barriers have a SIMD doing the maximum16 updates. Adjacent
+dense columns repeatedly share a SIMD while columns0..6 are~10% dense and
+columns27/28 nearly zero. This is actual input structure, not the prior
+independent Bernoulli estimate. It strongly motivates pairing heavy with
+light tasks while preserving each threadgroup's exact64-task set.
+
+Raw runs/d2-census.out SHA256
+7182e2d4a786b9b2aa9866f3205a458d5456bfab8b6c8b1b8eecb864077172f3.
+The census is not GPU barrier-wait or occupancy measurement. Rank3 and16
+position partials repeat the same selector-count structure; the ratio does
+not imply44.1% wall-time savings because matrix/control work and concurrent
+groups also contribute.
+
+Preflight: fmt, taplo(outside sandbox), dependency boundaries, shared field
+identity and line-cap self-tests pass; full schedule regeneration206.35s is
+byte-identical. Modern Python3.13 with PATH fixed leaves only the inherited
+recursive_commit error-owner failure (78/79pass). Inherited backend/runtime
+line caps and two unused akita-metal dependencies still fail; typos unavailable.
+Capture build4m34s; do not repeat unchanged repository-wide checks per variant.
+
+## D3 preregistration: heavy/light task pairing within each existing group
+
+Question: can the measured barrier imbalance be reduced without increasing
+matrix sweeps, changing accumulator width or shrinking the shared tile?
+First price one deterministic mapping offline on the frozen real capture.
+Estimate per-column density from1024 SplitMix64-selected rows in the certified
+live prefix (not regularly spaced rows, which can alias loop periodicity).
+Rank each existing group's<=64tasks by sampled column count times valid rows
+in its block; tie-break by original task index. Pair lightest with heaviest,
+then next lightest with next heaviest. Keep an odd middle task last. No
+benchmark-name or hard-coded column-family rules. Output a global task-id
+permutation and recompute the exact barrier max envelope with captured counts.
+
+Bar to implement: >=15% smaller sum32*max with unchanged exact total H,
+same per-group task sets and no out-of-group tasks. If it misses, do not
+write the GPU variant; investigate finer scheduling/repetition instead.
+This is an analytical selection rule, not a promised speedup or an optimum.
+
+If the mapping clears that bar, append a diagnostic shader using the original
+full tile, original arithmetic/selector/store helpers,1024threads and40
+source accumulator words/thread. Only global task0/1 identity becomes two
+loads from a read-only mapping buffer. Each task retains its original local
+row iteration and output address. U, output size, groups, matrix requests
+and barriers are unchanged; task distribution before each barrier changes.
+Added costs: two uniform task-index reads per SIMD per position/rank partial,
+~90KiB map,1024sampled source rows and~22301*log2(64) host sort comparisons.
+Source cache ordering may change even though each group's footprint does not.
+No host trace-sized scan or materialization is allowed for production mapping.
+
+Target test uses captured Fibonacci selectors and Private A/partial buffers,
+matching production storage. Maintain independent reduced oracle and sampled
+target oracle; compare original/permuted full output on a bounded command.
+Use a predeclared interior8-stream region, not a favorable handpicked subset.
+Whole-panel replay follows only if the bounded original/candidate observation
+improves>=10%; repeat a surprising/near-threshold result at most once. Reject
+any error, watchdog or missing parity. Keep20% as milestone, not ceiling.
+This is epoch1 transaction4; checkpoint model/results before another epoch.
