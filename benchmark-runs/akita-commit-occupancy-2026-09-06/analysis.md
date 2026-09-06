@@ -280,3 +280,60 @@ identical generated canonical A uploaded to Private storage, Private partials
 and matched readback (readback excluded from GPU panel timing). Full active
 output equality against the first original plus65 independent u128 samples
 per observation. This remains a ranking diagnostic, not a full-proof gain.
+
+## D3 GPU result / epoch1 checkpoint,05:58 UTC
+
+Original262.752667/262.860375ms, mapped250.159833/248.686875ms.
+Means262.806521→249.423354ms:5.0924% less time,5.3656% higher throughput;
+original drift0.0410%, sampled GPU frequencies~1572–1578MHz. Full3145728
+active coefficients agree and all independent samples pass checksum
+8ef3d516f470806e; reduced selected-zero/tail oracle also passes.
+No swaps/watchdog. Raw runs/d3-saturation.out SHA256
+eb6b9081e6c13535111d7a9d2703b0531e0f78d66b8a53fc76d8ca9541c0a6ea.
+
+Misses10% gate for full-panel replay. Park as a measured small scheduling
+lever, not a production finalist. Proportional extrapolation~0.627s is not
+measured full-panel/e2e saving. Broken assumption: the20.13% selector-max
+envelope improvement is not the same as GPU-time improvement; other work
+and/or latency hiding absorbs much of the predicted effect. No occupancy
+percentage or register-pressure attribution is justified.
+
+Epoch1's four transactions complete. No production optimization accepted;
+accepted binary/pin unchanged, no pushes. One verified full proof was used
+only to obtain the reusable capture. All diagnostic processes terminal.
+
+## Epoch2 / D4 preregistration: repetition at existing position-partial granularity
+
+Epoch2 checkpoint by07:30 UTC,<=3transactions,35min or two failed variants
+per mechanism without new causal data. Same security/evaluator/serial guards;
+no user authority expansion. Before a finalist, reserve the40min validation
+epoch explicitly. Twenty percent remains the first milestone, not a cap.
+
+The full-block census may hide repetition broken by rare rows. Existing
+commit output already has16 position partials, each16384trace rows. Compare
+exact canonical selector fragments across blocks/columns, but ONLY within
+the same position-partial index: different partials address different public
+A rows and cannot reuse their results merely because selectors match.
+
+D4 is CPU-only exact counting on the existing capture. One unchanged source
+pass, fragment fingerprints plus complete equality checks for every accepted
+match; selected-zero remains distinct from absence. Each partial repeats
+for all3rank elements. Count removable H, unique/duplicate/zero fragments,
+and unique task groups ceil(unique_fragments_per_partial/64). Verify total
+H exactly equals3263846381. Do not report the old full-block barrier metric
+on the new fragment indexing: this pass prices repetition only.
+
+Prediction: shorter fragments expose more exact reuse than the12.27%
+full-block result. Falsifier/implementation gate: <20% removable updates or
+<15% matrix-task-group reduction does not justify a standalone fragment-reuse
+candidate. If it clears both, next price GPU fingerprinting, exact equality,
+CPU scheduling and duplicate-output scatter BEFORE writing production code.
+Never land the11s exhaustive CPU census as preprocessing. Target metadata
+overhead must be subtracted from the saving; no extra trace-sized owner.
+
+Correctness argument: original partial contribution depends on matrix rank,
+position-partial and the canonical selector sequence, not original column
+or block. Compute representatives once, reproduce every original partial
+output slot, then keep the existing reduction and eval input unchanged.
+Hash equality only filters comparisons; it cannot authorize reuse.
+Budget<=10min tooling and<=180s count-only process; no GPU/proof rerun.

@@ -10,3 +10,7 @@
 {"event": "d2_census_complete", "raw_sha256": "7182e2d4a786b9b2aa9866f3205a458d5456bfab8b6c8b1b8eecb864077172f3", "utc": "2026-09-06T05:33:11Z"}
 {"event":"d2_verdict","utc":"2026-09-06T05:35:08Z","verdict":"keep","artifact":"verified real-selector capture and exact census","removable_update_fraction":0.122725149,"selector_balance_ratio":0.559019195,"production_candidate":false,"next":"D3 price heavy/light pairing within unchanged task groups"}
 {"event": "d3_pairing_price_complete", "raw_sha256": "d0ebaf9b15320b65b075f3773ac2240a65c2c0e1b35e1f5767a2c3f9cc5c315c", "utc": "2026-09-06T05:43:38Z"}
+{"binary_sha256": "abc394c10de26801e7e0b97a1f1765799056e92179bf8062f06af402aa61854f", "controller_pid": 2790, "event": "d3_cooldown", "seconds": 120, "utc": "2026-09-06T05:51:42Z"}
+{"archive_sha256": "133629cee9491d663d12ad3043513553fc81f3589009f8cdabb6125ce71ca3d3", "event": "d3_complete", "raw_sha256": "eb6b9081e6c13535111d7a9d2703b0531e0f78d66b8a53fc76d8ca9541c0a6ea", "sampled_family_rss_bytes": 6607781888, "utc": "2026-09-06T05:53:47Z"}
+{"event":"d3_verdict","utc":"2026-09-06T05:58:00Z","verdict":"discard","reason":"parked below10percent whole-panel replay gate","observed_time_saving_fraction":0.0509240294,"observed_throughput_gain":0.0536564311,"full_active_output_coefficients":3145728,"next":"D4 exact repetition within existing position partials"}
+{"event":"epoch_checkpoint","utc":"2026-09-06T05:58:00Z","epoch":1,"transactions_complete":4,"production_accepted":false,"next_epoch_deadline":"2026-09-06T07:30:00Z","next_epoch_transactions":3}
