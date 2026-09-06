@@ -635,3 +635,44 @@ first-use mapping/setup, all task windows, count storage and final correction
 before any full proof or production candidate is authorized. Any parity,
 watchdog or resource failure rejects. Budget<=20min tooling/compile and<=5min
 guarded comparison. At most one justified ordering refresh for invalid drift.
+
+## D10 result,06:58 UTC / D11 preregistration: interleaved shared limbs
+
+Original264.639500/264.097500ms; deferred259.734000/242.256792ms.
+Means264.368500→250.995396ms,5.06% less GPU time, original drift-0.205%.
+Candidate spread is6.73%; both observations improve but neither clears10%.
+No ordering refresh is authorized by the parent-drift rule. All independent
+oracles and full target equality pass, including the extremal matrix checksum
+7c0cd4ac28b19996. Zero swaps/watchdog. Raw
+runs/d10-saturation.out SHA256
+0f0a7ae4731e8232b2cd81b2775ed115c0df099025f2afff1275a2706a4dacaf.
+Park below full-panel gate. Proportional panel saving~0.62s before preprocessing
+is not a measured end-to-end saving. Simplifying the arithmetic did not yield
+the source-operation-count percentage as elapsed time. No bottleneck fraction
+can be inferred precisely from that intervention alone.
+
+D11 isolates shared-memory layout, retaining the accepted arithmetic and all
+other original scheduling. Current shared matrix has four u32 planes of2048
+elements, and each coefficient update gathers one scalar from every plane.
+Replace it by2048 interleaved AkitaFp128 records (same32768B), matching the
+public matrix's existing AoS records. Cooperative copy stores a whole record;
+each selected update reads four complete records and transposes their limb
+components in registers before calling the unchanged arithmetic helper.
+
+Costs: same U,40 persistent accumulator source words,1047GiB matrix requests,
+20.053TB shared reads,32KiB tile,1024threads,64tasks/group,16partials,barriers
+and original task ordering. The compiler may lower four-word records to wider
+loads/stores, reducing memory instruction issue; actual ISA count is unknown.
+Bank mapping changes from consecutive scalar words across SIMD lanes to
+four-word strides with wide records. That can improve issue cost or introduce
+bank serialization; explicitly do not assume a fourfold bandwidth gain.
+Temporary live record values may also change register allocation. The compulsory
+traffic and qualified copy proxies are unchanged; this is not a new measured
+memory floor or an occupancy claim. No deferred-sign/cached-device combination.
+
+Gate and order: frozen real512tasks; one warmup each, original,candidate,
+candidate,original; >=10% GPU-time saving, <=3% original drift; independent
+10/9-task full oracles and65 target samples plus full3145728 coefficient
+equality. If below gate, park after one layout variant unless a distinct new
+causal observation justifies another. <=15min tooling/compile,<=5min guarded
+run. Epoch4 transaction2, no production or security changes.
