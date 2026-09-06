@@ -60,3 +60,11 @@ Means32.749367875->30.504164896s, saving2.245203s (6.8557%wall,
 trace_len201327593, T28, zero swaps/watchdogs. RSS~83.7GiB in both variants.
 The historical36.183s parent is not used in these gains. Four workload
 transfers and remaining PCS/clippy/fmt gates are still pending; NOT accepted.
+
+10:16UTC BTreeMap one-pair transfer:27.610285583->27.089530625s,
+saving0.520755s (1.886%wall). Both verify with trace_len177115820,T28,
+zero swaps/watchdogs and~81.6GiB RSS. This is a single descriptive pair,
+not a confidence interval. Smaller than Fibonacci; do not extrapolate the
+Fibonacci saving uniformly. Raw parent/candidate SHA256:
+327517ef697788f4adc9da5bea342cca43099c03b26ef86184c31d837933695a
+6a9faf4a8cb52df7c534a988e2c27ec0406e1606e7999482db83ca293f8328d8.
