@@ -779,3 +779,36 @@ If it passes, future candidate screens may use this documented granularity
 but old gains are not silently promoted or combined. Do not rerun until lucky.
 One guarded process,120s initial cooling,<=180s and88GiB/zero-swap guards.
 Budget<=10min host tooling/compile and<=5min observation. No kernel edits.
+
+## D13 result,07:20 UTC / D14 preregistration: fixed eight-block reference bank
+
+Unchanged per-dispatch means270.350906,268.475661,275.799630,281.571859ms.
+Range/mean4.78%, above3%: reject the continuous-aggregate timing protocol.
+All correctness/resource guards pass. Raw runs/d13-saturation.out SHA256
+7ab7dd342c2a9b7958be2c76a82755be986557e9547913db9a0fd666ea0ea664.
+The longer continuous workload added a demonstrated confound: temperature
+climbed~37→77.5C, and later measured windows fell from1578MHz toward1500–1540.
+This does not retrospectively explain D11's drift at near-constant frequency.
+Do not normalize away the effect; separate cooled processes are the next
+parent-only control. No candidate is promoted by these observations.
+
+D14 is CPU-only pricing of an eight-reference version of D12. Fixed bank is
+blocks1..8, clipped to available blocks; block0 only for a single-block shape.
+Compare canonical selectors exactly, including selected-zero. For each task,
+maintain a bitmask of references still exactly equal, dropping each bit on
+its first mismatch. After all rows choose the smallest matching bank index;
+a bank task that maps to itself remains a representative. References chosen
+this way cannot form cycles: every reference maps to the least-index equal
+bank member. All-zero tasks are classified separately. No hash can authorize
+reuse and no input/workload-derived pivot search is performed.
+
+This prices whether a small deterministic bank recovers D2's12.27% removed
+work while avoiding full hash clustering. Both sides: up to8 reference checks
+per row while masks remain live, more source loads and mask state; a GPU
+version may early-finish a nonmatching nonzero task but must fully certify
+zeros/matches. Later host mapping, partial zeroing/scatter still need pricing.
+Gate>=10% exact removedH and>=10% unique64-task-group reduction before GPU
+preprocessing design. No kernel during the current timing pause. Conserve
+producerH; add a five-block/two-column hand fixture with H10 and removableH6
+to test multiple reference equivalence classes and no self/cyclic reuse.
+<=10min tooling,<=180s CPU under lock; epoch5 transaction2.
