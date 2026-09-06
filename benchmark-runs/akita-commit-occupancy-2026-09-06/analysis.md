@@ -579,3 +579,59 @@ including metadata dispatch, no sample>200ms, all checks pass. Otherwise
 reject this preprocessing choice before implementing the accumulator. This is
 an overhead gate, not a performance win. Epoch3 transaction3,<=20min tooling
 and<=5min guarded observation. Checkpoint the epoch afterward.
+
+## D9 result / epoch3 checkpoint,06:50 UTC
+
+Full356816-fragment producer57.729333/58.075167ms GPU (mean57.902250),
+58.838166/59.982583ms command wall. Clears150ms mean/200ms max gate.
+Warmup66.633667ms GPU but548.099667ms wall: first-dispatch host mapping/setup
+is material and must be charged once in the complete metadata+panel boundary,
+not ignored or presumed to recur independently of the original panel's own
+first-dispatch setup. No production cost conclusion from warm GPU time alone.
+All356816 fragment moment/range/monotonicity invariants and129 direct samples
+pass; reduced512-count full comparison passes; all repeated outputs identical.
+91.3MB output, zero swaps/watchdog, peak RSS5.63GiB. Raw
+runs/d9-saturation.out SHA256
+d5d9f8bcd579ffa0010f4e45fa41c2d489bf7442ce589764b7d0cca2bd274aba.
+
+Epoch3 complete: direct gathers and sign-band specialization rejected. The
+negative-count preprocessing price clears its gate; it is NOT a speedup yet.
+No production source changed or optimization accepted. The next question is
+whether explicitly removing hot-loop correction operations pays on real data.
+
+## Epoch4 / D10 preregistration: unsigned complements plus final correction
+
+Checkpoint by07:30 UTC,<=3transactions;35min/two failed variants per mechanism.
+Implement only D9's algebraic identity using the original shared-staged panel,
+original task mapping and selected-row order. No D3/D6/D7/D8 combinations.
+
+For each selected value, choose a or ~a according to its negacyclic sign.
+First limb is unsigned sum with carry=(sum<old), then use the existing
+carry helper for limbs1..3. Accumulate only unsigned overflow into the existing
+wrap vector. At each original output slot, use the original unsigned-wide
+reducer and subtract m*(OFFSET-1) with the original modular subtract helper.
+Read m from D9's exact u16 table, indexed by(block*16+partial,column,coefficient).
+Every original output slot and downstream reduction remains unchanged.
+
+No extra hot-loop accumulator/counter state:40 source words per lane remain;
+same U,matrix/shared traffic,32KiB tile,1024threads,64tasks/group,barriers and
+stream ordering. Costs are D9 metadata plus final output correction/reads and
+changed compiler scheduling. Explicit first carry and signed-wrap operations
+are removed, rather than hoping constant-branch specialization removes them.
+No claim of a known machine compute floor or20% speedup before measurement.
+
+Bounded real-input ranking uses the frozen count artifact (never a promotion
+timing with preprocessing hidden). Original,candidate,candidate,original,
+one warmup each; independent65-sample and full3145728 active output equality.
+Reduced10/9-task full oracles also include a separate matrix with0,1,p-1,p-2,
+32/64/96-bit carry boundaries and2^127, plus selected-zero/inactive padding.
+Small-shape counts are derived by direct row comparisons, independent of the
+histogram producer. Admission in this diagnostic is <=16384 rows/partial.
+
+Gate>=10% bounded panel GPU-time saving, <=3% parent drift, and proportional
+12.3199s-panel saving minus measured59.41ms warm metadata wall>=1s. This is
+only a ranking projection. Full-panel replay must include metadata dispatch,
+first-use mapping/setup, all task windows, count storage and final correction
+before any full proof or production candidate is authorized. Any parity,
+watchdog or resource failure rejects. Budget<=20min tooling/compile and<=5min
+guarded comparison. At most one justified ordering refresh for invalid drift.

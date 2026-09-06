@@ -22,3 +22,5 @@
 {"archive_sha256": "4e23a256cd20e449fa824d303fa7f1216b7bcebfe5aafc2014b03c7f8bf66a30", "event": "d7_complete", "raw_sha256": "c98e0d07c9c8fb4a3c40ed79600998038ac9191ca7917f6e3f0697e48a30657f", "sampled_family_rss_bytes": 6607765504, "utc": "2026-09-06T06:31:07Z"}
 {"binary_sha256": "06ac58d1b7c077034739320b81c0e07bbc21389b7a14f8c2b405f30deea647b0", "controller_pid": 5344, "event": "d8_cooldown", "seconds": 120, "utc": "2026-09-06T06:38:47Z"}
 {"archive_sha256": "02c88024c877aa3329396c1d8be8939435529ba85f659f6cadddea3b35d80d3d", "event": "d8_complete", "raw_sha256": "adc55c74f25efedc5c7d84484c32fd4b2cbc16b8a23d4f4425f7cd6044ed9277", "sampled_family_rss_bytes": 6607863808, "utc": "2026-09-06T06:40:53Z"}
+{"binary_sha256": "1d0e7f7afdd792add9123395e49badec0e8a8e9b1d0effb43add428743b85a01", "controller_pid": 5743, "event": "d9_cooldown", "seconds": 120, "utc": "2026-09-06T06:47:18Z"}
+{"archive_sha256": "0e4b56f74bab166146c41ee77283ed6b39bdfac05010da1589fa3fd1c3518baa", "event": "d9_complete", "raw_sha256": "d5d9f8bcd579ffa0010f4e45fa41c2d489bf7442ce589764b7d0cca2bd274aba", "sampled_family_rss_bytes": 3722412032, "utc": "2026-09-06T06:49:21Z"}
