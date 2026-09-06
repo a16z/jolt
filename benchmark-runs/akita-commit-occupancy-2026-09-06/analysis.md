@@ -973,3 +973,46 @@ Every timing charges both encoders.120s cooling,5s GPUcommand/180s process/
 88GiB/zero swaps/watchdogs. <=15min tooling+5min run; if gate fails again,
 park reference reuse rather than extending the search. No reuse panel code
 until this gate clears. Epoch6 transaction2, checkpoint remains08:30 UTC.
+
+### D17 result / D18 preregistration,08:03 UTC
+
+Both-pass GPU288.820708/289.832542ms,mean289.326625ms. Cold GPU293.791833ms,
+command wall776.394166ms,setup8.061958ms. All metadata entries and reduced
+fixtures match the independent oracle; exactH and unique counts unchanged.
+This removes57.66% of D16 preprocessing time, but still FAILS the frozen250ms
+gate. Park reference reuse after the second variant. No panel implementation
+or production promotion; do not lower the gate to accommodate the result.
+
+D18 is a different schedule mechanism with NO preprocessing requirement:
+column-major original-task enumeration. Logical taskg maps to column
+floor(g/full_blocks),block(g mod full_blocks), originalid=block*num_columns
++column. This is a bijection on all22301original tasks. No omitted zeros,
+duplicates, changed summation, parameters or protocol. Same34964-task groups,
+sameH3263846381, same16partials and public-A position domain per task.
+
+Causal hypothesis: current row-major groups mix dense and sparse columns,
+so per8-row tile barriers wait for their densest pair. D3 only repaired
+pairing inside the SAME groups; D18 changes group membership globally.
+Most new groups contain one column across different blocks; only column
+boundaries mix columns. This may reduce maxima while preserving all useful
+arithmetic and the1047GiB logical matrix requests. Price the exact tile-count
+envelope using the captured input before a GPU implementation.
+
+Added terms: global task mapping adds two integer divisions and a multiply
+once per thread, not in the2048-tile loop. Selector requests span more widely
+separated blocks, potentially hurting cache/TLB locality. Production would
+need a validated whole-source zero-copy view (no7.25GiB copy) or bounded
+range views. No extra source scan, hash, task metadata or field storage.
+Measured copy-based conditional matrix floor remains2.377s; useful compute
+count unchanged, actual issue/occupancy floor unknown. A smaller barrier
+envelope is a ranking signal, not a predicted proportional wall gain.
+
+D18 CPU-only census computes both original and mapped32*sum(tile_maxima),
+checking H conservation, permutation coverage and identical group count.
+Proceed to a separately registered GPU panel comparison only if envelope
+decreases>=15%. Otherwise reject without kernel code. One deterministic
+mapping, no search sweep. Existing real capture and zero semantics unchanged.
+Diagnostic census may reuse its existing729MB tile counts, but no such
+storage belongs on the prover path. <=10min tooling,180s CPU process under
+machine lock,zero swaps, no GPU overlap. Epoch6 transaction3; checkpoint
+after census, before any next-epoch GPU experiment.

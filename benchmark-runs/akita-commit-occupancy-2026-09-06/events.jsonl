@@ -44,3 +44,5 @@
 {"event": "d16_failure", "reason": "controller interrupted", "utc": "2026-09-06T07:50:31Z"}
 {"binary_sha256": "4864a0506ee820fd54ac4cf8caeb39528a96390b7c64e9313aa4e3f45980fc9c", "controller_pid": 8711, "event": "d16b_cooldown", "seconds": 120, "utc": "2026-09-06T07:51:00Z"}
 {"archive_sha256": "be3efdb02d1e58a5008a9c15c05ef39546aebc1762637720a6eec94500fc31a5", "event": "d16b_complete", "raw_sha256": "5c4464699f1a0871243a3ec2d596ae54f6af0bbb24a05a14340ebedbed6afdad", "sampled_family_rss_bytes": 5836865536, "utc": "2026-09-06T07:54:16Z"}
+{"binary_sha256": "6189b7b8bae4434137d8126dc129e6e4629c40a2ef1e4a8714d39e8e6791b1aa", "controller_pid": 9152, "event": "d17_cooldown", "seconds": 120, "utc": "2026-09-06T07:58:24Z"}
+{"archive_sha256": "2f04b6baae671fabdee5657d1bb2927c74999080e7ddfba2ab203a0083cdb050", "event": "d17_complete", "raw_sha256": "cc424cfdba06e07900c69545f9c843c6c00d7c8cf013a8c1075e5bfc36351013", "sampled_family_rss_bytes": 5840863232, "utc": "2026-09-06T08:01:40Z"}
