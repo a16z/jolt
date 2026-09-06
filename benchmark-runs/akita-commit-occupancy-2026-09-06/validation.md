@@ -38,3 +38,10 @@ Jolt serial Metal nextest started09:49UTC, not yet complete at this entry.
 52.925s total; rawSHA338b5243398807dbf74295415ca452935190b3adf4daec96fd7ba84edc81a4ed.
 The twelve-proof finalist epoch starts after this gate; its frozen manifest,
 contract and immutable per-proof logs live in finalist/.
+
+The original proof epoch stopped after one verified parent32.835085250s on
+historical drift; no candidate was run. The preregistered additional parent
+in finalist-rebased/ verifies32.501577250s,1.016% from the calibration control,
+passing its3% band. RawSHA86fe93de73c79f399432e27906eb9930a147fab9ad1a183207564437c7818835.
+All13-proof amended-budget records remain visible; the original parent is
+calibration only. The candidate comparison uses the new ABBA controls.

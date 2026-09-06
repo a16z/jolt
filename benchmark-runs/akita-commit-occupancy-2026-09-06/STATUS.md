@@ -1,4 +1,4 @@
-# Commit campaign checkpoint — 2026-09-06 09:52 UTC
+# Commit campaign checkpoint — 2026-09-06 10:03 UTC
 
 Goal active.20% higher useful root-panel throughput is a milestone, not a cap;
 the COMPONENT milestone now passes, but the full goal has NOT been achieved.
@@ -6,9 +6,10 @@ No production optimization accepted or pushed.
 Accepted Jolt554f62703/Akita d756e3a67 and parent binary remain unchanged.
 Serial M4 Max, no subagents, no Xcode/admin installation, security frozen.
 
-Finalist proof controller now owns the machine lock. Do not start another
-GPU run, build, or heavy CPU check while it runs. Follow run_finalist.py's
-frozen twelve-proof sequence,180s process/40minute epoch/120s cooling guards.
+Rebased finalist proof controller now owns the machine lock. Do not start another
+GPU run, build, or heavy CPU check while it runs. run_rebased_finalist.py adds
+one parent-only stability condition to the unchanged twelve-proof sequence,
+180s process/40minute epoch/120s cooling guards; deadline10:40:25UTC.
 Next: score full proofs, then remaining PCS feature-mode/clippy/fmt checks.
 D23 GPU11.994->9.570s,25.33% higher useful throughput,2.425s complete-wall
 saving. Exact arithmetic/output checks pass, parent drift0.7%, no swaps or
@@ -17,7 +18,13 @@ shape alignment16 while using internal8-position/20KiB tiles; the capture
 hook has been removed. No new mechanism before this finalist is evaluated.
 Epoch8 completed: production Akita7878e5ba1,32/32Akita Metal parity tests,
 329/329Jolt Metal tests, release build passes. Epoch9 is the reserved finalist
-matrix (see finalist/started.json for its absolute deadline).
+matrix stopped after one verified parent32.835085250s,9.25% faster than the
+historical36.182954209s. No candidate proof ran. All identity/hash checks pass;
+cause unproven. The one preregistered extra parent must agree within3% before
+any candidate. That extra parent now verifies32.501577250s,1.016% from the
+calibration control:PASS. First candidate is cooling. New artifacts:
+finalist-rebased/; original epoch preserved.
+Combined amended reserve13proofs/45minutes measurement+cooling execution.
 
 Latest complete-panel verdicts (all exact output parity, zero swaps/watchdogs):
 

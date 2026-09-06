@@ -1269,3 +1269,23 @@ old-vs-new oracles in production. Final manifest must freeze source/binary/
 guest hashes and the twelve-proof sequence before launching. Full nextest,
 PCS serial/parallel, both Jolt clippy modes and fmt gate final integration;
 inherited failures must remain explicit. No production accepted or pushed.
+
+### Full-proof parent shift and calibration amendment,10:00UTC
+
+Initial finalist epoch stopped after one verified parent32.835085250s,
+9.25% faster than historical36.182954209s; no candidate proof was run. Raw
+SHAeb0f84774073df75d1dddacf2c2b8a530153e2663daeb32f34a05b2ca2b1719d.
+Padded/real trace, binary/source/guest/controller hashes all match. No Rayon,
+Metal debug/validation, capture or watchdog override is set. Both runs use
+format none; old matrix cooling30s versus current120s differs. Process-wide
+CPU system time/page reclaims differ but do not establish cause. Current
+process snapshot is not evidence of historical contention. Do not credit
+this shift to the candidate or silently compare it against the old parent.
+
+One explicit pre-candidate amendment allows one extra parent calibration:
+must be within3% of32.835085250s, otherwise stop. If stable, it starts a new
+unchanged Fibonacci ABBA then four P/C transfers. Original epoch preserved;
+total ceiling13proofs/45minutes measurement+cooling, acceptance thresholds
+unchanged. Recovery preregistration1469fc958; deadline10:40:25UTC. The adapter
+adds only an additional rejection condition to the original observer; every
+original identity/verification/resource check remains. No retries authorized.
