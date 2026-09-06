@@ -14,7 +14,7 @@ shape rejection and D512 parity pass. Output is in the tool execution record
 `cargo fmt --all` and `git diff --check` pass. RTK is unavailable, so direct
 nextest is used. Subsequent checks use run_validation.py and immutable logs.
 
-Remaining: release build, Jolt Metal suite, affected PCS fp128 E2E/commitment
+At09:42UTC remaining: release build, Jolt Metal suite, affected PCS fp128 E2E/commitment
 contract/protocol-soundness targets under both serial/parallel feature graphs,
 both Jolt clippy modes, all three fork clippy configurations, final fmt,
 same-session full proofs and five-workload transfer. No acceptance claim.
@@ -102,3 +102,53 @@ routine fast gate. Every Cargo process remains <=20minutes and88GiB, additionall
 capped by the common absolute epoch deadline. A failed gate is investigated,
 not silently retried; preserve inherited failures. No candidate/evaluator
 changes or accepted pin update during this validation epoch.
+
+10:32UTC Collatz one-pair transfer:31.054731834->30.745958500s,
+saving0.308773s (0.994%wall). Both verify with trace_len238883429,T28,
+zero swaps/watchdogs. Raw parent/candidate SHA256:
+a2da7771bc2054b049351f28130ad666b06061d44a4ebeb7909afa24958e7d07
+9fa8404a54a4d574858144cdc7cad2d03cc443b7420976a268822907f2881cb7.
+
+Final timing audit independently reparses all12scored raw logs and verifies
+all frozen source/binary/controller/guest hashes:PASS. Mean padded M4 MHz
+8.415475741->8.909192209,+5.866768%; no observed per-workload regression.
+Maximum reported RSS86.934586GiB; no swaps/watchdogs. The extra original
+parent calibration remains separate and visible, not part of scored means.
+Using the original frozen1.13projection factor gives10.067387197MHz M5;
+this is NOT an M5 measurement, and its0.674% margin is thin relative to
+single-pair and hardware-projection uncertainty. No margin guarantee.
+
+10:34UTC akita-clippy-parallel passes in12.201s; rawSHA
+ee243a963a0ed53ac54eb93282e35b6d61a0cad79e46f337cf9e098795f437e9.
+Remaining validation is serial with hard deadline11:13:48UTC. No candidate
+change or accepted pin update has been made.
+
+10:42UTC all remaining software checks complete successfully, without retries:
+
+| Check | Result | Total seconds | Raw SHA256 |
+|---|---|---:|---|
+| Akita clippy serial |exit0|10.179|47413414bfaff9b728f79070f6360e74a35729f7a5895103c59c23990f115a78|
+| Akita clippy PCS |exit0|10.179|24eb2336783ec2dcfb926b7cead31b5dda2d0d7a00af5886ef260571c515221a|
+| PCS parallel |23/23,0skip|165.256|a90ad5a798a97f9e3618a0dda8379e6926f9f9f622b5f22ee839076f55b27ac6|
+| PCS serial |23/23,0skip|116.256|5f44888674c446fd8d85298f967a3beba912dbb2d4247594587c01bddacbe270|
+| Jolt clippy host |exit0|20.386|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855|
+| Jolt clippy host,zk |exit0|8.150|e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855|
+
+The two quiet Jolt clippy logs are empty on success; exit status, commands
+and resource records are in events.jsonl. PCS targets:akita_fp128_e2e,
+commitment_contract,protocol_soundness. Exact feature graphs/commands are
+preserved in validation_start events.
+
+10:48UTC final audit:both isolated workspaces pass cargo fmt --all --check;
+both accepted-to-candidate diffs pass git diff --check; complete finalist
+manifest fingerprints pass. Session34179 exit0 prints
+FINAL_FMT_DIFF_FINGERPRINT_AUDIT pass=true. A previous identical formatting
+invocation's output was unavailable after context compaction; only these
+cheap read-only checks were repeated to recover authoritative completion.
+No proof,test suite or clippy gate was repeated. No other campaign process
+was present; the audit's exclusive machine lock is released.
+
+Final scoped diff contains only the three recorded Akita Metal files.
+Both isolated worktrees are clean. All three preserved user-file hashes
+match recorded values. No default production-pin change or push. Final verdict
+and inherited/unavailable checks:acceptance.md.

@@ -33,12 +33,15 @@ invented optimum. Exact occupancy/optimality certification is unavailable.
 
 ## Ranked mechanisms and costs
 
-Current checkpoint09:52UTC: D23 staged radix26 passes the full-panel gate:
+Final checkpoint10:50UTC: D23 staged radix26 passes the full-panel gate:
 25.33% higher useful throughput,2.425s boundary saving. D22 without staging
 saved only8.97% GPU time, below gate. Derivation/cost/claim map:radix26.md.
 Production finalist7878e5ba1 passes32/32Akita Metal and329/329Jolt Metal tests.
-Fresh Fibonacci ABBA now saves2.245s (6.86%wall), with1.51%parent drift and
-all proofs verified. The four transfer pairs remain in flight; no acceptance.
+Fresh Fibonacci ABBA saves2.245s (6.86%wall), with1.51%parent drift and
+all proofs verified. All four transfers improve; five-way mean MHz rises5.8668%.
+PCS23/23 in each mode,all five clippy configurations,and final fmt/diff/
+fingerprint checks pass. Accept the isolated candidate; default source/pin
+unchanged,no push. Full decision and caveats:acceptance.md.
 
 D0/D1 resource-grid/reservation, D19 column grouping, D20 widened carry,
 and D21 state-halving all failed their promotion gates. Reference reuse is
