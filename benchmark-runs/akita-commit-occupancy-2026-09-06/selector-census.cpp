@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <map>
+#include <numeric>
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -146,6 +147,90 @@ struct Census {
             std::printf("CENSUS_BARRIER maximum_iterations=%llu count=%llu\n",
                 (unsigned long long)count, (unsigned long long)maximum_histogram[count]);
     }
+
+    void price_pairing(uint64_t live_rows, const char *map_path) const {
+        require(live_rows > 0 && live_rows <= blocks * rows_per_block, "live prefix bounds");
+        std::vector<uint64_t> sampled_hot(columns), score(hot.size());
+        std::vector<uint32_t> mapping(hot.size());
+        for (uint64_t sample = 0; sample < 1024; ++sample) {
+            uint64_t random = sample + 0x9e3779b97f4a7c15ull;
+            random = (random ^ (random >> 30)) * 0xbf58476d1ce4e5b9ull;
+            random = (random ^ (random >> 27)) * 0x94d049bb133111ebull;
+            random ^= random >> 31;
+            const uint64_t row = random % live_rows;
+            for (uint64_t column = 0; column < columns; ++column)
+                sampled_hot[column] += symbol(row, column) != 0;
+        }
+        for (uint64_t task = 0; task < hot.size(); ++task) {
+            const uint64_t first_row = (task / columns) * rows_per_block;
+            const uint64_t valid_rows = first_row < live_rows
+                ? std::min(rows_per_block, live_rows - first_row) : 0;
+            score[task] = sampled_hot[task % columns] * valid_rows;
+        }
+        for (uint64_t first = 0; first < hot.size(); first += 64) {
+            const size_t count = std::min(uint64_t(64), hot.size() - first);
+            std::vector<uint32_t> tasks(count);
+            std::iota(tasks.begin(), tasks.end(), uint32_t(first));
+            std::sort(tasks.begin(), tasks.end(), [&](uint32_t lhs, uint32_t rhs) {
+                return score[lhs] == score[rhs] ? lhs < rhs : score[lhs] < score[rhs];
+            });
+            size_t lower = 0, upper = count, output = first;
+            while (lower < upper) {
+                mapping[output++] = tasks[lower++];
+                if (lower < upper) mapping[output++] = tasks[--upper];
+            }
+            auto check = std::vector<uint32_t>(mapping.begin() + first, mapping.begin() + first + count);
+            std::sort(check.begin(), check.end());
+            for (size_t index = 0; index < count; ++index)
+                require(check[index] == first + index, "permutation preserves each original group");
+        }
+        const uint64_t tiles = (rows_per_block + 7) / 8;
+        uint64_t new_work = 0, new_max_sum = 0;
+        for (uint64_t first = 0; first < hot.size(); first += 64) {
+            for (uint64_t tile = 0; tile < tiles; ++tile) {
+                uint64_t maximum = 0;
+                for (uint64_t simd = 0; simd < 32; ++simd) {
+                    uint64_t iterations = 0;
+                    for (uint64_t offset = 0; offset < 2; ++offset) {
+                        const uint64_t local_task = first + simd * 2 + offset;
+                        if (local_task < mapping.size()) {
+                            const uint64_t task = mapping[local_task];
+                            iterations += tile_counts[((task / columns) * tiles + tile)
+                                * columns + task % columns];
+                        }
+                    }
+                    new_work += iterations;
+                    maximum = std::max(maximum, iterations);
+                }
+                new_max_sum += maximum * 32;
+            }
+        }
+        require(new_work == total_hot, "permuted work conservation");
+        for (unsigned artifact = 0; artifact < 2; ++artifact) {
+            const std::string path = std::string(map_path) + (artifact == 0 ? "" : ".hot.u64le");
+            const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+            require(fd >= 0, "fresh permutation artifact");
+            const void *data = artifact == 0 ? static_cast<const void *>(mapping.data())
+                : static_cast<const void *>(hot.data());
+            const size_t bytes = artifact == 0 ? mapping.size() * sizeof(uint32_t)
+                : hot.size() * sizeof(uint64_t);
+            size_t written = 0;
+            while (written < bytes) {
+                const ssize_t count = write(fd, static_cast<const uint8_t *>(data) + written, bytes - written);
+                require(count > 0, "permutation artifact write");
+                written += size_t(count);
+            }
+            require(fsync(fd) == 0 && close(fd) == 0, "permutation artifact sync");
+        }
+        std::printf("PAIRING_PRICE original_max_times32=%llu paired_max_times32=%llu conserved_hot=%llu envelope_reduction=%.9f original_balance=%.9f paired_balance=%.9f map_bytes=%llu\n",
+            (unsigned long long)barrier_max_sum, (unsigned long long)new_max_sum,
+            (unsigned long long)new_work, 1.0 - double(new_max_sum) / barrier_max_sum,
+            double(total_hot) / barrier_max_sum, double(total_hot) / new_max_sum,
+            (unsigned long long)(mapping.size() * sizeof(uint32_t)));
+        for (uint64_t column = 0; column < columns; ++column)
+            std::printf("PAIRING_SAMPLE column=%llu hot_of_1024=%llu\n",
+                (unsigned long long)column, (unsigned long long)sampled_hot[column]);
+    }
 };
 
 int main(int argc, const char **argv) {
@@ -156,7 +241,8 @@ int main(int argc, const char **argv) {
         && test.zero_tasks == 0 && test.barrier_max_sum == 128, "independent hand-counted fixture");
     std::puts("CENSUS_SELFTEST pass=true");
     if (argc == 1) return 0;
-    require(argc == 9, "usage: census lanes zeros rows columns positions full_blocks zero_mask expected_hot");
+    require(argc == 9 || argc == 11,
+        "usage: census lanes zeros rows columns positions full_blocks zero_mask expected_hot [live_rows map_path]");
     const auto start = std::chrono::steady_clock::now();
     Mapping lanes(argv[1]), zeros(argv[2]);
     const uint64_t rows = std::stoull(argv[3]), columns = std::stoull(argv[4]);
@@ -169,6 +255,7 @@ int main(int argc, const char **argv) {
         static_cast<const uint64_t *>(zeros.data), columns, positions / 2, blocks, mask);
     require(result.total_hot == expected_hot, "producer hot-entry count equality");
     result.print();
+    if (argc == 11) result.price_pairing(std::stoull(argv[9]), argv[10]);
     std::printf("CENSUS_COMPLETE elapsed_s=%.6f producer_hot_match=true\n",
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
 }

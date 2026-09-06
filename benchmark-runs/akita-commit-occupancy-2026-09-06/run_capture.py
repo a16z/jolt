@@ -12,14 +12,16 @@ import time
 from run_saturation import LOCK, ROOT, matrix, record
 
 
-def census():
+def census(pairing=False):
     capture = ROOT / "runs/d2-capture"
-    output = ROOT / "runs/d2-census.out"
+    output = ROOT / ("runs/d3-pairing-price.out" if pairing else "runs/d2-census.out")
     metadata = json.loads((capture / "metadata.json").read_text())
-    command = ["/usr/bin/time", "-l", str(ROOT / "bin/selector-census"),
+    command = ["/usr/bin/time", "-l", str(ROOT / ("bin/selector-pairing" if pairing else "bin/selector-census")),
         str(capture / "lanes.u8"), str(capture / "active_zero_rows.u64le")]
     command += [str(metadata[key]) for key in
         ("rows", "columns", "positions", "full_blocks", "zero_mask", "hot_entries")]
+    if pairing:
+        command += [str(metadata["zero_suffix_start"]), str(ROOT / "runs/d3-task-map.u32le")]
     if output.exists():
         raise RuntimeError("immutable census output exists")
     LOCK.mkdir()
@@ -29,9 +31,10 @@ def census():
         raw = output.read_text()
         if raw.count("producer_hot_match=true") != 1 or re.findall(r"(\d+)\s+swaps", raw) != ["0"]:
             raise RuntimeError("census identity/resource failure")
-        record("d2_census_complete", raw_sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+        record("d3_pairing_price_complete" if pairing else "d2_census_complete",
+               raw_sha256=hashlib.sha256(output.read_bytes()).hexdigest())
     except BaseException as error:
-        record("d2_census_failure", reason=str(error))
+        record("d3_pairing_price_failure" if pairing else "d2_census_failure", reason=str(error))
         raise
     finally:
         LOCK.rmdir()
@@ -101,5 +104,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, stop)
     parser = argparse.ArgumentParser()
     parser.add_argument("--census", action="store_true")
+    parser.add_argument("--price-pairing", action="store_true")
     args = parser.parse_args()
-    census() if args.census else main()
+    census(args.price_pairing) if args.census or args.price_pairing else main()
