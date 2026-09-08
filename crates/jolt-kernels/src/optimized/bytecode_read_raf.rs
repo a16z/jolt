@@ -1468,13 +1468,13 @@ mod akita_tests {
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-    use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::field_inline_bytecode::{
         FieldInlineBytecodeFold, FieldInlineBytecodeTable,
     };
+    use jolt_verifier::stages::relations::SumcheckInputPoints;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry;
@@ -1535,8 +1535,9 @@ mod akita_tests {
                 stage4_gamma: Fr::from_u64(13),
                 stage5_gamma: Fr::from_u64(17),
             };
-            let claims = LatticeReadRafAddressPhaseInputClaims::<Fr>::default();
-            let input_points = LatticeReadRafAddressPhaseInputClaims::<Vec<Fr>>::default();
+            let claims = SumcheckInputClaims::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
+            let input_points =
+                SumcheckInputPoints::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
 
             let mut session = ProofSession::default();
             let mut reference = ReferenceBackend
