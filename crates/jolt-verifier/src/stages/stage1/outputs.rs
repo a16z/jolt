@@ -5,7 +5,7 @@ use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
 use serde::{Deserialize, Serialize};
 
-use super::outer_remainder::OuterRemainder;
+use super::outer_remainder::{OuterRemainder, OuterRemainderOutputClaims};
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
@@ -18,10 +18,7 @@ pub struct Stage1OutputClaims<F: JoltField> {
 }
 
 impl<F: JoltField> Stage1OutputClaims<F> {
-    /// Construct the ordinary stage-1 claims. Producers without field-inline
-    /// semantics use this regardless of the build's feature set — the FR
-    /// payload starts absent and `stage1::verify` rejects its absence on
-    /// FR-on proofs.
+    /// Construct the stage-1 claims from the uni-skip and remainder outputs.
     pub fn new(uniskip_output_claim: F, outer: Stage1BatchOutputClaims<F>) -> Self {
         Self {
             uniskip_output_claim,
@@ -55,6 +52,18 @@ pub struct Stage1BatchSumchecks<F: JoltField> {
     pub outer_remainder: OuterRemainder<F>,
 }
 
+impl<F: JoltField> Stage1BatchOutputClaims<F> {
+    /// Project base-protocol claims, zero-initializing any extension columns.
+    pub fn from_base(outer_remainder: OuterRemainderOutputClaims<F>) -> Self {
+        Self {
+            #[cfg(feature = "field-inline")]
+            outer_remainder: outer_remainder.into(),
+            #[cfg(not(feature = "field-inline"))]
+            outer_remainder,
+        }
+    }
+}
+
 /// The Fiat-Shamir values the verifier draws during stage 1: the irreducible
 /// Spartan outer `tau` point and the uni-skip reduction challenge. Drawn
 /// path-agnostically before the ZK/clear branch; carried in [`Stage1ZkOutput`]
@@ -85,8 +94,7 @@ pub struct Stage1ClearOutput<F: JoltField> {
 }
 
 impl<F: JoltField> Stage1ClearOutput<F> {
-    /// Construct the ordinary clear output. The FR payload starts absent;
-    /// `stage1::verify` attaches it on FR-on proofs.
+    /// Pair the remainder opening values with their derived points.
     pub fn new(
         output_values: Stage1BatchOutputClaims<F>,
         output_points: Stage1BatchOutputPoints<F>,

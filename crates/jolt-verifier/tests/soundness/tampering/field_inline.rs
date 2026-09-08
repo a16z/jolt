@@ -11,7 +11,6 @@
         not(feature = "zk")
     ),
     expect(
-        clippy::expect_used,
         clippy::panic,
         reason = "fixture tamper tests should fail loudly when the stored proof shape changes"
     )

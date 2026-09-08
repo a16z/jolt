@@ -102,21 +102,14 @@ pub(crate) fn build_clear_claims<F: JoltField>(
     })
 }
 
-#[cfg_attr(
-    not(feature = "field-inline"),
-    expect(
-        clippy::useless_conversion,
-        reason = "field-inline selects composed output claims"
-    )
-)]
 fn spartan_outer_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage1BatchOutputClaims<F>, VerifierError> {
     let outer_claim = |variable| claims.require(outer_opening(variable));
     let flag_claim = |flag| outer_claim(JoltVirtualPolynomial::OpFlags(flag));
 
-    Ok(Stage1BatchOutputClaims {
-        outer_remainder: OuterRemainderOutputClaims {
+    Ok(Stage1BatchOutputClaims::from_base(
+        OuterRemainderOutputClaims {
             left_instruction_input: outer_claim(JoltVirtualPolynomial::LeftInstructionInput)?,
             right_instruction_input: outer_claim(JoltVirtualPolynomial::RightInstructionInput)?,
             product: outer_claim(JoltVirtualPolynomial::Product)?,
@@ -152,9 +145,8 @@ fn spartan_outer_claims_from_openings<F: JoltField>(
             is_compressed: flag_claim(CircuitFlags::IsCompressed)?,
             is_first_in_sequence: flag_claim(CircuitFlags::IsFirstInSequence)?,
             is_last_in_sequence: flag_claim(CircuitFlags::IsLastInSequence)?,
-        }
-        .into(),
-    })
+        },
+    ))
 }
 
 fn stage2_claims_from_openings<F: JoltField>(
@@ -306,29 +298,21 @@ fn stage5_claims_from_openings<F: JoltField>(
     ))
 }
 
-#[cfg_attr(
-    not(feature = "field-inline"),
-    expect(
-        clippy::useless_conversion,
-        reason = "field-inline selects composed output claims"
-    )
-)]
 fn stage6a_claims_from_openings<F: JoltField>(
     claims: &OpeningClaimMap<F>,
 ) -> Result<Stage6aOutputClaims<F>, VerifierError> {
     let bytecode_read_raf_address = bytecode::bytecode_read_raf_address_phase_opening();
     let booleanity_address = booleanity::booleanity_address_phase_opening();
 
-    Ok(Stage6aOutputClaims {
-        bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
+    Ok(Stage6aOutputClaims::from_base(
+        BytecodeReadRafAddressPhaseOutputClaims {
             intermediate: claims.require(bytecode_read_raf_address)?,
             val_stages: bytecode_val_stage_claims_from_openings(claims)?,
-        }
-        .into(),
-        booleanity: BooleanityAddressPhaseOutputClaims {
+        },
+        BooleanityAddressPhaseOutputClaims {
             intermediate: claims.require(booleanity_address)?,
         },
-    })
+    ))
 }
 
 #[cfg(not(feature = "akita"))]
