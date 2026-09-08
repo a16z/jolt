@@ -4,6 +4,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::JoltInstructionKind;
+#[cfg(feature = "field-inline")]
+use crate::{field_inline_operand_shape, FieldInlineXRegisterRole};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
@@ -78,4 +80,31 @@ pub struct JoltInstructionRow {
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
     pub is_compressed: bool,
+}
+
+impl JoltInstructionRow {
+    /// Operands belonging to the integer register file. Field-register slots
+    /// are absent; bridge instructions retain their integer source or destination.
+    pub fn integer_operands(&self) -> NormalizedOperands {
+        #[cfg(feature = "field-inline")]
+        if let Some(shape) = field_inline_operand_shape(self.instruction_kind) {
+            return NormalizedOperands {
+                rs1: matches!(
+                    shape.bridge_x_register_role,
+                    Some(FieldInlineXRegisterRole::ReadRs1)
+                )
+                .then_some(self.operands.rs1)
+                .flatten(),
+                rd: matches!(
+                    shape.bridge_x_register_role,
+                    Some(FieldInlineXRegisterRole::WriteRd)
+                )
+                .then_some(self.operands.rd)
+                .flatten(),
+                rs2: None,
+                imm: self.operands.imm,
+            };
+        }
+        self.operands
+    }
 }

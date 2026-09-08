@@ -78,10 +78,7 @@ use jolt_field::JoltField;
 use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
-#[cfg(feature = "field-inline")]
-use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
-#[cfg(feature = "field-inline")]
 use jolt_verifier::stages::relations::SumcheckOutputClaims;
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage6a::bytecode_read_raf::{
@@ -134,19 +131,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
         let relation = inputs.relation;
         // The per-row stage-value tables: the verifier's own fold over the
         // padded bytecode (carrying the lattice store stage as its last
-        // element on the packed shape). FR-on, the jolt fold sees the
-        // ordinary x-register slots only (the FR-operand slots ride the side
-        // table): see `field_inline_bytecode::suppress_field_operand_slots`.
+        // element on the packed shape).
         let program = witness.program_preprocessing();
         let stage_gammas = inputs.challenges.stage_gamma_powers();
-        #[cfg(feature = "field-inline")]
-        let masked_bytecode =
-            jolt_verifier::stages::field_inline_bytecode::suppress_field_operand_slots(
-                &program.bytecode.bytecode,
-            );
-        #[cfg(feature = "field-inline")]
-        let bytecode_rows: &[JoltInstructionRow] = &masked_bytecode;
-        #[cfg(not(feature = "field-inline"))]
         let bytecode_rows = &program.bytecode.bytecode;
         let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
             bytecode: bytecode_rows,
@@ -565,10 +552,18 @@ impl<F: JoltField> ProveRounds<F> for BytecodeReadRafAddressKernel<F> {
 impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects composed claims and opening ids"
+        )
+    )]
     fn output_claims(
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
-    ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
+    ) -> Result<SumcheckOutputClaims<F, BytecodeReadRafAddressPhase<F>>, SumcheckKernelError<F>>
+    {
         if self.rounds_bound != self.num_rounds() {
             return Err(SumcheckKernelError::NotFullyBound {
                 remaining: self.num_rounds() - self.rounds_bound,
@@ -596,7 +591,8 @@ impl<F: JoltField> SumcheckKernel<F> for BytecodeReadRafAddressKernel<F> {
         Ok(BytecodeReadRafAddressPhaseOutputClaims {
             intermediate,
             val_stages,
-        })
+        }
+        .into())
     }
 }
 
@@ -968,6 +964,13 @@ impl<F: JoltField> ProveRounds<F> for ComposedBytecodeReadRafCycleKernel<F> {
 impl<F: JoltField> SumcheckKernel<F> for ComposedBytecodeReadRafCycleKernel<F> {
     type Relation = BytecodeReadRafCycle<F>;
 
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects composed claims and opening ids"
+        )
+    )]
     fn output_claims(
         &mut self,
         _inputs: &SumcheckInputClaims<F, BytecodeReadRafCycle<F>>,

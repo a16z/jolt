@@ -1,5 +1,6 @@
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::jolt_device::MemoryLayout;
+use jolt_program::preprocess::PreprocessingError;
 
 use crate::{
     curve::JoltCurve,
@@ -139,16 +140,27 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
     }
 
     #[tracing::instrument(skip_all, name = "JoltSharedPreprocessing::new_committed")]
+    #[expect(
+        clippy::type_complexity,
+        reason = "returns the preprocessing, prover data, and associated commitment setup"
+    )]
     pub fn new_committed(
         program: ProgramPreprocessing<PCS>,
         memory_layout: MemoryLayout,
         max_padded_trace_length: usize,
         bytecode_chunk_count: usize,
-    ) -> (
-        JoltSharedPreprocessing<PCS>,
-        CommittedProgramProverData<PCS>,
-        PCS::ProverSetup,
-    ) {
+    ) -> Result<
+        (
+            JoltSharedPreprocessing<PCS>,
+            CommittedProgramProverData<PCS>,
+            PCS::ProverSetup,
+        ),
+        PreprocessingError,
+    > {
+        let ProgramPreprocessing::Full(full) = &program else {
+            return Err(PreprocessingError::AlreadyCommitted);
+        };
+        full.bytecode.validate_committed_profile()?;
         let bytecode_len = program.bytecode_len();
         assert!(
             is_valid_committed_bytecode_chunking_for_len(bytecode_len, bytecode_chunk_count),
@@ -170,10 +182,10 @@ impl<PCS: CommitmentScheme> JoltSharedPreprocessing<PCS> {
             &generators,
             shared.bytecode_chunk_count,
             max_log_k_chunk,
-        );
+        )?;
         shared.program = committed_program;
         shared.program_meta = shared.program.meta();
-        (shared, prover_data, generators)
+        Ok((shared, prover_data, generators))
     }
 
     pub fn is_committed_mode(&self) -> bool {

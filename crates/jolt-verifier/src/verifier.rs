@@ -20,8 +20,7 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use crate::proof::JoltCommitments;
 use crate::{
     config::{
-        validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG,
-        JOLT_VERIFIER_INSTRUCTION_PROFILE,
+        validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
     },
     num,
     preprocessing::JoltVerifierPreprocessing,
@@ -293,14 +292,14 @@ where
     VC::Output: AppendToTranscript,
     T: Transcript<Challenge = PCS::Field>,
 {
+    validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
+    validate_proof_consistency(proof, JOLT_VERIFIER_CONFIG.zk == ZkConfig::BlindFold)?;
     let checked = validate_inputs(
         preprocessing,
         public_io,
         proof,
         trusted_advice_commitment.is_some(),
     )?;
-    validate_proof_config(&JOLT_VERIFIER_CONFIG, proof.protocol)?;
-    validate_proof_consistency(proof, checked.zk)?;
 
     let mut transcript = T::new(b"Jolt");
     absorb_preamble(&checked, proof, &mut transcript);
@@ -357,30 +356,6 @@ where
         None
     };
     let program = &preprocessing.program;
-    // This build proves exactly one instruction profile. A full program
-    // carrying an instruction the build has no constraints for (an FR bridge
-    // row on an FR-off verifier, whose rd write no RV64 row pins) rejects here
-    // rather than verifying against the base rows alone. Committed programs
-    // carry no rows to scan; FR-on, the side-table requirement below rejects
-    // them.
-    if let Some(full) = program.as_full() {
-        if let Some(row) = full
-            .bytecode
-            .bytecode
-            .iter()
-            .find(|row| !JOLT_VERIFIER_INSTRUCTION_PROFILE.supports_jolt(row.instruction_kind))
-        {
-            return Err(VerifierError::UnsupportedInstruction {
-                kind: row.instruction_kind,
-            });
-        }
-    }
-    // The FR-on verifier anchors the FR access selectors through the bytecode
-    // side table (stage 6); preprocessing without it — a classic-profile
-    // program or committed-program mode — cannot back a proof, so reject
-    // before any stage runs.
-    #[cfg(feature = "field-inline")]
-    crate::stages::field_inline_bytecode::validate_field_inline_bytecode(program)?;
     let memory_layout = program.memory_layout();
     if &public_io.memory_layout != memory_layout {
         return Err(VerifierError::MemoryLayoutMismatch);
@@ -429,6 +404,31 @@ where
             max: max_ram_k,
         });
     }
+
+    // This build proves exactly one instruction profile. A full program
+    // carrying an instruction the build has no constraints for (an FR bridge
+    // row on an FR-off verifier, whose rd write no RV64 row pins) rejects here
+    // rather than verifying against the base rows alone. Committed programs
+    // carry no rows to scan; FR-on, the side-table requirement below rejects
+    // them.
+    if let Some(full) = program.as_full() {
+        if let Some(row) = full
+            .bytecode
+            .bytecode
+            .iter()
+            .find(|row| !JOLT_VERIFIER_INSTRUCTION_PROFILE.supports_jolt(row.instruction_kind))
+        {
+            return Err(VerifierError::UnsupportedInstruction {
+                kind: row.instruction_kind,
+            });
+        }
+    }
+    // The FR-on verifier anchors the FR access selectors through the bytecode
+    // side table (stage 6); preprocessing without it — a classic-profile
+    // program or committed-program mode — cannot back a proof, so reject
+    // before any stage runs.
+    #[cfg(feature = "field-inline")]
+    crate::stages::field_inline_bytecode::validate_field_inline_bytecode(program)?;
 
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(
@@ -1180,23 +1180,8 @@ where
     VC::Output: AppendToTranscript,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let checked = validate_inputs(
-        preprocessing,
-        public_io,
-        proof,
-        trusted_advice_commitment.is_some(),
-    )?;
-    validate_proof_config(&JoltProtocolConfig::for_zk(checked.zk), proof.protocol)?;
-    validate_proof_consistency(proof, checked.zk)?;
-
-    let mut transcript = T::new(b"Jolt");
-    absorb_preamble(&checked, proof, &mut transcript);
-    absorb_commitments(
-        preprocessing,
-        proof,
-        trusted_advice_commitment,
-        &mut transcript,
-    );
+    let (checked, transcript) =
+        validate_and_seed_transcript(preprocessing, public_io, proof, trusted_advice_commitment)?;
 
     Ok(PreStage1VerifierState {
         checked,
@@ -1215,6 +1200,13 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
 }
 
 #[cfg(test)]
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects composed claim and opening types"
+    )
+)]
 mod tests {
     use std::sync::Arc;
 
@@ -1393,6 +1385,50 @@ mod tests {
         assert!(matches!(
             validate_proof_consistency(&proof_with_zk(true, clear_claims()), true),
             Err(VerifierError::UnexpectedOpeningClaims)
+        ));
+    }
+
+    #[test]
+    fn protocol_and_payload_reject_before_preprocessing_validation() {
+        use jolt_transcript::LegacyBlake2bTranscript;
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut preprocessing = test_preprocessing();
+        // Invalid metadata and layout give independent later-stage failures.
+        #[cfg(feature = "field-inline")]
+        if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
+            Arc::make_mut(full).bytecode.field_inline = None;
+        }
+        let is_zk = JOLT_VERIFIER_CONFIG.zk == ZkConfig::BlindFold;
+        let mut proof = proof_with_zk(is_zk, if is_zk { zk_claims() } else { clear_claims() });
+        proof.protocol.zk = if is_zk {
+            ZkConfig::Transparent
+        } else {
+            ZkConfig::BlindFold
+        };
+        let public_io = JoltDevice::default();
+        assert!(matches!(
+            validate_and_seed_transcript::<_, _, LegacyBlake2bTranscript, _>(
+                &preprocessing,
+                &public_io,
+                &proof,
+                None
+            ),
+            Err(VerifierError::ProtocolConfigMismatch { .. })
+        ));
+        proof.protocol = JOLT_VERIFIER_CONFIG;
+        proof.stages.stage1_sumcheck_proof = sumcheck_proof(!is_zk);
+        assert!(matches!(
+            validate_and_seed_transcript::<_, _, LegacyBlake2bTranscript, _>(
+                &preprocessing,
+                &public_io,
+                &proof,
+                None
+            ),
+            Err(VerifierError::ExpectedClearProof {
+                field: "stage1_sumcheck_proof"
+            } | VerifierError::ExpectedCommittedProof {
+                field: "stage1_sumcheck_proof"
+            })
         ));
     }
 
@@ -1630,7 +1666,7 @@ mod tests {
                         branch_flag: zero,
                         next_is_noop: zero,
                         virtual_instruction: zero,
-                    },
+                    }.into(),
                     instruction_claim_reduction:
                         stage2::outputs::InstructionClaimReductionOutputClaims {
                             lookup_output: zero,
@@ -1723,7 +1759,7 @@ mod tests {
                 bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
                     intermediate: zero,
                     val_stages: Vec::new(),
-                },
+                }.into(),
                 booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
                     intermediate: zero,
                 },
@@ -1840,7 +1876,8 @@ mod tests {
                 is_compressed: zero,
                 is_first_in_sequence: zero,
                 is_last_in_sequence: zero,
-            },
+            }
+            .into(),
         }
     }
 

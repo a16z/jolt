@@ -35,7 +35,8 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
         generators: &PCS::ProverSetup,
         log_k_chunk: usize,
         bytecode_chunk_count: usize,
-    ) -> (Self, TrustedBytecodeHints<PCS>) {
+    ) -> Result<(Self, TrustedBytecodeHints<PCS>), PreprocessingError> {
+        bytecode.validate_committed_profile()?;
         let bytecode_len = bytecode.code_size;
         let bytecode_T = committed_bytecode_chunk_cycle_len(bytecode_len, bytecode_chunk_count);
 
@@ -59,7 +60,7 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
             .map(|poly| PCS::commit(poly, generators))
             .unzip();
 
-        (
+        Ok((
             Self {
                 commitments,
                 num_columns,
@@ -69,7 +70,7 @@ impl<PCS: CommitmentScheme> TrustedBytecodeCommitments<PCS> {
                 bytecode_T,
             },
             TrustedBytecodeHints { hints },
-        )
+        ))
     }
 }
 

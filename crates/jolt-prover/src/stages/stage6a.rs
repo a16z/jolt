@@ -14,6 +14,9 @@
 //! per-cycle bytecode indices) comes off the witness plane's typed stage-6
 //! rows — both fetched inside `prepare`, never staged here.
 
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::composed::ComposedClaims;
+
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -145,21 +148,19 @@ where
                 &stage5.output_values,
             ),
         };
+    #[cfg(feature = "field-inline")]
+    let bytecode_input_values = ComposedClaims {
+        base: bytecode_input_values,
+        field_inline: jolt_verifier::stages::stage6a::field_inline::bytecode_read_raf_inputs(
+            stage1,
+            &stage4.output_values,
+            &stage5.output_values,
+        )?,
+    };
     let inputs = Stage6aInputClaims {
         bytecode_read_raf: bytecode_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
-    // The FR appendage of the composed input claim: the stage-1 carrier's
-    // FieldOpFlag openings plus the stage-4/5 FR access openings, folded by
-    // the extended gamma powers inside the relation's composed `input_claim`.
-    #[cfg(feature = "field-inline")]
-    let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_inputs(
-        sumchecks,
-        stage1,
-        &stage4.output_values,
-        &stage5.output_values,
-    )?;
-
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,

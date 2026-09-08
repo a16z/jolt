@@ -1,3 +1,7 @@
+#[cfg(feature = "field-inline")]
+#[cfg(test)]
+use crate::stages::composed::ComposedClaims;
+
 use super::*;
 
 pub(super) fn add_stage6a<PCS, VC, ZkProof>(
@@ -15,8 +19,12 @@ where
     let formula_dimensions = formula_dimensions(input)?;
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
+    use crate::stages::relations::SymbolicOf;
+    use crate::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
     let bytecode_address_claims =
-        relations::bytecode::ReadRafAddressPhase::new(formula_dimensions.bytecode_read_raf);
+        SymbolicOf::<PCS::Field, BytecodeReadRafAddressPhase<PCS::Field>>::new(
+            formula_dimensions.bytecode_read_raf,
+        );
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
@@ -108,15 +116,6 @@ where
     // FR members' rows (referencing the SAME committed rows those stages
     // lowered).
     let bytecode_claim = relation_claim(&bytecode_address_claims);
-    #[cfg(feature = "field-inline")]
-    let bytecode_claim = {
-        let (rounds, input_expr, output_expr) = bytecode_claim;
-        (
-            rounds,
-            input_expr + super::field_inline::bytecode_input_extension_expr::<PCS::Field>(),
-            output_expr,
-        )
-    };
 
     add_batched_stage(
         builder,
@@ -127,7 +126,6 @@ where
         &input.stage6a.output_claims,
         values,
         address_phase_output_ids,
-        Vec::new(),
         Vec::new(),
     )
 }
@@ -201,7 +199,10 @@ mod field_inline_tests {
             rs2_ra: fr(303),
             rd_wa_val_evaluation: fr(304),
         };
-        let relation = relation.with_field_inline_inputs(field_inline.clone());
+        let inputs = ComposedClaims {
+            base: inputs,
+            field_inline: field_inline.clone(),
+        };
         let challenges = BytecodeReadRafAddressPhaseChallenges::<Fr> {
             gamma: fr(401),
             stage1_gamma: fr(402),
@@ -212,8 +213,7 @@ mod field_inline_tests {
         };
         let clear = relation.input_claim(&inputs, &challenges).unwrap();
 
-        let lowered_expr = map_expr(relation.symbolic().input_expression::<Fr>())
-            + super::super::field_inline::bytecode_input_extension_expr::<Fr>();
+        let lowered_expr = map_expr(relation.symbolic().input_expression::<Fr>());
         let resolve_field_inline = |id: &FieldInlineOpeningId| -> Fr {
             use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
 
@@ -250,7 +250,9 @@ mod field_inline_tests {
         };
         let lowered = lowered_expr.evaluate(
             |id| match id {
-                VerifierOpeningId::Jolt(id) => inputs.resolve_input(id).unwrap_or_else(|| fr(0)),
+                VerifierOpeningId::Jolt(id) => {
+                    inputs.resolve_input(&(*id).into()).unwrap_or_else(|| fr(0))
+                }
                 VerifierOpeningId::FieldInline(id) => resolve_field_inline(id),
             },
             |_| fr(0),

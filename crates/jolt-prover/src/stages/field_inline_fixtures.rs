@@ -562,12 +562,6 @@ pub(crate) mod twins {
         };
         let batch_challenges = sumchecks.draw_challenges(transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
-        let (sumchecks, attached) =
-            jolt_verifier::stages::stage1::field_inline::compose_outer_outputs(
-                sumchecks,
-                &stage1.claims,
-            )
-            .unwrap();
         let input_values = Stage1BatchInputClaims {
             outer_remainder: outer_remainder_input_values_from_uniskip_output(
                 stage1.claims.uniskip_output_claim,
@@ -585,7 +579,6 @@ pub(crate) mod twins {
             )
             .unwrap();
         sumchecks.append_output_claims(transcript, &stage1.claims.outer);
-        jolt_verifier::stages::stage1::field_inline::append_outer_openings(transcript, &attached);
     }
 
     /// Stage 2's twin (already round-tripped by stage 2's own tests):
@@ -606,11 +599,7 @@ pub(crate) mod twins {
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
         let tau_high: Fr = draw_spartan_product_tau_high(transcript);
-        let uniskip_relation = stage2_field_inline::compose_uniskip_inputs(
-            ProductUniskip::new(product_dimensions, tau_high),
-            &stage1.clear_output,
-        )
-        .unwrap();
+        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation
             .input_claim(&uniskip_inputs, &NoChallenges::default())
@@ -660,8 +649,6 @@ pub(crate) mod twins {
         sumchecks
             .validate_output_claims(&stage2.claims.batch_outputs)
             .unwrap();
-        let (sumchecks, attached_product) =
-            stage2_field_inline::compose_product_outputs(sumchecks, &stage2.claims).unwrap();
         let input_values = stage2_batch_input_values_from_upstream(
             &stage1.clear_output,
             stage2.claims.product_uniskip_output_claim,
@@ -678,7 +665,7 @@ pub(crate) mod twins {
                 2,
             )
             .unwrap();
-        sumchecks.append_output_claims(transcript, &stage2.claims.batch_outputs, &attached_product);
+        sumchecks.append_output_claims(transcript, &stage2.claims.batch_outputs);
     }
 
     /// Stage 3's twin (`stage3::verify`'s clear body — the stage has no FR
@@ -879,22 +866,8 @@ pub(crate) mod twins {
             stage5_points: &stage5.clear_output.output_points,
         })
         .unwrap();
-        let sumchecks = stage6a_field_inline::compose_bytecode_geometry(
-            sumchecks,
-            stage6a_field_inline::preprocessed_bytecode_table(&preprocessing.verifier.program)
-                .unwrap(),
-            &stage4.clear_output.output_points,
-            &stage5.clear_output.output_points,
-        );
         let challenges = sumchecks.draw_challenges(transcript).unwrap();
         sumchecks.validate_output_claims(&stage6a.claims).unwrap();
-        let sumchecks = stage6a_field_inline::compose_bytecode_inputs(
-            sumchecks,
-            &stage1.clear_output,
-            &stage4.clear_output.output_values,
-            &stage5.clear_output.output_values,
-        )
-        .unwrap();
         let base_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
             &stage1.clear_output.output_values,
             &stage2.clear_output.output_values,
@@ -913,6 +886,16 @@ pub(crate) mod twins {
                     &stage5.clear_output.output_values,
                 ),
             };
+        use jolt_verifier::stages::composed::ComposedClaims;
+        let base_input_values = ComposedClaims {
+            base: base_input_values,
+            field_inline: stage6a_field_inline::bytecode_read_raf_inputs(
+                &stage1.clear_output,
+                &stage4.clear_output.output_values,
+                &stage5.clear_output.output_values,
+            )
+            .unwrap(),
+        };
         let input_values = Stage6aInputClaims {
             bytecode_read_raf: base_input_values,
             booleanity: BooleanityAddressPhaseInputClaims::default(),

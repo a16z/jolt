@@ -157,6 +157,5 @@ where
         values,
         output_ids,
         Vec::new(),
-        Vec::new(),
     )
 }

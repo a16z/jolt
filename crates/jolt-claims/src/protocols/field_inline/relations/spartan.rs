@@ -18,7 +18,7 @@ use crate::OutputClaims;
 /// stage-1 remainder opening point. Generic over the opening cell (`F` value /
 /// `Vec<F>` point).
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"

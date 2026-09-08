@@ -611,6 +611,10 @@ pub fn commit_direct_program(
     bytecode_chunk_count: usize,
 ) -> Result<DirectProgramObjects, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
+    program
+        .bytecode
+        .validate_committed_profile()
+        .map_err(|error| commit_failed(error.to_string()))?;
     if program
         .bytecode
         .bytecode

@@ -28,7 +28,7 @@ fn tamper_manifest_covers_top_level_proof_fields() {
     let missing = proof_field_paths()
         .iter()
         .copied()
-        .filter(|path| !manifest_paths.contains(path))
+        .filter(|path| !manifest_paths.contains(*path))
         .collect::<Vec<_>>();
 
     assert!(

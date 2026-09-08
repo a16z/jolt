@@ -18,7 +18,10 @@
 //! replaces these internals for real trace lengths without touching the
 //! `jolt-prover` stage recipe.
 
-#[cfg(not(feature = "field-inline"))]
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::ids::VerifierOpeningId;
 use std::collections::BTreeMap;
 
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
@@ -58,8 +61,6 @@ use jolt_witness::WitnessError;
 use super::views::stream_pair_lsb;
 use super::views::{dense_view, replicate_stream_lsb};
 use crate::uniskip::UniskipKernel;
-#[cfg(feature = "field-inline")]
-use crate::FieldInlineOuterAppendage;
 #[cfg(not(feature = "field-inline"))]
 use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
@@ -306,7 +307,6 @@ impl<F: JoltField> SpartanOuterKernel<F> {
                 .collect();
             Ok(Box::new(ComposedOuterRemainderKernel {
                 relation: inputs.relation.clone(),
-                field_inline_appendage: Vec::new(),
                 tau_kernel: Polynomial::new(tau_kernel_table),
                 az: Polynomial::new(az_table),
                 bz: Polynomial::new(bz_table),
@@ -472,16 +472,11 @@ fn row_value_tables<F: JoltField>(
 /// down per proof by [`SumcheckKernel::validate_derived_tables`] and the
 /// driver's composed expected-output fold.
 ///
-/// The 48 column tables ride along (bound in lockstep) for the typed
-/// extraction and the FR appendage: once fully bound, the kernel publishes
-/// the 13 FR opening values on the (`Arc`-shared) relation cell the driver's
-/// curated absorb and the stage-1 recipe read.
+/// Column tables bind alongside the summand for extraction into the
+/// composed typed output claims.
 #[cfg(feature = "field-inline")]
 struct ComposedOuterRemainderKernel<F: JoltField> {
     relation: OuterRemainder<F>,
-    /// The FR opening appendage, produced at extraction and parked in the
-    /// session by `park_residue` for the driver's composition.
-    field_inline_appendage: Vec<F>,
     tau_kernel: Polynomial<F>,
     az: Polynomial<F>,
     bz: Polynomial<F>,
@@ -604,25 +599,21 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
         use jolt_claims::{InputClaims as _, OutputClaims as _};
 
         self.require_fully_bound()?;
-        // The FR appendage rides to the driver through the session (parked
-        // by `park_residue`): its curated absorb, composed expected-output
-        // fold, and the stage-1 recipe's claim assembly read it from there.
-        self.field_inline_appendage = self
-            .column_tables
-            .get(self.ordinary_ids.len()..)
-            .unwrap_or(&[])
+        let ids = self
+            .ordinary_ids
             .iter()
-            .map(|table| table.evals()[0])
+            .copied()
+            .map(VerifierOpeningId::from)
+            .chain(
+                field_outer_output_openings()
+                    .into_iter()
+                    .map(VerifierOpeningId::from),
+            );
+        let claims: BTreeMap<_, _> = ids
+            .zip(self.column_tables.iter().map(|table| table.evals()[0]))
             .collect();
-
-        let ordinary_ids = &self.ordinary_ids;
-        let column_tables = &self.column_tables;
         SumcheckOutputClaims::<F, OuterRemainder<F>>::from_opening_values(|id| {
-            ordinary_ids
-                .iter()
-                .position(|candidate| candidate == id)
-                .map(|position| column_tables[position].evals()[0])
-                .or_else(|| inputs.resolve_input(id))
+            claims.get(id).copied().or_else(|| inputs.resolve_input(id))
         })
         .map_err(SumcheckKernelError::from)
     }
@@ -684,10 +675,6 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
             }
         }
         Ok(())
-    }
-
-    fn park_residue(self: Box<Self>, session: &mut ProofSession) {
-        session.park(FieldInlineOuterAppendage(self.field_inline_appendage));
     }
 }
 

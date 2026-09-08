@@ -17,6 +17,10 @@
 //! coefficient), so it is a plain [`NaiveSumcheckProver`], bound `LowToHigh`.
 //! FR-on the member is the composed kernel at the bottom of this file.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::ids::VerifierOpeningId;
 use std::collections::BTreeMap;
 
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
@@ -25,8 +29,6 @@ use allocative::{Allocative, Key, Visitor};
 use jolt_claims::protocols::field_inline::geometry::product::{
     composed_remainder_factor_contributions, FieldProductLaneFactors,
 };
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{FieldInlinePolynomialId, FieldInlineVirtualPolynomial};
 use jolt_claims::protocols::jolt::geometry::spartan::{
@@ -64,8 +66,6 @@ use jolt_witness::WitnessError;
 
 use super::views::{dense_view, eq_table};
 use crate::uniskip::UniskipKernel;
-#[cfg(feature = "field-inline")]
-use crate::FieldInlineProductAppendage;
 #[cfg(not(feature = "field-inline"))]
 use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
@@ -324,7 +324,6 @@ impl<F: JoltField> SpartanProductKernel<F> {
             ]);
             Ok(Box::new(ComposedProductRemainderKernel {
                 relation: inputs.relation.clone(),
-                field_inline_appendage: None,
                 tau_kernel: Polynomial::new(tau_kernel_table),
                 left: Polynomial::new(left_table),
                 right: Polynomial::new(right_table),
@@ -402,17 +401,11 @@ impl<F: JoltField> SpartanProductKernel<F> {
 /// [`SumcheckKernel::validate_derived_tables`] and the driver's composed
 /// expected-output fold).
 ///
-/// The eight ordinary opening tables and the three FR factor tables ride
-/// along (bound in lockstep) for the typed extraction and the FR product
-/// appendage: once fully bound, the kernel publishes the three FR opening
-/// values on the (`Arc`-shared) relation cell the driver's curated absorb and
-/// the stage-2 recipe read.
+/// Column tables bind alongside the summand for extraction into the
+/// composed typed output claims.
 #[cfg(feature = "field-inline")]
 struct ComposedProductRemainderKernel<F: JoltField> {
     relation: ProductRemainder<F>,
-    /// The FR product appendage, produced at extraction and parked in the
-    /// session by `park_residue` for the driver's composition.
-    field_inline_appendage: Option<FieldRegistersProductOutputClaims<F>>,
     tau_kernel: Polynomial<F>,
     left: Polynomial<F>,
     right: Polynomial<F>,
@@ -545,23 +538,18 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
         use jolt_claims::{InputClaims as _, OutputClaims as _};
 
         self.require_fully_bound()?;
-        // The FR product appendage rides to the driver through the session
-        // (parked by `park_residue`): its curated absorb, composed
-        // expected-output fold, and the stage-2 recipe's claim assembly read
-        // it from there.
-        let [rs1_value, rs2_value, rd_value] = &self.field_inline_tables;
-        self.field_inline_appendage = Some(FieldRegistersProductOutputClaims {
-            rs1_value: rs1_value.evals()[0],
-            rs2_value: rs2_value.evals()[0],
-            rd_value: rd_value.evals()[0],
-        });
-
-        let opening_tables = &self.opening_tables;
+        let field_ids = selected_product_remainder_output_openings();
         SumcheckOutputClaims::<F, ProductRemainder<F>>::from_opening_values(|id| {
-            opening_tables
-                .get(id)
-                .map(|table| table.evals()[0])
-                .or_else(|| inputs.resolve_input(id))
+            match id {
+                VerifierOpeningId::Jolt(id) => {
+                    self.opening_tables.get(id).map(|table| table.evals()[0])
+                }
+                VerifierOpeningId::FieldInline(id) => field_ids
+                    .iter()
+                    .position(|candidate| candidate == id)
+                    .map(|position| self.field_inline_tables[position].evals()[0]),
+            }
+            .or_else(|| inputs.resolve_input(id))
         })
         .map_err(SumcheckKernelError::from)
     }
@@ -649,11 +637,5 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
             }
         }
         Ok(())
-    }
-
-    fn park_residue(self: Box<Self>, session: &mut ProofSession) {
-        if let Some(appendage) = self.field_inline_appendage {
-            session.park(FieldInlineProductAppendage(appendage));
-        }
     }
 }

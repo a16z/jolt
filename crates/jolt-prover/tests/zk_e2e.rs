@@ -606,7 +606,8 @@ mod zk {
                     guest.io_device.memory_layout.clone(),
                     support::MAX_PADDED_TRACE_LENGTH,
                     bytecode_chunk_count,
-                );
+                )
+                .expect("base-profile committed preprocessing");
             let legacy_preprocessing: support::LegacyPreprocessing =
                 LegacyProverPreprocessing::new_committed(
                     shared,

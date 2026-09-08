@@ -388,11 +388,7 @@ mod clear {
                     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
                         panic!("clear proof expected");
                     };
-                    let outer = claims
-                        .stage1
-                        .field_inline_outer
-                        .as_mut()
-                        .expect("FR-on proof carries stage-1 FR openings");
+                    let outer = &mut claims.stage1.outer.outer_remainder.field_inline;
                     outer.rs1_value += one;
                 }),
             ),
@@ -418,11 +414,7 @@ mod clear {
                     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
                         panic!("clear proof expected");
                     };
-                    let product = claims
-                        .stage2
-                        .field_inline_product
-                        .as_mut()
-                        .expect("FR-on proof carries the stage-2 FR product appendage");
+                    let product = &mut claims.stage2.batch_outputs.product_remainder.field_inline;
                     product.rd_value += one;
                 }),
             ),

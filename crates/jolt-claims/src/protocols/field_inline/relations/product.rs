@@ -20,7 +20,7 @@ use crate::{InputClaims, OutputClaims};
 /// canonical Fiat-Shamir order and mirrors
 /// `geometry::product::selected_product_remainder_output_openings()`.
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"

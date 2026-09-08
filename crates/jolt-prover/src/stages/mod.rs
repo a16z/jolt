@@ -17,6 +17,9 @@ use crate::ProverConfig;
 mod drivers;
 #[cfg(all(test, feature = "field-inline"))]
 pub(crate) mod field_inline_fixtures;
+#[cfg(all(test, feature = "field-inline"))]
+#[expect(clippy::unwrap_used, reason = "adversarial test assertions")]
+mod field_store_range;
 pub mod stage1;
 pub mod stage2;
 pub mod stage3;

@@ -1,3 +1,6 @@
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::ComposedClaims;
+
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
@@ -75,13 +78,6 @@ where
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
-    #[cfg(feature = "field-inline")]
-    let address_sumchecks = super::field_inline::compose_bytecode_geometry(
-        address_sumchecks,
-        super::field_inline::preprocessed_bytecode_table(&preprocessing.program)?,
-        stage4.output_points(),
-        stage5.output_points(),
-    );
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -115,14 +111,6 @@ where
     // `BytecodeValClaim` ids exactly when the program is committed).
     address_sumchecks.validate_output_claims(claims)?;
 
-    #[cfg(feature = "field-inline")]
-    let address_sumchecks = super::field_inline::compose_bytecode_inputs(
-        address_sumchecks,
-        stage1.clear()?,
-        &stage4.clear()?.output_values,
-        &stage5.clear()?.output_values,
-    )?;
-
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening (plus, under akita, the four reduced `Inc`
     // claims at the fused-inc consumer stage slots); the relation evaluates it
@@ -145,6 +133,15 @@ where
                 &stage5.clear()?.output_values,
             ),
         };
+    #[cfg(feature = "field-inline")]
+    let base_input_values = ComposedClaims {
+        base: base_input_values,
+        field_inline: super::field_inline::bytecode_read_raf_inputs(
+            stage1.clear()?,
+            &stage4.clear()?.output_values,
+            &stage5.clear()?.output_values,
+        )?,
+    };
     let address_input_values = Stage6aInputClaims {
         bytecode_read_raf: base_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
@@ -174,6 +171,13 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects composed claim and opening types"
+    )
+)]
 mod tests {
     use super::super::booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims};
     use super::super::bytecode_read_raf::{
@@ -225,7 +229,8 @@ mod tests {
             bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
                 intermediate: fr(901),
                 val_stages: Vec::new(),
-            },
+            }
+            .into(),
             booleanity: BooleanityAddressPhaseOutputClaims {
                 intermediate: fr(902),
             },

@@ -1,28 +1,22 @@
-//! Stage 6a's field-inline seam: every FR-specific divergence of the stage-6a
-//! verifier in one place — the FR appendage of the composed bytecode read-RAF
-//! input claim (its wiring from the stage-1/4/5 outputs and its gamma-power
-//! extension math) and the preprocessed side-table load the batch build
-//! carries for the prover's kernel. The `BytecodeReadRafAddressPhase`
-//! relation keeps only its composed FR fields (set by value through the
-//! `with_field_inline_*` builders below) and the composed `input_claim` shell
-//! that adds [`input_claim_extension`] onto the ordinary bind.
+//! Typed extension inputs for the bytecode address phase and geometry
+//! attached by the prover for its kernel. Verification evaluates the composed
+//! symbolic claim without materializing that geometry.
 
 use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
 use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
-use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
-use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::field_inline::{
+    FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
+};
+use jolt_claims::InputClaims;
 use jolt_claims::OutputClaims as _;
 use jolt_field::JoltField;
-use jolt_riscv::NUM_CIRCUIT_FLAGS;
 
 use jolt_openings::CommitmentScheme;
 
 use super::outputs::Stage6aSumchecks;
 use crate::preprocessing::ProgramPreprocessing;
 use crate::stages::field_inline_bytecode::{
-    convert_field_inline_bytecode, field_inline_stage_gamma_powers, required_field_inline_bytecode,
-    FieldInlineBytecodeTable,
+    convert_field_inline_bytecode, required_field_inline_bytecode, FieldInlineBytecodeTable,
 };
 use crate::stages::stage1::Stage1ClearOutput;
 use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
@@ -42,8 +36,8 @@ pub fn preprocessed_bytecode_table<PCS: CommitmentScheme>(
 
 /// The FR geometry the address-phase KERNEL folds over: the converted side
 /// table plus the stage-4/5 FR opening points (`FIELD_REGISTERS_LOG_K`-var
-/// address prefix ‖ cycle). Construction-time data both fronts hold, composed
-/// into the relation via [`compose_bytecode_geometry`]; the verifier itself
+/// address prefix ‖ cycle). Prover construction data, attached
+/// to the relation via [`compose_bytecode_geometry`]; the verifier itself
 /// never evaluates it in this stage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafGeometry<F> {
@@ -83,7 +77,7 @@ pub fn compose_bytecode_geometry<F: JoltField>(
 /// `field-inline-protocol.md`, "Stage 6 Composition"). The jolt symbolic input
 /// `Expr` cannot name FR openings, so these are composed into the relation
 /// (the stage-1/2 pattern) and consumed by the composed `input_claim`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafInputs<F> {
     /// The eight `FieldOpFlag` openings from the stage-1 FR Spartan-outer
     /// carrier, in `FIELD_INLINE_BYTECODE_STAGE1_FLAGS` order.
@@ -105,13 +99,7 @@ pub fn bytecode_read_raf_inputs<F: JoltField>(
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,
 ) -> Result<FieldInlineBytecodeReadRafInputs<F>, VerifierError> {
-    let outer =
-        stage1
-            .field_inline_output_values
-            .as_ref()
-            .ok_or(VerifierError::MissingProofPayload {
-                field: "stage1.field_inline_output_values",
-            })?;
+    let outer = &stage1.output_values.outer_remainder.field_inline;
     let mut field_op_flags = [F::zero(); FIELD_INLINE_BYTECODE_STAGE1_FLAGS.len()];
     for (slot, flag) in field_op_flags
         .iter_mut()
@@ -132,63 +120,43 @@ pub fn bytecode_read_raf_inputs<F: JoltField>(
     })
 }
 
-/// Wire the FR appendage from the stage-1/4/5 clear outputs and compose it
-/// into the batch's bytecode read-RAF relation (fail-closed on a missing
-/// stage-1 FR carrier). Both clear fronts compose through this before the
-/// input claim is computed.
-pub fn compose_bytecode_inputs<F: JoltField>(
-    sumchecks: Stage6aSumchecks<F>,
-    stage1: &Stage1ClearOutput<F>,
-    stage4: &Stage4OutputClaims<F>,
-    stage5: &Stage5OutputClaims<F>,
-) -> Result<Stage6aSumchecks<F>, VerifierError> {
-    let inputs = bytecode_read_raf_inputs(stage1, stage4, stage5)?;
-    Ok(Stage6aSumchecks {
-        bytecode_read_raf: sumchecks.bytecode_read_raf.with_field_inline_inputs(inputs),
-        ..sumchecks
-    })
+impl<F> FieldInlineBytecodeReadRafInputs<F> {
+    fn opening_ids() -> impl Iterator<Item = FieldInlineOpeningId> {
+        FIELD_INLINE_BYTECODE_STAGE1_FLAGS
+            .into_iter()
+            .map(|flag| outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(flag)))
+            .chain([
+                field_access_opening(FieldInlineVirtualPolynomial::FieldRdWa),
+                field_access_opening(FieldInlineVirtualPolynomial::FieldRs1Ra),
+                field_access_opening(FieldInlineVirtualPolynomial::FieldRs2Ra),
+                FieldInlineOpeningId::virtual_polynomial(
+                    FieldInlineVirtualPolynomial::FieldRdWa,
+                    FieldInlineRelationId::FieldRegistersValEvaluation,
+                ),
+            ])
+    }
 }
 
-/// The FR addend of the composed bytecode read-RAF input claim: the appendage
-/// openings folded under the EXISTING stage-1/4/5 gamma power sequences — the
-/// eight `FieldOpFlag` openings after the ordinary stage-1 powers,
-/// `FieldRdWa`/`FieldRs1Ra`/`FieldRs2Ra` after the stage-4 powers, and the
-/// stage-5 val-evaluation `FieldRdWa` after the stage-5 powers — each stage's
-/// extension riding the same outer gamma power as its ordinary stage claim
-/// (γ⁰/γ³/γ⁴). No new challenge draws: the powers extend (see
-/// `field_inline_stage_gamma_powers`).
-pub(super) fn input_claim_extension<F: JoltField>(
-    field_inline: &FieldInlineBytecodeReadRafInputs<F>,
-    challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
-) -> Result<F, VerifierError> {
-    let missing_power = || VerifierError::StageClaimPublicInputFailed {
-        stage: JoltRelationId::BytecodeReadRaf,
-        reason: "field-inline stage gamma powers do not cover the appended FR terms".to_string(),
-    };
-    let gammas = field_inline_stage_gamma_powers(challenges);
+impl<F: JoltField> InputClaims<F, FieldInlineOpeningId> for FieldInlineBytecodeReadRafInputs<F> {
+    fn canonical_order(&self) -> Vec<FieldInlineOpeningId> {
+        Self::opening_ids().collect()
+    }
 
-    let stage1_extension = gammas
-        .stage1
-        .get(2 + NUM_CIRCUIT_FLAGS..)
-        .filter(|powers| powers.len() == FIELD_INLINE_BYTECODE_STAGE1_FLAGS.len())
-        .ok_or_else(missing_power)?
-        .iter()
-        .zip(field_inline.field_op_flags)
-        .fold(F::zero(), |acc, (power, flag)| acc + *power * flag);
-    let stage4_powers = gammas.stage4.get(3..6).ok_or_else(missing_power)?;
-    let stage4_extension = stage4_powers
-        .iter()
-        .zip([
-            field_inline.rd_wa_read_write,
-            field_inline.rs1_ra,
-            field_inline.rs2_ra,
-        ])
-        .fold(F::zero(), |acc, (power, opening)| acc + *power * opening);
-    let stage5_extension =
-        *gammas.stage5.last().ok_or_else(missing_power)? * field_inline.rd_wa_val_evaluation;
+    fn resolve_input(&self, id: &FieldInlineOpeningId) -> Option<F> {
+        Self::opening_ids()
+            .zip(self.field_op_flags.into_iter().chain([
+                self.rd_wa_read_write,
+                self.rs1_ra,
+                self.rs2_ra,
+                self.rd_wa_val_evaluation,
+            ]))
+            .find_map(|(candidate, value)| (candidate == *id).then_some(value))
+    }
+}
 
-    let gamma = challenges.gamma;
-    let gamma3 = gamma * gamma * gamma;
-    let gamma4 = gamma3 * gamma;
-    Ok(stage1_extension + gamma3 * stage4_extension + gamma4 * stage5_extension)
+fn field_access_opening(polynomial: FieldInlineVirtualPolynomial) -> FieldInlineOpeningId {
+    FieldInlineOpeningId::virtual_polynomial(
+        polynomial,
+        FieldInlineRelationId::FieldRegistersReadWriteChecking,
+    )
 }

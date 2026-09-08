@@ -9,14 +9,27 @@
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
 #[cfg(feature = "field-inline")]
+use crate::stages::composed::ComposedClaims;
+use std::collections::BTreeSet;
+
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::{
+    ProductInputs as SelectedInputs, ProductOutputs as SelectedOutputs,
+    ProductRemainder as SelectedSymbolic,
+};
+#[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
-use jolt_claims::protocols::jolt::relations;
+#[cfg(not(feature = "field-inline"))]
+use jolt_claims::protocols::jolt::relations::spartan::{
+    ProductRemainder as SelectedSymbolic, ProductRemainderInputClaims as SelectedInputs,
+    ProductRemainderOutputClaims as SelectedOutputs,
+};
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductRemainderInputClaims, ProductRemainderOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
-    geometry::spartan, geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltOpeningId,
-    JoltRelationId, SpartanProductVirtualizationPublic,
+    geometry::spartan, geometry::spartan::SpartanProductDimensions, JoltDerivedId, JoltRelationId,
+    SpartanProductVirtualizationPublic,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
@@ -31,12 +44,20 @@ use crate::VerifierError;
 
 /// Wire the consumed opening *value* from the product uni-skip's reduced output
 /// claim (the output point comes from this relation's own sumcheck point).
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects a composed claim or opening id"
+    )
+)]
 pub fn product_remainder_input_values_from_uniskip_output<F: JoltField>(
     product_uniskip_output_claim: F,
-) -> ProductRemainderInputClaims<F> {
+) -> SelectedInputs<F> {
     ProductRemainderInputClaims {
         product_uniskip: product_uniskip_output_claim,
     }
+    .into()
 }
 
 impl<F: JoltField> ProductRemainder<F> {
@@ -51,19 +72,10 @@ impl<F: JoltField> ProductRemainder<F> {
 
 #[derive(Clone)]
 pub struct ProductRemainder<F: JoltField> {
-    symbolic: relations::spartan::ProductRemainder,
+    symbolic: SelectedSymbolic,
     uniskip_challenge: F,
     tau_high: F,
     tau_low: Vec<F>,
-    /// The three FR product-row opening values (`FieldRs1Value`,
-    /// `FieldRs2Value`, `FieldRdValue` at `FieldRegistersProduct`), composed
-    /// in through [`with_field_inline_outputs`](Self::with_field_inline_outputs):
-    /// the verifier from the proof's FR product appendage, the prover from the
-    /// appendage its composed remainder kernel parks in the session. The
-    /// composed `expected_output` folds them into the two factors at the lane
-    /// indices following the ordinary lanes and fails closed without them.
-    #[cfg(feature = "field-inline")]
-    field_inline_outputs: Option<FieldRegistersProductOutputClaims<F>>,
 }
 
 impl<F: JoltField> ProductRemainder<F> {
@@ -74,31 +86,11 @@ impl<F: JoltField> ProductRemainder<F> {
         tau_low: Vec<F>,
     ) -> Self {
         Self {
-            symbolic: relations::spartan::ProductRemainder::new(dimensions),
+            symbolic: SelectedSymbolic::new(dimensions),
             uniskip_challenge,
             tau_high,
             tau_low,
-            #[cfg(feature = "field-inline")]
-            field_inline_outputs: None,
         }
-    }
-
-    /// The relation composed with the FR product-row opening values — the
-    /// wire appendage the composed expected-output shell folds.
-    #[cfg(feature = "field-inline")]
-    pub fn with_field_inline_outputs(
-        mut self,
-        values: FieldRegistersProductOutputClaims<F>,
-    ) -> Self {
-        self.field_inline_outputs = Some(values);
-        self
-    }
-
-    /// The composed FR product-row opening values — read by the prove-side
-    /// driver's curated absorb.
-    #[cfg(feature = "field-inline")]
-    pub fn field_inline_outputs(&self) -> Option<&FieldRegistersProductOutputClaims<F>> {
-        self.field_inline_outputs.as_ref()
     }
 }
 
@@ -110,21 +102,28 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
-    type Symbolic = relations::spartan::ProductRemainder;
+    type Symbolic = SelectedSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
     }
 
-    fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects a composed claim or opening id"
+        )
+    )]
+    fn wire_output_openings(&self) -> BTreeSet<<SelectedSymbolic as SymbolicSumcheck>::OpeningId> {
         // Two wire openings beyond the output-`Expr`-referenced set:
         // `write_lookup_output_to_rd` and `virtual_instruction` are absorbed here
         // but their constraining fold happens downstream, in stage 6a's bytecode
         // read-RAF input claim.
         let mut openings = self.symbolic().expected_output_openings::<F>();
-        openings.extend([
-            spartan::write_lookup_output_to_rd_product(),
-            spartan::virtual_instruction_product(),
+        openings.extend::<[<SelectedSymbolic as SymbolicSumcheck>::OpeningId; 2]>([
+            spartan::write_lookup_output_to_rd_product().into(),
+            spartan::virtual_instruction_product().into(),
         ]);
         openings
     }
@@ -132,10 +131,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _input_points: &ProductRemainderInputClaims<Vec<F>>,
-    ) -> Result<ProductRemainderOutputClaims<Vec<F>>, VerifierError> {
+        _input_points: &SelectedInputs<Vec<F>>,
+    ) -> Result<SelectedOutputs<Vec<F>>, VerifierError> {
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
-        Ok(ProductRemainderOutputClaims {
+        let output = ProductRemainderOutputClaims {
             left_instruction_input: opening_point.clone(),
             right_instruction_input: opening_point.clone(),
             jump_flag: opening_point.clone(),
@@ -143,15 +142,25 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
             lookup_output: opening_point.clone(),
             branch_flag: opening_point.clone(),
             next_is_noop: opening_point.clone(),
-            virtual_instruction: opening_point,
-        })
+            virtual_instruction: opening_point.clone(),
+        };
+        #[cfg(feature = "field-inline")]
+        let output = ComposedClaims {
+            base: output,
+            field_inline: FieldRegistersProductOutputClaims {
+                rs1_value: opening_point.clone(),
+                rs2_value: opening_point.clone(),
+                rd_value: opening_point,
+            },
+        };
+        Ok(output)
     }
 
     fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _input_points: &ProductRemainderInputClaims<Vec<F>>,
-        output_points: &ProductRemainderOutputClaims<Vec<F>>,
+        _input_points: &SelectedInputs<Vec<F>>,
+        output_points: &SelectedOutputs<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanProductVirtualization(public_id) = id else {
@@ -198,86 +207,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
             }
         }
     }
-
-    /// The composed expected output claim over the feature-aware lane domain:
-    /// `tau_kernel · (ordinary_left + fr_left) · (ordinary_right + fr_right)`,
-    /// per `specs/field-inline-protocol.md` "Stage 2 Composition". The ordinary
-    /// factors are the jolt symbolic factor expressions (whose `LagrangeWeight`s
-    /// already evaluate over the composed domain via `derive_output_term`); the
-    /// FR contributions come from the jolt-claims composed-lane helper (pinned
-    /// against the field-constraint product rows in `jolt-r1cs`) over the
-    /// values supplied via
-    /// [`set_field_inline_outputs`](ProductRemainder::set_field_inline_outputs).
-    /// The jolt symbolic `output_expression` cannot name the FR openings, so
-    /// the composed form is assembled here from the same factor pieces.
-    #[cfg(feature = "field-inline")]
-    fn expected_output(
-        &self,
-        input_points: &ProductRemainderInputClaims<Vec<F>>,
-        output_values: &ProductRemainderOutputClaims<F>,
-        output_points: &ProductRemainderOutputClaims<Vec<F>>,
-        challenges: &NoChallenges<F>,
-    ) -> Result<F, VerifierError> {
-        use jolt_claims::protocols::field_inline::geometry::product::{
-            composed_remainder_factor_contributions, FieldProductLaneFactors,
-        };
-        use jolt_claims::protocols::jolt::{JoltDerivedId, JoltExpr};
-        use jolt_claims::{OutputClaims as _, SumcheckChallenges as _};
-        use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
-
-        let evaluate_factor = |expression: JoltExpr<F>| {
-            expression.try_evaluate(
-                |id| {
-                    output_values
-                        .resolve_output(id)
-                        .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
-                },
-                |id| {
-                    challenges
-                        .resolve_challenge(id)
-                        .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
-                },
-                |id| self.derive_output_term(id, input_points, output_points, challenges),
-            )
-        };
-        let ordinary_left = evaluate_factor(self.symbolic.left_factor_expression())?;
-        let ordinary_right = evaluate_factor(self.symbolic.right_factor_expression())?;
-        let tau_kernel = self.derive_output_term(
-            &JoltDerivedId::SpartanProductVirtualization(
-                SpartanProductVirtualizationPublic::TauKernel,
-            ),
-            input_points,
-            output_points,
-            challenges,
-        )?;
-
-        let field_inline = self.field_inline_outputs.as_ref().ok_or_else(|| {
-            public_input_failed(
-                "field-inline product outputs not composed (the stage-2 front must supply \
-                 them before the batch check)",
-            )
-        })?;
-        let weights =
-            centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, self.uniskip_challenge)
-                .map_err(public_input_failed)?;
-        let (fr_left, fr_right) = composed_remainder_factor_contributions(
-            &weights,
-            SPARTAN_PRODUCT_BASE_LANES,
-            &FieldProductLaneFactors {
-                rs1_value: field_inline.rs1_value,
-                rs2_value: field_inline.rs2_value,
-                rd_value: field_inline.rd_value,
-            },
-        )
-        .ok_or_else(|| {
-            public_input_failed(format!(
-                "composed product remainder weights do not cover the FR lanes (domain size \
-                 {SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE})"
-            ))
-        })?;
-
-        Ok(tau_kernel * (ordinary_left + fr_left) * (ordinary_right + fr_right))
-    }
 }
 
 #[cfg(all(test, feature = "field-inline"))]
@@ -286,7 +215,6 @@ mod tests {
     use super::super::outputs::FieldRegistersProductOutputClaims;
     use super::*;
     use jolt_field::{Fr, Ring};
-    use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -315,8 +243,8 @@ mod tests {
 
     fn fixture() -> (
         ProductRemainder<Fr>,
-        ProductRemainderInputClaims<Vec<Fr>>,
-        ProductRemainderOutputClaims<Vec<Fr>>,
+        SelectedInputs<Vec<Fr>>,
+        SelectedOutputs<Vec<Fr>>,
     ) {
         let log_t = 4usize;
         let uniskip_challenge = fr(37);
@@ -330,7 +258,7 @@ mod tests {
         );
 
         let sumcheck_point: Vec<Fr> = (60..64).map(fr).collect();
-        let input_points = ProductRemainderInputClaims::<Vec<Fr>>::default();
+        let input_points = SelectedInputs::<Vec<Fr>>::default();
         let output_points = relation
             .derive_opening_points(&sumcheck_point, &input_points)
             .unwrap();
@@ -348,7 +276,10 @@ mod tests {
         let (relation, input_points, output_points) = fixture();
         let outputs = output_values();
         let field_inline = field_inline_outputs();
-        let relation = relation.with_field_inline_outputs(field_inline.clone());
+        let outputs = ComposedClaims {
+            base: outputs,
+            field_inline: field_inline.clone(),
+        };
 
         let weights = centered_lagrange_evals(
             SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
@@ -398,124 +329,5 @@ mod tests {
             )
             .unwrap();
         assert_eq!(composed, expected);
-    }
-
-    /// With zero FR factor values the composed form reduces to the ordinary
-    /// jolt symbolic `output_expression` (evaluated over the same composed
-    /// domain weights) — pinning the override's ordinary-factor legs to the
-    /// symbolic source of truth rather than a restated lane table.
-    #[test]
-    fn composed_expected_output_reduces_to_symbolic_form_without_field_lanes() {
-        let (relation, input_points, output_points) = fixture();
-        let outputs = output_values();
-        let relation = relation.with_field_inline_outputs(FieldRegistersProductOutputClaims {
-            rs1_value: Fr::from_u64(0),
-            rs2_value: Fr::from_u64(0),
-            rd_value: Fr::from_u64(0),
-        });
-
-        use jolt_claims::OutputClaims as _;
-        let symbolic = relation
-            .symbolic
-            .output_expression::<Fr>()
-            .try_evaluate(
-                |id| {
-                    outputs
-                        .resolve_output(id)
-                        .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
-                },
-                |id| Err::<Fr, _>(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
-                |id| {
-                    relation.derive_output_term(
-                        id,
-                        &input_points,
-                        &output_points,
-                        &NoChallenges::default(),
-                    )
-                },
-            )
-            .unwrap();
-
-        let composed = relation
-            .expected_output(
-                &input_points,
-                &outputs,
-                &output_points,
-                &NoChallenges::default(),
-            )
-            .unwrap();
-        assert_eq!(composed, symbolic);
-    }
-
-    /// FR-lane weighting sits at the lane indices following the ordinary
-    /// lanes: perturbing only `rd_value` (the `FieldInvProduct` lane's right
-    /// factor) changes the composed output by
-    /// `tau_kernel · composed_left · w_4·delta`.
-    #[test]
-    fn composed_expected_output_weights_field_lanes_at_composed_indices() {
-        let (relation, input_points, output_points) = fixture();
-        let outputs = output_values();
-        let field_inline = field_inline_outputs();
-        let relation = relation.with_field_inline_outputs(field_inline.clone());
-        let base = relation
-            .expected_output(
-                &input_points,
-                &outputs,
-                &output_points,
-                &NoChallenges::default(),
-            )
-            .unwrap();
-
-        let (relation_perturbed, input_points, output_points) = fixture();
-        let delta = fr(97);
-        let mut perturbed = field_inline;
-        perturbed.rd_value += delta;
-        let relation_perturbed = relation_perturbed.with_field_inline_outputs(perturbed);
-        let shifted = relation_perturbed
-            .expected_output(
-                &input_points,
-                &outputs,
-                &output_points,
-                &NoChallenges::default(),
-            )
-            .unwrap();
-
-        let weights = centered_lagrange_evals(
-            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            relation_perturbed.uniskip_challenge(),
-        )
-        .unwrap();
-        let tau_kernel = relation_perturbed
-            .derive_output_term(
-                &JoltDerivedId::SpartanProductVirtualization(
-                    SpartanProductVirtualizationPublic::TauKernel,
-                ),
-                &input_points,
-                &output_points,
-                &NoChallenges::default(),
-            )
-            .unwrap();
-        // The composed left factor is unchanged by an rd_value shift; read it
-        // back off the base/shifted difference.
-        // The InverseProduct lane's composed index: base + 1 = 4 on the 5-lane domain.
-        let w4 = weights.get(SPARTAN_PRODUCT_BASE_LANES.checked_add(1).unwrap());
-        let w4 = *w4.unwrap();
-        let composed_left = {
-            let field_inline = field_inline_outputs();
-            let ordinary_weights = &weights;
-            let left_lanes = [
-                output_values().left_instruction_input,
-                output_values().lookup_output,
-                output_values().jump_flag,
-                field_inline.rs1_value,
-                field_inline.rs1_value,
-            ];
-            ordinary_weights
-                .iter()
-                .zip(left_lanes)
-                .map(|(weight, lane)| *weight * lane)
-                .sum::<Fr>()
-        };
-        assert_eq!(shifted - base, tau_kernel * composed_left * (w4 * delta));
     }
 }

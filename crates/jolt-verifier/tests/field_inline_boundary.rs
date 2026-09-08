@@ -1,217 +1,11 @@
-//! Repo-hygiene boundary check for the field-inline seams (dependency-free;
-//! reads the source tree at test time, so it enforces the boundary in the
-//! default FR-off suite on every PR).
-//!
-//! The architectural rule: the field-inline protocol is a completely separate
-//! codepath, and every FR divergence in this crate lives either in a dedicated
-//! `field_inline` seam module or at an explicitly whitelisted interaction
-//! point (a flagged one-line seam call, a carrier field, a module
-//! registration, or a relation's appendage shell). Each whitelist entry below
-//! says why its file legitimately carries `feature = "field-inline"` text, and
-//! caps how much of it the file may carry — moving FR logic back inline blows
-//! the cap and fails here.
+//! Structural guards for the verifier composition boundary. Protocol-family
+//! import disjointness is checked in jolt-claims; composed expression coverage
+//! is checked by stages::composed's typed contract test.
 
-#![expect(clippy::expect_used, reason = "test-only source-tree walking")]
+#![expect(clippy::expect_used, reason = "test-only source-tree inspection")]
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-const GATE: &str = "feature = \"field-inline\"";
-
-/// The whitelisted file set, each with WHY it is a legitimate seam and the
-/// maximum number of `feature = "field-inline"` occurrences it may carry
-/// (production and test text alike — the cap is the ratchet).
-const WHITELIST: &[(&str, usize, &str)] = &[
-    // Compile-time protocol selection: the FR config constant pair.
-    (
-        "config.rs",
-        6,
-        "compile-time protocol config + instruction profile",
-    ),
-    // The FR commitment payload is proof shape: carrier struct/field,
-    // constructor default, the homomorphic commitment slot's attach builder,
-    // and the packed limb-group commitment/claims slots with their carry-over
-    // lines.
-    (
-        "proof.rs",
-        12,
-        "FR commitment payload carriers + FR-slot-defaulting constructors",
-    ),
-    // The payload presence check, the FR commitment absorb seams, and the
-    // mode-specific test fixtures. (The fail-closed
-    // require_field_inline_slices gate lived here until the FR prover
-    // fixtures landed.)
-    (
-        "verifier.rs",
-        20,
-        "input gates + commitment absorb seams + test fixtures + gated test imports",
-    ),
-    // Module registration of the shared FR bytecode side-table seam, plus
-    // the packed schedule's FR presence-marker field and its constructor.
-    ("stages/mod.rs", 4, "seam registration + FR schedule marker"),
-    // Per-stage seam-module and FR-twin module registrations.
-    ("stages/stage1/mod.rs", 1, "seam module registration"),
-    ("stages/stage2/mod.rs", 2, "seam module registrations"),
-    ("stages/stage4/mod.rs", 3, "seam/twin module registrations"),
-    ("stages/stage5/mod.rs", 3, "seam/twin module registrations"),
-    ("stages/stage6a/mod.rs", 1, "seam module registration"),
-    ("stages/stage6b/mod.rs", 2, "seam/twin module registrations"),
-    ("stages/stage8/mod.rs", 2, "seam module registrations"),
-    // Stage verify.rs files: exactly the flagged one-line divergences calling
-    // their stage's field_inline seam (struct-literal fields keep the flag on
-    // the field line — the uniform impossible-case shape).
-    ("stages/stage1/verify.rs", 4, "flagged seam calls"),
-    ("stages/stage2/verify.rs", 7, "flagged seam calls"),
-    ("stages/stage4/verify.rs", 3, "flagged seam calls"),
-    ("stages/stage5/verify.rs", 3, "flagged seam calls"),
-    ("stages/stage6a/verify.rs", 2, "flagged seam calls"),
-    (
-        "stages/stage6b/verify.rs",
-        12,
-        "flagged seam calls + test fixtures + gated test import",
-    ),
-    (
-        "stages/stage8/verify.rs",
-        6,
-        "flagged seam calls + FR plan test gate",
-    ),
-    // The packed batch assembly: the FR proof-slot parameters and the flagged
-    // block calling the stage-8 packed FR seam.
-    (
-        "stages/stage8/packed.rs",
-        4,
-        "FR slot params + flagged seam call",
-    ),
-    // The FR recomposition-mismatch reject is a typed error variant.
-    ("error.rs", 1, "FR typed error variant"),
-    // outputs.rs carrier fields are proof shape: FR batch-member slots,
-    // output-claim carrier fields, point accessors, re-exports, and the
-    // mode-specific test fixtures that construct them.
-    (
-        "stages/stage1/outputs.rs",
-        5,
-        "FR carrier fields + gated import",
-    ),
-    (
-        "stages/stage2/outputs.rs",
-        19,
-        "FR carrier fields + test fixtures + gated test import",
-    ),
-    (
-        "stages/stage4/outputs.rs",
-        16,
-        "FR carrier fields + test fixtures + gated test import",
-    ),
-    (
-        "stages/stage5/outputs.rs",
-        10,
-        "FR carrier fields + test fixtures + gated test import",
-    ),
-    (
-        "stages/stage6b/outputs.rs",
-        7,
-        "FR carrier fields + FR-slot-defaulting constructor",
-    ),
-    // Relation files that carry an FR appendage: the OnceLock carrier field,
-    // its setter, and the composed input/expected-output override shells
-    // (trait items cannot move out of the impl; their FR math lives in the
-    // stage's field_inline seam or jolt-claims composed-lane helpers).
-    (
-        "stages/stage1/outer_remainder.rs",
-        9,
-        "FR appendage carrier + accessor + override + gated import",
-    ),
-    (
-        "stages/stage2/product_uniskip.rs",
-        6,
-        "FR appendage carrier + override + gated import",
-    ),
-    (
-        "stages/stage2/product_remainder.rs",
-        8,
-        "FR appendage carrier + accessor + override + gated imports",
-    ),
-    (
-        "stages/stage6a/bytecode_read_raf.rs",
-        13,
-        "FR appendage carriers (input values + kernel geometry) + override shell + \
-         gated imports",
-    ),
-    (
-        "stages/stage6b/bytecode_read_raf.rs",
-        11,
-        "FR fold constructor leg + composed publics + kernel fold accessor + \
-         ordinary-fold operand masking + gated import",
-    ),
-    // The stage-6b batch build: FR draw slot, build-parts leg, and the flagged
-    // seam calls assembling the FR members (struct fields cannot move).
-    (
-        "stages/stage6b/batch.rs",
-        16,
-        "FR batch legs + flagged seam calls + gated import",
-    ),
-    // The BlindFold lowering: the composite VerifierPublicId FR arms (type
-    // shape), the flagged seam calls into blindfold/field_inline.rs, and the
-    // FR value-parity test gates.
-    (
-        "stages/zk/blindfold/mod.rs",
-        16,
-        "FR id arms + flagged seam calls + ordinary-fold operand masking",
-    ),
-    (
-        "stages/zk/blindfold/stage1.rs",
-        6,
-        "flagged seam calls + tests",
-    ),
-    (
-        "stages/zk/blindfold/stage2.rs",
-        23,
-        "flagged seam calls + tests + gated test import",
-    ),
-    (
-        "stages/zk/blindfold/stage4.rs",
-        9,
-        "flagged seam calls + tests + gated test import",
-    ),
-    (
-        "stages/zk/blindfold/stage5.rs",
-        10,
-        "flagged seam calls + tests + gated test imports",
-    ),
-    (
-        "stages/zk/blindfold/stage6a.rs",
-        2,
-        "flagged seam call + test gate",
-    ),
-    (
-        "stages/zk/blindfold/stage6b.rs",
-        8,
-        "flagged seam calls + tests + gated test import",
-    ),
-];
-
-/// Files that ARE the field-inline seams: whole modules cfg-gated at their
-/// registration, so their content is FR by definition and carries no gate
-/// text of its own (a gate inside one would be redundant but harmless).
-const SEAM_MODULES: &[&str] = &[
-    "stages/field_inline_bytecode.rs",
-    "stages/stage1/field_inline.rs",
-    "stages/stage2/field_inline.rs",
-    "stages/stage4/field_inline.rs",
-    "stages/stage5/field_inline.rs",
-    "stages/stage6a/field_inline.rs",
-    "stages/stage6b/field_inline.rs",
-    "stages/stage8/field_inline.rs",
-    "stages/stage8/field_inline_packed.rs",
-    "stages/zk/blindfold/field_inline.rs",
-    // The FR ConcreteSumcheck twins: separate types per the protocol ruling,
-    // cfg-gated at their module registrations.
-    "stages/stage2/field_registers_claim_reduction.rs",
-    "stages/stage4/field_registers_read_write_checking.rs",
-    "stages/stage5/field_registers_val_evaluation.rs",
-    "stages/stage6b/field_registers_inc_claim_reduction.rs",
-];
 
 fn rust_sources(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -231,67 +25,99 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
 }
 
 #[test]
-fn field_inline_gates_stay_in_the_whitelisted_seams() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let caps: BTreeMap<&str, usize> = WHITELIST
-        .iter()
-        .map(|(file, cap, _why)| (*file, *cap))
-        .collect();
-
-    let mut violations = Vec::new();
-    for file in rust_sources(&src) {
-        let relative = file
-            .strip_prefix(&src)
-            .expect("sources live under src")
-            .to_string_lossy()
-            .replace('\\', "/");
-        let source = fs::read_to_string(&file).expect("source file is readable");
-        let count = source.matches(GATE).count();
-        if count == 0 {
-            continue;
-        }
-        if SEAM_MODULES.contains(&relative.as_str()) {
-            continue;
-        }
-        match caps.get(relative.as_str()) {
-            None => violations.push(format!(
-                "{relative}: {count} `{GATE}` occurrence(s) in a non-whitelisted file — move \
-                 the FR logic into that stage's field_inline seam module (or whitelist the new \
-                 seam here with a why-comment)"
-            )),
-            Some(cap) if count > *cap => violations.push(format!(
-                "{relative}: {count} `{GATE}` occurrences exceed the whitelisted cap of {cap} — \
-                 new FR divergences belong in the stage's field_inline seam module"
-            )),
-            Some(_) => {}
+fn composed_relations_use_symbolic_claim_evaluation() {
+    use syn::{ImplItem, Item};
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/stages");
+    for file in [
+        "stage1/outer_remainder.rs",
+        "stage2/product_uniskip.rs",
+        "stage2/product_remainder.rs",
+        "stage6a/bytecode_read_raf.rs",
+    ] {
+        let parsed = syn::parse_file(&fs::read_to_string(src.join(file)).expect("read relation"))
+            .expect("valid Rust source");
+        for item in parsed.items {
+            if let Item::Impl(item) = item {
+                if !item.trait_.as_ref().is_some_and(|(path, _)| {
+                    path.segments
+                        .last()
+                        .is_some_and(|segment| segment.ident == "ConcreteSumcheck")
+                }) {
+                    continue;
+                }
+                for method in item.items {
+                    if let ImplItem::Fn(method) = method {
+                        assert!(
+                            method.sig.ident != "input_claim"
+                                && method.sig.ident != "expected_output",
+                            "{file} bypasses its symbolic claim contract with {}",
+                            method.sig.ident
+                        );
+                    }
+                }
+            }
         }
     }
-    assert!(
-        violations.is_empty(),
-        "field-inline seam boundary violated:\n{}",
-        violations.join("\n")
-    );
 }
 
-/// Whitelisted files must keep existing (a rename silently drops its cap), and
-/// every seam module must stay registered where the convention says it lives.
 #[test]
-fn whitelisted_seam_files_exist() {
+fn runtime_sources_do_not_import_prover_implementation_crates() {
+    use syn::visit::{self, Visit};
+    use syn::{ItemMod, Path as SyntaxPath, UsePath};
+
+    #[derive(Default)]
+    struct Imports {
+        forbidden: Vec<String>,
+    }
+    impl Imports {
+        fn check(&mut self, name: String) {
+            if [
+                "jolt_prover",
+                "jolt_prover_legacy",
+                "jolt_kernels",
+                "jolt_witness",
+                "tracer",
+            ]
+            .contains(&name.as_str())
+            {
+                self.forbidden.push(name);
+            }
+        }
+    }
+    impl<'ast> Visit<'ast> for Imports {
+        fn visit_item_mod(&mut self, module: &'ast ItemMod) {
+            if module.attrs.iter().any(|attr| {
+                attr.path().is_ident("cfg")
+                    && attr
+                        .parse_args::<SyntaxPath>()
+                        .is_ok_and(|path| path.is_ident("test"))
+            }) {
+                return;
+            }
+            visit::visit_item_mod(self, module);
+        }
+        fn visit_use_path(&mut self, path: &'ast UsePath) {
+            self.check(path.ident.to_string());
+            visit::visit_use_path(self, path);
+        }
+        fn visit_path(&mut self, path: &'ast SyntaxPath) {
+            if let Some(first) = path.segments.first() {
+                self.check(first.ident.to_string());
+            }
+            visit::visit_path(self, path);
+        }
+    }
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut missing = Vec::new();
-    for (file, _cap, _why) in WHITELIST {
-        if !src.join(file).is_file() {
-            missing.push(*file);
-        }
+    for file in rust_sources(&src) {
+        let source = fs::read_to_string(&file).expect("read source");
+        let parsed = syn::parse_file(&source).expect("valid Rust source");
+        let mut imports = Imports::default();
+        imports.visit_file(&parsed);
+        assert!(
+            imports.forbidden.is_empty(),
+            "{} imports prover implementation crates: {:?}",
+            file.display(),
+            imports.forbidden
+        );
     }
-    for file in SEAM_MODULES {
-        if !src.join(file).is_file() {
-            missing.push(*file);
-        }
-    }
-    assert!(
-        missing.is_empty(),
-        "whitelisted seam files missing (update the whitelist alongside renames):\n{}",
-        missing.join("\n")
-    );
 }

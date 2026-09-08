@@ -5,23 +5,49 @@
 | Author(s) | Markos Georghiades, Codex |
 | Created | 2026-05-21 |
 | Status | implemented (modular stack) |
-| PR | TBD |
+| PR | #1808 |
 
 ## Implementation Status
 
-Implemented end-to-end on the modular stack (`jolt-prover` proves, the
-composed `jolt-verifier` verifies, in both proof modes) behind the
-`field-inline` feature; the legacy prover pins the axis disabled. One
-deviation from this spec's stage-2 alias table: instead of absorbing the
-aliased rows once, the implementation absorbs BOTH the FR claim-reduction
-outputs and the FR product-appendage rows (the curated stage-2 absorb) and
-enforces the table's equalities explicitly — clear mode via the stage-2
-seam's `validate_product_aliases`
-(`jolt-verifier/src/stages/stage2/field_inline.rs`), ZK mode via BlindFold
-`OpeningEquality` rows
-(`jolt-verifier/src/stages/zk/blindfold/field_inline.rs::stage2_opening_equalities`)
-— both single-sourced from the same `product_alias_polynomials` table so the
-two enforcement paths cannot drift.
+Implemented end-to-end on the modular stack (`jolt-prover` proves and
+`jolt-verifier` verifies, in clear and ZK modes) behind `field-inline`.
+The legacy prover keeps this axis disabled.
+
+The composed outer, product, and bytecode address-phase relations live in
+`jolt-verifier/src/stages/composed.rs`. Their typed inputs and outputs name
+both protocol families, and their symbolic expressions are the source for
+clear verification and BlindFold lowering. Kernels return these typed outputs
+directly through the regular batch interface.
+
+Stage 2 absorbs and commits each FR product opening once. The FR claim
+reduction uses the existing opening-alias mechanism. Its three value copies
+are omitted from `Stage2OutputClaims` serialization and reconstructed from the
+product outputs when decoding. The internal batch evaluator still checks
+alias consistency for callers that construct claim objects directly.
+
+This is a new wire-format revision, not a decoder for pre-#1808 proofs.
+`JoltProtocolConfig` serializes the extension axis even when disabled; the
+config fixture pins the six-byte transparent/homomorphic/FR-off header and
+rejects the old three-byte header. There is no implicit old-format fallback.
+The mandatory composed claim carriers and canonical stage-2 rows also replace
+the draft FR appendage format. Regenerate draft FR proofs after upgrading.
+Byte parity against the updated legacy prover checks agreement within this
+revision; it does not establish compatibility with earlier proof bytes.
+
+Committed-program construction rejects extension profiles before dropping
+full bytecode metadata, in both Dory and packed commitment paths. Committed
+FR programs remain unsupported. The verifier checks protocol and cheap input
+shapes before scanning full program metadata; stage 6a builds FR bytecode
+kernel geometry only on the prover path.
+
+The adversarial `fresh_store_lookup_proof_rejects_synchronized_wide_bridge_values`
+test bypasses the tracer and supplies `2^64 + 7` consistently to the store's
+field value, integer write, lookup operand, and claimed lookup output. The
+local bridge constraints hold. Fresh biased sumcheck messages pass every
+round check, but the concrete RangeCheck endpoint rejects them. The ZK build
+checks the recorded committed rounds against the production BlindFold R1CS;
+this is a binding test, not a complete forged VM/PCS proof. `u64::MAX` is the
+accepting control.
 
 ## Purpose
 

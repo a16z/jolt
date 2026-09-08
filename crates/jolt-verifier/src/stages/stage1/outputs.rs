@@ -1,7 +1,5 @@
 //! Typed inputs consumed and outputs produced by stage 1 verification.
 
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
@@ -17,12 +15,6 @@ use crate::VerifierError;
 pub struct Stage1OutputClaims<F: JoltField> {
     pub uniskip_output_claim: F,
     pub outer: Stage1BatchOutputClaims<F>,
-    /// The 13 FR-local Spartan-outer openings the composed R1CS appends after
-    /// the 35 ordinary columns. Present on every field-inline proof; carried as
-    /// an `Option` for the same producer reasons as the commitment payload, and
-    /// required fail-closed by `stage1::verify`.
-    #[cfg(feature = "field-inline")]
-    pub field_inline_outer: Option<FieldRegistersSpartanOuterOutputClaims<F>>,
 }
 
 impl<F: JoltField> Stage1OutputClaims<F> {
@@ -34,8 +26,6 @@ impl<F: JoltField> Stage1OutputClaims<F> {
         Self {
             uniskip_output_claim,
             outer,
-            #[cfg(feature = "field-inline")]
-            field_inline_outer: None,
         }
     }
 }
@@ -50,9 +40,8 @@ impl<F: JoltField> Stage1OutputClaims<F> {
 /// field per instance, in this declaration order. With a single instance and no
 /// cross-relation aliasing there is no `no_opening_values` opt-out: the
 /// generated absorb (`opening_values` / `append_output_claims` on this struct)
-/// delegates to `OuterRemainderOutputClaims` in `dimensions.variables()` order
-/// (the canonical 35 R1CS-input order), byte-identical to the previous explicit
-/// append loop.
+/// delegates to the member's typed output claims: base columns followed by
+/// field-inline columns when enabled.
 ///
 /// The member's `SpartanOuterPublic` coefficient table depends on the batch's own
 /// bound point, so it completes itself lazily: `derive_opening_points` captures
@@ -90,16 +79,9 @@ pub struct Stage1ClearOutput<F: JoltField> {
     /// `.outer_remainder.<field>`.
     pub output_values: Stage1BatchOutputClaims<F>,
     /// The produced remainder opening *points*, paired field-for-field with
-    /// `output_values`. All 35 openings share the single remainder point; the raw
+    /// `output_values`. All composed openings share the single remainder point; the raw
     /// reduction point is exposed by [`Stage1Output::remainder_point`].
     pub output_points: Stage1BatchOutputPoints<F>,
-    /// The 13 FR-local Spartan-outer opening values (appended-column order).
-    /// They share the remainder opening point with the ordinary openings; the
-    /// stage-2 FR claim reduction consumes them. `Some` on every verified
-    /// FR-on proof (`stage1::verify` fills it); `None` only from producers
-    /// that have not wired field-inline yet.
-    #[cfg(feature = "field-inline")]
-    pub field_inline_output_values: Option<FieldRegistersSpartanOuterOutputClaims<F>>,
 }
 
 impl<F: JoltField> Stage1ClearOutput<F> {
@@ -112,8 +94,6 @@ impl<F: JoltField> Stage1ClearOutput<F> {
         Self {
             output_values,
             output_points,
-            #[cfg(feature = "field-inline")]
-            field_inline_output_values: None,
         }
     }
 }
@@ -121,7 +101,7 @@ impl<F: JoltField> Stage1ClearOutput<F> {
 impl<F: JoltField> Stage1ClearOutput<F> {
     /// The raw (un-reversed) Spartan outer remainder reduction point: the
     /// clear path stores the openings at the REVERSED point
-    /// (`derive_opening_points`), so this reverses it back. All 35 stage-1
+    /// (`derive_opening_points`), so this reverses it back. All stage-1
     /// openings share the point; `left_instruction_input` is a representative
     /// accessor. Promoted so the prove-side recipes stop hand-copying the
     /// derivation (see [`Stage1Output::remainder_point`]).
@@ -186,7 +166,7 @@ impl<F: JoltField, C> Stage1Output<F, C> {
     /// bindings) slice and reverse this point themselves, so it must NOT be the
     /// already-reversed opening point: the clear path stores the openings at the
     /// reversed point (`derive_opening_points`), so we reverse it back here to
-    /// recover the raw reduction point the ZK `challenges()` returns directly. All 35
+    /// recover the raw reduction point the ZK `challenges()` returns directly. All
     /// stage-1 openings share this single reversed opening point, so `left_instruction_input`
     /// is a representative field accessor for it.
     pub fn remainder_point(&self) -> Vec<F> {

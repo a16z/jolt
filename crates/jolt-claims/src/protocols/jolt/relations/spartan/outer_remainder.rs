@@ -114,6 +114,32 @@ pub struct OuterRemainder {
     shape: SpartanOuterDimensions,
 }
 
+impl OuterRemainder {
+    /// The ordinary Az/Bz linear forms, including their affine terms.
+    /// Composed relations extend these with their additional columns.
+    pub fn output_factor_expressions<F: Ring>(&self) -> (JoltExpr<F>, JoltExpr<F>) {
+        // The factored quadratic form `tau_kernel · Az · Bz` with each linear
+        // form expanded over its per-column weights — every derived leaf one
+        // multilinear (the weights are linear in the stream variable).
+        let mut az = JoltExpr::zero();
+        let mut bz = JoltExpr::zero();
+        for (index, variable) in self.shape.variables().iter().copied().enumerate() {
+            az = az
+                + derived(JoltDerivedId::from(SpartanOuterPublic::AzWeight(index)))
+                    * opening(outer_opening(variable));
+            bz = bz
+                + derived(JoltDerivedId::from(SpartanOuterPublic::BzWeight(index)))
+                    * opening(outer_opening(variable));
+        }
+        if self.shape.include_affine_terms() {
+            az = az + derived(JoltDerivedId::from(SpartanOuterPublic::AzConstant));
+            bz = bz + derived(JoltDerivedId::from(SpartanOuterPublic::BzConstant));
+        }
+
+        (az, bz)
+    }
+}
+
 impl SymbolicSumcheck for OuterRemainder {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
@@ -145,24 +171,7 @@ impl SymbolicSumcheck for OuterRemainder {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        // The factored quadratic form `tau_kernel · Az · Bz` with each linear
-        // form expanded over its per-column weights — every derived leaf one
-        // multilinear (the weights are linear in the stream variable).
-        let mut az = JoltExpr::zero();
-        let mut bz = JoltExpr::zero();
-        for (index, variable) in self.shape.variables().iter().copied().enumerate() {
-            az = az
-                + derived(JoltDerivedId::from(SpartanOuterPublic::AzWeight(index)))
-                    * opening(outer_opening(variable));
-            bz = bz
-                + derived(JoltDerivedId::from(SpartanOuterPublic::BzWeight(index)))
-                    * opening(outer_opening(variable));
-        }
-        if self.shape.include_affine_terms() {
-            az = az + derived(JoltDerivedId::from(SpartanOuterPublic::AzConstant));
-            bz = bz + derived(JoltDerivedId::from(SpartanOuterPublic::BzConstant));
-        }
-
+        let (az, bz) = self.output_factor_expressions();
         derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
     }
 }

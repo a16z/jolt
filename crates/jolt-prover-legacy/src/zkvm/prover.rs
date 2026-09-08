@@ -2945,7 +2945,8 @@ mod tests {
             memory_layout,
             max_trace_len,
             bytecode_chunk_count,
-        );
+        )
+        .expect("base-profile committed preprocessing");
         let program = Arc::new(program);
         Ok((shared, prover_data, generators, program))
     }

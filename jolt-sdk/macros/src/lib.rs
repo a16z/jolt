@@ -655,7 +655,7 @@ impl MacroBuilder {
                         memory_layout,
                         #max_trace_length,
                         bytecode_chunk_count,
-                    );
+                    )?;
 
                 Ok((shared_preprocessing, committed_program_prover_data, generators))
             }

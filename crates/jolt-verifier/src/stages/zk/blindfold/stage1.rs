@@ -29,7 +29,6 @@ where
         values,
         vec![outer_uniskip_opening().into()],
         Vec::new(),
-        Vec::new(),
         VerifierExpr::zero(),
         opening(outer_uniskip_opening()),
     )?;
@@ -91,7 +90,7 @@ where
         *remainder_batching_coefficient * F::pow2(remainder_extra_vars),
     );
     let output_claim = scale_expr(
-        stage1_spartan_outer_output_expr(&opening_ids),
+        stage1_spartan_outer_output_expr(&dimensions),
         *remainder_batching_coefficient,
     );
     add_stage(
@@ -106,7 +105,6 @@ where
         &input.stage1.remainder_output_claims,
         values,
         opening_ids,
-        Vec::new(),
         Vec::new(),
         input_claim,
         output_claim,
@@ -132,39 +130,12 @@ pub(super) fn stage1_spartan_outer_opening_ids(
     opening_ids
 }
 
-/// The composed factored quadratic form, mirroring the clear path's
-/// `factored_output_claim`: `TauKernel · (AzConstant + Σ AzWeight(i)·o_i) ·
-/// (BzConstant + Σ BzWeight(i)·o_i)` over the FULL composed opening vector —
-/// the 35 ordinary openings followed (under `field-inline`) by the 13 FR-local
-/// openings, weighted by the SAME `JoltSpartanOuterRemainder` coefficient
-/// table at the appended indices.
-pub(super) fn stage1_spartan_outer_output_expr<F: JoltField>(
-    opening_ids: &[VerifierOpeningId],
+fn stage1_spartan_outer_output_expr<F: JoltField>(
+    dimensions: &SpartanOuterDimensions,
 ) -> VerifierExpr<F> {
-    let mut az = VerifierExpr::zero();
-    let mut bz = VerifierExpr::zero();
-    for (index, id) in opening_ids.iter().copied().enumerate() {
-        az = az
-            + derived(VerifierPublicId::SpartanOuter(
-                JoltSpartanOuterPublic::AzWeight(index),
-            )) * opening(id);
-        bz = bz
-            + derived(VerifierPublicId::SpartanOuter(
-                JoltSpartanOuterPublic::BzWeight(index),
-            )) * opening(id);
-    }
-    az = az
-        + derived(VerifierPublicId::SpartanOuter(
-            JoltSpartanOuterPublic::AzConstant,
-        ));
-    bz = bz
-        + derived(VerifierPublicId::SpartanOuter(
-            JoltSpartanOuterPublic::BzConstant,
-        ));
-    derived(VerifierPublicId::SpartanOuter(
-        JoltSpartanOuterPublic::TauKernel,
-    )) * az
-        * bz
+    use crate::stages::relations::SymbolicOf;
+    use crate::stages::stage1::outer_remainder::OuterRemainder;
+    map_expr(SymbolicOf::<F, OuterRemainder<F>>::new(dimensions.clone()).output_expression())
 }
 
 #[cfg(test)]
@@ -261,7 +232,7 @@ mod tests {
             .copied()
             .zip(openings.iter().copied())
             .collect();
-        let lowered = stage1_spartan_outer_output_expr::<Fr>(&opening_ids).evaluate(
+        let lowered = stage1_spartan_outer_output_expr::<Fr>(&dimensions).evaluate(
             |id| opening_values.get(id).copied().unwrap(),
             |_| Fr::zero(),
             |id| resolve_public(&publics, id),

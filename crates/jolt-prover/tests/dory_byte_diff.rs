@@ -1352,7 +1352,8 @@ mod committed_muldiv {
                 guest.io_device.memory_layout.clone(),
                 support::MAX_PADDED_TRACE_LENGTH,
                 bytecode_chunk_count,
-            );
+            )
+            .expect("base-profile committed preprocessing");
         let legacy_preprocessing = LegacyProverPreprocessing::new_committed(
             shared,
             committed_program_prover_data,
@@ -1687,7 +1688,8 @@ mod advice_committed {
                 guest.io_device.memory_layout.clone(),
                 support::MAX_PADDED_TRACE_LENGTH,
                 BYTECODE_CHUNK_COUNT,
-            );
+            )
+            .expect("base-profile committed preprocessing");
         let legacy_preprocessing = LegacyProverPreprocessing::new_committed(
             shared,
             committed_program_prover_data,

@@ -57,8 +57,6 @@ use jolt_field::JoltField;
 #[cfg(feature = "akita")]
 use jolt_poly::BindingOrder;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
-#[cfg(feature = "field-inline")]
-use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
@@ -225,17 +223,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             });
         }
         let stage_gammas = inputs.challenges.stage_gamma_powers();
-        // FR-on, the jolt fold sees the ordinary x-register slots only (the
-        // FR-operand slots ride the side table) — the same mask the
-        // reference kernel and the verifier's own fold apply.
-        #[cfg(feature = "field-inline")]
-        let masked_bytecode =
-            jolt_verifier::stages::field_inline_bytecode::suppress_field_operand_slots(
-                &program.bytecode.bytecode,
-            );
-        #[cfg(feature = "field-inline")]
-        let bytecode_rows: &[JoltInstructionRow] = &masked_bytecode;
-        #[cfg(not(feature = "field-inline"))]
         let bytecode_rows = &program.bytecode.bytecode;
         let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
             bytecode: bytecode_rows,
@@ -614,10 +601,18 @@ impl<F: JoltField> ProveRounds<F> for AddressKernel<F> {
 impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects composed claims and opening ids"
+        )
+    )]
     fn output_claims(
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
-    ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
+    ) -> Result<SumcheckOutputClaims<F, BytecodeReadRafAddressPhase<F>>, SumcheckKernelError<F>>
+    {
         self.progress.require_complete()?;
         let mut intermediate =
             self.entry_weight * self.entry_trace.evals()[0] * self.entry_expected.evals()[0];
@@ -639,7 +634,8 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
         Ok(BytecodeReadRafAddressPhaseOutputClaims {
             intermediate,
             val_stages,
-        })
+        }
+        .into())
     }
 }
 

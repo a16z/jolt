@@ -13,7 +13,21 @@
 //! *input* derived (resolved before binding), so this relation overrides
 //! `derive_input_term` rather than `derive_output_term`.
 
-use jolt_claims::protocols::jolt::relations;
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::ComposedClaims;
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::FieldProductUniskipInputs;
+
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::{
+    ProductUniskip as SelectedSymbolic, UniskipInputs as SelectedInputs,
+    UniskipOutputs as SelectedOutputs,
+};
+#[cfg(not(feature = "field-inline"))]
+use jolt_claims::protocols::jolt::relations::spartan::{
+    ProductUniskip as SelectedSymbolic, ProductUniskipInputClaims as SelectedInputs,
+    ProductUniskipOutputClaims as SelectedOutputs,
+};
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductUniskipInputClaims, ProductUniskipOutputClaims,
 };
@@ -35,46 +49,36 @@ use crate::VerifierError;
 /// from its own sumcheck point), so the input points are left empty.
 pub fn product_uniskip_input_values_from_stage1<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
-) -> ProductUniskipInputClaims<F> {
+) -> SelectedInputs<F> {
     let outer = &stage1.output_values.outer_remainder;
-    ProductUniskipInputClaims {
+    let inputs = ProductUniskipInputClaims {
         product: outer.product,
         should_branch: outer.should_branch,
         should_jump: outer.should_jump,
-    }
+    };
+    #[cfg(feature = "field-inline")]
+    let inputs = ComposedClaims {
+        base: inputs,
+        field_inline: FieldProductUniskipInputs {
+            product: outer.field_inline.product,
+            inv_product: outer.field_inline.inv_product,
+        },
+    };
+    inputs
 }
 
 #[derive(Clone)]
 pub struct ProductUniskip<F: JoltField> {
-    symbolic: relations::spartan::ProductUniskip,
+    symbolic: SelectedSymbolic,
     tau_high: F,
-    /// The two FR lane input values (`FieldProduct`, `FieldInvProduct`
-    /// openings at `FieldRegistersSpartanOuter`), composed in from the
-    /// stage-1 FR carrier through
-    /// [`with_field_inline_inputs`](Self::with_field_inline_inputs). The
-    /// composed `input_claim` consumes them at the lane indices following the
-    /// ordinary lanes and fails closed without them.
-    #[cfg(feature = "field-inline")]
-    field_inline_inputs: Option<[F; 2]>,
 }
 
 impl<F: JoltField> ProductUniskip<F> {
     pub fn new(dimensions: SpartanProductDimensions, tau_high: F) -> Self {
         Self {
-            symbolic: relations::spartan::ProductUniskip::new(dimensions),
+            symbolic: SelectedSymbolic::new(dimensions),
             tau_high,
-            #[cfg(feature = "field-inline")]
-            field_inline_inputs: None,
         }
-    }
-
-    /// The relation composed with the FR lane input values
-    /// (`[FieldProduct, FieldInvProduct]` at `FieldRegistersSpartanOuter`)
-    /// from stage 1's FR carrier.
-    #[cfg(feature = "field-inline")]
-    pub fn with_field_inline_inputs(mut self, product: F, inv_product: F) -> Self {
-        self.field_inline_inputs = Some([product, inv_product]);
-        self
     }
 }
 
@@ -86,7 +90,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
-    type Symbolic = relations::spartan::ProductUniskip;
+    type Symbolic = SelectedSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -95,11 +99,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _input_points: &ProductUniskipInputClaims<Vec<F>>,
-    ) -> Result<ProductUniskipOutputClaims<Vec<F>>, VerifierError> {
-        Ok(ProductUniskipOutputClaims {
+        _input_points: &SelectedInputs<Vec<F>>,
+    ) -> Result<SelectedOutputs<Vec<F>>, VerifierError> {
+        let output = ProductUniskipOutputClaims {
             uniskip: sumcheck_point.to_vec(),
-        })
+        };
+        #[cfg(feature = "field-inline")]
+        let output = output.into();
+        Ok(output)
     }
 
     fn derive_input_term(
@@ -135,66 +142,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
             }
         }
     }
-
-    /// The composed input claim over the feature-aware lane domain: the
-    /// ordinary three lanes (the jolt symbolic `input_expression`, whose
-    /// `UniskipLagrangeWeight`s already evaluate over the composed domain) plus
-    /// the two FR lanes at the following indices — the same Lagrange-weighted
-    /// fold, extended per `specs/field-inline-protocol.md` "Stage 2
-    /// Composition". The jolt symbolic expression cannot name the FR openings,
-    /// so the FR contribution comes from the jolt-claims composed-lane helper
-    /// (pinned against the field-constraint product rows in `jolt-r1cs`).
-    #[cfg(feature = "field-inline")]
-    fn input_claim(
-        &self,
-        input_values: &ProductUniskipInputClaims<F>,
-        challenges: &NoChallenges<F>,
-    ) -> Result<F, VerifierError> {
-        use jolt_claims::protocols::field_inline::geometry::product::{
-            composed_uniskip_input_contribution, FieldProductLaneInputs,
-        };
-        use jolt_claims::InputClaims as _;
-        use jolt_claims::SumcheckChallenges as _;
-        use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
-
-        let ordinary = self.symbolic().input_expression::<F>().try_evaluate(
-            |id| {
-                input_values
-                    .resolve_input(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
-            },
-            |id| {
-                challenges
-                    .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
-            },
-            |id| self.derive_input_term(id, challenges),
-        )?;
-
-        let [product, inv_product] = self.field_inline_inputs.ok_or_else(|| {
-            public_input_failed(
-                "field-inline product uni-skip inputs not composed (the stage-2 front must \
-                 supply them from the stage-1 FR carrier before the input claim)",
-            )
-        })?;
-        let weights = centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, self.tau_high)
-            .map_err(public_input_failed)?;
-        let field_inline = composed_uniskip_input_contribution(
-            &weights,
-            SPARTAN_PRODUCT_BASE_LANES,
-            &FieldProductLaneInputs {
-                product,
-                inv_product,
-            },
-        )
-        .ok_or_else(|| {
-            public_input_failed(format!(
-                "composed product uni-skip weights do not cover the FR lanes (domain size \
-                 {SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE})"
-            ))
-        })?;
-        Ok(ordinary + field_inline)
-    }
 }
 
 #[cfg(all(test, feature = "field-inline"))]
@@ -220,7 +167,13 @@ mod tests {
         };
         let field_product = Fr::from_u64(11);
         let field_inv_product = Fr::from_u64(13);
-        let relation = relation.with_field_inline_inputs(field_product, field_inv_product);
+        let inputs = ComposedClaims {
+            base: inputs,
+            field_inline: FieldProductUniskipInputs {
+                product: field_product,
+                inv_product: field_inv_product,
+            },
+        };
 
         let weights =
             centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high).unwrap();
@@ -241,22 +194,5 @@ mod tests {
             .input_claim(&inputs, &NoChallenges::default())
             .unwrap();
         assert_eq!(composed, expected);
-    }
-
-    /// An FR-on build whose FR inputs were never supplied cannot compute the
-    /// composed input claim — the producer path (no FR proving yet) fails
-    /// closed here rather than silently proving the 3-lane fold.
-    #[test]
-    fn composed_input_claim_requires_field_inline_inputs() {
-        let relation = ProductUniskip::new(SpartanProductDimensions::new(4), Fr::from_u64(23));
-        let inputs = ProductUniskipInputClaims::<Fr> {
-            product: Fr::from_u64(3),
-            should_branch: Fr::from_u64(5),
-            should_jump: Fr::from_u64(7),
-        };
-
-        assert!(relation
-            .input_claim(&inputs, &NoChallenges::default())
-            .is_err());
     }
 }

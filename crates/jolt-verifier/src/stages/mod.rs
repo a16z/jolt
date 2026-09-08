@@ -231,3 +231,6 @@ impl PrecommittedSchedule {
         }
     }
 }
+
+#[cfg(feature = "field-inline")]
+pub mod composed;

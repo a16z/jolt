@@ -10,6 +10,8 @@
 //! backend, and the same backend's `PrepareKernel<F, R>` remainder slot
 //! reclaims it once the uni-skip challenge is drawn.
 
+use jolt_verifier::stages::relations::OpeningIdOf;
+
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::JoltField;
@@ -29,8 +31,8 @@ pub trait UniskipKernel<F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     /// Compute the uni-skip first-round state and park it in the session

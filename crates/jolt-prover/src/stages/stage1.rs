@@ -7,8 +7,6 @@
 //! uni-skip polynomial, the remainder rounds) is behind the backend's
 //! `spartan_outer_uniskip` and `spartan_outer_remainder` slots.
 
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -28,8 +26,6 @@ use jolt_verifier::stages::stage1::outputs::{
     Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
-#[cfg(feature = "field-inline")]
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessPlane;
 
 use crate::recorder::ProofMode;
@@ -121,21 +117,8 @@ where
     #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof;
 
-    #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-    let mut claims =
-        Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
-    #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-    let mut clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
-    // Attach the FR Spartan-outer appendage the composed remainder kernel
-    // published: `claims` is the wire carrier `stage1::verify` requires
-    // fail-closed on FR-on proofs, `clear_output` the cross-stage carrier the
-    // stage-2 recipe's FR wiring consumes.
-    #[cfg(feature = "field-inline")]
-    {
-        let field_inline_outer = field_inline_outer_claims(session)?;
-        claims.field_inline_outer = Some(field_inline_outer.clone());
-        clear_output.field_inline_output_values = Some(field_inline_outer);
-    }
+    let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
+    let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
     Ok(Stage1ProverOutput {
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
@@ -145,40 +128,6 @@ where
         uniskip_witness: proved_uniskip.witness,
         #[cfg(feature = "zk")]
         committed_witness,
-    })
-}
-
-/// Assemble the FR Spartan-outer appendage claims from the values the
-/// composed remainder kernel parked in the session (taken here: the driver
-/// already composed them into its batch view), through the shared
-/// typed-claims constructor (ids resolved in appended-column order — the
-/// same `outer_output_openings` order the verifier's seam absorbs).
-#[cfg(feature = "field-inline")]
-fn field_inline_outer_claims<F: JoltField>(
-    session: &mut ProofSession,
-) -> Result<FieldRegistersSpartanOuterOutputClaims<F>, ProverError<F>> {
-    use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings;
-    use jolt_claims::OutputClaims as _;
-    use jolt_kernels::FieldInlineOuterAppendage;
-
-    let FieldInlineOuterAppendage(values) =
-        session
-            .take::<FieldInlineOuterAppendage<F>>()
-            .ok_or(ProverError::Verifier(VerifierError::MissingProofPayload {
-                field: "stage1 FR Spartan-outer appendage (composed remainder kernel)",
-            }))?;
-    let openings = outer_output_openings();
-    FieldRegistersSpartanOuterOutputClaims::from_opening_values(|id| {
-        openings
-            .iter()
-            .position(|candidate| candidate == id)
-            .and_then(|position| values.get(position).copied())
-    })
-    .map_err(|error| {
-        ProverError::Verifier(VerifierError::StageClaimSumcheckFailed {
-            stage: "Stage1Batch".to_string(),
-            reason: format!("FR Spartan-outer appendage assembly failed: {error}"),
-        })
     })
 }
 
@@ -199,7 +148,6 @@ mod field_inline_round_trip {
     use jolt_poly::Polynomial;
     use jolt_program::execution::OwnedTrace;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_verifier::stages::stage1::field_inline as stage1_field_inline;
     use jolt_verifier::stages::stage2::product_tau_low;
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
@@ -223,12 +171,7 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The FR appendage rides both carriers, and they agree.
-        let field_inline_outer = out.claims.field_inline_outer.clone().unwrap();
-        assert_eq!(
-            out.clear_output.field_inline_output_values.as_ref(),
-            Some(&field_inline_outer)
-        );
+        let field_inline_outer = &out.claims.outer.outer_remainder.field_inline;
 
         // The appendage values are honest evaluations: each FR cycle-domain
         // column's MLE at the stage-1 cycle binding (`tau_low`, the point
@@ -239,7 +182,7 @@ mod field_inline_round_trip {
             jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
                 .into_iter()
                 .zip(
-                    jolt_claims::OutputClaims::opening_values(&field_inline_outer),
+                    jolt_claims::OutputClaims::opening_values(field_inline_outer),
                 )
         {
             let table = field_inline_oracle
@@ -273,8 +216,6 @@ mod field_inline_round_trip {
         let batch_challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         sumchecks.validate_output_claims(&out.claims.outer).unwrap();
-        let (sumchecks, attached) =
-            stage1_field_inline::compose_outer_outputs(sumchecks, &out.claims).unwrap();
         let input_values = Stage1BatchInputClaims {
             outer_remainder: outer_remainder_input_values_from_uniskip_output(
                 out.claims.uniskip_output_claim,
@@ -292,7 +233,6 @@ mod field_inline_round_trip {
             )
             .unwrap();
         sumchecks.append_output_claims(&mut transcript, &out.claims.outer);
-        stage1_field_inline::append_outer_openings(&mut transcript, &attached);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }

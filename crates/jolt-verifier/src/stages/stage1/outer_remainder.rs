@@ -19,13 +19,28 @@
 //! in the stage-1 verifier; this relation consumes that uni-skip's reduced opening
 //! as its input claim.
 
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::ComposedClaims;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
+
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::{
+    OuterInputs as SelectedInputs, OuterOutputs as SelectedOutputs,
+    OuterRemainder as SelectedSymbolic,
+};
+#[cfg(not(feature = "field-inline"))]
+use jolt_claims::protocols::jolt::relations::spartan::{
+    OuterRemainder as SelectedSymbolic, OuterRemainderInputClaims as SelectedInputs,
+    OuterRemainderOutputClaims as SelectedOutputs,
+};
 use std::sync::OnceLock;
 
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderInputClaims, OuterRemainderOutputClaims,
 };
-use jolt_claims::protocols::jolt::{relations, JoltDerivedId, JoltRelationId, SpartanOuterPublic};
+use jolt_claims::protocols::jolt::{JoltDerivedId, JoltRelationId, SpartanOuterPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_r1cs::constraints::jolt::{
@@ -38,12 +53,20 @@ use crate::VerifierError;
 /// Wire the consumed opening *value* from the Spartan outer uni-skip's reduced output
 /// claim: only the value feeds the input claim (the output point comes from this
 /// relation's own sumcheck point).
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects a composed claim or opening id"
+    )
+)]
 pub fn outer_remainder_input_values_from_uniskip_output<F: JoltField>(
     uniskip_output_claim: F,
-) -> OuterRemainderInputClaims<F> {
+) -> SelectedInputs<F> {
     OuterRemainderInputClaims {
         outer_uniskip: uniskip_output_claim,
     }
+    .into()
 }
 
 /// The factored-form constituents, indexed for O(1) resolution. Built once
@@ -110,37 +133,11 @@ impl<F: JoltField> OuterRemainderCoefficients<F> {
             SpartanOuterPublic::BzConstant => Some(self.bz_constant),
         }
     }
-
-    /// The factored composed output claim
-    /// `tau_kernel · (az_c + Σ az[i]·o[i]) · (bz_c + Σ bz[i]·o[i])` over the full
-    /// selected opening vector (ordinary RV64 columns plus any appended
-    /// field-inline columns). The clear field-inline path checks this factored
-    /// form directly: the rv64 symbolic expression names only the 35 ordinary
-    /// openings, so it cannot express the composed claim.
-    #[cfg(feature = "field-inline")]
-    fn factored_output_claim(&self, openings: &[F]) -> F {
-        debug_assert_eq!(openings.len(), self.az_weights.len());
-        let az = self
-            .az_weights
-            .iter()
-            .zip(openings)
-            .fold(self.az_constant, |acc, (weight, opening)| {
-                acc + *weight * *opening
-            });
-        let bz = self
-            .bz_weights
-            .iter()
-            .zip(openings)
-            .fold(self.bz_constant, |acc, (weight, opening)| {
-                acc + *weight * *opening
-            });
-        self.tau_kernel * az * bz
-    }
 }
 
 #[derive(Clone)]
 pub struct OuterRemainder<F: JoltField> {
-    symbolic: relations::spartan::OuterRemainder,
+    symbolic: SelectedSymbolic,
     variable_count: usize,
     /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
     /// three inputs to the `SpartanOuterPublic` coefficient table. Both exist
@@ -155,15 +152,6 @@ pub struct OuterRemainder<F: JoltField> {
     /// `derive_output_term` call so the ZK path (which never evaluates the output
     /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
     coefficients: OnceLock<OuterRemainderCoefficients<F>>,
-    /// The 13 FR-local Spartan-outer opening values (appended-column order),
-    /// composed in by the stage-1 front through
-    /// [`with_field_inline_outputs`](Self::with_field_inline_outputs): the
-    /// verifier from the proof's claims, the prover from the appendage its
-    /// composed remainder kernel parks in the session. `None` until composed;
-    /// the composed expected-output shell fails closed without it (the ZK
-    /// path never evaluates that shell).
-    #[cfg(feature = "field-inline")]
-    field_inline_outputs: Option<Vec<F>>,
 }
 
 impl<F: JoltField> OuterRemainder<F> {
@@ -175,35 +163,17 @@ impl<F: JoltField> OuterRemainder<F> {
         let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
         debug_assert!(variable_count >= dimensions.variables().len());
         Self {
-            symbolic: relations::spartan::OuterRemainder::new(dimensions),
+            symbolic: SelectedSymbolic::new(dimensions),
             variable_count,
             tau,
             uniskip_challenge,
             bound_point: OnceLock::new(),
             coefficients: OnceLock::new(),
-            #[cfg(feature = "field-inline")]
-            field_inline_outputs: None,
         }
     }
 
     pub fn uniskip_challenge(&self) -> F {
         self.uniskip_challenge
-    }
-
-    /// The relation composed with the FR-local Spartan-outer opening values
-    /// (appended-column order) — the wire appendage the composed
-    /// expected-output shell folds after the 35 ordinary openings.
-    #[cfg(feature = "field-inline")]
-    pub fn with_field_inline_outputs(mut self, values: Vec<F>) -> Self {
-        self.field_inline_outputs = Some(values);
-        self
-    }
-
-    /// The composed FR-local Spartan-outer opening values — read by the
-    /// prove-side driver's curated absorb.
-    #[cfg(feature = "field-inline")]
-    pub fn field_inline_outputs(&self) -> Option<&[F]> {
-        self.field_inline_outputs.as_deref()
     }
 
     /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
@@ -247,7 +217,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
-    type Symbolic = relations::spartan::OuterRemainder;
+    type Symbolic = SelectedSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -256,8 +226,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _input_points: &OuterRemainderInputClaims<Vec<F>>,
-    ) -> Result<OuterRemainderOutputClaims<Vec<F>>, VerifierError> {
+        _input_points: &SelectedInputs<Vec<F>>,
+    ) -> Result<SelectedOutputs<Vec<F>>, VerifierError> {
         // Capture the bound point for the lazy coefficient-table build; reject a
         // rebind at a different point (one bind per verification).
         let bound_point = self
@@ -270,7 +240,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             ));
         }
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
-        Ok(OuterRemainderOutputClaims {
+        let output = OuterRemainderOutputClaims {
             left_instruction_input: opening_point.clone(),
             right_instruction_input: opening_point.clone(),
             product: opening_point.clone(),
@@ -305,15 +275,35 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             advice: opening_point.clone(),
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
-            is_last_in_sequence: opening_point,
-        })
+            is_last_in_sequence: opening_point.clone(),
+        };
+        #[cfg(feature = "field-inline")]
+        let output = ComposedClaims {
+            base: output,
+            field_inline: FieldRegistersSpartanOuterOutputClaims {
+                rs1_value: opening_point.clone(),
+                rs2_value: opening_point.clone(),
+                rd_value: opening_point.clone(),
+                product: opening_point.clone(),
+                inv_product: opening_point.clone(),
+                add: opening_point.clone(),
+                sub: opening_point.clone(),
+                mul: opening_point.clone(),
+                inv: opening_point.clone(),
+                assert_eq: opening_point.clone(),
+                load_from_x: opening_point.clone(),
+                store_to_x: opening_point.clone(),
+                load_imm: opening_point.clone(),
+            },
+        };
+        Ok(output)
     }
 
     fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _input_points: &OuterRemainderInputClaims<Vec<F>>,
-        _output_points: &OuterRemainderOutputClaims<Vec<F>>,
+        _input_points: &SelectedInputs<Vec<F>>,
+        _output_points: &SelectedOutputs<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanOuter(public_id) = id else {
@@ -323,46 +313,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             .resolve(*public_id)
             .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
-
-    /// The composed expected output claim over the full selected opening
-    /// vector: the 35 ordinary openings (canonical order) followed by the 13
-    /// FR-local openings composed in via
-    /// [`with_field_inline_outputs`](OuterRemainder::with_field_inline_outputs).
-    /// The rv64 symbolic `output_expression` names only the ordinary openings,
-    /// so under `field-inline` the check evaluates the factored composed form
-    /// directly — the same `JoltSpartanOuterRemainder` coefficient source the
-    /// BlindFold constraint will lower.
-    #[cfg(feature = "field-inline")]
-    fn expected_output(
-        &self,
-        _input_points: &OuterRemainderInputClaims<Vec<F>>,
-        output_values: &OuterRemainderOutputClaims<F>,
-        _output_points: &OuterRemainderOutputClaims<Vec<F>>,
-        _challenges: &NoChallenges<F>,
-    ) -> Result<F, VerifierError> {
-        use crate::stages::relations::OutputClaims as _;
-
-        let field_inline = self.field_inline_outputs.as_deref().ok_or_else(|| {
-            public_input_failed(
-                "field-inline Spartan outer outputs not composed (the stage-1 front must \
-                 supply them before the batch check)",
-            )
-        })?;
-        let mut openings = output_values.opening_values();
-        openings.extend_from_slice(field_inline);
-        if openings.len() != self.variable_count {
-            return Err(public_input_failed(format!(
-                "composed Spartan outer opening count mismatch: got {}, selected R1CS has {}",
-                openings.len(),
-                self.variable_count,
-            )));
-        }
-        Ok(self.coefficients()?.factored_output_claim(&openings))
-    }
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = "test fixtures")]
+#[cfg_attr(
+    feature = "field-inline",
+    expect(clippy::indexing_slicing, reason = "test fixtures")
+)]
 #[expect(
     clippy::as_conversions,
     reason = "tests use plain arithmetic on fixture data"
@@ -441,6 +399,7 @@ mod tests {
     }
 
     /// All 35 produced opening *points* sharing a single opening point.
+    #[cfg(not(feature = "field-inline"))]
     fn output_points_at(point: &[Fr]) -> OuterRemainderOutputClaims<Vec<Fr>> {
         let next = || point.to_vec();
         OuterRemainderOutputClaims {
@@ -487,7 +446,7 @@ mod tests {
     /// clear check therefore evaluates the factored form over the full selected
     /// opening vector. This pins both the sizing invariant that used to panic
     /// (weight vectors follow the composed jolt-r1cs column count) and the
-    /// composed algebra: the `expected_output` override evaluates bit-identically
+    /// composed algebra: the symbolic output evaluates identically
     /// to `JoltSpartanOuterRemainder::expected_output_claim` over all 48
     /// openings (35 ordinary in canonical order, then the 13 appended FR-local
     /// columns).
@@ -524,15 +483,24 @@ mod tests {
 
         let rv64_count = SPARTAN_OUTER_R1CS_INPUTS.len();
         let (rv64_openings, field_inline_openings) = openings.split_at(rv64_count);
-        let relation = relation.with_field_inline_outputs(field_inline_openings.to_vec());
 
-        let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        let input_points = SelectedInputs::<Vec<Fr>>::default();
         let _ = relation
             .derive_opening_points(&remainder_challenges, &input_points)
             .unwrap();
-        let point = vec![Fr::from_u64(7); remainder_len];
-        let output_values = output_values_from(rv64_openings);
-        let output_points = output_points_at(&point);
+        let ids = jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings();
+        let output_values = ComposedClaims {
+            base: output_values_from(rv64_openings),
+            field_inline: FieldRegistersSpartanOuterOutputClaims::from_opening_values(|id| {
+                ids.iter()
+                    .position(|candidate| candidate == id)
+                    .map(|i| field_inline_openings[i])
+            })
+            .unwrap(),
+        };
+        let output_points = relation
+            .derive_opening_points(&remainder_challenges, &input_points)
+            .unwrap();
         let composed_output = relation
             .expected_output(
                 &input_points,
@@ -582,7 +550,7 @@ mod tests {
         let factored_output = factored.expected_output_claim(&openings).unwrap();
 
         let relation = OuterRemainder::new(dimensions, tau, uniskip_challenge);
-        let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        let input_points = SelectedInputs::<Vec<Fr>>::default();
         // Capture the bound point (the third coefficient-table input); the table
         // itself is built lazily by the first `derive_output_term` call.
         let _ = relation

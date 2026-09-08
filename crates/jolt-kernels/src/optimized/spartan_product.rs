@@ -11,22 +11,23 @@
 //! computed; the extension coefficients at in-domain nodes are the 0/1
 //! Lagrange selectors, so one integer pipeline serves every node.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::ids::VerifierOpeningId;
+use jolt_verifier::stages::relations::OpeningIdOf;
 use std::collections::BTreeMap;
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::product::{
     composed_remainder_factor_contributions, FieldProductLaneFactors,
 };
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
     write_lookup_output_to_rd_product,
 };
-use jolt_claims::protocols::jolt::{
-    JoltDerivedId, JoltOpeningId, SpartanProductVirtualizationPublic,
-};
+use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S128, S192, S256};
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
@@ -64,8 +65,6 @@ use super::support::{
     RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
-#[cfg(feature = "field-inline")]
-use crate::FieldInlineProductAppendage;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -429,11 +428,6 @@ struct ProductRemainderKernel<F: JoltField> {
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanProductRow>,
-    /// The FR product appendage, produced at extraction and parked in the
-    /// session by `park_residue` for the driver's composition.
-    #[cfg(feature = "field-inline")]
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    field_inline_appendage: Option<FieldRegistersProductOutputClaims<F>>,
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
@@ -595,7 +589,6 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             challenges: RoundChallenges::new(rounds),
             rows,
             #[cfg(feature = "field-inline")]
-            field_inline_appendage: None,
             #[cfg(feature = "field-inline")]
             fr_rows,
             lagrange_weights: weights,
@@ -712,25 +705,19 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
 impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
     type Relation = ProductRemainder<F>;
 
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects composed claims and opening ids"
+        )
+    )]
     fn output_claims(
         &mut self,
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
         let weights = self.cycle_weights();
-        // The FR product appendage rides to the driver through the session
-        // (parked by `park_residue`): its curated absorb, composed
-        // expected-output fold, and the stage-2 recipe's claim assembly read
-        // it from there.
-        #[cfg(feature = "field-inline")]
-        {
-            let [rs1_value, rs2_value, rd_value] = self.fr_claimed_inputs(&weights);
-            self.field_inline_appendage = Some(FieldRegistersProductOutputClaims {
-                rs1_value,
-                rs2_value,
-                rd_value,
-            });
-        }
         let ids = [
             left_instruction_input_product(),
             right_instruction_input_product(),
@@ -741,13 +728,24 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
             next_is_noop_product(),
             virtual_instruction_product(),
         ];
-        let claims: BTreeMap<JoltOpeningId, F> = ids
+        let claims: BTreeMap<OpeningIdOf<F, Self::Relation>, F> = ids
             .into_iter()
+            .map(Into::into)
             .zip(self.claimed_inputs(&weights).map_err(|_| {
                 SumcheckKernelError::InvariantViolation {
                     reason: "product opening walk re-extraction failed after the rounds",
                 }
             })?)
+            .collect();
+        #[cfg(feature = "field-inline")]
+        let claims: BTreeMap<_, _> = claims
+            .into_iter()
+            .chain(
+                selected_product_remainder_output_openings()
+                    .into_iter()
+                    .map(VerifierOpeningId::from)
+                    .zip(self.fr_claimed_inputs(&weights)),
+            )
             .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| {
             claims.get(id).copied().or_else(|| inputs.resolve_input(id))
@@ -784,13 +782,6 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
             )?;
         }
         Ok(())
-    }
-
-    #[cfg(feature = "field-inline")]
-    fn park_residue(self: Box<Self>, session: &mut ProofSession) {
-        if let Some(appendage) = self.field_inline_appendage {
-            session.park(FieldInlineProductAppendage(appendage));
-        }
     }
 }
 

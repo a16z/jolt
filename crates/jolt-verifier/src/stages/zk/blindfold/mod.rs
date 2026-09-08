@@ -54,7 +54,7 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias, OpeningEquality};
+use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
 #[cfg(not(feature = "field-inline"))]
@@ -62,7 +62,7 @@ use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEv
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
-    derived, opening,
+    opening,
     protocols::jolt::{
         geometry::{
             booleanity::{self, BooleanityDimensions},
@@ -75,11 +75,8 @@ use jolt_claims::{
             dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
             instruction, ram,
             spartan::{
-                branch_flag_product, jump_flag_product, left_instruction_input_product,
-                lookup_output_product, next_is_noop_product, outer_opening, outer_uniskip_opening,
-                product_outer_opening, product_should_branch_outer_opening,
-                product_should_jump_outer_opening, product_uniskip_opening,
-                right_instruction_input_product, SpartanOuterDimensions, SpartanProductDimensions,
+                outer_opening, outer_uniskip_opening, product_uniskip_opening,
+                SpartanOuterDimensions, SpartanProductDimensions,
             },
         },
         AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
@@ -167,6 +164,16 @@ enum VerifierPublicId {
 
 impl From<JoltDerivedId> for VerifierPublicId {
     fn from(id: JoltDerivedId) -> Self {
+        use jolt_claims::protocols::jolt::SpartanOuterPublic;
+        if let JoltDerivedId::SpartanOuter(public) = id {
+            return Self::SpartanOuter(match public {
+                SpartanOuterPublic::TauKernel => JoltSpartanOuterPublic::TauKernel,
+                SpartanOuterPublic::AzWeight(i) => JoltSpartanOuterPublic::AzWeight(i),
+                SpartanOuterPublic::BzWeight(i) => JoltSpartanOuterPublic::BzWeight(i),
+                SpartanOuterPublic::AzConstant => JoltSpartanOuterPublic::AzConstant,
+                SpartanOuterPublic::BzConstant => JoltSpartanOuterPublic::BzConstant,
+            });
+        }
         Self::Jolt(id)
     }
 }
@@ -255,7 +262,6 @@ fn add_batched_stage<F, C>(
     values: &SourceValues<F>,
     opening_ids: Vec<VerifierOpeningId>,
     aliases: Vec<OpeningAlias<VerifierOpeningId>>,
-    equalities: Vec<OpeningEquality<VerifierOpeningId>>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
     F: JoltField,
@@ -311,7 +317,6 @@ where
         values,
         opening_ids,
         aliases,
-        equalities,
         input_claim,
         output_claim,
     )
@@ -331,7 +336,6 @@ fn add_stage<F, C>(
     values: &SourceValues<F>,
     opening_ids: Vec<VerifierOpeningId>,
     aliases: Vec<OpeningAlias<VerifierOpeningId>>,
-    equalities: Vec<OpeningEquality<VerifierOpeningId>>,
     input_claim: VerifierExpr<F>,
     output_claim: VerifierExpr<F>,
 ) -> Result<Builder<F, C>, VerifierError>
@@ -361,7 +365,6 @@ where
             output_claims.commitments.clone(),
         )
         .output_claim_aliases(aliases)
-        .output_claim_equalities(equalities)
         .input_claim(input_claim)
         .output_claim(output_claim)
         .finish_stage()
@@ -434,8 +437,8 @@ fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<VerifierOp
 }
 
 /// Lift jolt-typed `(aliased, source)` pairs into composite [`OpeningAlias`] rows.
-fn composite_aliases(
-    pairs: impl IntoIterator<Item = (JoltOpeningId, JoltOpeningId)>,
+fn composite_aliases<O: Into<VerifierOpeningId>>(
+    pairs: impl IntoIterator<Item = (O, O)>,
 ) -> Vec<OpeningAlias<VerifierOpeningId>> {
     pairs
         .into_iter()
@@ -802,17 +805,6 @@ where
                 }
             })?;
             let stage_gamma_powers = bytecode_challenges.stage_gamma_powers();
-            // FR-on, the jolt fold must see the ordinary x-register slots only
-            // (the FR-operand slots ride the side table): see
-            // `field_inline_bytecode::suppress_field_operand_slots`.
-            #[cfg(feature = "field-inline")]
-            let masked_bytecode =
-                crate::stages::field_inline_bytecode::suppress_field_operand_slots(
-                    &full_program.bytecode.bytecode,
-                );
-            #[cfg(feature = "field-inline")]
-            let bytecode_rows: &[_] = &masked_bytecode;
-            #[cfg(not(feature = "field-inline"))]
             let bytecode_rows = &full_program.bytecode.bytecode;
             #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
             let mut v =

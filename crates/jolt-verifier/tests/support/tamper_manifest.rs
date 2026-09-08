@@ -436,7 +436,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
     #[cfg(feature = "field-inline")]
     checked_standard(
         "stage1.claims.field_inline_outer",
-        "claims.stage1.field_inline_outer",
+        "claims.stage1.outer.outer_remainder.field_inline.*",
         VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
@@ -549,17 +549,16 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "field-inline fixture test offsets each FR claim-reduction output (the stage-2 fold \
-         and the explicit FR product-row alias equality consume them)",
+         and the generated alias check consume them)",
     ),
     #[cfg(feature = "field-inline")]
     checked_standard(
         "stage2.claims.field_inline_product",
-        "claims.stage2.field_inline_product",
+        "claims.stage2.batch_outputs.product_remainder.field_inline.*",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "field-inline fixture test offsets each FR product-appendage opening (the composed \
-         remainder's FR lanes and the explicit alias equality consume them)",
+        "field-inline fixture test offsets each composed FR product opening (the remainder and generated alias check consume them)",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
@@ -1211,10 +1210,26 @@ pub fn target_names_are_unique() -> bool {
         .all(|target| names.insert(target.name))
 }
 
-pub fn manifest_paths() -> BTreeSet<&'static str> {
+pub fn manifest_paths() -> BTreeSet<String> {
     all_targets()
         .into_iter()
         .flat_map(expand_manifest_path)
+        .map(|path| {
+            let path = path.to_owned();
+            #[cfg(feature = "field-inline")]
+            for prefix in [
+                "claims.stage1.outer.outer_remainder.",
+                "claims.stage2.batch_outputs.product_remainder.",
+                "claims.stage6a.bytecode_read_raf.",
+            ] {
+                if let Some(field) = path.strip_prefix(prefix) {
+                    if !field.starts_with("field_inline.") {
+                        return format!("{prefix}base.{field}");
+                    }
+                }
+            }
+            path
+        })
         .collect()
 }
 
@@ -1304,6 +1319,28 @@ pub fn assert_verifier_fixture_tamper_rejects(
 
 fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
     match target.path {
+        #[cfg(feature = "field-inline")]
+        "claims.stage1.outer.outer_remainder.field_inline.*" => vec![
+            "claims.stage1.outer.outer_remainder.field_inline.rs1_value",
+            "claims.stage1.outer.outer_remainder.field_inline.rs2_value",
+            "claims.stage1.outer.outer_remainder.field_inline.rd_value",
+            "claims.stage1.outer.outer_remainder.field_inline.product",
+            "claims.stage1.outer.outer_remainder.field_inline.inv_product",
+            "claims.stage1.outer.outer_remainder.field_inline.add",
+            "claims.stage1.outer.outer_remainder.field_inline.sub",
+            "claims.stage1.outer.outer_remainder.field_inline.mul",
+            "claims.stage1.outer.outer_remainder.field_inline.inv",
+            "claims.stage1.outer.outer_remainder.field_inline.assert_eq",
+            "claims.stage1.outer.outer_remainder.field_inline.load_from_x",
+            "claims.stage1.outer.outer_remainder.field_inline.store_to_x",
+            "claims.stage1.outer.outer_remainder.field_inline.load_imm",
+        ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage2.batch_outputs.product_remainder.field_inline.*" => vec![
+            "claims.stage2.batch_outputs.product_remainder.field_inline.rs1_value",
+            "claims.stage2.batch_outputs.product_remainder.field_inline.rs2_value",
+            "claims.stage2.batch_outputs.product_remainder.field_inline.rd_value",
+        ],
         "claims.stage1.outer.*" => vec![
             "claims.stage1.outer.outer_remainder.left_instruction_input",
             "claims.stage1.outer.outer_remainder.right_instruction_input",
@@ -1423,6 +1460,7 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
 
 fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>) {
     match value {
+        Value::Null if prefix.ends_with(".field_inline") => {}
         Value::Object(map) => {
             for (key, value) in map {
                 collect_leaf_paths(&format!("{prefix}.{key}"), value, paths);
@@ -1434,6 +1472,13 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
     }
 }
 
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects composed claim and opening types"
+    )
+)]
 pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
     let zero = F::zero();
     let optional = fill_optionals.then_some(zero);
@@ -1480,7 +1525,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     is_compressed: zero,
                     is_first_in_sequence: zero,
                     is_last_in_sequence: zero,
-                },
+                }.into(),
             },
         ),
         stage2: Stage2OutputClaims::new(
@@ -1500,7 +1545,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
-                },
+                }.into(),
                 instruction_claim_reduction:
                     stage2::outputs::InstructionClaimReductionOutputClaims {
                         lookup_output: zero,
@@ -1589,7 +1634,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
             bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
                 intermediate: zero,
                 val_stages: Vec::new(),
-            },
+            }.into(),
             booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
                 intermediate: zero,
             },

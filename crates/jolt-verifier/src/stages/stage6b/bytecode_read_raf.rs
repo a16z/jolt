@@ -214,15 +214,6 @@ fn fold_stage_values<F: JoltField>(
         )));
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
-    // FR-on, the jolt fold must see the ordinary x-register slots only (the
-    // FR-operand slots ride the side table): see
-    // `field_inline_bytecode::suppress_field_operand_slots`.
-    #[cfg(feature = "field-inline")]
-    let masked_bytecode =
-        crate::stages::field_inline_bytecode::suppress_field_operand_slots(fold.bytecode);
-    #[cfg(feature = "field-inline")]
-    let bytecode_rows: &[JoltInstructionRow] = &masked_bytecode;
-    #[cfg(not(feature = "field-inline"))]
     let bytecode_rows = fold.bytecode;
     let row_values = bytecode::read_raf_stage_values(BytecodeReadRafStageValueInputs {
         bytecode: bytecode_rows,
