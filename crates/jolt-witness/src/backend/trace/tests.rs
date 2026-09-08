@@ -1213,3 +1213,36 @@ fn backend_drops_only_canonical_trailing_padding() {
         [1, 1, 1, 1].map(Fr::from_u64)
     );
 }
+
+/// The dense-grid capacity formula: in-range shapes pass through, the
+/// profiling-scale shape that used to abort the process (`ram_K = 4096`,
+/// `log_T = 22`, 32-byte field: a 2^39-byte request) is refused with an
+/// actionable error, and the element/byte products refuse on overflow
+/// instead of wrapping.
+#[test]
+fn dense_grid_len_is_capped_and_overflow_checked() {
+    assert_eq!(checked_dense_grid_len::<Fr>(4096, 1 << 10), Ok(4096 << 10));
+    assert_eq!(
+        checked_dense_grid_len::<Fr>(
+            MAX_DENSE_GRID_BYTES / core::mem::size_of::<Fr>() / (1 << 10),
+            1 << 10
+        ),
+        Ok(MAX_DENSE_GRID_BYTES / core::mem::size_of::<Fr>())
+    );
+
+    let refused = checked_dense_grid_len::<Fr>(4096, 1 << 22).unwrap_err();
+    let reason = match refused {
+        WitnessError::InvalidDimensions { reason, .. } => reason,
+        other => format!("expected InvalidDimensions, got {other:?}"),
+    };
+    assert!(reason.contains(&(1_u64 << 39).to_string()), "{reason}");
+
+    assert!(matches!(
+        checked_dense_grid_len::<Fr>(usize::MAX, 2),
+        Err(WitnessError::InvalidDimensions { .. })
+    ));
+    assert!(matches!(
+        checked_dense_grid_len::<Fr>(usize::MAX / 8, 1),
+        Err(WitnessError::InvalidDimensions { .. })
+    ));
+}

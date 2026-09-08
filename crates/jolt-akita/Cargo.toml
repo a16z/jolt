@@ -11,6 +11,7 @@ workspace = true
 [features]
 default = []
 metal = ["dep:akita-metal"]
+profiling = []
 
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
@@ -38,6 +39,7 @@ tracing.workspace = true
 akita-metal = { workspace = true, optional = true, features = ["parallel"] }
 
 [dev-dependencies]
+bincode.workspace = true
 criterion = { workspace = true }
 jolt-dory = { workspace = true }
 # Subscriber stack only (bench tracing setup); no summary pipeline.

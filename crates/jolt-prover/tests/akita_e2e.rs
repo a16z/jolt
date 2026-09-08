@@ -204,6 +204,19 @@ mod akita_tests {
         assert_eq!(config.one_hot_config.committed_chunk_bits(), 4);
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("Akita proof must verify");
+        let encoded = bincode::serde::encode_to_vec(&proved.proof, bincode::config::standard())
+            .expect("serialize packed proof");
+        let (decoded, consumed): (Proof, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                .expect("deserialize packed proof");
+        assert_eq!(consumed, encoded.len());
+        let decoded = ProvedGuest {
+            preprocessing: proved.preprocessing.clone(),
+            public_io: proved.public_io.clone(),
+            proof: decoded,
+            trusted_advice_commitment: None,
+        };
+        verify(&decoded).expect("deserialized proof must verify");
 
         let tamper = |mutate: &dyn Fn(&mut ClearProofClaims<AkitaField>)| {
             let mut proof = proved.proof.clone();
@@ -303,6 +316,29 @@ mod akita_tests {
             let proved = prove_guest(run, config, true, &trusted);
             assert!(proved.proof.untrusted_advice_commitment.is_some());
             verify(&proved).expect("advice proof must verify");
+            if with_trusted {
+                assert!(
+                    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                        &proved.preprocessing.verifier,
+                        &proved.public_io,
+                        &proved.proof,
+                        proved.proof.untrusted_advice_commitment.as_ref(),
+                    )
+                    .is_err()
+                );
+            }
+            let mut tampered = proved;
+            let mut encoded = serde_json::to_value(&tampered.proof.joint_opening_proof)
+                .expect("serialize opening");
+            let selection = encoded
+                .get_mut("schedule_selection")
+                .and_then(serde_json::Value::as_array_mut)
+                .expect("fixed-width selection");
+            selection[0] =
+                serde_json::Value::from(selection[0].as_u64().expect("selection byte") ^ 1);
+            tampered.proof.joint_opening_proof =
+                serde_json::from_value(encoded).expect("decode tampered opening");
+            assert!(verify(&tampered).is_err());
         }
     }
 

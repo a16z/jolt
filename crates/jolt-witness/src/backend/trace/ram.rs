@@ -23,7 +23,8 @@ impl<T: TraceSource> TraceBackend<T> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
         let mut state = self.initial_ram_state()?;
-        let mut values = jolt_utils::unsafe_allocate_zero_vec(addresses * cycles);
+        let mut values =
+            jolt_utils::unsafe_allocate_zero_vec(checked_dense_grid_len::<F>(addresses, cycles)?);
 
         for cycle in 0..cycles {
             for (address, value) in state.iter().copied().enumerate() {
@@ -51,7 +52,8 @@ impl<T: TraceSource> TraceBackend<T> {
     pub(crate) fn materialize_ram_ra<F: JoltField>(&self) -> Result<Vec<F>, WitnessError> {
         let cycles = checked_pow2(self.config.log_t)?;
         let addresses = self.config.ram_k;
-        let mut values = jolt_utils::unsafe_allocate_zero_vec(addresses * cycles);
+        let mut values =
+            jolt_utils::unsafe_allocate_zero_vec(checked_dense_grid_len::<F>(addresses, cycles)?);
 
         for cycle in 0..cycles {
             let Some(row) = self.trace.trace.get(cycle) else {

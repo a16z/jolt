@@ -101,7 +101,6 @@ where
         config.trace_polynomial_order,
         config.one_hot_config,
         trusted_advice.is_some(),
-        untrusted_advice_present,
         false,
     )?;
 
@@ -147,6 +146,7 @@ where
     // Precommitted objects precede the trace because their profiles select its grouped row.
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice::<PCS>(
+            PCS::transparent_setup_context(&preprocessing.pcs_setup),
             JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
             public_io.memory_layout.max_untrusted_advice_size as usize,

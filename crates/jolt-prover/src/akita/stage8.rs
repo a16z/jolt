@@ -11,6 +11,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
 use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage8::packed::{
@@ -54,6 +55,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     untrusted_advice: Option<&AdviceObject<PCS>>,
     trusted_advice: Option<&AdviceObject<PCS>>,
     program: Option<&DirectProgramObjects<PCS>>,
+    stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     transcript: &mut T,
@@ -81,7 +83,7 @@ where
         })
         .map_err(batch_failed::<F>)?;
 
-    let leaves = leaf_claims(&checked.precommitted, stage6b, stage7)?;
+    let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
 
     let packed_claims =
         one_hot_trace_packed_claims(&plan, chunk_width, &leaves).map_err(ProverError::Verifier)?;

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use ark_serialize::CanonicalSerialize;
 use jolt_akita::{
-    AkitaField, AkitaProverSetup, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
-    PrecommittedScheduleParams,
+    AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AkitaVerifierSetup, PrecommittedScheduleParams,
 };
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
@@ -102,6 +102,7 @@ fn grouped_setup(
         layout_digest,
         one_hot_k,
         precommitted_schedule,
+        AkitaScheduleArtifacts::shared_from_default_directory(),
     );
     Ok(AkitaScheme::setup(params)?)
 }
@@ -129,12 +130,15 @@ pub fn preprocess_committed_with_advice(
                 reason: "entry address is absent from bytecode preprocessing".to_owned(),
             })?;
     let trace_order = config.trace_polynomial_order;
-    let direct_program =
-        commit_direct_program::<AkitaScheme>(&program, bytecode_chunk_count, trace_order).map_err(
-            |error| PreprocessingError::InvalidCommittedProgram {
-                reason: error.to_string(),
-            },
-        )?;
+    let direct_program = commit_direct_program::<AkitaScheme>(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &program,
+        bytecode_chunk_count,
+        trace_order,
+    )
+    .map_err(|error| PreprocessingError::InvalidCommittedProgram {
+        reason: error.to_string(),
+    })?;
     let direct_program_physical_vars: Vec<usize> = direct_program
         .objects
         .iter()
@@ -229,11 +233,15 @@ pub fn commit_trusted_advice(
     .map_err(|_| PreprocessingError::InvalidAdvice {
         reason: "trusted advice size does not fit usize".to_owned(),
     })?;
-    commit_advice::<AkitaScheme>(JoltAdviceKind::Trusted, advice_bytes, max_bytes).map_err(
-        |error| PreprocessingError::InvalidAdvice {
-            reason: error.to_string(),
-        },
+    commit_advice::<AkitaScheme>(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        JoltAdviceKind::Trusted,
+        advice_bytes,
+        max_bytes,
     )
+    .map_err(|error| PreprocessingError::InvalidAdvice {
+        reason: error.to_string(),
+    })
 }
 
 /// The physical arity of an advice object sized to the program's advice capacity.
