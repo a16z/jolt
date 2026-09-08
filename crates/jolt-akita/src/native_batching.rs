@@ -15,9 +15,8 @@
 //! statement shape, bridges Jolt's Fiat-Shamir transcript into Akita's, and
 //! embeds the backend proof bytes wholesale.
 
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{AkitaError, AkitaTranscript};
-use akita_schedules::TrustedScheduleCatalog;
 use std::sync::Arc;
 
 use akita_prover::{
@@ -378,8 +377,8 @@ impl AkitaNativeBatching {
             .map(|entry| &entry.claim.commitment)
             .collect::<Vec<_>>();
         let schedules = match setup.one_hot_k {
-            AKITA_ONE_HOT_K16 => setup.one_hot_k16_scheme()?.schedules(),
-            AKITA_ONE_HOT_K256 => setup.one_hot_k256_scheme()?.schedules(),
+            AKITA_ONE_HOT_K16 => setup.one_hot_k16_scheme()?.schedules().catalog(),
+            AKITA_ONE_HOT_K256 => setup.one_hot_k256_scheme()?.schedules().catalog(),
             _ => unreachable!("one-hot K was validated by setup"),
         };
         let (selection, precommitted_backend, main_backend, backend_proof) =
@@ -388,7 +387,6 @@ impl AkitaNativeBatching {
                 &precommitted_commitments,
                 &main.commitment,
                 proof,
-                &backend_main_point,
                 setup.one_hot_k,
             )?;
         let mut akita_transcript =
@@ -585,7 +583,7 @@ where
 /// prover: the shared point, per-polynomial claimed values, the group
 /// commitment, and the commit-time hint.
 fn single_group_batch<'a, Cfg, P>(
-    schedules: &TrustedScheduleCatalog,
+    schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],
     evaluations: &[AkitaField],
     polynomials: &'a [&'a P],
@@ -819,10 +817,10 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         // shapes are validated against the trusted schedule, so a malformed
         // proof cannot drive shape-backed allocations (see `shape_guard`).
         let schedules = match commitment.backend_flavor {
-            AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules(),
+            AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog(),
             AkitaBackendFlavor::OneHot => match setup.one_hot_k {
-                AKITA_ONE_HOT_K16 => setup.one_hot_k16_scheme()?.schedules(),
-                AKITA_ONE_HOT_K256 => setup.one_hot_k256_scheme()?.schedules(),
+                AKITA_ONE_HOT_K16 => setup.one_hot_k16_scheme()?.schedules().catalog(),
+                AKITA_ONE_HOT_K256 => setup.one_hot_k256_scheme()?.schedules().catalog(),
                 _ => unreachable!("the one-hot setup geometry was validated during setup"),
             },
         };

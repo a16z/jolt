@@ -9,12 +9,12 @@ use std::{
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
 
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaTranscript,
 };
 use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
-use akita_schedules::TrustedScheduleCatalog;
+use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint,
@@ -137,21 +137,23 @@ impl AkitaScheduleArtifacts {
         )
     }
 
-    pub fn dense_catalog(&self) -> Result<TrustedScheduleCatalog, AkitaError> {
-        akita_config::trusted_schedule_catalog_from_bytes::<JoltDenseBounded>(&self.dense)
+    pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
+        TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(&self.dense)
+            .map(|catalog| catalog.catalog().clone())
     }
 
-    pub fn one_hot_catalog(&self, one_hot_k: usize) -> Result<TrustedScheduleCatalog, AkitaError> {
+    pub fn one_hot_catalog(
+        &self,
+        one_hot_k: usize,
+    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
         match one_hot_k {
             AKITA_ONE_HOT_K16 => {
-                akita_config::trusted_schedule_catalog_from_bytes::<JoltOneHotK16>(
-                    &self.one_hot_k16,
-                )
+                TrustedScheduleCatalog::<JoltOneHotK16>::from_artifact_bytes(&self.one_hot_k16)
+                    .map(|catalog| catalog.catalog().clone())
             }
             AKITA_ONE_HOT_K256 => {
-                akita_config::trusted_schedule_catalog_from_bytes::<JoltOneHotK256>(
-                    &self.one_hot_k256,
-                )
+                TrustedScheduleCatalog::<JoltOneHotK256>::from_artifact_bytes(&self.one_hot_k256)
+                    .map(|catalog| catalog.catalog().clone())
             }
             other => Err(AkitaError::InvalidSetup(format!(
                 "unsupported Akita one-hot K={other}"

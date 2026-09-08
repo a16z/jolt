@@ -907,7 +907,7 @@ mod tests {
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
     use crate::configs::JoltDenseBounded;
     use akita_config::{policy_of, CommitmentConfig};
-    use akita_schedules::TrustedScheduleCatalog;
+    use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
@@ -1210,7 +1210,7 @@ mod tests {
             .find(|row| row.selection() != selected)
             .expect("the base catalog must contain an unused row")
             .selection();
-        let reduced_catalog = TrustedScheduleCatalog::try_new(
+        let reduced_catalog = ValidatedScheduleCatalog::try_new(
             JoltDenseBounded::schedule_family_name(),
             full_catalog
                 .rows()
