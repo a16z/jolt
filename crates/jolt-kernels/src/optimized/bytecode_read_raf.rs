@@ -1192,9 +1192,8 @@ mod tests {
     use jolt_verifier::stages::field_inline_bytecode::{
         convert_field_inline_bytecode, FieldInlineBytecodeFold, FieldInlineBytecodeTable,
     };
-    use jolt_verifier::stages::stage6a::bytecode_read_raf::{
-        BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
-    };
+    use jolt_verifier::stages::relations::SumcheckInputPoints;
+    use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
@@ -1306,8 +1305,10 @@ mod tests {
                 stage4_gamma: fr(13),
                 stage5_gamma: fr(17),
             };
-            let address_claims = BytecodeReadRafAddressPhaseInputClaims::<Fr>::default();
-            let address_input_points = BytecodeReadRafAddressPhaseInputClaims::<Vec<Fr>>::default();
+            let address_claims =
+                SumcheckInputClaims::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
+            let address_input_points =
+                SumcheckInputPoints::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
 
             let mut session = ProofSession::default();
             let mut reference =

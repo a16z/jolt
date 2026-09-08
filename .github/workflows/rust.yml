@@ -135,6 +135,8 @@ jobs:
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
+      - name: Check field-inline claim crate without workspace feature unification
+        run: cargo clippy -p jolt-claims --all-targets --features field-inline
       - name: cargo clippy --features field-inline
         run: >
           cargo clippy

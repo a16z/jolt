@@ -1,6 +1,3 @@
-#[cfg(all(test, feature = "field-inline"))]
-use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
-
 #[cfg(feature = "serialization")]
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
@@ -335,6 +332,8 @@ const fn noop_instruction() -> JoltInstructionRow {
 #[expect(clippy::unwrap_used)]
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
         SourceExtension, RV64IMAC_JOLT,

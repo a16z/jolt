@@ -800,9 +800,7 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::{CanonicalBytes, Fr, Ring};
     use jolt_program::execution::OwnedTrace;
-    use jolt_verifier::stages::stage2::product_remainder::{
-        product_remainder_input_values_from_uniskip_output, ProductRemainderInputClaims,
-    };
+    use jolt_verifier::stages::stage2::product_remainder::product_remainder_input_values_from_uniskip_output;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
     #[cfg(feature = "field-inline")]
@@ -1088,7 +1086,7 @@ mod tests {
             tau_low.clone(),
         );
         let claims = product_remainder_input_values_from_uniskip_output(input_claim);
-        let points = ProductRemainderInputClaims::<Vec<Fr>>::default();
+        let points = SumcheckInputPoints::<Fr, ProductRemainder<Fr>>::default();
         let no_challenges = NoChallenges::<Fr>::default();
 
         let mut reference_kernel = ReferenceProductRemainder
@@ -1291,7 +1289,7 @@ mod tests {
                 tau_low.clone(),
             );
             let claims = product_remainder_input_values_from_uniskip_output(input_claim);
-            let points = ProductRemainderInputClaims::<Vec<Fr>>::default();
+            let points = SumcheckInputPoints::<Fr, ProductRemainder<Fr>>::default();
             let no_challenges = NoChallenges::<Fr>::default();
             let mut reference_kernel = ReferenceProductRemainder
                 .prepare(

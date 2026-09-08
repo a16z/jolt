@@ -1385,9 +1385,7 @@ mod tests {
     use jolt_field::signed::S128;
     use jolt_field::{Fr, Ring};
     use jolt_program::execution::OwnedTrace;
-    use jolt_verifier::stages::stage1::outer_remainder::{
-        outer_remainder_input_values_from_uniskip_output, OuterRemainderInputClaims,
-    };
+    use jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
     #[cfg(feature = "field-inline")]
@@ -1714,7 +1712,7 @@ mod tests {
         );
         let relation = OuterRemainder::new(SpartanOuterDimensions::rv64(log_t), tau.clone(), r0);
         let claims = outer_remainder_input_values_from_uniskip_output(input_claim);
-        let points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        let points = SumcheckInputPoints::<Fr, OuterRemainder<Fr>>::default();
         let no_challenges = NoChallenges::<Fr>::default();
 
         let mut reference_kernel = ReferenceOuterRemainder
@@ -1857,7 +1855,7 @@ mod tests {
 
         let relation = OuterRemainder::new(SpartanOuterDimensions::rv64(log_t), tau.clone(), r0);
         let claims = outer_remainder_input_values_from_uniskip_output(input_claim);
-        let points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        let points = SumcheckInputPoints::<Fr, OuterRemainder<Fr>>::default();
         let no_challenges = NoChallenges::<Fr>::default();
         let mut reference_kernel = ReferenceOuterRemainder
             .prepare(
