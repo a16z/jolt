@@ -7,9 +7,9 @@
 
 use std::path::PathBuf;
 
-use akita_config::trusted_setup_matrix_capacity;
+use akita_config::{SetupRequirements, TrustedScheduleCatalog};
 use akita_planner::emit::MaterializationDiagnostics;
-use akita_schedules::{ResolvedScheduleRow, TrustedScheduleCatalog};
+use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
     FoldSchedule, PolynomialGroupLayout,
@@ -29,11 +29,11 @@ fn artifacts() -> AkitaScheduleArtifacts {
         .expect("checked-in Jolt schedule artifacts")
 }
 
-fn dense_catalog() -> TrustedScheduleCatalog {
+fn dense_catalog() -> ValidatedScheduleCatalog {
     artifacts().dense_catalog().expect("dense catalog")
 }
 
-fn one_hot_catalog(one_hot_k: usize) -> TrustedScheduleCatalog {
+fn one_hot_catalog(one_hot_k: usize) -> ValidatedScheduleCatalog {
     artifacts()
         .one_hot_catalog(one_hot_k)
         .expect("one-hot catalog")
@@ -57,7 +57,7 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     }
 }
 
-fn scalar_schedule(catalog: &TrustedScheduleCatalog, num_vars: usize) -> FoldSchedule {
+fn scalar_schedule(catalog: &ValidatedScheduleCatalog, num_vars: usize) -> FoldSchedule {
     catalog
         .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
             num_vars, 1,
@@ -95,7 +95,7 @@ fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
 const TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(20, 1);
 const TRUSTED_ADVICE_K256_FINAL_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(39, 1);
 
-fn trusted_advice_grouped_key(dense: &TrustedScheduleCatalog) -> AkitaScheduleLookupKey {
+fn trusted_advice_grouped_key(dense: &ValidatedScheduleCatalog) -> AkitaScheduleLookupKey {
     let trusted_profile = dense_precommit_profile(dense, TRUSTED_ADVICE_GROUP)
         .expect("trusted advice standalone row must resolve");
     AkitaScheduleLookupKey {
@@ -105,7 +105,7 @@ fn trusted_advice_grouped_key(dense: &TrustedScheduleCatalog) -> AkitaScheduleLo
 }
 
 fn assert_adaptation_preserves_main_skeleton(
-    base: &TrustedScheduleCatalog,
+    base: &ValidatedScheduleCatalog,
     resolved: &ResolvedScheduleRow,
     final_group: PolynomialGroupLayout,
 ) {
@@ -155,7 +155,7 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
         .resolve_key(&key)
         .expect("setup-owned row must resolve by key");
     assert_eq!(resolved.profiles().precommitteds, key.precommitteds);
-    assert_adaptation_preserves_main_skeleton(&base, &resolved, key.final_group);
+    assert_adaptation_preserves_main_skeleton(&base, resolved, key.final_group);
     assert_eq!(
         setup_catalog
             .resolve_selection(resolved.selection())
@@ -191,7 +191,7 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
                 precommitteds: vec![precommit],
             })
             .expect("adapted K=16 row");
-        assert_adaptation_preserves_main_skeleton(&base, &resolved, final_group);
+        assert_adaptation_preserves_main_skeleton(&base, resolved, final_group);
     }
 }
 
@@ -219,8 +219,11 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
         prefix.outer_slice_count,
     )
     .expect("precommit capacity");
-    let setup_capacity = trusted_setup_matrix_capacity::<JoltOneHotK256>(&setup_catalog, 39, 2)
-        .expect("catalog-backed setup capacity");
+    let trusted_catalog =
+        TrustedScheduleCatalog::<JoltOneHotK256>::new(setup_catalog).expect("config-bound catalog");
+    let setup_capacity = SetupRequirements::from_catalog(&trusted_catalog, 39, 2)
+        .expect("catalog-backed setup capacity")
+        .matrix_capacity;
     assert!(setup_capacity.num_field_elements >= full_capacity.num_field_elements);
     assert!(setup_capacity.num_field_elements >= precommit_capacity);
 }

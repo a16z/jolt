@@ -4,9 +4,9 @@
 //! backend proof shape is derived from Akita's trusted schedule before a
 //! backend deserializer can reserve payload-sized buffers.
 
-use akita_config::{derive_transcript_grinding_plan, effective_batched_schedule, CommitmentConfig};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::AkitaError;
-use akita_schedules::{ResolvedScheduleRow, TrustedScheduleCatalog};
+use akita_schedules::ResolvedScheduleRow;
 use akita_types::{
     canonical_proof_shape, CompressionChainPlan, FoldSchedule, GroupCommitPhaseParams,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
@@ -16,15 +16,13 @@ use jolt_openings::OpeningsError;
 
 use crate::adapters::{
     deserialize_akita, invalid_batch, AkitaBackendCommitment, AkitaBackendCommitmentPayload,
-    AkitaBackendFlavor, AkitaBackendProof, AkitaBackendProofShape, AkitaBatchProof,
-    AkitaCommitment, AkitaConfig, AkitaField, AkitaOneHotK16Config, AkitaOneHotK256Config,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaBackendProof, AkitaBackendProofShape, AkitaBatchProof, AkitaCommitment, AkitaField,
 };
 
 /// Deserializes the backend commitment and proof only after their declared
 /// shapes have been derived from the trusted resolved schedule.
-pub(crate) fn deserialize_checked_backend_payload(
-    schedules: &TrustedScheduleCatalog,
+pub(crate) fn deserialize_checked_backend_payload<Cfg>(
+    schedules: &TrustedScheduleCatalog<Cfg>,
     commitment: &AkitaCommitment,
     proof: &AkitaBatchProof,
     statement_len: usize,
@@ -36,111 +34,14 @@ pub(crate) fn deserialize_checked_backend_payload(
         AkitaBackendProof,
     ),
     OpeningsError,
-> {
-    let layout = OpeningClaimsLayout::new(backend_point.len(), statement_len)
-        .map_err(|err| invalid_batch(format!("Akita opening layout is invalid: {err}")))?;
-    let selection = proof.selection();
-    match commitment.backend_flavor {
-        AkitaBackendFlavor::Dense => deserialize_checked_single_payload::<AkitaConfig>(
-            schedules,
-            commitment,
-            proof,
-            selection,
-            &layout,
-            backend_point,
-        ),
-        AkitaBackendFlavor::OneHot => match commitment.one_hot_k {
-            AKITA_ONE_HOT_K16 => deserialize_checked_single_payload::<AkitaOneHotK16Config>(
-                schedules,
-                commitment,
-                proof,
-                selection,
-                &layout,
-                backend_point,
-            ),
-            AKITA_ONE_HOT_K256 => deserialize_checked_single_payload::<AkitaOneHotK256Config>(
-                schedules,
-                commitment,
-                proof,
-                selection,
-                &layout,
-                backend_point,
-            ),
-            one_hot_k => Err(invalid_batch(format!(
-                "unsupported Akita one-hot K={one_hot_k}"
-            ))),
-        },
-    }
-}
-
-/// Guard and decode the ordered grouped root in public order
-/// `[dense precommits.., final streamed one-hot]`.
-pub(crate) fn deserialize_checked_grouped_backend_payload(
-    schedules: &TrustedScheduleCatalog,
-    precommitted: &[&AkitaCommitment],
-    main: &AkitaCommitment,
-    proof: &AkitaBatchProof,
-    main_backend_point: &[AkitaField],
-    one_hot_k: usize,
-) -> Result<
-    (
-        OpeningScheduleSelection,
-        Vec<AkitaBackendCommitment>,
-        AkitaBackendCommitment,
-        AkitaBackendProof,
-    ),
-    OpeningsError,
-> {
-    let selection = proof.selection();
-    let mut group_layouts = precommitted
-        .iter()
-        .map(|commitment| PolynomialGroupLayout::new(commitment.num_vars, commitment.poly_count))
-        .collect::<Vec<_>>();
-    group_layouts.push(PolynomialGroupLayout::new(main.num_vars, main.poly_count));
-    let layout = OpeningClaimsLayout::from_groups(group_layouts)
-        .map_err(|err| invalid_batch(format!("Akita grouped opening layout is invalid: {err}")))?;
-    match one_hot_k {
-        AKITA_ONE_HOT_K256 => deserialize_checked_grouped_payload::<AkitaOneHotK256Config>(
-            schedules,
-            precommitted,
-            main,
-            proof,
-            selection,
-            &layout,
-            main_backend_point,
-        ),
-        AKITA_ONE_HOT_K16 => deserialize_checked_grouped_payload::<AkitaOneHotK16Config>(
-            schedules,
-            precommitted,
-            main,
-            proof,
-            selection,
-            &layout,
-            main_backend_point,
-        ),
-        _ => Err(invalid_batch("unsupported grouped one-hot configuration")),
-    }
-}
-
-fn deserialize_checked_single_payload<Cfg>(
-    schedules: &TrustedScheduleCatalog,
-    commitment: &AkitaCommitment,
-    proof: &AkitaBatchProof,
-    selection: OpeningScheduleSelection,
-    layout: &OpeningClaimsLayout,
-    backend_point: &[AkitaField],
-) -> Result<
-    (
-        OpeningScheduleSelection,
-        AkitaBackendCommitment,
-        AkitaBackendProof,
-    ),
-    OpeningsError,
 >
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
-    let resolved = resolve_schedule_row::<Cfg>(schedules, selection, layout, backend_point)
+    let layout = OpeningClaimsLayout::new(backend_point.len(), statement_len)
+        .map_err(|err| invalid_batch(format!("Akita opening layout is invalid: {err}")))?;
+    let selection = proof.selection();
+    let resolved = resolve_schedule_row(schedules, selection, &layout)
         .map_err(|err| invalid_batch(format!("Akita schedule resolution failed: {err}")))?;
     validate_commitment_profile_len(commitment, &resolved.profiles().final_group)?;
     let backend_payload = deserialize_akita::<AkitaBackendCommitmentPayload>(
@@ -149,18 +50,17 @@ where
     )?;
     let backend_commitment =
         AkitaBackendCommitment::new(resolved.profiles().final_group, backend_payload);
-    let backend_proof = deserialize_checked_proof::<Cfg>(&resolved, layout, proof)?;
+    let backend_proof = deserialize_checked_proof::<Cfg>(resolved, &layout, proof)?;
     Ok((resolved.selection(), backend_commitment, backend_proof))
 }
 
-fn deserialize_checked_grouped_payload<Cfg>(
-    schedules: &TrustedScheduleCatalog,
+/// Guard and decode the ordered grouped root in public order
+/// `[dense precommits.., final streamed one-hot]`.
+pub(crate) fn deserialize_checked_grouped_backend_payload<Cfg>(
+    schedules: &TrustedScheduleCatalog<Cfg>,
     precommitted: &[&AkitaCommitment],
     main: &AkitaCommitment,
     proof: &AkitaBatchProof,
-    selection: OpeningScheduleSelection,
-    layout: &OpeningClaimsLayout,
-    main_backend_point: &[AkitaField],
 ) -> Result<
     (
         OpeningScheduleSelection,
@@ -173,7 +73,15 @@ fn deserialize_checked_grouped_payload<Cfg>(
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
-    let resolved = resolve_schedule_row::<Cfg>(schedules, selection, layout, main_backend_point)
+    let selection = proof.selection();
+    let mut group_layouts = precommitted
+        .iter()
+        .map(|commitment| PolynomialGroupLayout::new(commitment.num_vars, commitment.poly_count))
+        .collect::<Vec<_>>();
+    group_layouts.push(PolynomialGroupLayout::new(main.num_vars, main.poly_count));
+    let layout = OpeningClaimsLayout::from_groups(group_layouts)
+        .map_err(|err| invalid_batch(format!("Akita grouped opening layout is invalid: {err}")))?;
+    let resolved = resolve_schedule_row(schedules, selection, &layout)
         .map_err(|err| invalid_batch(format!("Akita grouped schedule resolution failed: {err}")))?;
     let profiles = resolved.profiles();
 
@@ -192,7 +100,7 @@ where
         &main.backend_coeff_len,
     )?;
     let main_backend = AkitaBackendCommitment::new(profiles.final_group, main_payload);
-    let backend_proof = deserialize_checked_proof::<Cfg>(&resolved, layout, proof)?;
+    let backend_proof = deserialize_checked_proof::<Cfg>(resolved, &layout, proof)?;
 
     Ok((
         resolved.selection(),
@@ -224,18 +132,17 @@ where
     Ok(backend_proof)
 }
 
-fn resolve_schedule_row<Cfg>(
-    schedules: &TrustedScheduleCatalog,
+fn resolve_schedule_row<'a, Cfg>(
+    schedules: &'a TrustedScheduleCatalog<Cfg>,
     selection: OpeningScheduleSelection,
     layout: &OpeningClaimsLayout,
-    backend_point: &[AkitaField],
-) -> Result<ResolvedScheduleRow, AkitaError>
+) -> Result<&'a ResolvedScheduleRow, AkitaError>
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
-    akita_config::validate_trusted_schedule_catalog::<Cfg>(schedules)?;
     let resolved = schedules.resolve_selection(selection)?;
-    effective_batched_schedule::<Cfg>(resolved, layout, backend_point)
+    resolved.validate_opening_layout(layout)?;
+    Ok(resolved)
 }
 
 fn validate_commitment_profile_len(
@@ -305,10 +212,14 @@ mod tests {
     )]
 
     use super::*;
+    use akita_config::TrustedScheduleCatalog;
     use akita_types::AkitaScheduleLookupKey;
     use jolt_field::Ring;
 
-    use crate::AkitaScheduleArtifacts;
+    use crate::{
+        adapters::{AkitaBackendFlavor, AkitaConfig},
+        AkitaScheduleArtifacts,
+    };
 
     fn dense_commitment(num_vars: usize, poly_count: usize) -> AkitaCommitment {
         AkitaCommitment {
@@ -326,15 +237,16 @@ mod tests {
         (0..num_vars as u64).map(AkitaField::from_u64).collect()
     }
 
-    fn dense_schedules() -> TrustedScheduleCatalog {
+    fn dense_schedules() -> TrustedScheduleCatalog<AkitaConfig> {
         let artifacts =
             AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
                 .expect("workspace schedule artifacts");
-        artifacts.dense_catalog().expect("dense schedule catalog")
+        TrustedScheduleCatalog::new(artifacts.dense_catalog().expect("dense schedule catalog"))
+            .expect("typed dense schedule catalog")
     }
 
     fn test_selection(
-        schedules: &TrustedScheduleCatalog,
+        schedules: &TrustedScheduleCatalog<AkitaConfig>,
         num_vars: usize,
         poly_count: usize,
     ) -> OpeningScheduleSelection {
@@ -354,7 +266,7 @@ mod tests {
         Vec<AkitaField>,
         OpeningClaimsLayout,
         ResolvedScheduleRow,
-        TrustedScheduleCatalog,
+        TrustedScheduleCatalog<AkitaConfig>,
     ) {
         let schedules = dense_schedules();
         let point = point(num_vars);
@@ -364,10 +276,9 @@ mod tests {
             &schedules,
             test_selection(&schedules, num_vars, poly_count),
             &layout,
-            &point,
         )
         .expect("schedule");
-        (commitment, point, layout, resolved, schedules)
+        (commitment, point, layout, resolved.clone(), schedules)
     }
 
     #[test]
@@ -449,13 +360,9 @@ mod tests {
         .expect("open should succeed");
 
         let layout = OpeningClaimsLayout::new(num_vars, 1).expect("layout");
-        let resolved = resolve_schedule_row::<AkitaConfig>(
-            &dense_schedules(),
-            proof.selection(),
-            &layout,
-            &point,
-        )
-        .expect("schedule");
+        let schedules = dense_schedules();
+        let resolved = resolve_schedule_row::<AkitaConfig>(&schedules, proof.selection(), &layout)
+            .expect("schedule");
         let schedule = resolved.schedule();
         let derived = derive_proof_shape::<AkitaConfig>(schedule, &layout)
             .expect("schedule-derived shape must build");
