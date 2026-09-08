@@ -1,7 +1,0 @@
-warning: /Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt/crates/jolt-kernels/Cargo.toml: `default-features` is ignored for jolt-poly, since `default-features` was not specified for `workspace.dependencies.jolt-poly`, this could become a hard error in the future
-warning: /Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-kernels, since `default-features` was not specified for `workspace.dependencies.jolt-kernels`, this could become a hard error in the future
-warning: /Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-poly, since `default-features` was not specified for `workspace.dependencies.jolt-poly`, this could become a hard error in the future
-warning: /Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-profiling, since `default-features` was not specified for `workspace.dependencies.jolt-profiling`, this could become a hard error in the future
-warning: /Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt/crates/jolt-prover/Cargo.toml: `default-features` is ignored for jolt-profiling, since `default-features` was not specified for `workspace.dependencies.jolt-profiling`, this could become a hard error in the future
-   Compiling jolt-prover v0.1.0 (/Users/mgeorghiades/worktrees/jolt/bright-ridge/jolt/crates/jolt-prover)
-    Finished `release` profile [optimized + debuginfo] target(s) in 3m 28s

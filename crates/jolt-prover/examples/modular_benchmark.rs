@@ -1,6 +1,6 @@
-//! Akita acceptance-matrix harness.
+//! Akita proof benchmark.
 //!
-//! The campaign CLI (`--name`, `--scale` or `--target-trace-size`,
+//! A CLI (`--name`, `--scale` or `--target-trace-size`,
 //! `--backend optimized|metal`, `--format chrome`) over
 //! [`jolt_prover::profile`]. Beyond the profile artifacts it writes the
 //! scorer's files: `benchmark-runs/results/akita_{name}_{scale}_{backend}.csv`

@@ -53,12 +53,11 @@ class MatrixContract(unittest.TestCase):
     def test_mean_of_rates_and_no_partial_or_duplicate_pass(self):
         rows = [dict(workload=name, scale=28, padded_mhz=rate)
                 for name, rate in zip(matrix.WORKLOADS, (4, 8, 12, 16))]
-        self.assertEqual(matrix.mean_rates(rows)[0]["measured_mean_mhz"], 10)
-        self.assertTrue(matrix.mean_rates(rows)[0]["measured_10mhz_pass"])
+        self.assertEqual(matrix.mean_rates(rows), [dict(scale=28, measured_mean_mhz=10)])
         self.assertEqual(matrix.mean_rates(rows[:-1]), [])
         self.assertEqual(matrix.mean_rates(rows + [rows[0]]), [])
         rows[0]["padded_mhz"] = 0
-        self.assertFalse(matrix.mean_rates(rows)[0]["measured_10mhz_pass"])
+        self.assertEqual(matrix.mean_rates(rows)[0]["measured_mean_mhz"], 9)
 
     def test_resume_rejects_changed_raw_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

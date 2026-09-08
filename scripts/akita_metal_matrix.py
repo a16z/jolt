@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guarded four-workload Metal sweep; see specs/akita-metal-andrew-matrix.md."""
+"""Guarded four-workload Metal sweep; see crates/jolt-kernels/src/metal/README.md."""
 
 import argparse
 import csv
@@ -96,9 +96,7 @@ def mean_rates(results):
         if len(rows) != 4 or {row["workload"] for row in rows} != set(WORKLOADS):
             continue
         rate = statistics.mean(row["padded_mhz"] for row in rows)
-        means.append(dict(scale=scale, measured_mean_mhz=rate,
-                          measured_10mhz_pass=rate >= 10,
-                          projected_m5_mean_mhz=1.13 * rate))
+        means.append(dict(scale=scale, measured_mean_mhz=rate))
     return means
 
 
@@ -151,7 +149,7 @@ class Study:
                     environment={key: os.environ.get(key) for key in
                                  ("RAYON_NUM_THREADS", "JOLT_AKITA_DECOMPOSE_MODE", "JOLT_PATH",
                                   "JOLT_METAL_HANG_WATCHDOG", "JOLT_METAL_HANG_WATCHDOG_SECS",
-                                  "AKITA_METAL_ROOT_CENSUS_TILE_STRIDE", "CARGO_TARGET_DIR")})
+                                  "CARGO_TARGET_DIR")})
 
     def load_results(self):
         results = []
@@ -177,10 +175,9 @@ class Study:
             writer.writerows(results)
         (self.output / "summary.json").write_text(json.dumps(dict(cells=len(results), means=means), indent=2) + "\n")
         lines = ["# Four-workload Metal matrix", "", f"Verified observations: {len(results)}.", "",
-                 "Rates below use padded trace rows, not hashes/second. M5 is an optional projection, not measured.", "",
-                 "| Scale | Measured mean MHz | Measured >=10 MHz? | Projected M5 mean MHz (1.13x) |",
-                 "|---|---:|---|---:|"]
-        lines += [f"| 2^{row['scale']} | {row['measured_mean_mhz']:.4f} | {'yes' if row['measured_10mhz_pass'] else 'no'} | {row['projected_m5_mean_mhz']:.4f} |" for row in means]
+                 "Rates use padded trace rows, not hashes/second. All rates are measured on the machine recorded in manifest.json.", "",
+                 "| Scale | Measured mean MHz |", "|---|---:|"]
+        lines += [f"| 2^{row['scale']} | {row['measured_mean_mhz']:.4f} |" for row in means]
         lines += ["", "Only complete four-workload scales receive a mean. One observation per cell; no uncertainty interval.",
                   "Individual times, actual rows and memory are in results.csv; machine/build/guest identity is in manifest.json.",
                   "Inspect events.jsonl and raw logs for failures. No omitted/failed cell is treated as a pass.", ""]
@@ -193,7 +190,7 @@ class Study:
         environment = os.environ.copy()
         environment["RUST_MIN_STACK"] = "67108864"
         for key in ("JOLT_METAL_HANG_WATCHDOG", "JOLT_METAL_HANG_WATCHDOG_SECS",
-                    "AKITA_METAL_ROOT_CENSUS_TILE_STRIDE", "JOLT_AKITA_DECOMPOSE_MODE"):
+                    "JOLT_AKITA_DECOMPOSE_MODE"):
             if key in environment:
                 raise RuntimeError(f"unset {key}: this matrix uses the production defaults and watchdog")
         manifest_path = self.output / "manifest.json"
@@ -222,7 +219,7 @@ class Study:
                 guest_hashes[matches[0]] = digest(matches[0])
             manifest = dict(identity=identity, scales=scales, workloads=WORKLOADS,
                             guests=guest_hashes, cooldown_s=COOLDOWN, timeout_s=TIMEOUT,
-                            rss_stop_bytes=RSS_LIMIT, projection_factor=1.13,
+                            rss_stop_bytes=RSS_LIMIT,
                             blake2b_t28_hashes=80000, created_epoch=time.time(),
                             deadline_epoch=time.time() + BUDGET)
             with manifest_path.open("x") as stream:
@@ -283,7 +280,7 @@ def main():
     if sys.platform != "darwin":
         parser.error("measurement requires macOS; report-only works elsewhere")
     study.output.mkdir(parents=True, exist_ok=True)
-    lock = ROOT / "benchmark-runs/akita-10mhz-studies/scratch/machine.lock"
+    lock = ROOT / "benchmark-runs/akita-metal-matrix.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
     with (Path(tempfile.gettempdir()) / "jolt-akita-metal-matrix.lock").open("a") as machine:
         fcntl.flock(machine, fcntl.LOCK_EX | fcntl.LOCK_NB)

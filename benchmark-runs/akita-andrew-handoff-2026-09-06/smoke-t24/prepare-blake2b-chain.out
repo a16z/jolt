@@ -1,1 +1,0 @@
-GUEST_PREPARED name=blake2b-chain path=/tmp/jolt-guest-targets/hashbench-guest-blake2b_chain/riscv64imac-unknown-none-elf/release/hashbench-guest

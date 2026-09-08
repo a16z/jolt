@@ -1,1 +1,0 @@
-GUEST_PREPARED name=fibonacci path=/tmp/jolt-guest-targets/fibonacci-guest-/riscv64imac-unknown-none-elf/release/fibonacci-guest

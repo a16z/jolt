@@ -40,6 +40,13 @@ temp_file
 !patches/**/*.patch
 
 *.pyc
+__pycache__/
+
+# Local experiment workspaces, captured GPU traces, and campaign state
+/.worktrees/
+/.autoresearch/
+/goal.md
+*.gputrace
 
 # act executable
 bin/act
