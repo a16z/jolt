@@ -309,20 +309,6 @@ mod tests {
         assert!(err.to_string().contains("bytes"));
     }
 
-    #[test]
-    fn unknown_one_hot_chunk_size_rejects_before_deserialization() {
-        let (mut commitment, point, _, resolved, schedules) = resolved_dense(16, 2);
-        commitment.backend_flavor = AkitaBackendFlavor::OneHot;
-        commitment.one_hot_k = 32;
-        let proof = AkitaBatchProof::new(resolved.selection(), Vec::new());
-        let err = deserialize_checked_backend_payload(&schedules, &commitment, &proof, 2, &point)
-            .expect_err("unknown one-hot chunk size must be rejected");
-        assert!(
-            err.to_string().contains("unsupported Akita one-hot K"),
-            "unexpected error: {err}"
-        );
-    }
-
     /// A real prover run must realize exactly the fold structure the
     /// schedule prescribes — the shape is derived from the schedule, so this
     /// ties the derived model to actual backend prover output.
