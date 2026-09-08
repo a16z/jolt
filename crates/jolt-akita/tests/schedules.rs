@@ -300,6 +300,11 @@ fn catalogs_match_planner_regeneration() {
 /// its FR row, and the limb group closes every advice combination.
 #[cfg(feature = "field-inline")]
 mod field_inc_limbs {
+    #![expect(
+        clippy::panic,
+        reason = "pin tests attribute a failing arity in the panic message"
+    )]
+
     use akita_config::CommitmentConfig;
     use akita_schedules::TrustedScheduleCatalog;
     use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams, PolynomialGroupLayout};
