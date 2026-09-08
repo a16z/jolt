@@ -18,6 +18,14 @@ edition = "2021"
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover-legacy?/zk", "jolt-verifier?/zk"]
+# The packed (Akita) protocol: the guest verifier over fp128 and the host
+# tracer's fp128 field-inline field. Mutually exclusive with `zk`.
+akita = [
+  "jolt-prover-legacy?/akita",
+  "jolt-verifier?/akita",
+  "jolt-program?/fp128-field-inline",
+  "tracer?/fp128-field-inline",
+]
 # Guest-side field-inline instruction macros plus FR-profile decoding,
 # tracing, and preprocessing. Proving an FR guest needs the modular
 # `jolt-prover` (see examples/eqpoly-field): the generated `prove_*` routes

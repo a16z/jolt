@@ -120,9 +120,14 @@ impl<'de> Deserialize<'de> for DoryVerifierSetup {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
         validate_verifier_setup_structure(&buf).map_err(serde::de::Error::custom)?;
-        ArkworksVerifierSetup::deserialize_compressed(&buf[..])
-            .map_err(serde::de::Error::custom)
-            .map(Self)
+        #[cfg(feature = "unchecked-verifier-setup")]
+        let setup = {
+            use ark_serialize::{Compress, Validate};
+            ArkworksVerifierSetup::deserialize_with_mode(&buf[..], Compress::Yes, Validate::No)
+        };
+        #[cfg(not(feature = "unchecked-verifier-setup"))]
+        let setup = ArkworksVerifierSetup::deserialize_compressed(&buf[..]);
+        setup.map_err(serde::de::Error::custom).map(Self)
     }
 }
 

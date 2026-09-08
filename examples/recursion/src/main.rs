@@ -1,8 +1,11 @@
 use clap::{Parser, Subcommand};
+#[cfg(not(feature = "akita"))]
 use jolt_sdk::guest::program::Program;
+use jolt_sdk::{JoltDevice, MemoryConfig};
+#[cfg(not(feature = "akita"))]
 use jolt_sdk::{
-    JoltDevice, JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
-    MemoryConfig, MemoryLayout, ProgramPreprocessing, RV64IMACProof,
+    JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing, MemoryLayout,
+    ProgramPreprocessing, RV64IMACProof,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
@@ -10,11 +13,64 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{error, info};
 
+/// Field-inline hint recording around the host's own verification; a no-op
+/// build without the `field-inline` feature ships an empty tape.
+#[cfg(feature = "field-inline")]
+use jolt_field::fr_inline::{start_recording, take_recording};
+#[cfg(not(feature = "field-inline"))]
+fn start_recording() {}
+#[cfg(not(feature = "field-inline"))]
+fn take_recording() -> Option<Vec<u8>> {
+    None
+}
+
+/// The proof and verifier preprocessing the guest consumes, per commitment
+/// build: Dory on the homomorphic build, Akita on `--features akita`.
+#[cfg(not(feature = "akita"))]
+type GuestProof = RV64IMACProof;
+#[cfg(not(feature = "akita"))]
+type GuestVerifierPreprocessing = JoltVerifierPreprocessing;
+#[cfg(feature = "akita")]
+type GuestProof = jolt_sdk::jolt_verifier::JoltProof<
+    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaScheme,
+    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaVc,
+>;
+#[cfg(feature = "akita")]
+type GuestVerifierPreprocessing = jolt_sdk::jolt_verifier::JoltVerifierPreprocessing<
+    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaScheme,
+    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaVc,
+>;
+
 fn push_record<T: Serialize>(buffer: &mut Vec<u8>, value: &T) {
     let bytes = bincode::serde::encode_to_vec(value, bincode::config::standard()).unwrap();
     let len = u64::try_from(bytes.len()).unwrap();
     buffer.extend_from_slice(&len.to_le_bytes());
     buffer.extend_from_slice(&bytes);
+}
+
+/// The hint tape travels as raw bytes behind a length prefix: the guest
+/// consumes it in place instead of decoding a `Vec<u8>` byte by byte.
+fn push_raw(buffer: &mut Vec<u8>, bytes: &[u8]) {
+    let len = u64::try_from(bytes.len()).unwrap();
+    buffer.extend_from_slice(&len.to_le_bytes());
+    buffer.extend_from_slice(bytes);
+}
+
+fn read_raw<'a>(buffer: &'a [u8], offset: &mut usize) -> Result<&'a [u8], String> {
+    if buffer.len().saturating_sub(*offset) < 8 {
+        return Err("missing record length prefix".to_string());
+    }
+    let mut len_bytes = [0u8; 8];
+    len_bytes.copy_from_slice(&buffer[*offset..*offset + 8]);
+    *offset += 8;
+    let len = usize::try_from(u64::from_le_bytes(len_bytes)).unwrap();
+    if buffer.len().saturating_sub(*offset) < len {
+        return Err("truncated raw record".to_string());
+    }
+    let end = *offset + len;
+    let bytes = &buffer[*offset..end];
+    *offset = end;
+    Ok(bytes)
 }
 
 fn read_record<T: DeserializeOwned>(buffer: &[u8], offset: &mut usize) -> Result<T, String> {
@@ -157,11 +213,11 @@ impl GuestProgram {
                     }
                 } else {
                     MemoryConfig {
-                        max_input_size: 2000000,
+                        max_input_size: 40_000_000,
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
-                        heap_size: 33554432,
+                        heap_size: 134217728,
                         stack_size: 33554432,
                         program_size: None,
                     }
@@ -261,7 +317,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     info!("Checking data integrity...");
 
     let mut offset = 0;
-    let verifier_preprocessing: JoltVerifierPreprocessing =
+    let verifier_preprocessing: GuestVerifierPreprocessing =
         read_record(all_groups_data, &mut offset).unwrap();
     let verifier_bytes =
         bincode::serde::encode_to_vec(&verifier_preprocessing, bincode::config::standard())
@@ -275,13 +331,17 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        match read_record::<RV64IMACProof>(all_groups_data, &mut offset) {
+        match read_record::<GuestProof>(all_groups_data, &mut offset) {
             Ok(_) => info!("✓ Proof {i} deserialized"),
             Err(e) => error!("✗ Failed to deserialize proof {i}: {e:?}"),
         }
         match read_record::<JoltDevice>(all_groups_data, &mut offset) {
             Ok(_) => info!("✓ Device {i} deserialized"),
             Err(e) => error!("✗ Failed to deserialize device {i}: {e:?}"),
+        }
+        match read_raw(all_groups_data, &mut offset) {
+            Ok(hints) => info!("✓ Hint tape {i} read ({} limbs)", hints.len() / 8),
+            Err(e) => error!("✗ Failed to deserialize hint tape {i}: {e:?}"),
         }
     }
 
@@ -297,6 +357,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
     (n, remaining_data.len() as u32)
 }
 
+#[cfg(not(feature = "akita"))]
 fn preprocess_guest_prover(
     guest_prog: &mut Program,
     max_trace_length: usize,
@@ -321,6 +382,130 @@ fn preprocess_guest_prover(
     }
 }
 
+/// The packed (Akita) inner proofs: legacy packed prover over fp128, the
+/// packed verifier preprocessing, and the fp128 field-inline hint tape from
+/// the host's own verification of each proof.
+#[cfg(feature = "akita")]
+fn collect_guest_proofs(
+    guest: GuestProgram,
+    target_dir: &str,
+    _use_embed: bool,
+    _bytecode_chunk_count: Option<usize>,
+) -> Vec<u8> {
+    use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
+    use jolt_sdk::jolt_prover_legacy::zkvm::packed::{
+        akita_verifier_preprocessing, AkitaField, AkitaPackedProver, AkitaPackedScheme,
+        AkitaScheduleArtifacts, AkitaScheme, AkitaTranscript, AkitaVc,
+    };
+    use jolt_sdk::jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
+    use jolt_sdk::jolt_prover_legacy::zkvm::program::ProgramPreprocessing;
+    use jolt_sdk::jolt_prover_legacy::zkvm::prover::{JoltCpuProver, JoltProverPreprocessing};
+
+    info!("Starting packed collect_guest_proofs for {}", guest.name());
+    let max_trace_length = guest.get_max_trace_length(false);
+    let memory_config = MemoryConfig {
+        heap_size: 32768u64,
+        ..Default::default()
+    };
+    let mut program = jolt_sdk::host::Program::new(guest.name());
+    program.set_func(guest.func());
+    program.set_std(false);
+    program.set_memory_config(memory_config);
+    program.build(target_dir);
+    let (bytecode, init_memory_state, _, e_entry) = program.decode();
+    let elf_contents = program.get_elf_contents().unwrap();
+    let inputs = guest.inputs();
+    let (_, _, _, io_device) = program.trace(&inputs[0], &[], &[]);
+    let program_data =
+        ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
+    let shared: JoltSharedPreprocessing<AkitaPackedScheme> = JoltSharedPreprocessing::new(
+        program_data,
+        io_device.memory_layout.clone(),
+        max_trace_length,
+    );
+    let prover_preprocessing = JoltProverPreprocessing::new(shared);
+
+    let mut all_groups_data = Vec::new();
+    let n = inputs.len() as u32;
+    let mut verifier_preprocessing = None;
+    let mut records = Vec::new();
+    for input_bytes in inputs {
+        let prover: AkitaPackedProver<'_> = JoltCpuProver::gen_from_elf(
+            &prover_preprocessing,
+            &elf_contents,
+            &input_bytes,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let public_io = prover.program_io.clone();
+        let (object_setup, verifier_setup) =
+            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params(
+                AkitaScheduleArtifacts::shared_from_default_directory(),
+            ))
+            .unwrap();
+        let now = Instant::now();
+        let proof = prover.prove_packed(&object_setup, None, None).unwrap();
+        info!("  Packed prove time: {:.3}s", now.elapsed().as_secs_f64());
+        let mut preprocessing =
+            akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
+        // The guest's setup is a trusted constant: carry the expanded backend
+        // verifier keys instead of re-deriving them from the seed in-circuit.
+        let embedded = preprocessing
+            .pcs_setup
+            .embed_prepared_backend_verifiers()
+            .expect("embed prepared Akita backend verifiers");
+        info!("  Embedded prepared Akita backend verifier keys: {embedded} bytes");
+        let ntt_cache = preprocessing
+            .pcs_setup
+            .embed_prepared_terminal_ntt_cache(proof.joint_opening_proof.schedule_row_digest())
+            .expect("embed prepared Akita terminal NTT cache");
+        info!("  Embedded prepared Akita terminal NTT cache: {ntt_cache} bytes");
+        // Record against the preprocessing exactly as the guest receives it:
+        // the setup's `#[serde(skip)]` backend cache is rebuilt inside the
+        // guest's verify, so the host must rebuild it too for the operation
+        // sequences to agree.
+        let (preprocessing, _): (
+            jolt_sdk::jolt_verifier::JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
+            _,
+        ) = bincode::serde::decode_from_slice(
+            &bincode::serde::encode_to_vec(&preprocessing, bincode::config::standard()).unwrap(),
+            bincode::config::standard(),
+        )
+        .unwrap();
+        info!("  Verifying (recording the fp128 field-inline hint tape)...");
+        start_recording();
+        let is_valid = jolt_sdk::jolt_verifier::verify::<
+            AkitaField,
+            AkitaScheme,
+            AkitaVc,
+            AkitaTranscript,
+        >(&preprocessing, &public_io, &proof, None)
+        .inspect_err(|error| error!("  Verification failed: {error:?}"))
+        .is_ok();
+        let hints = take_recording().unwrap_or_default();
+        info!(
+            "  Verification result: {is_valid}; {} hint limbs",
+            hints.len() / 8
+        );
+        records.push((proof, public_io, hints));
+        verifier_preprocessing = Some(preprocessing);
+    }
+    push_record(&mut all_groups_data, &verifier_preprocessing.unwrap());
+    push_record(&mut all_groups_data, &n);
+    for (proof, public_io, hints) in records {
+        push_record(&mut all_groups_data, &proof);
+        push_record(&mut all_groups_data, &public_io);
+        push_raw(&mut all_groups_data, &hints);
+    }
+    info!("Total data size: {} bytes", all_groups_data.len());
+    all_groups_data
+}
+
+#[cfg(not(feature = "akita"))]
 fn collect_guest_proofs(
     guest: GuestProgram,
     target_dir: &str,
@@ -359,6 +544,18 @@ fn collect_guest_proofs(
             jolt_sdk::Curve,
             jolt_sdk::PCS,
         >(&guest_prover_preprocessing);
+    // Record hints against the preprocessing exactly as the guest receives it.
+    let guest_verifier_preprocessing: JoltVerifierPreprocessing =
+        bincode::serde::decode_from_slice(
+            &bincode::serde::encode_to_vec(
+                &guest_verifier_preprocessing,
+                bincode::config::standard(),
+            )
+            .unwrap(),
+            bincode::config::standard(),
+        )
+        .unwrap()
+        .0;
 
     let inputs = guest.inputs();
     info!("Got inputs: {inputs:?}");
@@ -418,7 +615,8 @@ fn collect_guest_proofs(
         push_record(&mut all_groups_data, &proof);
         push_record(&mut all_groups_data, &io_device);
 
-        info!("  Verifying...");
+        info!("  Verifying (recording the field-inline hint tape)...");
+        start_recording();
         let is_valid = jolt_sdk::jolt_verifier::verify::<
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
@@ -426,7 +624,12 @@ fn collect_guest_proofs(
             jolt_sdk::VerifierTranscript,
         >(&guest_verifier_preprocessing, &io_device, &proof, None)
         .is_ok();
-        info!("  Verification result: {is_valid}");
+        let hints = take_recording().unwrap_or_default();
+        info!(
+            "  Verification result: {is_valid}; {} hint limbs",
+            hints.len() / 8
+        );
+        push_raw(&mut all_groups_data, &hints);
     }
     info!("Total prove time: {total_prove_time:.3}s");
     info!("Total data size: {} bytes", all_groups_data.len());
@@ -539,9 +742,33 @@ fn run_recursion_proof(
     let mut program = jolt_sdk::host::Program::new("recursion-guest");
     program.set_func("verify");
     program.set_std(true);
+    // The verifier guest computes its field arithmetic through the
+    // field-inline instructions (hinted), so it decodes under the FR profile.
+    #[cfg(feature = "field-inline")]
+    program.enable_field_inline();
+    #[cfg(feature = "akita")]
+    program.add_guest_feature("akita");
+    // The verifier preprocessing is the recursion circuit's own trusted
+    // constant: its group elements need no subgroup validation on decode.
+    #[cfg(not(feature = "akita"))]
+    program.add_guest_feature("trusted-preprocessing");
     program.set_memory_config(memory_config);
     program.build(target_dir);
     let elf_contents = program.get_elf_contents().unwrap();
+    if run_config == RunConfig::Trace {
+        // Trace through the host program: it decodes under the FR profile the
+        // hinted verifier guest needs, and tracing needs no PCS setup.
+        info!("  Trace-only mode: Skipping proof generation and verification.");
+        // Streamed to disk: a multi-gigacycle verifier trace does not fit in
+        // memory as rows.
+        let trace_path = std::path::PathBuf::from(format!("/tmp/{}-recursion.trace", guest.name()));
+        let (_, io_device) = program.trace_to_file(&input_bytes, &[], &[], &trace_path);
+        let _ = std::fs::remove_file(&trace_path);
+        let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
+        info!("  Recursion output (trace-only): {rv}");
+        let _ = max_trace_length;
+        return;
+    }
     let mut recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
     recursion.elf = program.elf;
 
@@ -549,77 +776,87 @@ fn run_recursion_proof(
         // shorten the max_trace_length for tracing only. Speeds up setup time for tracing purposes.
         max_trace_length = 0;
     }
-    let recursion_prover_preprocessing =
-        jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
-    let recursion_verifier_preprocessing =
-        jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
-            jolt_sdk::F,
-            jolt_sdk::Curve,
-            jolt_sdk::PCS,
-        >(&recursion_prover_preprocessing);
+    #[cfg(feature = "akita")]
+    {
+        // Packed mode traces only: the recursion guest itself is not proven here.
+        let _ = (max_trace_length, recursion);
+        info!("  Packed mode supports trace-only runs.");
+    }
+    #[cfg(not(feature = "akita"))]
+    {
+        let recursion_prover_preprocessing =
+            jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
+        let recursion_verifier_preprocessing =
+            jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
+                jolt_sdk::F,
+                jolt_sdk::Curve,
+                jolt_sdk::PCS,
+            >(&recursion_prover_preprocessing);
 
-    // update program_size in memory_config now that we know it
-    recursion.memory_config.program_size = Some(
-        recursion_verifier_preprocessing
-            .program
-            .memory_layout()
-            .program_size,
-    );
+        // update program_size in memory_config now that we know it
+        recursion.memory_config.program_size = Some(
+            recursion_verifier_preprocessing
+                .program
+                .memory_layout()
+                .program_size,
+        );
 
-    let mut output_bytes = vec![
-        0;
-        recursion_verifier_preprocessing
-            .program
-            .memory_layout()
-            .max_output_size as usize
-    ];
-    match run_config {
-        RunConfig::Prove => {
-            let (proof, io_device, _debug): (RV64IMACProof, _, _) =
-                jolt_sdk::guest::prover::prove::<
-                    jolt_sdk::F,
-                    jolt_sdk::Curve,
-                    jolt_sdk::PCS,
-                    jolt_sdk::ProofTranscript,
-                >(
-                    &recursion,
-                    &input_bytes,
-                    &[],
-                    &[],
-                    None,
-                    None,
-                    &mut output_bytes,
-                    &recursion_prover_preprocessing,
-                )
-                .expect("prover should produce verifier-native proof");
-            let is_valid =
-                jolt_sdk::jolt_verifier::verify::<
+        let mut output_bytes = vec![
+            0;
+            recursion_verifier_preprocessing
+                .program
+                .memory_layout()
+                .max_output_size as usize
+        ];
+        match run_config {
+            RunConfig::Prove => {
+                let (proof, io_device, _debug): (RV64IMACProof, _, _) =
+                    jolt_sdk::guest::prover::prove::<
+                        jolt_sdk::F,
+                        jolt_sdk::Curve,
+                        jolt_sdk::PCS,
+                        jolt_sdk::ProofTranscript,
+                    >(
+                        &recursion,
+                        &input_bytes,
+                        &[],
+                        &[],
+                        None,
+                        None,
+                        &mut output_bytes,
+                        &recursion_prover_preprocessing,
+                    )
+                    .expect("prover should produce verifier-native proof");
+                let is_valid = jolt_sdk::jolt_verifier::verify::<
                     jolt_sdk::VerifierField,
                     jolt_sdk::VerifierPCS,
                     jolt_sdk::VerifierVC,
                     jolt_sdk::VerifierTranscript,
-                >(&recursion_verifier_preprocessing, &io_device, &proof, None)
+                >(
+                    &recursion_verifier_preprocessing, &io_device, &proof, None
+                )
                 .is_ok();
-            let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
-            info!("  Recursion verification result: {rv}");
-            info!("  Recursion verification result: {is_valid}");
-        }
-        RunConfig::Trace => {
-            info!("  Trace-only mode: Skipping proof generation and verification.");
-            let (_, _, _, io_device) = recursion.trace(&input_bytes, &[], &[]);
-            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
-            info!("  Recursion output (trace-only): {rv}");
-        }
-        RunConfig::TraceToFile => {
-            info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
-            let (_, io_device) = recursion.trace_to_file(
-                &input_bytes,
-                &[],
-                &[],
-                &format!("/tmp/{}.trace", guest.name()).into(),
-            );
-            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
-            info!("  Recursion output (trace-only): {rv}");
+                let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
+                info!("  Recursion verification result: {rv}");
+                info!("  Recursion verification result: {is_valid}");
+            }
+            RunConfig::Trace => {
+                info!("  Trace-only mode: Skipping proof generation and verification.");
+                let (_, _, _, io_device) = recursion.trace(&input_bytes, &[], &[]);
+                let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
+                info!("  Recursion output (trace-only): {rv}");
+            }
+            RunConfig::TraceToFile => {
+                info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
+                let (_, io_device) = recursion.trace_to_file(
+                    &input_bytes,
+                    &[],
+                    &[],
+                    &format!("/tmp/{}.trace", guest.name()).into(),
+                );
+                let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
+                info!("  Recursion output (trace-only): {rv}");
+            }
         }
     }
 }

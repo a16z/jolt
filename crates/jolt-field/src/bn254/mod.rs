@@ -74,10 +74,10 @@ macro_rules! wrap_bn254 {
         }
 
         $crate::impl_ring_ops!(impl[] $ty {
-            add(a, b): $ty(a.0 + b.0),
-            sub(a, b): $ty(a.0 - b.0),
-            mul(a, b): $ty(a.0 * b.0),
-            neg(a): $ty(-a.0),
+            add(a, b): <$ty as $crate::bn254::InlineArith>::add(a, b),
+            sub(a, b): <$ty as $crate::bn254::InlineArith>::sub(a, b),
+            mul(a, b): <$ty as $crate::bn254::InlineArith>::mul(a, b),
+            neg(a): <$ty as $crate::bn254::InlineArith>::neg(a),
             zero: $ty(<$inner as ::num_traits::Zero>::zero()),
             one: $ty(<$inner as ::num_traits::One>::one()),
         });
@@ -101,7 +101,7 @@ macro_rules! wrap_bn254 {
         impl Field for $ty {
             #[inline]
             fn inverse(&self) -> Option<Self> {
-                <$inner as ark_ff::Field>::inverse(&self.0).map($ty)
+                <$ty as $crate::bn254::InlineArith>::inverse(*self)
             }
 
             #[inline]
@@ -359,5 +359,116 @@ impl Ring for Fq {
     #[inline]
     fn square(&self) -> Self {
         Fq(ark_ff::Field::square(&self.0))
+    }
+}
+
+/// The ring-op bodies behind the `impl_field!` arithmetic: native arkworks
+/// for `Fq` always, and for `Fr` unless the `field-inline-guest` feature
+/// routes it through the hinted field-inline path (`crate::fr_inline`).
+pub trait InlineArith: Sized {
+    fn add(a: Self, b: Self) -> Self;
+    fn sub(a: Self, b: Self) -> Self;
+    fn mul(a: Self, b: Self) -> Self;
+    fn neg(a: Self) -> Self;
+    fn inverse(a: Self) -> Option<Self>;
+}
+
+impl InlineArith for Fq {
+    #[inline(always)]
+    fn add(a: Self, b: Self) -> Self {
+        Fq(a.0 + b.0)
+    }
+    #[inline(always)]
+    fn sub(a: Self, b: Self) -> Self {
+        Fq(a.0 - b.0)
+    }
+    #[inline(always)]
+    fn mul(a: Self, b: Self) -> Self {
+        Fq(a.0 * b.0)
+    }
+    #[inline(always)]
+    fn neg(a: Self) -> Self {
+        Fq(-a.0)
+    }
+    #[inline(always)]
+    fn inverse(a: Self) -> Option<Self> {
+        <ark_bn254::Fq as ark_ff::Field>::inverse(&a.0).map(Fq)
+    }
+}
+
+#[cfg(not(all(feature = "field-inline-guest", target_arch = "riscv64")))]
+impl InlineArith for Fr {
+    #[inline(always)]
+    fn add(a: Self, b: Self) -> Self {
+        let out = Fr(a.0 + b.0);
+        #[cfg(feature = "field-inline-guest")]
+        crate::fr_inline::record(&out.inner_limbs());
+        out
+    }
+    #[inline(always)]
+    fn sub(a: Self, b: Self) -> Self {
+        let out = Fr(a.0 - b.0);
+        #[cfg(feature = "field-inline-guest")]
+        crate::fr_inline::record(&out.inner_limbs());
+        out
+    }
+    #[inline(always)]
+    fn mul(a: Self, b: Self) -> Self {
+        let out = Fr(a.0 * b.0);
+        #[cfg(feature = "field-inline-guest")]
+        crate::fr_inline::record(&out.inner_limbs());
+        out
+    }
+    #[inline(always)]
+    fn neg(a: Self) -> Self {
+        let out = Fr(-a.0);
+        #[cfg(feature = "field-inline-guest")]
+        crate::fr_inline::record(&out.inner_limbs());
+        out
+    }
+    #[inline(always)]
+    fn inverse(a: Self) -> Option<Self> {
+        let out = <ark_bn254::Fr as ark_ff::Field>::inverse(&a.0).map(Fr);
+        #[cfg(feature = "field-inline-guest")]
+        if let Some(out) = out {
+            crate::fr_inline::record(&out.inner_limbs());
+        }
+        out
+    }
+}
+
+/// The hinted guest path: raw Montgomery limbs in, raw Montgomery limbs out
+/// (see `crate::fr_inline` for the representation argument).
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+impl Fr {
+    #[inline(always)]
+    fn from_raw(limbs: [u64; 4]) -> Self {
+        Fr(ark_ff::Fp(ark_ff::BigInt(limbs), core::marker::PhantomData))
+    }
+}
+
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+impl InlineArith for Fr {
+    fn add(a: Self, b: Self) -> Self {
+        Fr::from_raw(crate::fr_inline::add(&a.inner_limbs(), &b.inner_limbs()))
+    }
+    fn sub(a: Self, b: Self) -> Self {
+        Fr::from_raw(crate::fr_inline::sub(&a.inner_limbs(), &b.inner_limbs()))
+    }
+    fn mul(a: Self, b: Self) -> Self {
+        Fr::from_raw(crate::fr_inline::mul(
+            &a.inner_limbs(),
+            &b.inner_limbs(),
+            true,
+        ))
+    }
+    fn neg(a: Self) -> Self {
+        Fr::from_raw(crate::fr_inline::neg(&a.inner_limbs()))
+    }
+    fn inverse(a: Self) -> Option<Self> {
+        if a.inner_limbs() == [0; 4] {
+            return None;
+        }
+        Some(Fr::from_raw(crate::fr_inline::inv(&a.inner_limbs(), true)))
     }
 }

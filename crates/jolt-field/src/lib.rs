@@ -109,6 +109,8 @@ pub use algebra::{
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "bn254")]
+#[cfg(feature = "field-inline-guest")]
+pub mod fr_inline;
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 #[cfg(feature = "solinas")]

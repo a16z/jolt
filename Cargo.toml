@@ -302,6 +302,8 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
 akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
 akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
 akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-serialization = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
+akita-verifier = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
 akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
 akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }
 akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "ce27c705d92b2ce5327b5c590b6dd6fe86f8479f", default-features = false }

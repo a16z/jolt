@@ -22,7 +22,9 @@
 )]
 
 pub mod ec;
+pub mod no_vector_commitment;
 pub use ec::{JoltGroup, PairingGroup, Pedersen, PedersenSetup};
+pub use no_vector_commitment::{NoCommitment, NoVectorCommitment};
 
 mod commitment;
 pub use commitment::{

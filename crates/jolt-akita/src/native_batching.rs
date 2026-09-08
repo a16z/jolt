@@ -932,6 +932,7 @@ mod tests {
                 dense: Vec::new(),
                 one_hot: Vec::new(),
             },
+            prepared_backend_verifiers: Default::default(),
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);

@@ -574,6 +574,7 @@ impl CommitmentScheme for AkitaScheme {
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
             schedule_artifacts,
+            prepared_backend_verifiers: Default::default(),
             backend_cache: BackendVerifierCache::default(),
         };
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) =
@@ -932,6 +933,7 @@ mod tests {
                     .to_artifact_bytes()
                     .unwrap(),
             },
+            prepared_backend_verifiers: Default::default(),
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");

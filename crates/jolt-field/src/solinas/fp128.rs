@@ -622,7 +622,9 @@ impl<const P: u128> Fp128<P> {
         let mut acc = <Self as num_traits::One>::one();
         while exp > 0 {
             if (exp & 1) == 1 {
-                acc *= base;
+                // Raw on purpose: this ladder backs `inline_inverse`, which
+                // must record exactly one field-inline hint (its result).
+                acc = Self(Self::mul_raw(acc.0, base.0));
             }
             base = Self(Self::sqr_raw(base.0));
             exp >>= 1;
@@ -1020,10 +1022,10 @@ impl<const P: u128> Fp128<P> {
 }
 
 crate::impl_ring_ops!(impl[const P: u128] Fp128<P> {
-    add(a, b): Fp128(Self::add_raw(a.0, b.0)),
-    sub(a, b): Fp128(Self::sub_raw(a.0, b.0)),
-    mul(a, b): Fp128(Self::mul_raw(a.0, b.0)),
-    neg(a): Fp128(Self::sub_raw(pack(0, 0), a.0)),
+    add(a, b): Self::inline_add(a, b),
+    sub(a, b): Self::inline_sub(a, b),
+    mul(a, b): Self::inline_mul(a, b),
+    neg(a): Self::inline_neg(a),
     zero: Fp128(pack(0, 0)),
     // P > 1 is implied by the C asserts (odd and C(C+1) < P).
     one: Fp128(pack(1, 0)),
@@ -1067,19 +1069,16 @@ impl<const P: u128> Ring for Fp128<P> {
 
     #[inline(always)]
     fn square(&self) -> Self {
-        Self(Self::sqr_raw(self.0))
+        // Through the ring multiply so a field-inline guest squares in one
+        // FR instruction (and host recording stays in step with it).
+        Self::inline_mul(*self, *self)
     }
 }
 
 impl<const P: u128> Field for Fp128<P> {
     #[inline(always)]
     fn inverse(&self) -> Option<Self> {
-        let inv = self.inv_or_zero();
-        if num_traits::Zero::is_zero(self) {
-            None
-        } else {
-            Some(inv)
-        }
+        Self::inline_inverse(*self)
     }
 
     /// Fermat inversion with branchless zero-masking.
@@ -1255,6 +1254,70 @@ mod tests {
         check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
         check::<{ u128::MAX - 274 }>(); // C = 275
         check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
+    }
+}
+
+/// The ring-op bodies: native Solinas arithmetic, or on a RISC-V guest built
+/// with `field-inline-guest` the hinted field-inline path (canonical limbs
+/// need no representation correction).
+#[cfg(not(all(feature = "field-inline-guest", target_arch = "riscv64")))]
+impl<const P: u128> Fp128<P> {
+    #[inline(always)]
+    fn record(self) -> Self {
+        #[cfg(feature = "field-inline-guest")]
+        crate::fr_inline::record(&self.0);
+        self
+    }
+    #[inline(always)]
+    fn inline_add(a: Self, b: Self) -> Self {
+        Fp128(Self::add_raw(a.0, b.0)).record()
+    }
+    #[inline(always)]
+    fn inline_sub(a: Self, b: Self) -> Self {
+        Fp128(Self::sub_raw(a.0, b.0)).record()
+    }
+    #[inline(always)]
+    fn inline_mul(a: Self, b: Self) -> Self {
+        Fp128(Self::mul_raw(a.0, b.0)).record()
+    }
+    #[inline(always)]
+    fn inline_neg(a: Self) -> Self {
+        Fp128(Self::sub_raw(pack(0, 0), a.0)).record()
+    }
+    #[inline(always)]
+    fn inline_inverse(a: Self) -> Option<Self> {
+        let out: Option<Self> = if num_traits::Zero::is_zero(&a) {
+            None
+        } else {
+            Some(a.inv_or_zero())
+        };
+        #[cfg(feature = "field-inline-guest")]
+        if let Some(out) = out {
+            crate::fr_inline::record(&out.0);
+        }
+        out
+    }
+}
+
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+impl<const P: u128> Fp128<P> {
+    fn inline_add(a: Self, b: Self) -> Self {
+        Fp128(crate::fr_inline::add(&a.0, &b.0))
+    }
+    fn inline_sub(a: Self, b: Self) -> Self {
+        Fp128(crate::fr_inline::sub(&a.0, &b.0))
+    }
+    fn inline_mul(a: Self, b: Self) -> Self {
+        Fp128(crate::fr_inline::mul(&a.0, &b.0, false))
+    }
+    fn inline_neg(a: Self) -> Self {
+        Fp128(crate::fr_inline::neg(&a.0))
+    }
+    fn inline_inverse(a: Self) -> Option<Self> {
+        if a.0 == [0; 2] {
+            return None;
+        }
+        Some(Fp128(crate::fr_inline::inv(&a.0, false)))
     }
 }
 

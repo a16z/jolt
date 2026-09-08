@@ -34,6 +34,11 @@ fuzzing = ["asm"]
 parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
 fp128-proof-linkage = ["asm"]
+# Guest-side field-inline arithmetic with prover-supplied result hints: on a
+# RISC-V guest the FR-capable fields' ring ops run as FIELD_* instructions
+# checked by FIELD_ASSERT_EQ against the hint tape; on the host the same ops
+# record the tape. See `fr_inline`.
+field-inline-guest = []
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires

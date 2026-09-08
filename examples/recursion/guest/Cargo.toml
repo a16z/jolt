@@ -5,7 +5,9 @@ edition = "2021"
 
 [features]
 guest = []
-field-inline = ["jolt_sdk/field-inline"]
+field-inline = ["jolt_sdk/field-inline", "jolt-field/field-inline-guest"]
+akita = ["jolt_sdk/akita", "dep:jolt-akita", "dep:jolt-crypto", "dep:jolt-transcript"]
+trusted-preprocessing = ["jolt-dory/unchecked-verifier-setup"]
 
 [dependencies]
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
@@ -15,6 +17,11 @@ jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
 ] }
 bincode.workspace = true
 serde.workspace = true
+jolt-field = { path = "../../../crates/jolt-field" }
+jolt-akita = { path = "../../../crates/jolt-akita", optional = true }
+jolt-dory = { path = "../../../crates/jolt-dory" }
+jolt-crypto = { path = "../../../crates/jolt-crypto", optional = true }
+jolt-transcript = { path = "../../../crates/jolt-transcript", optional = true }
 
 [lib]
 test = false
