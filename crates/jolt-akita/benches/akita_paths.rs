@@ -35,12 +35,12 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use akita_config::CommitmentConfig;
+use akita_config::TrustedScheduleCatalog;
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
 use akita_prover::{
     AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, GroupContext, OneHotPoly,
     PreparedProverGroup, SelectedProverOpeningData,
 };
-use akita_schedules::TrustedScheduleCatalog;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaCommitmentHint, BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
@@ -327,14 +327,18 @@ fn akita_case(num_vars: usize) -> AkitaCase {
         artifacts.clone(),
     ))
     .unwrap();
-    let dense_scheme = BackendScheme::new(artifacts.dense_catalog().expect("dense catalog"))
-        .expect("dense scheme");
+    let dense_scheme = BackendScheme::new(
+        TrustedScheduleCatalog::new(artifacts.dense_catalog().expect("dense catalog"))
+            .expect("dense scheme"),
+    );
     let one_hot_scheme = OneHotBackendScheme::new(
-        artifacts
-            .one_hot_catalog(AKITA_ONE_HOT_K256)
-            .expect("one-hot catalog"),
-    )
-    .expect("one-hot scheme");
+        TrustedScheduleCatalog::new(
+            artifacts
+                .one_hot_catalog(AKITA_ONE_HOT_K256)
+                .expect("one-hot catalog"),
+        )
+        .expect("one-hot scheme"),
+    );
     let backend_prover = dense_scheme
         .setup_prover(num_vars, NUM_POLYS)
         .expect("Akita backend setup should succeed");
@@ -617,7 +621,7 @@ fn akita_prover_commit_one_hot(
 }
 
 fn akita_prover_claims<'a, Cfg, P>(
-    schedules: &TrustedScheduleCatalog,
+    schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],
     evaluations: Vec<AkitaField>,
     polynomials: &'a [&'a P],
