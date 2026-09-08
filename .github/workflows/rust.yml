@@ -538,11 +538,13 @@ jobs:
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
       # The packed FR provisioning pins (the FR limb arity line against the
-      # packing law). The verifier's legacy-generated akita fixture suites
-      # cannot run FR-on (legacy proofs pin the FR axis disabled), so that
-      # combination is lint-only above.
+      # packing law), and the verifier's packed FR fixture suite (the modular
+      # packed prover's eq-MLE proof; legacy-generated akita fixtures pin the
+      # FR axis disabled and are FR-off only).
       - name: Run jolt-akita with field-inline
         run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
+      - name: Run jolt-verifier with prover-fixtures,field-inline,akita
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest

@@ -201,9 +201,7 @@ mod field_inline_tests {
             rs2_ra: fr(303),
             rd_wa_val_evaluation: fr(304),
         };
-        relation
-            .set_field_inline_inputs(field_inline.clone())
-            .unwrap();
+        let relation = relation.with_field_inline_inputs(field_inline.clone());
         let challenges = BytecodeReadRafAddressPhaseChallenges::<Fr> {
             gamma: fr(401),
             stage1_gamma: fr(402),

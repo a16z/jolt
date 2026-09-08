@@ -359,6 +359,35 @@ mod tests {
             .expect("ASSERT_EQ witness satisfies constraints");
     }
 
+    /// The store bridge's range binding: `FieldRs1Value` must equal both the
+    /// x-register write and the range-checked lookup operand. A witness that
+    /// stores a value the lookup did not range-check (the operand disagrees)
+    /// fails the lookup row; one whose x-register write disagrees fails the
+    /// store row. Neither can smuggle a non-u64 field value into x-rd.
+    #[test]
+    fn store_to_x_rejects_an_unchecked_or_mismatched_write() {
+        let base = witness(Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(42), &[]);
+        let mut active = base.clone();
+        active[V_IS_FIELD_STORE_TO_X] = one();
+        field_inline_trace_constraints::<Fr>()
+            .check_witness(&active)
+            .expect("a range-checked store satisfies both bridge rows");
+
+        let mut unchecked = active.clone();
+        unchecked[V_X_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(6);
+        assert_eq!(
+            field_inline_trace_constraints::<Fr>().check_witness(&unchecked),
+            Err(ROW_STORE_TO_X_LOOKUP)
+        );
+
+        let mut mismatched = active;
+        mismatched[V_X_RD_WRITE_VALUE] = Fr::from_u64(6);
+        assert_eq!(
+            field_inline_trace_constraints::<Fr>().check_witness(&mismatched),
+            Err(ROW_STORE_TO_X)
+        );
+    }
+
     #[test]
     fn native_identity_bridge_constraints_are_gated() {
         let mut witness = witness(Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(42), &[]);

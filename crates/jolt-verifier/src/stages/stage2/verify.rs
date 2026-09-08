@@ -218,7 +218,8 @@ where
     sumchecks.validate_output_claims(&claims.batch_outputs)?;
 
     #[cfg(feature = "field-inline")]
-    let field_inline_product = super::field_inline::attach_product_outputs(&sumchecks, claims)?;
+    let (sumchecks, field_inline_product) =
+        super::field_inline::compose_product_outputs(sumchecks, claims)?;
 
     let input_values =
         stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim)?;
@@ -296,7 +297,8 @@ where
             let claims = &proof.clear_claims()?.stage2;
             let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
             #[cfg(feature = "field-inline")]
-            super::field_inline::attach_uniskip_inputs(&uniskip_relation, stage1)?;
+            let uniskip_relation =
+                super::field_inline::compose_uniskip_inputs(uniskip_relation, stage1)?;
             let uniskip_input_values = product_uniskip_input_values_from_stage1(stage1);
             let uniskip_input_claim =
                 uniskip_relation.input_claim(&uniskip_input_values, &NoChallenges::default())?;

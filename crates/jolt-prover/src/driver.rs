@@ -89,6 +89,20 @@ pub trait StageProver<F: JoltField>: Sized {
         claims: &Self::OutputClaims,
         points: &Self::OutputPoints,
     ) -> Result<Vec<F>, ProverError<F>>;
+
+    /// The batch re-composed with the cross-member residue its kernels parked
+    /// in the session after extraction — the composed relations' wire
+    /// appendages (field-inline), which the curated absorb and the
+    /// expected-output fold read off the relations. `None` keeps the
+    /// constructed batch; the default emitted by [`impl_stage_prover!`] composes
+    /// nothing, FR stages supply an override block at the macro invocation
+    /// site.
+    fn compose_parked_residue(
+        &self,
+        session: &ProofSession,
+    ) -> Result<Option<Self>, ProverError<F>>
+    where
+        Self: Sized;
 }
 
 /// The per-stage kernel-source bound collector: [`impl_stage_prover!`] emits
@@ -460,8 +474,21 @@ macro_rules! impl_stage_prover {
             batch = $($rest)*
         }
     };
+    // Uncomposed stage: the constructed batch is the batch the fold and the
+    // absorb read (no kernel-parked residue to compose in).
     (
         curate = |$curate_batch:ident, $curate_claims:ident, $curate_points:ident| $curate_body:block,
+        batch = $($rest:tt)*
+    ) => {
+        $crate::driver::impl_stage_prover! {
+            curate = |$curate_batch, $curate_claims, $curate_points| $curate_body,
+            compose = |__batch, __session| { ::core::result::Result::Ok(::core::option::Option::None) },
+            batch = $($rest)*
+        }
+    };
+    (
+        curate = |$curate_batch:ident, $curate_claims:ident, $curate_points:ident| $curate_body:block,
+        compose = |$compose_batch:ident, $compose_session:ident| $compose_body:block,
         batch = $batch:ident,
         label = $label:literal,
         aggregates = {
@@ -556,11 +583,15 @@ macro_rules! impl_stage_prover {
                 };
                 $($crate::driver::__stage_member!(park $presence $member, session);)+
 
+                // The composed view: the constructed batch plus whatever the
+                // kernels parked for the fold and the absorb to read.
+                let __composed = self.compose_parked_residue(session)?;
+                let __batch_view: &Self = __composed.as_ref().unwrap_or(self);
                 let __opening_values =
-                    self.curate_opening_values(&__output_claims, &__output_points)?;
-                $crate::driver::__stage_shape_check!($shape, self, __output_claims);
+                    __batch_view.curate_opening_values(&__output_claims, &__output_points)?;
+                $crate::driver::__stage_shape_check!($shape, __batch_view, __output_claims);
 
-                let __expected = self.expected_final_claim(
+                let __expected = __batch_view.expected_final_claim(
                     &__coefficients,
                     input_points,
                     &__output_claims,
@@ -598,6 +629,15 @@ macro_rules! impl_stage_prover {
                 let $curate_batch = self;
                 let _ = ($curate_batch, $curate_points);
                 $curate_body
+            }
+
+            fn compose_parked_residue(
+                &self,
+                $compose_session: &::jolt_kernels::ProofSession,
+            ) -> ::core::result::Result<::core::option::Option<Self>, $crate::ProverError<F>> {
+                let $compose_batch = self;
+                let _ = ($compose_batch, $compose_session);
+                $compose_body
             }
         }
 

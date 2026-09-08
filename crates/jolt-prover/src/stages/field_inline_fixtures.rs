@@ -562,11 +562,12 @@ pub(crate) mod twins {
         };
         let batch_challenges = sumchecks.draw_challenges(transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
-        let attached = jolt_verifier::stages::stage1::field_inline::attach_outer_outputs(
-            &sumchecks,
-            &stage1.claims,
-        )
-        .unwrap();
+        let (sumchecks, attached) =
+            jolt_verifier::stages::stage1::field_inline::compose_outer_outputs(
+                sumchecks,
+                &stage1.claims,
+            )
+            .unwrap();
         let input_values = Stage1BatchInputClaims {
             outer_remainder: outer_remainder_input_values_from_uniskip_output(
                 stage1.claims.uniskip_output_claim,
@@ -605,9 +606,11 @@ pub(crate) mod twins {
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
         let tau_high: Fr = draw_spartan_product_tau_high(transcript);
-        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
-        stage2_field_inline::attach_uniskip_inputs(&uniskip_relation, &stage1.clear_output)
-            .unwrap();
+        let uniskip_relation = stage2_field_inline::compose_uniskip_inputs(
+            ProductUniskip::new(product_dimensions, tau_high),
+            &stage1.clear_output,
+        )
+        .unwrap();
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation
             .input_claim(&uniskip_inputs, &NoChallenges::default())
@@ -657,8 +660,8 @@ pub(crate) mod twins {
         sumchecks
             .validate_output_claims(&stage2.claims.batch_outputs)
             .unwrap();
-        let attached_product =
-            stage2_field_inline::attach_product_outputs(&sumchecks, &stage2.claims).unwrap();
+        let (sumchecks, attached_product) =
+            stage2_field_inline::compose_product_outputs(sumchecks, &stage2.claims).unwrap();
         let input_values = stage2_batch_input_values_from_upstream(
             &stage1.clear_output,
             stage2.claims.product_uniskip_output_claim,
@@ -876,18 +879,17 @@ pub(crate) mod twins {
             stage5_points: &stage5.clear_output.output_points,
         })
         .unwrap();
-        stage6a_field_inline::attach_bytecode_geometry(
-            &sumchecks.bytecode_read_raf,
+        let sumchecks = stage6a_field_inline::compose_bytecode_geometry(
+            sumchecks,
             stage6a_field_inline::preprocessed_bytecode_table(&preprocessing.verifier.program)
                 .unwrap(),
             &stage4.clear_output.output_points,
             &stage5.clear_output.output_points,
-        )
-        .unwrap();
+        );
         let challenges = sumchecks.draw_challenges(transcript).unwrap();
         sumchecks.validate_output_claims(&stage6a.claims).unwrap();
-        stage6a_field_inline::attach_bytecode_inputs(
-            &sumchecks.bytecode_read_raf,
+        let sumchecks = stage6a_field_inline::compose_bytecode_inputs(
+            sumchecks,
             &stage1.clear_output,
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,

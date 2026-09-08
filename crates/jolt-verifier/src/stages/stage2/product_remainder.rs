@@ -9,9 +9,6 @@
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
 #[cfg(feature = "field-inline")]
-use std::sync::{Arc, OnceLock};
-
-#[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
@@ -59,15 +56,14 @@ pub struct ProductRemainder<F: JoltField> {
     tau_high: F,
     tau_low: Vec<F>,
     /// The three FR product-row opening values (`FieldRs1Value`,
-    /// `FieldRs2Value`, `FieldRdValue` at `FieldRegistersProduct`), set by the
-    /// stage-2 verifier from the proof's FR product appendage before the batch
-    /// check. The composed `expected_output` folds them into the two factors at
-    /// the lane indices following the ordinary lanes.
-    /// Behind an `Arc` so relation clones share the cell — the prove-side
-    /// composed kernel clones the batch's relation instance and its write
-    /// must be visible to the driver's curation and expected-output fold.
+    /// `FieldRs2Value`, `FieldRdValue` at `FieldRegistersProduct`), composed
+    /// in through [`with_field_inline_outputs`](Self::with_field_inline_outputs):
+    /// the verifier from the proof's FR product appendage, the prover from the
+    /// appendage its composed remainder kernel parks in the session. The
+    /// composed `expected_output` folds them into the two factors at the lane
+    /// indices following the ordinary lanes and fails closed without them.
     #[cfg(feature = "field-inline")]
-    field_inline_outputs: Arc<OnceLock<FieldRegistersProductOutputClaims<F>>>,
+    field_inline_outputs: Option<FieldRegistersProductOutputClaims<F>>,
 }
 
 impl<F: JoltField> ProductRemainder<F> {
@@ -83,34 +79,26 @@ impl<F: JoltField> ProductRemainder<F> {
             tau_high,
             tau_low,
             #[cfg(feature = "field-inline")]
-            field_inline_outputs: Arc::new(OnceLock::new()),
+            field_inline_outputs: None,
         }
     }
 
-    /// Supply the FR product-row opening values from the proof's FR product
-    /// appendage. Must be called before the batch's expected-output check;
-    /// rejects a second set at different values (one proof per relation
-    /// instance).
+    /// The relation composed with the FR product-row opening values — the
+    /// wire appendage the composed expected-output shell folds.
     #[cfg(feature = "field-inline")]
-    pub fn set_field_inline_outputs(
-        &self,
+    pub fn with_field_inline_outputs(
+        mut self,
         values: FieldRegistersProductOutputClaims<F>,
-    ) -> Result<(), VerifierError> {
-        let stored = self.field_inline_outputs.get_or_init(|| values.clone());
-        if *stored != values {
-            return Err(public_input_failed(
-                "field-inline product outputs already set to different values",
-            ));
-        }
-        Ok(())
+    ) -> Self {
+        self.field_inline_outputs = Some(values);
+        self
     }
 
-    /// The FR product-row opening values, once supplied — read by the
-    /// prove-side driver's curated absorb and the stage-2 recipe's claim
-    /// assembly.
+    /// The composed FR product-row opening values — read by the prove-side
+    /// driver's curated absorb.
     #[cfg(feature = "field-inline")]
     pub fn field_inline_outputs(&self) -> Option<&FieldRegistersProductOutputClaims<F>> {
-        self.field_inline_outputs.get()
+        self.field_inline_outputs.as_ref()
     }
 }
 
@@ -263,10 +251,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
             challenges,
         )?;
 
-        let field_inline = self.field_inline_outputs.get().ok_or_else(|| {
+        let field_inline = self.field_inline_outputs.as_ref().ok_or_else(|| {
             public_input_failed(
-                "field-inline product outputs not set (stage2::verify must supply them \
-                 before the batch check)",
+                "field-inline product outputs not composed (the stage-2 front must supply \
+                 them before the batch check)",
             )
         })?;
         let weights =
@@ -360,9 +348,7 @@ mod tests {
         let (relation, input_points, output_points) = fixture();
         let outputs = output_values();
         let field_inline = field_inline_outputs();
-        relation
-            .set_field_inline_outputs(field_inline.clone())
-            .unwrap();
+        let relation = relation.with_field_inline_outputs(field_inline.clone());
 
         let weights = centered_lagrange_evals(
             SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
@@ -422,13 +408,11 @@ mod tests {
     fn composed_expected_output_reduces_to_symbolic_form_without_field_lanes() {
         let (relation, input_points, output_points) = fixture();
         let outputs = output_values();
-        relation
-            .set_field_inline_outputs(FieldRegistersProductOutputClaims {
-                rs1_value: Fr::from_u64(0),
-                rs2_value: Fr::from_u64(0),
-                rd_value: Fr::from_u64(0),
-            })
-            .unwrap();
+        let relation = relation.with_field_inline_outputs(FieldRegistersProductOutputClaims {
+            rs1_value: Fr::from_u64(0),
+            rs2_value: Fr::from_u64(0),
+            rd_value: Fr::from_u64(0),
+        });
 
         use jolt_claims::OutputClaims as _;
         let symbolic = relation
@@ -472,9 +456,7 @@ mod tests {
         let (relation, input_points, output_points) = fixture();
         let outputs = output_values();
         let field_inline = field_inline_outputs();
-        relation
-            .set_field_inline_outputs(field_inline.clone())
-            .unwrap();
+        let relation = relation.with_field_inline_outputs(field_inline.clone());
         let base = relation
             .expected_output(
                 &input_points,
@@ -488,9 +470,7 @@ mod tests {
         let delta = fr(97);
         let mut perturbed = field_inline;
         perturbed.rd_value += delta;
-        relation_perturbed
-            .set_field_inline_outputs(perturbed)
-            .unwrap();
+        let relation_perturbed = relation_perturbed.with_field_inline_outputs(perturbed);
         let shifted = relation_perturbed
             .expected_output(
                 &input_points,

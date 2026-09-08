@@ -14,13 +14,20 @@ use crate::stages::relations::OutputClaims as _;
 use crate::VerifierError;
 
 /// Extract the FR Spartan-outer appendage from the stage-1 claims (fail-closed
-/// on an FR-on proof without it) and supply it to the composed remainder
+/// on an FR-on proof without it) and compose it into the batch's remainder
 /// relation: the composed R1CS appends 13 FR-local columns whose openings ride
 /// the same remainder sumcheck and feed the composed expected-output check.
-pub fn attach_outer_outputs<F: JoltField>(
-    sumchecks: &Stage1BatchSumchecks<F>,
+/// Returns the composed batch and the typed appendage.
+pub fn compose_outer_outputs<F: JoltField>(
+    sumchecks: Stage1BatchSumchecks<F>,
     claims: &Stage1OutputClaims<F>,
-) -> Result<FieldRegistersSpartanOuterOutputClaims<F>, VerifierError> {
+) -> Result<
+    (
+        Stage1BatchSumchecks<F>,
+        FieldRegistersSpartanOuterOutputClaims<F>,
+    ),
+    VerifierError,
+> {
     let field_inline_outer =
         claims
             .field_inline_outer
@@ -28,10 +35,12 @@ pub fn attach_outer_outputs<F: JoltField>(
             .ok_or(VerifierError::MissingProofPayload {
                 field: "claims.stage1.field_inline_outer",
             })?;
-    sumchecks
-        .outer_remainder
-        .set_field_inline_outputs(field_inline_outer.opening_values())?;
-    Ok(field_inline_outer)
+    let composed = Stage1BatchSumchecks {
+        outer_remainder: sumchecks
+            .outer_remainder
+            .with_field_inline_outputs(field_inline_outer.opening_values()),
+    };
+    Ok((composed, field_inline_outer))
 }
 
 /// Absorb the FR-local openings after the ordinary ones, in appended-column

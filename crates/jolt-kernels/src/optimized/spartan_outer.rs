@@ -91,6 +91,8 @@ use super::support::{
     RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
+#[cfg(feature = "field-inline")]
+use crate::FieldInlineOuterAppendage;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -873,12 +875,10 @@ struct OuterRemainderKernel<F: JoltField> {
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanOuterRow>,
-    /// The Arc-shared relation cell: the FR opening appendage publishes on
-    /// it at extraction (the driver's curated absorb and the stage-1 recipe
-    /// read it there).
+    /// The FR opening appendage, produced at extraction and parked in the
+    /// session by `park_residue` for the driver's composition.
     #[cfg(feature = "field-inline")]
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    relation: OuterRemainder<F>,
+    field_inline_appendage: Vec<F>,
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
@@ -1017,7 +1017,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             challenges: RoundChallenges::new(rounds),
             rows,
             #[cfg(feature = "field-inline")]
-            relation: inputs.relation.clone(),
+            field_inline_appendage: Vec::new(),
             #[cfg(feature = "field-inline")]
             fr_rows,
             opening_ids,
@@ -1108,7 +1108,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// The 13 FR opening values at the bound cycle point: one eq-weighted
     /// walk over the sparse FR rows (columns in
     /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order
-    /// `set_field_inline_outputs` expects).
+    /// the composed remainder relation folds).
     #[cfg(feature = "field-inline")]
     fn fr_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
         let mut values = vec![F::zero(); 13];
@@ -1285,13 +1285,13 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
                     reason: "outer opening walk re-extraction failed after the rounds",
                 })?;
-        // Publish the FR appendage on the Arc-shared relation cell: the
-        // driver's curated absorb, its composed expected-output fold, and
-        // the stage-1 recipe's claim assembly all read it from there.
+        // The FR appendage rides to the driver through the session (parked
+        // by `park_residue`): its curated absorb, composed expected-output
+        // fold, and the stage-1 recipe's claim assembly read it from there.
         #[cfg(feature = "field-inline")]
-        self.relation
-            .set_field_inline_outputs(self.fr_claimed_inputs(&weights))
-            .map_err(SumcheckKernelError::Verifier)?;
+        {
+            self.field_inline_appendage = self.fr_claimed_inputs(&weights);
+        }
         let claims: BTreeMap<JoltOpeningId, F> =
             self.opening_ids.iter().copied().zip(claimed).collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| {
@@ -1351,6 +1351,11 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
             )?;
         }
         Ok(())
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn park_residue(self: Box<Self>, session: &mut ProofSession) {
+        session.park(FieldInlineOuterAppendage(self.field_inline_appendage));
     }
 }
 

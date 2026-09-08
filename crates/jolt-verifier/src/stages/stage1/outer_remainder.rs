@@ -19,8 +19,6 @@
 //! in the stage-1 verifier; this relation consumes that uni-skip's reduced opening
 //! as its input claim.
 
-#[cfg(feature = "field-inline")]
-use std::sync::Arc;
 use std::sync::OnceLock;
 
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
@@ -158,13 +156,14 @@ pub struct OuterRemainder<F: JoltField> {
     /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
     coefficients: OnceLock<OuterRemainderCoefficients<F>>,
     /// The 13 FR-local Spartan-outer opening values (appended-column order),
-    /// set by `stage1::verify` from the proof's claims before the batch check
-    /// (prove side: by the composed remainder kernel once fully bound). Behind
-    /// an `Arc` so relation clones share the cell — the prove-side kernel
-    /// clones the batch's relation instance and its write must be visible to
-    /// the driver's curation and expected-output fold.
+    /// composed in by the stage-1 front through
+    /// [`with_field_inline_outputs`](Self::with_field_inline_outputs): the
+    /// verifier from the proof's claims, the prover from the appendage its
+    /// composed remainder kernel parks in the session. `None` until composed;
+    /// the composed expected-output shell fails closed without it (the ZK
+    /// path never evaluates that shell).
     #[cfg(feature = "field-inline")]
-    field_inline_outputs: Arc<OnceLock<Vec<F>>>,
+    field_inline_outputs: Option<Vec<F>>,
 }
 
 impl<F: JoltField> OuterRemainder<F> {
@@ -183,7 +182,7 @@ impl<F: JoltField> OuterRemainder<F> {
             bound_point: OnceLock::new(),
             coefficients: OnceLock::new(),
             #[cfg(feature = "field-inline")]
-            field_inline_outputs: Arc::new(OnceLock::new()),
+            field_inline_outputs: None,
         }
     }
 
@@ -191,27 +190,20 @@ impl<F: JoltField> OuterRemainder<F> {
         self.uniskip_challenge
     }
 
-    /// Supply the FR-local Spartan-outer opening values (appended-column
-    /// order) from the proof's stage-1 claims. Must be called before the
-    /// batch's expected-output check; rejects a second set at a different
-    /// value (one proof per relation instance).
+    /// The relation composed with the FR-local Spartan-outer opening values
+    /// (appended-column order) — the wire appendage the composed
+    /// expected-output shell folds after the 35 ordinary openings.
     #[cfg(feature = "field-inline")]
-    pub fn set_field_inline_outputs(&self, values: Vec<F>) -> Result<(), VerifierError> {
-        let stored = self.field_inline_outputs.get_or_init(|| values.clone());
-        if *stored != values {
-            return Err(public_input_failed(
-                "field-inline Spartan outer outputs already set to different values",
-            ));
-        }
-        Ok(())
+    pub fn with_field_inline_outputs(mut self, values: Vec<F>) -> Self {
+        self.field_inline_outputs = Some(values);
+        self
     }
 
-    /// The FR-local Spartan-outer opening values, once supplied — read by the
-    /// prove-side driver's curated absorb and the stage-1 recipe's claim
-    /// assembly.
+    /// The composed FR-local Spartan-outer opening values — read by the
+    /// prove-side driver's curated absorb.
     #[cfg(feature = "field-inline")]
     pub fn field_inline_outputs(&self) -> Option<&[F]> {
-        self.field_inline_outputs.get().map(Vec::as_slice)
+        self.field_inline_outputs.as_deref()
     }
 
     /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
@@ -334,8 +326,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
 
     /// The composed expected output claim over the full selected opening
     /// vector: the 35 ordinary openings (canonical order) followed by the 13
-    /// FR-local openings supplied via
-    /// [`set_field_inline_outputs`](OuterRemainder::set_field_inline_outputs).
+    /// FR-local openings composed in via
+    /// [`with_field_inline_outputs`](OuterRemainder::with_field_inline_outputs).
     /// The rv64 symbolic `output_expression` names only the ordinary openings,
     /// so under `field-inline` the check evaluates the factored composed form
     /// directly — the same `JoltSpartanOuterRemainder` coefficient source the
@@ -350,10 +342,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
     ) -> Result<F, VerifierError> {
         use crate::stages::relations::OutputClaims as _;
 
-        let field_inline = self.field_inline_outputs.get().ok_or_else(|| {
+        let field_inline = self.field_inline_outputs.as_deref().ok_or_else(|| {
             public_input_failed(
-                "field-inline Spartan outer outputs not set (stage1::verify must supply \
-                 them before the batch check)",
+                "field-inline Spartan outer outputs not composed (the stage-1 front must \
+                 supply them before the batch check)",
             )
         })?;
         let mut openings = output_values.opening_values();
@@ -532,9 +524,7 @@ mod tests {
 
         let rv64_count = SPARTAN_OUTER_R1CS_INPUTS.len();
         let (rv64_openings, field_inline_openings) = openings.split_at(rv64_count);
-        relation
-            .set_field_inline_outputs(field_inline_openings.to_vec())
-            .unwrap();
+        let relation = relation.with_field_inline_outputs(field_inline_openings.to_vec());
 
         let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
         let _ = relation

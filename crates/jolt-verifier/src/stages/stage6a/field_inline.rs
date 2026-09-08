@@ -3,9 +3,9 @@
 //! input claim (its wiring from the stage-1/4/5 outputs and its gamma-power
 //! extension math) and the preprocessed side-table load the batch build
 //! carries for the prover's kernel. The `BytecodeReadRafAddressPhase`
-//! relation keeps only its appendage carriers (the `OnceLock`s + setters) and
-//! the composed `input_claim` shell that adds [`input_claim_extension`] onto
-//! the ordinary bind.
+//! relation keeps only its composed FR fields (set by value through the
+//! `with_field_inline_*` builders below) and the composed `input_claim` shell
+//! that adds [`input_claim_extension`] onto the ordinary bind.
 
 use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
 use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
@@ -18,7 +18,7 @@ use jolt_riscv::NUM_CIRCUIT_FLAGS;
 
 use jolt_openings::CommitmentScheme;
 
-use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
+use super::outputs::Stage6aSumchecks;
 use crate::preprocessing::ProgramPreprocessing;
 use crate::stages::field_inline_bytecode::{
     convert_field_inline_bytecode, field_inline_stage_gamma_powers, required_field_inline_bytecode,
@@ -42,10 +42,9 @@ pub fn preprocessed_bytecode_table<PCS: CommitmentScheme>(
 
 /// The FR geometry the address-phase KERNEL folds over: the converted side
 /// table plus the stage-4/5 FR opening points (`FIELD_REGISTERS_LOG_K`-var
-/// address prefix ‖ cycle). Construction-time data both fronts hold, carried
-/// on the relation as an appendage (the same OnceLock idiom as the input
-/// values below) via [`attach_bytecode_geometry`]; the verifier itself never
-/// evaluates it in this stage.
+/// address prefix ‖ cycle). Construction-time data both fronts hold, composed
+/// into the relation via [`compose_bytecode_geometry`]; the verifier itself
+/// never evaluates it in this stage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafGeometry<F> {
     pub table: FieldInlineBytecodeTable,
@@ -56,29 +55,34 @@ pub struct FieldInlineBytecodeReadRafGeometry<F> {
 }
 
 /// Wire the FR kernel geometry from the preprocessed side table and the
-/// stage-4/5 FR opening points, and supply it to the composed bytecode
-/// read-RAF relation. Both fronts attach through this right after the batch
+/// stage-4/5 FR opening points, and compose it into the batch's bytecode
+/// read-RAF relation. Both fronts compose through this right after the batch
 /// build (fail-closed: a kernel prepared without it rejects).
-pub fn attach_bytecode_geometry<F: JoltField>(
-    relation: &BytecodeReadRafAddressPhase<F>,
+pub fn compose_bytecode_geometry<F: JoltField>(
+    sumchecks: Stage6aSumchecks<F>,
     table: FieldInlineBytecodeTable,
     stage4_points: &Stage4OutputPoints<F>,
     stage5_points: &Stage5OutputPoints<F>,
-) -> Result<(), VerifierError> {
-    relation.set_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
-        table,
-        read_write_point: stage4_points.field_registers_read_write_point().to_vec(),
-        val_evaluation_point: stage5_points
-            .field_registers_val_evaluation_point()
-            .to_vec(),
-    })
+) -> Stage6aSumchecks<F> {
+    Stage6aSumchecks {
+        bytecode_read_raf: sumchecks.bytecode_read_raf.with_field_inline_geometry(
+            FieldInlineBytecodeReadRafGeometry {
+                table,
+                read_write_point: stage4_points.field_registers_read_write_point().to_vec(),
+                val_evaluation_point: stage5_points
+                    .field_registers_val_evaluation_point()
+                    .to_vec(),
+            },
+        ),
+        ..sumchecks
+    }
 }
 
 /// The field-inline opening values the extended address-phase input claim
 /// folds under the extended stage-1/4/5 gamma powers (spec:
 /// `field-inline-protocol.md`, "Stage 6 Composition"). The jolt symbolic input
-/// `Expr` cannot name FR openings, so these ride the relation as an appendage
-/// (the stage-1/2 OnceLock pattern) consumed by the composed `input_claim`.
+/// `Expr` cannot name FR openings, so these are composed into the relation
+/// (the stage-1/2 pattern) and consumed by the composed `input_claim`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafInputs<F> {
     /// The eight `FieldOpFlag` openings from the stage-1 FR Spartan-outer
@@ -128,17 +132,21 @@ pub fn bytecode_read_raf_inputs<F: JoltField>(
     })
 }
 
-/// Wire the FR appendage from the stage-1/4/5 clear outputs and supply it to
-/// the composed bytecode read-RAF relation (fail-closed on a missing stage-1
-/// FR carrier). Both fronts attach through this before the input claim is
-/// computed.
-pub fn attach_bytecode_inputs<F: JoltField>(
-    relation: &BytecodeReadRafAddressPhase<F>,
+/// Wire the FR appendage from the stage-1/4/5 clear outputs and compose it
+/// into the batch's bytecode read-RAF relation (fail-closed on a missing
+/// stage-1 FR carrier). Both clear fronts compose through this before the
+/// input claim is computed.
+pub fn compose_bytecode_inputs<F: JoltField>(
+    sumchecks: Stage6aSumchecks<F>,
     stage1: &Stage1ClearOutput<F>,
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,
-) -> Result<(), VerifierError> {
-    relation.set_field_inline_inputs(bytecode_read_raf_inputs(stage1, stage4, stage5)?)
+) -> Result<Stage6aSumchecks<F>, VerifierError> {
+    let inputs = bytecode_read_raf_inputs(stage1, stage4, stage5)?;
+    Ok(Stage6aSumchecks {
+        bytecode_read_raf: sumchecks.bytecode_read_raf.with_field_inline_inputs(inputs),
+        ..sumchecks
+    })
 }
 
 /// The FR addend of the composed bytecode read-RAF input claim: the appendage

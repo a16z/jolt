@@ -25,9 +25,9 @@ use std::{
 };
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+pub use jolt_akita::AkitaScheduleArtifacts;
 #[cfg(feature = "field-inline")]
 use jolt_akita::FieldIncLimbScheduleParams;
-pub use jolt_akita::AkitaScheduleArtifacts;
 use jolt_akita::{AkitaSetupParams, PrecommittedScheduleParams};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     is_valid_committed_program_immediate, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
@@ -477,11 +477,38 @@ pub fn field_inc_limb_schedule_params(
     ))
 }
 
+/// The FR-on transparent packed setup for a trace with no advice and no
+/// committed program: the one-hot trace group plus the always-present FR limb
+/// group, whose arity line joins the grouped schedule (the derivation
+/// [`one_hot_trace_setup_params`](AkitaPackedProver::one_hot_trace_setup_params)
+/// performs for a legacy prover instance). One owner for the modular packed
+/// FR provers — the profile harness, the packed FR e2e, and the verifier's
+/// packed FR fixture — so none restates the grouped capacity law.
+#[cfg(feature = "field-inline")]
+pub fn field_inline_one_hot_trace_setup_params(
+    setup_num_vars: usize,
+    setup_num_polys: usize,
+    layout_digest: [u8; 32],
+    one_hot_k: usize,
+    schedule_artifacts: Arc<AkitaScheduleArtifacts>,
+) -> Result<AkitaSetupParams, VerifierError> {
+    let precommitted_schedule = PrecommittedScheduleParams::new(None, None, setup_num_vars)
+        .with_field_inc_limbs(field_inc_limb_schedule_params(one_hot_k)?);
+    Ok(AkitaSetupParams::one_hot_only_grouped(
+        setup_num_vars,
+        setup_num_polys,
+        grouped_batch_poly_capacity(0, 0, 0),
+        layout_digest,
+        one_hot_k,
+        Some(precommitted_schedule),
+        schedule_artifacts,
+    ))
+}
+
 /// The grouped packed setup's polynomial capacity: the one-hot trace group,
 /// the direct program objects, one slot per configured advice kind, and the
-/// FR limb group on FR-on builds. Public so the profile harness sizes its
-/// transparent setup by the same law.
-pub fn grouped_batch_poly_capacity(
+/// FR limb group on FR-on builds.
+fn grouped_batch_poly_capacity(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
     direct_program_objects: usize,

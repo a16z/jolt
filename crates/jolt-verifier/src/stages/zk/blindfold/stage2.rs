@@ -604,9 +604,7 @@ mod tests {
         };
         let field_product = fr(11);
         let field_inv_product = fr(13);
-        relation
-            .set_field_inline_inputs(field_product, field_inv_product)
-            .unwrap();
+        let relation = relation.with_field_inline_inputs(field_product, field_inv_product);
         let clear = relation
             .input_claim(&inputs, &NoChallenges::default())
             .unwrap();
@@ -683,9 +681,7 @@ mod tests {
             rs2_value: fr(29),
             rd_value: fr(31),
         };
-        relation
-            .set_field_inline_outputs(appendage.clone())
-            .unwrap();
+        let relation = relation.with_field_inline_outputs(appendage.clone());
 
         let sumcheck_point: Vec<Fr> = (60..64).map(fr).collect();
         let input_points = ProductRemainderInputClaims::<Vec<Fr>>::default();

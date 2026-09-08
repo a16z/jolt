@@ -132,7 +132,7 @@ where
     // stage-2 recipe's FR wiring consumes.
     #[cfg(feature = "field-inline")]
     {
-        let field_inline_outer = field_inline_outer_claims(&sumchecks)?;
+        let field_inline_outer = field_inline_outer_claims(session)?;
         claims.field_inline_outer = Some(field_inline_outer.clone());
         clear_output.field_inline_output_values = Some(field_inline_outer);
     }
@@ -149,22 +149,24 @@ where
 }
 
 /// Assemble the FR Spartan-outer appendage claims from the values the
-/// composed remainder kernel published on the batch relation, through the
-/// shared typed-claims constructor (ids resolved in appended-column order —
-/// the same `outer_output_openings` order the verifier's seam absorbs).
+/// composed remainder kernel parked in the session (taken here: the driver
+/// already composed them into its batch view), through the shared
+/// typed-claims constructor (ids resolved in appended-column order — the
+/// same `outer_output_openings` order the verifier's seam absorbs).
 #[cfg(feature = "field-inline")]
 fn field_inline_outer_claims<F: JoltField>(
-    sumchecks: &Stage1BatchSumchecks<F>,
+    session: &mut ProofSession,
 ) -> Result<FieldRegistersSpartanOuterOutputClaims<F>, ProverError<F>> {
     use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings;
     use jolt_claims::OutputClaims as _;
+    use jolt_kernels::FieldInlineOuterAppendage;
 
-    let values = sumchecks
-        .outer_remainder
-        .field_inline_outputs()
-        .ok_or(ProverError::Verifier(VerifierError::MissingProofPayload {
-            field: "stage1 FR Spartan-outer appendage (composed remainder kernel)",
-        }))?;
+    let FieldInlineOuterAppendage(values) =
+        session
+            .take::<FieldInlineOuterAppendage<F>>()
+            .ok_or(ProverError::Verifier(VerifierError::MissingProofPayload {
+                field: "stage1 FR Spartan-outer appendage (composed remainder kernel)",
+            }))?;
     let openings = outer_output_openings();
     FieldRegistersSpartanOuterOutputClaims::from_opening_values(|id| {
         openings
@@ -271,7 +273,8 @@ mod field_inline_round_trip {
         let batch_challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         sumchecks.validate_output_claims(&out.claims.outer).unwrap();
-        let attached = stage1_field_inline::attach_outer_outputs(&sumchecks, &out.claims).unwrap();
+        let (sumchecks, attached) =
+            stage1_field_inline::compose_outer_outputs(sumchecks, &out.claims).unwrap();
         let input_values = Stage1BatchInputClaims {
             outer_remainder: outer_remainder_input_values_from_uniskip_output(
                 out.claims.uniskip_output_claim,

@@ -13,9 +13,6 @@
 //! *input* derived (resolved before binding), so this relation overrides
 //! `derive_input_term` rather than `derive_output_term`.
 
-#[cfg(feature = "field-inline")]
-use std::sync::OnceLock;
-
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductUniskipInputClaims, ProductUniskipOutputClaims,
@@ -52,12 +49,13 @@ pub struct ProductUniskip<F: JoltField> {
     symbolic: relations::spartan::ProductUniskip,
     tau_high: F,
     /// The two FR lane input values (`FieldProduct`, `FieldInvProduct`
-    /// openings at `FieldRegistersSpartanOuter`), set by the stage-2 verifier
-    /// from the stage-1 FR carrier before the input claim is computed. The
+    /// openings at `FieldRegistersSpartanOuter`), composed in from the
+    /// stage-1 FR carrier through
+    /// [`with_field_inline_inputs`](Self::with_field_inline_inputs). The
     /// composed `input_claim` consumes them at the lane indices following the
-    /// ordinary lanes.
+    /// ordinary lanes and fails closed without them.
     #[cfg(feature = "field-inline")]
-    field_inline_inputs: OnceLock<[F; 2]>,
+    field_inline_inputs: Option<[F; 2]>,
 }
 
 impl<F: JoltField> ProductUniskip<F> {
@@ -66,24 +64,17 @@ impl<F: JoltField> ProductUniskip<F> {
             symbolic: relations::spartan::ProductUniskip::new(dimensions),
             tau_high,
             #[cfg(feature = "field-inline")]
-            field_inline_inputs: OnceLock::new(),
+            field_inline_inputs: None,
         }
     }
 
-    /// Supply the FR lane input values (`[FieldProduct, FieldInvProduct]` at
-    /// `FieldRegistersSpartanOuter`) from stage 1's FR carrier. Must be called
-    /// before `input_claim`; rejects a second set at different values (one
-    /// proof per relation instance).
+    /// The relation composed with the FR lane input values
+    /// (`[FieldProduct, FieldInvProduct]` at `FieldRegistersSpartanOuter`)
+    /// from stage 1's FR carrier.
     #[cfg(feature = "field-inline")]
-    pub fn set_field_inline_inputs(&self, product: F, inv_product: F) -> Result<(), VerifierError> {
-        let values = [product, inv_product];
-        let stored = self.field_inline_inputs.get_or_init(|| values);
-        if *stored != values {
-            return Err(public_input_failed(
-                "field-inline product uni-skip inputs already set to different values",
-            ));
-        }
-        Ok(())
+    pub fn with_field_inline_inputs(mut self, product: F, inv_product: F) -> Self {
+        self.field_inline_inputs = Some([product, inv_product]);
+        self
     }
 }
 
@@ -180,9 +171,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductUniskip<F> {
             |id| self.derive_input_term(id, challenges),
         )?;
 
-        let [product, inv_product] = *self.field_inline_inputs.get().ok_or_else(|| {
+        let [product, inv_product] = self.field_inline_inputs.ok_or_else(|| {
             public_input_failed(
-                "field-inline product uni-skip inputs not set (the stage-2 verifier must \
+                "field-inline product uni-skip inputs not composed (the stage-2 front must \
                  supply them from the stage-1 FR carrier before the input claim)",
             )
         })?;
@@ -229,9 +220,7 @@ mod tests {
         };
         let field_product = Fr::from_u64(11);
         let field_inv_product = Fr::from_u64(13);
-        relation
-            .set_field_inline_inputs(field_product, field_inv_product)
-            .unwrap();
+        let relation = relation.with_field_inline_inputs(field_product, field_inv_product);
 
         let weights =
             centered_lagrange_evals(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high).unwrap();

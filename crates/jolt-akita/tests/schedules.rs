@@ -399,8 +399,8 @@ mod field_inc_limbs {
     /// through the frozen setup catalog. Doubles as the norm-budget check:
     /// the rows plan under the same u64-bounded dense fold policy advice
     /// uses, so a planned row means the limb words fit that budget. Arities
-    /// below the prover's trace floor are unreachable; whether the planner
-    /// admits them is not asserted.
+    /// below the prover's trace floor are unreachable and not swept (the
+    /// dense catalog need not carry their limb layouts).
     fn fr_rows_plan_and_resolve_at_every_arity<Cfg: CommitmentConfig>(
         one_hot_k: usize,
         (declared_min, ceiling): (usize, usize),
@@ -408,8 +408,8 @@ mod field_inc_limbs {
         let dense = dense_catalog();
         let base = one_hot_catalog(one_hot_k);
         let params = law_derived_params(one_hot_k);
-        let reachable_min = trace_arity_overhead(one_hot_k) + PROVER_MIN_LOG_T;
-        for final_num_vars in declared_min..=ceiling {
+        let reachable_min = (trace_arity_overhead(one_hot_k) + PROVER_MIN_LOG_T).max(declared_min);
+        for final_num_vars in reachable_min..=ceiling {
             let rows = provision_precommitted_for_k(
                 &dense,
                 &base,
@@ -420,14 +420,11 @@ mod field_inc_limbs {
                 one_hot_k,
                 final_num_vars,
             )
-            .expect("FR provisioning must plan or skip every arity");
-            assert!(
-                rows.rows().len() <= 1,
-                "K={one_hot_k} final arity {final_num_vars}: one FR row at most"
-            );
-            if final_num_vars < reachable_min {
-                continue;
-            }
+            .unwrap_or_else(|error| {
+                panic!(
+                    "K={one_hot_k} final arity {final_num_vars}: FR provisioning failed: {error}"
+                )
+            });
             assert_eq!(
                 rows.rows().len(),
                 1,
@@ -490,4 +487,3 @@ mod field_inc_limbs {
         }
     }
 }
-

@@ -1,6 +1,6 @@
 //! Stage 2's field-inline seam: every FR-specific divergence of the stage-2
 //! verifier in one place — the FR claim-reduction member and its input wiring,
-//! the product uni-skip/remainder appendage attachment, the spec's alias
+//! the product uni-skip/remainder appendage composition, the spec's alias
 //! table, the composed committed row count, and the curated absorb.
 //! `verify.rs` interacts with the FR protocol only through the functions here
 //! (plus the FR carrier fields on the outputs, which are proof shape).
@@ -58,14 +58,14 @@ pub fn claim_reduction_inputs<F: JoltField>(
     })
 }
 
-/// Supply the FR lane input claims (`FieldProduct`/`FieldInvProduct` at the FR
-/// Spartan-outer segment) to the composed product uni-skip. They enter the
+/// Compose the FR lane input claims (`FieldProduct`/`FieldInvProduct` at the
+/// FR Spartan-outer segment) into the product uni-skip. They enter the
 /// composed input exactly as the ordinary lanes do — Lagrange-weighted at the
 /// lane indices following them. Fail-closed on a missing stage-1 FR carrier.
-pub fn attach_uniskip_inputs<F: JoltField>(
-    uniskip: &ProductUniskip<F>,
+pub fn compose_uniskip_inputs<F: JoltField>(
+    uniskip: ProductUniskip<F>,
     stage1: &Stage1ClearOutput<F>,
-) -> Result<(), VerifierError> {
+) -> Result<ProductUniskip<F>, VerifierError> {
     let field_inline =
         stage1
             .field_inline_output_values
@@ -73,12 +73,13 @@ pub fn attach_uniskip_inputs<F: JoltField>(
             .ok_or(VerifierError::MissingProofPayload {
                 field: "stage1.field_inline_output_values",
             })?;
-    uniskip.set_field_inline_inputs(field_inline.product, field_inline.inv_product)
+    Ok(uniskip.with_field_inline_inputs(field_inline.product, field_inline.inv_product))
 }
 
 /// Extract the FR product appendage from the stage-2 claims (fail-closed),
-/// supply it to the composed product remainder, and enforce the spec's alias
-/// table against the FR claim-reduction member outputs.
+/// compose it into the batch's product remainder, and enforce the spec's
+/// alias table against the FR claim-reduction member outputs. Returns the
+/// composed batch and the typed appendage.
 ///
 /// WHY the explicit equality: the spec's alias table (field-inline-protocol.md,
 /// "Stage 2 Composition") aliases the FR claim-reduction outputs into the FR
@@ -90,10 +91,16 @@ pub fn attach_uniskip_inputs<F: JoltField>(
 /// relations bind the same batch-point suffix and derive the same reversed
 /// opening point (pinned by
 /// `field_registers_claim_reduction_shares_the_product_remainder_point`).
-pub fn attach_product_outputs<F: JoltField>(
-    sumchecks: &Stage2BatchSumchecks<F>,
+pub fn compose_product_outputs<F: JoltField>(
+    sumchecks: Stage2BatchSumchecks<F>,
     claims: &Stage2OutputClaims<F>,
-) -> Result<FieldRegistersProductOutputClaims<F>, VerifierError> {
+) -> Result<
+    (
+        Stage2BatchSumchecks<F>,
+        FieldRegistersProductOutputClaims<F>,
+    ),
+    VerifierError,
+> {
     let field_inline_product =
         claims
             .field_inline_product
@@ -101,11 +108,14 @@ pub fn attach_product_outputs<F: JoltField>(
             .ok_or(VerifierError::MissingProofPayload {
                 field: "claims.stage2.field_inline_product",
             })?;
-    sumchecks
-        .product_remainder
-        .set_field_inline_outputs(field_inline_product.clone())?;
     validate_product_aliases(&claims.batch_outputs, &field_inline_product)?;
-    Ok(field_inline_product)
+    let composed = Stage2BatchSumchecks {
+        product_remainder: sumchecks
+            .product_remainder
+            .with_field_inline_outputs(field_inline_product.clone()),
+        ..sumchecks
+    };
+    Ok((composed, field_inline_product))
 }
 
 /// The spec's stage-2 alias table (`field-inline-protocol.md`, "Stage 2
@@ -123,7 +133,7 @@ pub(crate) fn product_alias_polynomials() -> [FieldInlineVirtualPolynomial; 3] {
 
 /// Enforce the spec's stage-2 alias table: each FR claim-reduction output
 /// equals the FR product-remainder opening of the same polynomial (see the WHY
-/// on [`attach_product_outputs`]). Value-only, like the generated
+/// on [`compose_product_outputs`]). Value-only, like the generated
 /// `validate_aliases`.
 fn validate_product_aliases<F: JoltField>(
     batch_outputs: &Stage2BatchOutputClaims<F>,

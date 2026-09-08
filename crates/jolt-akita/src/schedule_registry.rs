@@ -328,6 +328,13 @@ pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 /// Adapt grouped rows for optional advice followed by the mandatory groups —
 /// (field-inline) the FR limb group, then the direct committed-program
 /// objects — all in canonical precommit order.
+#[cfg_attr(
+    feature = "field-inline",
+    expect(
+        clippy::too_many_arguments,
+        reason = "the FR limb arity line is one more caller-derived precommit input beside the advice and program lines"
+    )
+)]
 pub fn provision_precommitted_for_k(
     dense_catalog: &TrustedScheduleCatalog,
     one_hot_catalog: &TrustedScheduleCatalog,

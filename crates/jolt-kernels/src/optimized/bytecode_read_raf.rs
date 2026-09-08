@@ -1296,13 +1296,12 @@ mod tests {
                 entry_bytecode_index,
             );
             #[cfg(feature = "field-inline")]
-            address_relation
-                .set_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
+            let address_relation =
+                address_relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
                     table: field_inline_table.clone(),
                     read_write_point: field_read_write_point.clone(),
                     val_evaluation_point: field_val_evaluation_point.clone(),
-                })
-                .unwrap();
+                });
             let address_challenges = BytecodeReadRafAddressPhaseChallenges {
                 gamma: fr(3),
                 stage1_gamma: fr(5),
@@ -1520,18 +1519,17 @@ mod akita_tests {
                 0,
             );
             // All-inactive and well-formed, mirroring `run_pair`: the geometry
-            // attach is required fail-closed under `field-inline`.
+            // composition is required fail-closed under `field-inline`.
             #[cfg(feature = "field-inline")]
-            relation
-                .set_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
+            let relation =
+                relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
                     table: FieldInlineBytecodeTable {
                         rows: vec![Default::default(); bytecode_len],
                         field_register_log_k: FIELD_REGISTERS_LOG_K,
                     },
                     read_write_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 61),
                     val_evaluation_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 67),
-                })
-                .unwrap();
+                });
             let challenges = BytecodeReadRafAddressPhaseChallenges {
                 gamma: Fr::from_u64(3),
                 stage1_gamma: Fr::from_u64(5),

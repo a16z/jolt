@@ -65,7 +65,8 @@ where
         sumchecks.validate_output_claims(&claims.outer)?;
 
         #[cfg(feature = "field-inline")]
-        let field_inline_outer = super::field_inline::attach_outer_outputs(&sumchecks, claims)?;
+        let (sumchecks, field_inline_outer) =
+            super::field_inline::compose_outer_outputs(sumchecks, claims)?;
 
         // The remainder consumes the uni-skip's reduced opening as its input claim
         // (the relation's `input_claim` is the bare consumed opening).

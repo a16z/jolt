@@ -54,6 +54,8 @@ pub use commitment::{
 };
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
+#[cfg(feature = "field-inline")]
+pub use kernel::{FieldInlineOuterAppendage, FieldInlineProductAppendage};
 pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};
 pub use optimized::OptimizedBackend;
 pub use reference::naive::NaiveSumcheckProver;

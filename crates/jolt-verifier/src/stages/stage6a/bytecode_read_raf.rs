@@ -10,9 +10,6 @@
 //! Under the `akita` feature the symbolic swaps to the lattice address phase,
 //! whose input fold additionally consumes the four reduced `Inc` claims
 
-#[cfg(feature = "field-inline")]
-use std::sync::OnceLock;
-
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
 #[cfg(feature = "field-inline")]
@@ -231,17 +228,19 @@ pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     /// kernel reads these.
     stage_points: BytecodeStagePoints<F>,
     entry_bytecode_index: usize,
-    /// The FR opening values the composed input claim folds, set by the
-    /// stage-6a fronts from the stage-1/4/5 clear outputs before the input
-    /// claim is computed. See
+    /// The FR opening values the composed input claim folds, composed in by
+    /// the clear stage-6a fronts from the stage-1/4/5 clear outputs
+    /// ([`with_field_inline_inputs`](Self::with_field_inline_inputs)); the
+    /// composed `input_claim` fails closed without them. See
     /// [`field_inline::FieldInlineBytecodeReadRafInputs`](super::field_inline::FieldInlineBytecodeReadRafInputs).
     #[cfg(feature = "field-inline")]
-    field_inline_inputs: OnceLock<FieldInlineBytecodeReadRafInputs<F>>,
+    field_inline_inputs: Option<FieldInlineBytecodeReadRafInputs<F>>,
     /// The FR side table and opening points the address-phase kernel folds
-    /// over, set by both fronts right after the batch build. See
+    /// over, composed in by both fronts right after the batch build
+    /// ([`with_field_inline_geometry`](Self::with_field_inline_geometry)). See
     /// [`field_inline::FieldInlineBytecodeReadRafGeometry`](super::field_inline::FieldInlineBytecodeReadRafGeometry).
     #[cfg(feature = "field-inline")]
-    field_inline_geometry: OnceLock<FieldInlineBytecodeReadRafGeometry<F>>,
+    field_inline_geometry: Option<FieldInlineBytecodeReadRafGeometry<F>>,
 }
 
 impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
@@ -258,62 +257,43 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
             stage_points,
             entry_bytecode_index,
             #[cfg(feature = "field-inline")]
-            field_inline_inputs: OnceLock::new(),
+            field_inline_inputs: None,
             #[cfg(feature = "field-inline")]
-            field_inline_geometry: OnceLock::new(),
+            field_inline_geometry: None,
         }
     }
 
-    /// Supply the FR kernel geometry (rejects a second set at different
-    /// contents — one proof per relation instance).
+    /// The relation composed with the FR kernel geometry (side table + FR
+    /// opening points).
     #[cfg(feature = "field-inline")]
-    pub fn set_field_inline_geometry(
-        &self,
+    pub fn with_field_inline_geometry(
+        mut self,
         geometry: FieldInlineBytecodeReadRafGeometry<F>,
-    ) -> Result<(), VerifierError> {
-        let stored = self.field_inline_geometry.get_or_init(|| geometry.clone());
-        if *stored != geometry {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "field-inline bytecode read-RAF geometry already set to different \
-                         contents"
-                    .to_string(),
-            });
-        }
-        Ok(())
+    ) -> Self {
+        self.field_inline_geometry = Some(geometry);
+        self
     }
 
-    /// The carried FR kernel geometry, fail-closed when the front never
-    /// attached one.
+    /// The composed FR kernel geometry, fail-closed when the front never
+    /// composed one.
     #[cfg(feature = "field-inline")]
     pub fn field_inline_geometry(
         &self,
     ) -> Result<&FieldInlineBytecodeReadRafGeometry<F>, VerifierError> {
-        self.field_inline_geometry
-            .get()
-            .ok_or_else(|| VerifierError::StageClaimPublicInputFailed {
+        self.field_inline_geometry.as_ref().ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::BytecodeReadRaf,
-                reason: "field-inline bytecode read-RAF geometry was never attached".to_string(),
-            })
+                reason: "field-inline bytecode read-RAF geometry was never composed".to_string(),
+            }
+        })
     }
 
-    /// Supply the FR opening values the composed input claim folds. Must be
-    /// called before `input_claim`; rejects a second set at different values
-    /// (one proof per relation instance).
+    /// The relation composed with the FR opening values the composed input
+    /// claim folds.
     #[cfg(feature = "field-inline")]
-    pub fn set_field_inline_inputs(
-        &self,
-        values: FieldInlineBytecodeReadRafInputs<F>,
-    ) -> Result<(), VerifierError> {
-        let stored = self.field_inline_inputs.get_or_init(|| values.clone());
-        if *stored != values {
-            return Err(VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::BytecodeReadRaf,
-                reason: "field-inline bytecode read-RAF inputs already set to different values"
-                    .to_string(),
-            });
-        }
-        Ok(())
+    pub fn with_field_inline_inputs(mut self, values: FieldInlineBytecodeReadRafInputs<F>) -> Self {
+        self.field_inline_inputs = Some(values);
+        self
     }
 
     pub fn committed_program(&self) -> bool {
@@ -420,11 +400,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
             |id| self.derive_input_term(id, challenges),
         )?;
 
-        let field_inline = self.field_inline_inputs.get().ok_or_else(|| {
+        let field_inline = self.field_inline_inputs.as_ref().ok_or_else(|| {
             VerifierError::StageClaimPublicInputFailed {
                 stage: JoltRelationId::BytecodeReadRaf,
-                reason: "field-inline bytecode read-RAF inputs not set (the stage-6a front must \
-                         supply them from the stage-1/4/5 outputs before the input claim)"
+                reason: "field-inline bytecode read-RAF inputs not composed (the stage-6a front \
+                         must supply them from the stage-1/4/5 outputs before the input claim)"
                     .to_string(),
             }
         })?;
@@ -605,9 +585,7 @@ mod field_inline_tests {
         let inputs = input_values();
         let challenges = challenges();
         let field_inline = field_inline_inputs();
-        relation
-            .set_field_inline_inputs(field_inline.clone())
-            .unwrap();
+        let relation = relation.with_field_inline_inputs(field_inline.clone());
 
         let ordinary = relation
             .symbolic()
@@ -667,15 +645,13 @@ mod field_inline_tests {
         let relation = relation();
         let inputs = input_values();
         let challenges = challenges();
-        relation
-            .set_field_inline_inputs(FieldInlineBytecodeReadRafInputs {
-                field_op_flags: [Fr::from_u64(0); 8],
-                rd_wa_read_write: Fr::from_u64(0),
-                rs1_ra: Fr::from_u64(0),
-                rs2_ra: Fr::from_u64(0),
-                rd_wa_val_evaluation: Fr::from_u64(0),
-            })
-            .unwrap();
+        let relation = relation.with_field_inline_inputs(FieldInlineBytecodeReadRafInputs {
+            field_op_flags: [Fr::from_u64(0); 8],
+            rd_wa_read_write: Fr::from_u64(0),
+            rs1_ra: Fr::from_u64(0),
+            rs2_ra: Fr::from_u64(0),
+            rd_wa_val_evaluation: Fr::from_u64(0),
+        });
 
         let ordinary = relation
             .symbolic()

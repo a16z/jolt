@@ -103,19 +103,19 @@ where
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
     })?;
-    // The FR kernel geometry, attached exactly like the verifier: the
+    // The FR kernel geometry, composed exactly like the verifier: the
     // preprocessed side table (required fail-closed, like the stage-6b build)
     // plus the stage-4/5 FR opening points the address kernel's FR
     // stage-value legs fold over.
     #[cfg(feature = "field-inline")]
-    jolt_verifier::stages::stage6a::field_inline::attach_bytecode_geometry(
-        &sumchecks.bytecode_read_raf,
+    let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_geometry(
+        sumchecks,
         jolt_verifier::stages::stage6a::field_inline::preprocessed_bytecode_table(
             &preprocessing.verifier.program,
         )?,
         &stage4.output_points,
         &stage5.output_points,
-    )?;
+    );
     // The generated per-member draw, mirroring the verifier: the bytecode
     // member's six squeezes (the fold gamma plus the five per-stage gammas),
     // then the booleanity member's override (the reference-address pad draw
@@ -153,8 +153,8 @@ where
     // FieldOpFlag openings plus the stage-4/5 FR access openings, folded by
     // the extended gamma powers inside the relation's composed `input_claim`.
     #[cfg(feature = "field-inline")]
-    jolt_verifier::stages::stage6a::field_inline::attach_bytecode_inputs(
-        &sumchecks.bytecode_read_raf,
+    let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_inputs(
+        sumchecks,
         stage1,
         &stage4.output_values,
         &stage5.output_values,
@@ -193,7 +193,7 @@ where
 /// FR-on clear round-trips of the stage-6a recipe against the verifier's own
 /// public constituents — `stage6a::verify`'s clear body (the batch built by
 /// the promoted `build_from_parts` with the FR side table on the bytecode
-/// member, the FR appendage attach, the composed input claim with its
+/// member, the FR appendage composition, the composed input claim with its
 /// gamma-power extension) on a twin transcript positioned by the stage-1..5
 /// replays, on the FR-ACTIVE arithmetic trace: the appendage openings are
 /// nonzero, so the address kernel's FR stage-value legs are exercised for

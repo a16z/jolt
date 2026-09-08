@@ -16,6 +16,8 @@ use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
+#[cfg(feature = "field-inline")]
+use jolt_kernels::FieldInlineProductAppendage;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
@@ -106,9 +108,12 @@ where
     let tau_high: F = draw_spartan_product_tau_high(transcript);
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
     // The FR lane inputs enter the composed input claim exactly as on the
-    // verifier — through the shared seam attach, before `input_claim`.
+    // verifier — composed through the shared seam, before `input_claim`.
     #[cfg(feature = "field-inline")]
-    jolt_verifier::stages::stage2::field_inline::attach_uniskip_inputs(&uniskip_relation, stage1)?;
+    let uniskip_relation = jolt_verifier::stages::stage2::field_inline::compose_uniskip_inputs(
+        uniskip_relation,
+        stage1,
+    )?;
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
         uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
@@ -195,20 +200,18 @@ where
     #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
     let mut claims =
         Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
-    // Attach the FR product appendage the composed remainder kernel
-    // published: `claims` is the wire carrier `stage2::verify` requires
+    // Attach the FR product appendage the composed remainder kernel parked
+    // in the session (taken here: the driver already composed it into its
+    // batch view): `claims` is the wire carrier `stage2::verify` requires
     // fail-closed on FR-on proofs.
     #[cfg(feature = "field-inline")]
     {
-        claims.field_inline_product = Some(
-            sumchecks
-                .product_remainder
-                .field_inline_outputs()
-                .ok_or(ProverError::Verifier(VerifierError::MissingProofPayload {
-                    field: "stage2 FR product appendage (composed remainder kernel)",
-                }))?
-                .clone(),
-        );
+        let FieldInlineProductAppendage(appendage) = session
+            .take::<FieldInlineProductAppendage<F>>()
+            .ok_or(ProverError::Verifier(VerifierError::MissingProofPayload {
+                field: "stage2 FR product appendage (composed remainder kernel)",
+            }))?;
+        claims.field_inline_product = Some(appendage);
     }
 
     Ok(Stage2ProverOutput {
@@ -231,7 +234,7 @@ where
 /// public constituents — `stage2::verify`'s clear body step for step (the
 /// `τ_high` draw, the composed uni-skip via the seam attach and
 /// `uniskip::verify_clear`, the six-member batch with the FR claim-reduction
-/// member, the FR product appendage attach with its alias equality, and the
+/// member, the FR product appendage composition with its alias equality, and the
 /// curated absorb) on a twin transcript. The full `stage2::verify` entrypoint
 /// needs an assembled `JoltProof` (no test constructor for the joint-opening
 /// slot), so this is the closest public seam; the 32-byte transcript-state
@@ -319,11 +322,12 @@ mod field_inline_round_trip {
             };
             let batch_challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
             let input_points = sumchecks.empty_input_points();
-            let attached = jolt_verifier::stages::stage1::field_inline::attach_outer_outputs(
-                &sumchecks,
-                &stage1.claims,
-            )
-            .unwrap();
+            let (sumchecks, attached) =
+                jolt_verifier::stages::stage1::field_inline::compose_outer_outputs(
+                    sumchecks,
+                    &stage1.claims,
+                )
+                .unwrap();
             let input_values = Stage1BatchInputClaims {
                 outer_remainder: jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output(
                     stage1.claims.uniskip_output_claim,
@@ -357,9 +361,11 @@ mod field_inline_round_trip {
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
         let tau_high: Fr = draw_spartan_product_tau_high(&mut transcript);
-        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
-        stage2_field_inline::attach_uniskip_inputs(&uniskip_relation, &stage1.clear_output)
-            .unwrap();
+        let uniskip_relation = stage2_field_inline::compose_uniskip_inputs(
+            ProductUniskip::new(product_dimensions, tau_high),
+            &stage1.clear_output,
+        )
+        .unwrap();
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation
             .input_claim(&uniskip_inputs, &NoChallenges::default())
@@ -409,8 +415,8 @@ mod field_inline_round_trip {
         sumchecks
             .validate_output_claims(&out.claims.batch_outputs)
             .unwrap();
-        let attached_product =
-            stage2_field_inline::attach_product_outputs(&sumchecks, &out.claims).unwrap();
+        let (sumchecks, attached_product) =
+            stage2_field_inline::compose_product_outputs(sumchecks, &out.claims).unwrap();
         let input_values = stage2_batch_input_values_from_upstream(
             &stage1.clear_output,
             out.claims.product_uniskip_output_claim,

@@ -17,6 +17,8 @@ use std::collections::BTreeMap;
 use jolt_claims::protocols::field_inline::geometry::product::{
     composed_remainder_factor_contributions, FieldProductLaneFactors,
 };
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
@@ -62,6 +64,8 @@ use super::support::{
     RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
+#[cfg(feature = "field-inline")]
+use crate::FieldInlineProductAppendage;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -425,11 +429,11 @@ struct ProductRemainderKernel<F: JoltField> {
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanProductRow>,
-    /// The Arc-shared relation cell: the FR product appendage publishes on
-    /// it at extraction.
+    /// The FR product appendage, produced at extraction and parked in the
+    /// session by `park_residue` for the driver's composition.
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(skip))]
-    relation: ProductRemainder<F>,
+    field_inline_appendage: Option<FieldRegistersProductOutputClaims<F>>,
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
@@ -591,7 +595,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             challenges: RoundChallenges::new(rounds),
             rows,
             #[cfg(feature = "field-inline")]
-            relation: inputs.relation.clone(),
+            field_inline_appendage: None,
             #[cfg(feature = "field-inline")]
             fr_rows,
             lagrange_weights: weights,
@@ -714,21 +718,18 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
         let weights = self.cycle_weights();
-        // Publish the FR product appendage on the Arc-shared relation cell:
-        // the driver's curated absorb, its composed expected-output fold, and
-        // the stage-2 recipe's claim assembly all read it from there.
+        // The FR product appendage rides to the driver through the session
+        // (parked by `park_residue`): its curated absorb, composed
+        // expected-output fold, and the stage-2 recipe's claim assembly read
+        // it from there.
         #[cfg(feature = "field-inline")]
         {
-            use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
-
             let [rs1_value, rs2_value, rd_value] = self.fr_claimed_inputs(&weights);
-            self.relation
-                .set_field_inline_outputs(FieldRegistersProductOutputClaims {
-                    rs1_value,
-                    rs2_value,
-                    rd_value,
-                })
-                .map_err(SumcheckKernelError::Verifier)?;
+            self.field_inline_appendage = Some(FieldRegistersProductOutputClaims {
+                rs1_value,
+                rs2_value,
+                rd_value,
+            });
         }
         let ids = [
             left_instruction_input_product(),
@@ -783,6 +784,13 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
             )?;
         }
         Ok(())
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn park_residue(self: Box<Self>, session: &mut ProofSession) {
+        if let Some(appendage) = self.field_inline_appendage {
+            session.park(FieldInlineProductAppendage(appendage));
+        }
     }
 }
 

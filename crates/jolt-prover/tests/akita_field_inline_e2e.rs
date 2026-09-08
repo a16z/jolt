@@ -23,7 +23,7 @@ mod support {
     use std::sync::Arc;
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-    use jolt_akita::{AkitaCommitment, PrecommittedScheduleParams};
+    use jolt_akita::AkitaCommitment;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
@@ -37,9 +37,9 @@ mod support {
     use jolt_prover_legacy::field::akita::AkitaFp128;
     use jolt_prover_legacy::host::Program;
     use jolt_prover_legacy::zkvm::packed::{
-        akita_verifier_preprocessing, field_inc_limb_schedule_params, AkitaField, AkitaJoltProof,
-        AkitaScheduleArtifacts,
-        AkitaNoCurve, AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
+        akita_verifier_preprocessing, field_inline_one_hot_trace_setup_params, AkitaField,
+        AkitaJoltProof, AkitaNoCurve, AkitaPackedScheme, AkitaScheduleArtifacts, AkitaScheme,
+        AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
@@ -209,21 +209,15 @@ mod support {
         let (setup_shape, layout_digest, one_hot_k) =
             akita::one_hot_trace_setup_shape(&config, bytecode_len)
                 .expect("OneHotTrace setup shape");
-        // The setup's final arity carries the FR limb group (the derivation
-        // legacy's one_hot_trace_setup_params performs).
-        let precommitted_schedule =
-            PrecommittedScheduleParams::new(None, None, setup_shape.num_vars).with_field_inc_limbs(
-                field_inc_limb_schedule_params(one_hot_k).expect("FR limb arity line"),
-            );
-        let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only_grouped(
+        // The setup's final arity carries the FR limb group.
+        let params = field_inline_one_hot_trace_setup_params(
             setup_shape.num_vars,
             setup_shape.num_polys,
-            2,
             layout_digest,
             one_hot_k,
-            Some(precommitted_schedule),
             AkitaScheduleArtifacts::shared_from_default_directory(),
-        );
+        )
+        .expect("FR-on packed setup params");
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(params)
                 .expect("the transparent packed setup must derive");

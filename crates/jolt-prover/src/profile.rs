@@ -990,16 +990,12 @@ fn prove_workload(
     backend: BackendKind,
 ) -> ProvenRun {
     use jolt_akita::AkitaScheduleArtifacts;
-    #[cfg(feature = "field-inline")]
-    use jolt_akita::PrecommittedScheduleParams;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
+    #[cfg(feature = "field-inline")]
+    use jolt_prover_legacy::zkvm::packed::field_inline_one_hot_trace_setup_params;
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, AkitaField, AkitaPackedScheme, AkitaScheme, AkitaTranscript,
         AkitaVc,
-    };
-    #[cfg(feature = "field-inline")]
-    use jolt_prover_legacy::zkvm::packed::{
-        field_inc_limb_schedule_params, grouped_batch_poly_capacity,
     };
 
     let backend = match backend {
@@ -1068,24 +1064,16 @@ fn prove_workload(
         schedule_artifacts,
     );
     // An FR-on prover commits the limb group on every proof, so the setup
-    // carries the FR arity line in its schedule (legacy's
-    // `one_hot_trace_setup_params` derivation, without advice or a committed
-    // program).
+    // carries the FR arity line in its schedule.
     #[cfg(feature = "field-inline")]
-    let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only_grouped(
+    let params = field_inline_one_hot_trace_setup_params(
         setup_shape.num_vars,
         setup_shape.num_polys,
-        grouped_batch_poly_capacity(0, 0, 0),
         layout_digest,
         one_hot_k,
-        Some(
-            PrecommittedScheduleParams::new(None, None, setup_shape.num_vars).with_field_inc_limbs(
-                field_inc_limb_schedule_params(one_hot_k)
-                    .expect("the FR limb arity line must derive for a canonical K"),
-            ),
-        ),
         schedule_artifacts,
-    );
+    )
+    .expect("the FR-on packed setup params must derive for a canonical K");
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
