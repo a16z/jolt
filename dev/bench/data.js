@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788896910854,
+  "lastUpdate": 1788900950102,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -155914,6 +155914,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 869276,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f09bbc1e34777e7ff2cb5b73c639460fd48695c4",
+          "message": "chore(deps): fix cargo audit findings and add nightly cargo audit workflow (#1843)\n\n* chore(deps): fix cargo audit findings and add nightly cargo audit workflow\n\n`cargo audit` on main reported four vulnerabilities plus unsound and yanked\nwarnings. All three tracked lockfiles now audit clean with\n`--deny unsound --deny yanked`; only `unmaintained` warnings remain, none\nwith a fix short of upstream changes.\n\n- quick-xml 0.26.0 (RUSTSEC-2026-0194, RUSTSEC-2026-0195): reached only\n  through pprof's `flamegraph` feature -> inferno 0.11. pprof still pins\n  inferno ^0.11 upstream and Jolt only uses pprof's `.pprof()` protobuf\n  output, so drop the feature. jolt-prover-legacy's pprof/prost now inherit\n  the workspace declarations. Removes inferno 0.11.21, quick-xml 0.26.0 and\n  is-terminal 0.4.17 from Cargo.lock.\n- crossbeam-epoch 0.9.18 -> 0.9.20 (RUSTSEC-2026-0204), ruint 1.17.2 ->\n  1.20.0 (RUSTSEC-2026-0220), memmap2 0.9.10 -> 0.9.11 (RUSTSEC-2026-0186,\n  unsound), spin 0.9.8 -> 0.9.9 and 0.10.0 -> 0.10.1 (yanked).\n- jolt-eval/fuzz/Cargo.lock: same crossbeam-epoch and memmap2 fixes plus\n  anyhow 1.0.102 -> 1.0.104 (RUSTSEC-2026-0190, unsound) and gimli 0.33.1 ->\n  0.34.0 (yanked). The lock was stale against its path deps, so cargo\n  re-synced 18 packages; tree-sitter stays pinned at 0.20.9 (see #1688).\n\nNew .github/workflows/cargo-audit.yml runs nightly (and on demand, and on\nPRs that edit the workflow itself) over every tracked Cargo.lock with\n`--deny unsound --deny yanked`, and files a deduplicated issue on failure,\nmirroring z3-nightly.yml. CONTRIBUTING.md lists the command and the\ncargo-audit prerequisite.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* chore(deps): drop the unused workspace prost dependency\n\npprof's `prost-codec` feature depends on pprof's own prost 0.12 and\nre-exports `Message` as `pprof::protos::Message`, which is what both\njolt-profiling and jolt-prover-legacy import. The workspace `prost = \"0.14\"`\n(added with the pprof feature in #988 and carried into jolt-profiling in\n#1364) was never named by any Rust source, so it only pulled prost 0.14.4 and\nprost-derive 0.14.4 into Cargo.lock behind the two `pprof` features. Remove\nit along with the cargo-machete ignores that were hiding it.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>",
+          "timestamp": "2026-09-08T12:57:09-07:00",
+          "tree_id": "73305cdf1dde6440e01c1b98408fb995769188d1",
+          "url": "https://github.com/a16z/jolt/commit/f09bbc1e34777e7ff2cb5b73c639460fd48695c4"
+        },
+        "date": 1788900944740,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.0605,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.9627,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 507352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6066,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.4661,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 507064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.9841,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 502256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 2.9783,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 119560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1065,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 859088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4799,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 507056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.401,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 503224,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 17.2994,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500868,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.5594,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 504676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 25.7504,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1027840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 11.9382,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 645124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 63.4986,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 2161396,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 506972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.3001,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 498612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.9472,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 859428,
             "unit": "KB",
             "extra": ""
           }
