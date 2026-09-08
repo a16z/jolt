@@ -27,6 +27,7 @@ use std::{
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 #[cfg(feature = "field-inline")]
 use jolt_akita::FieldIncLimbScheduleParams;
+pub use jolt_akita::AkitaScheduleArtifacts;
 use jolt_akita::{AkitaSetupParams, PrecommittedScheduleParams};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     is_valid_committed_program_immediate, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
@@ -100,6 +101,7 @@ pub type AkitaTranscript = jolt_transcript::LegacyBlake2bTranscript<AkitaField>;
 pub type AkitaVc = NoVectorCommitment<AkitaField>;
 /// The verifier-native proof the packed prover emits.
 pub type AkitaJoltProof = JoltProof<AkitaScheme, AkitaVc>;
+
 /// A group placeholder for the packed prover's curve parameter: the packed
 /// axis is transparent-only, so no group operation is ever performed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -389,12 +391,13 @@ impl crate::zkvm::proof::ProofCurve<AkitaFp128> for AkitaNoCurve {
     }
 }
 
-/// The transparent setup of a singleton commitment object (advice word
-/// objects, including direct program objects): one polynomial at `num_vars`, seeded by the
-/// object plan's layout digest — the shared [`TransparentObjectSetup`]
-/// convention `akita_verifier_preprocessing` and the modular packed prover
-/// re-derive independently, so all sides stay on a single definition.
+/// The transparent setup of a singleton commitment object (advice words or a
+/// direct program object): the application-owned catalog context admits one
+/// polynomial at `num_vars`, keyed by the object plan's layout digest. Legacy
+/// and modular preprocessing use the same [`TransparentObjectSetup`]
+/// definition and immutable artifact bundle.
 fn transparent_object_setup(
+    setup_context: &Arc<AkitaScheduleArtifacts>,
     num_vars: usize,
     layout_digest: [u8; 32],
 ) -> Result<
@@ -404,10 +407,15 @@ fn transparent_object_setup(
     ),
     jolt_openings::OpeningsError,
 > {
-    <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(num_vars, layout_digest)
+    <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
+        setup_context,
+        num_vars,
+        layout_digest,
+    )
 }
 
 fn advice_object_setup(
+    setup_context: &Arc<AkitaScheduleArtifacts>,
     kind: JoltAdviceKind,
     max_advice_bytes: usize,
 ) -> Result<<AkitaScheme as VerifierCommitmentScheme>::ProverSetup, VerifierError> {
@@ -417,12 +425,14 @@ fn advice_object_setup(
             reason: error.to_string(),
         }
     })?;
-    let (setup, _verifier_setup) =
-        transparent_object_setup(plan.packing().packed_num_vars(), plan.layout_digest()).map_err(
-            |error| VerifierError::FinalOpeningVerificationFailed {
-                reason: error.to_string(),
-            },
-        )?;
+    let (setup, _verifier_setup) = transparent_object_setup(
+        setup_context,
+        plan.packing().packed_num_vars(),
+        plan.layout_digest(),
+    )
+    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
+        reason: error.to_string(),
+    })?;
     Ok(setup)
 }
 
@@ -467,34 +477,6 @@ pub fn field_inc_limb_schedule_params(
     ))
 }
 
-pub fn provision_precommitted_schedules(
-    max_untrusted_advice_bytes: usize,
-    max_trusted_advice_bytes: usize,
-    direct_program_physical_vars: &[usize],
-    one_hot_k: usize,
-    final_num_vars: usize,
-) -> Result<(), VerifierError> {
-    let untrusted_physical_vars = (max_untrusted_advice_bytes > 0)
-        .then(|| advice_physical_num_vars(JoltAdviceKind::Untrusted, max_untrusted_advice_bytes))
-        .transpose()?;
-    let trusted_physical_vars = (max_trusted_advice_bytes > 0)
-        .then(|| advice_physical_num_vars(JoltAdviceKind::Trusted, max_trusted_advice_bytes))
-        .transpose()?;
-    jolt_akita::schedule_registry::provision_precommitted_for_k(
-        untrusted_physical_vars,
-        trusted_physical_vars,
-        direct_program_physical_vars,
-        #[cfg(feature = "field-inline")]
-        Some(field_inc_limb_schedule_params(one_hot_k)?),
-        one_hot_k,
-        final_num_vars,
-    )
-    .map(|_| ())
-    .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
-        reason: error.to_string(),
-    })
-}
-
 /// The grouped packed setup's polynomial capacity: the one-hot trace group,
 /// the direct program objects, one slot per configured advice kind, and the
 /// FR limb group on FR-on builds. Public so the profile harness sizes its
@@ -521,8 +503,8 @@ pub struct AdviceObject {
     pub setup: <AkitaScheme as VerifierCommitmentScheme>::ProverSetup,
 }
 
-/// Builds the canonical zero-padded advice-word commitment. The setup is derived from the public advice shape
-/// with the same fixed seed on both sides (the Akita setup is transparent).
+/// Builds the canonical zero-padded advice-word commitment under the setup
+/// already derived from the immutable catalog context and public advice shape.
 pub fn commit_advice(
     kind: JoltAdviceKind,
     advice_bytes: &[u8],
@@ -565,10 +547,15 @@ pub fn commit_advice(
 /// commitment to the verifier. Runs at preprocessing time, so it builds its
 /// own object setup.
 pub fn commit_trusted_advice(
+    setup_context: &Arc<AkitaScheduleArtifacts>,
     trusted_advice_bytes: &[u8],
     max_trusted_advice_bytes: usize,
 ) -> Result<AdviceObject, VerifierError> {
-    let setup = advice_object_setup(JoltAdviceKind::Trusted, max_trusted_advice_bytes)?;
+    let setup = advice_object_setup(
+        setup_context,
+        JoltAdviceKind::Trusted,
+        max_trusted_advice_bytes,
+    )?;
     commit_advice(
         JoltAdviceKind::Trusted,
         trusted_advice_bytes,
@@ -591,6 +578,7 @@ pub struct DirectProgramObjects {
 /// Assembles and commits the direct bounded-dense bytecode chunks and program
 /// image under their transparent object setups.
 pub fn commit_direct_program(
+    setup_context: &Arc<AkitaScheduleArtifacts>,
     program: &crate::zkvm::program::FullProgramPreprocessing,
     memory_layout: &common::jolt_device::MemoryLayout,
     bytecode_chunk_count: usize,
@@ -663,7 +651,7 @@ pub fn commit_direct_program(
                 .map_err(|error| commit_failed(error.to_string()))?
                 .0
             } else {
-                transparent_object_setup(physical_vars, object_plan.layout_digest())
+                transparent_object_setup(setup_context, physical_vars, object_plan.layout_digest())
                     .map_err(|error| commit_failed(error.to_string()))?
                     .0
             };
@@ -689,6 +677,7 @@ pub fn commit_direct_program(
 /// commitment binds via explicit transcript absorption in canonical object
 /// order, exactly like the base committed chunk commitments.
 pub fn shared_preprocessing_with_direct_program(
+    setup_context: &Arc<AkitaScheduleArtifacts>,
     program: crate::zkvm::program::ProgramPreprocessing<AkitaPackedScheme>,
     memory_layout: common::jolt_device::MemoryLayout,
     max_padded_trace_length: usize,
@@ -706,7 +695,8 @@ pub fn shared_preprocessing_with_direct_program(
             reason: "packed committed preprocessing starts from a full program".to_string(),
         });
     };
-    let direct_program = commit_direct_program(&full, &memory_layout, bytecode_chunk_count)?;
+    let direct_program =
+        commit_direct_program(setup_context, &full, &memory_layout, bytecode_chunk_count)?;
     let meta = full.meta();
     let meta_for_shared = meta.clone();
     let bytecode_len = full.bytecode_len();
@@ -757,7 +747,10 @@ impl AkitaPackedProver<'_> {
         reason = "consistent with the canonical-layout expects below; a program whose \
                   advice capacity cannot be scheduled is a preprocessing-time invariant break"
     )]
-    pub fn one_hot_trace_setup_params(&self) -> AkitaSetupParams {
+    pub fn one_hot_trace_setup_params(
+        &self,
+        schedule_artifacts: Arc<AkitaScheduleArtifacts>,
+    ) -> AkitaSetupParams {
         let one_hot_trace_shape = self.one_hot_trace_shape();
         let shape = ONE_HOT_TRACE_LAYOUT
             .setup_shape(&one_hot_trace_shape)
@@ -836,6 +829,7 @@ impl AkitaPackedProver<'_> {
             layout_digest,
             one_hot_k,
             precommitted_schedule,
+            schedule_artifacts,
         )
     }
 
@@ -977,6 +971,7 @@ impl AkitaPackedProver<'_> {
     #[tracing::instrument(skip_all, name = "generate_and_commit_untrusted_advice_packed")]
     fn generate_and_commit_untrusted_advice_packed(
         &mut self,
+        setup_context: &Arc<AkitaScheduleArtifacts>,
     ) -> Result<Option<AdviceObject>, VerifierError> {
         if self.program_io.untrusted_advice.is_empty() {
             return Ok(None);
@@ -987,12 +982,25 @@ impl AkitaPackedProver<'_> {
         let setup = match self.preprocessing.untrusted_advice_object_setup.get() {
             Some(setup) => setup,
             None => {
-                let built = advice_object_setup(JoltAdviceKind::Untrusted, max_advice_bytes)?;
+                let built = advice_object_setup(
+                    setup_context,
+                    JoltAdviceKind::Untrusted,
+                    max_advice_bytes,
+                )?;
                 self.preprocessing
                     .untrusted_advice_object_setup
                     .get_or_init(|| built)
             }
         };
+        if !Arc::ptr_eq(
+            <AkitaScheme as TransparentObjectSetup>::transparent_setup_context(setup),
+            setup_context,
+        ) {
+            return Err(VerifierError::FinalOpeningVerificationFailed {
+                reason: "untrusted-advice setup was derived from a different Akita schedule artifact bundle"
+                    .to_owned(),
+            });
+        }
         let object = commit_advice(
             JoltAdviceKind::Untrusted,
             &self.program_io.untrusted_advice,
@@ -1453,7 +1461,9 @@ impl AkitaPackedProver<'_> {
         // Both advice objects are precommitted batch groups, so both are
         // committed before the trace: the final commit is conditioned on the
         // frozen profile of every precommitted group.
-        let advice_object = self.generate_and_commit_untrusted_advice_packed()?;
+        let advice_object = self.generate_and_commit_untrusted_advice_packed(
+            <AkitaScheme as TransparentObjectSetup>::transparent_setup_context(object_setup),
+        )?;
         let mut precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
         if let Some(object) = advice_object.as_ref() {
             precommitted.push((
@@ -1713,8 +1723,8 @@ impl AkitaPackedProver<'_> {
 
 /// The verifier preprocessing for a packed proof: the program preprocessing
 /// (full-program mode), the digest, the `OneHotTrace` setup, and the per-object
-/// setups derived from the public shapes (transparent setup, fixed seed —
-/// the same derivation the prover's object builders use).
+/// setups derived from the same immutable schedule-artifact context and
+/// public shapes used by the prover's object builders.
 pub fn akita_verifier_preprocessing(
     preprocessing: &crate::zkvm::prover::JoltProverPreprocessing<
         AkitaFp128,
@@ -1756,37 +1766,6 @@ pub fn akita_verifier_preprocessing(
             })
         }
     };
-    let one_hot_k = akita_verifier_setup.one_hot_k();
-    let akita_verifier_final_num_vars = akita_verifier_setup.max_num_vars();
-    let layout = &preprocessing.shared.memory_layout;
-    let direct_program_plan = preprocessing.shared.program.is_committed().then(|| {
-        let bytecode_len = preprocessing.shared.bytecode_size();
-        let bytecode_chunk_count = preprocessing.shared.bytecode_chunk_count;
-        committed_program_packing_plan(
-            bytecode_len,
-            bytecode_chunk_count,
-            preprocessing.shared.program.program_image_len_words(),
-            TracePolynomialOrder::CycleMajor,
-        )
-        .expect("the canonical precommitted packing plan must exist")
-    });
-    let direct_program_physical_vars = direct_program_plan
-        .as_ref()
-        .map(|plan| {
-            plan.objects()
-                .map(|object| object.packing().packed_num_vars())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    provision_precommitted_schedules(
-        layout.max_untrusted_advice_size as usize,
-        layout.max_trusted_advice_size as usize,
-        &direct_program_physical_vars,
-        one_hot_k,
-        akita_verifier_final_num_vars,
-    )
-    .expect("precommitted grouped schedules must provision for the verifier");
-
     JoltVerifierPreprocessing::new(
         program,
         preprocessing.shared.digest(),
@@ -1836,7 +1815,8 @@ mod tests {
         )
         .unwrap();
         let io_device = prover.program_io.clone();
-        let setup_params = prover.one_hot_trace_setup_params();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let setup_params = prover.one_hot_trace_setup_params(schedule_artifacts);
         assert_eq!(setup_params.one_hot_k(), 16);
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(setup_params).unwrap();
@@ -1938,9 +1918,11 @@ mod tests {
             prover.one_hot_params.ram_k,
         );
         let io_device = prover.program_io.clone();
-        let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
-                .unwrap();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+            prover.one_hot_trace_setup_params(schedule_artifacts),
+        )
+        .unwrap();
         let proof = prover
             .prove_packed(&object_setup, None, None)
             .expect("packed prover should produce a verifier-native proof");
@@ -1997,7 +1979,9 @@ mod advice_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let trusted_object = commit_trusted_advice(
+            &schedule_artifacts,
             &trusted_advice,
             io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -2016,9 +2000,10 @@ mod advice_tests {
         .unwrap();
         let io_device = prover.program_io.clone();
 
-        let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
-                .expect("the transparent packed setup must derive");
+        let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+            prover.one_hot_trace_setup_params(schedule_artifacts),
+        )
+        .expect("the transparent packed setup must derive");
         let trusted_commitment = trusted_object.commitment.clone();
         let proof = prover
             .prove_packed(&object_setup, Some(&trusted_object), None)
@@ -2077,7 +2062,9 @@ mod advice_tests {
         let prover_preprocessing = JoltProverPreprocessing::new(shared);
         let elf_contents = program.get_elf_contents().expect("elf contents is None");
 
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let trusted_object = commit_trusted_advice(
+            &schedule_artifacts,
             &trusted_advice,
             io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -2096,9 +2083,10 @@ mod advice_tests {
         .unwrap();
         let io_device = prover.program_io.clone();
 
-        let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
-                .expect("the transparent packed setup must derive");
+        let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+            prover.one_hot_trace_setup_params(schedule_artifacts),
+        )
+        .expect("the transparent packed setup must derive");
         let trusted_commitment = trusted_object.commitment.clone();
         let proof = prover
             .prove_packed(&object_setup, Some(&trusted_object), None)
@@ -2128,6 +2116,7 @@ mod committed_tests {
     /// program image join the main trace in one native Akita batch.
     fn committed_e2e(bytecode_chunk_count: usize) {
         DoryGlobals::reset();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let mut program = host::Program::new("muldiv-guest");
         let (bytecode, init_memory_state, _, e_entry) = program.decode();
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
@@ -2136,6 +2125,7 @@ mod committed_tests {
         let program_data = ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry)
             .expect("program preprocessing");
         let (shared, prover_data, direct_program) = shared_preprocessing_with_direct_program(
+            &schedule_artifacts,
             program_data,
             io_device.memory_layout.clone(),
             1 << 16,
@@ -2159,9 +2149,10 @@ mod committed_tests {
         .unwrap();
         let io_device = prover.program_io.clone();
 
-        let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params())
-                .expect("the transparent packed setup must derive");
+        let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+            prover.one_hot_trace_setup_params(schedule_artifacts),
+        )
+        .expect("the transparent packed setup must derive");
         let proof = prover
             .prove_packed(&object_setup, None, Some(&direct_program))
             .expect("packed prover should produce a verifier-native proof");
@@ -2270,7 +2261,8 @@ mod committed_tests {
         .unwrap();
         let io_device = prover.program_io.clone();
         eprintln!("trace length: {}", prover.trace.len());
-        let setup_params = prover.one_hot_trace_setup_params();
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let setup_params = prover.one_hot_trace_setup_params(schedule_artifacts.clone());
         eprintln!("OneHotTrace one-hot K: {}", setup_params.one_hot_k());
         let setup_start = Instant::now();
         let (object_setup, verifier_setup) =
@@ -2279,6 +2271,7 @@ mod committed_tests {
 
         let commit_start = Instant::now();
         let trusted_object = commit_trusted_advice(
+            &schedule_artifacts,
             &trusted_advice,
             io_device.memory_layout.max_trusted_advice_size as usize,
         )
@@ -2465,9 +2458,10 @@ mod advice_object_tests {
     fn byte_sized_advice_region_commits_and_opens() {
         let max_advice_bytes = 8;
         let advice_bytes = [5u8, 7];
+        let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
 
         for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
-            let setup = advice_object_setup(kind, max_advice_bytes).unwrap();
+            let setup = advice_object_setup(&schedule_artifacts, kind, max_advice_bytes).unwrap();
             let AdviceObject {
                 plan,
                 polynomial,
@@ -2518,6 +2512,7 @@ mod advice_object_tests {
                     plan.packing().packed_num_vars(),
                     1,
                     plan.layout_digest(),
+                    schedule_artifacts.clone(),
                 ),
             )
             .unwrap();

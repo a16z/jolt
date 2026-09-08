@@ -989,6 +989,7 @@ fn prove_workload(
     trace_output: TraceOutput<ProfileTrace>,
     backend: BackendKind,
 ) -> ProvenRun {
+    use jolt_akita::AkitaScheduleArtifacts;
     #[cfg(feature = "field-inline")]
     use jolt_akita::PrecommittedScheduleParams;
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
@@ -1054,12 +1055,17 @@ fn prove_workload(
         legacy_preprocessing.shared.bytecode_size(),
     )
     .expect("OneHotTrace setup shape");
+    // Disk I/O is deployment work, not PCS setup. Load the ordinary `.aks`
+    // files before entering the setup measurement; catalog admission and
+    // matrix/key construction remain inside the timed setup call.
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     #[cfg(not(feature = "field-inline"))]
     let params = <<AkitaScheme as VerifierCommitmentScheme>::SetupParams>::one_hot_only(
         setup_shape.num_vars,
         setup_shape.num_polys,
         layout_digest,
         one_hot_k,
+        schedule_artifacts,
     );
     // An FR-on prover commits the limb group on every proof, so the setup
     // carries the FR arity line in its schedule (legacy's
@@ -1078,6 +1084,7 @@ fn prove_workload(
                     .expect("the FR limb arity line must derive for a canonical K"),
             ),
         ),
+        schedule_artifacts,
     );
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();

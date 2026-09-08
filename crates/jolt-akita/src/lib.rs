@@ -30,8 +30,6 @@ mod scheme;
 mod shape_guard;
 mod trace_onehot;
 
-pub(crate) use akita_schedules::RecursiveSplitSearchPolicy;
-
 pub use akita_pcs::AkitaError;
 
 #[cfg(feature = "profiling")]
@@ -42,8 +40,8 @@ pub use adapters::{
 };
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
-    AKITA_ONE_HOT_K256,
+    AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupParams,
+    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,

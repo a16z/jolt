@@ -144,6 +144,7 @@ where
     // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice::<PCS>(
+            PCS::transparent_setup_context(&preprocessing.pcs_setup),
             JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
             public_io.memory_layout.max_untrusted_advice_size as usize,
@@ -152,7 +153,11 @@ where
         None
     };
     #[cfg(feature = "field-inline")]
-    let field_inc_limbs = super::field_inline::commit_field_inc_limbs::<F, PCS>(log_t, witness)?;
+    let field_inc_limbs = super::field_inline::commit_field_inc_limbs::<F, PCS>(
+        PCS::transparent_setup_context(&preprocessing.pcs_setup),
+        log_t,
+        witness,
+    )?;
 
     // Canonical public batch order: advice, (field-inline) the FR limb group,
     // then the direct committed-program objects, then OneHotTrace.

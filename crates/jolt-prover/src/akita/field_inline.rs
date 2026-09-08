@@ -46,6 +46,7 @@ pub struct FieldIncLimbsObject<PCS: CommitmentScheme> {
 /// identically zero `FieldRdInc` still commits (all-zero content is legal;
 /// dense schedules are keyed by shape, never content).
 pub fn commit_field_inc_limbs<F, PCS>(
+    setup_context: &PCS::SetupContext,
     log_t: usize,
     witness: &dyn JoltWitnessPlane<F>,
 ) -> Result<FieldIncLimbsObject<PCS>, ProverError<F>>
@@ -87,9 +88,12 @@ where
         }
     }
     let polynomial = Polynomial::new(evaluations);
-    let (setup, _verifier_setup) =
-        PCS::transparent_object_setup(plan.packing().packed_num_vars(), plan.layout_digest())
-            .map_err(commit_failed)?;
+    let (setup, _verifier_setup) = PCS::transparent_object_setup(
+        setup_context,
+        plan.packing().packed_num_vars(),
+        plan.layout_digest(),
+    )
+    .map_err(commit_failed)?;
     let (commitment, hint) = tracing::info_span!(
         "commit_field_inc_limbs",
         packed_num_vars = plan.packing().packed_num_vars()

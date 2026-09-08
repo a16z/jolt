@@ -39,6 +39,7 @@ serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 
 [dev-dependencies]
+bincode.workspace = true
 criterion = { workspace = true }
 # The FR provisioning pin test holds the registry's carried arity line to the
 # jolt-claims packing law across the whole swept range. No features: an akita

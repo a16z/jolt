@@ -38,6 +38,7 @@ mod support {
     use jolt_prover_legacy::host::Program;
     use jolt_prover_legacy::zkvm::packed::{
         akita_verifier_preprocessing, field_inc_limb_schedule_params, AkitaField, AkitaJoltProof,
+        AkitaScheduleArtifacts,
         AkitaNoCurve, AkitaPackedScheme, AkitaScheme, AkitaTranscript, AkitaVc,
     };
     use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
@@ -221,6 +222,7 @@ mod support {
             layout_digest,
             one_hot_k,
             Some(precommitted_schedule),
+            AkitaScheduleArtifacts::shared_from_default_directory(),
         );
         let (object_setup, verifier_setup) =
             <AkitaScheme as VerifierCommitmentScheme>::setup(params)
@@ -326,6 +328,7 @@ mod support {
         }
         let polynomial = Polynomial::new(evaluations);
         let (setup, _) = <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
             plan.packing().packed_num_vars(),
             digest,
         )
