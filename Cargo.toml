@@ -47,10 +47,10 @@ members = [
   "crates/jolt-utils",
   "crates/jolt-profiling",
   "crates/jolt-field",
+  "crates/jolt-host",
   "crates/jolt-kernels",
   "crates/jolt-kernels-derive",
   "crates/jolt-prover",
-  "crates/jolt-prover-legacy",
   "tracer",
   "common",
   "jolt-platform",
@@ -153,7 +153,7 @@ env_logger.workspace = true
 zeroos-build.workspace = true
 
 jolt-sdk = { workspace = true, features = ["host"] }
-jolt-prover-legacy = { workspace = true, features = ["default"] }
+jolt-prover.workspace = true
 
 [profile.test]
 opt-level = 3
@@ -296,17 +296,18 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "69438de6cd8ce8ed7c9ebb21bdf60b813e8fcabc", default-features = false }
+# Immutable fork revision with main integration and CPU/Metal prefix repairs.
+akita-algebra = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-config = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-error = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-metal = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-pcs = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-prover = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-planner = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-schedules = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-challenges = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-transcript = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
+akita-types = { git = "https://github.com/markosg04/akita", rev = "50c26d4568e1d0959a372279e712c69f115b2f8a", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -349,6 +350,7 @@ bytemuck_derive = "1.10.1"
 num = "0.4.3"
 num-integer = { version = "0.1.45", default-features = false }
 num-bigint = { version = "0.4.6", default-features = false }
+metal = "0.33.0"
 num-derive = "0.5.1"
 num-traits = { version = "0.2.19", default-features = false }
 
@@ -366,7 +368,6 @@ tracing = { version = "0.1.37", default-features = false, features = [
 ] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
-inferno = { version = "0.12.3" }
 allocative = { version = "=0.3.6" }
 # No `flamegraph` feature: it pulls in inferno 0.11 (quick-xml 0.26,
 # RUSTSEC-2026-0194/0195) and only the `.pprof()` protobuf output is used.
@@ -426,7 +427,6 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 # Internal dependencies
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
-jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
 jolt-akita = { path = "./crates/jolt-akita" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
@@ -434,6 +434,7 @@ jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
+jolt-host = { path = "./crates/jolt-host" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }

@@ -308,7 +308,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
 /// zk/clear branch (it reads only presence flags and layout geometry), so the
 /// [`RamValCheck`] relation can be constructed once via [`decomposition`]; the
 /// clear path attaches the claimed opening *values* afterwards via
-/// [`ram_val_check_initial_evaluation`].
+/// `ram_val_check_initial_evaluation`.
 ///
 /// [`decomposition`]: Self::decomposition
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -355,7 +355,7 @@ impl<F: JoltField> RamValCheckInitStructure<F> {
 
 /// Build the [`RamValCheckInitStructure`] from the presence flags and layout
 /// geometry. Runs before the zk/clear branch in both modes; the advice selectors
-/// and opening points come from [`ram_val_check_advice_block`], the same
+/// and opening points come from `ram_val_check_advice_block`, the same
 /// computation the prover uses.
 pub fn ram_val_check_init_structure<F: JoltField>(
     checked: &CheckedInputs,
@@ -389,7 +389,7 @@ pub fn ram_val_check_init_structure<F: JoltField>(
 
 /// The verifier's reconstruction of `Val_init(r_address)`: the public initial-RAM
 /// evaluation plus the present advice / program-image contributions (each carrying
-/// its staged opening). Built by [`ram_val_check_initial_evaluation`] from the
+/// its staged opening). Built by `ram_val_check_initial_evaluation` from the
 /// [`RamValCheckInitStructure`] and the proof's claimed opening values; consumed by
 /// the stage-4 input wiring and the downstream stage-6/7 address-phase reductions.
 #[derive(Clone, Debug, PartialEq, Eq)]

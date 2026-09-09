@@ -24,6 +24,8 @@ mod commit;
 mod decomposition;
 mod grouped;
 mod kernels;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+mod metal;
 mod opening;
 mod source;
 mod traversal;
@@ -32,7 +34,7 @@ mod traversal;
 mod tests;
 
 pub(crate) use grouped::GroupedRootSource;
-pub use source::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
+pub use source::{no_selected_row, TraceOneHotRows, TracePackedOneHot, TracePackedSelectors};
 
 #[cfg(test)]
 use decomposition::{

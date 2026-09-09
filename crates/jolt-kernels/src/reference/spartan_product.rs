@@ -62,6 +62,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        _known_values: &[F],
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {

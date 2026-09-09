@@ -1,8 +1,5 @@
-use jolt_prover_legacy::{
-    poly::opening_proof::SumcheckId,
-    zkvm::{lookup_table::LookupTables, witness::VirtualPolynomial},
-};
-use strum::IntoEnumIterator as _;
+use jolt_claims::protocols::jolt::{JoltRelationId, JoltVirtualPolynomial};
+use jolt_lookup_tables::LookupTableKind;
 
 use crate::{
     lookups::ZkLeanLookupTable,
@@ -20,13 +17,13 @@ pub struct ZkLeanLookupTableFlag<const XLEN: usize> {
 
 impl<const XLEN: usize> ZkLeanLookupTableFlag<XLEN> {
     pub fn iter() -> impl Iterator<Item = Self> {
-        let sumcheck_id = SumcheckId::InstructionReadRaf;
+        let relation = JoltRelationId::InstructionReadRaf;
 
-        LookupTables::<XLEN>::iter()
+        LookupTableKind::<XLEN>::iter()
             .enumerate()
             .map(move |(i, lookup_table)| {
                 let var =
-                    ZkLeanVarRef::virtual_var(sumcheck_id, VirtualPolynomial::LookupTableFlag(i));
+                    ZkLeanVarRef::virtual_var(relation, JoltVirtualPolynomial::LookupTableFlag(i));
                 let lookup_table_ident = ZkLeanLookupTable::from(lookup_table).name();
 
                 ZkLeanLookupTableFlag {
@@ -79,20 +76,22 @@ pub struct ZkLeanLookupTableFlags<const XLEN: usize> {
 impl<const XLEN: usize> ZkLeanLookupTableFlags<XLEN> {
     pub fn extract() -> Self {
         let left_operand = ZkLeanVarRef::virtual_var(
-            SumcheckId::SpartanOuter,
-            VirtualPolynomial::LeftLookupOperand,
+            JoltRelationId::SpartanOuter,
+            JoltVirtualPolynomial::LeftLookupOperand,
         );
         let right_operand = ZkLeanVarRef::virtual_var(
-            SumcheckId::SpartanOuter,
-            VirtualPolynomial::RightLookupOperand,
+            JoltRelationId::SpartanOuter,
+            JoltVirtualPolynomial::RightLookupOperand,
         );
         let interleaving_flag = ZkLeanVarRef::virtual_var(
-            SumcheckId::InstructionReadRaf,
-            VirtualPolynomial::InstructionRafFlag,
+            JoltRelationId::InstructionReadRaf,
+            JoltVirtualPolynomial::InstructionRafFlag,
         );
         let lookup_table_flags = ZkLeanLookupTableFlag::<XLEN>::iter().collect();
-        let lookup_output =
-            ZkLeanVarRef::virtual_var(SumcheckId::SpartanOuter, VirtualPolynomial::LookupOutput);
+        let lookup_output = ZkLeanVarRef::virtual_var(
+            JoltRelationId::SpartanOuter,
+            JoltVirtualPolynomial::LookupOutput,
+        );
 
         Self {
             left_operand,

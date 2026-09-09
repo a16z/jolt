@@ -50,6 +50,8 @@ struct PackedTraceRows {
     selected_rows: Vec<u8>,
     ram_active_rows: Vec<u64>,
     ram_digit_zero_mask: u64,
+    hot_entries: usize,
+    zero_suffix_start: usize,
 }
 
 impl PackedTraceRows {
@@ -97,6 +99,18 @@ impl TraceOneHotRows for PackedTraceRows {
         selected_rows.copy_from_slice(&self.selected_rows[start..start + selected_rows.len()]);
     }
 
+    fn packed_selectors(&self) -> Option<jolt_akita::TracePackedSelectors<'_>> {
+        Some(
+            jolt_akita::TracePackedSelectors::new_with_precomputed_metrics(
+                &self.selected_rows,
+                &self.ram_active_rows,
+                self.ram_digit_zero_mask,
+                self.hot_entries,
+                self.zero_suffix_start,
+            ),
+        )
+    }
+
     fn committed_digit_zero_mask(&self, row: usize) -> u64 {
         let active = self.ram_active_rows[row / u64::BITS as usize]
             & (1u64 << (row % u64::BITS as usize))
@@ -132,6 +146,20 @@ fn fill_trace_row(
         *selected_row = row_index as u8;
     }
     row.ram_address.0.is_some()
+}
+
+fn committed_entry_count(
+    selected_rows: &[u8],
+    ram_active: bool,
+    ram_digit_zero_mask: u64,
+) -> usize {
+    selected_rows
+        .iter()
+        .enumerate()
+        .filter(|&(column, selected_row)| {
+            *selected_row != 0 || (ram_active && ram_digit_zero_mask & (1u64 << column) != 0)
+        })
+        .count()
 }
 
 /// Builds the row-major source for the native `OneHotTrace` commitment in the
@@ -186,26 +214,54 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         }
     }
 
+    let random_access = witness.random_access();
+    let zero_suffix_start = if let Some(access) = random_access.as_ref() {
+        let physical_rows = access.physical_rows().min(num_rows);
+        if physical_rows < num_rows {
+            let padding = access.window::<OneHotTraceSourceRow>(physical_rows)?;
+            let mut selected = vec![0u8; num_columns];
+            if fill_trace_row(padding, &columns, &mut selected)
+                || selected.iter().any(|&row| row != 0)
+            {
+                num_rows
+            } else {
+                physical_rows
+            }
+        } else {
+            num_rows
+        }
+    } else {
+        num_rows
+    };
     let mut selected_rows = vec![0u8; num_rows * num_columns];
     let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
     #[cfg(feature = "parallel")]
-    if let Some(access) = witness.random_access() {
+    if let Some(access) = random_access {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
-            selected_rows
+            let active_lane_count = zero_suffix_start * num_columns;
+            let active_word_count = zero_suffix_start.div_ceil(u64::BITS as usize);
+            let hot_entries = selected_rows[..active_lane_count]
                 .par_chunks_mut(num_columns * u64::BITS as usize)
-                .zip(ram_active_rows.par_iter_mut())
+                .zip(ram_active_rows[..active_word_count].par_iter_mut())
                 .enumerate()
-                .for_each(|(word_index, (word_rows, ram_active_word))| {
+                .map(|(word_index, (word_rows, ram_active_word))| {
+                    let mut hot_entries = 0usize;
                     for (row_offset, selected_rows) in
                         word_rows.chunks_exact_mut(num_columns).enumerate()
                     {
                         let row_index = word_index * u64::BITS as usize + row_offset;
                         match access.window::<OneHotTraceSourceRow>(row_index) {
                             Ok(row) => {
-                                if fill_trace_row(row, &columns, selected_rows) {
+                                let ram_active = fill_trace_row(row, &columns, selected_rows);
+                                if ram_active {
                                     *ram_active_word |= 1u64 << row_offset;
                                 }
+                                hot_entries += committed_entry_count(
+                                    selected_rows,
+                                    ram_active,
+                                    ram_digit_zero_mask,
+                                );
                             }
                             Err(error) => {
                                 if let Ok(mut guard) = extraction_error.try_lock() {
@@ -214,7 +270,9 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                             }
                         }
                     }
-                });
+                    hot_entries
+                })
+                .sum();
             #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
             if let Some(error) = extraction_error.into_inner().unwrap() {
                 return Err(error.into());
@@ -225,20 +283,25 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
                 selected_rows,
                 ram_active_rows,
                 ram_digit_zero_mask,
+                hot_entries,
+                zero_suffix_start,
             }));
         }
     }
 
     let rows: Vec<OneHotTraceSourceRow> = collect_bundles(witness, num_rows)?;
+    let mut hot_entries = 0usize;
     for (row_index, (row, selected_rows)) in rows
         .into_iter()
         .zip(selected_rows.chunks_exact_mut(num_columns))
         .enumerate()
     {
-        if fill_trace_row(row, &columns, selected_rows) {
+        let ram_active = fill_trace_row(row, &columns, selected_rows);
+        if ram_active {
             ram_active_rows[row_index / u64::BITS as usize] |=
                 1u64 << (row_index % u64::BITS as usize);
         }
+        hot_entries += committed_entry_count(selected_rows, ram_active, ram_digit_zero_mask);
     }
     Ok(Arc::new(PackedTraceRows {
         num_rows,
@@ -246,6 +309,8 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         selected_rows,
         ram_active_rows,
         ram_digit_zero_mask,
+        hot_entries,
+        zero_suffix_start,
     }))
 }
 

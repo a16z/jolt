@@ -2,16 +2,12 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 
-use ark_bn254::Fr;
-use jolt_prover_legacy::field::JoltField;
-use jolt_prover_legacy::poly::dense_mlpoly::DensePolynomial;
-use jolt_prover_legacy::poly::eq_poly::EqPolynomial;
-use jolt_prover_legacy::poly::multilinear_polynomial::BindingOrder;
-use jolt_prover_legacy::poly::split_eq_poly::GruenSplitEqPolynomial;
+use jolt_field::Fr;
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial};
 
 use super::{CheckError, Invariant, InvariantViolation};
 
-type Challenge = <Fr as JoltField>::Challenge;
+type Challenge = Fr;
 
 /// Input for the split-eq bind invariants.
 ///
@@ -57,7 +53,7 @@ impl Invariant for SplitEqBindLowHighInvariant {
 
     fn description(&self) -> String {
         "GruenSplitEqPolynomial::bind (LowToHigh) must match \
-         DensePolynomial::bound_poly_var_bot at every round."
+         Polynomial::bind_with_order at every round."
             .to_string()
     }
 
@@ -71,11 +67,11 @@ impl Invariant for SplitEqBindLowHighInvariant {
         let rs = to_challenges(&input.rs);
         let num_vars = w.len();
 
-        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
+        let mut regular_eq = Polynomial::<Fr>::new(EqPolynomial::evals(&w, None));
         let mut split_eq = GruenSplitEqPolynomial::<Fr>::new(&w, BindingOrder::LowToHigh);
 
         let merged = split_eq.merge();
-        if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
+        if regular_eq.evals() != merged.evals() {
             return Err(CheckError::Violation(InvariantViolation::with_details(
                 "Initial merge mismatch (LowToHigh)",
                 format!("num_vars={num_vars}"),
@@ -83,11 +79,11 @@ impl Invariant for SplitEqBindLowHighInvariant {
         }
 
         for (round, r) in rs.iter().enumerate() {
-            regular_eq.bound_poly_var_bot(r);
+            regular_eq.bind_with_order(*r, BindingOrder::LowToHigh);
             split_eq.bind(*r);
 
             let merged = split_eq.merge();
-            if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
+            if regular_eq.evals() != merged.evals() {
                 return Err(CheckError::Violation(InvariantViolation::with_details(
                     "Bind mismatch (LowToHigh)",
                     format!("num_vars={num_vars}, round={round}"),
@@ -132,7 +128,7 @@ impl Invariant for SplitEqBindHighLowInvariant {
 
     fn description(&self) -> String {
         "GruenSplitEqPolynomial::bind (HighToLow) must match \
-         DensePolynomial::bound_poly_var_top at every round."
+         Polynomial::bind_with_order at every round."
             .to_string()
     }
 
@@ -146,11 +142,11 @@ impl Invariant for SplitEqBindHighLowInvariant {
         let rs = to_challenges(&input.rs);
         let num_vars = w.len();
 
-        let mut regular_eq = DensePolynomial::<Fr>::new(EqPolynomial::evals(&w));
+        let mut regular_eq = Polynomial::<Fr>::new(EqPolynomial::evals(&w, None));
         let mut split_eq = GruenSplitEqPolynomial::<Fr>::new(&w, BindingOrder::HighToLow);
 
         let merged = split_eq.merge();
-        if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
+        if regular_eq.evals() != merged.evals() {
             return Err(CheckError::Violation(InvariantViolation::with_details(
                 "Initial merge mismatch (HighToLow)",
                 format!("num_vars={num_vars}"),
@@ -158,11 +154,11 @@ impl Invariant for SplitEqBindHighLowInvariant {
         }
 
         for (round, r) in rs.iter().enumerate() {
-            regular_eq.bound_poly_var_top(r);
+            regular_eq.bind_with_order(*r, BindingOrder::HighToLow);
             split_eq.bind(*r);
 
             let merged = split_eq.merge();
-            if regular_eq.Z[..regular_eq.len()] != merged.Z[..merged.len()] {
+            if regular_eq.evals() != merged.evals() {
                 return Err(CheckError::Violation(InvariantViolation::with_details(
                     "Bind mismatch (HighToLow)",
                     format!("num_vars={num_vars}, round={round}"),

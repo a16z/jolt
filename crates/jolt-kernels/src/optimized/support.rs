@@ -737,6 +737,22 @@ impl<F: JoltField> SplitLt<F> {
         }
     }
 
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn split_lo(&self) -> Option<&[F]> {
+        match self {
+            Self::Split { lt_lo, .. } => Some(lt_lo),
+            Self::Dense(_) => None,
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn current_len(&self) -> usize {
+        match self {
+            Self::Split { lt_lo, lt_hi, .. } => lt_lo.len() * lt_hi.len(),
+            Self::Dense(table) => table.len(),
+        }
+    }
+
     pub(crate) fn final_value(&self) -> F {
         match self {
             Self::Dense(table) => {
@@ -786,6 +802,30 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
         match self {
             Self::Owned(rows) => BundleAccess::View(rows),
             Self::Retained(rows) => BundleAccess::Retained(rows),
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn production_source_kind(&self) -> &'static str {
+        match self {
+            Self::Owned(_) => "owned_random_access",
+            Self::Retained(_) => "retained_host_repack",
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn host_repack_rows(&self) -> usize {
+        match self {
+            Self::Owned(_) => 0,
+            Self::Retained(rows) => rows.len(),
+        }
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn explicit_rows(&self) -> usize {
+        match self {
+            Self::Owned(rows) => rows.physical_rows().min(rows.cycles()),
+            Self::Retained(rows) => rows.len(),
         }
     }
 }

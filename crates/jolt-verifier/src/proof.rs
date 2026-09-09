@@ -31,10 +31,7 @@ pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 #[cfg(feature = "akita")]
 pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
 
-#[expect(
-    non_snake_case,
-    reason = "Matches current jolt-prover-legacy proof field name."
-)]
+#[expect(non_snake_case, reason = "Preserves the deployed proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "PCS::Field: Serialize, ZkProof: Serialize",

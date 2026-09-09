@@ -65,6 +65,14 @@ fn scalar_schedule(catalog: &ValidatedScheduleCatalog, num_vars: usize) -> FoldS
         .clone()
 }
 
+#[test]
+fn k256_t28_catalog_preserves_prover_optimized_root() {
+    let schedule = scalar_schedule(&one_hot_catalog(AKITA_ONE_HOT_K256), 41);
+    let inner = &schedule.root.params.final_group().profile.inner.matrix;
+    assert_eq!(inner.ring_dimension(), 128);
+    assert_eq!(inner.output_rank(), 3);
+}
+
 fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
     schedule
         .recursive_folds
@@ -87,6 +95,41 @@ fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
             &catalog,
             cutover_num_vars
         )));
+    }
+
+    for key in keys(ONE_HOT_TRACE_NUM_POLYS, K256_NUM_VARS) {
+        one_hot_catalog(AKITA_ONE_HOT_K256)
+            .resolve_key(&AkitaScheduleLookupKey::single(key))
+            .expect("K256 catalog row must resolve")
+            .validate_opening_layout(
+                &akita_types::OpeningClaimsLayout::from_groups(vec![key])
+                    .expect("K256 Metal catalog key must form an opening layout"),
+            )
+            .expect("K256 Metal catalog row must validate and resolve");
+    }
+}
+
+/// The shared CPU/Metal catalog preserves every row digest across transport.
+#[test]
+fn shared_k256_catalog_preserves_row_digests_across_transport() {
+    let catalog = one_hot_catalog(AKITA_ONE_HOT_K256);
+    let transported = TrustedScheduleCatalog::<JoltOneHotK256>::from_artifact_bytes(
+        &catalog.to_artifact_bytes().expect("encode shared catalog"),
+    )
+    .expect("decode shared catalog");
+    for key in keys(ONE_HOT_TRACE_NUM_POLYS, K256_NUM_VARS) {
+        let lookup = AkitaScheduleLookupKey::single(key);
+        let original = catalog
+            .resolve_key(&lookup)
+            .expect("original row must resolve");
+        let decoded = transported
+            .resolve_key(&lookup)
+            .expect("transported row must resolve");
+        assert_eq!(
+            original.selection().row_digest,
+            decoded.selection().row_digest,
+            "shared K256 row digest changed during transport at {key:?}"
+        );
     }
 }
 

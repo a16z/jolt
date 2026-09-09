@@ -6,6 +6,7 @@ pub mod performance;
 pub mod synthesis;
 pub mod telemetry;
 
+use code_quality::PROOF_SYSTEM_CRATE_DIRS;
 use std::fmt;
 
 /// Error during objective measurement.
@@ -75,13 +76,13 @@ impl StaticAnalysisObjective {
     pub fn all() -> Vec<Self> {
         vec![
             Self::Lloc(code_quality::lloc::LlocObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::CognitiveComplexity(code_quality::cognitive::CognitiveComplexityObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
             Self::HalsteadBugs(code_quality::halstead_bugs::HalsteadBugsObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             }),
         ]
     }
@@ -130,7 +131,7 @@ impl StaticAnalysisObjective {
     }
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
-        &["crates/jolt-prover-legacy/"]
+        PROOF_SYSTEM_CRATE_DIRS
     }
 }
 
@@ -197,7 +198,7 @@ impl PerformanceObjective {
 
     pub fn diff_paths(&self) -> &'static [&'static str] {
         match self {
-            Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["crates/jolt-prover-legacy/"],
+            Self::BindLowToHigh(_) | Self::BindHighToLow(_) => &["crates/jolt-poly/"],
             Self::NaiveSortTime(_) => &["jolt-eval/src/sort_targets.rs"],
             Self::MulU64(_) | Self::MulI64(_) | Self::MulU128(_) | Self::MulI128(_) => {
                 &["crates/jolt-field/"]
@@ -381,7 +382,7 @@ mod tests {
         // Same variant with identical inner data looks up successfully.
         let lloc_same = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                target_dir: "crates/jolt-prover-legacy/src",
+                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
             },
         ));
         assert_eq!(m[&lloc_same], 100.0);
@@ -389,7 +390,7 @@ mod tests {
         // Same variant with different inner data does NOT match.
         let lloc_other = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                target_dir: "other/path",
+                crate_dirs: &["other/path"],
             },
         ));
         assert!(!m.contains_key(&lloc_other));

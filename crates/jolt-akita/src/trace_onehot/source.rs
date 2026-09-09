@@ -9,6 +9,88 @@ use akita_prover::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolySh
 use super::NO_SELECTED_ROW;
 use crate::AkitaField;
 
+/// Borrowed row-major selectors plus optional precomputed metrics for a
+/// resident trace source; the Metal commit and opening paths consume them.
+#[derive(Clone, Copy, Debug)]
+pub struct TracePackedSelectors<'a> {
+    row_major: &'a [u8],
+    active_zero_rows: &'a [u64],
+    zero_column_mask: u64,
+    hot_entries: Option<usize>,
+    zero_suffix_start: Option<usize>,
+}
+
+impl<'a> TracePackedSelectors<'a> {
+    #[must_use]
+    pub fn new(row_major: &'a [u8], active_zero_rows: &'a [u64], zero_column_mask: u64) -> Self {
+        Self {
+            row_major,
+            active_zero_rows,
+            zero_column_mask,
+            hot_entries: None,
+            zero_suffix_start: None,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_hot_entries(
+        row_major: &'a [u8],
+        active_zero_rows: &'a [u64],
+        zero_column_mask: u64,
+        hot_entries: usize,
+    ) -> Self {
+        Self {
+            row_major,
+            active_zero_rows,
+            zero_column_mask,
+            hot_entries: Some(hot_entries),
+            zero_suffix_start: None,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_precomputed_metrics(
+        row_major: &'a [u8],
+        active_zero_rows: &'a [u64],
+        zero_column_mask: u64,
+        hot_entries: usize,
+        zero_suffix_start: usize,
+    ) -> Self {
+        Self {
+            row_major,
+            active_zero_rows,
+            zero_column_mask,
+            hot_entries: Some(hot_entries),
+            zero_suffix_start: Some(zero_suffix_start),
+        }
+    }
+
+    #[must_use]
+    pub fn row_major(self) -> &'a [u8] {
+        self.row_major
+    }
+
+    #[must_use]
+    pub fn active_zero_rows(self) -> &'a [u64] {
+        self.active_zero_rows
+    }
+
+    #[must_use]
+    pub fn zero_column_mask(self) -> u64 {
+        self.zero_column_mask
+    }
+
+    #[must_use]
+    pub fn hot_entries(self) -> Option<usize> {
+        self.hot_entries
+    }
+
+    #[must_use]
+    pub fn zero_suffix_start(self) -> Option<usize> {
+        self.zero_suffix_start
+    }
+}
+
 /// Row-major source for the semantic columns packed into `OneHotTrace`.
 ///
 /// `fill_row` must overwrite all of `selected_rows`. Byte zero means no committed
@@ -17,6 +99,11 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_rows(&self) -> usize;
     fn num_columns(&self) -> usize;
     fn fill_row(&self, row: usize, selected_rows: &mut [u8]);
+
+    /// Borrows a resident row-major representation when the source has one.
+    fn packed_selectors(&self) -> Option<TracePackedSelectors<'_>> {
+        None
+    }
 
     /// Bit `i` is set when column `i` commits row zero in this trace row.
     fn committed_digit_zero_mask(&self, _row: usize) -> u64 {

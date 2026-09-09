@@ -69,6 +69,21 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             impl #impl_generics #krate::PrepareKernel<#f, #r> for #name #ty_generics
             #where_clause
             {
+                fn prefetch(
+                    &self,
+                    session: &mut #krate::ProofSession,
+                ) -> ::core::result::Result<(), #krate::KernelError<#f>> {
+                    self.#ident.prefetch(session)
+                }
+
+                fn prefetch_relation(
+                    &self,
+                    session: &mut #krate::ProofSession,
+                    relation: &#r,
+                ) -> ::core::result::Result<(), #krate::KernelError<#f>> {
+                    self.#ident.prefetch_relation(session, relation)
+                }
+
                 fn prepare(
                     &self,
                     session: &mut #krate::ProofSession,

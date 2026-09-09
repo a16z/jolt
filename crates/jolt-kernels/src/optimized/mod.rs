@@ -1,8 +1,6 @@
-//! The optimized backend: legacy-ported kernels behind the same slots the
-//! reference backend serves, byte-identical round polynomials and output
-//! claims by construction (the parity tests in each module pin them against
-//! the naive tier on synthetic traces; `byte_diff` pins the full proofs
-//! against `jolt-prover-legacy`).
+//! The optimized backend: kernels behind the same slots the reference backend
+//! serves. Parity tests in each module pin round polynomials and output claims
+//! against the reference tier on synthetic traces.
 //!
 //! The shared playbook, per kernel:
 //! - **Sparse one-hot access**: per-cycle hot indices off typed witness
@@ -19,8 +17,8 @@
 //!   byte-identical.
 //! - **Eval-at-1 recovery**: round messages sample the summand at
 //!   `t ∈ {0, 2, .., degree}` and recover `s(1) = previous_claim − s(0)`,
-//!   the same trade the legacy prover makes (a dishonest input claim
-//!   surfaces at the driver's final-claim check instead of the round check).
+//!   so a dishonest input claim surfaces at the driver's final-claim check
+//!   instead of the round check.
 //! - **Rayon cycle walks** with per-thread partial accumulators.
 //!
 //! Each module documents its own port; [`JoltBackend::optimized`] wires them.
@@ -50,16 +48,16 @@ pub mod ram_ra_claim_reduction;
 pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
-mod ram_trace;
+pub(crate) mod ram_trace;
 pub mod ram_val_check;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
-mod rw_matrix;
+pub(crate) mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
-mod support;
+pub(crate) mod support;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
@@ -130,7 +128,7 @@ where
             Box::new(ram_hamming_booleanity::OptimizedRamHammingBooleanity);
 
         self.bytecode_read_raf_address = Box::new(OptimizedBytecodeReadRafAddress);
-        self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
+        self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle::default());
         self.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
         self.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
 

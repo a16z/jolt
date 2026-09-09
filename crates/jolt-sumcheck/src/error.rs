@@ -94,6 +94,16 @@ pub enum SumcheckError<F: Field> {
         kind: &'static str,
     },
 
+    /// A prove-side compute backend failed while producing a round message.
+    /// This never appears in proof data.
+    #[error("{backend} compute backend failed: {message}")]
+    ComputeBackend {
+        /// Backend family that failed.
+        backend: &'static str,
+        /// Device or runtime error reported by that backend.
+        message: String,
+    },
+
     /// A vector-commitment setup cannot commit to any values.
     #[error("vector-commitment setup has zero capacity")]
     ZeroCommitmentCapacity,

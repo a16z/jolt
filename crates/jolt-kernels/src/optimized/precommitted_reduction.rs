@@ -14,9 +14,7 @@
 //! subtle padded-claim round algebra and the 6b→7 carry stays the one
 //! [`PrecommittedReductionCarry`] type: either tier's cycle kernel parks a
 //! carry the other tier's address slot reclaims, and mixed-tier composition
-//! holds by construction. What this module owns is the PREPARE side — the
-//! table builders (ported from
-//! `jolt-prover-legacy/src/zkvm/claim_reductions/{advice,bytecode,program_image}.rs`):
+//! holds by construction. This module owns the table builders:
 //!
 //! - **Advice** (`AdviceClaimReductionProver::initialize`): the eq table is
 //!   built from the LSB-permuted challenges directly (one parallel

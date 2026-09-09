@@ -104,6 +104,8 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
+/// Backward-compatible name for the ring's integer embedding trait.
+pub use algebra::Ring as FromPrimitiveInt;
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,

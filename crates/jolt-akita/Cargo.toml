@@ -9,6 +9,8 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+default = []
+metal = ["dep:akita-metal"]
 profiling = []
 
 [dependencies]
@@ -32,6 +34,9 @@ jolt-transcript.workspace = true
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+akita-metal = { workspace = true, optional = true, features = ["parallel"] }
 
 [dev-dependencies]
 bincode.workspace = true

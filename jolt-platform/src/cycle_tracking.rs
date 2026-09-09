@@ -2,7 +2,7 @@
 //! Important for usage: often enough the rust compiler will optimize away
 //! computations / other instructions when trying to profile cycles.
 //! This will result in inaccurate measurements.
-//! The easiest solution is to use the hint Module (https://doc.rust-lang.org/core/hint/index.html),
+//! The easiest solution is to use the hint module (<https://doc.rust-lang.org/core/hint/index.html>),
 //! `black_box()` in particular can be used to prevent the compiler from moving your code.
 
 // Constants to signal the emulator

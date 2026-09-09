@@ -19,7 +19,7 @@
 //! precommitted reduction family in [`precommitted_reduction`] is the
 //! carrier). Only the bespoke slots keep hand-shaped trait modules at the
 //! crate root: the uni-skip fronts ([`uniskip`]), commitment streaming, and
-//! the joint opening. Reference implementations live under [`reference`].
+//! the joint opening. Reference implementations live under [`mod@reference`].
 //! The [`NaiveSumcheckProver`] is the reference tier: it
 //! interprets a relation's output `Expr` with polynomial-valued leaves,
 //! making any relation whose leaves are multilinear provable at harness
@@ -40,13 +40,20 @@ pub mod committed_program;
 mod error;
 mod kernel;
 pub mod mem;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub mod metal;
 pub mod opening;
 pub mod optimized;
 pub mod precommitted_reduction;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+mod ram_access;
 pub mod reference;
 pub mod uniskip;
 
-pub use backend::{BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession};
+pub use backend::{
+    BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession,
+    Stage2ProductInstructionPrefetch, Stage5InstructionReadRafPrefetch,
+};
 pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;

@@ -131,8 +131,8 @@ pub use error::SumcheckError;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 pub use prover::{
     prove_batch, prove_uniskip_clear, prove_uniskip_committed, MemberFinish, MemberRound,
-    ProveRounds, ProvedBatch, ProvedUniskip, ProvedUniskipCommitted, RoundScheduler,
-    SequentialRounds,
+    ProveRounds, ProvedBatch, ProvedUniskip, ProvedUniskipCommitted, RoundExecutionDomain,
+    RoundScheduler, SequentialRounds, TwoLaneRounds,
 };
 #[cfg(feature = "r1cs")]
 pub use r1cs::{

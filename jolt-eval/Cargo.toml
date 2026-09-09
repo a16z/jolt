@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-jolt-prover-legacy = { workspace = true, features = ["host"] }
+jolt-host = { workspace = true }
+jolt-prover = { workspace = true }
+jolt-sdk = { workspace = true, features = ["host"] }
 jolt-verifier = { workspace = true }
 jolt-dory = { workspace = true }
 jolt-crypto = { workspace = true }
@@ -12,6 +14,7 @@ jolt-program = { workspace = true, features = ["serialization"] }
 jolt-tracer-x86 = { workspace = true }
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
+jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
   "transcript-keccak",
@@ -21,7 +24,6 @@ spongefish = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
 
-ark-bn254 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
 postcard = { workspace = true, features = ["use-std"] }
@@ -54,7 +56,6 @@ libc = "0.2"
 criterion = { workspace = true }
 iai-callgrind.workspace = true
 iai-callgrind-runner.workspace = true
-jolt-poly.workspace = true
 
 [[bench]]
 name = "bind_parallel_high_to_low"

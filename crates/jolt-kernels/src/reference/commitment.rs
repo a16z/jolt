@@ -3,7 +3,7 @@
 //!
 //! Under the cycle-major order every committed column is fed from ONE fused
 //! pass over the trace: the commit consumer implements [`StreamConsumer`]
-//! over the [`CommittedColumnsWitness`] fact bundle, holds every column's
+//! over the `CommittedColumnsWitness` fact bundle, holds every column's
 //! partial commitment state (the runtime arity lives here, in the consumer),
 //! and per row window feeds dense columns through the
 //! [`StreamingCommitment::feed`] family and one-hot columns through the
@@ -40,8 +40,8 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
-    // The backend-neutral `commit_witness` span lives at the stage-0 call
-    // boundary (`crates/jolt-prover/src/stages/stage0.rs`), so every
+    // The backend-neutral `commit_witness` span lives at the Dory stage-0 call
+    // boundary (`crates/jolt-prover/src/dory/stages/stage0.rs`), so every
     // `CommitWitness` implementation inherits it — see the taxonomy's
     // kernel-seam contract.
     fn commit_witness(

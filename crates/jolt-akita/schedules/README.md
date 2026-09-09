@@ -25,6 +25,11 @@ setup-offloaded schedule, including every production K=256 trace (K=256 starts
 at `2^25`). This is an offline catalog policy: proving and verification simply
 resolve the exact admitted row and never choose a mode dynamically.
 
+K=256 restricts the planner's A-ring search to dimensions 64 and 128. At T28
+this selects the D128/rank-3 root used by both CPU and Metal commitment kernels;
+the unrestricted D512/rank-1 choice substantially increases prover time. The
+catalog generator still applies the current SIS sizing and admission checks.
+
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:
 

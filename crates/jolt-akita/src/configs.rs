@@ -7,6 +7,7 @@
 use akita_config::proof_optimized::fp128::{DenseBounded, OneHot};
 use akita_config::recursive_commitment::RecursiveScheduleConfig;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_schedules::{RingDimensionScheduleMode, ADAPTIVE_SEARCH_LEVELS};
 use akita_types::sis::CommittedSourceClass;
 
 use crate::AKITA_ONE_HOT_K16;
@@ -19,7 +20,8 @@ macro_rules! delegate_preset {
         $name:ident,
         $base:ty,
         $committed_source_class:expr,
-        $family_name:literal
+        $family_name:literal,
+        $ring_dimension_schedule_mode:expr
     ) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Debug, Default)]
@@ -28,8 +30,8 @@ macro_rules! delegate_preset {
         impl CommitmentConfig for $name {
             type Field = <$base as CommitmentConfig>::Field;
             type ExtField = <$base as CommitmentConfig>::ExtField;
-            const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
-                <$base as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
+            const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
+                $ring_dimension_schedule_mode;
             const EXT_DEGREE: usize = <$base as CommitmentConfig>::EXT_DEGREE;
 
             fn schedule_family_name() -> &'static str {
@@ -84,7 +86,8 @@ delegate_preset!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
-    "jolt-fp128-onehot-k16-direct-planner"
+    "jolt-fp128-onehot-k16-direct-planner",
+    <OneHot as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE
 );
 
 delegate_preset!(
@@ -92,7 +95,15 @@ delegate_preset!(
     JoltOneHotK256Direct,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
-    "jolt-fp128-onehot-k256-direct-planner"
+    "jolt-fp128-onehot-k256-direct-planner",
+    // D128/rank 3 reduces the per-hot-entry work in both CPU and Metal commits.
+    RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: &[64, 128],
+        potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
+        potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
+    }
 );
 
 impl RecursiveScheduleConfig for JoltOneHotK16Direct {
@@ -116,7 +127,8 @@ delegate_preset!(
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
-    "jolt-fp128-dense-bounded"
+    "jolt-fp128-dense-bounded",
+    <DenseBounded as CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE
 );
 
 #[cfg(test)]
@@ -141,7 +153,7 @@ mod tests {
         assert_eq!(JoltOneHotK256::opening_basis_range(), (3, 6));
         assert!(matches!(
             JoltOneHotK256::RING_DIMENSION_SCHEDULE_MODE,
-            akita_schedules::RingDimensionScheduleMode::AdaptiveDimension { .. }
+            RingDimensionScheduleMode::AdaptiveDimension { .. }
         ));
         assert!(JoltOneHotK16::recursive_setup_planning());
         assert!(JoltOneHotK256::recursive_setup_planning());

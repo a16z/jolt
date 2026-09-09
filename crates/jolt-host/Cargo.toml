@@ -1,0 +1,27 @@
+[package]
+name = "jolt-host"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Host-side guest build, execution, and analysis support for Jolt"
+repository = "https://github.com/a16z/jolt"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+field-inline = [
+  "jolt-program/field-inline",
+  "jolt-riscv/field-inline",
+  "tracer/field-inline",
+]
+
+[dependencies]
+bincode.workspace = true
+common.workspace = true
+jolt-program = { workspace = true, features = ["image", "serialization"] }
+jolt-riscv = { workspace = true, features = ["serialization"] }
+serde = { workspace = true, features = ["derive"] }
+tracer = { workspace = true, default-features = false, features = ["std"] }
+tracing.workspace = true

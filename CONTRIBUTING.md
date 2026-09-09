@@ -77,8 +77,8 @@ Spec analysis can also be triggered externally by adding the `claude-spec-review
 
 ```bash
 # Lint (must pass in both modes)
-cargo clippy -p jolt-prover-legacy --features host --message-format=short -q --all-targets -- -D warnings
-cargo clippy -p jolt-prover-legacy --features host,zk --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-prover --features prover-fixtures --message-format=short -q --all-targets -- -D warnings
+cargo clippy -p jolt-prover --features prover-fixtures,zk --message-format=short -q --all-targets -- -D warnings
 
 # Format
 cargo fmt -q
@@ -87,8 +87,8 @@ cargo fmt -q
 cargo nextest run --cargo-quiet
 
 # Primary correctness check
-cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
-cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
+cargo nextest run -p jolt-verifier standard_muldiv --cargo-quiet --features prover-fixtures
+cargo nextest run -p jolt-prover zk_muldiv --cargo-quiet --features prover-fixtures,zk
 
 # Dependency advisories (CI runs this nightly over every tracked Cargo.lock;
 # see .github/workflows/cargo-audit.yml for the policy and triage steps)

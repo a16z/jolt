@@ -2,9 +2,8 @@
 //! polynomials. The verifier MUST never panic on any input — it must either
 //! return `Ok(EvaluationClaim)` or a typed [`SumcheckError`].
 //!
-//! This is a single-instance verifier panic-guard, mirroring the audit-driven
-//! panic-resistance work in `jolt-prover-legacy` (e.g. PR #1408 wrapping the verifier in
-//! `catch_unwind` for malformed proofs).
+//! This is a single-instance verifier panic guard, continuing the malformed-proof
+//! coverage from PR #1408.
 
 #![no_main]
 

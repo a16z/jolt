@@ -244,6 +244,7 @@ fn deferred_fp128_shift_accumulator_matches_canonical_at_batch_bound() {
     assert_deferred_fp128_shift_accumulator::<64>();
     assert_deferred_fp128_shift_accumulator::<128>();
     assert_deferred_fp128_shift_accumulator::<256>();
+    assert_deferred_fp128_shift_accumulator::<512>();
 }
 
 fn assert_opening_kernels_match_materialized<const D: usize>(
@@ -531,4 +532,97 @@ fn coefficient_packing_rejects_invalid_selector() {
     )
     .expect_err("selector outside K must reject");
     assert!(error.to_string().contains("outside K=16"));
+}
+
+/// The production D=512 / K=256 commit path (two trace rows per ring, deferred
+/// limb accumulation over K256 row tiles) must equal a canonical negacyclic
+/// shift-accumulate over the same setup rows, including the committed-zero
+/// mask semantics and more than one flush window.
+#[test]
+fn d512_k256_commit_matches_canonical_accumulate() {
+    use super::traversal::row_is_committed;
+    use akita_prover::compute::{CommitInnerPlan, RootCommitKernel};
+    use akita_prover::{AkitaProverSetup, ComputeBackendSetup, RootCommitSource};
+    use akita_types::SetupMatrixCapacity;
+
+    const D: usize = 512;
+    const K: usize = 256;
+    const COLUMNS: usize = 11;
+    const CAPACITY: usize = 16;
+    const ROWS: usize = 1 << 15;
+    const POSITIONS: usize = 4096;
+
+    let rows = TestRows {
+        rows: ROWS,
+        columns: COLUMNS,
+        k: K,
+        committed_zero_column: Some(3),
+    };
+    let source = TracePackedOneHot::new(
+        K,
+        D,
+        CAPACITY,
+        Arc::new(TestRows {
+            rows: ROWS,
+            columns: COLUMNS,
+            k: K,
+            committed_zero_column: Some(3),
+        }),
+    )
+    .unwrap();
+    let plan = CommitInnerPlan {
+        n_a: 1,
+        num_positions_per_block: POSITIONS,
+        num_digits_inner: 1,
+        log_basis_inner: 8,
+    };
+    let setup = AkitaProverSetup::<AkitaField>::generate_with_capacity(
+        RootPolyMeta::<AkitaField>::num_vars(&source),
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: plan.n_a * POSITIONS * D,
+        },
+    )
+    .unwrap();
+    let cpu = CpuBackend::DEFAULT;
+    let prepared = cpu.prepare_setup(&setup).unwrap();
+    let witness = cpu
+        .commit_inner_group(
+            &prepared,
+            vec![
+                <TracePackedOneHot as RootCommitSource<AkitaField, D>>::commit_view(&source)
+                    .unwrap(),
+            ],
+            plan,
+        )
+        .unwrap();
+    let output = witness[0].inner_rows.as_ring_slice::<D>().unwrap();
+
+    let a_view = cpu
+        .prepared_expanded_setup(&prepared)
+        .shared_matrix()
+        .ring_view::<D>(plan.n_a, POSITIONS)
+        .unwrap();
+    let a_row = a_view.rows().next().unwrap();
+    let rows_per_ring = D / K;
+    let blocks_per_column = ROWS / rows_per_ring / POSITIONS;
+    let mut expected = vec![CyclotomicRing::<AkitaField, D>::zero(); CAPACITY * blocks_per_column];
+    let mut selected = vec![NO_SELECTED_ROW; COLUMNS];
+    for row in 0..ROWS {
+        rows.fill_row(row, &mut selected);
+        let mask = rows.committed_digit_zero_mask(row);
+        let ring = row / rows_per_ring;
+        let row_offset = row % rows_per_ring;
+        let (block, position) = (ring / POSITIONS, ring % POSITIONS);
+        for (column, &hot) in selected.iter().enumerate() {
+            if row_is_committed(hot, mask, column) {
+                a_row[position].shift_accumulate_into(
+                    &mut expected[column * blocks_per_column + block],
+                    row_offset * K + usize::from(hot),
+                );
+            }
+        }
+    }
+    assert_eq!(output.len(), expected.len());
+    assert!(output.iter().zip(&expected).all(|(got, want)| got == want));
 }

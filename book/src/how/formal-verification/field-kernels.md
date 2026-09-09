@@ -423,8 +423,8 @@ The result relies on the following assumptions.
 
 Jolt owns the kernel, theorem, proof object, and inspection witness. This
 does not yet prove every executable that depends on Jolt. In particular, the
-`akita` path (`jolt-akita` and the `akita` features of `jolt-prover` and
-`jolt-prover-legacy`) now uses the shared `jolt_field::Fp128` at
+`akita` path (`jolt-akita` and the `akita` feature of `jolt-prover`)
+now uses the shared `jolt_field::Fp128` at
 `Prime128OffsetA7F7`, but it enables only `jolt-field/solinas`, not `asm`, so
 it runs the portable Rust bodies rather than the proved kernels. These
 theorems do not cover that path. A production rollout must forward `asm` from

@@ -9,7 +9,7 @@
 #   RUNS=9 ./jolt-eval/bin/run_baseline_x86.sh   # more repetitions
 #
 # Budget roughly an hour of machine time: the measurement itself is minutes,
-# but the first build of jolt-prover-legacy with `host` dominates. Rent cores.
+# but the first prover build dominates. Rent cores.
 set -euo pipefail
 
 RUNS="${RUNS:-5}"

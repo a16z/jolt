@@ -380,7 +380,7 @@ pub(super) fn coefficient_packing_partials_packed<E, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
 ) -> Result<Vec<AkitaField>, AkitaError>
 where
-    E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
+    E: ExtField<AkitaField> + FpExtEncoding<AkitaField> + jolt_field::MulBaseUnreduced<AkitaField>,
 {
     plan.validate::<D>(source.num_vars)?;
     let point = plan.point;

@@ -9,11 +9,8 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_sha2(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_sha2(shared_preprocessing.clone());
-    let verifier_preprocessing = guest::preprocess_verifier_sha2(
-        shared_preprocessing,
-        prover_preprocessing.generators.to_verifier_setup(),
-        None,
-    );
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_sha2(&prover_preprocessing);
 
     let prove_sha2 = guest::build_prover_sha2(program, prover_preprocessing);
     let verify_sha2 = guest::build_verifier_sha2(verifier_preprocessing);

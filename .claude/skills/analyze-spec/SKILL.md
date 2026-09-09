@@ -91,10 +91,10 @@ door open, doesn't force a fit.
 <Good>
 Citing codebase context:
 ```
-I found that `DoryCommitmentScheme` in `crates/jolt-prover-legacy/src/poly/commitment/dory/`
-uses a two-tier structure (tier-1 chunks → tier-2 aggregation). The spec mentions
-"streaming commitments" but doesn't specify which tier is streamed. Is this streaming
-at tier-1 (chunk-level), tier-2 (aggregation), or both?
+I found that `DoryScheme` in `crates/jolt-dory/src/scheme.rs` exposes both ordinary
+and streaming commitment paths. The spec mentions "streaming commitments" but doesn't
+say whether the new behavior belongs in the PCS adapter or in the prover's witness feed.
+Which boundary should own it?
 ```
 Why good: Explored first, cited specific types and files.
 </Good>

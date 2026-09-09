@@ -57,29 +57,40 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamValCheck<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamValCheck<F>>>, KernelError<F>> {
-        let relation = inputs.relation;
-        let log_t = relation.trace_dimensions().log_t();
-        let ram_log_k = relation.ram_log_k();
-        let ram_val_point: &[F] = &inputs.points.ram_val;
-        if ram_val_point.len() != ram_log_k + log_t {
-            return Err(KernelError::InvariantViolation {
-                reason: "RAM value-check input point has the wrong variable count",
-            });
-        }
-        let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
-
-        // Reuse stage 2 addresses; collect only the short-lived values.
-        let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
-        super::ram_trace::validate_addresses(&columns.addresses, 1usize << ram_log_k)?;
-        let addresses = Arc::clone(&columns.addresses);
-
-        Ok(Box::new(RamValCheckKernel {
-            progress: RoundProgress::new(log_t),
-            inc: IncColumn::Raw(columns),
-            ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { addresses }),
-            lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
-        }))
+        Ok(Box::new(prepare_optimized_ram_val_check(
+            session, witness, inputs,
+        )?))
     }
+}
+
+/// Builds the CPU kernel; the Metal route reuses it for its host fallback.
+pub(crate) fn prepare_optimized_ram_val_check<F: JoltField>(
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    inputs: ProverInputs<'_, F, RamValCheck<F>>,
+) -> Result<RamValCheckKernel<F>, KernelError<F>> {
+    let relation = inputs.relation;
+    let log_t = relation.trace_dimensions().log_t();
+    let ram_log_k = relation.ram_log_k();
+    let ram_val_point: &[F] = &inputs.points.ram_val;
+    if ram_val_point.len() != ram_log_k + log_t {
+        return Err(KernelError::InvariantViolation {
+            reason: "RAM value-check input point has the wrong variable count",
+        });
+    }
+    let (r_address, r_cycle) = ram_val_point.split_at(ram_log_k);
+
+    // Reuse stage 2 addresses; collect only the short-lived values.
+    let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
+    super::ram_trace::validate_addresses(&columns.addresses, 1usize << ram_log_k)?;
+    let addresses = Arc::clone(&columns.addresses);
+
+    Ok(RamValCheckKernel {
+        progress: RoundProgress::new(log_t),
+        inc: IncColumn::Raw(columns),
+        ra: LazyFoldedRa::new(vec![eq_table(r_address)], RamAddressIndices { addresses }),
+        lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
+    })
 }
 
 /// Raw trace values for two rounds; a dense `T/4` table afterward.
@@ -101,8 +112,12 @@ fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
     F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
 }
 
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct RamValCheckKernel<F: JoltField> {
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+pub(crate) struct RamValCheckKernel<F: JoltField> {
     progress: RoundProgress,
     inc: IncColumn<F>,
     ra: LazyFoldedRa<F, RamAddressIndices>,

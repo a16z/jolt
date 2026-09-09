@@ -41,9 +41,8 @@
 //! | `pprof` | Scoped CPU profiling via `pprof` with `.pb` output |
 //! | `allocative` | Heap flamegraph generation from `allocative`-instrumented types |
 //!
-//! Subscriber-only consumers (the legacy harness bin) depend with
-//! `default-features = false`, keeping the summary stack out of standard
-//! `--features host` builds.
+//! Subscriber-only consumers use `default-features = false`, keeping the
+//! summary stack out of standard `--features host` builds.
 //!
 //! # Dependency Position
 //!

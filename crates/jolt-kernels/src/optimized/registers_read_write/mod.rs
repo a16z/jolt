@@ -29,6 +29,8 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[cfg(all(feature = "metal", target_os = "macos"))]
+mod packed;
 mod rows;
 mod sparse;
 #[cfg(test)]
@@ -38,12 +40,116 @@ pub(crate) mod test_support;
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests;
 
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
+pub(crate) use packed::PackedRegisterRowsDeviceView;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+pub(crate) use packed::{
+    AlignedCompactRegisterIndices, AlignedPackedRegisterRows, AlignedPackedRegisterRowsError,
+    BoundRegisterCycleRoot, PackedRegisterCycleRow, RegisterCapacityExceeded,
+    PACKED_REGISTER_ROWS_ALIGNMENT,
+};
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use rows::CollectRegisterEntries;
 use sparse::{CoeffLut, CycleState};
 
 pub struct OptimizedRegistersReadWrite;
+
+impl OptimizedRegistersReadWrite {
+    #[cfg(all(feature = "metal", feature = "test-utils"))]
+    pub(crate) fn evaluator_entry_sizes<F: JoltField>() -> (usize, usize) {
+        sparse::evaluator_entry_sizes::<F>()
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    pub(crate) fn prepare_after_cycle_phase<F: JoltField>(
+        log_t: usize,
+        log_k: usize,
+        r_cycle: &[F],
+        operand_rows: Option<&[PackedRegisterCycleRow]>,
+        cycle_challenges: &[F],
+        roots: Vec<BoundRegisterCycleRoot<F>>,
+        increment: F,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
+    {
+        if log_t == 0 || log_t >= 32 || r_cycle.len() != log_t || cycle_challenges.len() != log_t {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers read-write cycle continuation has the wrong domain",
+            });
+        }
+        let cycles = 1usize << log_t;
+        if operand_rows.is_some_and(|rows| rows.len() > cycles) {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers read-write cycle continuation has the wrong domain",
+            });
+        }
+        let k = 1usize << log_k;
+        if roots.len() > k
+            || roots.iter().any(|root| root.column as usize >= k)
+            || !roots.windows(2).all(|pair| pair[0].column < pair[1].column)
+        {
+            return Err(KernelError::InvariantViolation {
+                reason: "registers read-write cycle roots are not sorted unique columns",
+            });
+        }
+
+        let mut gruen = GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh);
+        for &challenge in cycle_challenges {
+            gruen.bind(challenge);
+        }
+        let mut ra = vec![F::zero(); k];
+        let mut wa = vec![F::zero(); k];
+        let mut val = vec![F::zero(); k];
+        for root in roots {
+            let column = root.column as usize;
+            ra[column] = root.ra;
+            wa[column] = root.wa;
+            val[column] = root.value;
+        }
+        let (rs1_indices, rs2_indices) = operand_rows.map_or_else(
+            || (Vec::new(), Vec::new()),
+            |rows| {
+                let mut rs1_indices = vec![None; cycles];
+                let mut rs2_indices = vec![None; cycles];
+                for (index, row) in rows.iter().enumerate() {
+                    rs1_indices[index] = (row.rs1_index != PackedRegisterCycleRow::NO_REGISTER)
+                        .then_some(row.rs1_index);
+                    rs2_indices[index] = (row.rs2_index != PackedRegisterCycleRow::NO_REGISTER)
+                        .then_some(row.rs2_index);
+                }
+                (rs1_indices, rs2_indices)
+            },
+        );
+        let mut challenges = RoundChallenges::new(log_t + log_k);
+        for &challenge in cycle_challenges {
+            challenges.push(challenge);
+        }
+        Ok(Box::new(ReadWriteKernel {
+            log_t,
+            log_k,
+            // The cycle phase ran on the device: the continuation starts in
+            // the address phase with the dense K-sized state populated, so
+            // the sparse cycle state is never consulted. `CoeffLut::new`
+            // requires a populated power-of-two table; the empty LUT is the
+            // module's `unused_lut`.
+            cycle: CycleState::new(
+                Vec::new(),
+                CycleState::unused_lut(),
+                CycleState::unused_lut(),
+                Vec::new(),
+            ),
+            eq_scalar: gruen.current_scalar(),
+            gruen,
+            ra,
+            wa,
+            val,
+            inc_scalar: increment,
+            rs1_indices,
+            rs2_indices,
+            challenges,
+        }))
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
     fn prepare(

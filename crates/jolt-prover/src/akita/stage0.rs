@@ -3,7 +3,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
@@ -17,6 +17,7 @@ use jolt_verifier::{
 use jolt_witness::JoltWitnessPlane;
 
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
+use super::JoltAkitaBackend;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Outputs retained for later prover stages.
@@ -34,11 +35,13 @@ where
 /// Validate inputs, commit the packed objects, and seed the transcript.
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
+    backend: &JoltAkitaBackend<F, PCS>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
+    witness_prepare_start: Option<&std::sync::mpsc::Sender<()>>,
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: JoltField,
@@ -49,6 +52,11 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
+    if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
+        return Err(ProverError::Unsupported {
+            reason: "Akita supports only cycle-major trace polynomials",
+        });
+    }
     if trusted_advice.is_some() == public_io.trusted_advice.is_empty() {
         return Err(ProverError::Unsupported {
             reason: "trusted-advice object presence disagrees with the trusted advice bytes",
@@ -192,18 +200,47 @@ where
     }
     let (commitment, hint) =
         tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
-            let packed_trace_rows = assemble_one_hot_trace_rows(
-                witness,
-                &plan,
-                formula_dimensions.ra_layout,
-                log_k_chunk,
-                log_t,
-            )?;
+            // The trace group has log2(capacity) + log_t + log_k_chunk variables;
+            // the backend uses it to pick the row whose matrix prefix to build
+            // while the rows are still being assembled.
+            let trace_num_vars = plan.packing().slot_capacity().trailing_zeros() as usize
+                + log_t
+                + log_k_chunk;
+            let trace_backend = &backend.trace_commitment;
+            let pcs_setup = &preprocessing.pcs_setup;
+            let packed_trace_rows = std::thread::scope(|scope| {
+                let prewarm = scope.spawn(move || {
+                    tracing::info_span!("akita_prewarm_trace_commitment").in_scope(|| {
+                        PCS::prewarm_trace_commitment(trace_backend, pcs_setup, trace_num_vars)
+                    })
+                });
+                let rows = assemble_one_hot_trace_rows(
+                    witness,
+                    &plan,
+                    formula_dimensions.ra_layout,
+                    log_k_chunk,
+                    log_t,
+                );
+                match prewarm.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "trace commitment prewarm failed; the commit will build its own state");
+                    }
+                    Err(_) => {
+                        tracing::warn!("trace commitment prewarm thread panicked; the commit will build its own state");
+                    }
+                }
+                rows
+            })?;
+            if let Some(start) = witness_prepare_start {
+                let _ = start.send(());
+            }
             let precommitted_hints = precommitted
                 .iter()
                 .map(|(_, _, hint)| *hint)
                 .collect::<Vec<_>>();
             let committed = PCS::commit_trace_one_hot(
+                &backend.trace_commitment,
                 &preprocessing.pcs_setup,
                 preprocessing.pcs_setup.default_layout_digest(),
                 plan.packing().slot_capacity(),

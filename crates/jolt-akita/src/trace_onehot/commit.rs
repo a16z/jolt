@@ -91,7 +91,7 @@ pub(super) fn commit_packed<const D: usize>(
                 );
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
-                let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
+                let rank_tiled_k256 = matches!(D, 64 | 128 | 256 | 512)
                     && source.one_hot_k == 256
                     && num_columns <= u32::BITS as usize;
                 let mut wide = if rank_tiled_k256 {
@@ -100,7 +100,54 @@ pub(super) fn commit_packed<const D: usize>(
                     vec![WideCyclotomicRing::zero(); num_columns * plan.n_a]
                 };
                 let mut budget = 0usize;
-                if source.one_hot_k < D {
+                if source.one_hot_k < D && rank_tiled_k256 {
+                    let rows_per_ring = D / source.one_hot_k;
+                    debug_assert_eq!(rows_per_ring, 2);
+                    let row_start = ring_start * rows_per_ring;
+                    let row_end = ring_end * rows_per_ring;
+                    let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
+                    let mut committed_zero_masks = vec![0u64; K256_ROW_BATCH];
+                    let mut rank_deferred = vec![DeferredFp128Ring::zero(); num_columns];
+                    for tile_start in (row_start..row_end).step_by(K256_ROW_BATCH) {
+                        let tile_len = (row_end - tile_start).min(K256_ROW_BATCH);
+                        let selected_rows = &mut hot_values[..tile_len * num_columns];
+                        let zero_masks = &mut committed_zero_masks[..tile_len];
+                        source.rows.fill_rows(tile_start, selected_rows);
+                        source
+                            .rows
+                            .fill_committed_digit_zero_masks(tile_start, zero_masks);
+                        for (a, a_row) in a_rows.iter().enumerate() {
+                            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
+                                .chunks_exact(num_columns)
+                                .zip(zero_masks.iter())
+                                .enumerate()
+                            {
+                                let trace_row = tile_start + row_offset;
+                                let ring = trace_row / rows_per_ring;
+                                let position = ring - block_ring_start;
+                                let a_col = position * plan.num_digits_inner;
+                                let coefficient_base =
+                                    (trace_row % rows_per_ring) * source.one_hot_k;
+                                for (column, &hot) in row_indices.iter().enumerate() {
+                                    if !row_is_committed(hot, committed_zero_mask, column) {
+                                        continue;
+                                    }
+                                    if usize::from(hot) >= source.one_hot_k {
+                                        return Err(AkitaError::InvalidInput(format!(
+                                            "trace one-hot row {hot} is outside K={}",
+                                            source.one_hot_k
+                                        )));
+                                    }
+                                    rank_deferred[column].shift_accumulate(
+                                        &a_row[a_col],
+                                        coefficient_base + usize::from(hot),
+                                    );
+                                }
+                            }
+                            flush_deferred_rank(&mut rank_deferred, &mut reduced, plan.n_a, a);
+                        }
+                    }
+                } else if source.one_hot_k < D {
                     let rows_per_ring = D / source.one_hot_k;
                     let mut shift_groups = (source.one_hot_k == 16
                         && rows_per_ring.is_multiple_of(4))
