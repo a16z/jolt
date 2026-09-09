@@ -40,7 +40,7 @@ pub(crate) mod test_support;
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests;
 
-#[cfg(feature = "test-utils")]
+#[cfg(all(feature = "test-utils", feature = "metal", target_os = "macos"))]
 pub(crate) use packed::PackedRegisterRowsDeviceView;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 pub(crate) use packed::{

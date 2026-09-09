@@ -59,8 +59,7 @@ impl Drop for PprofGuard {
 
         let prefix = crate::setup::PPROF_PREFIX
             .get()
-            .map(String::as_str)
-            .unwrap_or("benchmark-runs/pprof/");
+            .map_or("benchmark-runs/pprof/", String::as_str);
         let filename = format!("{prefix}{}.pb", self.label);
 
         if let Some(dir) = std::path::Path::new(&filename).parent() {
