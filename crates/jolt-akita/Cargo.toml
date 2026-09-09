@@ -13,6 +13,8 @@ default = ["parallel"]
 # Rayon-backed akita kernels and the host backend thread pool. A zkVM guest
 # builds without it: single-core, and the join/split machinery is pure cost.
 parallel = ["akita-pcs/parallel", "akita-prover/parallel"]
+# The akita transcript over the jolt-inlines Blake2b (guest verifiers).
+blake2-inline = ["akita-transcript/blake2-inline", "akita-types/blake2-inline"]
 # Field-inline (FR) protocol composition on the packed axis: extends the
 # provisioned grouped-schedule params with the always-present FR limb-group
 # profile. Selected by jolt-prover's `field-inline` feature; off keeps

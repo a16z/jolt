@@ -15,6 +15,8 @@ akita = ["jolt-sdk/akita"]
 
 [dependencies]
 jolt-openings = { path = "../../crates/jolt-openings" }
+# Registers the Blake2b inline with the tracer for the guest transcripts.
+jolt-inlines-blake2 = { workspace = true, features = ["host"] }
 jolt-sdk = { workspace = true, features = ["host"] }
 jolt-field = { path = "../../crates/jolt-field", optional = true }
 tracing-subscriber.workspace = true
@@ -23,3 +25,4 @@ postcard.workspace = true
 clap.workspace = true
 bincode.workspace = true
 serde.workspace = true
+

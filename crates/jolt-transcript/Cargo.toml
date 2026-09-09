@@ -14,6 +14,9 @@ workspace = true
 [features]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 transcript-blake2b = ["spongefish/blake2", "dep:blake2"]
+# Blake2b transcripts over the jolt-inlines Blake2b (one inline compress per
+# block on a guest); identical bytes to the `blake2` crate.
+blake2-inline = ["dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["dep:light-poseidon"]
 
@@ -23,6 +26,7 @@ ark-ff.workspace = true
 light-poseidon = { workspace = true, optional = true }
 spongefish = { workspace = true, features = ["ark-ff"] }
 blake2 = { workspace = true, optional = true }
+jolt-inlines-blake2 = { workspace = true, optional = true }
 digest = { workspace = true }
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
 rand.workspace = true

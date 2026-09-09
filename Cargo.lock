@@ -252,6 +252,7 @@ dependencies = [
  "akita-serialization",
  "blake2 0.10.6",
  "jolt-field",
+ "jolt-inlines-blake2",
  "spongefish",
 ]
 
@@ -267,6 +268,7 @@ dependencies = [
  "akita-transcript",
  "blake2 0.10.6",
  "jolt-field",
+ "jolt-inlines-blake2",
  "num-traits",
  "rand_core 0.6.4",
  "rayon",
@@ -3274,6 +3276,7 @@ dependencies = [
  "derive_more",
  "jolt-claims-derive",
  "jolt-field",
+ "jolt-inlines-blake2",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
@@ -3426,6 +3429,7 @@ name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
  "blake2 0.11.0-rc.6",
+ "digest 0.11.3",
  "hex-literal",
  "jolt-inlines-sdk",
  "rand 0.8.7",
@@ -3912,6 +3916,7 @@ dependencies = [
  "criterion",
  "digest 0.11.3",
  "jolt-field",
+ "jolt-inlines-blake2",
  "light-poseidon",
  "num-traits",
  "rand 0.8.7",
@@ -5580,6 +5585,7 @@ dependencies = [
  "bincode 2.0.1",
  "clap",
  "jolt-field",
+ "jolt-inlines-blake2",
  "jolt-openings",
  "jolt-sdk",
  "postcard",

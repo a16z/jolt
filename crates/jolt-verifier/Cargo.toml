@@ -12,6 +12,8 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
+# Guest verifiers: the claim layout digests over the jolt-inlines Blake2b.
+blake2-inline = ["jolt-claims/blake2-inline"]
 default = ["transcript-blake2b"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).

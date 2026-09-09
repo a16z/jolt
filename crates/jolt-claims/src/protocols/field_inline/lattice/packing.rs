@@ -8,7 +8,7 @@
 //! claim binds to the group by the single linear identity
 //! [`recompose_limbs`](super::geometry::recompose_limbs).
 
-use blake2::{digest::consts::U32, Blake2b, Digest};
+use crate::blake2b256::{Blake2b256, Digest};
 use jolt_field::Field;
 #[cfg(feature = "akita")]
 use jolt_openings::PrecommittedRole;
@@ -106,7 +106,7 @@ pub const fn field_inc_limbs_precommitted_role() -> PrecommittedRole {
 }
 
 fn layout_digest(packing: &PrefixPackedLayout<FieldIncLimbWord>) -> [u8; 32] {
-    let mut hasher = Blake2b::<U32>::new();
+    let mut hasher = Blake2b256::new();
     hasher.update(b"jolt/field-inline/akita/inc-limb-words/v1");
     append_usize(&mut hasher, packing.logical_num_vars());
     append_usize(&mut hasher, packing.packed_num_vars());
@@ -118,7 +118,7 @@ fn layout_digest(packing: &PrefixPackedLayout<FieldIncLimbWord>) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
+fn append_usize(hasher: &mut Blake2b256, value: usize) {
     hasher.update((value as u64).to_le_bytes());
 }
 

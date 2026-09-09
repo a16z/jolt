@@ -10,6 +10,7 @@ const INITIAL_STATE: [u64; STATE_VECTOR_LEN] = {
     h
 };
 
+#[derive(Clone)]
 pub struct Blake2b {
     /// Hash state (8 x 64-bit words)
     h: [u64; STATE_VECTOR_LEN],
@@ -39,6 +40,34 @@ impl Blake2b {
     ///
     /// # Panics
     /// Panics if `salt` or `persona` is longer than 16 bytes.
+    /// Blake2b with an `output_len`-byte digest (1..=64). The digest length is
+    /// part of the parameter block folded into the IV, so a shorter digest is
+    /// its own hash function, not a truncation of the 64-byte one.
+    #[inline(always)]
+    pub fn new_with_output_len(output_len: usize) -> Self {
+        assert!(
+            (1..=OUTPUT_SIZE).contains(&output_len),
+            "Blake2b digest length must be 1..=64 bytes"
+        );
+        let mut h = IV;
+        h[0] ^= 0x01010000 ^ (output_len as u64);
+        Self {
+            h,
+            buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
+            buffer_len: 0,
+            counter: 0,
+        }
+    }
+
+    /// Finalize into `out`, which holds the digest length this hasher was
+    /// created with (the leading bytes of the state).
+    #[inline(always)]
+    pub fn finalize_into(self, out: &mut [u8]) {
+        let full = self.finalize();
+        let len = out.len();
+        out.copy_from_slice(&full[..len]);
+    }
+
     #[inline(always)]
     pub fn new_with_params(salt: &[u8], persona: &[u8]) -> Self {
         Self {

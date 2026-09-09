@@ -1,4 +1,7 @@
 use clap::{Parser, Subcommand};
+// Linked for its inline registration: the guest transcripts hash with the
+// Blake2b inline, which the tracer expands only for registered extensions.
+use jolt_inlines_blake2 as _;
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::guest::program::Program;
 use jolt_sdk::{JoltDevice, MemoryConfig};
@@ -390,12 +393,13 @@ fn collect_guest_proofs(
     guest: GuestProgram,
     target_dir: &str,
     _use_embed: bool,
-    _bytecode_chunk_count: Option<usize>,
+    bytecode_chunk_count: Option<usize>,
 ) -> Vec<u8> {
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_sdk::jolt_prover_legacy::zkvm::packed::{
-        akita_verifier_preprocessing, AkitaField, AkitaPackedProver, AkitaPackedScheme,
-        AkitaScheduleArtifacts, AkitaScheme, AkitaTranscript, AkitaVc,
+        akita_verifier_preprocessing, shared_preprocessing_with_direct_program, AkitaField,
+        AkitaPackedProver, AkitaPackedScheme, AkitaScheduleArtifacts, AkitaScheme, AkitaTranscript,
+        AkitaVc,
     };
     use jolt_sdk::jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
     use jolt_sdk::jolt_prover_legacy::zkvm::program::ProgramPreprocessing;
@@ -418,12 +422,36 @@ fn collect_guest_proofs(
     let (_, _, _, io_device) = program.trace(&inputs[0], &[], &[]);
     let program_data =
         ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
-    let shared: JoltSharedPreprocessing<AkitaPackedScheme> = JoltSharedPreprocessing::new(
-        program_data,
-        io_device.memory_layout.clone(),
-        max_trace_length,
-    );
-    let prover_preprocessing = JoltProverPreprocessing::new(shared);
+    // With a chunk count the bytecode is committed: the guest verifier opens a
+    // committed bytecode polynomial instead of walking every bytecode row, and
+    // its preprocessing carries commitments rather than rows. The opening adds
+    // two precommitted objects to the batch, so it pays only once the bytecode
+    // pass outgrows that (not for a program this small).
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let (prover_preprocessing, direct_program) = match bytecode_chunk_count {
+        Some(chunk_count) => {
+            let (shared, prover_data, direct_program) = shared_preprocessing_with_direct_program(
+                &schedule_artifacts,
+                program_data,
+                io_device.memory_layout.clone(),
+                max_trace_length,
+                chunk_count,
+            )
+            .expect("packed committed preprocessing");
+            (
+                JoltProverPreprocessing::new_committed(shared, prover_data, AkitaPackedScheme),
+                Some(direct_program),
+            )
+        }
+        None => {
+            let shared: JoltSharedPreprocessing<AkitaPackedScheme> = JoltSharedPreprocessing::new(
+                program_data,
+                io_device.memory_layout.clone(),
+                max_trace_length,
+            );
+            (JoltProverPreprocessing::new(shared), None)
+        }
+    };
 
     let mut all_groups_data = Vec::new();
     let n = inputs.len() as u32;
@@ -442,16 +470,20 @@ fn collect_guest_proofs(
         )
         .unwrap();
         let public_io = prover.program_io.clone();
-        let (object_setup, verifier_setup) =
-            <AkitaScheme as VerifierCommitmentScheme>::setup(prover.one_hot_trace_setup_params(
-                AkitaScheduleArtifacts::shared_from_default_directory(),
-            ))
-            .unwrap();
+        let (object_setup, verifier_setup) = <AkitaScheme as VerifierCommitmentScheme>::setup(
+            prover.one_hot_trace_setup_params(schedule_artifacts.clone()),
+        )
+        .unwrap();
         let now = Instant::now();
-        let proof = prover.prove_packed(&object_setup, None, None).unwrap();
+        let proof = prover
+            .prove_packed(&object_setup, None, direct_program.as_ref())
+            .unwrap();
         info!("  Packed prove time: {:.3}s", now.elapsed().as_secs_f64());
-        let mut preprocessing =
-            akita_verifier_preprocessing(&prover_preprocessing, verifier_setup, None);
+        let mut preprocessing = akita_verifier_preprocessing(
+            &prover_preprocessing,
+            verifier_setup,
+            direct_program.as_ref(),
+        );
         // The guest's setup is a trusted constant: carry the expanded backend
         // verifier keys instead of re-deriving them from the seed in-circuit.
         let embedded = preprocessing
@@ -749,6 +781,7 @@ fn run_recursion_proof(
     #[cfg(feature = "akita")]
     program.add_guest_feature("akita");
     program.add_guest_feature("fast-alloc");
+    program.add_guest_feature("blake2-inline");
     // The verifier preprocessing is the recursion circuit's own trusted
     // constant: its group elements need no subgroup validation on decode.
     #[cfg(not(feature = "akita"))]

@@ -202,6 +202,7 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 # field identity rather than separate path and Git copies.
 [patch."https://github.com/a16z/jolt"]
 jolt-field = { path = "crates/jolt-field" }
+jolt-inlines-blake2 = { path = "jolt-inlines/blake2" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
