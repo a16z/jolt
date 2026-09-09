@@ -65,6 +65,14 @@ fn scalar_schedule(catalog: &ValidatedScheduleCatalog, num_vars: usize) -> FoldS
         .clone()
 }
 
+#[test]
+fn k256_t28_catalog_preserves_prover_optimized_root() {
+    let schedule = scalar_schedule(&one_hot_catalog(AKITA_ONE_HOT_K256), 41);
+    let inner = &schedule.root.params.final_group().profile.inner.matrix;
+    assert_eq!(inner.ring_dimension(), 128);
+    assert_eq!(inner.output_rank(), 3);
+}
+
 fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
     schedule
         .recursive_folds
