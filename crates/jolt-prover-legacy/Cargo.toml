@@ -42,6 +42,9 @@ akita = [
 ]
 zk = ["dory/zk", "dep:jolt-blindfold", "jolt-verifier/zk"]
 host = [
+  "jolt-poly?/parallel",
+  "jolt-crypto?/parallel",
+  "jolt-akita?/parallel",
   "prover",
   "dep:jolt-inlines-sha2",
   "dep:jolt-inlines-keccak256",
@@ -133,7 +136,7 @@ jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
 jolt-claims = { workspace = true, optional = true }
-jolt-crypto = { workspace = true, optional = true }
+jolt-crypto = { workspace = true, optional = true, features = ["bn254"] }
 jolt-dory = { workspace = true, optional = true }
 jolt-field = { workspace = true, optional = true }
 jolt-lookup-tables = { workspace = true, optional = true }

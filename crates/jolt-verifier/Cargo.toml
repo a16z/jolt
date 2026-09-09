@@ -58,7 +58,7 @@ common.workspace = true
 jolt-blindfold.workspace = true
 jolt-claims.workspace = true
 jolt-claims-derive.workspace = true
-jolt-crypto.workspace = true
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field.workspace = true
 jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true

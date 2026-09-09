@@ -9,7 +9,7 @@ description = "Polynomial commitment scheme traits and batch openings for the Jo
 workspace = true
 
 [dependencies]
-jolt-crypto.workspace = true
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-transcript.workspace = true

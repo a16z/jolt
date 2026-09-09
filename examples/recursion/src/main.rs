@@ -124,6 +124,9 @@ enum Commands {
         /// Use committed program mode for the inner guest proof
         #[arg(long, value_name = "CHUNKS")]
         committed_bytecode: Option<usize>,
+        /// Number of inner proofs the recursion guest verifies in one run
+        #[arg(long, value_name = "COUNT", default_value_t = 1)]
+        proofs: usize,
     },
     /// Verify proofs and optionally embed them
     Verify {
@@ -190,15 +193,17 @@ impl GuestProgram {
         }
     }
 
-    fn inputs(&self) -> Vec<Vec<u8>> {
-        match self {
-            GuestProgram::Fibonacci => {
-                vec![postcard::to_stdvec(&2u32).unwrap()]
-            }
-            GuestProgram::Muldiv => {
-                vec![postcard::to_stdvec(&(10u32, 5u32, 2u32)).unwrap()]
-            }
-        }
+    /// `count` distinct inputs: one inner proof each, all verified by one run
+    /// of the recursion guest (setup decode is paid once per run).
+    fn inputs(&self, count: usize) -> Vec<Vec<u8>> {
+        (0..count as u32)
+            .map(|index| match self {
+                GuestProgram::Fibonacci => postcard::to_stdvec(&(2u32 + index)).unwrap(),
+                GuestProgram::Muldiv => {
+                    postcard::to_stdvec(&(10u32 + index, 5u32, 2u32 + index)).unwrap()
+                }
+            })
+            .collect()
     }
 
     fn get_memory_config(&self, use_embed: bool) -> MemoryConfig {
@@ -394,6 +399,7 @@ fn collect_guest_proofs(
     target_dir: &str,
     _use_embed: bool,
     bytecode_chunk_count: Option<usize>,
+    proofs: usize,
 ) -> Vec<u8> {
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_sdk::jolt_prover_legacy::zkvm::packed::{
@@ -418,7 +424,7 @@ fn collect_guest_proofs(
     program.build(target_dir);
     let (bytecode, init_memory_state, _, e_entry) = program.decode();
     let elf_contents = program.get_elf_contents().unwrap();
-    let inputs = guest.inputs();
+    let inputs = guest.inputs(proofs);
     let (_, _, _, io_device) = program.trace(&inputs[0], &[], &[]);
     let program_data =
         ProgramPreprocessing::preprocess(bytecode, init_memory_state, e_entry).unwrap();
@@ -543,6 +549,7 @@ fn collect_guest_proofs(
     target_dir: &str,
     use_embed: bool,
     bytecode_chunk_count: Option<usize>,
+    proofs: usize,
 ) -> Vec<u8> {
     info!("Starting collect_guest_proofs for {}", guest.name());
     let max_trace_length = guest.get_max_trace_length(use_embed);
@@ -589,7 +596,7 @@ fn collect_guest_proofs(
         .unwrap()
         .0;
 
-    let inputs = guest.inputs();
+    let inputs = guest.inputs(proofs);
     info!("Got inputs: {inputs:?}");
 
     let mut all_groups_data = Vec::new();
@@ -748,13 +755,22 @@ fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
     proof_data
 }
 
-fn generate_proofs(guest: GuestProgram, workdir: &Path, bytecode_chunk_count: Option<usize>) {
-    info!("Generating proofs for {} guest program...", guest.name());
+fn generate_proofs(
+    guest: GuestProgram,
+    workdir: &Path,
+    bytecode_chunk_count: Option<usize>,
+    proofs: usize,
+) {
+    info!(
+        "Generating {proofs} proof(s) for {} guest program...",
+        guest.name()
+    );
 
     let target_dir = "/tmp/jolt-guest-targets";
 
     // Collect guest proofs
-    let all_groups_data = collect_guest_proofs(guest, target_dir, false, bytecode_chunk_count);
+    let all_groups_data =
+        collect_guest_proofs(guest, target_dir, false, bytecode_chunk_count, proofs);
 
     // Save proof data
     save_proof_data(guest, &all_groups_data, workdir);
@@ -970,6 +986,7 @@ fn main() {
             example,
             workdir,
             committed_bytecode,
+            proofs,
         }) => {
             let guest = match GuestProgram::from_str(example) {
                 Some(guest) => guest,
@@ -978,7 +995,7 @@ fn main() {
                     return;
                 }
             };
-            generate_proofs(guest, workdir, *committed_bytecode);
+            generate_proofs(guest, workdir, *committed_bytecode, *proofs);
         }
         Some(Commands::Verify {
             example,

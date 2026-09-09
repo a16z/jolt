@@ -19,8 +19,6 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-# `parallel` is a default for host builds; guest-verifier closure members
-# depend on this crate with `default-features = false`.
 default = ["bn254", "parallel"]
 bn254 = [
   "dep:ark-bn254",
@@ -31,6 +29,8 @@ bn254 = [
   "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
+  # The BN254 batch-addition and GLV kernels are written over rayon.
+  "parallel",
 ]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
 

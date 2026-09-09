@@ -4,16 +4,14 @@ use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
-    booleanity_claim, hamming_weight_claim, reduced_claim, virtualization_claim,
+    booleanity_claim, gamma_power_expr, hamming_weight_claim, reduced_claim, virtualization_claim,
     HammingWeightClaimReductionDimensions,
 };
 use crate::protocols::jolt::{
     HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltChallengeId,
     JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
 };
-use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
-};
+use crate::{derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 
 /// Produced one-hot `Ra` opening claims, grouped by family (instruction,
 /// bytecode, RAM) in canonical layout order. Every produced opening shares the
@@ -100,28 +98,26 @@ impl SymbolicSumcheck for ClaimReduction {
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut input = JoltExpr::zero();
 
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
             input = input
-                + gamma.clone().pow(3 * i) * hamming_weight_claim(polynomial)
-                + gamma.clone().pow(3 * i + 1) * opening(booleanity_claim(polynomial))
-                + gamma.clone().pow(3 * i + 2) * opening(virtualization_claim(polynomial));
+                + gamma_power_expr(3 * i) * hamming_weight_claim(polynomial)
+                + gamma_power_expr(3 * i + 1) * opening(booleanity_claim(polynomial))
+                + gamma_power_expr(3 * i + 2) * opening(virtualization_claim(polynomial));
         }
 
         input
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let mut output = JoltExpr::zero();
 
         for (i, polynomial) in self.shape.layout.polynomials().enumerate() {
-            let output_coeff = gamma.clone().pow(3 * i)
-                + gamma.clone().pow(3 * i + 1)
+            let output_coeff = gamma_power_expr(3 * i)
+                + gamma_power_expr(3 * i + 1)
                     * derived(HammingWeightClaimReductionPublic::EqBooleanity)
-                + gamma.clone().pow(3 * i + 2)
+                + gamma_power_expr(3 * i + 2)
                     * derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
             output = output + output_coeff * opening(reduced_claim(polynomial));
         }
@@ -206,7 +202,12 @@ mod tests {
                 ) => gamma,
                 _ => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltDerivedId::HammingWeightClaimReduction(
+                    HammingWeightClaimReductionPublic::GammaPow(exponent),
+                ) => gamma_power(gamma, exponent),
+                _ => zero,
+            },
         );
 
         let output = relation.output_expression::<Fr>().evaluate(
@@ -235,6 +236,9 @@ mod tests {
                 JoltDerivedId::HammingWeightClaimReduction(
                     HammingWeightClaimReductionPublic::EqVirtualization(2),
                 ) => eq_virt_ram,
+                JoltDerivedId::HammingWeightClaimReduction(
+                    HammingWeightClaimReductionPublic::GammaPow(exponent),
+                ) => gamma_power(gamma, exponent),
                 _ => zero,
             },
         );

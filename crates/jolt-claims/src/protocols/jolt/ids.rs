@@ -143,6 +143,10 @@ pub enum HammingWeightClaimReductionPublic {
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
     BalancedIncValueAtAddress,
+    /// `gamma^k` for `k >= 2`, as one derived leaf: the batching coefficient of
+    /// the k-th leg. A term with `k` repeated challenge factors costs the
+    /// verifier `k` copies and `k` multiplies per evaluation; the leaf costs one.
+    GammaPow(usize),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

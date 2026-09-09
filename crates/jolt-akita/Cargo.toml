@@ -38,7 +38,7 @@ akita-verifier.workspace = true
 serde_bytes = "0.11"
 akita-transcript.workspace = true
 akita-types.workspace = true
-jolt-crypto.workspace = true
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["solinas"] }
 jolt-openings.workspace = true
 jolt-poly.workspace = true

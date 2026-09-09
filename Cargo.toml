@@ -436,11 +436,13 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
-jolt-akita = { path = "./crates/jolt-akita" }
+# `parallel` (and jolt-crypto's `bn254`) are opt-in: the guest-verifier closure
+# builds without rayon, prover crates enable them through their own features.
+jolt-akita = { path = "./crates/jolt-akita", default-features = false }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
-jolt-crypto = { path = "./crates/jolt-crypto" }
+jolt-crypto = { path = "./crates/jolt-crypto", default-features = false }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
@@ -452,8 +454,8 @@ jolt-profiling = { path = "./crates/jolt-profiling" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-witness = { path = "./crates/jolt-witness" }
 jolt-witness-derive = { path = "./crates/jolt-witness-derive" }
-jolt-poly = { path = "./crates/jolt-poly" }
-jolt-r1cs = { path = "./crates/jolt-r1cs" }
+jolt-poly = { path = "./crates/jolt-poly", default-features = false }
+jolt-r1cs = { path = "./crates/jolt-r1cs", default-features = false }
 jolt-transcript = { path = "./crates/jolt-transcript" }
 jolt-utils = { path = "./crates/jolt-utils" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
