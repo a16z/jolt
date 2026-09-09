@@ -1,0 +1,99 @@
+# Nightly `cargo audit` of every tracked Cargo.lock — the workspace lockfile
+# plus the two cargo-fuzz workspaces that commit one (jolt-eval/fuzz and
+# crates/jolt-field/fuzz) — against the RustSec advisory database. The other
+# fuzz workspaces commit no lockfile and resolve fresh on every fuzz-crates.yml
+# run, so they are not covered here. Dependabot security alerts cover the root
+# workspace's crates.io dependencies too, but they only reach whoever has
+# alerts enabled; this run fails loudly and files an issue.
+#
+# POLICY — vulnerabilities always fail. `--deny unsound --deny yanked` also
+# fails the run on unsound crates and yanked versions: both are actionable with
+# `cargo update -p <crate>` and all tracked lockfiles are clean of them as of
+# this workflow landing. `unmaintained` advisories only warn, because denying
+# them would fail every run: bincode 2 is the workspace's own serialization
+# format and bincode 1 comes via dory-pcs and iai-callgrind; paste is a direct
+# dependency of tracer and z3-verifier and is also pinned by arkworks, plonky3,
+# alloy and ZeroOS; derivative (ark-ff 0.3/0.4), fxhash (rust-code-analysis)
+# and proc-macro-error2 (alloy-sol-macro, iai-callgrind) are transitive with
+# no fix short of upstream changes.
+#
+# Nightly-only by design: new advisories land against an unchanged lockfile, so
+# a PR-blocking check would fail unrelated PRs the day an advisory is published.
+# The only PR trigger is a change to this file, so edits to the workflow get
+# exercised before merge. `workflow_dispatch` allows on-demand runs (e.g. to
+# confirm a `cargo update` cleared a finding).
+#
+# TRIAGE — the run log has the `Crate:` / `ID:` / `Solution:` lines. Prefer
+# `cargo update -p <crate>` (use `--manifest-path` for the fuzz lockfiles) when
+# a patched version exists; otherwise bump or drop the dependent crate (or the
+# feature that pulls it in). Only as a last resort ignore the advisory in
+# `.cargo/audit.toml` (`[advisories] ignore = ["RUSTSEC-..."]`) with a comment
+# explaining why the vulnerable code path is unreachable.
+name: Cargo Audit
+
+on:
+  schedule:
+    # 06:27 UTC nightly (off the top of the hour to dodge scheduler congestion)
+    - cron: "27 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/cargo-audit.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    # Backstop only. The real bound is the step-level timeout below: a job-level
+    # timeout CANCELS the job, which skips the `if: failure()` reporting step, so
+    # a hang would go unreported. Keep this comfortably above the step budget.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Audit every tracked Cargo.lock
+        # Step-level (not job-level) so a stalled advisory-db or index fetch
+        # fails this step and the reporting step below still runs. Audits all
+        # lockfiles before exiting so one finding doesn't hide another.
+        timeout-minutes: 10
+        run: |
+          status=0
+          while IFS= read -r lock; do
+            echo "::group::cargo audit ${lock}"
+            if ! cargo audit --deny unsound --deny yanked --file "${lock}"; then
+              echo "::error file=${lock}::cargo audit failed for ${lock}"
+              status=1
+            fi
+            echo "::endgroup::"
+          done < <(git ls-files -- 'Cargo.lock' '**/Cargo.lock')
+          exit "${status}"
+      - name: File failure issue
+        # Skipped on the self-test PR trigger: a failure there is not a nightly
+        # regression (and fork PRs get a read-only token anyway).
+        if: failure() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --state open --search "in:title \"Nightly cargo audit failed\"" \
+            --json number --jq 'length')
+          if [ "$existing" -eq 0 ]; then
+            body=$(printf '%s\n\n%s\n\n%s' \
+              "The scheduled cargo-audit run failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              "A RustSec advisory (vulnerability, unsound crate, or yanked version) matches a crate in one of the tracked Cargo.lock files. The run log has the \`Crate:\` / \`ID:\` / \`Solution:\` lines for each finding." \
+              "Fix with \`cargo update -p <crate>\` when a patched version exists (\`--manifest-path\` for the fuzz lockfiles); otherwise bump or drop the dependent crate. See the TRIAGE notes in the header comment of .github/workflows/cargo-audit.yml.")
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Nightly cargo audit failed" \
+              --body "$body"
+          else
+            echo "Open failure issue already exists; not filing a duplicate."
+          fi
