@@ -69,6 +69,9 @@ const REG_LIMB: u32 = 6;
 const REG_OUT: u32 = 7;
 #[cfg(target_arch = "riscv64")]
 const REG_HINT: u32 = 8;
+/// Running sum of a register-resident dot product.
+#[cfg(target_arch = "riscv64")]
+const REG_ACC: u32 = 9;
 
 /// BN254 scalar-field Montgomery constants as canonical little-endian limbs.
 #[cfg(target_arch = "riscv64")]
@@ -302,6 +305,18 @@ mod emit {
     pub fn assert_out_eq_hint() {
         fixed!(r_word(FUNCT3_ASSERT_EQ, 0, REG_OUT, REG_HINT));
     }
+    #[inline(always)]
+    pub fn acc_zero() {
+        fixed!(i_word(FUNCT3_LOAD_IMM, REG_ACC, 0));
+    }
+    #[inline(always)]
+    pub fn acc_add_out() {
+        fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_OUT));
+    }
+    #[inline(always)]
+    pub fn assert_acc_eq_hint() {
+        fixed!(r_word(FUNCT3_ASSERT_EQ, 0, REG_ACC, REG_HINT));
+    }
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -379,6 +394,27 @@ mod guest {
         finish()
     }
     /// Caller guarantees `a != 0` (FIELD_INV traps on zero).
+    /// `Σ a[i]·b[i]` with the running sum resident in the field register file:
+    /// operands are loaded once each and only the final sum is hinted, so a
+    /// length-`k` dot product costs `k` multiplies with one hint round trip
+    /// instead of `k` hinted multiplies and `k − 1` hinted additions.
+    /// Canonical (non-Montgomery) limbs only.
+    #[inline(always)]
+    pub fn dot<const N: usize>(a: &[[u64; N]], b: &[[u64; N]]) -> [u64; N] {
+        ensure_constants();
+        emit::acc_zero();
+        for (x, y) in a.iter().zip(b) {
+            load(REG_A, x);
+            load(REG_B, y);
+            emit::mul_out();
+            emit::acc_add_out();
+        }
+        let hint = next_hint::<N>();
+        load(REG_HINT, &hint);
+        emit::assert_acc_eq_hint();
+        hint
+    }
+
     #[inline(always)]
     pub fn inv<const N: usize>(a: &[u64; N], montgomery: bool) -> [u64; N] {
         ensure_constants();
@@ -392,4 +428,4 @@ mod guest {
 }
 
 #[cfg(target_arch = "riscv64")]
-pub use guest::{add, inv, mul, neg, sub};
+pub use guest::{add, dot, inv, mul, neg, sub};

@@ -25,6 +25,35 @@ cfg_if::cfg_if! {
         pub fn exit(code: i32) -> ! {
             std::process::exit(code)
         }
+
+        /// Rust allocations on jolt-platform's size-class arena (see
+        /// `__platform_bootstrap` for the heap split with musl).
+        #[cfg(feature = "guest-size-class-alloc")]
+        struct SizeClassAllocator;
+
+        #[cfg(feature = "guest-size-class-alloc")]
+        // SAFETY: the arena is initialized in `__platform_bootstrap` before
+        // any Rust allocation, and the guest is single-threaded.
+        unsafe impl core::alloc::GlobalAlloc for SizeClassAllocator {
+            unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+                jolt_platform::size_class_alloc::alloc(layout)
+            }
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+                jolt_platform::size_class_alloc::dealloc(ptr, layout)
+            }
+            unsafe fn realloc(
+                &self,
+                ptr: *mut u8,
+                layout: core::alloc::Layout,
+                new_size: usize,
+            ) -> *mut u8 {
+                jolt_platform::size_class_alloc::realloc(ptr, layout, new_size)
+            }
+        }
+
+        #[cfg(feature = "guest-size-class-alloc")]
+        #[global_allocator]
+        static ALLOCATOR: SizeClassAllocator = SizeClassAllocator;
     } else if #[cfg(target_os = "none")] {
         pub use jolt_platform::putchar;
 

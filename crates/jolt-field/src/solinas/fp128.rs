@@ -1076,6 +1076,17 @@ impl<const P: u128> Ring for Fp128<P> {
 }
 
 impl<const P: u128> Field for Fp128<P> {
+    #[inline]
+    fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        <Self as PseudoMersenne>::inline_dot(a, b).unwrap_or_else(|| {
+            a.iter()
+                .zip(b)
+                .fold(<Self as num_traits::Zero>::zero(), |acc, (x, y)| {
+                    acc + *x * *y
+                })
+        })
+    }
+
     #[inline(always)]
     fn inverse(&self) -> Option<Self> {
         Self::inline_inverse(*self)
@@ -1188,6 +1199,41 @@ impl<const P: u128> WithAccumulator for Fp128<P> {
 
 impl<const P: u128> PseudoMersenne for Fp128<P> {
     const OFFSET: u128 = Self::C;
+
+    #[cfg(feature = "field-inline-guest")]
+    fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
+        Some(Self::inline_dot_kernel(a, b))
+    }
+}
+
+#[cfg(all(feature = "field-inline-guest", not(target_arch = "riscv64")))]
+impl<const P: u128> Fp128<P> {
+    /// Host side of the field-inline dot product: exact widening
+    /// accumulation, one reduction, one recorded hint.
+    fn inline_dot_kernel(a: &[Self], b: &[Self]) -> Self {
+        use crate::{Unreduced, Zero};
+        let accum = a.iter().zip(b).fold(
+            <<Self as Unreduced>::Product as Zero>::zero(),
+            |acc, (x, y)| acc + x.mul_unreduced(*y),
+        );
+        let out = <Self as Unreduced>::reduce_product(accum);
+        crate::fr_inline::record(&out.0);
+        out
+    }
+}
+
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+impl<const P: u128> Fp128<P> {
+    fn inline_dot_kernel(a: &[Self], b: &[Self]) -> Self {
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
+        let (a, b): (&[[u64; 2]], &[[u64; 2]]) = unsafe {
+            (
+                core::slice::from_raw_parts(a.as_ptr().cast(), a.len()),
+                core::slice::from_raw_parts(b.as_ptr().cast(), b.len()),
+            )
+        };
+        Fp128(crate::fr_inline::dot(a, b))
+    }
 }
 
 // Cross-check the inline-asm kernels against the portable arithmetic on every
@@ -1263,26 +1309,20 @@ mod tests {
 #[cfg(not(all(feature = "field-inline-guest", target_arch = "riscv64")))]
 impl<const P: u128> Fp128<P> {
     #[inline(always)]
-    fn record(self) -> Self {
-        #[cfg(feature = "field-inline-guest")]
-        crate::fr_inline::record(&self.0);
-        self
-    }
-    #[inline(always)]
     fn inline_add(a: Self, b: Self) -> Self {
-        Fp128(Self::add_raw(a.0, b.0)).record()
+        Fp128(Self::add_raw(a.0, b.0))
     }
     #[inline(always)]
     fn inline_sub(a: Self, b: Self) -> Self {
-        Fp128(Self::sub_raw(a.0, b.0)).record()
+        Fp128(Self::sub_raw(a.0, b.0))
     }
     #[inline(always)]
     fn inline_mul(a: Self, b: Self) -> Self {
-        Fp128(Self::mul_raw(a.0, b.0)).record()
+        Fp128(Self::mul_raw(a.0, b.0))
     }
     #[inline(always)]
     fn inline_neg(a: Self) -> Self {
-        Fp128(Self::sub_raw(pack(0, 0), a.0)).record()
+        Fp128(Self::sub_raw(pack(0, 0), a.0))
     }
     #[inline(always)]
     fn inline_inverse(a: Self) -> Option<Self> {
@@ -1301,17 +1341,20 @@ impl<const P: u128> Fp128<P> {
 
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 impl<const P: u128> Fp128<P> {
+    // Addition, subtraction and negation stay in software on the guest: a
+    // two-limb add with one conditional subtract is cheaper than the hinted
+    // field-inline round trip (operand loads, hint load, assert).
     fn inline_add(a: Self, b: Self) -> Self {
-        Fp128(crate::fr_inline::add(&a.0, &b.0))
+        Fp128(Self::add_raw(a.0, b.0))
     }
     fn inline_sub(a: Self, b: Self) -> Self {
-        Fp128(crate::fr_inline::sub(&a.0, &b.0))
+        Fp128(Self::sub_raw(a.0, b.0))
     }
     fn inline_mul(a: Self, b: Self) -> Self {
-        Fp128(crate::fr_inline::mul(&a.0, &b.0, false))
+        Fp128(Self::mul_raw(a.0, b.0))
     }
     fn inline_neg(a: Self) -> Self {
-        Fp128(crate::fr_inline::neg(&a.0))
+        Fp128(Self::sub_raw(pack(0, 0), a.0))
     }
     fn inline_inverse(a: Self) -> Option<Self> {
         if a.0 == [0; 2] {

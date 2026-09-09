@@ -8,6 +8,7 @@ guest = []
 field-inline = ["jolt_sdk/field-inline", "jolt-field/field-inline-guest"]
 akita = ["jolt_sdk/akita", "dep:jolt-akita", "dep:jolt-crypto", "dep:jolt-transcript"]
 trusted-preprocessing = ["jolt-dory/unchecked-verifier-setup"]
+fast-alloc = ["jolt_sdk/guest-size-class-alloc", "jolt_sdk/guest-fast-mem"]
 
 [dependencies]
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [

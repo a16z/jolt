@@ -16,6 +16,10 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+# std guests: route Rust allocations to jolt-platform's O(1) size-class
+# arena instead of musl's malloc over ZeroOS's first-fit heap.
+guest-size-class-alloc = []
+guest-fast-mem = ["jolt-platform/fast-mem"]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover-legacy?/zk", "jolt-verifier?/zk"]
 # The packed (Akita) protocol: the guest verifier over fp128 and the host

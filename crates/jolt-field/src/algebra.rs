@@ -169,6 +169,15 @@ pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
+    /// `Σ a[i]·b[i]` over the shorter of the two slices. Fields with a batched
+    /// guest path (register-resident field-inline accumulation) override this.
+    #[inline]
+    fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        a.iter()
+            .zip(b)
+            .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
+    }
+
     /// Multiplicative inverse with zero mapped to zero.
     #[inline]
     fn inv_or_zero(self) -> Self {
@@ -219,6 +228,16 @@ pub trait Field: Ring {
 pub trait PseudoMersenne: Field + CanonicalEncoding {
     /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
+
+    /// `Σ a[i]·b[i]` on a field-inline guest, with the sum register-resident
+    /// and one hint for the result; `None` where no such path exists (the
+    /// caller then folds in software). Fields whose guest arithmetic is
+    /// hinted override this; the host counterpart records the single hint.
+    #[inline]
+    fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
+        let _ = (a, b);
+        None
+    }
 
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.
     ///

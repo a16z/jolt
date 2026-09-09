@@ -234,13 +234,17 @@ fn fold_stage_values<F: JoltField>(
         stage4_gammas: fold.stage_gammas[3],
         stage5_gammas: fold.stage_gammas[4],
     });
-    let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
-    for (row_values, eq_address) in row_values.into_iter().zip(address_eq_evals) {
-        for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
-            *stage_value += row_value * eq_address;
+    // One dot product per stage (columns of the row table against the
+    // address eq table) so a field-inline guest folds each stage in the
+    // register file.
+    let mut columns: [Vec<F>; NUM_BYTECODE_VAL_STAGES] =
+        std::array::from_fn(|_| Vec::with_capacity(row_values.len()));
+    for row in &row_values {
+        for (column, value) in columns.iter_mut().zip(row) {
+            column.push(*value);
         }
     }
-    Ok(stage_values)
+    Ok(columns.map(|column| F::dot_product(&column, &address_eq_evals)))
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {

@@ -472,3 +472,19 @@ jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
 jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+
+# Companion akita branch for the recursion cycle work (feat/fast-recursion-companion
+# in the user's fork); drop once the upstream rev carries these changes.
+[patch."https://github.com/LayerZero-Labs/akita.git"]
+akita-algebra = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-algebra" }
+akita-challenges = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-challenges" }
+akita-config = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-config" }
+akita-error = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-error" }
+akita-pcs = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-pcs" }
+akita-planner = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-planner" }
+akita-prover = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-prover" }
+akita-schedules = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-schedules" }
+akita-serialization = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-serialization" }
+akita-transcript = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-transcript" }
+akita-types = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-types" }
+akita-verifier = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-verifier" }

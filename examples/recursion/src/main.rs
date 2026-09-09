@@ -748,6 +748,7 @@ fn run_recursion_proof(
     program.enable_field_inline();
     #[cfg(feature = "akita")]
     program.add_guest_feature("akita");
+    program.add_guest_feature("fast-alloc");
     // The verifier preprocessing is the recursion circuit's own trusted
     // constant: its group elements need no subgroup validation on decode.
     #[cfg(not(feature = "akita"))]

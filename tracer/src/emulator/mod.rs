@@ -26,6 +26,8 @@ pub mod default_terminal;
 pub mod elf_analyzer;
 pub mod memory;
 pub mod mmu;
+#[cfg(feature = "std")]
+pub mod pc_profile;
 pub mod terminal;
 
 use self::cpu::Cpu;

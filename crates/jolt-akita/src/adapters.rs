@@ -285,15 +285,30 @@ pub fn host_parallel_verifier_threads() -> usize {
 /// the packed prover at trace-scale shapes. Every backend setup/commit/
 /// prove/verify entry funnels through this pool. Nested calls reuse it.
 pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    #[cfg(feature = "profiling")]
-    match PROFILE_BACKEND_POOL.with(Cell::get) {
-        ProfileBackendPool::HostParallel => return host_parallel_verifier_pool().install(f),
-        ProfileBackendPool::SingleThreaded => {
-            return single_threaded_verifier_pool().install(f);
+    // A zkVM guest is single-core: run inline rather than spawn a pool whose
+    // worker stacks the guest heap cannot hold.
+    #[cfg(any(
+        target_arch = "riscv32",
+        target_arch = "riscv64",
+        feature = "field-inline"
+    ))]
+    return f();
+    #[cfg(not(any(
+        target_arch = "riscv32",
+        target_arch = "riscv64",
+        feature = "field-inline"
+    )))]
+    {
+        #[cfg(feature = "profiling")]
+        match PROFILE_BACKEND_POOL.with(Cell::get) {
+            ProfileBackendPool::HostParallel => return host_parallel_verifier_pool().install(f),
+            ProfileBackendPool::SingleThreaded => {
+                return single_threaded_verifier_pool().install(f);
+            }
+            ProfileBackendPool::Default => {}
         }
-        ProfileBackendPool::Default => {}
+        backend_pool().install(f)
     }
-    backend_pool().install(f)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,6 +550,11 @@ pub struct PreparedBackendVerifiers {
     /// schedule row), installed into the flavor's verifier key on first use.
     #[serde(default)]
     terminal_ntt_caches: Vec<PreparedTerminalNttCache>,
+    /// The schedule catalogs in binary form, sparing the guest the JSON parse.
+    #[serde(default, with = "serde_bytes")]
+    dense_catalog: Option<Vec<u8>>,
+    #[serde(default, with = "serde_bytes")]
+    one_hot_catalog: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -648,13 +668,20 @@ impl AkitaVerifierSetup {
 
     pub(crate) fn dense_scheme(&self) -> Result<&AkitaBackendScheme, OpeningsError> {
         let result = self.backend_cache.dense_scheme.get_or_init(|| {
-            self.schedule_artifacts
-                .dense()
-                .ok_or_else(|| "Akita verifier setup has no dense schedule artifact".to_string())
-                .and_then(|bytes| {
-                    AkitaBackendScheme::from_schedule_artifact(bytes)
-                        .map_err(|error| error.to_string())
-                })
+            match self.prepared_backend_verifiers.dense_catalog.as_deref() {
+                Some(binary) => AkitaBackendScheme::from_schedule_artifact_binary(binary)
+                    .map_err(|error| error.to_string()),
+                None => self
+                    .schedule_artifacts
+                    .dense()
+                    .ok_or_else(|| {
+                        "Akita verifier setup has no dense schedule artifact".to_string()
+                    })
+                    .and_then(|bytes| {
+                        AkitaBackendScheme::from_schedule_artifact(bytes)
+                            .map_err(|error| error.to_string())
+                    }),
+            }
         });
         result
             .as_ref()
@@ -663,13 +690,20 @@ impl AkitaVerifierSetup {
 
     pub(crate) fn one_hot_k16_scheme(&self) -> Result<&AkitaOneHotK16BackendScheme, OpeningsError> {
         let result = self.backend_cache.one_hot_k16_scheme.get_or_init(|| {
-            self.schedule_artifacts
-                .one_hot()
-                .ok_or_else(|| "Akita verifier setup has no one-hot schedule artifact".to_string())
-                .and_then(|bytes| {
-                    AkitaOneHotK16BackendScheme::from_schedule_artifact(bytes)
-                        .map_err(|error| error.to_string())
-                })
+            match self.prepared_backend_verifiers.one_hot_catalog.as_deref() {
+                Some(binary) => AkitaOneHotK16BackendScheme::from_schedule_artifact_binary(binary)
+                    .map_err(|error| error.to_string()),
+                None => self
+                    .schedule_artifacts
+                    .one_hot()
+                    .ok_or_else(|| {
+                        "Akita verifier setup has no one-hot schedule artifact".to_string()
+                    })
+                    .and_then(|bytes| {
+                        AkitaOneHotK16BackendScheme::from_schedule_artifact(bytes)
+                            .map_err(|error| error.to_string())
+                    }),
+            }
         });
         result
             .as_ref()
@@ -680,13 +714,20 @@ impl AkitaVerifierSetup {
         &self,
     ) -> Result<&AkitaOneHotK256BackendScheme, OpeningsError> {
         let result = self.backend_cache.one_hot_k256_scheme.get_or_init(|| {
-            self.schedule_artifacts
-                .one_hot()
-                .ok_or_else(|| "Akita verifier setup has no one-hot schedule artifact".to_string())
-                .and_then(|bytes| {
-                    AkitaOneHotK256BackendScheme::from_schedule_artifact(bytes)
-                        .map_err(|error| error.to_string())
-                })
+            match self.prepared_backend_verifiers.one_hot_catalog.as_deref() {
+                Some(binary) => AkitaOneHotK256BackendScheme::from_schedule_artifact_binary(binary)
+                    .map_err(|error| error.to_string()),
+                None => self
+                    .schedule_artifacts
+                    .one_hot()
+                    .ok_or_else(|| {
+                        "Akita verifier setup has no one-hot schedule artifact".to_string()
+                    })
+                    .and_then(|bytes| {
+                        AkitaOneHotK256BackendScheme::from_schedule_artifact(bytes)
+                            .map_err(|error| error.to_string())
+                    }),
+            }
         });
         result
             .as_ref()
@@ -816,10 +857,24 @@ impl AkitaVerifierSetup {
         let total = dense.as_ref().map_or(0, Vec::len) + one_hot.as_ref().map_or(0, Vec::len);
         let terminal_ntt_caches =
             std::mem::take(&mut self.prepared_backend_verifiers.terminal_ntt_caches);
+        let dense_catalog = self
+            .schedule_artifacts
+            .dense()
+            .map(TrustedScheduleCatalog::artifact_binary_from_json)
+            .transpose()
+            .map_err(invalid_setup)?;
+        let one_hot_catalog = self
+            .schedule_artifacts
+            .one_hot()
+            .map(TrustedScheduleCatalog::artifact_binary_from_json)
+            .transpose()
+            .map_err(invalid_setup)?;
         self.prepared_backend_verifiers = PreparedBackendVerifiers {
             dense,
             one_hot,
             terminal_ntt_caches,
+            dense_catalog,
+            one_hot_catalog,
         };
         Ok(total)
     }

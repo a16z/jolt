@@ -2,7 +2,7 @@ use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 /// An atomic value used inside a symbolic claim expression.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Source<O, P = (), C = usize> {
     /// Polynomial opening supplied by the prover and checked by the verifier.
     Opening(O),
@@ -127,6 +127,26 @@ impl<F: Ring, O, P, C> Expr<F, O, P, C> {
 
 impl<F: Ring, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
     pub fn pow(self, mut exponent: usize) -> Self {
+        // A single source (a challenge, typically) raised to a power is one
+        // term with the factor repeated: build it directly instead of
+        // squaring symbolic products, which copies O(n log n) factors.
+        if let [term] = self.terms.as_slice() {
+            if let [source] = term.factors.as_slice() {
+                if exponent == 0 {
+                    return Self::one();
+                }
+                let mut coefficient = F::one();
+                for _ in 0..exponent {
+                    coefficient *= term.coefficient;
+                }
+                return Self {
+                    terms: vec![Term {
+                        coefficient,
+                        factors: vec![source.clone(); exponent],
+                    }],
+                };
+            }
+        }
         let mut result = Self::one();
         let mut base = self;
 
