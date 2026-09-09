@@ -281,6 +281,12 @@ fn modular_lookup_table_indices_match_prover_abi() {
                 Default::default(),
             )),
         ),
+        (
+            LookupTableKind::<XLEN>::DoublewordAlignment(Default::default()).index(),
+            prover_index(ProverLookupTables::<XLEN>::DoublewordAlignment(
+                Default::default(),
+            )),
+        ),
     ];
 
     assert_eq!(ProverLookupTables::<XLEN>::COUNT, cases.len());

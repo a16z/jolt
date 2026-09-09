@@ -291,6 +291,9 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualAssertWordAlignment => {
                 LookupTables::WordAlignment(Default::default())
             }
+            JoltInstructionKind::LD | JoltInstructionKind::SD => {
+                LookupTables::DoublewordAlignment(Default::default())
+            }
             JoltInstruction::VirtualZeroExtendWord(_) => {
                 LookupTables::LowerHalfWord(Default::default())
             }
@@ -391,8 +394,6 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstruction::FieldStoreToX(_)
             | JoltInstruction::FieldLoadImm(_) => return None,
             JoltInstructionKind::NoOp
-            | JoltInstructionKind::LD
-            | JoltInstructionKind::SD
             | JoltInstructionKind::FENCE
             | JoltInstruction::VirtualHostIO(_) => return None,
         })

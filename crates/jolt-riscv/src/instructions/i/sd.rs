@@ -3,6 +3,6 @@ use crate::jolt_instruction;
 jolt_instruction!(
     /// RV64I SD: store doubleword (full 64 bits). Identity operation.
     Sd,
-    circuit flags: [Store],
-    instruction flags: []
+    circuit flags: [AddOperands, Store, Assert],
+    instruction flags: [LeftOperandIsRs1Value, RightOperandIsImm]
 );

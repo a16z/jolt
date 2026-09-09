@@ -18,6 +18,7 @@ use crate::traits::LookupTable;
 pub mod align_addr;
 pub mod and;
 pub mod andn;
+pub mod doubleword_alignment;
 pub mod equal;
 pub mod halfword_alignment;
 pub mod lower_half_word;
@@ -70,6 +71,7 @@ pub use suffixes::{SuffixEval, Suffixes};
 use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
+use doubleword_alignment::DoublewordAlignmentTable;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
@@ -192,6 +194,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     ShiftDataH(ShiftDataHTable<XLEN>),
     ShiftDataW(ShiftDataWTable<XLEN>),
     VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
+    DoublewordAlignment(DoublewordAlignmentTable<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -256,6 +259,7 @@ macro_rules! dispatch {
             Self::ShiftDataH($t) => $expr,
             Self::ShiftDataW($t) => $expr,
             Self::VirtualXORROTL1($t) => $expr,
+            Self::DoublewordAlignment($t) => $expr,
         }
     };
 }

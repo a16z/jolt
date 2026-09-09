@@ -49,6 +49,7 @@ mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
 mod sign_extension_w;
+mod three_lsb;
 mod two_lsb;
 mod upper_word;
 mod window_sign;
@@ -101,6 +102,7 @@ use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use sign_extension_w::SignExtensionWSuffix;
+use three_lsb::ThreeLsbSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 pub(crate) use window_sign::window_sign_bit;
@@ -196,6 +198,7 @@ pub enum Suffixes {
     XorRotL1Pairs,
     TopYBit,
     BottomXBit,
+    ThreeLsb,
 }
 
 /// Total number of suffix variants.
@@ -218,6 +221,7 @@ impl Suffixes {
                 | Suffixes::RightOperandIsZero
                 | Suffixes::Lsb
                 | Suffixes::TwoLsb
+                | Suffixes::ThreeLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
                 | Suffixes::WindowSign
@@ -292,6 +296,7 @@ impl Suffixes {
             Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
             Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
             Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
+            Suffixes::ThreeLsb => ThreeLsbSuffix::suffix_mle(b),
         }
     }
 

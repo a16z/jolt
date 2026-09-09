@@ -1,6 +1,7 @@
 use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
+use doubleword_alignment::DoublewordAlignmentTable;
 use equal::EqualTable;
 use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
@@ -89,6 +90,7 @@ pub mod suffixes;
 pub mod align_addr;
 pub mod and;
 pub mod andn;
+pub mod doubleword_alignment;
 pub mod equal;
 pub mod halfword_alignment;
 pub mod lower_half_word;
@@ -199,6 +201,7 @@ pub enum LookupTables<const XLEN: usize> {
     ShiftDataH(ShiftDataHTable<XLEN>),
     ShiftDataW(ShiftDataWTable<XLEN>),
     VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
+    DoublewordAlignment(DoublewordAlignmentTable<XLEN>),
 }
 
 impl<const XLEN: usize> LookupTables<XLEN> {
@@ -266,6 +269,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftDataH(table) => table.materialize(),
             LookupTables::ShiftDataW(table) => table.materialize(),
             LookupTables::VirtualXORROTL1(table) => table.materialize(),
+            LookupTables::DoublewordAlignment(table) => table.materialize(),
         }
     }
 
@@ -326,6 +330,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftDataH(table) => table.materialize_entry(index),
             LookupTables::ShiftDataW(table) => table.materialize_entry(index),
             LookupTables::VirtualXORROTL1(table) => table.materialize_entry(index),
+            LookupTables::DoublewordAlignment(table) => table.materialize_entry(index),
         }
     }
 
@@ -390,6 +395,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftDataH(table) => table.evaluate_mle(r),
             LookupTables::ShiftDataW(table) => table.evaluate_mle(r),
             LookupTables::VirtualXORROTL1(table) => table.evaluate_mle(r),
+            LookupTables::DoublewordAlignment(table) => table.evaluate_mle(r),
         }
     }
 
@@ -450,6 +456,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftDataH(table) => table.suffixes(),
             LookupTables::ShiftDataW(table) => table.suffixes(),
             LookupTables::VirtualXORROTL1(table) => table.suffixes(),
+            LookupTables::DoublewordAlignment(table) => table.suffixes(),
         }
     }
 
@@ -514,6 +521,7 @@ impl<const XLEN: usize> LookupTables<XLEN> {
             LookupTables::ShiftDataH(table) => table.combine(prefixes, suffixes),
             LookupTables::ShiftDataW(table) => table.combine(prefixes, suffixes),
             LookupTables::VirtualXORROTL1(table) => table.combine(prefixes, suffixes),
+            LookupTables::DoublewordAlignment(table) => table.combine(prefixes, suffixes),
         }
     }
 }

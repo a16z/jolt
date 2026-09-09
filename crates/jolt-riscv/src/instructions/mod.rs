@@ -744,6 +744,21 @@ mod tests {
     }
 
     #[test]
+    fn doubleword_memory_accesses_are_alignment_assertions() {
+        for instr in [
+            JoltInstruction::Ld(Ld(JoltInstructionRow::default())),
+            JoltInstruction::Sd(Sd(JoltInstructionRow::default())),
+        ] {
+            let circuit_flags = instr.circuit_flags();
+            let instruction_flags = instr.instruction_flags();
+            assert!(circuit_flags[CircuitFlags::AddOperands]);
+            assert!(circuit_flags[CircuitFlags::Assert]);
+            assert!(instruction_flags[InstructionFlags::LeftOperandIsRs1Value]);
+            assert!(instruction_flags[InstructionFlags::RightOperandIsImm]);
+        }
+    }
+
+    #[test]
     fn phase_specific_instruction_kinds_are_distinct() {
         let source_kind = crate::SourceInstructionKind::AMOADDW;
 

@@ -22,6 +22,7 @@ use srlw_sext::SrlwSextPrefix;
 use std::{fmt::Display, ops::Index};
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use three_lsb::ThreeLsbPrefix;
 
 use align_addr::AlignAddrPrefix;
 use and::AndPrefix;
@@ -92,6 +93,7 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod sign_extension_w;
 pub mod srlw_sext;
+pub mod three_lsb;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod window_sign;
@@ -211,6 +213,7 @@ pub enum Prefixes {
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
+    ThreeLsb,
 }
 
 #[derive(Clone, Copy, Allocative)]
@@ -386,6 +389,7 @@ impl Prefixes {
                 OffsetScalePrefix::<XLEN, 4>::prefix_mle(checkpoints, r_x, c, b, j)
             }
             Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
+            Prefixes::ThreeLsb => ThreeLsbPrefix::<XLEN>::prefix_mle(checkpoints, r_x, c, b, j),
         };
         PrefixEval(eval)
     }
@@ -801,6 +805,13 @@ impl Prefixes {
                 suffix_len,
             ),
             Prefixes::AlignAddr => AlignAddrPrefix::<XLEN>::update_prefix_checkpoint(
+                checkpoints,
+                r_x,
+                r_y,
+                j,
+                suffix_len,
+            ),
+            Prefixes::ThreeLsb => ThreeLsbPrefix::<XLEN>::update_prefix_checkpoint(
                 checkpoints,
                 r_x,
                 r_y,

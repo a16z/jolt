@@ -43,6 +43,7 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod sign_extension_w;
 pub mod srlw_sext;
+pub mod three_lsb;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod window_sign;
@@ -60,6 +61,7 @@ use std::ops::Index;
 use crate::lookup_bits::LookupBits;
 use align_addr::AlignAddrPrefix;
 use pow2_offset::Pow2OffsetPrefix;
+use three_lsb::ThreeLsbPrefix;
 
 /// A prefix polynomial evaluated at binary points during materialization.
 ///
@@ -185,6 +187,7 @@ pub enum Prefixes {
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
+    ThreeLsb,
 }
 
 /// Total number of prefix variants.
@@ -262,6 +265,7 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotL1Acc => xor_rotl1::XorRotL1AccPrefix::$method($($args),*),
             Prefixes::XorRotL1Straddle => xor_rotl1::XorRotL1StraddlePrefix::$method($($args),*),
             Prefixes::XorRotL1Wrap => xor_rotl1::XorRotL1WrapPrefix::$method($($args),*),
+            Prefixes::ThreeLsb => ThreeLsbPrefix::$method($($args),*),
         }
     };
 }

@@ -33,6 +33,7 @@ use sign_extension::SignExtensionSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use sign_extension_w::SignExtensionWSuffix;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter};
+use three_lsb::ThreeLsbSuffix;
 
 use align_addr::AlignAddrSuffix;
 use and::AndSuffix;
@@ -90,6 +91,7 @@ pub mod sign_extension;
 pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod sign_extension_w;
+pub mod three_lsb;
 pub mod two_lsb;
 pub mod upper_word;
 pub mod window_sign;
@@ -173,6 +175,7 @@ pub enum Suffixes {
     XorRotL1Pairs,
     TopYBit,
     BottomXBit,
+    ThreeLsb,
 }
 
 pub type SuffixEval<F: JoltField> = F;
@@ -194,6 +197,7 @@ impl Suffixes {
                 | Suffixes::RightOperandIsZero
                 | Suffixes::Lsb
                 | Suffixes::TwoLsb
+                | Suffixes::ThreeLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
                 | Suffixes::WindowSign
@@ -271,6 +275,7 @@ impl Suffixes {
             Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
             Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
             Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
+            Suffixes::ThreeLsb => ThreeLsbSuffix::suffix_mle(b),
         }
     }
 }
