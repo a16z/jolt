@@ -19,9 +19,9 @@ jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
 bincode.workspace = true
 serde.workspace = true
 jolt-field = { path = "../../../crates/jolt-field" }
-jolt-akita = { path = "../../../crates/jolt-akita", optional = true }
+jolt-akita = { path = "../../../crates/jolt-akita", optional = true, default-features = false }
 jolt-dory = { path = "../../../crates/jolt-dory" }
-jolt-crypto = { path = "../../../crates/jolt-crypto", optional = true }
+jolt-crypto = { path = "../../../crates/jolt-crypto", optional = true, default-features = false }
 jolt-transcript = { path = "../../../crates/jolt-transcript", optional = true }
 
 [lib]

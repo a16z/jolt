@@ -16,6 +16,7 @@ pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafCyclePhaseChallenges, BytecodeReadRafCyclePhaseCommittedChallenges,
     BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
 };
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{
     geometry::{
         bytecode::{
@@ -247,6 +248,24 @@ fn fold_stage_values<F: JoltField>(
     Ok(columns.map(|column| F::dot_product(&column, &address_eq_evals)))
 }
 
+/// Produced `BytecodeRa` opening values keyed by id, for the expression
+/// resolvers: sorted once so each factor resolves by binary search instead of
+/// a scan over every opening.
+fn bytecode_ra_table<F: JoltField>(ids: &[JoltOpeningId], values: &[F]) -> Vec<(JoltOpeningId, F)> {
+    let mut table: Vec<(JoltOpeningId, F)> =
+        ids.iter().copied().zip(values.iter().copied()).collect();
+    table.sort_unstable_by_key(|(id, _)| *id);
+    table
+}
+
+fn bytecode_ra_value<F: JoltField>(table: &[(JoltOpeningId, F)], id: &JoltOpeningId) -> Option<F> {
+    table
+        .binary_search_by_key(id, |(key, _)| *key)
+        .ok()
+        .and_then(|index| table.get(index))
+        .map(|(_, value)| *value)
+}
+
 fn public_input_failed(reason: impl ToString) -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::BytecodeReadRaf,
@@ -289,14 +308,11 @@ fn expected_output_from_publics<F: JoltField>(
         });
     }
     let relation = relations::bytecode::ReadRaf::new(dimensions);
+    let table = bytecode_ra_table(&output_openings.bytecode_ra, bytecode_ra);
     relation.output_expression::<F>().try_evaluate(
         |id| {
-            for (opening, value) in output_openings.bytecode_ra.iter().zip(bytecode_ra) {
-                if *id == *opening {
-                    return Ok(*value);
-                }
-            }
-            Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
+            bytecode_ra_value(&table, id)
+                .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
         },
         |id| match id {
             JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(gamma),
@@ -437,21 +453,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     output_values.bytecode_ra.len()
                 )));
             }
+            let table = bytecode_ra_table(&output_openings.bytecode_ra, &output_values.bytecode_ra);
             self.symbolic().output_expression::<F>().try_evaluate(
                 |id| {
                     if *id == bytecode::fused_inc_read_raf_opening() {
                         return Ok(output_values.fused_inc);
                     }
-                    for (opening_id, value) in output_openings
-                        .bytecode_ra
-                        .iter()
-                        .zip(&output_values.bytecode_ra)
-                    {
-                        if *id == *opening_id {
-                            return Ok(*value);
-                        }
-                    }
-                    Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
+                    bytecode_ra_value(&table, id)
+                        .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
                 },
                 |id| match id {
                     JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
@@ -908,6 +917,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
             },
         );
         let output_openings = bytecode::read_raf_output_openings(self.dimensions);
+        let table = bytecode_ra_table(&output_openings.bytecode_ra, &output_values.bytecode_ra);
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
                 #[cfg(feature = "akita")]
@@ -919,16 +929,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                         return Ok(*value);
                     }
                 }
-                for (index, opening_id) in output_openings.bytecode_ra.iter().enumerate() {
-                    if *id == *opening_id {
-                        return output_values
-                            .bytecode_ra
-                            .get(index)
-                            .copied()
-                            .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() });
-                    }
-                }
-                Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
+                bytecode_ra_value(&table, id)
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges

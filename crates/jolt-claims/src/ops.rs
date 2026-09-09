@@ -148,10 +148,9 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
         // Each left term's factor list is copied once per right term except
         // the last, which takes it over: the common `power * source` product
         // then costs no factor copies at all.
-        let (rhs_last, rhs_init) = rhs
-            .terms
-            .split_last()
-            .expect("non-zero expressions have a term");
+        let Some((rhs_last, rhs_init)) = rhs.terms.split_last() else {
+            return Self::zero();
+        };
         let mut terms = Vec::with_capacity(self.terms.len() * rhs.terms.len());
         for lhs_term in self.terms {
             for rhs_term in rhs_init {

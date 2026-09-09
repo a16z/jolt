@@ -26,6 +26,11 @@ use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+#[cfg(all(
+    feature = "parallel",
+    not(feature = "field-inline"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
@@ -183,8 +188,18 @@ const SCHEDULE_SELECTION_BYTES: usize = 32;
 
 /// Worker stack size for [`with_backend_pool`]. Stacks are lazily committed,
 /// so oversizing costs virtual address space only.
+#[cfg(all(
+    feature = "parallel",
+    not(feature = "field-inline"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
 const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
+#[cfg(all(
+    feature = "parallel",
+    not(feature = "field-inline"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
 #[expect(
     clippy::expect_used,
     reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
@@ -201,6 +216,11 @@ fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> ThreadP
         .expect("the Akita backend thread pool must build")
 }
 
+#[cfg(all(
+    feature = "parallel",
+    not(feature = "field-inline"),
+    not(any(target_arch = "riscv32", target_arch = "riscv64"))
+))]
 fn backend_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| build_backend_pool("jolt-akita", None))
@@ -290,13 +310,15 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     #[cfg(any(
         target_arch = "riscv32",
         target_arch = "riscv64",
-        feature = "field-inline"
+        feature = "field-inline",
+        not(feature = "parallel")
     ))]
     return f();
     #[cfg(not(any(
         target_arch = "riscv32",
         target_arch = "riscv64",
-        feature = "field-inline"
+        feature = "field-inline",
+        not(feature = "parallel")
     )))]
     {
         #[cfg(feature = "profiling")]
@@ -876,6 +898,16 @@ impl AkitaVerifierSetup {
             dense_catalog,
             one_hot_catalog,
         };
+        let prepared = &self.prepared_backend_verifiers;
+        tracing::info!(
+            dense_key_bytes = prepared.dense.as_ref().map_or(0, Vec::len),
+            one_hot_key_bytes = prepared.one_hot.as_ref().map_or(0, Vec::len),
+            dense_catalog_bytes = prepared.dense_catalog.as_ref().map_or(0, Vec::len),
+            one_hot_catalog_bytes = prepared.one_hot_catalog.as_ref().map_or(0, Vec::len),
+            dense_artifact_json_bytes = self.schedule_artifacts.dense().map_or(0, <[u8]>::len),
+            one_hot_artifact_json_bytes = self.schedule_artifacts.one_hot().map_or(0, <[u8]>::len),
+            "embedded prepared Akita backend verifier payload"
+        );
         Ok(total)
     }
 

@@ -9,6 +9,10 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+default = ["parallel"]
+# Rayon-backed akita kernels and the host backend thread pool. A zkVM guest
+# builds without it: single-core, and the join/split machinery is pure cost.
+parallel = ["akita-pcs/parallel", "akita-prover/parallel"]
 # Field-inline (FR) protocol composition on the packed axis: extends the
 # provisioned grouped-schedule params with the always-present FR limb-group
 # profile. Selected by jolt-prover's `field-inline` feature; off keeps
@@ -22,8 +26,8 @@ profiling = []
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
-akita-prover = { workspace = true, features = ["parallel"] }
+akita-pcs = { workspace = true, default-features = false, features = ["transcript-blake2b"] }
+akita-prover = { workspace = true, default-features = false, features = ["transcript-blake2b"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
