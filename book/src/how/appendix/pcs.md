@@ -19,7 +19,18 @@ In the context of a larger proof system like Jolt, polynomial commitment schemes
 ## Role in Jolt
 
 In Jolt, the prover commits to several witness polynomials derived from the execution trace being proven.
-These polynomial commitments are used extensively to tie together the various algebraic claims generated during proving. Jolt currently uses **Dory** as its polynomial commitment scheme. Dory provides an efficient method for committing to and opening one-hot polynomials, while supporting [batch openings](../optimizations/batched-openings.md) across many claims with relatively low overhead.
+These polynomial commitments tie together the various algebraic claims generated during proving. Jolt supports two backends:
+
+| | [Dory](../dory.md) | [Akita](../akita.md) |
+|---|---|---|
+| Cryptographic construction | Elliptic curve pairings over BN254 | Lattice commitments |
+| Proof field | BN254 scalar field | 128-bit prime field |
+| Trace commitments | Separate commitments to witness polynomials | One packed `OneHotTrace` commitment containing address and increment columns |
+| Final opening | Random linear combination using additive homomorphism | Native grouped opening across trace, advice, and committed-program objects |
+| Zero knowledge in Jolt | Available with `zk` via [BlindFold](../blindfold.md) | Not currently supported |
+| Selection | Default | `akita` Cargo feature |
+
+Both backends use transparent setup and exploit Jolt's small, sparse witness values. They share the sumcheck and lookup architecture, but their commitment layouts and final [opening proofs](../architecture/opening-proof.md) differ. The prover and verifier must be built for the same protocol; `akita` and `zk` are mutually exclusive. See [backend selection](../../usage/quickstart.md#choosing-a-commitment-backend) for commands and SDK availability.
 
 ## Further Reading
 

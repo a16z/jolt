@@ -1,6 +1,8 @@
 # Dory
 
-Dory is the [polynomial commitment scheme](./appendix/pcs.md) used in Jolt. It is based on the scheme described in [Lee21](https://eprint.iacr.org/2020/1274) and implemented in the [`a16z/dory`](https://github.com/a16z/dory/) repository.
+Dory is Jolt's default elliptic curve [polynomial commitment backend](./appendix/pcs.md), using pairings over BN254 and its scalar field. It is based on the scheme described in [Lee21](https://eprint.iacr.org/2020/1274) and implemented in the [`a16z/dory`](https://github.com/a16z/dory/) repository. Jolt also supports the lattice-based [Akita](./akita.md) backend.
+
+Dory supports both ordinary proofs and zero-knowledge proofs via [BlindFold](./blindfold.md), selected with the `zk` Cargo feature. The matrix layout, group operations, and homomorphic batching described in this chapter apply to Dory.
 
 ## Background: AFGHO commitments
 
@@ -88,7 +90,9 @@ In Jolt, witness polynomials can be committed in a **streaming** fashion: rather
 
 ## Implementation
 
-The Jolt implementation of Dory lives in `crates/jolt-prover-legacy/src/poly/commitment/dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. Key files:
+The modular implementation lives in `crates/jolt-dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. `DoryScheme` implements the commitment, streaming, additive-homomorphism, and ZK opening traits from `crates/jolt-openings/`. The prover orchestrates witness commitments and the final batched opening in `crates/jolt-prover/src/dory/`.
+
+The legacy integration remains in `crates/jolt-prover-legacy/src/poly/commitment/dory/`. Key files:
 
 - `commitment_scheme.rs` &mdash; Implements the `CommitmentScheme` and `StreamingCommitmentScheme` traits.
 - `dory_globals.rs` &mdash; Manages per-context Dory matrix dimensions ($\nu$, $\sigma$) and coefficient layout.

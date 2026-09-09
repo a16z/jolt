@@ -4,6 +4,8 @@
 
 Jolt is **fast** (state-of-the-art performance on CPU) and relatively **simple** (thanks to its lookup-centric architecture).
 
+Jolt supports two polynomial commitment backends: **[Dory](./how/dory.md)**, the default elliptic curve backend, and **[Akita](./how/akita.md)**, a lattice backend. Both support the sumcheck and lookup architecture; they use different fields, commitment layouts, and opening protocols. See [backend selection](./usage/quickstart.md#choosing-a-commitment-backend) for usage and current zero-knowledge support.
+
 **AI coding agents**: Install the Jolt [agent skill](https://vercel.com/docs/agent-resources/skills) to let Claude Code, Cursor, Codex, etc. wrap Rust functions in Jolt proofs: `npx skills add a16z/jolt`
 
 This book has the following top-level sections:
@@ -44,4 +46,4 @@ Updates:
 Jolt was initially forked from Srinath Setty's work on [`microsoft/Spartan`](https://github.com/microsoft/spartan), specifically the [`arkworks-rs/Spartan`](https://github.com/arkworks-rs/spartan) fork in order to use the excellent `arkworks-rs` field and curve implementations.
 Jolt uses its own [fork](https://github.com/a16z/arkworks-algebra) of `arkworks-algebra` with certain optimizations, including some described [here](./how/optimizations/small-value.md).
 Jolt's R1CS is also proven using a version of Spartan (forked from the [microsoft/Spartan2](https://github.com/microsoft/Spartan2) codebase) optimized for Jolt's uniform R1CS constraints.
-Jolt uses [Dory](https://github.com/a16z/dory/) as its PCS, inspired by the Space and Time Labs implementation [`spaceandtimefdn/sxt-dory`](https://github.com/spaceandtimefdn/sxt-dory).
+Jolt's elliptic curve backend uses [Dory](https://github.com/a16z/dory/), inspired by the Space and Time Labs implementation [`spaceandtimefdn/sxt-dory`](https://github.com/spaceandtimefdn/sxt-dory). Its lattice backend uses [Akita](https://github.com/LayerZero-Labs/akita).

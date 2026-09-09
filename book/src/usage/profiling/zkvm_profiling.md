@@ -11,6 +11,22 @@ cargo run --release -p jolt-prover --features profiling -- \
     profile --name sha2-chain --format chrome
 ```
 
+Run these commands from a Jolt checkout. The command above uses the default
+elliptic-curve backend, [Dory](../../how/dory.md). Add the `akita` Cargo
+feature to use the lattice backend, [Akita](../../how/akita.md):
+
+```bash
+cargo run --release -p jolt-prover --features profiling,akita -- \
+    profile --name fibonacci --backend optimized --format chrome
+```
+
+The `akita` feature selects the protocol for both proving and verification
+at compile time. Jolt's Akita integration currently supports
+non-zero-knowledge proofs only; `akita` and `zk` cannot be enabled together.
+The Akita harness loads its schedule catalogs from
+`crates/jolt-akita/schedules/` by default. Set `JOLT_AKITA_SCHEDULE_DIR` to
+use another directory containing those `.aks` files.
+
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
 | `--name` | default scale |
@@ -20,7 +36,8 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 | `sha3-chain` | 2^22 |
 | `btreemap` | 2^20 |
 
-`--backend` selects the prover backend (both subcommands): `reference`
+`--backend` selects the kernel implementation for either Dory or Akita
+(both subcommands): `reference`
 (default) is the naive test oracle — absolute numbers are provisional,
 attribution is meaningful relatively — while `optimized` is the performance
 tier (legacy-parity prover performance), slotting into the same
@@ -28,9 +45,10 @@ instrumented seams.
 
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
-`modular_{workload}_{scale}`, hyphens in the workload mapped to
-underscores; optimized runs append `_optimized`, keeping their artifact set
-next to the reference one), and `benchmark-runs/latest_{trace_name}` is symlinked to the
+`modular_{workload}_{scale}` for Dory or
+`modular_{workload}_akita_{scale}` for Akita, with hyphens in the workload
+mapped to underscores; optimized runs append `_optimized`), and
+`benchmark-runs/latest_{trace_name}` is symlinked to the
 newest successful run — the stable path every example below reads. All
 paths are under the current working directory. The directory name carries
 the run identity, so the files inside use fixed names:
@@ -38,6 +56,11 @@ the run identity, so the files inside use fixed names:
 - `trace.json` — chrome trace. Open in
   [Perfetto](https://ui.perfetto.dev/) or query with `trace_processor` SQL.
 - `summary.json` — schema-versioned aggregates (see below).
+
+For example, the Akita command above writes its summary to
+`benchmark-runs/latest_modular_fibonacci_akita_16_optimized/summary.json`.
+The query examples below use Dory's reference paths; substitute the
+corresponding Akita or optimized path for those runs.
 
 The run also compiles and traces the guest, derives the PCS setup, proves it,
 and verifies the proof. PCS setup and `prove()` are timed separately. The
@@ -58,8 +81,17 @@ cargo run --release -p jolt-prover --features profiling -- \
 # --benchmarks fibonacci,sha2-chain limits the workload set
 ```
 
+Use the same Cargo feature to sweep Akita workloads:
+
+```bash
+cargo run --release -p jolt-prover --features profiling,akita -- \
+    benchmark --min-scale 18 --max-scale 21 --backend optimized --resume
+```
+
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
-in the run directories). In addition to prover throughput and proof size, the
+in the run directories). Akita rows append `_akita` to the workload name,
+and `--resume` checks the selected protocol and kernel implementation's
+artifact path. In addition to prover throughput and proof size, the
 CSV records `setup_time_s`, `verifier_parallel_time_s`,
 `verifier_single_thread_time_s`, and the explicit parallel worker count.
 Existing CSVs using the previous header are migrated in place with empty
@@ -176,7 +208,7 @@ self-contained page:
 ```bash
 cargo run --release -p jolt-prover --features profiling,allocative -- \
     profile --name fibonacci --format chrome
-open benchmark-runs/latest_modular_fibonacci_13/memory.html
+open benchmark-runs/latest_modular_fibonacci_16/memory.html
 ```
 
 **`memory.html`** is the human view — one time axis carrying
@@ -196,7 +228,7 @@ so heap attribution is one `jq` away:
 ```bash
 jq '.heap | map_values({gib: (.total_bytes / 1073741824),
                         top: (.roots | to_entries | max_by(.value) | .key)})' \
-    benchmark-runs/latest_modular_fibonacci_13/summary.json
+    benchmark-runs/latest_modular_fibonacci_16/summary.json
 ```
 
 One snapshot per driver batch, taken right after every member kernel's
