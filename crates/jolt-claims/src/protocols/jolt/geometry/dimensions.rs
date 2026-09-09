@@ -13,28 +13,30 @@ use super::{
 
 pub const REGISTER_ADDRESS_BITS: usize = 7;
 
-/// Spartan outer eq-constraint rows per cycle in the RV64 R1CS.
-const RV64_SPARTAN_OUTER_ROW_COUNT: usize = 19;
-/// Spartan product-constraint lanes per cycle in the RV64 R1CS.
-const RV64_SPARTAN_PRODUCT_LANES: usize = 3;
-/// Eq-constraint rows and product lanes the `field-inline` extension appends.
-#[cfg(feature = "field-inline")]
-const FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT: usize = 8;
-#[cfg(not(feature = "field-inline"))]
-const FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT: usize = 0;
-#[cfg(feature = "field-inline")]
-const FIELD_INLINE_SPARTAN_PRODUCT_LANES: usize = 2;
-#[cfg(not(feature = "field-inline"))]
-const FIELD_INLINE_SPARTAN_PRODUCT_LANES: usize = 0;
+/// Spartan outer eq-constraint rows and product lanes per cycle, per
+/// constraint table. `jolt-r1cs` builds the tables and depends on this crate,
+/// so it cannot own the uni-skip geometry below; instead each table module
+/// statically asserts its counts against these
+/// (`jolt_r1cs::constraints::{rv64, field_constraints}`).
+pub const RV64_SPARTAN_OUTER_ROW_COUNT: usize = 19;
+pub const RV64_SPARTAN_PRODUCT_LANES: usize = 3;
+pub const FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT: usize = 8;
+pub const FIELD_INLINE_SPARTAN_PRODUCT_LANES: usize = 2;
 
-/// Row and lane counts of the composed Spartan R1CS. `jolt-r1cs` builds the
-/// constraint tables and depends on this crate, so it cannot be the owner of
-/// the uni-skip geometry below; instead it statically asserts its table sizes
-/// against these counts (`jolt_r1cs::constraints::jolt`).
-pub const SPARTAN_OUTER_ROW_COUNT: usize =
-    RV64_SPARTAN_OUTER_ROW_COUNT + FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT;
-pub const SPARTAN_PRODUCT_LANES: usize =
-    RV64_SPARTAN_PRODUCT_LANES + FIELD_INLINE_SPARTAN_PRODUCT_LANES;
+/// Row and lane counts of the composed Spartan R1CS: the RV64 table plus,
+/// under `field-inline`, the appended native-field table.
+pub const SPARTAN_OUTER_ROW_COUNT: usize = RV64_SPARTAN_OUTER_ROW_COUNT
+    + if cfg!(feature = "field-inline") {
+        FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT
+    } else {
+        0
+    };
+pub const SPARTAN_PRODUCT_LANES: usize = RV64_SPARTAN_PRODUCT_LANES
+    + if cfg!(feature = "field-inline") {
+        FIELD_INLINE_SPARTAN_PRODUCT_LANES
+    } else {
+        0
+    };
 
 /// Uni-skip geometry: the outer first round skips over half the constraint
 /// rows (each row group is one Lagrange node), the product first round over one

@@ -24,7 +24,7 @@ use crate::{
         JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG, MIN_TRACE_LENGTH,
     },
     num,
-    preprocessing::JoltVerifierPreprocessing,
+    preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing},
     proof::{JoltProof, TracePolynomialOrder},
     stages::{
         stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
@@ -487,7 +487,7 @@ struct ProofShape {
 /// layout), so this closes prover degrees of freedom in the Fiat-Shamir
 /// statement rather than a soundness gap.
 fn validate_proof_shape<PCS: CommitmentScheme>(
-    program: &crate::preprocessing::ProgramPreprocessing<PCS>,
+    program: &ProgramPreprocessing<PCS>,
     shape: ProofShape,
 ) -> Result<(), VerifierError> {
     let memory_layout = program.memory_layout();
@@ -1198,6 +1198,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::config::NARROW_ONE_HOT_CONFIG;
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::JoltReadWriteConfig;
@@ -1215,8 +1216,6 @@ mod tests {
     };
     use jolt_transcript::Transcript;
     use num_traits::Zero;
-
-    use crate::preprocessing::ProgramPreprocessing;
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -1559,7 +1558,7 @@ mod tests {
                 registers_rw_phase1_num_rounds: 1,
                 registers_rw_phase2_num_rounds: 7,
             },
-            one_hot_config: crate::config::NARROW_ONE_HOT_CONFIG,
+            one_hot_config: NARROW_ONE_HOT_CONFIG,
             trace_polynomial_order: crate::proof::TracePolynomialOrder::CycleMajor,
         }
     }

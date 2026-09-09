@@ -68,6 +68,13 @@ pub const NUM_EQ_CONSTRAINTS: usize = 19;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
 
+// The uni-skip geometry in `jolt-claims` is derived from these counts.
+const _: () = assert!(
+    NUM_EQ_CONSTRAINTS == RV64_SPARTAN_OUTER_ROW_COUNT
+        && NUM_PRODUCT_CONSTRAINTS == RV64_SPARTAN_PRODUCT_LANES,
+    "RV64 constraint table diverges from the jolt-claims Spartan geometry"
+);
+
 pub const fn const_column() -> usize {
     V_CONST
 }
@@ -84,6 +91,9 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
 use crate::constraint::SparseRow;
+use jolt_claims::protocols::jolt::geometry::dimensions::{
+    RV64_SPARTAN_OUTER_ROW_COUNT, RV64_SPARTAN_PRODUCT_LANES,
+};
 use jolt_field::Field;
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);

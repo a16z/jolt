@@ -14,7 +14,17 @@ use thiserror::Error as ThisError;
 use crate::SparseRow;
 use crate::{ConstraintMatrices, ConstraintMatrixEvalError};
 
-use super::rv64;
+use super::rv64::{
+    self, NUM_R1CS_INPUTS, V_FLAG_ADD_OPERANDS, V_FLAG_ADVICE, V_FLAG_ASSERT,
+    V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC, V_FLAG_IS_COMPRESSED, V_FLAG_IS_FIRST_IN_SEQUENCE,
+    V_FLAG_IS_LAST_IN_SEQUENCE, V_FLAG_JUMP, V_FLAG_LOAD, V_FLAG_MULTIPLY_OPERANDS, V_FLAG_STORE,
+    V_FLAG_SUBTRACT_OPERANDS, V_FLAG_VIRTUAL_INSTRUCTION, V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD, V_IMM,
+    V_LEFT_INSTRUCTION_INPUT, V_LEFT_LOOKUP_OPERAND, V_LOOKUP_OUTPUT, V_NEXT_IS_FIRST_IN_SEQUENCE,
+    V_NEXT_IS_VIRTUAL, V_NEXT_PC, V_NEXT_UNEXPANDED_PC, V_PC, V_PRODUCT, V_RAM_ADDRESS,
+    V_RAM_READ_VALUE, V_RAM_WRITE_VALUE, V_RD_WRITE_VALUE, V_RIGHT_INSTRUCTION_INPUT,
+    V_RIGHT_LOOKUP_OPERAND, V_RS1_VALUE, V_RS2_VALUE, V_SHOULD_BRANCH, V_SHOULD_JUMP,
+    V_UNEXPANDED_PC,
+};
 
 #[cfg(feature = "field-inline")]
 use super::field_constraints;
@@ -42,37 +52,16 @@ pub const NUM_CONSTRAINTS_PER_CYCLE: usize =
 #[cfg(not(feature = "field-inline"))]
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = rv64::NUM_CONSTRAINTS_PER_CYCLE;
 
-#[cfg(feature = "field-inline")]
-pub const SPARTAN_OUTER_ROW_COUNT: usize =
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::NUM_EQ_CONSTRAINTS;
-
-#[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_OUTER_ROW_COUNT: usize = rv64::NUM_EQ_CONSTRAINTS;
-
-#[cfg(feature = "field-inline")]
-pub const SPARTAN_PRODUCT_LANES: usize =
-    rv64::NUM_PRODUCT_CONSTRAINTS + field_constraints::NUM_PRODUCT_CONSTRAINTS;
-
-#[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_PRODUCT_LANES: usize = rv64::NUM_PRODUCT_CONSTRAINTS;
-
-// The uni-skip geometry is owned by `jolt-claims` (it cannot depend on this
-// crate). These assertions pin the constraint tables built here to the row and
-// lane counts that geometry was derived from.
-const _: () = assert!(
-    SPARTAN_OUTER_ROW_COUNT == dimensions::SPARTAN_OUTER_ROW_COUNT,
-    "Spartan outer eq-constraint row count diverges from jolt-claims geometry"
-);
-const _: () = assert!(
-    SPARTAN_PRODUCT_LANES == dimensions::SPARTAN_PRODUCT_LANES,
-    "Spartan product lane count diverges from jolt-claims geometry"
-);
-
+// The uni-skip geometry and the composed row/lane counts are owned by
+// `jolt-claims` (it cannot depend on this crate); `rv64` and
+// `field_constraints` each statically assert their table against the count
+// they contribute.
 pub use dimensions::{
     OUTER_UNISKIP_DOMAIN_SIZE as SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
     OUTER_UNISKIP_FIRST_ROUND_DEGREE as SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
     PRODUCT_UNISKIP_DOMAIN_SIZE as SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
     PRODUCT_UNISKIP_FIRST_ROUND_DEGREE as SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+    SPARTAN_OUTER_ROW_COUNT,
 };
 
 pub const SPARTAN_OUTER_REMAINDER_DEGREE: usize = 3;
@@ -158,42 +147,42 @@ const _: () = {
 /// name. `None` for virtual polynomials that are not R1CS inputs.
 const fn rv64_input_column(input: JoltVirtualPolynomial) -> Option<usize> {
     match input {
-        JoltVirtualPolynomial::LeftInstructionInput => Some(rv64::V_LEFT_INSTRUCTION_INPUT),
-        JoltVirtualPolynomial::RightInstructionInput => Some(rv64::V_RIGHT_INSTRUCTION_INPUT),
-        JoltVirtualPolynomial::Product => Some(rv64::V_PRODUCT),
-        JoltVirtualPolynomial::ShouldBranch => Some(rv64::V_SHOULD_BRANCH),
-        JoltVirtualPolynomial::PC => Some(rv64::V_PC),
-        JoltVirtualPolynomial::UnexpandedPC => Some(rv64::V_UNEXPANDED_PC),
-        JoltVirtualPolynomial::Imm => Some(rv64::V_IMM),
-        JoltVirtualPolynomial::RamAddress => Some(rv64::V_RAM_ADDRESS),
-        JoltVirtualPolynomial::Rs1Value => Some(rv64::V_RS1_VALUE),
-        JoltVirtualPolynomial::Rs2Value => Some(rv64::V_RS2_VALUE),
-        JoltVirtualPolynomial::RdWriteValue => Some(rv64::V_RD_WRITE_VALUE),
-        JoltVirtualPolynomial::RamReadValue => Some(rv64::V_RAM_READ_VALUE),
-        JoltVirtualPolynomial::RamWriteValue => Some(rv64::V_RAM_WRITE_VALUE),
-        JoltVirtualPolynomial::LeftLookupOperand => Some(rv64::V_LEFT_LOOKUP_OPERAND),
-        JoltVirtualPolynomial::RightLookupOperand => Some(rv64::V_RIGHT_LOOKUP_OPERAND),
-        JoltVirtualPolynomial::NextUnexpandedPC => Some(rv64::V_NEXT_UNEXPANDED_PC),
-        JoltVirtualPolynomial::NextPC => Some(rv64::V_NEXT_PC),
-        JoltVirtualPolynomial::NextIsVirtual => Some(rv64::V_NEXT_IS_VIRTUAL),
-        JoltVirtualPolynomial::NextIsFirstInSequence => Some(rv64::V_NEXT_IS_FIRST_IN_SEQUENCE),
-        JoltVirtualPolynomial::LookupOutput => Some(rv64::V_LOOKUP_OUTPUT),
-        JoltVirtualPolynomial::ShouldJump => Some(rv64::V_SHOULD_JUMP),
+        JoltVirtualPolynomial::LeftInstructionInput => Some(V_LEFT_INSTRUCTION_INPUT),
+        JoltVirtualPolynomial::RightInstructionInput => Some(V_RIGHT_INSTRUCTION_INPUT),
+        JoltVirtualPolynomial::Product => Some(V_PRODUCT),
+        JoltVirtualPolynomial::ShouldBranch => Some(V_SHOULD_BRANCH),
+        JoltVirtualPolynomial::PC => Some(V_PC),
+        JoltVirtualPolynomial::UnexpandedPC => Some(V_UNEXPANDED_PC),
+        JoltVirtualPolynomial::Imm => Some(V_IMM),
+        JoltVirtualPolynomial::RamAddress => Some(V_RAM_ADDRESS),
+        JoltVirtualPolynomial::Rs1Value => Some(V_RS1_VALUE),
+        JoltVirtualPolynomial::Rs2Value => Some(V_RS2_VALUE),
+        JoltVirtualPolynomial::RdWriteValue => Some(V_RD_WRITE_VALUE),
+        JoltVirtualPolynomial::RamReadValue => Some(V_RAM_READ_VALUE),
+        JoltVirtualPolynomial::RamWriteValue => Some(V_RAM_WRITE_VALUE),
+        JoltVirtualPolynomial::LeftLookupOperand => Some(V_LEFT_LOOKUP_OPERAND),
+        JoltVirtualPolynomial::RightLookupOperand => Some(V_RIGHT_LOOKUP_OPERAND),
+        JoltVirtualPolynomial::NextUnexpandedPC => Some(V_NEXT_UNEXPANDED_PC),
+        JoltVirtualPolynomial::NextPC => Some(V_NEXT_PC),
+        JoltVirtualPolynomial::NextIsVirtual => Some(V_NEXT_IS_VIRTUAL),
+        JoltVirtualPolynomial::NextIsFirstInSequence => Some(V_NEXT_IS_FIRST_IN_SEQUENCE),
+        JoltVirtualPolynomial::LookupOutput => Some(V_LOOKUP_OUTPUT),
+        JoltVirtualPolynomial::ShouldJump => Some(V_SHOULD_JUMP),
         JoltVirtualPolynomial::OpFlags(flag) => Some(match flag {
-            CircuitFlags::AddOperands => rv64::V_FLAG_ADD_OPERANDS,
-            CircuitFlags::SubtractOperands => rv64::V_FLAG_SUBTRACT_OPERANDS,
-            CircuitFlags::MultiplyOperands => rv64::V_FLAG_MULTIPLY_OPERANDS,
-            CircuitFlags::Load => rv64::V_FLAG_LOAD,
-            CircuitFlags::Store => rv64::V_FLAG_STORE,
-            CircuitFlags::Jump => rv64::V_FLAG_JUMP,
-            CircuitFlags::WriteLookupOutputToRD => rv64::V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD,
-            CircuitFlags::VirtualInstruction => rv64::V_FLAG_VIRTUAL_INSTRUCTION,
-            CircuitFlags::Assert => rv64::V_FLAG_ASSERT,
-            CircuitFlags::DoNotUpdateUnexpandedPC => rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC,
-            CircuitFlags::Advice => rv64::V_FLAG_ADVICE,
-            CircuitFlags::IsCompressed => rv64::V_FLAG_IS_COMPRESSED,
-            CircuitFlags::IsFirstInSequence => rv64::V_FLAG_IS_FIRST_IN_SEQUENCE,
-            CircuitFlags::IsLastInSequence => rv64::V_FLAG_IS_LAST_IN_SEQUENCE,
+            CircuitFlags::AddOperands => V_FLAG_ADD_OPERANDS,
+            CircuitFlags::SubtractOperands => V_FLAG_SUBTRACT_OPERANDS,
+            CircuitFlags::MultiplyOperands => V_FLAG_MULTIPLY_OPERANDS,
+            CircuitFlags::Load => V_FLAG_LOAD,
+            CircuitFlags::Store => V_FLAG_STORE,
+            CircuitFlags::Jump => V_FLAG_JUMP,
+            CircuitFlags::WriteLookupOutputToRD => V_FLAG_WRITE_LOOKUP_OUTPUT_TO_RD,
+            CircuitFlags::VirtualInstruction => V_FLAG_VIRTUAL_INSTRUCTION,
+            CircuitFlags::Assert => V_FLAG_ASSERT,
+            CircuitFlags::DoNotUpdateUnexpandedPC => V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC,
+            CircuitFlags::Advice => V_FLAG_ADVICE,
+            CircuitFlags::IsCompressed => V_FLAG_IS_COMPRESSED,
+            CircuitFlags::IsFirstInSequence => V_FLAG_IS_FIRST_IN_SEQUENCE,
+            CircuitFlags::IsLastInSequence => V_FLAG_IS_LAST_IN_SEQUENCE,
         }),
         JoltVirtualPolynomial::NextIsNoop
         | JoltVirtualPolynomial::Rd
@@ -229,12 +218,12 @@ const fn rv64_input_column(input: JoltVirtualPolynomial) -> Option<usize> {
     reason = "const evaluation: `index < NUM_R1CS_INPUTS` is the loop bound, and a failure would be a compile error"
 )]
 const _: () = {
-    assert!(SPARTAN_OUTER_R1CS_INPUTS.len() == rv64::NUM_R1CS_INPUTS);
+    assert!(SPARTAN_OUTER_R1CS_INPUTS.len() == NUM_R1CS_INPUTS);
     let mut index = 0;
-    while index < rv64::NUM_R1CS_INPUTS {
+    while index < NUM_R1CS_INPUTS {
         match rv64_input_column(SPARTAN_OUTER_R1CS_INPUTS[index]) {
             Some(column) => assert!(
-                column == rv64::V_LEFT_INSTRUCTION_INPUT + index,
+                column == V_LEFT_INSTRUCTION_INPUT + index,
                 "SPARTAN_OUTER_R1CS_INPUTS order disagrees with the rv64 column layout"
             ),
             None => panic!("SPARTAN_OUTER_R1CS_INPUTS names a polynomial without an rv64 column"),
@@ -305,8 +294,8 @@ pub fn spartan_outer_row_weights<F: JoltField>(
 }
 
 pub fn spartan_outer_opening_columns() -> Vec<usize> {
-    let columns = (0..rv64::NUM_R1CS_INPUTS)
-        .map(|index| rv64::V_LEFT_INSTRUCTION_INPUT + index)
+    let columns = (0..NUM_R1CS_INPUTS)
+        .map(|index| V_LEFT_INSTRUCTION_INPUT + index)
         .collect::<Vec<_>>();
 
     #[cfg(feature = "field-inline")]
@@ -590,7 +579,7 @@ mod tests {
         );
         assert_eq!(
             spartan_outer_opening_columns(),
-            (rv64::V_LEFT_INSTRUCTION_INPUT..=rv64::NUM_R1CS_INPUTS).collect::<Vec<_>>()
+            (V_LEFT_INSTRUCTION_INPUT..=NUM_R1CS_INPUTS).collect::<Vec<_>>()
         );
     }
 
@@ -704,7 +693,7 @@ mod tests {
             );
         }
         assert_eq!(
-            spartan_outer_opening_columns()[rv64::NUM_R1CS_INPUTS..],
+            spartan_outer_opening_columns()[NUM_R1CS_INPUTS..],
             (FIELD_INLINE_COLUMN_BASE..FIELD_INLINE_COLUMN_BASE + FIELD_INLINE_APPENDED_COLUMNS)
                 .collect::<Vec<_>>()
         );
@@ -742,7 +731,7 @@ mod tests {
             .expect("field-inline output claim evaluates");
         assert_eq!(
             opening_count,
-            rv64::NUM_R1CS_INPUTS + FIELD_INLINE_APPENDED_COLUMNS
+            NUM_R1CS_INPUTS + FIELD_INLINE_APPENDED_COLUMNS
         );
         // The factored publics: the tau kernel, one Az and one Bz weight per
         // opening (appended field-inline columns included), and the two
