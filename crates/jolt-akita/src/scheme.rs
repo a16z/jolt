@@ -21,7 +21,7 @@ use crate::adapters::{
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
     AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor,
     AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
+    PreparedBytes, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -555,14 +555,14 @@ impl CommitmentScheme for AkitaScheme {
         };
         let schedule_artifacts = match params.flavor {
             AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
-                dense: dense_schedule_artifact()?,
-                one_hot: one_hot_schedule_artifact()?,
+                dense: PreparedBytes::owned(dense_schedule_artifact()?),
+                one_hot: PreparedBytes::owned(one_hot_schedule_artifact()?),
             },
             AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
-                one_hot: one_hot_schedule_artifact()?,
+                one_hot: PreparedBytes::owned(one_hot_schedule_artifact()?),
             },
             AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
-                dense: dense_schedule_artifact()?,
+                dense: PreparedBytes::owned(dense_schedule_artifact()?),
             },
         };
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
@@ -922,16 +922,20 @@ mod tests {
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
-                dense: artifacts
-                    .dense_catalog()
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
-                one_hot: artifacts
-                    .one_hot_catalog(AKITA_ONE_HOT_K256)
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
+                dense: PreparedBytes::owned(
+                    artifacts
+                        .dense_catalog()
+                        .unwrap()
+                        .to_artifact_bytes()
+                        .unwrap(),
+                ),
+                one_hot: PreparedBytes::owned(
+                    artifacts
+                        .one_hot_catalog(AKITA_ONE_HOT_K256)
+                        .unwrap()
+                        .to_artifact_bytes()
+                        .unwrap(),
+                ),
             },
             prepared_backend_verifiers: Default::default(),
             backend_cache: Default::default(),

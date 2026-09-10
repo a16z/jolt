@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt,
     io::Cursor,
     path::{Path, PathBuf},
@@ -18,7 +19,7 @@ use akita_schedules::TrustedScheduleCatalog;
 use akita_serialization::{Compress, Validate};
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
-    AkitaCommitmentHint as AkitaBackendCommitmentHint,
+    AkitaCommitmentHint as AkitaBackendCommitmentHint, AkitaExpandedSetup,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
@@ -177,6 +178,7 @@ pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
 pub(crate) type AkitaBackendProof = AkitaBackendBatchProof<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
+type AkitaBackendExpandedSetup = AkitaExpandedSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
 pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
@@ -562,21 +564,100 @@ pub struct AkitaVerifierSetup {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedBackendVerifiers {
-    // `serde_bytes`: bincode otherwise decodes a `Vec<u8>` element by element,
-    // which for these multi-megabyte keys costs a guest ~27 cycles per byte.
-    #[serde(with = "serde_bytes")]
-    dense: Option<Vec<u8>>,
-    #[serde(with = "serde_bytes")]
-    one_hot: Option<Vec<u8>>,
+    dense: Option<PreparedBytes>,
+    one_hot: Option<PreparedBytes>,
     /// Terminal NTT caches (the public matrix's negacyclic NTT form for one
     /// schedule row), installed into the flavor's verifier key on first use.
     #[serde(default)]
     terminal_ntt_caches: Vec<PreparedTerminalNttCache>,
     /// The schedule catalogs in binary form, sparing the guest the JSON parse.
-    #[serde(default, with = "serde_bytes")]
-    dense_catalog: Option<Vec<u8>>,
-    #[serde(default, with = "serde_bytes")]
-    one_hot_catalog: Option<Vec<u8>>,
+    #[serde(default)]
+    dense_catalog: Option<PreparedBytes>,
+    #[serde(default)]
+    one_hot_catalog: Option<PreparedBytes>,
+}
+
+/// One prepared payload's bytes: owned by the host that expanded them, or a
+/// view of the verifier program's own image or input on a guest that attached
+/// them in place ([`AkitaVerifierSetup::attach_prepared_payloads`]). A payload
+/// detached for out-of-line transport travels as an empty byte string; real
+/// payloads are never empty (each starts with a header).
+///
+/// A detached body is self-aligning: its first byte is a skew `s` in `1..=8`,
+/// the payload starts at offset `s`, and `s` is chosen so that, with the body
+/// on an 8-byte address, the field coefficients a key payload's
+/// [`AkitaExpandedSetup::coefficient_offset`] points at are 8-byte aligned.
+///
+/// Serialized as one byte string: bincode otherwise decodes a `Vec<u8>`
+/// element by element, which for these multi-megabyte keys costs a guest ~27
+/// cycles per byte.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedBytes(Cow<'static, [u8]>);
+
+impl PreparedBytes {
+    pub(crate) fn owned(bytes: Vec<u8>) -> Self {
+        Self(Cow::Owned(bytes))
+    }
+
+    fn is_detached(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Take the bytes as a detached body whose payload offset `aligned_offset`
+    /// lands 8-byte aligned when the body does.
+    fn detach(&mut self, aligned_offset: usize) -> Vec<u8> {
+        let payload = std::mem::replace(&mut self.0, Cow::Borrowed(&[]));
+        let skew = 8 - u8::try_from(aligned_offset % 8).unwrap_or(0);
+        let mut body = Vec::with_capacity(usize::from(skew) + payload.len());
+        body.push(skew);
+        body.resize(usize::from(skew), 0);
+        body.extend_from_slice(&payload);
+        body
+    }
+
+    fn attach(body: &'static [u8]) -> Result<Self, OpeningsError> {
+        let skew = usize::from(
+            *body
+                .first()
+                .ok_or_else(|| invalid_setup("empty payload body"))?,
+        );
+        let payload = body
+            .get(skew..)
+            .filter(|_| (1..=8).contains(&skew))
+            .ok_or_else(|| invalid_setup("malformed payload body skew"))?;
+        Ok(Self(Cow::Borrowed(payload)))
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl AsRef<[u8]> for PreparedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Serialize for PreparedBytes {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for PreparedBytes {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde_bytes::ByteBuf::deserialize(deserializer).map(|bytes| Self::owned(bytes.into_vec()))
+    }
+}
+
+/// What a detached payload body must keep aligned (see [`PreparedBytes`]).
+#[derive(Clone, Copy)]
+enum PayloadKind {
+    /// A serialized backend verifier key: its coefficients.
+    VerifierKey,
+    /// Any other payload: nothing beyond its start.
+    Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -584,16 +665,35 @@ pub struct PreparedBackendVerifiers {
 struct PreparedTerminalNttCache {
     flavor: AkitaBackendFlavor,
     row_digest: [u8; SCHEDULE_SELECTION_BYTES],
-    #[serde(with = "serde_bytes")]
-    artifact: Vec<u8>,
+    artifact: PreparedBytes,
 }
 
 impl PreparedBackendVerifiers {
-    fn bytes(&self, flavor: AkitaBackendFlavor) -> Option<&[u8]> {
+    fn bytes(&self, flavor: AkitaBackendFlavor) -> Option<&PreparedBytes> {
         match flavor {
-            AkitaBackendFlavor::Dense => self.dense.as_deref(),
-            AkitaBackendFlavor::OneHot => self.one_hot.as_deref(),
+            AkitaBackendFlavor::Dense => self.dense.as_ref(),
+            AkitaBackendFlavor::OneHot => self.one_hot.as_ref(),
         }
+    }
+
+    /// Every payload slot with its kind, in the order the detached bodies
+    /// travel.
+    fn slots(&mut self) -> impl Iterator<Item = (PayloadKind, &mut PreparedBytes)> {
+        self.dense
+            .iter_mut()
+            .chain(self.one_hot.iter_mut())
+            .map(|key| (PayloadKind::VerifierKey, key))
+            .chain(
+                self.dense_catalog
+                    .iter_mut()
+                    .chain(self.one_hot_catalog.iter_mut())
+                    .chain(
+                        self.terminal_ntt_caches
+                            .iter_mut()
+                            .map(|cache| &mut cache.artifact),
+                    )
+                    .map(|bytes| (PayloadKind::Bytes, bytes)),
+            )
     }
 
     fn install_terminal_ntt_caches(
@@ -606,12 +706,15 @@ impl PreparedBackendVerifiers {
             .iter()
             .filter(|cache| cache.flavor == flavor)
         {
-            verifier
-                .install_trusted_prepared_verifier_ntt_cache(
-                    &cache.artifact,
-                    ScheduleRowDigest::from_bytes(cache.row_digest),
-                )
-                .map_err(invalid_setup)?;
+            let row_digest = ScheduleRowDigest::from_bytes(cache.row_digest);
+            match &cache.artifact.0 {
+                Cow::Borrowed(artifact) => verifier
+                    .install_trusted_prepared_verifier_ntt_cache_in_place(artifact, row_digest),
+                Cow::Owned(artifact) => {
+                    verifier.install_trusted_prepared_verifier_ntt_cache(artifact, row_digest)
+                }
+            }
+            .map_err(invalid_setup)?;
         }
         Ok(())
     }
@@ -621,33 +724,37 @@ impl PreparedBackendVerifiers {
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub(crate) enum AkitaVerifierScheduleArtifacts {
     Dense {
-        #[serde(with = "serde_bytes")]
-        dense: Vec<u8>,
+        dense: PreparedBytes,
     },
     OneHot {
-        #[serde(with = "serde_bytes")]
-        one_hot: Vec<u8>,
+        one_hot: PreparedBytes,
     },
     Both {
-        #[serde(with = "serde_bytes")]
-        dense: Vec<u8>,
-        #[serde(with = "serde_bytes")]
-        one_hot: Vec<u8>,
+        dense: PreparedBytes,
+        one_hot: PreparedBytes,
     },
 }
 
 impl AkitaVerifierScheduleArtifacts {
     fn dense(&self) -> Option<&[u8]> {
         match self {
-            Self::Dense { dense } | Self::Both { dense, .. } => Some(dense),
+            Self::Dense { dense } | Self::Both { dense, .. } => Some(dense.as_ref()),
             Self::OneHot { .. } => None,
         }
     }
 
     fn one_hot(&self) -> Option<&[u8]> {
         match self {
-            Self::OneHot { one_hot } | Self::Both { one_hot, .. } => Some(one_hot),
+            Self::OneHot { one_hot } | Self::Both { one_hot, .. } => Some(one_hot.as_ref()),
             Self::Dense { .. } => None,
+        }
+    }
+
+    fn slots(&mut self) -> Vec<&mut PreparedBytes> {
+        match self {
+            Self::Dense { dense } => vec![dense],
+            Self::OneHot { one_hot } => vec![one_hot],
+            Self::Both { dense, one_hot } => vec![dense, one_hot],
         }
     }
 }
@@ -690,7 +797,12 @@ impl AkitaVerifierSetup {
 
     pub(crate) fn dense_scheme(&self) -> Result<&AkitaBackendScheme, OpeningsError> {
         let result = self.backend_cache.dense_scheme.get_or_init(|| {
-            match self.prepared_backend_verifiers.dense_catalog.as_deref() {
+            match self
+                .prepared_backend_verifiers
+                .dense_catalog
+                .as_ref()
+                .map(PreparedBytes::as_ref)
+            {
                 Some(binary) => AkitaBackendScheme::from_schedule_artifact_binary(binary)
                     .map_err(|error| error.to_string()),
                 None => self
@@ -712,7 +824,12 @@ impl AkitaVerifierSetup {
 
     pub(crate) fn one_hot_k16_scheme(&self) -> Result<&AkitaOneHotK16BackendScheme, OpeningsError> {
         let result = self.backend_cache.one_hot_k16_scheme.get_or_init(|| {
-            match self.prepared_backend_verifiers.one_hot_catalog.as_deref() {
+            match self
+                .prepared_backend_verifiers
+                .one_hot_catalog
+                .as_ref()
+                .map(PreparedBytes::as_ref)
+            {
                 Some(binary) => AkitaOneHotK16BackendScheme::from_schedule_artifact_binary(binary)
                     .map_err(|error| error.to_string()),
                 None => self
@@ -736,7 +853,12 @@ impl AkitaVerifierSetup {
         &self,
     ) -> Result<&AkitaOneHotK256BackendScheme, OpeningsError> {
         let result = self.backend_cache.one_hot_k256_scheme.get_or_init(|| {
-            match self.prepared_backend_verifiers.one_hot_catalog.as_deref() {
+            match self
+                .prepared_backend_verifiers
+                .one_hot_catalog
+                .as_ref()
+                .map(PreparedBytes::as_ref)
+            {
                 Some(binary) => AkitaOneHotK256BackendScheme::from_schedule_artifact_binary(binary)
                     .map_err(|error| error.to_string()),
                 None => self
@@ -773,14 +895,20 @@ impl AkitaVerifierSetup {
         }
         let verifier = match self.prepared_backend_verifiers.bytes(flavor) {
             // Trusted: these bytes are part of the verifier's own setup, so the
-            // expanded matrix is taken as-is rather than re-derived from the seed.
-            Some(bytes) => AkitaBackendVerifierSetup::deserialize_with_mode(
-                bytes,
-                Compress::No,
-                Validate::No,
-                &(),
-            )
-            .map_err(invalid_setup)?,
+            // expanded matrix is taken as-is rather than re-derived from the
+            // seed, and viewed in place when the bytes outlive the program.
+            Some(PreparedBytes(Cow::Borrowed(bytes))) => {
+                AkitaBackendVerifierSetup::borrow_trusted(bytes).map_err(invalid_setup)?
+            }
+            Some(PreparedBytes(Cow::Owned(bytes))) => {
+                AkitaBackendVerifierSetup::deserialize_with_mode(
+                    bytes.as_slice(),
+                    Compress::No,
+                    Validate::No,
+                    &(),
+                )
+                .map_err(invalid_setup)?
+            }
             None => self.build_backend_verifier(flavor)?,
         };
         self.prepared_backend_verifiers
@@ -839,7 +967,7 @@ impl AkitaVerifierSetup {
             caches.push(PreparedTerminalNttCache {
                 flavor,
                 row_digest,
-                artifact,
+                artifact: PreparedBytes::owned(artifact),
             });
         }
         let total = caches.iter().map(|cache| cache.artifact.len()).sum();
@@ -892,23 +1020,90 @@ impl AkitaVerifierSetup {
             .transpose()
             .map_err(invalid_setup)?;
         self.prepared_backend_verifiers = PreparedBackendVerifiers {
-            dense,
-            one_hot,
+            dense: dense.map(PreparedBytes::owned),
+            one_hot: one_hot.map(PreparedBytes::owned),
             terminal_ntt_caches,
-            dense_catalog,
-            one_hot_catalog,
+            dense_catalog: dense_catalog.map(PreparedBytes::owned),
+            one_hot_catalog: one_hot_catalog.map(PreparedBytes::owned),
         };
         let prepared = &self.prepared_backend_verifiers;
         tracing::info!(
-            dense_key_bytes = prepared.dense.as_ref().map_or(0, Vec::len),
-            one_hot_key_bytes = prepared.one_hot.as_ref().map_or(0, Vec::len),
-            dense_catalog_bytes = prepared.dense_catalog.as_ref().map_or(0, Vec::len),
-            one_hot_catalog_bytes = prepared.one_hot_catalog.as_ref().map_or(0, Vec::len),
+            dense_key_bytes = prepared.dense.as_ref().map_or(0, PreparedBytes::len),
+            one_hot_key_bytes = prepared.one_hot.as_ref().map_or(0, PreparedBytes::len),
+            dense_catalog_bytes = prepared
+                .dense_catalog
+                .as_ref()
+                .map_or(0, PreparedBytes::len),
+            one_hot_catalog_bytes = prepared
+                .one_hot_catalog
+                .as_ref()
+                .map_or(0, PreparedBytes::len),
             dense_artifact_json_bytes = self.schedule_artifacts.dense().map_or(0, <[u8]>::len),
             one_hot_artifact_json_bytes = self.schedule_artifacts.one_hot().map_or(0, <[u8]>::len),
             "embedded prepared Akita backend verifier payload"
         );
         Ok(total)
+    }
+
+    /// Take every prepared payload out of the setup, leaving detached markers
+    /// behind, so a transport can carry the bodies out of line: a
+    /// verifier-as-guest then reads them where they lie instead of copying
+    /// multi-megabyte byte strings out of the setup record. Returned in the
+    /// order [`Self::attach_prepared_payloads`] expects them back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a key payload's header cannot be parsed.
+    pub fn detach_prepared_payloads(&mut self) -> Result<Vec<Vec<u8>>, OpeningsError> {
+        let mut bodies = Vec::new();
+        for (kind, slot) in self.payload_slots() {
+            let aligned_offset = match kind {
+                PayloadKind::VerifierKey => {
+                    AkitaBackendExpandedSetup::coefficient_offset(slot.as_ref())
+                        .map_err(invalid_setup)?
+                }
+                PayloadKind::Bytes => 0,
+            };
+            bodies.push(slot.detach(aligned_offset));
+        }
+        Ok(bodies)
+    }
+
+    /// Every out-of-line payload slot: the prepared keys, catalogs and NTT
+    /// caches, then the schedule artifacts.
+    fn payload_slots(&mut self) -> impl Iterator<Item = (PayloadKind, &mut PreparedBytes)> {
+        self.prepared_backend_verifiers.slots().chain(
+            self.schedule_artifacts
+                .slots()
+                .into_iter()
+                .map(|bytes| (PayloadKind::Bytes, bytes)),
+        )
+    }
+
+    /// Put detached payload bodies back, viewed in place for the program's
+    /// lifetime. The public matrix in a key payload is used without copying
+    /// when its coefficients lie 8-byte aligned (see
+    /// [`akita_types::AkitaVerifierSetup::borrow_trusted`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the body count does not match the detached slots
+    /// or a body is malformed.
+    pub fn attach_prepared_payloads(
+        &mut self,
+        payloads: &[&'static [u8]],
+    ) -> Result<(), OpeningsError> {
+        let mut bodies = payloads.iter();
+        for (_, slot) in self.payload_slots().filter(|(_, slot)| slot.is_detached()) {
+            let body = bodies
+                .next()
+                .ok_or_else(|| invalid_setup("fewer prepared payloads than detached slots"))?;
+            *slot = PreparedBytes::attach(body)?;
+        }
+        if bodies.next().is_some() {
+            return Err(invalid_setup("more prepared payloads than detached slots"));
+        }
+        Ok(())
     }
 
     fn build_backend_verifier(
@@ -1042,6 +1237,9 @@ pub struct AkitaCommitment {
     /// Field-coefficient count of the serialized backend commitment — the
     /// deserialization context [`akita_types::Commitment`] requires.
     pub(crate) backend_coeff_len: usize,
+    // `serde_bytes` on every byte payload: bincode otherwise decodes a
+    // `Vec<u8>` element by element, ~27 guest cycles per byte.
+    #[serde(with = "serde_bytes")]
     pub(crate) serialized_backend_bytes: Vec<u8>,
 }
 
@@ -1157,6 +1355,7 @@ pub struct AkitaBatchProof {
     /// prover. The verifier resolves this digest under its configured catalog;
     /// the backend proof body does not encode the selection itself.
     pub(crate) schedule_selection: [u8; SCHEDULE_SELECTION_BYTES],
+    #[serde(with = "serde_bytes")]
     pub(crate) backend_proof: Vec<u8>,
 }
 
@@ -1195,6 +1394,7 @@ impl AkitaBatchProof {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaHidingCommitment {
+    #[serde(with = "serde_bytes")]
     pub(crate) eval: Vec<u8>,
 }
 

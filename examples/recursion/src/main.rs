@@ -4,10 +4,10 @@ use clap::{Parser, Subcommand};
 use jolt_inlines_blake2 as _;
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::guest::program::Program;
-use jolt_sdk::{JoltDevice, MemoryConfig};
+use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::{
-    JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing, MemoryLayout,
+    JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
     ProgramPreprocessing, RV64IMACProof,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -44,19 +44,33 @@ type GuestVerifierPreprocessing = jolt_sdk::jolt_verifier::JoltVerifierPreproces
     jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaVc,
 >;
 
+/// Guest records are `[u64 length][body][zero padding to 8 bytes]`, so every
+/// body starts 8-byte aligned relative to the stream: raw payloads (the hint
+/// tape, the Akita setup keys) are then used where they lie, and the Akita
+/// public matrix is viewed in place without copying.
+const RECORD_ALIGN: usize = 8;
+
 fn push_record<T: Serialize>(buffer: &mut Vec<u8>, value: &T) {
     let bytes = bincode::serde::encode_to_vec(value, bincode::config::standard()).unwrap();
-    let len = u64::try_from(bytes.len()).unwrap();
-    buffer.extend_from_slice(&len.to_le_bytes());
-    buffer.extend_from_slice(&bytes);
+    push_raw(buffer, &bytes);
 }
 
-/// The hint tape travels as raw bytes behind a length prefix: the guest
-/// consumes it in place instead of decoding a `Vec<u8>` byte by byte.
+/// Raw bytes behind a length prefix: the guest consumes them in place instead
+/// of decoding a `Vec<u8>` byte by byte.
 fn push_raw(buffer: &mut Vec<u8>, bytes: &[u8]) {
     let len = u64::try_from(bytes.len()).unwrap();
     buffer.extend_from_slice(&len.to_le_bytes());
     buffer.extend_from_slice(bytes);
+    buffer.resize(buffer.len().next_multiple_of(RECORD_ALIGN), 0);
+}
+
+/// The stream's leading record: `pad` zero bytes chosen so that, at the
+/// address the guest sees the stream, every following body is 8-byte
+/// aligned. Only this record is not padded to 8 bytes itself.
+fn push_alignment_pad(buffer: &mut Vec<u8>, pad: usize) {
+    let len = u64::try_from(pad).unwrap();
+    buffer.extend_from_slice(&len.to_le_bytes());
+    buffer.resize(buffer.len() + pad, 0);
 }
 
 fn read_raw<'a>(buffer: &'a [u8], offset: &mut usize) -> Result<&'a [u8], String> {
@@ -72,7 +86,7 @@ fn read_raw<'a>(buffer: &'a [u8], offset: &mut usize) -> Result<&'a [u8], String
     }
     let end = *offset + len;
     let bytes = &buffer[*offset..end];
-    *offset = end;
+    *offset = end.next_multiple_of(RECORD_ALIGN).min(buffer.len());
     Ok(bytes)
 }
 
@@ -93,7 +107,7 @@ fn read_record<T: DeserializeOwned>(buffer: &[u8], offset: &mut usize) -> Result
         bincode::serde::decode_from_slice(&buffer[*offset..end], bincode::config::standard())
             .map_err(|error| error.to_string())?;
     assert_eq!(consumed, len, "record decoder left trailing bytes");
-    *offset = end;
+    *offset = end.next_multiple_of(RECORD_ALIGN).min(buffer.len());
     Ok(value)
 }
 
@@ -211,7 +225,7 @@ impl GuestProgram {
             GuestProgram::Fibonacci => {
                 if use_embed {
                     MemoryConfig {
-                        max_input_size: 4096,
+                        max_input_size: 16_000_000,
                         max_output_size: 4096,
                         max_untrusted_advice_size: 0,
                         max_trusted_advice_size: 0,
@@ -321,7 +335,16 @@ fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Pa
     );
 }
 
-fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
+/// Where the proof section starts in a saved stream: the setup section (the
+/// verifier preprocessing and its detached payloads) precedes it, so an
+/// embedded build can bake the setup into the guest image and feed only the
+/// proofs as input.
+struct StreamLayout {
+    setup_len: usize,
+    proof_count: u32,
+}
+
+fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
     info!("Checking data integrity...");
 
     let mut offset = 0;
@@ -334,6 +357,14 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
         "✓ Verifier preprocessing deserialized successfully ({} bytes)",
         verifier_bytes.len()
     );
+    let payload_count: u32 = read_record(all_groups_data, &mut offset).unwrap();
+    for i in 0..payload_count {
+        match read_raw(all_groups_data, &mut offset) {
+            Ok(payload) => info!("✓ Setup payload {i} read ({} bytes)", payload.len()),
+            Err(e) => error!("✗ Failed to read setup payload {i}: {e:?}"),
+        }
+    }
+    let setup_len = offset;
 
     let n: u32 = read_record(all_groups_data, &mut offset).unwrap();
     info!("✓ Number of proofs deserialized: {n}");
@@ -353,16 +384,17 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
         }
     }
 
-    let remaining_data: Vec<u8> = all_groups_data[offset..].to_vec();
-    info!("✓ Remaining data size: {} bytes", remaining_data.len());
-
+    let remaining = all_groups_data.len() - offset;
+    info!("✓ Remaining data size: {remaining} bytes");
     assert_eq!(
-        remaining_data.len(),
-        0,
+        remaining, 0,
         "Not all data was consumed during deserialization"
     );
 
-    (n, remaining_data.len() as u32)
+    StreamLayout {
+        setup_len,
+        proof_count: n,
+    }
 }
 
 #[cfg(not(feature = "akita"))]
@@ -532,7 +564,18 @@ fn collect_guest_proofs(
         records.push((proof, public_io, hints));
         verifier_preprocessing = Some(preprocessing);
     }
-    push_record(&mut all_groups_data, &verifier_preprocessing.unwrap());
+    // The multi-megabyte setup payloads travel out of line, so the guest reads
+    // them where they lie instead of copying them out of the bincode record.
+    let mut verifier_preprocessing = verifier_preprocessing.unwrap();
+    let payloads = verifier_preprocessing
+        .pcs_setup
+        .detach_prepared_payloads()
+        .expect("detach prepared Akita payloads");
+    push_record(&mut all_groups_data, &verifier_preprocessing);
+    push_record(&mut all_groups_data, &(payloads.len() as u32));
+    for payload in &payloads {
+        push_raw(&mut all_groups_data, payload);
+    }
     push_record(&mut all_groups_data, &n);
     for (proof, public_io, hints) in records {
         push_record(&mut all_groups_data, &proof);
@@ -603,6 +646,8 @@ fn collect_guest_proofs(
     let mut total_prove_time = 0.0;
 
     push_record(&mut all_groups_data, &guest_verifier_preprocessing);
+    // No out-of-line setup payloads: the Dory setup travels inside the record.
+    push_record(&mut all_groups_data, &0u32);
 
     let n = inputs.len() as u32;
     push_record(&mut all_groups_data, &n);
@@ -675,45 +720,84 @@ fn collect_guest_proofs(
     all_groups_data
 }
 
-fn generate_embedded_bytes(guest: GuestProgram, all_groups_data: &[u8], output_dir: &Path) {
+/// Bake the setup section of the stream into the guest image: `embedded.bin`
+/// next to the guest sources, included 8-byte aligned by the generated
+/// `embedded_bytes.rs`. The guest then takes its verifier setup from its own
+/// image and only the proofs from its input.
+fn generate_embedded_bytes(guest: GuestProgram, setup_section: &[u8], output_dir: &Path) {
     info!(
-        "Generating embedded bytes for {} guest program...",
-        guest.name()
+        "Generating embedded setup for {} guest program ({} bytes)...",
+        guest.name(),
+        setup_section.len()
     );
-
-    let (n, remaining_data_size) = check_data_integrity(all_groups_data);
-
-    if remaining_data_size > 0 {
-        info!("Warning: Remaining data is not empty ({remaining_data_size} bytes). This might indicate proofs are included.");
-        info!("For embedded mode, only verifier preprocessing should be included.");
-    }
-
-    let mut output = String::new();
-    output.push_str(&format!(
-        "// Generated embedded bytes for {} recursion guest\n",
-        guest.name()
-    ));
-    output.push_str("pub static EMBEDDED_BYTES: &[u8] = &[\n");
-
-    for (i, byte) in all_groups_data.iter().enumerate() {
-        if i > 0 && i % 16 == 0 {
-            output.push('\n');
-        }
-        output.push_str(&format!("0x{byte:02x}, "));
-    }
-
-    output.push_str("\n];\n");
-    output.push_str(&format!(
-        "// Total embedded bytes: {}\n",
-        all_groups_data.len()
-    ));
-    output.push_str(&format!("// Number of proofs: {n}\n"));
+    let mut image = Vec::with_capacity(setup_section.len() + RECORD_ALIGN);
+    // The static is 8-byte aligned, so no leading pad is needed.
+    push_alignment_pad(&mut image, 0);
+    image.extend_from_slice(setup_section);
 
     std::fs::create_dir_all(output_dir).unwrap();
+    let bin_path = output_dir.join("embedded.bin");
+    std::fs::write(&bin_path, &image).unwrap();
+    let source = format!(
+        "// Generated by the recursion host: the verifier setup baked into this image.\n\
+         #[repr(C, align(8))]\n\
+         struct Aligned<T: ?Sized>(T);\n\
+         static ALIGNED: Aligned<[u8; {len}]> = Aligned(*include_bytes!(\"embedded.bin\"));\n\
+         pub static EMBEDDED_BYTES: &[u8] = &ALIGNED.0;\n",
+        len = image.len()
+    );
+    let source_path = output_dir.join("embedded_bytes.rs");
+    std::fs::write(&source_path, source).unwrap();
+    info!("Embedded setup written to {}", bin_path.display());
+}
 
-    let filename = output_dir.join("embedded_bytes.rs");
-    std::fs::write(&filename, output).unwrap();
-    info!("Embedded bytes written to {}", filename.display());
+/// Undo [`generate_embedded_bytes`]: an input-mode build must not carry a
+/// stale baked setup.
+fn clear_embedded_bytes(output_dir: &Path) {
+    std::fs::create_dir_all(output_dir).unwrap();
+    std::fs::write(
+        output_dir.join("embedded_bytes.rs"),
+        "pub static EMBEDDED_BYTES: &[u8] = &[];\n",
+    )
+    .unwrap();
+    let _ = std::fs::remove_file(output_dir.join("embedded.bin"));
+}
+
+/// Frame `section` as the guest's input: `postcard` prefixes the byte slice
+/// with a varint length, so a leading pad record lands every body 8-byte
+/// aligned at the address the guest reads it from.
+fn frame_guest_input(section: &[u8], memory_config: &MemoryConfig) -> Vec<u8> {
+    fn varint_len(value: usize) -> usize {
+        postcard::to_stdvec(&value).unwrap().len()
+    }
+    // The I/O region does not depend on the program size, which the layout
+    // insists on knowing (as the SDK's own macro does, pass a placeholder).
+    let layout = MemoryLayout::new(&MemoryConfig {
+        program_size: Some(0),
+        ..*memory_config
+    });
+    let input_start = usize::try_from(layout.input_start).unwrap();
+    let mut pad = 0;
+    // The varint width depends on the total length, which depends on the pad;
+    // iterate to the fixpoint (the width changes only at 2^(7k) boundaries).
+    for _ in 0..4 {
+        let total = 8 + pad + section.len();
+        let body_start = input_start + varint_len(total) + 8;
+        let next = body_start.next_multiple_of(RECORD_ALIGN) - body_start;
+        if next == pad {
+            break;
+        }
+        pad = next;
+    }
+    let mut stream = Vec::with_capacity(8 + pad + section.len());
+    push_alignment_pad(&mut stream, pad);
+    stream.extend_from_slice(section);
+    assert_eq!(
+        (input_start + varint_len(stream.len()) + 8 + pad) % RECORD_ALIGN,
+        0,
+        "guest input bodies must be 8-byte aligned"
+    );
+    postcard::to_stdvec(&stream.as_slice()).unwrap()
 }
 
 fn save_proof_data(guest: GuestProgram, all_groups_data: &[u8], workdir: &Path) {
@@ -924,56 +1008,40 @@ fn verify_proofs(
     generate_provable_macro(guest, use_embed, output_dir);
 
     let all_groups_data = load_proof_data(guest, workdir);
+    let layout = check_data_integrity(&all_groups_data);
+    let memory_config = guest.get_memory_config(use_embed);
 
-    check_data_integrity(&all_groups_data);
-
-    if use_embed {
-        info!("Running {} recursion with embedded bytes...", guest.name());
-
-        generate_embedded_bytes(guest, &all_groups_data, output_dir);
-
-        let memory_config = guest.get_memory_config(use_embed);
-
-        let input_bytes = vec![];
-        info!("Using empty input bytes (embedded mode)");
-
-        run_recursion_proof(
-            guest,
-            run_config,
-            input_bytes,
-            memory_config,
-            guest.get_max_trace_length(use_embed),
+    let input_section = if use_embed {
+        info!(
+            "Running {} recursion with the setup baked into the guest image...",
+            guest.name()
         );
+        let (setup_section, proof_section) = all_groups_data.split_at(layout.setup_len);
+        generate_embedded_bytes(guest, setup_section, output_dir);
+        proof_section
     } else {
         info!("Running {} recursion with input data...", guest.name());
+        clear_embedded_bytes(output_dir);
+        all_groups_data.as_slice()
+    };
+    let input_bytes = frame_guest_input(input_section, &memory_config);
+    info!(
+        "Serialized input size: {} bytes ({} proofs)",
+        input_bytes.len(),
+        layout.proof_count
+    );
+    assert!(
+        input_bytes.len() < memory_config.max_input_size as usize,
+        "Input size is too large"
+    );
 
-        info!("Testing basic serialization/deserialization...");
-        let test_input_bytes = postcard::to_stdvec(&all_groups_data).unwrap();
-        let test_deserialized: Vec<u8> = postcard::from_bytes(&test_input_bytes).unwrap();
-        assert_eq!(all_groups_data, test_deserialized);
-        info!("Basic serialization/deserialization test passed!");
-
-        check_data_integrity(&all_groups_data);
-
-        let mut input_bytes = vec![];
-        input_bytes.append(&mut postcard::to_stdvec(&all_groups_data.as_slice()).unwrap());
-
-        info!("Serialized input size: {} bytes", input_bytes.len());
-        let memory_config = guest.get_memory_config(use_embed);
-
-        assert!(
-            input_bytes.len() < memory_config.max_input_size as usize,
-            "Input size is too large"
-        );
-
-        run_recursion_proof(
-            guest,
-            run_config,
-            input_bytes,
-            memory_config,
-            guest.get_max_trace_length(use_embed),
-        );
-    }
+    run_recursion_proof(
+        guest,
+        run_config,
+        input_bytes,
+        memory_config,
+        guest.get_max_trace_length(use_embed),
+    );
 }
 
 fn main() {

@@ -892,7 +892,7 @@ mod tests {
     use jolt_field::Zero;
     use jolt_openings::PrecommittedRole;
 
-    use crate::adapters::AkitaVerifierScheduleArtifacts;
+    use crate::adapters::{AkitaVerifierScheduleArtifacts, PreparedBytes};
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,
@@ -929,8 +929,8 @@ mod tests {
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
-                dense: Vec::new(),
-                one_hot: Vec::new(),
+                dense: PreparedBytes::owned(Vec::new()),
+                one_hot: PreparedBytes::owned(Vec::new()),
             },
             prepared_backend_verifiers: Default::default(),
             backend_cache: Default::default(),
