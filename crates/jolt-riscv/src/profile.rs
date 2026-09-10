@@ -40,6 +40,8 @@ pub enum InlineExtension {
     Secp256k1,
     Grumpkin,
     P256,
+    /// Inlines registered by a downstream host crate (custom-1 opcode 0x2B).
+    External,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,6 +90,7 @@ pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionPro
         InlineExtension::Secp256k1,
         InlineExtension::Grumpkin,
         InlineExtension::P256,
+        InlineExtension::External,
     ],
 };
 
@@ -284,6 +287,7 @@ const fn inline_extension_code(extension: InlineExtension) -> u8 {
         InlineExtension::Secp256k1 => 5,
         InlineExtension::Grumpkin => 6,
         InlineExtension::P256 => 7,
+        InlineExtension::External => 8,
     }
 }
 
@@ -356,6 +360,18 @@ mod tests {
             RV64IMAC_JOLT.fingerprint(),
             RV64IMAC_JOLT_ALL_INLINES.fingerprint()
         );
+    }
+
+    #[test]
+    fn external_inline_extension_is_accepted_only_by_all_inlines_profile() {
+        assert!(RV64IMAC_JOLT_ALL_INLINES.supports_inline(InlineExtension::External));
+        assert!(!RV64IMAC_JOLT.supports_inline(InlineExtension::External));
+
+        let with_external = JoltInstructionProfile {
+            source_extensions: RV64IMAC_JOLT.source_extensions,
+            inline_extensions: &[InlineExtension::External],
+        };
+        assert_ne!(RV64IMAC_JOLT.fingerprint(), with_external.fingerprint());
     }
 
     #[test]
