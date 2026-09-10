@@ -411,7 +411,11 @@ pub enum JoltPolynomialId {
     Virtual(JoltVirtualPolynomial),
 }
 
+// Word-aligned so that the verifier's many id moves and comparisons are word
+// operations rather than byte-granular ones, which a zkVM guest pays several
+// trace rows per byte for (4M rows on a 150M-row verification).
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[repr(align(8))]
 pub enum JoltOpeningId {
     Polynomial {
         polynomial: JoltPolynomialId,

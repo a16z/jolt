@@ -479,6 +479,36 @@ mod guest {
         pows: &[[u64; N]],
     ) -> [u64; N] {
         ensure_constants();
+        let len = pows.len();
+        assert_eq!(rows.len(), weights.len(), "one weight per row");
+        assert!(
+            rows.iter().all(|row| row.len() == len),
+            "every row has one element per power"
+        );
+        // One block's row pointers stay in scalar registers and the element
+        // index is the only loop state: the scalar bookkeeping around each
+        // field-inline word costs as much as the word itself, so the inner
+        // loop is unrolled per block width and indexes without bounds checks.
+        macro_rules! accumulate_block {
+            ($($row:ident => $k:literal),+) => {
+                for j in 0..len {
+                    // SAFETY: `j < len`, and every row has `len` elements
+                    // (asserted above).
+                    unsafe {
+                        load(REG_A, pows.get_unchecked(j));
+                        $(
+                            load(REG_B, $row.get_unchecked(j));
+                            emit::mul_out();
+                            emit::row_acc_add_out($k);
+                        )+
+                    }
+                }
+            };
+        }
+        const _: () = assert!(
+            WEIGHTED_ROWS_BLOCK == 5,
+            "the block arms below are five wide"
+        );
         emit::sum_zero();
         for (block_rows, block_weights) in rows
             .chunks(WEIGHTED_ROWS_BLOCK)
@@ -487,13 +517,16 @@ mod guest {
             for k in 0..block_rows.len() {
                 emit::row_acc_zero(k);
             }
-            for (j, pow) in pows.iter().enumerate() {
-                load(REG_A, pow);
-                for (k, row) in block_rows.iter().enumerate() {
-                    load(REG_B, &row[j]);
-                    emit::mul_out();
-                    emit::row_acc_add_out(k);
+            match block_rows {
+                [r0, r1, r2, r3, r4] => {
+                    accumulate_block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3, r4 => 4)
                 }
+                [r0, r1, r2, r3] => accumulate_block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3),
+                [r0, r1, r2] => accumulate_block!(r0 => 0, r1 => 1, r2 => 2),
+                [r0, r1] => accumulate_block!(r0 => 0, r1 => 1),
+                [r0] => accumulate_block!(r0 => 0),
+                // `chunks(WEIGHTED_ROWS_BLOCK)` yields one to five rows.
+                _ => {}
             }
             for (k, weight) in block_weights.iter().enumerate() {
                 load(REG_B, weight);

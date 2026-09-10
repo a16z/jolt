@@ -514,6 +514,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     // `OutputClaims::opening_values` reconstructs the values from this order via
     // `resolve_output`, so the canonical order is single-sourced here.
     let mut order_chains = Vec::new();
+    let mut value_chains = Vec::new();
     let mut resolve_arms = Vec::new();
     let mut construct_fields = Vec::new();
 
@@ -528,6 +529,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         if *is_many {
             let id = id_expr(&namespace, kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
+            value_chains.push(quote!(.chain(self.#ident.iter().copied())));
             resolve_arms.push(quote! {
                 for (index, __value) in self.#ident.iter().enumerate() {
                     if *id == #id {
@@ -552,6 +554,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         } else if *is_option {
             let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
+            value_chains.push(quote!(.chain(self.#ident.iter().copied())));
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__value) = &self.#ident {
                     if *id == #id {
@@ -564,6 +567,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         } else {
             let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
+            value_chains.push(quote!(.chain(::core::iter::once(self.#ident))));
             resolve_arms.push(quote! {
                 if *id == #id {
                     return ::core::option::Option::Some(self.#ident);
@@ -620,6 +624,16 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
+                    .collect()
+            }
+
+            // The same field walk as `canonical_order`, reading values: the
+            // trait default resolves every id through `resolve_output`, a
+            // linear scan per id that a verifier with `Vec` families pays
+            // quadratically.
+            fn opening_values(&self) -> ::std::vec::Vec<F> {
+                ::core::iter::empty::<F>()
+                    #(#value_chains)*
                     .collect()
             }
 

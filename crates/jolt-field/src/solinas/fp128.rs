@@ -1260,13 +1260,15 @@ impl<const P: u128> Fp128<P> {
     }
 
     fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
-        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`, so a slice
+        // of it, and a slice of such slices, have the limb slices' layout.
         let cast = |slice: &[Self]| -> &[[u64; 2]] {
             unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
         };
-        let rows: Vec<&[[u64; 2]]> = rows.iter().map(|row| cast(row)).collect();
+        let rows: &[&[[u64; 2]]] =
+            unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
         Fp128(crate::fr_inline::weighted_dot_rows(
-            &rows,
+            rows,
             cast(weights),
             cast(pows),
         ))

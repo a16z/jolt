@@ -60,11 +60,12 @@ pub struct MissingOpeningValue<O: core::fmt::Debug> {
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]) so the
 /// trait can live in the framework half and be reused by other protocol families.
 pub trait OutputClaims<F: JoltField, O = JoltOpeningId> {
-    /// Produced opening scalars in canonical (field-declaration) order. Built from
-    /// [`canonical_order`](Self::canonical_order) + [`resolve_output`](Self::resolve_output),
-    /// both derived from the same fields, so `opening_values()[k]` is exactly
-    /// `resolve_output(canonical_order()[k])`. The ids within one `OutputClaims`
-    /// struct are distinct, so each canonical-order id resolves to its own value.
+    /// Produced opening scalars in canonical (field-declaration) order:
+    /// `opening_values()[k]` is exactly `resolve_output(canonical_order()[k])`.
+    /// The default builds it from [`canonical_order`](Self::canonical_order) +
+    /// [`resolve_output`](Self::resolve_output); the derive overrides it with
+    /// the direct field walk, which agrees because all three come from the same
+    /// fields and the ids within one `OutputClaims` struct are distinct.
     #[expect(
         clippy::expect_used,
         reason = "every canonical_order id is emitted from the same field as resolve_output, so resolution is infallible by construction"
