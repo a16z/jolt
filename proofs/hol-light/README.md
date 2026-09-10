@@ -78,7 +78,7 @@ Use `aarch64` instead of `x86_64` to check the AArch64 path.
 
 ## Differential fuzzing
 
-The `fp128_asm_differential` target compares assembly with portable arithmetic
+The `fp128-asm-differential` target compares assembly with portable arithmetic
 for both public offsets, 275 and A7F7, and a test-only generic offset 173, for
 addition, subtraction, and multiplication. The extra offset ensures the
 register-parameterized path stays independently reachable. On AArch64 it also
@@ -89,7 +89,7 @@ workflow, and on x86-64 with BMI2 and ADX enabled through this proof workflow.
 Run it locally from `crates/jolt-field` on a supported architecture.
 
 ```sh
-cargo +nightly fuzz run fp128_asm_differential -- -max_total_time=120
+cargo +nightly-2026-08-24 fuzz run fp128-asm-differential -- -max_total_time=120
 ```
 
 Fuzzing complements the theorem and byte checks. It does not replace either:
