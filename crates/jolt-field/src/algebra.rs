@@ -239,6 +239,15 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
         None
     }
 
+    /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]` on a field-inline guest with
+    /// the powers loaded once per block of rows and one hint for the total;
+    /// `None` where no such path exists.
+    #[inline]
+    fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
+        let _ = (rows, weights, pows);
+        None
+    }
+
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.
     ///
     /// Defaults to the generic coefficient schedule; base fields whose

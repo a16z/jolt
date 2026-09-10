@@ -5,11 +5,12 @@
 //! workloads copy megabytes of setup and proof bytes. These definitions take
 //! precedence over the libc archive members at link time.
 //!
-//! Aligned access only: wide loads and stores are issued at 8-byte aligned
-//! addresses. When source and destination disagree on alignment, the copy
-//! reads aligned source words and assembles each destination word from two
-//! neighbours with shifts (the classic libc approach), so the fast path
-//! covers the common "aligned buffer from an arbitrary byte offset" case.
+//! Long copies use aligned wide loads and stores; when source and destination
+//! disagree on alignment, the copy reads aligned source words and assembles
+//! each destination word from two neighbours with shifts (the classic libc
+//! approach). Byte loops only ever run for the unaligned head and the tail:
+//! the zkVM expands every byte-granular or misaligned access into several
+//! trace rows, and a misaligned word costs more than the bytes it replaces.
 
 use core::ptr;
 
@@ -19,7 +20,6 @@ const WORD: usize = 8;
 fn misalignment(p: usize) -> usize {
     (WORD - (p % WORD)) % WORD
 }
-
 /// # Safety
 /// `dst` and `src` are valid for `n` bytes and do not overlap.
 #[no_mangle]

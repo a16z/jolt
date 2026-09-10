@@ -72,6 +72,12 @@ const REG_HINT: u32 = 8;
 /// Running sum of a register-resident dot product.
 #[cfg(target_arch = "riscv64")]
 const REG_ACC: u32 = 9;
+/// The weighted-rows kernel keeps one accumulator per row of a block in
+/// registers 9..=13 and the weighted total in 14.
+#[cfg(target_arch = "riscv64")]
+const REG_SUM: u32 = 14;
+/// Rows per block of the weighted-rows kernel (registers 9..=13).
+pub const WEIGHTED_ROWS_BLOCK: usize = 5;
 
 /// BN254 scalar-field Montgomery constants as canonical little-endian limbs.
 #[cfg(target_arch = "riscv64")]
@@ -317,6 +323,51 @@ mod emit {
     pub fn assert_acc_eq_hint() {
         fixed!(r_word(FUNCT3_ASSERT_EQ, 0, REG_ACC, REG_HINT));
     }
+    /// Zero row accumulator `k` (registers 9..=13).
+    #[inline(always)]
+    pub fn row_acc_zero(k: usize) {
+        match k {
+            0 => fixed!(i_word(FUNCT3_LOAD_IMM, 9, 0)),
+            1 => fixed!(i_word(FUNCT3_LOAD_IMM, 10, 0)),
+            2 => fixed!(i_word(FUNCT3_LOAD_IMM, 11, 0)),
+            3 => fixed!(i_word(FUNCT3_LOAD_IMM, 12, 0)),
+            _ => fixed!(i_word(FUNCT3_LOAD_IMM, 13, 0)),
+        }
+    }
+    /// `acc_k += OUT`.
+    #[inline(always)]
+    pub fn row_acc_add_out(k: usize) {
+        match k {
+            0 => fixed!(r_word(FUNCT3_ADD, 9, 9, REG_OUT)),
+            1 => fixed!(r_word(FUNCT3_ADD, 10, 10, REG_OUT)),
+            2 => fixed!(r_word(FUNCT3_ADD, 11, 11, REG_OUT)),
+            3 => fixed!(r_word(FUNCT3_ADD, 12, 12, REG_OUT)),
+            _ => fixed!(r_word(FUNCT3_ADD, 13, 13, REG_OUT)),
+        }
+    }
+    /// `OUT = acc_k * B`.
+    #[inline(always)]
+    pub fn mul_out_row_acc_b(k: usize) {
+        match k {
+            0 => fixed!(r_word(FUNCT3_MUL, REG_OUT, 9, REG_B)),
+            1 => fixed!(r_word(FUNCT3_MUL, REG_OUT, 10, REG_B)),
+            2 => fixed!(r_word(FUNCT3_MUL, REG_OUT, 11, REG_B)),
+            3 => fixed!(r_word(FUNCT3_MUL, REG_OUT, 12, REG_B)),
+            _ => fixed!(r_word(FUNCT3_MUL, REG_OUT, 13, REG_B)),
+        }
+    }
+    #[inline(always)]
+    pub fn sum_zero() {
+        fixed!(i_word(FUNCT3_LOAD_IMM, REG_SUM, 0));
+    }
+    #[inline(always)]
+    pub fn sum_add_out() {
+        fixed!(r_word(FUNCT3_ADD, REG_SUM, REG_SUM, REG_OUT));
+    }
+    #[inline(always)]
+    pub fn assert_sum_eq_hint() {
+        fixed!(r_word(FUNCT3_ASSERT_EQ, 0, REG_SUM, REG_HINT));
+    }
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -415,6 +466,47 @@ mod guest {
         hint
     }
 
+    /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]` with the row sums and the
+    /// weighted total register-resident and one hint for the result. Each
+    /// power is loaded once per block of [`WEIGHTED_ROWS_BLOCK`] rows, which
+    /// is what makes this cheaper than one [`dot`] per row: operand ingress,
+    /// not arithmetic, is the cost of a field-inline multiply-accumulate.
+    /// Canonical limbs; every row has `pows.len()` elements.
+    #[inline(always)]
+    pub fn weighted_dot_rows<const N: usize>(
+        rows: &[&[[u64; N]]],
+        weights: &[[u64; N]],
+        pows: &[[u64; N]],
+    ) -> [u64; N] {
+        ensure_constants();
+        emit::sum_zero();
+        for (block_rows, block_weights) in rows
+            .chunks(WEIGHTED_ROWS_BLOCK)
+            .zip(weights.chunks(WEIGHTED_ROWS_BLOCK))
+        {
+            for k in 0..block_rows.len() {
+                emit::row_acc_zero(k);
+            }
+            for (j, pow) in pows.iter().enumerate() {
+                load(REG_A, pow);
+                for (k, row) in block_rows.iter().enumerate() {
+                    load(REG_B, &row[j]);
+                    emit::mul_out();
+                    emit::row_acc_add_out(k);
+                }
+            }
+            for (k, weight) in block_weights.iter().enumerate() {
+                load(REG_B, weight);
+                emit::mul_out_row_acc_b(k);
+                emit::sum_add_out();
+            }
+        }
+        let hint = next_hint::<N>();
+        load(REG_HINT, &hint);
+        emit::assert_sum_eq_hint();
+        hint
+    }
+
     #[inline(always)]
     pub fn inv<const N: usize>(a: &[u64; N], montgomery: bool) -> [u64; N] {
         ensure_constants();
@@ -428,4 +520,4 @@ mod guest {
 }
 
 #[cfg(target_arch = "riscv64")]
-pub use guest::{add, dot, inv, mul, neg, sub};
+pub use guest::{add, dot, inv, mul, neg, sub, weighted_dot_rows};

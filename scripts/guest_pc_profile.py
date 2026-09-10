@@ -71,18 +71,23 @@ def ranges(args):
 def callers(args):
     resolver = Resolver(symbols(args.elf))
     per = collections.Counter()
+    calls = collections.Counter()
     totals = collections.Counter()
     for line in open(args.profile_ra):
-        leaf, caller, rows = line.split()
+        leaf, caller, rows, *entries = line.split()
         rows = int(rows)
         leaf = resolver.name(int(leaf, 16))[:60]
-        per[(leaf, resolver.name(int(caller, 16))[: args.width])] += rows
+        key = (leaf, resolver.name(int(caller, 16))[: args.width])
+        per[key] += rows
+        calls[key] += int(entries[0]) if entries else 0
         totals[leaf] += rows
     for leaf, rows in totals.most_common(args.top):
         print(f"== {leaf}: {rows}")
         for (l, c), n in per.most_common():
             if l == leaf and n >= args.min_share * rows:
-                print(f"   {n:>11} {100 * n / rows:5.1f}%  {c}")
+                count = calls[(l, c)]
+                per_call = f" ({n // count} rows/call over {count} calls)" if count else ""
+                print(f"   {n:>11} {100 * n / rows:5.1f}%  {c}{per_call}")
 
 
 def main():

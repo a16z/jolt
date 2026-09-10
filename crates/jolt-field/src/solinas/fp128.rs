@@ -1204,6 +1204,11 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
     fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
         Some(Self::inline_dot_kernel(a, b))
     }
+
+    #[cfg(feature = "field-inline-guest")]
+    fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
+        Some(Self::inline_weighted_dot_kernel(rows, weights, pows))
+    }
 }
 
 #[cfg(all(feature = "field-inline-guest", not(target_arch = "riscv64")))]
@@ -1220,6 +1225,25 @@ impl<const P: u128> Fp128<P> {
         crate::fr_inline::record(&out.0);
         out
     }
+
+    /// Host side of the weighted-rows kernel: exact per-row accumulation,
+    /// one reduction per row, one recorded hint for the total.
+    fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
+        use crate::{Unreduced, Zero};
+        let out = rows
+            .iter()
+            .zip(weights)
+            .fold(Self::zero(), |sum, (row, weight)| {
+                let accum = row.iter().zip(pows).fold(
+                    <<Self as Unreduced>::Product as Zero>::zero(),
+                    |acc, (x, y)| acc + x.mul_unreduced(*y),
+                );
+                let row_sum = <Self as Unreduced>::reduce_product(accum);
+                Fp128(Self::add_raw(sum.0, Self::mul_raw(row_sum.0, weight.0)))
+            });
+        crate::fr_inline::record(&out.0);
+        out
+    }
 }
 
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
@@ -1233,6 +1257,19 @@ impl<const P: u128> Fp128<P> {
             )
         };
         Fp128(crate::fr_inline::dot(a, b))
+    }
+
+    fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
+        // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
+        let cast = |slice: &[Self]| -> &[[u64; 2]] {
+            unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
+        };
+        let rows: Vec<&[[u64; 2]]> = rows.iter().map(|row| cast(row)).collect();
+        Fp128(crate::fr_inline::weighted_dot_rows(
+            &rows,
+            cast(weights),
+            cast(pows),
+        ))
     }
 }
 

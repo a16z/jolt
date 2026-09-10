@@ -5,9 +5,9 @@
 //! `JOLT_PC_PROFILE_RANGES=<file>` (lines `start end`, hex, from
 //! `scripts/guest_pc_profile.py ranges`), rows spent inside those address
 //! ranges are also attributed to the return address captured on entry, so a
-//! leaf such as `memcpy` is charged to its callers. Both tables are written
-//! when the trace ends (`<path>` and `<path>.ra`), for
-//! `scripts/guest_pc_profile.py report`.
+//! leaf such as `memcpy` is charged to its callers, with the call count.
+//! Both tables are written when the trace ends (`<path>` and `<path>.ra`),
+//! for `scripts/guest_pc_profile.py report` / `callers`.
 //!
 //! Off by default: one relaxed load per instruction.
 
@@ -25,7 +25,8 @@ struct Profile {
     by_pc: HashMap<u64, u64>,
     ranges: Vec<(u64, u64)>,
     current_leaf: Option<(u64, u64)>,
-    by_leaf_caller: HashMap<(u64, u64), u64>,
+    /// Rows and entries (calls) per (leaf start, caller return address).
+    by_leaf_caller: HashMap<(u64, u64), (u64, u64)>,
 }
 
 thread_local! {
@@ -89,11 +90,14 @@ pub fn record(pc: u64, rows: u64, ra: u64) {
             .map(|(start, _)| *start);
         match leaf {
             Some(start) => {
-                if pc == start {
+                let entered = pc == start;
+                if entered {
                     profile.current_leaf = Some((start, ra));
                 }
                 let key = profile.current_leaf.unwrap_or((start, 0));
-                *profile.by_leaf_caller.entry(key).or_insert(0) += rows;
+                let entry = profile.by_leaf_caller.entry(key).or_insert((0, 0));
+                entry.0 += rows;
+                entry.1 += u64::from(entered);
             }
             None => profile.current_leaf = None,
         }
@@ -117,8 +121,8 @@ pub fn finish() {
             tracing::error!("failed to write the PC profile: {error}");
         }
         let mut by_caller = String::new();
-        for ((leaf, caller), rows) in &profile.by_leaf_caller {
-            by_caller.push_str(&format!("{leaf:x} {caller:x} {rows}\n"));
+        for ((leaf, caller), (rows, entries)) in &profile.by_leaf_caller {
+            by_caller.push_str(&format!("{leaf:x} {caller:x} {rows} {entries}\n"));
         }
         let mut caller_path = profile.path.clone();
         caller_path.as_mut_os_string().push(".ra");
