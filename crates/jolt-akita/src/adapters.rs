@@ -1,4 +1,5 @@
 use std::{
+    env::VarError,
     fmt,
     io::Cursor,
     path::{Path, PathBuf},
@@ -1011,13 +1012,47 @@ pub fn reverse_point(point: &[AkitaField]) -> Vec<AkitaField> {
     point.iter().rev().copied().collect()
 }
 
+const COMMIT_SCRATCH_ENV: &str = "JOLT_AKITA_COMMIT_SCRATCH_BYTES_PER_WORKER";
+
+fn cpu_backend_with_scratch(value: Option<&str>) -> Result<CpuBackend, OpeningsError> {
+    let scratch = value.map_or(
+        Ok(CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER),
+        |value| {
+            value.parse::<usize>().map_err(|_| {
+                OpeningsError::InvalidSetup(format!(
+                    "{COMMIT_SCRATCH_ENV} must be a positive integer in bytes"
+                ))
+            })
+        },
+    )?;
+    CpuBackend::with_resource_limits(CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS, scratch)
+        .map_err(|error| OpeningsError::InvalidSetup(format!("{COMMIT_SCRATCH_ENV}: {error}")))
+}
+
+/// Read the per-worker scratch budget once so setup and proving use the same policy.
+/// Defaults to 8 MiB; e.g. JOLT_AKITA_COMMIT_SCRATCH_BYTES_PER_WORKER=16777216
+/// allows 16 MiB per worker without changing protocol parameters.
+pub(crate) fn cpu_backend() -> Result<&'static CpuBackend, OpeningsError> {
+    static BACKEND: OnceLock<Result<CpuBackend, OpeningsError>> = OnceLock::new();
+    BACKEND
+        .get_or_init(|| match std::env::var(COMMIT_SCRATCH_ENV) {
+            Ok(value) => cpu_backend_with_scratch(Some(&value)),
+            Err(VarError::NotPresent) => cpu_backend_with_scratch(None),
+            Err(error) => Err(OpeningsError::InvalidSetup(format!(
+                "{COMMIT_SCRATCH_ENV}: {error}"
+            ))),
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
 pub(crate) fn backend_stack<'a>(
     backend_prover_setup: &'a AkitaBackendProverSetup,
     prepared_backend_setup: &'a AkitaBackendPreparedSetup,
 ) -> Result<BackendStack<'a>, OpeningsError> {
     let _span = info_span!("jolt_akita::make_backend_stack").entered();
     akita_prover::UniformProverStack::uniform(
-        &CpuBackend::DEFAULT,
+        cpu_backend()?,
         prepared_backend_setup,
         backend_prover_setup.expanded.as_ref(),
     )
@@ -1260,4 +1295,24 @@ where
     bridged_session_label.extend_from_slice(session_label);
     bridged_session_label.extend_from_slice(&bridge_bytes);
     AkitaTranscript::new(&bridged_session_label)
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod cpu_backend_tests {
+    use super::*;
+
+    #[test]
+    fn scratch_budget_configuration() {
+        assert_eq!(cpu_backend_with_scratch(None).unwrap(), CpuBackend::DEFAULT);
+        let backend = cpu_backend_with_scratch(Some("16777216")).unwrap();
+        assert_eq!(backend.commit_scratch_bytes_per_worker(), 16 << 20);
+        assert_eq!(
+            backend.max_cached_ring_switch_elements(),
+            CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS
+        );
+        for value in ["0", "", "-1", "16MiB", "18446744073709551616"] {
+            assert!(cpu_backend_with_scratch(Some(value)).is_err(), "{value}");
+        }
+    }
 }
