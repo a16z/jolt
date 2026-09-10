@@ -526,9 +526,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-primitives"
-version = "1.6.1"
+version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f007e257069855bdf21d27762fd3f3705a613f805c9a08309bf353503f081d71"
+checksum = "ce7b00f0cb42c66ec353076ded1dff1fbf818f6e0e26c40c8a8456c04483fca4"
 dependencies = [
  "alloy-rlp",
  "bytes",
@@ -1320,9 +1320,9 @@ dependencies = [
 
 [[package]]
 name = "blake2"
-version = "0.11.0-rc.6"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "061f1a09225e328e1ffbb378d2d49923c0ca5fee19fb5ac1cc9c1e9d52b93690"
+checksum = "5b5d4d889834ee8ecfc0f8426ad30faf7cdcb10f741a8e6d7224d95325479f6f"
 dependencies = [
  "digest 0.11.3",
 ]
@@ -1542,9 +1542,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.4.4"
+version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ad534f4357a5264cce5019c989cf66a4f0dc4e0d1b1d15f8aacec0ff7360273"
+checksum = "005ec2760ca554fae18df7a11195552ec576cd665632a881bc011d5bb2fd4d80"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1709,7 +1709,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2474,7 +2474,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2550,9 +2550,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.11"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
+checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
 name = "findshlibs"
@@ -2784,7 +2784,7 @@ dependencies = [
 name = "hashbench-guest"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "blake3",
  "jolt-inlines-blake2",
  "jolt-inlines-blake3",
@@ -3232,7 +3232,7 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "derive_more",
  "jolt-claims-derive",
  "jolt-field",
@@ -3387,7 +3387,7 @@ dependencies = [
 name = "jolt-inlines-blake2"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "hex-literal",
  "jolt-inlines-sdk",
  "rand 0.8.7",
@@ -3710,7 +3710,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "bincode 2.0.1",
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "chrono",
  "clap",
  "common",
@@ -3867,7 +3867,7 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "criterion",
  "digest 0.11.3",
  "jolt-field",
@@ -4033,9 +4033,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.182"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libm"
@@ -5247,7 +5247,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap",
@@ -5876,7 +5876,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6507,7 +6507,7 @@ source = "git+https://github.com/arkworks-rs/spongefish?rev=d2d190b1329d35ac9577
 dependencies = [
  "ark-ff 0.6.0",
  "ark-serialize 0.6.0",
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "digest 0.11.3",
  "keccak 0.1.6",
  "p3-koala-bear",
@@ -6733,7 +6733,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7382,7 +7382,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7691,15 +7691,6 @@ dependencies = [
 
 [[package]]
 name = "z3-src"
-version = "500.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf6100f1870aed4684e564ebcb86a9daa09e84ba95ee594d72b844c1f4363b63"
-dependencies = [
- "cmake",
-]
-
-[[package]]
-name = "z3-src"
 version = "501.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b72734fb46b47cd6c5a9a1dab4ca1c3c060822d3f34cdcac5d6ae570408b47a"
@@ -7714,7 +7705,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96975839f50a909f6ec19671e5c06d7f0d6fc67287a120e1b010c5f8d91944d6"
 dependencies = [
  "pkg-config",
- "z3-src 501.0.0",
+ "z3-src",
 ]
 
 [[package]]
@@ -7726,7 +7717,7 @@ dependencies = [
  "paste",
  "tracer",
  "z3",
- "z3-src 500.0.0",
+ "z3-src",
 ]
 
 [[package]]
