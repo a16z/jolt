@@ -7691,15 +7691,6 @@ dependencies = [
 
 [[package]]
 name = "z3-src"
-version = "500.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf6100f1870aed4684e564ebcb86a9daa09e84ba95ee594d72b844c1f4363b63"
-dependencies = [
- "cmake",
-]
-
-[[package]]
-name = "z3-src"
 version = "501.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b72734fb46b47cd6c5a9a1dab4ca1c3c060822d3f34cdcac5d6ae570408b47a"
@@ -7714,7 +7705,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96975839f50a909f6ec19671e5c06d7f0d6fc67287a120e1b010c5f8d91944d6"
 dependencies = [
  "pkg-config",
- "z3-src 501.0.0",
+ "z3-src",
 ]
 
 [[package]]
@@ -7726,7 +7717,7 @@ dependencies = [
  "paste",
  "tracer",
  "z3",
- "z3-src 500.0.0",
+ "z3-src",
 ]
 
 [[package]]
