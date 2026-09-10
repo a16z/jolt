@@ -69,7 +69,7 @@ This is a refactor of trait boundaries, not of arithmetic. The `jolt-eval` invar
 - Full `cargo nextest run --cargo-quiet`; `muldiv` e2e in `--features host` and `--features host,zk`.
 - `cargo clippy --all --features host -q --all-targets -- -D warnings` and again with `host,zk`.
 - `jolt-field` standalone under feature combos: `bn254`, `solinas`, `bn254,solinas,parallel`, `--no-default-features`.
-- The `solinas_field_arith` fuzz target and both criterion benches must still build.
+- The `solinas-field-arith` fuzz target and both criterion benches must still build.
 - Existing in-crate unit tests (prime, ext, packed, unreduced) are updated for renamed bounds but not weakened; deleted traits take their dead tests with them.
 - New: bincode round-trip tests for all Solinas types; a compile test that the merged `CanonicalRepr` default challenge derivation matches the previous `TranscriptChallenge` behavior on `Fr` (identical bytes in, identical element out).
 
