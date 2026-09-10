@@ -258,8 +258,10 @@ mod field_inline_tests {
                 VerifierPublicId::Challenge(id) => {
                     challenges.resolve_challenge(id).unwrap_or_else(|| fr(0))
                 }
-                VerifierPublicId::Jolt(_)
-                | VerifierPublicId::SpartanOuter(_)
+                VerifierPublicId::Jolt(id) => relation
+                    .derive_input_term(id, &challenges)
+                    .unwrap_or_else(|_| fr(0)),
+                VerifierPublicId::SpartanOuter(_)
                 | VerifierPublicId::FieldInline(_)
                 | VerifierPublicId::FieldInlineChallenge(_) => fr(0),
             },

@@ -26,7 +26,8 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::bytecode::{bytecode_val_stage_opening, NUM_BYTECODE_VAL_STAGES},
         dimensions::committed_address_chunks,
     },
-    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltRelationId,
+    BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltChallengeId, JoltDerivedId,
+    JoltRelationId,
 };
 use jolt_claims::{SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
@@ -319,6 +320,10 @@ fn expected_output_from_publics<F: JoltField>(
             _ => Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
         },
         |id| match id {
+            JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                challenge: BytecodeReadRafChallenge::Gamma,
+                exponent,
+            }) => Ok(bytecode::challenge_pow(gamma, *exponent)),
             JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                 .value(*public_id)
                 .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
@@ -472,6 +477,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     JoltDerivedId::BytecodeReadRaf(
                         jolt_claims::protocols::jolt::BytecodeReadRafPublic::StageValue(stage),
                     ) if *stage >= base_stages => fused_stage_value(*stage),
+                    JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                        challenge: BytecodeReadRafChallenge::Gamma,
+                        exponent,
+                    }) => Ok(bytecode::challenge_pow(challenges.gamma, *exponent)),
                     JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                         .value(*public_id)
                         .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
@@ -938,6 +947,15 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| match id {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                    challenge,
+                    exponent,
+                }) => challenges
+                    .resolve_challenge(&(*challenge).into())
+                    .map(|value| bytecode::challenge_pow(value, *exponent))
+                    .ok_or(VerifierError::MissingStageClaimChallenge {
+                        id: JoltChallengeId::from(*challenge).into(),
+                    }),
                 JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                     .value(*public_id)
                     .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),

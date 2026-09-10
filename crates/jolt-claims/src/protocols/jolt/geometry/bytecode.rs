@@ -77,6 +77,51 @@ impl BytecodeReadRafDimensions {
     }
 }
 
+/// `challenge^exponent` as an expression leaf: the constant one, the
+/// challenge itself, or the derived [`BytecodeReadRafPublic::ChallengePow`]
+/// public for higher powers, so a fold over many powers stays one factor per
+/// term instead of `exponent` repeated challenge factors (which the guest
+/// verifier paid for on every expression build and evaluation).
+pub(crate) fn challenge_pow_expr<F: Ring>(
+    challenge: BytecodeReadRafChallenge,
+    exponent: usize,
+) -> JoltExpr<F> {
+    match exponent {
+        0 => JoltExpr::one(),
+        1 => crate::challenge(challenge),
+        _ => derived(BytecodeReadRafPublic::ChallengePow {
+            challenge,
+            exponent,
+        }),
+    }
+}
+
+/// The value behind [`BytecodeReadRafPublic::ChallengePow`].
+pub fn challenge_pow<F: Ring>(value: F, exponent: usize) -> F {
+    super::claim_reductions::hamming_weight::gamma_pow(value, exponent)
+}
+
+/// One past the largest exponent the read-RAF expressions raise each
+/// challenge to, for `num_val_stages` val stages: the verifier registers the
+/// [`BytecodeReadRafPublic::ChallengePow`] publics `2..bound` per challenge.
+/// Owned here next to the expression builders that use the powers.
+pub fn challenge_power_bounds(num_val_stages: usize) -> [(BytecodeReadRafChallenge, usize); 6] {
+    [
+        (BytecodeReadRafChallenge::Gamma, num_val_stages + 3),
+        (
+            BytecodeReadRafChallenge::Stage1Gamma,
+            CIRCUIT_FLAGS.len() + 2,
+        ),
+        (BytecodeReadRafChallenge::Stage2Gamma, 4),
+        (BytecodeReadRafChallenge::Stage3Gamma, 9),
+        (BytecodeReadRafChallenge::Stage4Gamma, 3),
+        (
+            BytecodeReadRafChallenge::Stage5Gamma,
+            LookupTableKind::<XLEN>::COUNT + 2,
+        ),
+    ]
+}
+
 /// The staged input fold shared by the bytecode read-RAF monolith and its
 /// address phase: the five base staged claims at `γ^0..4`, then one raw claim
 /// per `extra_stage_claims` entry at the following powers (the lattice
@@ -86,21 +131,23 @@ pub(crate) fn read_raf_address_input_fold<F>(extra_stage_claims: Vec<JoltExpr<F>
 where
     F: Ring,
 {
-    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
     let num_val_stages = base_stages + extra_stage_claims.len();
 
-    let mut fold = gamma.clone().pow(num_val_stages + 2)
+    let mut fold = challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 2)
         + stage1_claim()
-        + gamma.clone() * stage2_claim()
-        + gamma.clone().pow(2) * stage3_claim()
-        + gamma.clone().pow(3) * stage4_claim()
-        + gamma.clone().pow(4) * stage5_claim::<F>();
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, 1) * stage2_claim()
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, 2) * stage3_claim()
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, 3) * stage4_claim()
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, 4) * stage5_claim::<F>();
     for (index, claim) in extra_stage_claims.into_iter().enumerate() {
-        fold = fold + gamma.clone().pow(base_stages + index) * claim;
+        fold =
+            fold + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, base_stages + index) * claim;
     }
-    fold + gamma.clone().pow(num_val_stages) * opening(pc_spartan_outer())
-        + gamma.pow(num_val_stages + 1) * opening(pc_shift())
+    fold + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages)
+        * opening(pc_spartan_outer())
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 1)
+            * opening(pc_shift())
 }
 
 pub(crate) fn read_raf_cycle_output<F>(
@@ -110,16 +157,19 @@ pub(crate) fn read_raf_cycle_output<F>(
 where
     F: Ring,
 {
-    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let mut output_coeff = JoltExpr::zero();
     for stage in 0..num_val_stages {
         output_coeff = output_coeff
-            + gamma.clone().pow(stage) * derived(BytecodeReadRafPublic::StageValue(stage));
+            + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, stage)
+                * derived(BytecodeReadRafPublic::StageValue(stage));
     }
     output_coeff = output_coeff
-        + gamma.clone().pow(num_val_stages) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages)
+            * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 1)
+            * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 2)
+            * derived(BytecodeReadRafPublic::Entry);
 
     output_coeff * bytecode_ra_product(dimensions)
 }
@@ -131,21 +181,22 @@ pub(crate) fn read_raf_cycle_output_committed<F>(
 where
     F: Ring,
 {
-    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     // The staged Val factor multiplies after the RA product so the lowered
     // R1CS auxiliary chain matches core's `[ra..., val_stage]` factor order.
     let mut output = JoltExpr::zero();
     for stage in 0..num_val_stages {
         output = output
-            + gamma.clone().pow(stage)
+            + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, stage)
                 * derived(BytecodeReadRafPublic::StageCycleEq(stage))
                 * bytecode_ra_product(dimensions)
                 * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(stage));
     }
-    let raf_coeff = gamma.clone().pow(num_val_stages)
+    let raf_coeff = challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages)
         * derived(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 1)
+            * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 2)
+            * derived(BytecodeReadRafPublic::Entry);
 
     output + raf_coeff * bytecode_ra_product(dimensions)
 }
@@ -185,23 +236,27 @@ pub(crate) fn read_raf_cycle_output_lattice<F>(dimensions: BytecodeReadRafDimens
 where
     F: Ring,
 {
-    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
     let num_val_stages = base_stages + LATTICE_FUSED_INC_STAGES;
     let mut base_coeff = JoltExpr::zero();
     for stage in 0..base_stages {
         base_coeff = base_coeff
-            + gamma.clone().pow(stage) * derived(BytecodeReadRafPublic::StageValue(stage));
+            + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, stage)
+                * derived(BytecodeReadRafPublic::StageValue(stage));
     }
     base_coeff = base_coeff
-        + gamma.clone().pow(num_val_stages) * derived(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.clone().pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages)
+            * derived(BytecodeReadRafPublic::SpartanOuterRaf)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 1)
+            * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 2)
+            * derived(BytecodeReadRafPublic::Entry);
 
     let mut fused_coeff = JoltExpr::zero();
     for stage in base_stages..num_val_stages {
         fused_coeff = fused_coeff
-            + gamma.clone().pow(stage) * derived(BytecodeReadRafPublic::StageValue(stage));
+            + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, stage)
+                * derived(BytecodeReadRafPublic::StageValue(stage));
     }
 
     (base_coeff + fused_coeff * opening(fused_inc_read_raf_opening()))
@@ -219,7 +274,6 @@ pub(crate) fn read_raf_cycle_output_committed_lattice<F>(
 where
     F: Ring,
 {
-    let gamma = challenge(BytecodeReadRafChallenge::Gamma);
     let base_stages = BYTECODE_STAGE_GAMMA_COUNTS.len();
     let num_val_stages = base_stages + LATTICE_FUSED_INC_STAGES;
     let ra_product = bytecode_ra_product(dimensions);
@@ -229,28 +283,30 @@ where
     let mut output = JoltExpr::zero();
     for stage in 0..base_stages {
         output = output
-            + gamma.clone().pow(stage)
+            + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, stage)
                 * derived(BytecodeReadRafPublic::StageCycleEq(stage))
                 * ra_product.clone()
                 * opening(super::claim_reductions::bytecode::bytecode_val_stage_opening(stage));
     }
-    let store_pair = gamma.clone().pow(base_stages)
+    let store_pair = challenge_pow_expr(BytecodeReadRafChallenge::Gamma, base_stages)
         * derived(BytecodeReadRafPublic::StageCycleEq(base_stages))
-        + gamma.clone().pow(base_stages + 1)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, base_stages + 1)
             * derived(BytecodeReadRafPublic::StageCycleEq(base_stages + 1));
-    let notstore_pair = gamma.clone().pow(base_stages + 2)
+    let notstore_pair = challenge_pow_expr(BytecodeReadRafChallenge::Gamma, base_stages + 2)
         * derived(BytecodeReadRafPublic::StageCycleEq(base_stages + 2))
-        + gamma.clone().pow(base_stages + 3)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, base_stages + 3)
             * derived(BytecodeReadRafPublic::StageCycleEq(base_stages + 3));
     output = output
         + store_pair * ra_product.clone() * fused.clone() * store.clone()
         + notstore_pair.clone() * ra_product.clone() * fused.clone()
         - notstore_pair * ra_product.clone() * fused * store;
 
-    let raf_coeff = gamma.clone().pow(num_val_stages)
+    let raf_coeff = challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages)
         * derived(BytecodeReadRafPublic::SpartanOuterRaf)
-        + gamma.clone().pow(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
-        + gamma.pow(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 1)
+            * derived(BytecodeReadRafPublic::SpartanShiftRaf)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Gamma, num_val_stages + 2)
+            * derived(BytecodeReadRafPublic::Entry);
 
     output + raf_coeff * ra_product
 }
@@ -282,7 +338,9 @@ impl<F: JoltField> BytecodeReadRafPublicValues<F> {
     pub fn value(&self, id: BytecodeReadRafPublic) -> Option<F> {
         match id {
             BytecodeReadRafPublic::StageValue(index) => self.stage_values.get(index).copied(),
-            BytecodeReadRafPublic::StageCycleEq(_) => None,
+            BytecodeReadRafPublic::StageCycleEq(_) | BytecodeReadRafPublic::ChallengePow { .. } => {
+                None
+            }
             BytecodeReadRafPublic::SpartanOuterRaf => Some(self.spartan_outer_raf),
             BytecodeReadRafPublic::SpartanShiftRaf => Some(self.spartan_shift_raf),
             BytecodeReadRafPublic::Entry => Some(self.entry),
@@ -309,7 +367,9 @@ impl<F: JoltField> BytecodeReadRafCommittedPublicValues<F> {
     /// instead of evaluating with a silently zeroed term.
     pub fn value(&self, id: BytecodeReadRafPublic) -> Option<F> {
         match id {
-            BytecodeReadRafPublic::StageValue(_) => None,
+            BytecodeReadRafPublic::StageValue(_) | BytecodeReadRafPublic::ChallengePow { .. } => {
+                None
+            }
             BytecodeReadRafPublic::StageCycleEq(index) => self.stage_cycle_eqs.get(index).copied(),
             BytecodeReadRafPublic::SpartanOuterRaf => Some(self.spartan_outer_raf),
             BytecodeReadRafPublic::SpartanShiftRaf => Some(self.spartan_shift_raf),
@@ -650,7 +710,9 @@ where
         opening(unexpanded_pc_spartan_outer()) + beta.clone() * opening(imm_spartan_outer());
 
     for (i, flag) in CIRCUIT_FLAGS.into_iter().enumerate() {
-        claim = claim + beta.clone().pow(i + 2) * opening(op_flag_spartan_outer(flag));
+        claim = claim
+            + challenge_pow_expr(BytecodeReadRafChallenge::Stage1Gamma, i + 2)
+                * opening(op_flag_spartan_outer(flag));
     }
 
     claim
@@ -664,8 +726,10 @@ where
 
     opening(op_flag_product(CircuitFlags::Jump))
         + beta.clone() * opening(instruction_flag_product(InstructionFlags::Branch))
-        + beta.clone().pow(2) * opening(op_flag_product(CircuitFlags::WriteLookupOutputToRD))
-        + beta.pow(3) * opening(op_flag_product(CircuitFlags::VirtualInstruction))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage2Gamma, 2)
+            * opening(op_flag_product(CircuitFlags::WriteLookupOutputToRD))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage2Gamma, 3)
+            * opening(op_flag_product(CircuitFlags::VirtualInstruction))
 }
 
 pub(crate) fn stage3_claim<F>() -> JoltExpr<F>
@@ -676,19 +740,24 @@ where
 
     opening(imm())
         + beta.clone() * opening(unexpanded_pc_shift())
-        + beta.clone().pow(2)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 2)
             * opening(instruction_flag_input(
                 InstructionFlags::LeftOperandIsRs1Value,
             ))
-        + beta.clone().pow(3) * opening(instruction_flag_input(InstructionFlags::LeftOperandIsPC))
-        + beta.clone().pow(4)
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 3)
+            * opening(instruction_flag_input(InstructionFlags::LeftOperandIsPC))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 4)
             * opening(instruction_flag_input(
                 InstructionFlags::RightOperandIsRs2Value,
             ))
-        + beta.clone().pow(5) * opening(instruction_flag_input(InstructionFlags::RightOperandIsImm))
-        + beta.clone().pow(6) * opening(instruction_flag_shift(InstructionFlags::IsNoop))
-        + beta.clone().pow(7) * opening(op_flag_shift(CircuitFlags::VirtualInstruction))
-        + beta.pow(8) * opening(op_flag_shift(CircuitFlags::IsFirstInSequence))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 5)
+            * opening(instruction_flag_input(InstructionFlags::RightOperandIsImm))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 6)
+            * opening(instruction_flag_shift(InstructionFlags::IsNoop))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 7)
+            * opening(op_flag_shift(CircuitFlags::VirtualInstruction))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 8)
+            * opening(op_flag_shift(CircuitFlags::IsFirstInSequence))
 }
 
 pub(crate) fn stage4_claim<F>() -> JoltExpr<F>
@@ -699,7 +768,8 @@ where
 
     opening(rd_wa_read_write())
         + beta.clone() * opening(rs1_ra_read_write())
-        + beta.pow(2) * opening(rs2_ra_read_write())
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage4Gamma, 2)
+            * opening(rs2_ra_read_write())
 }
 
 pub(crate) fn stage5_claim<F>() -> JoltExpr<F>
@@ -711,7 +781,9 @@ where
         opening(rd_wa_val_evaluation()) + beta.clone() * opening(instruction_raf_flag());
 
     for (i, table) in LookupTableKind::<XLEN>::iter().enumerate() {
-        claim = claim + beta.clone().pow(i + 2) * opening(lookup_table_flag(table));
+        claim = claim
+            + challenge_pow_expr(BytecodeReadRafChallenge::Stage5Gamma, i + 2)
+                * opening(lookup_table_flag(table));
     }
 
     claim

@@ -599,6 +599,15 @@ mod field_inline_tests {
                         fr(0)
                     }
                 }
+                VerifierPublicId::Jolt(JoltDerivedId::BytecodeReadRaf(
+                    BytecodeReadRafPublic::ChallengePow {
+                        challenge,
+                        exponent,
+                    },
+                )) => {
+                    assert_eq!(*challenge, BytecodeReadRafChallenge::Gamma);
+                    bytecode::challenge_pow(challenges.gamma, *exponent)
+                }
                 VerifierPublicId::Jolt(JoltDerivedId::BytecodeReadRaf(public)) => {
                     publics.value(*public).unwrap_or_else(|| fr(0))
                 }

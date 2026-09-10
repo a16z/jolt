@@ -169,6 +169,14 @@ pub enum BytecodeReadRafPublic {
     SpartanOuterRaf,
     SpartanShiftRaf,
     Entry,
+    /// `challenge^exponent` for an exponent of at least two: the batching
+    /// challenges fold dozens of claims, and one derived leaf per power keeps
+    /// each folded term at one factor instead of `exponent` repeated ones
+    /// (see `geometry::bytecode::challenge_pow_expr`).
+    ChallengePow {
+        challenge: BytecodeReadRafChallenge,
+        exponent: usize,
+    },
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

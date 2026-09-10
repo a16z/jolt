@@ -233,7 +233,7 @@ mod tests {
     };
     use crate::protocols::jolt::geometry::claim_reductions::bytecode::bytecode_val_stage_opening;
     use crate::protocols::jolt::geometry::spartan::pc_shift;
-    use crate::protocols::jolt::BytecodeReadRafPublic;
+    use crate::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
     use crate::SymbolicSumcheck;
     use jolt_field::{Fr, Ring};
 
@@ -279,7 +279,13 @@ mod tests {
                 _ => zero,
             },
             |_| gamma,
-            |_| zero,
+            |id| match *id {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                    exponent,
+                    ..
+                }) => pow(gamma, exponent),
+                _ => zero,
+            },
         );
         assert_eq!(
             input,
@@ -338,6 +344,10 @@ mod tests {
                 JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => outer_raf,
                 JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => shift_raf,
                 JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                    exponent,
+                    ..
+                }) => pow(gamma, exponent),
                 _ => zero,
             },
         );
@@ -393,6 +403,10 @@ mod tests {
                 JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanOuterRaf) => outer_raf,
                 JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::SpartanShiftRaf) => shift_raf,
                 JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                    exponent,
+                    ..
+                }) => pow(gamma, exponent),
                 _ => zero,
             },
         );

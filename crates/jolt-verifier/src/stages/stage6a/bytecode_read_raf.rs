@@ -12,17 +12,17 @@
 
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
-#[cfg(feature = "field-inline")]
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::{
-        bytecode::BytecodeReadRafDimensions, claim_reductions::bytecode as bytecode_reduction,
+        bytecode::{self, BytecodeReadRafDimensions},
+        claim_reductions::bytecode as bytecode_reduction,
         dimensions::REGISTER_ADDRESS_BITS,
     },
-    JoltOpeningId, JoltRelationId,
+    BytecodeReadRafPublic, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
@@ -359,6 +359,32 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
         openings
     }
 
+    /// The batching-challenge powers the address fold references as derived
+    /// leaves (`challenge_pow_expr`), from the drawn challenges.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "fail-closed: any other derived id is not an input derived of this relation"
+    )]
+    fn derive_input_term(
+        &self,
+        id: &JoltDerivedId,
+        challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        use jolt_claims::SumcheckChallenges as _;
+        match id {
+            JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                challenge,
+                exponent,
+            }) => challenges
+                .resolve_challenge(&(*challenge).into())
+                .map(|value| bytecode::challenge_pow(value, *exponent))
+                .ok_or(VerifierError::MissingStageClaimChallenge {
+                    id: JoltChallengeId::from(*challenge).into(),
+                }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+        }
+    }
+
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
@@ -601,12 +627,7 @@ mod field_inline_tests {
                         .resolve_challenge(id)
                         .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
                 },
-                |_| {
-                    Err(VerifierError::StageClaimPublicInputFailed {
-                        stage: JoltRelationId::BytecodeReadRaf,
-                        reason: "no input deriveds".to_string(),
-                    })
-                },
+                |id| relation.derive_input_term(id, &challenges),
             )
             .unwrap();
 
@@ -667,12 +688,7 @@ mod field_inline_tests {
                         .resolve_challenge(id)
                         .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
                 },
-                |_| {
-                    Err(VerifierError::StageClaimPublicInputFailed {
-                        stage: JoltRelationId::BytecodeReadRaf,
-                        reason: "no input deriveds".to_string(),
-                    })
-                },
+                |id| relation.derive_input_term(id, &challenges),
             )
             .unwrap();
         assert_eq!(

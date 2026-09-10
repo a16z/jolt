@@ -884,6 +884,28 @@ where
         spartan_shift_raf,
     )?;
     values.public(JoltDerivedId::from(BytecodeReadRafPublic::Entry), entry)?;
+    // The batching-challenge powers the read-RAF expressions fold under
+    // (`bytecode::challenge_pow_expr` leaves), one public per power.
+    {
+        use jolt_claims::SumcheckChallenges as _;
+        for (challenge, bound) in bytecode::challenge_power_bounds(bytecode::READ_RAF_CYCLE_STAGES)
+        {
+            let value = bytecode_challenges
+                .resolve_challenge(&challenge.into())
+                .ok_or(VerifierError::MissingStageClaimChallenge {
+                    id: JoltChallengeId::from(challenge).into(),
+                })?;
+            for exponent in 2..bound {
+                values.public(
+                    JoltDerivedId::from(BytecodeReadRafPublic::ChallengePow {
+                        challenge,
+                        exponent,
+                    }),
+                    bytecode::challenge_pow(value, exponent),
+                )?;
+            }
+        }
+    }
 
     let booleanity_address_point = input
         .stage6a
