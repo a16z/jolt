@@ -52,6 +52,12 @@ pub struct FieldRegistersSpartanOuterOutputClaims<C> {
     pub store_to_x: C,
     #[opening(FieldOpFlag(FieldInlineOpFlag::LoadImm))]
     pub load_imm: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadWord))]
+    pub load_word: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadWordHi))]
+    pub load_word_hi: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::SplitLow))]
+    pub split_low: C,
 }
 
 #[cfg(test)]
@@ -80,6 +86,9 @@ mod tests {
             load_from_x: value,
             store_to_x: value,
             load_imm: value,
+            load_word: value,
+            load_word_hi: value,
+            split_low: value,
         };
         assert_eq!(outputs.canonical_order(), outer_output_openings());
     }

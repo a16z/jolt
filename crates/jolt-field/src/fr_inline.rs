@@ -1,19 +1,15 @@
-//! Field-inline (FR) guest arithmetic with prover-supplied result hints.
+//! Field-inline (FR) guest arithmetic.
 //!
 //! On a RISC-V guest built with the `field-inline-guest` feature, the ring
 //! operations of the FR-capable fields ([`crate::Fr`], [`Fp128`]) execute as
-//! field-inline instructions instead of software limb arithmetic: both
-//! operands are recomposed into the FR register file (Horner in radix
-//! 2^64), the operation runs as one instruction, and the result is compared
-//! by `FIELD_ASSERT_EQ` against a hint the prover recorded on the host. A
-//! wrong or missing hint traps the trace, so a hinted guest can never accept
-//! a computation the FR constraints would reject; the only thing a malicious
-//! hint stream can do is make the guest trap or reject.
-//!
-//! Hints are the raw limb representation of each operation's result in the
-//! same order the operations execute; the host records them by running the
-//! identical code with [`start_recording`] / [`take_recording`], and the
-//! guest installs the tape with [`install`] before the hinted computation.
+//! field-inline instructions instead of software limb arithmetic: operands
+//! enter the FR register file straight from memory (`FIELD_LOAD_WORD` for the
+//! top limb, `FIELD_LOAD_WORD_HI` folding each lower limb in radix 2^64), the
+//! operation runs as one instruction, and the result leaves through
+//! `FIELD_SPLIT_LOW` (one range-bound low limb per row, the quotient staying
+//! in the register file) closed by `FIELD_STORE_TO_X`. Every row is a
+//! constrained instruction, so the guest computes exactly what the FR
+//! constraints prove — no host-supplied hints.
 //!
 //! `Fr` keeps its Montgomery representation: a raw limb vector `aR` loaded
 //! as a field element differs from `a` by the constant `R`, which
@@ -23,7 +19,7 @@
 //! correction.
 
 #[cfg(target_arch = "riscv64")]
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// The custom-0 opcode the tracer dispatches field-inline words on.
 pub const OPCODE: u32 = 0x7b;
@@ -33,9 +29,19 @@ pub const FUNCT3_MUL: u32 = 2;
 pub const FUNCT3_INV: u32 = 3;
 pub const FUNCT3_ASSERT_EQ: u32 = 4;
 pub const FUNCT3_LOAD_FROM_X: u32 = 5;
+pub const FUNCT3_STORE_TO_X: u32 = 6;
 pub const FUNCT3_LOAD_IMM: u32 = 7;
-/// The x-register the bridge instructions read (`a0`).
+/// funct7 of `FIELD_SPLIT_LOW` (shares `FIELD_STORE_TO_X`'s funct3).
+pub const FUNCT7_SPLIT_LOW: u32 = 1;
+/// The x-register the bridge instructions read (`a0`); the memory-sourced
+/// loads take their address base from it.
 pub const BRIDGE_X_REGISTER: u32 = 10;
+/// The scratch x-register a memory-sourced load also writes the word to (`a1`).
+pub const LOAD_WORD_SCRATCH_X_REGISTER: u32 = 11;
+/// funct7 of the memory-sourced loads: the family bit, the high-word bit, and
+/// the word offset (see `jolt_riscv::field_inline_load_word_funct7`).
+pub const FUNCT7_LOAD_WORD_FAMILY: u32 = 0x40;
+pub const FUNCT7_LOAD_WORD_HIGH: u32 = 0x20;
 
 #[cfg(target_arch = "riscv64")]
 const fn r_word(funct3: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
@@ -47,12 +53,42 @@ const fn i_word(funct3: u32, rd: u32, imm: u32) -> u32 {
     OPCODE | (rd << 7) | (funct3 << 12) | (imm << 20)
 }
 
+/// `FIELD_LOAD_WORD[_HI] fr[fr_rd] <- mem[a0 + 8·offset_words]`, the word
+/// also written to the scratch `a1`.
+#[cfg(target_arch = "riscv64")]
+const fn load_word_encoding(fr_rd: u32, high: bool, offset_words: u32) -> u32 {
+    let funct7 =
+        FUNCT7_LOAD_WORD_FAMILY | if high { FUNCT7_LOAD_WORD_HIGH } else { 0 } | offset_words;
+    r_word(
+        FUNCT3_LOAD_FROM_X,
+        LOAD_WORD_SCRATCH_X_REGISTER,
+        BRIDGE_X_REGISTER,
+        fr_rd,
+    ) | (funct7 << 25)
+}
+
+/// `FIELD_SPLIT_LOW a1, fr[src] -> fr[quotient]`: the low limb lands in the
+/// scratch `a1`, the quotient in `fr[quotient]`.
+#[cfg(target_arch = "riscv64")]
+const fn split_low_word(src: u32, quotient: u32) -> u32 {
+    r_word(
+        FUNCT3_STORE_TO_X,
+        LOAD_WORD_SCRATCH_X_REGISTER,
+        src,
+        quotient,
+    ) | (FUNCT7_SPLIT_LOW << 25)
+}
+
+/// `FIELD_STORE_TO_X a1, fr[src]`: the (sub-2^64) value lands in `a1`.
+#[cfg(target_arch = "riscv64")]
+const fn store_to_x_word(src: u32) -> u32 {
+    r_word(FUNCT3_STORE_TO_X, LOAD_WORD_SCRATCH_X_REGISTER, src, 0)
+}
+
 // ---------------------------------------------------------------------------
 // FR register map for the hinted ops. Constants live in low registers for
 // the whole run; each operation uses the scratch registers above them.
 // ---------------------------------------------------------------------------
-#[cfg(target_arch = "riscv64")]
-const REG_RADIX: u32 = 0; // 2^64
 #[cfg(target_arch = "riscv64")]
 const REG_RINV: u32 = 1; // BN254 R^-1 (Montgomery product correction)
 #[cfg(target_arch = "riscv64")]
@@ -63,12 +99,13 @@ const REG_ZERO: u32 = 3;
 const REG_A: u32 = 4;
 #[cfg(target_arch = "riscv64")]
 const REG_B: u32 = 5;
+/// The two registers the limb readout alternates its quotients through.
 #[cfg(target_arch = "riscv64")]
-const REG_LIMB: u32 = 6;
+const REG_SCRATCH_A: u32 = 6;
 #[cfg(target_arch = "riscv64")]
 const REG_OUT: u32 = 7;
 #[cfg(target_arch = "riscv64")]
-const REG_HINT: u32 = 8;
+const REG_SCRATCH_B: u32 = 8;
 /// Running sum of a register-resident dot product.
 #[cfg(target_arch = "riscv64")]
 const REG_ACC: u32 = 9;
@@ -96,141 +133,11 @@ const BN254_R2: [u64; 4] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Hint tape (guest) and recorder (host).
-// ---------------------------------------------------------------------------
-
-// The tape is process-global, not thread-local: the guest is single-core and
-// verifier code may run on more than one thread-local block, which must all
-// see the same cursor.
-#[cfg(target_arch = "riscv64")]
-static TAPE_PTR: AtomicUsize = AtomicUsize::new(0);
-#[cfg(target_arch = "riscv64")]
-static TAPE_LEN: AtomicUsize = AtomicUsize::new(0);
-#[cfg(target_arch = "riscv64")]
-static TAPE_POS: AtomicUsize = AtomicUsize::new(0);
-
-/// Install the hint tape the hinted operations consume, in execution order:
-/// each hint is its result's limbs as little-endian `u64`s, so the tape is
-/// consumed straight from the byte buffer it arrives in. The slice must
-/// outlive every hinted operation.
-#[cfg(target_arch = "riscv64")]
-pub fn install(hints: &[u8]) {
-    TAPE_PTR.store(hints.as_ptr() as usize, Ordering::Relaxed);
-    TAPE_LEN.store(hints.len(), Ordering::Relaxed);
-    TAPE_POS.store(0, Ordering::Relaxed);
-}
-
-/// Tape bytes consumed so far (guest) — lets a driver check the tape was
-/// used exactly.
-#[cfg(target_arch = "riscv64")]
-pub fn consumed() -> usize {
-    TAPE_POS.load(Ordering::Relaxed)
-}
-
-#[cfg(target_arch = "riscv64")]
-#[cold]
-fn tape_exhausted() -> ! {
-    panic!("field-inline hint tape exhausted: the host recording ran fewer field operations than the guest")
-}
-
-/// Pops the next `N`-limb hint. Plain unaligned word loads: this sits on
-/// every field operation, so it must not turn into `memcpy` calls.
-#[cfg(target_arch = "riscv64")]
-#[inline(always)]
-fn next_hint<const N: usize>() -> [u64; N] {
-    let pos = TAPE_POS.load(Ordering::Relaxed);
-    if pos + 8 * N > TAPE_LEN.load(Ordering::Relaxed) {
-        tape_exhausted();
-    }
-    let ptr = TAPE_PTR.load(Ordering::Relaxed) as *const u8;
-    let mut out = [0u64; N];
-    for (i, slot) in out.iter_mut().enumerate() {
-        // SAFETY: bounds checked above against the installed slice length;
-        // the tape is little-endian, as is the guest.
-        *slot = unsafe { ptr.add(pos + 8 * i).cast::<u64>().read_unaligned() };
-    }
-    TAPE_POS.store(pos + 8 * N, Ordering::Relaxed);
-    out
-}
-
-#[cfg(not(target_arch = "riscv64"))]
-mod recorder {
-    use std::sync::{Mutex, MutexGuard, PoisonError};
-    static RECORD: Mutex<Option<Vec<u8>>> = Mutex::new(None);
-    fn tape() -> MutexGuard<'static, Option<Vec<u8>>> {
-        // A poisoned recorder holds a well-formed prefix; keep recording.
-        RECORD.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-    pub fn start() {
-        *tape() = Some(Vec::new());
-    }
-    pub fn take() -> Option<Vec<u8>> {
-        tape().take()
-    }
-    pub fn record(limbs: &[u64]) {
-        if let Some(tape) = tape().as_mut() {
-            for limb in limbs {
-                tape.extend_from_slice(&limb.to_le_bytes());
-            }
-        }
-    }
-}
-
-/// Start recording result hints on the host (no-op on the guest).
-pub fn start_recording() {
-    #[cfg(not(target_arch = "riscv64"))]
-    recorder::start();
-}
-
-/// Stop recording and return the tape bytes (host); `None` on the guest.
-pub fn take_recording() -> Option<Vec<u8>> {
-    #[cfg(not(target_arch = "riscv64"))]
-    return recorder::take();
-    #[cfg(target_arch = "riscv64")]
-    None
-}
-
-/// Record one result on the host recorder; no-op on the guest.
-#[inline]
-pub fn record(limbs: &[u64]) {
-    #[cfg(not(target_arch = "riscv64"))]
-    recorder::record(limbs);
-    #[cfg(target_arch = "riscv64")]
-    let _ = limbs;
-}
-
-// ---------------------------------------------------------------------------
 // Guest instruction emitters.
 // ---------------------------------------------------------------------------
 #[cfg(target_arch = "riscv64")]
 mod emit {
     use super::*;
-
-    #[inline(always)]
-    pub fn load_from_x(rd: u32, value: u64) {
-        // The word is built from run-time register numbers, so it goes through
-        // a register-indexed `.word` via a small match on the destination.
-        macro_rules! word {
-            ($rd:expr) => {
-                // SAFETY: one fixed field-inline word; a0 carries the operand.
-                unsafe {
-                    core::arch::asm!(".word {w}", w = const r_word(FUNCT3_LOAD_FROM_X, $rd, BRIDGE_X_REGISTER, 0), in("x10") value, options(nostack));
-                }
-            };
-        }
-        match rd {
-            0 => word!(0),
-            1 => word!(1),
-            2 => word!(2),
-            3 => word!(3),
-            4 => word!(4),
-            5 => word!(5),
-            6 => word!(6),
-            7 => word!(7),
-            8 => word!(8),
-            _ => word!(9),
-        }
-    }
 
     macro_rules! fixed {
         ($w:expr) => {
@@ -241,43 +148,98 @@ mod emit {
         };
     }
 
+    /// One memory-sourced load: `fr[dst] = [fr[dst]·2^64 +] mem[base + 8·offset]`.
+    /// The word is built from run-time register numbers and offsets, so it
+    /// goes through a small match on the destination and limb position.
     #[inline(always)]
-    pub fn load_imm_radix_2() {
-        fixed!(i_word(FUNCT3_LOAD_IMM, REG_RADIX, 2));
+    pub fn load_word(dst: u32, high: bool, offset: usize, base: *const u64) {
+        macro_rules! word {
+            ($rd:expr, $high:expr, $offset:expr) => {
+                // SAFETY: one fixed field-inline word; a0 carries the address
+                // base, a1 receives the loaded word.
+                unsafe {
+                    core::arch::asm!(".word {w}", w = const load_word_encoding($rd, $high, $offset), in("x10") base, out("x11") _, options(nostack, readonly));
+                }
+            };
+        }
+        macro_rules! limbs {
+            ($rd:expr) => {
+                match (high, offset) {
+                    (false, 0) => word!($rd, false, 0),
+                    (false, 1) => word!($rd, false, 1),
+                    (false, 2) => word!($rd, false, 2),
+                    (false, _) => word!($rd, false, 3),
+                    (true, 0) => word!($rd, true, 0),
+                    (true, 1) => word!($rd, true, 1),
+                    (true, 2) => word!($rd, true, 2),
+                    (true, _) => word!($rd, true, 3),
+                }
+            };
+        }
+        match dst {
+            REG_RINV => limbs!(REG_RINV),
+            REG_R2 => limbs!(REG_R2),
+            REG_A => limbs!(REG_A),
+            _ => limbs!(REG_B),
+        }
     }
+
+    /// `a1 = fr[src] mod 2^64`, `fr[quotient] = (fr[src] − a1) / 2^64`; returns
+    /// the low limb. `src` is a result register or a scratch quotient.
+    #[inline(always)]
+    pub fn split_low(src: u32, quotient: u32) -> u64 {
+        macro_rules! word {
+            ($src:expr, $quotient:expr) => {{
+                let low: u64;
+                // SAFETY: one fixed field-inline word; a1 receives the limb.
+                unsafe {
+                    core::arch::asm!(".word {w}", w = const split_low_word($src, $quotient), out("x11") low, options(nostack, nomem));
+                }
+                low
+            }};
+        }
+        macro_rules! sources {
+            ($quotient:expr) => {
+                match src {
+                    REG_OUT => word!(REG_OUT, $quotient),
+                    REG_ACC => word!(REG_ACC, $quotient),
+                    REG_SUM => word!(REG_SUM, $quotient),
+                    REG_SCRATCH_A => word!(REG_SCRATCH_A, $quotient),
+                    _ => word!(REG_SCRATCH_B, $quotient),
+                }
+            };
+        }
+        match quotient {
+            REG_SCRATCH_A => sources!(REG_SCRATCH_A),
+            _ => sources!(REG_SCRATCH_B),
+        }
+    }
+
+    /// `a1 = fr[src]` for a value below 2^64 (the last quotient of a readout).
+    #[inline(always)]
+    pub fn store_to_x(src: u32) -> u64 {
+        macro_rules! word {
+            ($src:expr) => {{
+                let value: u64;
+                // SAFETY: one fixed field-inline word; a1 receives the value.
+                unsafe {
+                    core::arch::asm!(".word {w}", w = const store_to_x_word($src), out("x11") value, options(nostack, nomem));
+                }
+                value
+            }};
+        }
+        match src {
+            REG_OUT => word!(REG_OUT),
+            REG_ACC => word!(REG_ACC),
+            REG_SUM => word!(REG_SUM),
+            REG_SCRATCH_A => word!(REG_SCRATCH_A),
+            _ => word!(REG_SCRATCH_B),
+        }
+    }
+
     #[inline(always)]
     pub fn load_imm_zero() {
         fixed!(i_word(FUNCT3_LOAD_IMM, REG_ZERO, 0));
-    }
-    #[inline(always)]
-    pub fn square_radix() {
-        fixed!(r_word(FUNCT3_MUL, REG_RADIX, REG_RADIX, REG_RADIX));
-    }
-    /// `dst = dst * radix + limb` — the Horner step; `dst` is A, B, RINV, R2 or HINT.
-    #[inline(always)]
-    pub fn horner_step(dst: u32) {
-        match dst {
-            REG_A => {
-                fixed!(r_word(FUNCT3_MUL, REG_A, REG_A, REG_RADIX));
-                fixed!(r_word(FUNCT3_ADD, REG_A, REG_A, REG_LIMB));
-            }
-            REG_B => {
-                fixed!(r_word(FUNCT3_MUL, REG_B, REG_B, REG_RADIX));
-                fixed!(r_word(FUNCT3_ADD, REG_B, REG_B, REG_LIMB));
-            }
-            REG_RINV => {
-                fixed!(r_word(FUNCT3_MUL, REG_RINV, REG_RINV, REG_RADIX));
-                fixed!(r_word(FUNCT3_ADD, REG_RINV, REG_RINV, REG_LIMB));
-            }
-            REG_R2 => {
-                fixed!(r_word(FUNCT3_MUL, REG_R2, REG_R2, REG_RADIX));
-                fixed!(r_word(FUNCT3_ADD, REG_R2, REG_R2, REG_LIMB));
-            }
-            _ => {
-                fixed!(r_word(FUNCT3_MUL, REG_HINT, REG_HINT, REG_RADIX));
-                fixed!(r_word(FUNCT3_ADD, REG_HINT, REG_HINT, REG_LIMB));
-            }
-        }
     }
     #[inline(always)]
     pub fn add_out() {
@@ -308,20 +270,12 @@ mod emit {
         fixed!(r_word(FUNCT3_MUL, REG_OUT, REG_OUT, REG_R2));
     }
     #[inline(always)]
-    pub fn assert_out_eq_hint() {
-        fixed!(r_word(FUNCT3_ASSERT_EQ, 0, REG_OUT, REG_HINT));
-    }
-    #[inline(always)]
     pub fn acc_zero() {
         fixed!(i_word(FUNCT3_LOAD_IMM, REG_ACC, 0));
     }
     #[inline(always)]
     pub fn acc_add_out() {
         fixed!(r_word(FUNCT3_ADD, REG_ACC, REG_ACC, REG_OUT));
-    }
-    #[inline(always)]
-    pub fn assert_acc_eq_hint() {
-        fixed!(r_word(FUNCT3_ASSERT_EQ, 0, REG_ACC, REG_HINT));
     }
     /// Zero row accumulator `k` (registers 9..=13).
     #[inline(always)]
@@ -364,10 +318,6 @@ mod emit {
     pub fn sum_add_out() {
         fixed!(r_word(FUNCT3_ADD, REG_SUM, REG_SUM, REG_OUT));
     }
-    #[inline(always)]
-    pub fn assert_sum_eq_hint() {
-        fixed!(r_word(FUNCT3_ASSERT_EQ, 0, REG_SUM, REG_HINT));
-    }
 }
 
 #[cfg(target_arch = "riscv64")]
@@ -376,13 +326,16 @@ mod guest {
 
     static READY: AtomicBool = AtomicBool::new(false);
 
-    /// Load `limbs` (little-endian radix 2^64) into `dst` by Horner.
+    /// Load `limbs` (little-endian radix 2^64) into `dst` straight from
+    /// memory: the top limb by `FIELD_LOAD_WORD`, each lower limb folded in by
+    /// `FIELD_LOAD_WORD_HI` (a load and the Horner step in one row). One row
+    /// per limb instead of the bridge's three.
     #[inline(always)]
     fn load<const N: usize>(dst: u32, limbs: &[u64; N]) {
-        emit::load_from_x(dst, limbs[N - 1]);
+        let base = limbs.as_ptr();
+        emit::load_word(dst, false, N - 1, base);
         for i in (0..N - 1).rev() {
-            emit::load_from_x(REG_LIMB, limbs[i]);
-            emit::horner_step(dst);
+            emit::load_word(dst, true, i, base);
         }
     }
 
@@ -391,22 +344,35 @@ mod guest {
         if READY.load(Ordering::Relaxed) {
             return;
         }
-        emit::load_imm_radix_2();
-        for _ in 0..6 {
-            emit::square_radix(); // 2 -> 2^64
-        }
         emit::load_imm_zero();
         load(REG_RINV, &BN254_RINV);
         load(REG_R2, &BN254_R2);
         READY.store(true, Ordering::Relaxed);
     }
 
+    /// Read the `N`-limb result out of `src`: `N − 1` splits peel the low
+    /// limbs (quotients alternating through the two scratch registers), and
+    /// the last quotient, below 2^64, leaves through the store bridge.
+    #[inline(always)]
+    fn read_out<const N: usize>(src: u32) -> [u64; N] {
+        let mut limbs = [0u64; N];
+        let mut current = src;
+        for limb in limbs.iter_mut().take(N - 1) {
+            let quotient = if current == REG_SCRATCH_A {
+                REG_SCRATCH_B
+            } else {
+                REG_SCRATCH_A
+            };
+            *limb = emit::split_low(current, quotient);
+            current = quotient;
+        }
+        limbs[N - 1] = emit::store_to_x(current);
+        limbs
+    }
+
     #[inline(always)]
     fn finish<const N: usize>() -> [u64; N] {
-        let hint = next_hint::<N>();
-        load(REG_HINT, &hint);
-        emit::assert_out_eq_hint();
-        hint
+        read_out(REG_OUT)
     }
 
     #[inline(always)]
@@ -446,9 +412,9 @@ mod guest {
     }
     /// Caller guarantees `a != 0` (FIELD_INV traps on zero).
     /// `Σ a[i]·b[i]` with the running sum resident in the field register file:
-    /// operands are loaded once each and only the final sum is hinted, so a
-    /// length-`k` dot product costs `k` multiplies with one hint round trip
-    /// instead of `k` hinted multiplies and `k − 1` hinted additions.
+    /// operands are loaded once each and only the final sum is read out, so a
+    /// length-`k` dot product costs `k` multiplies and one readout instead of
+    /// `k` multiplies and `k − 1` additions each read out.
     /// Canonical (non-Montgomery) limbs only.
     #[inline(always)]
     pub fn dot<const N: usize>(a: &[[u64; N]], b: &[[u64; N]]) -> [u64; N] {
@@ -460,14 +426,11 @@ mod guest {
             emit::mul_out();
             emit::acc_add_out();
         }
-        let hint = next_hint::<N>();
-        load(REG_HINT, &hint);
-        emit::assert_acc_eq_hint();
-        hint
+        read_out(REG_ACC)
     }
 
     /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]` with the row sums and the
-    /// weighted total register-resident and one hint for the result. Each
+    /// weighted total register-resident and one readout for the result. Each
     /// power is loaded once per block of [`WEIGHTED_ROWS_BLOCK`] rows, which
     /// is what makes this cheaper than one [`dot`] per row: operand ingress,
     /// not arithmetic, is the cost of a field-inline multiply-accumulate.
@@ -534,10 +497,7 @@ mod guest {
                 emit::sum_add_out();
             }
         }
-        let hint = next_hint::<N>();
-        load(REG_HINT, &hint);
-        emit::assert_sum_eq_hint();
-        hint
+        read_out(REG_SUM)
     }
 
     #[inline(always)]

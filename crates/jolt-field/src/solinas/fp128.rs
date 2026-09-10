@@ -1214,24 +1214,21 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
 #[cfg(all(feature = "field-inline-guest", not(target_arch = "riscv64")))]
 impl<const P: u128> Fp128<P> {
     /// Host side of the field-inline dot product: exact widening
-    /// accumulation, one reduction, one recorded hint.
+    /// accumulation, one reduction.
     fn inline_dot_kernel(a: &[Self], b: &[Self]) -> Self {
         use crate::{Unreduced, Zero};
         let accum = a.iter().zip(b).fold(
             <<Self as Unreduced>::Product as Zero>::zero(),
             |acc, (x, y)| acc + x.mul_unreduced(*y),
         );
-        let out = <Self as Unreduced>::reduce_product(accum);
-        crate::fr_inline::record(&out.0);
-        out
+        <Self as Unreduced>::reduce_product(accum)
     }
 
     /// Host side of the weighted-rows kernel: exact per-row accumulation,
-    /// one reduction per row, one recorded hint for the total.
+    /// one reduction per row.
     fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
         use crate::{Unreduced, Zero};
-        let out = rows
-            .iter()
+        rows.iter()
             .zip(weights)
             .fold(Self::zero(), |sum, (row, weight)| {
                 let accum = row.iter().zip(pows).fold(
@@ -1240,9 +1237,7 @@ impl<const P: u128> Fp128<P> {
                 );
                 let row_sum = <Self as Unreduced>::reduce_product(accum);
                 Fp128(Self::add_raw(sum.0, Self::mul_raw(row_sum.0, weight.0)))
-            });
-        crate::fr_inline::record(&out.0);
-        out
+            })
     }
 }
 
@@ -1343,8 +1338,8 @@ mod tests {
 }
 
 /// The ring-op bodies: native Solinas arithmetic, or on a RISC-V guest built
-/// with `field-inline-guest` the hinted field-inline path (canonical limbs
-/// need no representation correction).
+/// with `field-inline-guest` the field-inline path for multiplication and
+/// inversion (canonical limbs need no representation correction).
 #[cfg(not(all(feature = "field-inline-guest", target_arch = "riscv64")))]
 impl<const P: u128> Fp128<P> {
     #[inline(always)]
@@ -1365,24 +1360,21 @@ impl<const P: u128> Fp128<P> {
     }
     #[inline(always)]
     fn inline_inverse(a: Self) -> Option<Self> {
-        let out: Option<Self> = if num_traits::Zero::is_zero(&a) {
+        if num_traits::Zero::is_zero(&a) {
             None
         } else {
             Some(a.inv_or_zero())
-        };
-        #[cfg(feature = "field-inline-guest")]
-        if let Some(out) = out {
-            crate::fr_inline::record(&out.0);
         }
-        out
     }
 }
 
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 impl<const P: u128> Fp128<P> {
     // Addition, subtraction and negation stay in software on the guest: a
-    // two-limb add with one conditional subtract is cheaper than the hinted
-    // field-inline round trip (operand loads, hint load, assert).
+    // two-limb add with one conditional subtract costs about what the
+    // field-inline round trip does (four operand loads, the op, two readout
+    // rows). A multiply is several times that in software, so it goes
+    // through the FR unit.
     fn inline_add(a: Self, b: Self) -> Self {
         Fp128(Self::add_raw(a.0, b.0))
     }
@@ -1390,7 +1382,7 @@ impl<const P: u128> Fp128<P> {
         Fp128(Self::sub_raw(a.0, b.0))
     }
     fn inline_mul(a: Self, b: Self) -> Self {
-        Fp128(Self::mul_raw(a.0, b.0))
+        Fp128(crate::fr_inline::mul(&a.0, &b.0, false))
     }
     fn inline_neg(a: Self) -> Self {
         Fp128(Self::sub_raw(pack(0, 0), a.0))

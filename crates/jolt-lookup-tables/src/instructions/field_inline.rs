@@ -12,33 +12,43 @@
 //! same condition under which the tracer executes the store.
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_riscv::instructions::FieldStoreToX;
+use jolt_riscv::instructions::{FieldSplitLow, FieldStoreToX};
 use jolt_riscv::JoltCycle;
 
-impl_lookup_table!(FieldStoreToX, Some(RangeCheck));
+/// The store bridge's range-checked rd write, shared by `FieldStoreToX` and
+/// `FieldSplitLow` (whose rd write is the peeled low limb).
+macro_rules! impl_range_checked_rd_write {
+    ($($name:ident),+ $(,)?) => {
+        $(
+            impl_lookup_table!($name, Some(RangeCheck));
 
-impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for FieldStoreToX<C> {
-    fn to_instruction_inputs(&self) -> (u64, i128) {
-        (0, 0)
-    }
+            impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for $name<C> {
+                fn to_instruction_inputs(&self) -> (u64, i128) {
+                    (0, 0)
+                }
 
-    fn to_lookup_operands(&self) -> (u64, u128) {
-        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        (
-            0,
-            (self.0.rd_vals().map_or(0, |(_, post)| post) & mask) as u128,
-        )
-    }
+                fn to_lookup_operands(&self) -> (u64, u128) {
+                    let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+                    (
+                        0,
+                        (self.0.rd_vals().map_or(0, |(_, post)| post) & mask) as u128,
+                    )
+                }
 
-    fn to_lookup_index(&self) -> u128 {
-        LookupQuery::<XLEN>::to_lookup_operands(self).1
-    }
+                fn to_lookup_index(&self) -> u128 {
+                    LookupQuery::<XLEN>::to_lookup_operands(self).1
+                }
 
-    fn to_lookup_output(&self) -> u64 {
-        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        self.0.rd_vals().map_or(0, |(_, post)| post) & mask
-    }
+                fn to_lookup_output(&self) -> u64 {
+                    let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
+                    self.0.rd_vals().map_or(0, |(_, post)| post) & mask
+                }
+            }
+        )+
+    };
 }
+
+impl_range_checked_rd_write!(FieldStoreToX, FieldSplitLow);
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]

@@ -220,7 +220,21 @@ impl FieldInlineBytecodeRow {
         let Some(shape) = field_inline_operand_shape(row.instruction_kind) else {
             return Ok(Self::default());
         };
-        let rs1 = if shape.reads_fr_rs1 {
+        // The field destination rides the `rs2` slot when the `rd` slot names
+        // a scratch x-register (the memory-sourced loads).
+        let (fr_rd_slot, fr_rd_name) = if shape.fr_rd_in_rs2_slot {
+            (row.operands.rs2, "rs2")
+        } else {
+            (row.operands.rd, "rd")
+        };
+        let rd = if shape.writes_fr_rd {
+            Some(field_register(fr_rd_slot, fr_rd_name)?)
+        } else {
+            None
+        };
+        let rs1 = if shape.fr_rs1_is_fr_rd {
+            rd
+        } else if shape.reads_fr_rs1 {
             Some(field_register(row.operands.rs1, "rs1")?)
         } else {
             None
@@ -230,13 +244,10 @@ impl FieldInlineBytecodeRow {
         } else {
             None
         };
-        let rd = if shape.writes_fr_rd {
-            Some(field_register(row.operands.rd, "rd")?)
-        } else {
-            None
-        };
         let bridge_x_register = match shape.bridge_x_register_role {
-            Some(FieldInlineXRegisterRole::ReadRs1) => Some(x_register(row.operands.rs1, "rs1")?),
+            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
+                Some(x_register(row.operands.rs1, "rs1")?)
+            }
             Some(FieldInlineXRegisterRole::WriteRd) => {
                 // x0 discards writes, so the bridge row `RdWriteValue =
                 // FieldRs1Value` could hold only for a zero field value; the
@@ -344,6 +355,14 @@ pub enum FieldInlineBridge {
         field_value: FieldEncodedValue,
         x_register: u8,
         x_value: u64,
+    },
+    /// A memory-sourced load: the word read at `x_base + offset` was written
+    /// to the scratch `x_register` and folded into the field destination.
+    LoadWord {
+        x_base: u8,
+        x_register: u8,
+        word: u64,
+        field_value: FieldEncodedValue,
     },
 }
 

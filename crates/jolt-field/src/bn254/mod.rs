@@ -400,40 +400,23 @@ impl InlineArith for Fq {
 impl InlineArith for Fr {
     #[inline(always)]
     fn add(a: Self, b: Self) -> Self {
-        let out = Fr(a.0 + b.0);
-        #[cfg(feature = "field-inline-guest")]
-        crate::fr_inline::record(&out.inner_limbs());
-        out
+        Fr(a.0 + b.0)
     }
     #[inline(always)]
     fn sub(a: Self, b: Self) -> Self {
-        let out = Fr(a.0 - b.0);
-        #[cfg(feature = "field-inline-guest")]
-        crate::fr_inline::record(&out.inner_limbs());
-        out
+        Fr(a.0 - b.0)
     }
     #[inline(always)]
     fn mul(a: Self, b: Self) -> Self {
-        let out = Fr(a.0 * b.0);
-        #[cfg(feature = "field-inline-guest")]
-        crate::fr_inline::record(&out.inner_limbs());
-        out
+        Fr(a.0 * b.0)
     }
     #[inline(always)]
     fn neg(a: Self) -> Self {
-        let out = Fr(-a.0);
-        #[cfg(feature = "field-inline-guest")]
-        crate::fr_inline::record(&out.inner_limbs());
-        out
+        Fr(-a.0)
     }
     #[inline(always)]
     fn inverse(a: Self) -> Option<Self> {
-        let out = <ark_bn254::Fr as ark_ff::Field>::inverse(&a.0).map(Fr);
-        #[cfg(feature = "field-inline-guest")]
-        if let Some(out) = out {
-            crate::fr_inline::record(&out.inner_limbs());
-        }
-        out
+        <ark_bn254::Fr as ark_ff::Field>::inverse(&a.0).map(Fr)
     }
 }
 

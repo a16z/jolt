@@ -155,7 +155,7 @@ pub struct OuterRemainder<F: JoltField> {
     /// `derive_output_term` call so the ZK path (which never evaluates the output
     /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
     coefficients: OnceLock<OuterRemainderCoefficients<F>>,
-    /// The 13 FR-local Spartan-outer opening values (appended-column order),
+    /// The 16 FR-local Spartan-outer opening values (appended-column order),
     /// composed in by the stage-1 front through
     /// [`with_field_inline_outputs`](Self::with_field_inline_outputs): the
     /// verifier from the proof's claims, the prover from the appendage its

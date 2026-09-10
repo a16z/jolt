@@ -141,14 +141,6 @@ fn verify(bytes: &[u8]) -> u32 {
         let device: JoltDevice = input.record();
         end_cycle_tracking("deserialize device");
 
-        // The field-inline hint tape: every field operation's result, in
-        // execution order, recorded by the host's own verification run.
-        start_cycle_tracking("deserialize hints");
-        let hints = input.raw();
-        end_cycle_tracking("deserialize hints");
-        #[cfg(feature = "field-inline")]
-        jolt_field::fr_inline::install(hints);
-
         start_cycle_tracking("verification");
         #[cfg(not(feature = "akita"))]
         let is_valid = jolt::jolt_verifier::verify::<
@@ -168,14 +160,6 @@ fn verify(bytes: &[u8]) -> u32 {
         .inspect_err(|error| eprintln!("verification failed: {error:?}"))
         .is_ok();
         end_cycle_tracking("verification");
-        #[cfg(feature = "field-inline")]
-        assert_eq!(
-            jolt_field::fr_inline::consumed(),
-            hints.len(),
-            "hint tape length disagrees with the executed field operations"
-        );
-        #[cfg(not(feature = "field-inline"))]
-        let _ = hints;
         all_valid = all_valid && is_valid;
     }
 

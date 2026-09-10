@@ -16,17 +16,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{error, info};
 
-/// Field-inline hint recording around the host's own verification; a no-op
-/// build without the `field-inline` feature ships an empty tape.
-#[cfg(feature = "field-inline")]
-use jolt_field::fr_inline::{start_recording, take_recording};
-#[cfg(not(feature = "field-inline"))]
-fn start_recording() {}
-#[cfg(not(feature = "field-inline"))]
-fn take_recording() -> Option<Vec<u8>> {
-    None
-}
-
 /// The proof and verifier preprocessing the guest consumes, per commitment
 /// build: Dory on the homomorphic build, Akita on `--features akita`.
 #[cfg(not(feature = "akita"))]
@@ -45,8 +34,8 @@ type GuestVerifierPreprocessing = jolt_sdk::jolt_verifier::JoltVerifierPreproces
 >;
 
 /// Guest records are `[u64 length][body][zero padding to 8 bytes]`, so every
-/// body starts 8-byte aligned relative to the stream: raw payloads (the hint
-/// tape, the Akita setup keys) are then used where they lie, and the Akita
+/// body starts 8-byte aligned relative to the stream: raw payloads (the
+/// Akita setup keys) are then used where they lie, and the Akita
 /// public matrix is viewed in place without copying.
 const RECORD_ALIGN: usize = 8;
 
@@ -378,10 +367,6 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
             Ok(_) => info!("✓ Device {i} deserialized"),
             Err(e) => error!("✗ Failed to deserialize device {i}: {e:?}"),
         }
-        match read_raw(all_groups_data, &mut offset) {
-            Ok(hints) => info!("✓ Hint tape {i} read ({} limbs)", hints.len() / 8),
-            Err(e) => error!("✗ Failed to deserialize hint tape {i}: {e:?}"),
-        }
     }
 
     let remaining = all_groups_data.len() - offset;
@@ -423,7 +408,7 @@ fn preprocess_guest_prover(
 }
 
 /// The packed (Akita) inner proofs: legacy packed prover over fp128, the
-/// packed verifier preprocessing, and the fp128 field-inline hint tape from
+/// packed verifier preprocessing from
 /// the host's own verification of each proof.
 #[cfg(feature = "akita")]
 fn collect_guest_proofs(
@@ -546,8 +531,7 @@ fn collect_guest_proofs(
             bincode::config::standard(),
         )
         .unwrap();
-        info!("  Verifying (recording the fp128 field-inline hint tape)...");
-        start_recording();
+        info!("  Verifying...");
         let is_valid = jolt_sdk::jolt_verifier::verify::<
             AkitaField,
             AkitaScheme,
@@ -556,12 +540,8 @@ fn collect_guest_proofs(
         >(&preprocessing, &public_io, &proof, None)
         .inspect_err(|error| error!("  Verification failed: {error:?}"))
         .is_ok();
-        let hints = take_recording().unwrap_or_default();
-        info!(
-            "  Verification result: {is_valid}; {} hint limbs",
-            hints.len() / 8
-        );
-        records.push((proof, public_io, hints));
+        info!("  Verification result: {is_valid}");
+        records.push((proof, public_io));
         verifier_preprocessing = Some(preprocessing);
     }
     // The multi-megabyte setup payloads travel out of line, so the guest reads
@@ -577,10 +557,9 @@ fn collect_guest_proofs(
         push_raw(&mut all_groups_data, payload);
     }
     push_record(&mut all_groups_data, &n);
-    for (proof, public_io, hints) in records {
+    for (proof, public_io) in records {
         push_record(&mut all_groups_data, &proof);
         push_record(&mut all_groups_data, &public_io);
-        push_raw(&mut all_groups_data, &hints);
     }
     info!("Total data size: {} bytes", all_groups_data.len());
     all_groups_data
@@ -626,7 +605,6 @@ fn collect_guest_proofs(
             jolt_sdk::Curve,
             jolt_sdk::PCS,
         >(&guest_prover_preprocessing);
-    // Record hints against the preprocessing exactly as the guest receives it.
     let guest_verifier_preprocessing: JoltVerifierPreprocessing =
         bincode::serde::decode_from_slice(
             &bincode::serde::encode_to_vec(
@@ -699,8 +677,7 @@ fn collect_guest_proofs(
         push_record(&mut all_groups_data, &proof);
         push_record(&mut all_groups_data, &io_device);
 
-        info!("  Verifying (recording the field-inline hint tape)...");
-        start_recording();
+        info!("  Verifying...");
         let is_valid = jolt_sdk::jolt_verifier::verify::<
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
@@ -708,12 +685,7 @@ fn collect_guest_proofs(
             jolt_sdk::VerifierTranscript,
         >(&guest_verifier_preprocessing, &io_device, &proof, None)
         .is_ok();
-        let hints = take_recording().unwrap_or_default();
-        info!(
-            "  Verification result: {is_valid}; {} hint limbs",
-            hints.len() / 8
-        );
-        push_raw(&mut all_groups_data, &hints);
+        info!("  Verification result: {is_valid}");
     }
     info!("Total prove time: {total_prove_time:.3}s");
     info!("Total data size: {} bytes", all_groups_data.len());
@@ -875,7 +847,7 @@ fn run_recursion_proof(
     program.set_func("verify");
     program.set_std(true);
     // The verifier guest computes its field arithmetic through the
-    // field-inline instructions (hinted), so it decodes under the FR profile.
+    // field-inline instructions, so it decodes under the FR profile.
     #[cfg(feature = "field-inline")]
     program.enable_field_inline();
     #[cfg(feature = "akita")]
@@ -891,7 +863,7 @@ fn run_recursion_proof(
     let elf_contents = program.get_elf_contents().unwrap();
     if run_config == RunConfig::Trace {
         // Trace through the host program: it decodes under the FR profile the
-        // hinted verifier guest needs, and tracing needs no PCS setup.
+        // verifier guest needs, and tracing needs no PCS setup.
         info!("  Trace-only mode: Skipping proof generation and verification.");
         // Streamed to disk: a multi-gigacycle verifier trace does not fit in
         // memory as rows.

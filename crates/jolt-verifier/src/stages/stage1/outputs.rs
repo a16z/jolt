@@ -17,7 +17,7 @@ use crate::VerifierError;
 pub struct Stage1OutputClaims<F: JoltField> {
     pub uniskip_output_claim: F,
     pub outer: Stage1BatchOutputClaims<F>,
-    /// The 13 FR-local Spartan-outer openings the composed R1CS appends after
+    /// The 16 FR-local Spartan-outer openings the composed R1CS appends after
     /// the 35 ordinary columns. Present on every field-inline proof; carried as
     /// an `Option` for the same producer reasons as the commitment payload, and
     /// required fail-closed by `stage1::verify`.
@@ -93,7 +93,7 @@ pub struct Stage1ClearOutput<F: JoltField> {
     /// `output_values`. All 35 openings share the single remainder point; the raw
     /// reduction point is exposed by [`Stage1Output::remainder_point`].
     pub output_points: Stage1BatchOutputPoints<F>,
-    /// The 13 FR-local Spartan-outer opening values (appended-column order).
+    /// The 16 FR-local Spartan-outer opening values (appended-column order).
     /// They share the remainder opening point with the ordinary openings; the
     /// stage-2 FR claim reduction consumes them. `Some` on every verified
     /// FR-on proof (`stage1::verify` fills it); `None` only from producers

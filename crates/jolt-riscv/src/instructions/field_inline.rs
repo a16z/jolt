@@ -46,3 +46,30 @@ jolt_instruction!(
     /// Load an immediate field value into a field register.
     FieldLoadImm
 );
+
+jolt_instruction!(
+    /// Load a 64-bit word from memory into a field register: an `LD` into the
+    /// scratch x-register `rd` (the ordinary load rows bind the word) whose
+    /// loaded value the FR row copies into field register `rs2`.
+    FieldLoadWord,
+    circuit flags: [Load],
+    instruction flags: []
+);
+
+jolt_instruction!(
+    /// Load the low word of a two-limb operand and fold it in: field register
+    /// `rs2` becomes `2^64 · rs2 + word`, the word again an `LD` into the
+    /// scratch x-register `rd`.
+    FieldLoadWordHi,
+    circuit flags: [Load],
+    instruction flags: []
+);
+
+jolt_instruction!(
+    /// Peel the low limb off field register `rs1`: the x-register `rd` takes
+    /// `frs1 mod 2^64`, range-bound through the same `RangeCheck` lookup as
+    /// `FieldStoreToX`, and field register `rs2` takes the quotient.
+    FieldSplitLow,
+    circuit flags: [Advice, WriteLookupOutputToRD],
+    instruction flags: []
+);

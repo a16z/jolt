@@ -15,7 +15,7 @@ use crate::VerifierError;
 
 /// Extract the FR Spartan-outer appendage from the stage-1 claims (fail-closed
 /// on an FR-on proof without it) and compose it into the batch's remainder
-/// relation: the composed R1CS appends 13 FR-local columns whose openings ride
+/// relation: the composed R1CS appends 16 FR-local columns whose openings ride
 /// the same remainder sumcheck and feed the composed expected-output check.
 /// Returns the composed batch and the typed appendage.
 pub fn compose_outer_outputs<F: JoltField>(
@@ -55,7 +55,7 @@ pub fn append_outer_openings<F: JoltField, T: Transcript<Challenge = F>>(
 }
 
 /// The composed stage-1 committed row count: the ordinary member openings plus
-/// the 13 FR-local appendage rows — the same rows the clear path absorbs after
+/// the 16 FR-local appendage rows — the same rows the clear path absorbs after
 /// the member openings.
 pub fn composed_output_claim_count(base: usize) -> Result<usize, VerifierError> {
     base.checked_add(FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT)

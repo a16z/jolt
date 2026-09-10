@@ -152,6 +152,9 @@ fn flags_for_op(op: FieldInlineOp) -> FieldInlineBytecodeFlags {
         FieldInlineOp::LoadFromX => flags.load_from_x = true,
         FieldInlineOp::StoreToX => flags.store_to_x = true,
         FieldInlineOp::LoadImm => flags.load_imm = true,
+        FieldInlineOp::LoadWord => flags.load_word = true,
+        FieldInlineOp::LoadWordHi => flags.load_word_hi = true,
+        FieldInlineOp::SplitLow => flags.split_low = true,
     }
     flags
 }
@@ -186,11 +189,15 @@ pub fn suppress_field_operand_slots(bytecode: &[JoltInstructionRow]) -> Vec<Jolt
             };
             let mut masked = *row;
             masked.operands.rd = match shape.bridge_x_register_role {
-                Some(FieldInlineXRegisterRole::WriteRd) => row.operands.rd,
+                Some(
+                    FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd,
+                ) => row.operands.rd,
                 _ => None,
             };
             masked.operands.rs1 = match shape.bridge_x_register_role {
-                Some(FieldInlineXRegisterRole::ReadRs1) => row.operands.rs1,
+                Some(
+                    FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd,
+                ) => row.operands.rs1,
                 _ => None,
             };
             // No field op reads an ordinary rs2.
@@ -315,9 +322,19 @@ mod tests {
             FieldInlineOp::LoadFromX => (register(8), None, None),
             FieldInlineOp::StoreToX => (None, register(9), None),
             FieldInlineOp::LoadImm => (register(10), None, None),
+            FieldInlineOp::LoadWord => (register(12), None, None),
+            FieldInlineOp::LoadWordHi => (register(13), register(13), None),
+            FieldInlineOp::SplitLow => (register(14), register(15), None),
         };
-        let bridge_x_register =
-            matches!(op, FieldInlineOp::LoadFromX | FieldInlineOp::StoreToX).then_some(11);
+        let bridge_x_register = matches!(
+            op,
+            FieldInlineOp::LoadFromX
+                | FieldInlineOp::StoreToX
+                | FieldInlineOp::LoadWord
+                | FieldInlineOp::LoadWordHi
+                | FieldInlineOp::SplitLow
+        )
+        .then_some(11);
         let immediate =
             matches!(op, FieldInlineOp::LoadImm).then(|| FieldEncodedValue::from_u64(42));
         ProgramRow {
@@ -331,7 +348,7 @@ mod tests {
         }
     }
 
-    const ALL_OPS: [FieldInlineOp; 8] = [
+    const ALL_OPS: [FieldInlineOp; 11] = [
         FieldInlineOp::Add,
         FieldInlineOp::Sub,
         FieldInlineOp::Mul,
@@ -340,6 +357,9 @@ mod tests {
         FieldInlineOp::LoadFromX,
         FieldInlineOp::StoreToX,
         FieldInlineOp::LoadImm,
+        FieldInlineOp::LoadWord,
+        FieldInlineOp::LoadWordHi,
+        FieldInlineOp::SplitLow,
     ];
 
     fn claims_flag_for_op(op: FieldInlineOp) -> FieldInlineOpFlag {
@@ -352,6 +372,9 @@ mod tests {
             FieldInlineOp::LoadFromX => FieldInlineOpFlag::LoadFromX,
             FieldInlineOp::StoreToX => FieldInlineOpFlag::StoreToX,
             FieldInlineOp::LoadImm => FieldInlineOpFlag::LoadImm,
+            FieldInlineOp::LoadWord => FieldInlineOpFlag::LoadWord,
+            FieldInlineOp::LoadWordHi => FieldInlineOpFlag::LoadWordHi,
+            FieldInlineOp::SplitLow => FieldInlineOpFlag::SplitLow,
         }
     }
 

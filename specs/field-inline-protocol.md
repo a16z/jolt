@@ -743,6 +743,9 @@ selectors:
   IsFieldLoadFromX
   IsFieldStoreToX
   IsFieldLoadImm
+  IsFieldLoadWord
+  IsFieldLoadWordHi
+  IsFieldSplitLow
 
 field values:
   FieldRs1Value
@@ -784,6 +787,15 @@ field-register -> x-register:
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(Imm, F)) = 0
+
+memory -> field-register (see "Memory-Sourced Loads And Limb Readout";
+one row serves both forms — a plain load reads no field register, so its
+FieldRs1Value is zero):
+  (IsFieldLoadWord + IsFieldLoadWordHi)
+    * (FieldRdValue - 2^64 * FieldRs1Value - RdWriteValue) = 0
+
+field-register -> limbs:
+  IsFieldSplitLow * (FieldRs1Value - RdWriteValue - 2^64 * FieldRdValue) = 0
 ```
 
 The FINV relation cannot be represented as
@@ -849,6 +861,55 @@ These rows depend on canonical encoding for the active `F: JoltField`. For a
 advice-tape encoding, and bridge/load/store row shape. It does not change the
 field arithmetic relation: FR values remain native elements of `F`.
 
+## Memory-Sourced Loads And Limb Readout
+
+Operand ingress and result egress dominate a guest's field-inline cost: the
+bridge moves one 64-bit word per row, so a two-limb operand cost two `LD`s,
+two `FIELD_LOAD_FROM_X` rows and a Horner multiply-add, and a result left
+the register file only by comparison against a host-supplied hint. Three
+instructions collapse both sides to one row per limb and remove the hint
+tape.
+
+`FIELD_LOAD_WORD frd <- mem[x_rs1 + 8·offset]` and
+`FIELD_LOAD_WORD_HI frd <- frd · 2^64 + mem[x_rs1 + 8·offset]` are, to the
+RV64 rows, an `LD` into a scratch x-register: they carry the `Load` circuit
+flag, so `RamAddress = Rs1Value + Imm`, `RamReadValue = RamWriteValue` and
+`RdWriteValue = RamReadValue` bind the word exactly as for `LD`, the RAM
+Twist records the read, and the register Twist records the scratch write.
+The FR row then equates the field destination with the word folded under
+the accumulator read back as `rs1` (`2^64` is a constant of `F`); a plain
+`LOAD_WORD` reads no field register, the read-write checking pins that
+cycle's `FieldRs1Value` to zero, and the same row reduces to
+`FieldRdValue = RdWriteValue`. The two ops share one row so the Spartan
+outer stays at 30 rows: a 16-node uni-skip domain would overflow the
+kernels' `i128` power sums. Encoding: opcode `0x7b`, `FIELD_LOAD_FROM_X`'s
+funct3, funct7 bit 6 set, bit 5 the high-word form, bits 4..0 the word
+offset; `rd` the scratch x-register, `rs1` the x base, `rs2` the field
+destination (the side table reads the field operand from the `rs2` slot and,
+for the high form, the field `rs1` read is that same register). A top limb
+loads with `LOAD_WORD`, every lower limb with `LOAD_WORD_HI`: one row per
+limb.
+
+`FIELD_SPLIT_LOW x_rd, frs1 -> frs2` peels the low limb: the x-register
+write is `frs1 mod 2^64`, range-bound through the same `RangeCheck` lookup
+as `FIELD_STORE_TO_X` (`Advice` + `WriteLookupOutputToRD`, RV64 row 12 and
+the lookup give `RdWriteValue < 2^64`), and the field destination `rs2` is
+the quotient `(frs1 − x_rd) / 2^64`. `N − 1` splits followed by one
+`FIELD_STORE_TO_X` of the last quotient (which must fit 64 bits) write every
+limb of an `N`-limb result to x-registers: `frs1 = Σ limb_i · 2^(64 i)` with
+every limb below 2^64. The representative is canonical whenever
+`Σ limb_i · 2^(64 i) < p`; a prover may only choose a non-canonical
+representative of the same residue (`f + k·p`) when it fits the limb width,
+which changes what the guest computes next and therefore what it accepts —
+it cannot make an honest verifier program accept. Encoding: funct3 of
+`FIELD_STORE_TO_X`, funct7 `1`; `rd` the x-register, `rs1` the field source,
+`rs2` the field quotient register.
+
+Stage 1 appends the three selector openings (`FieldOpFlag(LoadWord)`,
+`FieldOpFlag(LoadWordHi)`, `FieldOpFlag(SplitLow)`) after the eight base
+flags, in that order, and the FR bytecode side table's stage-1 flag set
+grows by the same three entries.
+
 ## Stage 1 Composition
 
 Field-inline stage-1 composition follows the same ownership rule as the rest
@@ -901,6 +962,9 @@ IsFieldAssertEq
 IsFieldLoadFromX
 IsFieldStoreToX
 IsFieldLoadImm
+IsFieldLoadWord
+IsFieldLoadWordHi
+IsFieldSplitLow
 ```
 
 `jolt-verifier` should compute the selected Spartan outer expected claim using

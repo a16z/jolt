@@ -120,7 +120,7 @@ where
         let remainder_consistency =
             sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
         // The committed shell carries the composed row order: the 35 member
-        // openings, then (under `field-inline`) the 13 FR-local appendage
+        // openings, then (under `field-inline`) the 16 FR-local appendage
         // rows — the same rows the clear path absorbs after the member
         // openings.
         let output_claim_count = sumchecks.output_claim_count();

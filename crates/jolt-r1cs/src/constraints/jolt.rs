@@ -98,6 +98,7 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FINV,
+    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_WORD,
 ];
 
 #[cfg(not(feature = "field-inline"))]
@@ -120,6 +121,7 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
     FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
+    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_SPLIT_LOW,
 ];
 
 pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
@@ -364,6 +366,9 @@ pub const fn field_inline_column(local_column: usize) -> Option<usize> {
         field_constraints::V_IS_FIELD_LOAD_FROM_X => Some(FIELD_INLINE_COLUMN_BASE + 10),
         field_constraints::V_IS_FIELD_STORE_TO_X => Some(FIELD_INLINE_COLUMN_BASE + 11),
         field_constraints::V_IS_FIELD_LOAD_IMM => Some(FIELD_INLINE_COLUMN_BASE + 12),
+        field_constraints::V_IS_FIELD_LOAD_WORD => Some(FIELD_INLINE_COLUMN_BASE + 13),
+        field_constraints::V_IS_FIELD_LOAD_WORD_HI => Some(FIELD_INLINE_COLUMN_BASE + 14),
+        field_constraints::V_IS_FIELD_SPLIT_LOW => Some(FIELD_INLINE_COLUMN_BASE + 15),
         _ => None,
     }
 }
@@ -512,8 +517,8 @@ mod tests {
             SPARTAN_OUTER_ROW_COUNT,
             rv64::NUM_EQ_CONSTRAINTS + field_constraints::NUM_EQ_CONSTRAINTS
         );
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 14);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 39);
+        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
+        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
         assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
         assert_eq!(
             &SPARTAN_OUTER_FIRST_GROUP_ROWS[10..],
@@ -522,6 +527,7 @@ mod tests {
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FINV,
+                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_WORD,
             ]
         );
         assert_eq!(
@@ -532,6 +538,7 @@ mod tests {
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
                 FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
+                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_SPLIT_LOW,
             ]
         );
         assert_eq!(
@@ -565,6 +572,9 @@ mod tests {
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadFromX),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::StoreToX),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
+            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWord),
+            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWordHi),
+            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::SplitLow),
         ];
         assert_eq!(FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, expected_inputs);
 

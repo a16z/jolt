@@ -14,6 +14,35 @@ pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
 pub const FIELD_INLINE_OPCODE: u8 = 0x7b;
 pub const FIELD_INLINE_R_TYPE_FUNCT7: u8 = 0;
 pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u8 = 7;
+/// The memory-sourced loads share `FIELD_LOAD_FROM_X`'s funct3 and are told
+/// apart by funct7: bit 6 marks the family, bit 5 selects the high-word
+/// (Horner) form, bits 4..0 carry the word offset added to the base register.
+pub const FIELD_INLINE_LOAD_WORD_FUNCT3: u8 = 5;
+pub const FIELD_INLINE_LOAD_WORD_FUNCT7_FAMILY: u8 = 0x40;
+pub const FIELD_INLINE_LOAD_WORD_FUNCT7_HIGH: u8 = 0x20;
+pub const FIELD_INLINE_LOAD_WORD_OFFSET_MASK: u8 = 0x1f;
+/// Bytes between consecutive word offsets of a memory-sourced load.
+pub const FIELD_INLINE_LOAD_WORD_STRIDE: u32 = 8;
+/// The limb split shares `FIELD_STORE_TO_X`'s funct3 under funct7 1.
+pub const FIELD_INLINE_SPLIT_LOW_FUNCT3: u8 = 6;
+pub const FIELD_INLINE_SPLIT_LOW_FUNCT7: u8 = 1;
+
+/// The funct7 of a memory-sourced load at `offset_words` (at most 31).
+pub const fn field_inline_load_word_funct7(high: bool, offset_words: u8) -> u8 {
+    FIELD_INLINE_LOAD_WORD_FUNCT7_FAMILY
+        | if high {
+            FIELD_INLINE_LOAD_WORD_FUNCT7_HIGH
+        } else {
+            0
+        }
+        | (offset_words & FIELD_INLINE_LOAD_WORD_OFFSET_MASK)
+}
+
+/// The byte offset a memory-sourced load word adds to its base register.
+pub const fn field_inline_load_word_offset(word: u32) -> u32 {
+    (((word >> 25) as u8) & FIELD_INLINE_LOAD_WORD_OFFSET_MASK) as u32
+        * FIELD_INLINE_LOAD_WORD_STRIDE
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
@@ -29,6 +58,19 @@ pub enum FieldInlineOp {
     LoadFromX,
     StoreToX,
     LoadImm,
+    /// `frd = mem[x_rs1 + offset]`: an `LD` into the scratch x-register `rd`
+    /// whose loaded word also lands in field register `rs2`.
+    LoadWord,
+    /// `frd = frd · 2^64 + mem[x_rs1 + offset]`: the Horner step of a two-limb
+    /// operand fused with the load of its low word (same operand roles as
+    /// [`Self::LoadWord`]; field register `rs2` is both read and written).
+    LoadWordHi,
+    /// Peel the low limb off a field value: `x_rd = frs1 mod 2^64` (a
+    /// range-bound store-bridge write) and field register `rs2` takes the
+    /// quotient `(frs1 − x_rd) / 2^64`. Repeated, then closed by a
+    /// `FIELD_STORE_TO_X` of the last quotient, it writes every limb of a
+    /// field result to x-registers without a host-supplied hint.
+    SplitLow,
 }
 
 impl FieldInlineOp {
@@ -42,6 +84,9 @@ impl FieldInlineOp {
             Self::LoadFromX => 5,
             Self::StoreToX => 6,
             Self::LoadImm => 7,
+            Self::LoadWord => 8,
+            Self::LoadWordHi => 9,
+            Self::SplitLow => 10,
         }
     }
 
@@ -55,9 +100,13 @@ impl FieldInlineOp {
             Self::LoadFromX => 5,
             Self::StoreToX => 6,
             Self::LoadImm => FIELD_INLINE_LOAD_IMM_FUNCT3,
+            Self::LoadWord | Self::LoadWordHi => FIELD_INLINE_LOAD_WORD_FUNCT3,
+            Self::SplitLow => FIELD_INLINE_SPLIT_LOW_FUNCT3,
         }
     }
 
+    /// The funct7 the encoding matches on; the memory-sourced loads keep their
+    /// word offset in the low funct7 bits, which the match ignores.
     pub const fn funct7(self) -> Option<u8> {
         match self {
             Self::LoadImm => None,
@@ -68,12 +117,20 @@ impl FieldInlineOp {
             | Self::AssertEq
             | Self::LoadFromX
             | Self::StoreToX => Some(FIELD_INLINE_R_TYPE_FUNCT7),
+            Self::LoadWord => Some(field_inline_load_word_funct7(false, 0)),
+            Self::LoadWordHi => Some(field_inline_load_word_funct7(true, 0)),
+            Self::SplitLow => Some(FIELD_INLINE_SPLIT_LOW_FUNCT7),
         }
+    }
+
+    pub const fn is_memory_load(self) -> bool {
+        matches!(self, Self::LoadWord | Self::LoadWordHi)
     }
 
     pub const fn instruction_mask(self) -> u32 {
         match self.funct7() {
             None => 0x0000_707f,
+            Some(_) if self.is_memory_load() => 0xc000_707f,
             Some(_) => 0xfe00_707f,
         }
     }
@@ -96,11 +153,23 @@ impl FieldInlineOp {
             5 => Some(Self::LoadFromX),
             6 => Some(Self::StoreToX),
             7 => Some(Self::LoadImm),
+            8 => Some(Self::LoadWord),
+            9 => Some(Self::LoadWordHi),
+            10 => Some(Self::SplitLow),
             _ => None,
         }
     }
 
     pub const fn from_r_type_key(funct7: u8, funct3: u8) -> Option<Self> {
+        if funct3 == FIELD_INLINE_LOAD_WORD_FUNCT3
+            && funct7 & FIELD_INLINE_LOAD_WORD_FUNCT7_FAMILY != 0
+        {
+            return if funct7 & FIELD_INLINE_LOAD_WORD_FUNCT7_HIGH != 0 {
+                Some(Self::LoadWordHi)
+            } else {
+                Some(Self::LoadWord)
+            };
+        }
         match (funct7, funct3) {
             (FIELD_INLINE_R_TYPE_FUNCT7, 0) => Some(Self::Add),
             (FIELD_INLINE_R_TYPE_FUNCT7, 1) => Some(Self::Sub),
@@ -109,6 +178,7 @@ impl FieldInlineOp {
             (FIELD_INLINE_R_TYPE_FUNCT7, 4) => Some(Self::AssertEq),
             (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadFromX),
             (FIELD_INLINE_R_TYPE_FUNCT7, 6) => Some(Self::StoreToX),
+            (FIELD_INLINE_SPLIT_LOW_FUNCT7, FIELD_INLINE_SPLIT_LOW_FUNCT3) => Some(Self::SplitLow),
             _ => None,
         }
     }
@@ -171,6 +241,9 @@ impl Valid for FieldInlineOp {
 pub enum FieldInlineXRegisterRole {
     ReadRs1,
     WriteRd,
+    /// A memory-sourced load: `rs1` is the address base and `rd` the scratch
+    /// register the loaded word is written to, exactly an `LD`.
+    ReadRs1WriteRd,
 }
 
 #[cfg(feature = "serialization")]
@@ -183,6 +256,7 @@ impl CanonicalSerialize for FieldInlineXRegisterRole {
         let tag = match self {
             Self::ReadRs1 => 0u8,
             Self::WriteRd => 1u8,
+            Self::ReadRs1WriteRd => 2u8,
         };
         tag.serialize_with_mode(&mut writer, compress)
     }
@@ -202,6 +276,7 @@ impl CanonicalDeserialize for FieldInlineXRegisterRole {
         match u8::deserialize_with_mode(&mut reader, compress, validate)? {
             0 => Ok(Self::ReadRs1),
             1 => Ok(Self::WriteRd),
+            2 => Ok(Self::ReadRs1WriteRd),
             _ => Err(SerializationError::InvalidData),
         }
     }
@@ -276,6 +351,12 @@ pub struct FieldInlineOperandShape {
     pub writes_fr_rd: bool,
     pub bridge_x_register_role: Option<FieldInlineXRegisterRole>,
     pub has_immediate: bool,
+    /// The field destination is encoded in the `rs2` operand slot (the `rd`
+    /// slot names the scratch x-register of a memory-sourced load).
+    pub fr_rd_in_rs2_slot: bool,
+    /// The field `rs1` read is the destination register itself (a Horner
+    /// step reads the accumulator it overwrites).
+    pub fr_rs1_is_fr_rd: bool,
 }
 
 impl FieldInlineOperandShape {
@@ -314,6 +395,9 @@ pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Optio
         crate::SourceInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
         crate::SourceInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
         crate::SourceInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
+        crate::SourceInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
+        crate::SourceInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
+        crate::SourceInstruction::FieldSplitLow(_) => Some(FieldInlineOp::SplitLow),
         _ => None,
     }
 }
@@ -332,6 +416,9 @@ pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<Fi
         crate::JoltInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
         crate::JoltInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
         crate::JoltInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
+        crate::JoltInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
+        crate::JoltInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
+        crate::JoltInstruction::FieldSplitLow(_) => Some(FieldInlineOp::SplitLow),
         _ => None,
     }
 }
@@ -354,6 +441,8 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             writes_fr_rd: true,
             bridge_x_register_role: None,
             has_immediate: false,
+            fr_rd_in_rs2_slot: false,
+            fr_rs1_is_fr_rd: false,
         },
         FieldInlineOp::Inv => FieldInlineOperandShape {
             op,
@@ -362,6 +451,8 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             writes_fr_rd: true,
             bridge_x_register_role: None,
             has_immediate: false,
+            fr_rd_in_rs2_slot: false,
+            fr_rs1_is_fr_rd: false,
         },
         FieldInlineOp::AssertEq => FieldInlineOperandShape {
             op,
@@ -370,6 +461,8 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             writes_fr_rd: false,
             bridge_x_register_role: None,
             has_immediate: false,
+            fr_rd_in_rs2_slot: false,
+            fr_rs1_is_fr_rd: false,
         },
         FieldInlineOp::LoadFromX => FieldInlineOperandShape {
             op,
@@ -378,6 +471,8 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             writes_fr_rd: true,
             bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1),
             has_immediate: false,
+            fr_rd_in_rs2_slot: false,
+            fr_rs1_is_fr_rd: false,
         },
         FieldInlineOp::StoreToX => FieldInlineOperandShape {
             op,
@@ -386,6 +481,8 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             writes_fr_rd: false,
             bridge_x_register_role: Some(FieldInlineXRegisterRole::WriteRd),
             has_immediate: false,
+            fr_rd_in_rs2_slot: false,
+            fr_rs1_is_fr_rd: false,
         },
         FieldInlineOp::LoadImm => FieldInlineOperandShape {
             op,
@@ -394,6 +491,38 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             writes_fr_rd: true,
             bridge_x_register_role: None,
             has_immediate: true,
+            fr_rd_in_rs2_slot: false,
+            fr_rs1_is_fr_rd: false,
+        },
+        FieldInlineOp::LoadWord => FieldInlineOperandShape {
+            op,
+            reads_fr_rs1: false,
+            reads_fr_rs2: false,
+            writes_fr_rd: true,
+            bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
+            has_immediate: false,
+            fr_rd_in_rs2_slot: true,
+            fr_rs1_is_fr_rd: false,
+        },
+        FieldInlineOp::LoadWordHi => FieldInlineOperandShape {
+            op,
+            reads_fr_rs1: true,
+            reads_fr_rs2: false,
+            writes_fr_rd: true,
+            bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
+            has_immediate: false,
+            fr_rd_in_rs2_slot: true,
+            fr_rs1_is_fr_rd: true,
+        },
+        FieldInlineOp::SplitLow => FieldInlineOperandShape {
+            op,
+            reads_fr_rs1: true,
+            reads_fr_rs2: false,
+            writes_fr_rd: true,
+            bridge_x_register_role: Some(FieldInlineXRegisterRole::WriteRd),
+            has_immediate: false,
+            fr_rd_in_rs2_slot: true,
+            fr_rs1_is_fr_rd: false,
         },
     }
 }
