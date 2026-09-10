@@ -14,6 +14,9 @@
 //! statement and must not back a proof path.
 
 use crate::constraint::SparseRow;
+use jolt_claims::protocols::jolt::geometry::dimensions::{
+    FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT, FIELD_INLINE_SPARTAN_PRODUCT_LANES,
+};
 use jolt_field::JoltField;
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
@@ -56,6 +59,14 @@ pub const ROW_FIELD_PRODUCT: usize = NUM_EQ_CONSTRAINTS;
 pub const ROW_FIELD_INV_PRODUCT: usize = NUM_EQ_CONSTRAINTS + 1;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 2;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS;
+
+// The `field-inline` uni-skip geometry in `jolt-claims` is derived from these
+// counts.
+const _: () = assert!(
+    NUM_EQ_CONSTRAINTS == FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT
+        && NUM_PRODUCT_CONSTRAINTS == FIELD_INLINE_SPARTAN_PRODUCT_LANES,
+    "field-inline constraint table diverges from the jolt-claims Spartan geometry"
+);
 
 pub const fn const_column() -> usize {
     V_CONST

@@ -42,6 +42,34 @@ fn excessive_trace_length_rejects_now() {
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
+fn off_policy_read_write_config_rejects_now() {
+    let base = standard_muldiv_case();
+    tamper_manifest::assert_verifier_fixture_tamper_rejects(
+        tamper_manifest::required_target("proof.rw_config"),
+        &base,
+        |case| {
+            // Still a valid phase split, so only the policy check rejects it.
+            case.proof.rw_config.ram_rw_phase1_num_rounds -= 1;
+        },
+    );
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn inadmissible_one_hot_config_rejects_now() {
+    let base = standard_muldiv_case();
+    tamper_manifest::assert_verifier_fixture_tamper_rejects(
+        tamper_manifest::required_target("proof.one_hot_config"),
+        &base,
+        |case| {
+            // Divides the 16-bit virtual chunk, so only the regime check rejects it.
+            case.proof.one_hot_config.log_k_chunk = 2;
+        },
+    );
+}
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
 fn invalid_ram_domain_rejects_now() {
     let base = standard_muldiv_case();
     tamper_manifest::assert_verifier_fixture_tamper_rejects(

@@ -100,6 +100,15 @@ where
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
     let read_write_dimensions = proof.rw_config.ram_dimensions(log_t, log_k);
+    // Eager: `output_check_rounds` and the RAF dimensions subtract the
+    // proof-supplied phase-1 round count before any lazy point-derivation
+    // check would catch an oversized split.
+    read_write_dimensions
+        .validate_phase_split()
+        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
+            stage: JoltRelationId::RamReadWriteChecking,
+            reason: error.to_string(),
+        })?;
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
         RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {

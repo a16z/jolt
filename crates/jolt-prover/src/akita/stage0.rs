@@ -91,6 +91,7 @@ where
         config.trace_length,
         config.ram_K,
         config.trace_polynomial_order,
+        config.rw_config,
         config.one_hot_config,
         trusted_advice.is_some(),
         false,

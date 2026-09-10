@@ -222,6 +222,69 @@ fn wrong_point_rejected() {
     assert!(result.is_err(), "tampered point must be rejected");
 }
 
+/// A `(nu, sigma)` split other than the balanced one the commitment was formed
+/// over: still `nu + sigma == point.len()` and `nu <= sigma`, so only the
+/// verifier's split gate distinguishes it from an honest proof.
+fn unbalanced_split(num_vars: usize) -> (usize, usize) {
+    let sigma = num_vars.div_ceil(2) + 1;
+    (num_vars - sigma, sigma)
+}
+
+#[test]
+fn unbalanced_matrix_split_rejected() {
+    let num_vars = 4;
+    let mut rng = ChaCha20Rng::seed_from_u64(550);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as Field>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
+
+    let mut pt = Blake2bTranscript::new(b"unbalanced-split");
+    let mut proof =
+        DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt).unwrap();
+    (proof.0.nu, proof.0.sigma) = unbalanced_split(num_vars);
+
+    let mut vt = Blake2bTranscript::new(b"unbalanced-split");
+    let result = DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt);
+    assert!(
+        result.is_err(),
+        "a prover-chosen matrix split must be rejected"
+    );
+}
+
+#[test]
+fn zk_unbalanced_matrix_split_rejected() {
+    let num_vars = 4;
+    let mut rng = ChaCha20Rng::seed_from_u64(551);
+
+    let prover_setup = DoryScheme::setup_prover(num_vars);
+    let verifier_setup = DoryScheme::setup_verifier(num_vars);
+    let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
+    let point: Vec<Fr> = (0..num_vars)
+        .map(|_| <Fr as Field>::random(&mut rng))
+        .collect();
+    let eval = poly.evaluate(&point);
+    let (commitment, hint) =
+        <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup).unwrap();
+
+    let mut pt = Blake2bTranscript::new(b"zk-unbalanced-split");
+    let (mut proof, _eval_com, _blind) =
+        DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut pt).unwrap();
+    (proof.0.nu, proof.0.sigma) = unbalanced_split(num_vars);
+
+    let mut vt = Blake2bTranscript::new(b"zk-unbalanced-split");
+    let result = DoryScheme::verify_zk(&commitment, &point, &proof, &verifier_setup, &mut vt);
+    assert!(
+        result.is_err(),
+        "ZK: a prover-chosen matrix split must be rejected"
+    );
+}
+
 #[test]
 fn combine_linear_combination() {
     let num_vars = 3;
