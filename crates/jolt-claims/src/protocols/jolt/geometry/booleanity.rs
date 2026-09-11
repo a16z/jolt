@@ -1,10 +1,9 @@
 use jolt_field::Ring;
 
-use crate::{challenge, derived, opening};
+use crate::{derived, opening};
 
 use super::super::{
-    BooleanityChallenge, BooleanityPublic, JoltExpr, JoltOpeningId, JoltRelationId,
-    JoltVirtualPolynomial,
+    BooleanityPublic, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::ra::JoltRaPolynomialLayout;
 
@@ -43,13 +42,17 @@ pub(crate) fn booleanity_output<F>(openings: impl IntoIterator<Item = JoltOpenin
 where
     F: Ring,
 {
-    let gamma = challenge(BooleanityChallenge::Gamma);
     let eq_address_cycle = derived(BooleanityPublic::EqAddressCycle);
     let mut output = JoltExpr::zero();
 
     for (i, opening_id) in openings.into_iter().enumerate() {
         let x = opening(opening_id);
-        output = output + gamma.clone().pow(2 * i) * (x.clone() * x.clone() - x);
+        let weight = if i == 0 {
+            JoltExpr::one()
+        } else {
+            derived(BooleanityPublic::GammaPow { exponent: 2 * i })
+        };
+        output = output + weight * (x.clone() * x.clone() - x);
     }
 
     eq_address_cycle * output

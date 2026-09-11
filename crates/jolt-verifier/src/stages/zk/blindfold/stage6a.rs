@@ -64,6 +64,20 @@ where
         instruction_ra_claims.rounds(),
         inc_claims.rounds(),
     )?;
+    for (i, _) in booleanity::booleanity_output_openings(booleanity_dimensions.layout)
+        .into_iter()
+        .enumerate()
+        .skip(1)
+    {
+        let exponent = 2 * i;
+        values.public(
+            JoltDerivedId::from(BooleanityPublic::GammaPow { exponent }),
+            jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow(
+                input.stage6a.challenges.booleanity.gamma,
+                exponent,
+            ),
+        )?;
+    }
     if let Some(layout) = trusted_layout {
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted)?;
     }

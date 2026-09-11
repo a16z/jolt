@@ -112,6 +112,10 @@ pub enum BooleanityChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BooleanityPublic {
     EqAddressCycle,
+    /// The batching weight γ^exponent, shared by the two terms of one opening.
+    GammaPow {
+        exponent: usize,
+    },
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
