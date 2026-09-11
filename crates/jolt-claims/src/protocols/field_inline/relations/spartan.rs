@@ -56,8 +56,8 @@ pub struct FieldRegistersSpartanOuterOutputClaims<C> {
     pub load_word: C,
     #[opening(FieldOpFlag(FieldInlineOpFlag::LoadWordHi))]
     pub load_word_hi: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::SplitLow))]
-    pub split_low: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::AdviceLimb))]
+    pub advice_limb: C,
 }
 
 #[cfg(test)]
@@ -88,7 +88,7 @@ mod tests {
             load_imm: value,
             load_word: value,
             load_word_hi: value,
-            split_low: value,
+            advice_limb: value,
         };
         assert_eq!(outputs.canonical_order(), outer_output_openings());
     }

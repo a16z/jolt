@@ -137,8 +137,7 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
-// `FieldStoreToX` is the one FR instruction with a lookup: its bridge is
-// range-bound through `RangeCheck` (`instructions::field_inline`).
+// The store bridge and limb advice use `RangeCheck`; the other FR ops have no lookup.
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,

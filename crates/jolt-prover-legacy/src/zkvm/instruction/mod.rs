@@ -392,7 +392,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstruction::FieldLoadImm(_)
             | JoltInstruction::FieldLoadWord(_)
             | JoltInstruction::FieldLoadWordHi(_)
-            | JoltInstruction::FieldSplitLow(_) => return None,
+            | JoltInstruction::FieldAdviceLimb(_) => return None,
             JoltInstructionKind::NoOp
             | JoltInstructionKind::LD
             | JoltInstructionKind::SD

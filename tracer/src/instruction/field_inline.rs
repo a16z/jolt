@@ -144,9 +144,9 @@ field_instruction!(
     SourceInstructionKind::FIELD_LOAD_WORD_HI
 );
 field_instruction!(
-    FIELD_SPLIT_LOW,
-    FieldInlineOp::SplitLow,
-    SourceInstructionKind::FIELD_SPLIT_LOW
+    FIELD_ADVICE_LIMB,
+    FieldInlineOp::AdviceLimb,
+    SourceInstructionKind::FIELD_ADVICE_LIMB
 );
 
 // The proof field the tracer executes over — the single selection point:
@@ -197,14 +197,13 @@ fn execute_over<F: Field + CanonicalEncoding>(
         FieldInlineOp::LoadWord | FieldInlineOp::LoadWordHi => {
             execute_load_word::<F>(op, operands, cpu)
         }
-        FieldInlineOp::SplitLow => pure(execute_split_low::<F>(op, operands, cpu)),
+        FieldInlineOp::AdviceLimb => pure(execute_advice_limb::<F>(op, operands, cpu)),
     }
 }
 
-/// `x_rd = frs1 mod 2^64`, `fr[rs2] = (frs1 − x_rd) / 2^64` on the canonical
-/// encoding: the low limb leaves through the range-bound store bridge and the
-/// quotient stays in the register file for the next split.
-fn execute_split_low<F: Field + CanonicalEncoding>(
+/// Honest advice generation chooses the canonical low limb and quotient.
+/// Constraints permit other choices; the guest validates the full readout.
+fn execute_advice_limb<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -216,7 +215,7 @@ fn execute_split_low<F: Field + CanonicalEncoding>(
     // `execute_store_to_x`).
     assert!(
         x_register != 0,
-        "FIELD_SPLIT_LOW to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
+        "FIELD_ADVICE_LIMB to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
         cpu.read_pc(),
     );
     let field_value = cpu.field_registers.read(field_register);

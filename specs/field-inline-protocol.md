@@ -745,7 +745,7 @@ selectors:
   IsFieldLoadImm
   IsFieldLoadWord
   IsFieldLoadWordHi
-  IsFieldSplitLow
+  IsFieldAdviceLimb
 
 field values:
   FieldRs1Value
@@ -795,7 +795,7 @@ FieldRs1Value is zero):
     * (FieldRdValue - 2^64 * FieldRs1Value - RdWriteValue) = 0
 
 field-register -> limbs:
-  IsFieldSplitLow * (FieldRs1Value - RdWriteValue - 2^64 * FieldRdValue) = 0
+  IsFieldAdviceLimb * (FieldRs1Value - RdWriteValue - 2^64 * FieldRdValue) = 0
 ```
 
 The FINV relation cannot be represented as
@@ -849,8 +849,7 @@ is the identity on values that fit it.
   this forces `FieldRs1Value = FieldRs1Value mod 2^64`: the store is
   satisfiable exactly when the field value fits in 64 bits, which is the
   condition under which the tracer executes it (wider values trap). Wide
-  values leave the field through the advice pattern (advice limbs + Horner +
-  `FIELD_ASSERT_EQ`), not through this bridge.
+  values use the multi-instruction advice readout below.
 
 Multi-limb bridge encodings (below) are therefore not a v1 requirement; they
 would widen the x-register side of the bridge, not change its range argument.
@@ -890,23 +889,34 @@ for the high form, the field `rs1` read is that same register). A top limb
 loads with `LOAD_WORD`, every lower limb with `LOAD_WORD_HI`: one row per
 limb.
 
-`FIELD_SPLIT_LOW x_rd, frs1 -> frs2` peels the low limb: the x-register
-write is `frs1 mod 2^64`, range-bound through the same `RangeCheck` lookup
-as `FIELD_STORE_TO_X` (`Advice` + `WriteLookupOutputToRD`, RV64 row 12 and
-the lookup give `RdWriteValue < 2^64`), and the field destination `rs2` is
-the quotient `(frs1 − x_rd) / 2^64`. `N − 1` splits followed by one
-`FIELD_STORE_TO_X` of the last quotient (which must fit 64 bits) write every
-limb of an `N`-limb result to x-registers: `frs1 = Σ limb_i · 2^(64 i)` with
-every limb below 2^64. The representative is canonical whenever
-`Σ limb_i · 2^(64 i) < p`; a prover may only choose a non-canonical
-representative of the same residue (`f + k·p`) when it fits the limb width,
-which changes what the guest computes next and therefore what it accepts —
-it cannot make an honest verifier program accept. Encoding: funct3 of
-`FIELD_STORE_TO_X`, funct7 `1`; `rd` the x-register, `rs1` the field source,
-`rs2` the field quotient register.
+`FIELD_ADVICE_LIMB x_rd, frs1 -> frs2` supplies a 64-bit advice limb
+and constrains `frs1 = x_rd + 2^64 · frs2` in the proof field. The
+`RangeCheck` lookup (`Advice` + `WriteLookupOutputToRD`, RV64 row 12)
+bounds `x_rd`, but does not uniquely determine either output. The honest
+tracer chooses the canonical low limb and quotient; this choice is not a
+constraint. In particular, input zero also permits limb one with quotient
+`−1/2^64`. Encoding remains funct3 of `FIELD_STORE_TO_X`, funct7 `1`;
+`rd` is the x-register, `rs1` the field source, and `rs2` the quotient.
+
+A deterministic conversion requires `N − 1` advice limbs followed by
+`FIELD_STORE_TO_X` on the last quotient, **and** a guest integer check
+`Σ limb_i · 2^(64 i) < p`. The instruction relations establish equality
+modulo `p`; the integer check makes the representative unique. Without it,
+zero could be represented by the limbs of `p`, violating field wrappers'
+canonical storage invariant. `Fr::from_inline_limbs` and
+`Fp128::from_inline_limbs` perform this check before arithmetic results
+enter their storage. A violation panics the guest and cannot produce a
+successful execution. Raw instruction users must supply their own range
+check whenever subsequent computation requires canonical limbs.
+
+This is a guest-level repair; opcode ordinals and proof equations stay
+unchanged. Previously compiled recursion guests must be rebuilt. Boundary
+tests accept zero and `p − 1` and reject `p`; composed FR e2e tests cover
+the new ingress and advice instructions. Cycle measurements include the
+canonicality checks.
 
 Stage 1 appends the three selector openings (`FieldOpFlag(LoadWord)`,
-`FieldOpFlag(LoadWordHi)`, `FieldOpFlag(SplitLow)`) after the eight base
+`FieldOpFlag(LoadWordHi)`, `FieldOpFlag(AdviceLimb)`) after the eight base
 flags, in that order, and the FR bytecode side table's stage-1 flag set
 grows by the same three entries.
 
@@ -964,7 +974,7 @@ IsFieldStoreToX
 IsFieldLoadImm
 IsFieldLoadWord
 IsFieldLoadWordHi
-IsFieldSplitLow
+IsFieldAdviceLimb
 ```
 
 `jolt-verifier` should compute the selected Spartan outer expected claim using

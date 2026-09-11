@@ -67,8 +67,8 @@ use ecall::ECALL;
 use fence::FENCE;
 #[cfg(feature = "field-inline")]
 use field_inline::{
-    FIELD_ADD, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_FROM_X, FIELD_LOAD_IMM, FIELD_LOAD_WORD,
-    FIELD_LOAD_WORD_HI, FIELD_MUL, FIELD_SPLIT_LOW, FIELD_STORE_TO_X, FIELD_SUB,
+    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_FROM_X, FIELD_LOAD_IMM,
+    FIELD_LOAD_WORD, FIELD_LOAD_WORD_HI, FIELD_MUL, FIELD_STORE_TO_X, FIELD_SUB,
 };
 use jal::JAL;
 use jalr::JALR;
@@ -631,7 +631,7 @@ macro_rules! define_rv64imac_enums {
                     Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_WORD(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_WORD_HI(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_SPLIT_LOW(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_ADVICE_LIMB(cycle) => cycle.ram_access.trace,
                     _ => None,
                 }
             }
@@ -977,7 +977,7 @@ fn is_field_inline_instruction(instruction: &Instruction) -> bool {
             | Instruction::FIELD_LOAD_IMM(_)
             | Instruction::FIELD_LOAD_WORD(_)
             | Instruction::FIELD_LOAD_WORD_HI(_)
-            | Instruction::FIELD_SPLIT_LOW(_)
+            | Instruction::FIELD_ADVICE_LIMB(_)
     )
 }
 
@@ -1442,8 +1442,8 @@ impl Instruction {
                     Some(jolt_riscv::FieldInlineOp::LoadWordHi) => {
                         Ok(FIELD_LOAD_WORD_HI::new(instr, address, true, compressed).into())
                     }
-                    Some(jolt_riscv::FieldInlineOp::SplitLow) => {
-                        Ok(FIELD_SPLIT_LOW::new(instr, address, true, compressed).into())
+                    Some(jolt_riscv::FieldInlineOp::AdviceLimb) => {
+                        Ok(FIELD_ADVICE_LIMB::new(instr, address, true, compressed).into())
                     }
                     None => Err("Invalid field-inline instruction"),
                 }

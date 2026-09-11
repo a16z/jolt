@@ -211,7 +211,7 @@ macro_rules! for_each_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_WORD_HI => FieldLoadWordHi => "field.load_word_hi",
                 #[cfg(feature = "field-inline")]
-                FIELD_SPLIT_LOW => FieldSplitLow => "field.split_low",
+                FIELD_ADVICE_LIMB => FieldAdviceLimb => "field.advice_limb",
             ]
         }
     };
@@ -332,7 +332,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_WORD_HI => FieldLoadWordHi => (0x0109, "field.load_word_hi"),
                 #[cfg(feature = "field-inline")]
-                FIELD_SPLIT_LOW => FieldSplitLow => (0x010a, "field.split_low"),
+                FIELD_ADVICE_LIMB => FieldAdviceLimb => (0x010a, "field.advice_limb"),
             ]
         }
     };

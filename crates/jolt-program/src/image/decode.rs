@@ -214,7 +214,7 @@ fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError>
         Some(FieldInlineOp::LoadImm) => Ok(SourceInstructionKind::FIELD_LOAD_IMM),
         Some(FieldInlineOp::LoadWord) => Ok(SourceInstructionKind::FIELD_LOAD_WORD),
         Some(FieldInlineOp::LoadWordHi) => Ok(SourceInstructionKind::FIELD_LOAD_WORD_HI),
-        Some(FieldInlineOp::SplitLow) => Ok(SourceInstructionKind::FIELD_SPLIT_LOW),
+        Some(FieldInlineOp::AdviceLimb) => Ok(SourceInstructionKind::FIELD_ADVICE_LIMB),
         None => invalid("invalid field-inline encoding"),
     }
 }
@@ -293,7 +293,7 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         SourceInstructionKind::FIELD_ADD
         | SourceInstructionKind::FIELD_SUB
         | SourceInstructionKind::FIELD_MUL
-        | SourceInstructionKind::FIELD_SPLIT_LOW => format_r_operands(word),
+        | SourceInstructionKind::FIELD_ADVICE_LIMB => format_r_operands(word),
         // FIELD_ASSERT_EQ has no destination register; decoding it with `rd: None`
         // keeps the bytecode operands consistent with the tracer's parsed shape and
         // avoids the rd=x0 virtual-register rewrite during expansion.

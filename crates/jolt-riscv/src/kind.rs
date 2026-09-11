@@ -523,7 +523,7 @@ macro_rules! source_extension_for_marker {
     (FieldLoadWordHi) => {
         Some(SourceExtension::FieldInline)
     };
-    (FieldSplitLow) => {
+    (FieldAdviceLimb) => {
         Some(SourceExtension::FieldInline)
     };
 }
@@ -1015,7 +1015,7 @@ macro_rules! source_side_effects_for_marker {
     (FieldLoadWordHi) => {
         true
     };
-    (FieldSplitLow) => {
+    (FieldAdviceLimb) => {
         true
     };
 }
@@ -1318,7 +1318,7 @@ macro_rules! jolt_target_extension_for_marker {
     (FieldLoadWordHi) => {
         Some(JoltTargetExtension::FieldInline)
     };
-    (FieldSplitLow) => {
+    (FieldAdviceLimb) => {
         Some(JoltTargetExtension::FieldInline)
     };
 }
@@ -1393,7 +1393,7 @@ macro_rules! jolt_side_effects_for_marker {
     (FieldLoadWordHi) => {
         true
     };
-    (FieldSplitLow) => {
+    (FieldAdviceLimb) => {
         true
     };
     (Add) => {

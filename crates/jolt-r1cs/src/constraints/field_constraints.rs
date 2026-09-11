@@ -52,7 +52,7 @@ pub const V_IS_FIELD_STORE_TO_X: usize = 15;
 pub const V_IS_FIELD_LOAD_IMM: usize = 16;
 pub const V_IS_FIELD_LOAD_WORD: usize = 17;
 pub const V_IS_FIELD_LOAD_WORD_HI: usize = 18;
-pub const V_IS_FIELD_SPLIT_LOW: usize = 19;
+pub const V_IS_FIELD_ADVICE_LIMB: usize = 19;
 /// The shared RV64 `RightLookupOperand` column: the store bridge's
 /// non-interleaved `RangeCheck` index (see the module doc).
 pub const V_X_RIGHT_LOOKUP_OPERAND: usize = 20;
@@ -82,11 +82,11 @@ pub const ROW_STORE_TO_X_LOOKUP: usize = 8;
 /// Spartan outer uni-skip domain at 15, the largest whose integer power
 /// sums fit the kernels' `i128` accumulators.
 pub const ROW_LOAD_WORD: usize = 9;
-/// `IsFieldSplitLow · (FieldRs1Value − RdWriteValue − 2^64·FieldRdValue) = 0`:
-/// the x-register write is the low limb (RV64 row 12 plus the `RangeCheck`
+/// `IsFieldAdviceLimb · (FieldRs1Value − RdWriteValue − 2^64·FieldRdValue) = 0`:
+/// the x-register write is a 64-bit advice limb (RV64 row 12 plus the `RangeCheck`
 /// lookup bound it below 2^64, as for the store bridge) and the field
 /// destination the quotient.
-pub const ROW_SPLIT_LOW: usize = 10;
+pub const ROW_ADVICE_LIMB: usize = 10;
 pub const NUM_EQ_CONSTRAINTS: usize = 11;
 
 pub const ROW_FIELD_PRODUCT: usize = NUM_EQ_CONSTRAINTS;
@@ -187,7 +187,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]);
     c_rows.push(empty());
 
-    a_rows.push(row::<F>(&[(V_IS_FIELD_SPLIT_LOW, 1)]));
+    a_rows.push(row::<F>(&[(V_IS_FIELD_ADVICE_LIMB, 1)]));
     b_rows.push(vec![
         (V_FIELD_RS1_VALUE, F::one()),
         (V_X_RD_WRITE_VALUE, -F::one()),
@@ -471,17 +471,16 @@ mod tests {
         );
     }
 
-    /// The limb split: the x-register write is the low limb and the field
-    /// destination the quotient, so `frs1 = lo + 2^64 · quotient`.
+    /// Advice fixes a residue relation, not a canonical integer decomposition.
     #[test]
-    fn split_low_row_binds_the_low_limb_and_quotient() {
+    fn advice_limb_row_binds_the_low_limb_and_quotient() {
         let low = Fr::from_u64(0x1234_5678);
         let quotient = Fr::from_u64(9);
         let mut split = witness(
             low + quotient * limb_radix::<Fr>(),
             Fr::from_u64(0),
             quotient,
-            &[(V_IS_FIELD_SPLIT_LOW, one())],
+            &[(V_IS_FIELD_ADVICE_LIMB, one())],
         );
         split[V_X_RD_WRITE_VALUE] = low;
         field_inline_trace_constraints::<Fr>()
@@ -490,8 +489,23 @@ mod tests {
         split[V_FIELD_RD_VALUE] = quotient + one();
         assert_eq!(
             field_inline_trace_constraints::<Fr>().check_witness(&split),
-            Err(ROW_SPLIT_LOW)
+            Err(ROW_ADVICE_LIMB)
         );
+    }
+
+    #[test]
+    fn advice_limb_permits_noncanonical_choices() {
+        let quotient = -limb_radix::<Fr>().inverse().unwrap();
+        let mut row = witness(
+            Fr::from_u64(0),
+            Fr::from_u64(0),
+            quotient,
+            &[(V_IS_FIELD_ADVICE_LIMB, one())],
+        );
+        row[V_X_RD_WRITE_VALUE] = one();
+        field_inline_trace_constraints::<Fr>()
+            .check_witness(&row)
+            .expect("canonicality belongs to the complete guest readout");
     }
 
     #[test]

@@ -85,7 +85,7 @@ impl InstructionFormat for FormatFieldInline {
             },
             // `rd` is the x-register taking the low limb, `rs1` the field
             // source, `rs2` the field register taking the quotient.
-            Some(FieldInlineOp::SplitLow) => Self {
+            Some(FieldInlineOp::AdviceLimb) => Self {
                 op,
                 rd: Some(rd),
                 rs1: Some(rs1),

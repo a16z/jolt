@@ -66,10 +66,10 @@ jolt_instruction!(
 );
 
 jolt_instruction!(
-    /// Peel the low limb off field register `rs1`: the x-register `rd` takes
-    /// `frs1 mod 2^64`, range-bound through the same `RangeCheck` lookup as
-    /// `FieldStoreToX`, and field register `rs2` takes the quotient.
-    FieldSplitLow,
+    /// Supply a range-checked advice limb in x-register `rd`, with
+    /// `frs1 = rd + 2^64 · frs2` in the proof field. Canonical integer
+    /// readout requires a guest range check after the final store.
+    FieldAdviceLimb,
     circuit flags: [Advice, WriteLookupOutputToRD],
     instruction flags: []
 );

@@ -121,7 +121,7 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
     FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_SPLIT_LOW,
+    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ADVICE_LIMB,
 ];
 
 pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
@@ -368,7 +368,7 @@ pub const fn field_inline_column(local_column: usize) -> Option<usize> {
         field_constraints::V_IS_FIELD_LOAD_IMM => Some(FIELD_INLINE_COLUMN_BASE + 12),
         field_constraints::V_IS_FIELD_LOAD_WORD => Some(FIELD_INLINE_COLUMN_BASE + 13),
         field_constraints::V_IS_FIELD_LOAD_WORD_HI => Some(FIELD_INLINE_COLUMN_BASE + 14),
-        field_constraints::V_IS_FIELD_SPLIT_LOW => Some(FIELD_INLINE_COLUMN_BASE + 15),
+        field_constraints::V_IS_FIELD_ADVICE_LIMB => Some(FIELD_INLINE_COLUMN_BASE + 15),
         _ => None,
     }
 }
@@ -538,7 +538,7 @@ mod tests {
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
                 rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
                 FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_SPLIT_LOW,
+                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ADVICE_LIMB,
             ]
         );
         assert_eq!(
@@ -574,7 +574,7 @@ mod tests {
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWord),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWordHi),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::SplitLow),
+            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AdviceLimb),
         ];
         assert_eq!(FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, expected_inputs);
 

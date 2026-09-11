@@ -467,7 +467,7 @@ impl SpartanOuterRow {
         // magnitudes zero except FINV's `inv_product − 1 = −1` and the load
         // row's `frd − 2^64·frs1 − RdWriteValue = −RdWriteValue`.
         // Second group [ASSERT_EQ, LOAD_FROM_X, STORE_TO_X, LOAD_IMM,
-        // STORE_TO_X_LOOKUP, SPLIT_LOW]: guards zero; magnitudes `0`,
+        // STORE_TO_X_LOOKUP, ADVICE_LIMB]: guards zero; magnitudes `0`,
         // `frd − Rs1Value = −Rs1Value`, `RdWriteValue − frs1 = RdWriteValue`,
         // `frd − Imm = −Imm`, `RightLookupOperand − frs1 = RightLookupOperand`,
         // `frs1 − RdWriteValue − 2^64·frd = −RdWriteValue`.
@@ -532,7 +532,7 @@ impl SpartanOuterRow {
         values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::StoreToX);
         values.b_second[RV64_SECOND_GROUP_LEN + 4] =
             F::from_u128(self.right_lookup_operand.0) - fr.rs1_value;
-        values.a_second[RV64_SECOND_GROUP_LEN + 5] = flag(FieldInlineOpFlag::SplitLow);
+        values.a_second[RV64_SECOND_GROUP_LEN + 5] = flag(FieldInlineOpFlag::AdviceLimb);
         values.b_second[RV64_SECOND_GROUP_LEN + 5] =
             fr.rs1_value - rd_write_value - limb_radix::<F>() * fr.rd_value;
         values

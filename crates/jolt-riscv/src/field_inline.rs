@@ -9,6 +9,8 @@ use ark_serialize::{
     Write,
 };
 
+use crate::NormalizedOperands;
+
 pub const FIELD_REGISTER_LOG_K: u8 = 4;
 pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
 pub const FIELD_INLINE_OPCODE: u8 = 0x7b;
@@ -24,8 +26,8 @@ pub const FIELD_INLINE_LOAD_WORD_OFFSET_MASK: u8 = 0x1f;
 /// Bytes between consecutive word offsets of a memory-sourced load.
 pub const FIELD_INLINE_LOAD_WORD_STRIDE: u32 = 8;
 /// The limb split shares `FIELD_STORE_TO_X`'s funct3 under funct7 1.
-pub const FIELD_INLINE_SPLIT_LOW_FUNCT3: u8 = 6;
-pub const FIELD_INLINE_SPLIT_LOW_FUNCT7: u8 = 1;
+pub const FIELD_INLINE_ADVICE_LIMB_FUNCT3: u8 = 6;
+pub const FIELD_INLINE_ADVICE_LIMB_FUNCT7: u8 = 1;
 
 /// The funct7 of a memory-sourced load at `offset_words` (at most 31).
 pub const fn field_inline_load_word_funct7(high: bool, offset_words: u8) -> u8 {
@@ -65,12 +67,10 @@ pub enum FieldInlineOp {
     /// operand fused with the load of its low word (same operand roles as
     /// [`Self::LoadWord`]; field register `rs2` is both read and written).
     LoadWordHi,
-    /// Peel the low limb off a field value: `x_rd = frs1 mod 2^64` (a
-    /// range-bound store-bridge write) and field register `rs2` takes the
-    /// quotient `(frs1 − x_rd) / 2^64`. Repeated, then closed by a
-    /// `FIELD_STORE_TO_X` of the last quotient, it writes every limb of a
-    /// field result to x-registers without a host-supplied hint.
-    SplitLow,
+    /// Supply a 64-bit advice limb `x_rd` with `frs1 = x_rd + 2^64 · frs2`.
+    /// The tracer chooses the canonical low limb; the relation permits other
+    /// choices. A full readout needs a guest integer check below the modulus.
+    AdviceLimb,
 }
 
 impl FieldInlineOp {
@@ -86,7 +86,7 @@ impl FieldInlineOp {
             Self::LoadImm => 7,
             Self::LoadWord => 8,
             Self::LoadWordHi => 9,
-            Self::SplitLow => 10,
+            Self::AdviceLimb => 10,
         }
     }
 
@@ -101,7 +101,7 @@ impl FieldInlineOp {
             Self::StoreToX => 6,
             Self::LoadImm => FIELD_INLINE_LOAD_IMM_FUNCT3,
             Self::LoadWord | Self::LoadWordHi => FIELD_INLINE_LOAD_WORD_FUNCT3,
-            Self::SplitLow => FIELD_INLINE_SPLIT_LOW_FUNCT3,
+            Self::AdviceLimb => FIELD_INLINE_ADVICE_LIMB_FUNCT3,
         }
     }
 
@@ -119,7 +119,7 @@ impl FieldInlineOp {
             | Self::StoreToX => Some(FIELD_INLINE_R_TYPE_FUNCT7),
             Self::LoadWord => Some(field_inline_load_word_funct7(false, 0)),
             Self::LoadWordHi => Some(field_inline_load_word_funct7(true, 0)),
-            Self::SplitLow => Some(FIELD_INLINE_SPLIT_LOW_FUNCT7),
+            Self::AdviceLimb => Some(FIELD_INLINE_ADVICE_LIMB_FUNCT7),
         }
     }
 
@@ -155,7 +155,7 @@ impl FieldInlineOp {
             7 => Some(Self::LoadImm),
             8 => Some(Self::LoadWord),
             9 => Some(Self::LoadWordHi),
-            10 => Some(Self::SplitLow),
+            10 => Some(Self::AdviceLimb),
             _ => None,
         }
     }
@@ -178,7 +178,9 @@ impl FieldInlineOp {
             (FIELD_INLINE_R_TYPE_FUNCT7, 4) => Some(Self::AssertEq),
             (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadFromX),
             (FIELD_INLINE_R_TYPE_FUNCT7, 6) => Some(Self::StoreToX),
-            (FIELD_INLINE_SPLIT_LOW_FUNCT7, FIELD_INLINE_SPLIT_LOW_FUNCT3) => Some(Self::SplitLow),
+            (FIELD_INLINE_ADVICE_LIMB_FUNCT7, FIELD_INLINE_ADVICE_LIMB_FUNCT3) => {
+                Some(Self::AdviceLimb)
+            }
             _ => None,
         }
     }
@@ -360,6 +362,24 @@ pub struct FieldInlineOperandShape {
 }
 
 impl FieldInlineOperandShape {
+    /// Retain the ordinary register operands; field operands use a separate plane.
+    pub fn x_operands(self, mut operands: NormalizedOperands) -> NormalizedOperands {
+        operands.rs1 = match self.bridge_x_register_role {
+            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
+                operands.rs1
+            }
+            _ => None,
+        };
+        operands.rd = match self.bridge_x_register_role {
+            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
+                operands.rd
+            }
+            _ => None,
+        };
+        operands.rs2 = None;
+        operands
+    }
+
     pub const fn is_pure_field_op(self) -> bool {
         self.bridge_x_register_role.is_none()
     }
@@ -397,7 +417,7 @@ pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Optio
         crate::SourceInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
         crate::SourceInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
         crate::SourceInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
-        crate::SourceInstruction::FieldSplitLow(_) => Some(FieldInlineOp::SplitLow),
+        crate::SourceInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
 }
@@ -418,7 +438,7 @@ pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<Fi
         crate::JoltInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
         crate::JoltInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
         crate::JoltInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
-        crate::JoltInstruction::FieldSplitLow(_) => Some(FieldInlineOp::SplitLow),
+        crate::JoltInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
 }
@@ -514,7 +534,7 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             fr_rd_in_rs2_slot: true,
             fr_rs1_is_fr_rd: true,
         },
-        FieldInlineOp::SplitLow => FieldInlineOperandShape {
+        FieldInlineOp::AdviceLimb => FieldInlineOperandShape {
             op,
             reads_fr_rs1: true,
             reads_fr_rs2: false,

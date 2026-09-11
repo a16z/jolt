@@ -195,7 +195,7 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
             FieldInlineOpFlag::LoadImm,
             FieldInlineOpFlag::LoadWord,
             FieldInlineOpFlag::LoadWordHi,
-            FieldInlineOpFlag::SplitLow,
+            FieldInlineOpFlag::AdviceLimb,
         ];
         let mut rows = Vec::new();
         for (cycle, row) in self.trace_rows.iter().enumerate() {

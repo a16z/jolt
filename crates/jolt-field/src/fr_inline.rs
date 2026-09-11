@@ -6,10 +6,10 @@
 //! enter the FR register file straight from memory (`FIELD_LOAD_WORD` for the
 //! top limb, `FIELD_LOAD_WORD_HI` folding each lower limb in radix 2^64), the
 //! operation runs as one instruction, and the result leaves through
-//! `FIELD_SPLIT_LOW` (one range-bound low limb per row, the quotient staying
-//! in the register file) closed by `FIELD_STORE_TO_X`. Every row is a
-//! constrained instruction, so the guest computes exactly what the FR
-//! constraints prove — no host-supplied hints.
+//! `FIELD_ADVICE_LIMB` (one range-bound low limb per row, the quotient staying
+//! in the register file) closed by `FIELD_STORE_TO_X`. These relations bind
+//! the result modulo the field characteristic. The field wrappers check
+//! that the returned integer is below the modulus before using it.
 //!
 //! `Fr` keeps its Montgomery representation: a raw limb vector `aR` loaded
 //! as a field element differs from `a` by the constant `R`, which
@@ -31,8 +31,8 @@ pub const FUNCT3_ASSERT_EQ: u32 = 4;
 pub const FUNCT3_LOAD_FROM_X: u32 = 5;
 pub const FUNCT3_STORE_TO_X: u32 = 6;
 pub const FUNCT3_LOAD_IMM: u32 = 7;
-/// funct7 of `FIELD_SPLIT_LOW` (shares `FIELD_STORE_TO_X`'s funct3).
-pub const FUNCT7_SPLIT_LOW: u32 = 1;
+/// funct7 of `FIELD_ADVICE_LIMB` (shares `FIELD_STORE_TO_X`'s funct3).
+pub const FUNCT7_ADVICE_LIMB: u32 = 1;
 /// The x-register the bridge instructions read (`a0`); the memory-sourced
 /// loads take their address base from it.
 pub const BRIDGE_X_REGISTER: u32 = 10;
@@ -67,16 +67,16 @@ const fn load_word_encoding(fr_rd: u32, high: bool, offset_words: u32) -> u32 {
     ) | (funct7 << 25)
 }
 
-/// `FIELD_SPLIT_LOW a1, fr[src] -> fr[quotient]`: the low limb lands in the
+/// `FIELD_ADVICE_LIMB a1, fr[src] -> fr[quotient]`: the low limb lands in the
 /// scratch `a1`, the quotient in `fr[quotient]`.
 #[cfg(target_arch = "riscv64")]
-const fn split_low_word(src: u32, quotient: u32) -> u32 {
+const fn advice_limb_word(src: u32, quotient: u32) -> u32 {
     r_word(
         FUNCT3_STORE_TO_X,
         LOAD_WORD_SCRATCH_X_REGISTER,
         src,
         quotient,
-    ) | (FUNCT7_SPLIT_LOW << 25)
+    ) | (FUNCT7_ADVICE_LIMB << 25)
 }
 
 /// `FIELD_STORE_TO_X a1, fr[src]`: the (sub-2^64) value lands in `a1`.
@@ -184,16 +184,17 @@ mod emit {
         }
     }
 
-    /// `a1 = fr[src] mod 2^64`, `fr[quotient] = (fr[src] − a1) / 2^64`; returns
-    /// the low limb. `src` is a result register or a scratch quotient.
+    /// Supply a 64-bit limb with `fr[quotient] = (fr[src] − a1) / 2^64`.
+    /// The honest tracer chooses the canonical low limb. This row alone
+    /// does not enforce that choice.
     #[inline(always)]
-    pub fn split_low(src: u32, quotient: u32) -> u64 {
+    pub fn advice_limb(src: u32, quotient: u32) -> u64 {
         macro_rules! word {
             ($src:expr, $quotient:expr) => {{
                 let low: u64;
                 // SAFETY: one fixed field-inline word; a1 receives the limb.
                 unsafe {
-                    core::arch::asm!(".word {w}", w = const split_low_word($src, $quotient), out("x11") low, options(nostack, nomem));
+                    core::arch::asm!(".word {w}", w = const advice_limb_word($src, $quotient), out("x11") low, options(nostack, nomem));
                 }
                 low
             }};
@@ -353,6 +354,7 @@ mod guest {
     /// Read the `N`-limb result out of `src`: `N − 1` splits peel the low
     /// limbs (quotients alternating through the two scratch registers), and
     /// the last quotient, below 2^64, leaves through the store bridge.
+    /// The caller must reject integers at or above the active field modulus.
     #[inline(always)]
     fn read_out<const N: usize>(src: u32) -> [u64; N] {
         let mut limbs = [0u64; N];
@@ -363,7 +365,7 @@ mod guest {
             } else {
                 REG_SCRATCH_A
             };
-            *limb = emit::split_low(current, quotient);
+            *limb = emit::advice_limb(current, quotient);
             current = quotient;
         }
         limbs[N - 1] = emit::store_to_x(current);

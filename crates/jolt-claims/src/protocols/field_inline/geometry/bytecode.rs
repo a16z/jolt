@@ -19,7 +19,7 @@ pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 11] = [
     FieldInlineOpFlag::LoadImm,
     FieldInlineOpFlag::LoadWord,
     FieldInlineOpFlag::LoadWordHi,
-    FieldInlineOpFlag::SplitLow,
+    FieldInlineOpFlag::AdviceLimb,
 ];
 
 pub const FIELD_INLINE_BYTECODE_STAGE1_GAMMA_COUNT: usize =
@@ -52,7 +52,7 @@ pub struct FieldInlineBytecodeFlags {
     pub load_imm: bool,
     pub load_word: bool,
     pub load_word_hi: bool,
-    pub split_low: bool,
+    pub advice_limb: bool,
 }
 
 impl FieldInlineBytecodeFlags {
@@ -68,7 +68,7 @@ impl FieldInlineBytecodeFlags {
             FieldInlineOpFlag::LoadImm => self.load_imm,
             FieldInlineOpFlag::LoadWord => self.load_word,
             FieldInlineOpFlag::LoadWordHi => self.load_word_hi,
-            FieldInlineOpFlag::SplitLow => self.split_low,
+            FieldInlineOpFlag::AdviceLimb => self.advice_limb,
         }
     }
 
@@ -359,7 +359,7 @@ fn validate_operand_layout(
         FieldInlineOpFlag::Add | FieldInlineOpFlag::Sub | FieldInlineOpFlag::Mul => {
             operands.rd.is_some() && operands.rs1.is_some() && operands.rs2.is_some()
         }
-        FieldInlineOpFlag::Inv | FieldInlineOpFlag::SplitLow => {
+        FieldInlineOpFlag::Inv | FieldInlineOpFlag::AdviceLimb => {
             operands.rd.is_some() && operands.rs1.is_some() && operands.rs2.is_none()
         }
         FieldInlineOpFlag::AssertEq => {

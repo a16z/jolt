@@ -1241,6 +1241,19 @@ impl<const P: u128> Fp128<P> {
     }
 }
 
+#[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
+impl<const P: u128> Fp128<P> {
+    #[inline(always)]
+    #[expect(
+        clippy::expect_used,
+        reason = "invalid limb advice must abort the guest"
+    )]
+    fn from_inline_limbs(limbs: [u64; 2]) -> Self {
+        // Advice limbs determine only a residue until the integer is range checked.
+        Self::from_u128_checked(join(limbs)).expect("noncanonical field-inline result")
+    }
+}
+
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 impl<const P: u128> Fp128<P> {
     fn inline_dot_kernel(a: &[Self], b: &[Self]) -> Self {
@@ -1251,7 +1264,7 @@ impl<const P: u128> Fp128<P> {
                 core::slice::from_raw_parts(b.as_ptr().cast(), b.len()),
             )
         };
-        Fp128(crate::fr_inline::dot(a, b))
+        Self::from_inline_limbs(crate::fr_inline::dot(a, b))
     }
 
     fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
@@ -1262,7 +1275,7 @@ impl<const P: u128> Fp128<P> {
         };
         let rows: &[&[[u64; 2]]] =
             unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
-        Fp128(crate::fr_inline::weighted_dot_rows(
+        Self::from_inline_limbs(crate::fr_inline::weighted_dot_rows(
             rows,
             cast(weights),
             cast(pows),
@@ -1382,7 +1395,7 @@ impl<const P: u128> Fp128<P> {
         Fp128(Self::sub_raw(a.0, b.0))
     }
     fn inline_mul(a: Self, b: Self) -> Self {
-        Fp128(crate::fr_inline::mul(&a.0, &b.0, false))
+        Self::from_inline_limbs(crate::fr_inline::mul(&a.0, &b.0, false))
     }
     fn inline_neg(a: Self) -> Self {
         Fp128(Self::sub_raw(pack(0, 0), a.0))
@@ -1391,7 +1404,7 @@ impl<const P: u128> Fp128<P> {
         if a.0 == [0; 2] {
             return None;
         }
-        Some(Fp128(crate::fr_inline::inv(&a.0, false)))
+        Some(Self::from_inline_limbs(crate::fr_inline::inv(&a.0, false)))
     }
 }
 
@@ -1402,6 +1415,21 @@ mod wide_tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::RngCore;
     use rand_core::SeedableRng;
+
+    #[test]
+    fn inline_readout_accepts_canonical_boundaries() {
+        type F = Fp128<{ u128::MAX - 0xffff_a7f6 }>;
+        assert_eq!(F::from_inline_limbs([0; 2]).0, [0; 2]);
+        let largest = split(u128::MAX - 0xffff_a7f7);
+        assert_eq!(F::from_inline_limbs(largest).0, largest);
+    }
+
+    #[test]
+    #[should_panic(expected = "noncanonical field-inline result")]
+    fn inline_readout_rejects_modulus_as_zero() {
+        let _ =
+            Fp128::<{ u128::MAX - 0xffff_a7f6 }>::from_inline_limbs(split(u128::MAX - 0xffff_a7f6));
+    }
 
     #[test]
     fn mul_wide_limbs_roundtrips_through_reduction() {

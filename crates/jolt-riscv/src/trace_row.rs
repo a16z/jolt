@@ -290,17 +290,8 @@ impl JoltTraceRow {
         #[cfg(feature = "field-inline")]
         let (rs1, rs2, rd) = match crate::field_inline::field_inline_operand_shape(kind) {
             Some(shape) => {
-                use crate::field_inline::FieldInlineXRegisterRole as Role;
-                let rs1 = match shape.bridge_x_register_role {
-                    Some(Role::ReadRs1) => instruction.operands.rs1,
-                    _ => None,
-                };
-                let rd = match shape.bridge_x_register_role {
-                    Some(Role::WriteRd) => instruction.operands.rd,
-                    _ => None,
-                };
-                // No field op reads an ordinary rs2.
-                (rs1, None, rd)
+                let operands = shape.x_operands(instruction.operands);
+                (operands.rs1, operands.rs2, operands.rd)
             }
             None => (
                 instruction.operands.rs1,

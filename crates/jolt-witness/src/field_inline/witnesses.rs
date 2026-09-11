@@ -197,6 +197,6 @@ pub(crate) const fn op(flag: FieldInlineOpFlag) -> FieldInlineOp {
         FieldInlineOpFlag::LoadImm => FieldInlineOp::LoadImm,
         FieldInlineOpFlag::LoadWord => FieldInlineOp::LoadWord,
         FieldInlineOpFlag::LoadWordHi => FieldInlineOp::LoadWordHi,
-        FieldInlineOpFlag::SplitLow => FieldInlineOp::SplitLow,
+        FieldInlineOpFlag::AdviceLimb => FieldInlineOp::AdviceLimb,
     }
 }

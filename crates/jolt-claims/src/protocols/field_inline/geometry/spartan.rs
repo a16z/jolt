@@ -18,7 +18,7 @@ pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS: [FieldInlineVirtualPolynomial;
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWord),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWordHi),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::SplitLow),
+    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AdviceLimb),
 ];
 
 pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT: usize =
@@ -70,7 +70,7 @@ pub fn outer_output_openings() -> [FieldInlineOpeningId; FIELD_INLINE_SPARTAN_OU
             FieldInlineOpFlag::LoadWordHi,
         )),
         outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::SplitLow,
+            FieldInlineOpFlag::AdviceLimb,
         )),
     ]
 }
