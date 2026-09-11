@@ -54,7 +54,7 @@ Record changes to existing `jolt-eval` invariants and any new ones to add in the
 Ask: "What is explicitly out of scope?" Push back if non-goals are vague — "you said 'not performance-critical', but the hot path in `crates/jolt-poly/` multiplies across thousands of rounds. Is there a concrete budget?"
 
 #### Evaluation — Acceptance Criteria
-Ask: "What test would prove this works? Give me concrete, checkable criteria." Each criterion must be a checkbox item. Push for specificity — "existing tests pass" is not enough; ask what NEW tests are needed.
+Ask: "What check would prove this works? Give me concrete, checkable criteria." Each criterion must be a checkbox item. Name the behavior and evidence required; reuse existing coverage when sufficient and add tests only for distinct gaps.
 
 #### Evaluation — Testing Strategy
 Ask: "Which existing tests must keep passing? What new tests are needed? Does this need both `--features host` and `--features host,zk` coverage?"

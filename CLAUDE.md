@@ -4,6 +4,14 @@
 
 Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that efficiently proves and verifies program execution. It uses sumcheck-based protocols, multilinear polynomial commitments (Dory), and the Twist/Shout lookup argument.
 
+## Agent Workflow
+
+- Carry an authorized request through implementation and verification. Resolve routine choices from repository conventions; ask only when missing information would materially change correctness or scope. Continue independent work while an answer is pending.
+- User instructions take precedence over skill guidance. Reuse authorization and answers already supplied. If a skill blocks requested work, cite its exact file and instruction and explain the conflict.
+- Read relevant code before asking about repository facts. Use `rg` for searches; batch independent reads when supported, and wait for required results before dependent work. Run Cargo commands sequentially, including across agents.
+- Treat follow-up messages as updates to the active task unless the user cancels or replaces it.
+- Lead with the result. Keep explanations concise and concrete; report checks actually run, their results, and any remaining blocker. Preserve required output formats in automated workflows.
+
 ## Essential Commands
 
 ### Linting and Formatting
@@ -256,6 +264,8 @@ Concrete implementations: `OuterRemainingSumcheckParams` (spartan/outer.rs), `Ra
 
 ### Testing Guidelines
 
+- Match verification to the changed behavior and complete the applicable checks above and in the invoked workflow. After they pass, repeat or broaden checks only for further changes, failures, or unresolved concerns.
+- Add tests for distinct failure signals, not to mirror the implementation or require new tests for every low-impact edit.
 - Do not add old-vs-new equivalence tests that reimplement the pre-change logic as the oracle. Transition-validation belongs in the PR process (byte-parity CI vs a living reference, one-off scripts), not the permanent suite. Permanent tests must assert against independent ground truth: spec vectors, golden fixtures, live reference paths (e.g. `jolt-kernels`' reference tier, the legacy-prover byte-parity suites), or properties. If the old code is deleted, its reimplementation in a test is dead weight — delete the test rather than keep the old logic alive inside it. A `#[cfg(test)]` copy of superseded production code "kept as the oracle" is the same anti-pattern.
 
 ### Lint Policy
