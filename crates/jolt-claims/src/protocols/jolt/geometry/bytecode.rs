@@ -489,7 +489,7 @@ where
 /// the others by the read-raf consumers.
 pub fn read_raf_stage_values<F>(
     inputs: BytecodeReadRafStageValueInputs<'_, F>,
-) -> Vec<[F; NUM_BYTECODE_VAL_STAGES]>
+) -> impl ExactSizeIterator<Item = [F; NUM_BYTECODE_VAL_STAGES]> + '_
 where
     F: JoltField,
 {
@@ -497,22 +497,18 @@ where
         inputs.register_read_write_point,
         inputs.register_val_evaluation_point,
     );
-    inputs
-        .bytecode
-        .iter()
-        .map(|instruction| {
-            read_raf_row_values::<F>(
-                instruction,
-                &register_eq.read_write,
-                &register_eq.val_evaluation,
-                inputs.stage1_gammas,
-                inputs.stage2_gammas,
-                inputs.stage3_gammas,
-                inputs.stage4_gammas,
-                inputs.stage5_gammas,
-            )
-        })
-        .collect()
+    inputs.bytecode.iter().map(move |instruction| {
+        read_raf_row_values::<F>(
+            instruction,
+            &register_eq.read_write,
+            &register_eq.val_evaluation,
+            inputs.stage1_gammas,
+            inputs.stage2_gammas,
+            inputs.stage3_gammas,
+            inputs.stage4_gammas,
+            inputs.stage5_gammas,
+        )
+    })
 }
 
 pub fn read_raf_public_values<F>(
@@ -934,7 +930,8 @@ mod tests {
             stage3_gammas: &stage3_gammas,
             stage4_gammas: &stage4_gammas,
             stage5_gammas: &stage5_gammas,
-        });
+        })
+        .collect::<Vec<_>>();
         let expected = bytecode
             .iter()
             .map(|row| {

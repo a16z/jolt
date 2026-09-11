@@ -235,7 +235,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             stage3_gammas: &stage_gammas[2],
             stage4_gammas: &stage_gammas[3],
             stage5_gammas: &stage_gammas[4],
-        });
+        })
+        .collect::<Vec<_>>();
 
         let stage_cycle_points = relation.stage_cycle_points();
         let fused_cycle_points = relation.fused_inc_cycle_points();

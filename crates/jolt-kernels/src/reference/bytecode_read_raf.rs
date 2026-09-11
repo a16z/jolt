@@ -150,7 +150,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
             stage3_gammas: &stage_gammas[2],
             stage4_gammas: &stage_gammas[3],
             stage5_gammas: &stage_gammas[4],
-        });
+        })
+        .collect::<Vec<_>>();
         // The PC pushforward source: the per-cycle bytecode indices,
         // collected as typed bundles off the witness plane's row source.
         let rows: Vec<BytecodeReadRafWitness> =

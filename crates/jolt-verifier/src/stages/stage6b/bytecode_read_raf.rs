@@ -232,9 +232,9 @@ fn fold_stage_values<F: JoltField>(
     // register file.
     let mut columns: [Vec<F>; NUM_BYTECODE_VAL_STAGES] =
         std::array::from_fn(|_| Vec::with_capacity(row_values.len()));
-    for row in &row_values {
+    for row in row_values {
         for (column, value) in columns.iter_mut().zip(row) {
-            column.push(*value);
+            column.push(value);
         }
     }
     Ok(columns.map(|column| F::dot_product(&column, &address_eq_evals)))
