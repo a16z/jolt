@@ -520,7 +520,7 @@ mod tests {
                     }
                 })
                 .collect();
-        assert_eq!(extension_ids.len(), 12);
+        assert_eq!(extension_ids.len(), 15);
         assert_eq!(
             bytecode_inputs
                 .canonical_order()
