@@ -81,9 +81,6 @@ impl NttBuilder {
         self.asm.emit_r(Kind::MUL, scratch, low, p);
         self.asm.emit_r(Kind::SUB, product, product, scratch);
         self.asm.emit_i(Kind::SRAI, out, product, 32);
-        // For arbitrary i32 inputs the shifted result can exceed i32. Keep
-        // the same explicit truncation as the portable operation.
-        self.asm.emit_i(Kind::ADDIW, out, out, 0);
     }
 
     fn reduce(&mut self, value: u8) {

@@ -6,7 +6,7 @@ caller supplies the modulus, Montgomery inverse, twist powers, and stage
 twiddles. See the function's API contract for their bounds and layout.
 
 The inline keeps all 64 coefficients in virtual registers across the six
-butterfly stages. It expands to 4,456 rows of existing proved integer
+butterfly stages. It expands to 4,200 rows of existing proved integer
 instructions, including register resets. It adds no advice or new proof
 constraints. Arithmetic has explicit wrapping semantics even outside the
 NTT parameter domain; supplying valid roots remains the caller's job.
@@ -34,7 +34,7 @@ the Jolt workspace's local patch, pending publication of this crate.
 
 
 `pointwise_dot64` adds six Montgomery pointwise products into a 64-coefficient
-accumulator. It keeps 32 wide sums live at a time and expands to 3,427 rows,
+accumulator. It keeps 32 wide sums live at a time and expands to 3,363 rows,
 using 52 virtual registers and existing proved integer operations. The six-product
 bound requires canonical operands and an odd prime below `2^30`; shorter batches
 use zero operands. Its safe API uses portable arithmetic for arrays without

@@ -71,7 +71,6 @@ impl DotBuilder {
                     self.asm.emit_r(Kind::MUL, temp, temp, p);
                     self.asm.emit_r(Kind::SUB, sum, sum, temp);
                     self.asm.emit_i(Kind::SRAI, sum, sum, 32);
-                    self.asm.emit_i(Kind::ADDIW, sum, sum, 0);
                     reduce(&mut self.asm, sum, p, temp, mask);
                 }
                 let offset = (block + lane) as i64 * 4;
