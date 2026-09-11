@@ -769,6 +769,9 @@ selectors:
   IsFieldLoadFromX
   IsFieldStoreToX
   IsFieldLoadImm
+  IsFieldLoadWord
+  IsFieldLoadWordHi
+  IsFieldAdviceLimb
 
 field values:
   FieldRs1Value
@@ -810,6 +813,15 @@ field-register -> x-register:
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(Imm, F)) = 0
+
+memory -> field-register (see "Memory-Sourced Loads And Limb Readout";
+one row serves both forms — a plain load reads no field register, so its
+FieldRs1Value is zero):
+  (IsFieldLoadWord + IsFieldLoadWordHi)
+    * (FieldRdValue - 2^64 * FieldRs1Value - RdWriteValue) = 0
+
+field-register -> limbs:
+  IsFieldAdviceLimb * (FieldRs1Value - RdWriteValue - 2^64 * FieldRdValue) = 0
 ```
 
 The FINV relation cannot be represented as
@@ -863,8 +875,7 @@ is the identity on values that fit it.
   this forces `FieldRs1Value = FieldRs1Value mod 2^64`: the store is
   satisfiable exactly when the field value fits in 64 bits, which is the
   condition under which the tracer executes it (wider values trap). Wide
-  values leave the field through the advice pattern (advice limbs + Horner +
-  `FIELD_ASSERT_EQ`), not through this bridge.
+  values use the multi-instruction advice readout below.
 
 Multi-limb bridge encodings (below) are therefore not a v1 requirement; they
 would widen the x-register side of the bridge, not change its range argument.
@@ -874,6 +885,57 @@ These rows depend on canonical encoding for the active `F: JoltField`. For a
 128-bit Jolt field, they may use two 64-bit limbs. This affects ABI,
 advice-tape encoding, and bridge/load/store row shape. It does not change the
 field arithmetic relation: FR values remain native elements of `F`.
+
+## Memory-Sourced Loads And Limb Readout
+
+Memory-sourced loads move one word per VM row into the field-register file.
+Limb advice provides bounded integer outputs for field values; callers that
+need canonical readout must additionally check the reconstructed integer.
+
+`FIELD_LOAD_WORD frd <- mem[x_rs1 + 8·offset]` and
+`FIELD_LOAD_WORD_HI frd <- frd · 2^64 + mem[x_rs1 + 8·offset]` are, to the
+RV64 rows, an `LD` into a scratch x-register: they carry the `Load` circuit
+flag, so `RamAddress = Rs1Value + Imm`, `RamReadValue = RamWriteValue` and
+`RdWriteValue = RamReadValue` bind the word exactly as for `LD`, the RAM
+Twist records the read, and the register Twist records the scratch write.
+The FR row then equates the field destination with the word folded under
+the accumulator read back as `rs1` (`2^64` is a constant of `F`); a plain
+`LOAD_WORD` reads no field register, the read-write checking pins that
+cycle's `FieldRs1Value` to zero, and the same row reduces to
+`FieldRdValue = RdWriteValue`. The two ops share one row so the Spartan
+outer stays at 30 rows: a 16-node uni-skip domain would overflow the
+kernels' `i128` power sums. Encoding: opcode `0x7b`, `FIELD_LOAD_FROM_X`'s
+funct3, funct7 bit 6 set, bit 5 the high-word form, bits 4..0 the word
+offset; `rd` the scratch x-register, `rs1` the x base, `rs2` the field
+destination (the side table reads the field operand from the `rs2` slot and,
+for the high form, the field `rs1` read is that same register). A top limb
+loads with `LOAD_WORD`, every lower limb with `LOAD_WORD_HI`: one row per
+limb.
+
+`FIELD_ADVICE_LIMB x_rd, frs1 -> frs2` supplies a 64-bit advice limb
+and constrains `frs1 = x_rd + 2^64 · frs2` in the proof field. The
+`RangeCheck` lookup (`Advice` + `WriteLookupOutputToRD`, RV64 row 12)
+bounds `x_rd`, but does not uniquely determine either output. The honest
+tracer chooses the canonical low limb and quotient; this choice is not a
+constraint. In particular, input zero also permits limb one with quotient
+`−1/2^64`. Encoding remains funct3 of `FIELD_STORE_TO_X`, funct7 `1`;
+`rd` is the x-register, `rs1` the field source, and `rs2` the quotient.
+
+A deterministic conversion requires `N − 1` advice limbs followed by
+`FIELD_STORE_TO_X` on the last quotient, **and** a guest integer check
+`Σ limb_i · 2^(64 i) < p`. The instruction relations establish equality
+modulo `p`; the integer check makes the representative unique. Without it,
+zero could be represented by the limbs of `p`, violating field wrappers'
+canonical storage invariant. Raw instruction users must check the reconstructed
+integer against the modulus whenever subsequent computation requires canonical
+limbs. The ISA supplies bounded limb advice, not a canonical conversion API.
+The composed field-inline e2e checks exercise the memory ingress and advice
+instructions against an independently pinned integer.
+
+Stage 1 appends the three selector openings (`FieldOpFlag(LoadWord)`,
+`FieldOpFlag(LoadWordHi)`, `FieldOpFlag(AdviceLimb)`) after the eight base
+flags, in that order, and the FR bytecode side table's stage-1 flag set
+grows by the same three entries.
 
 ## Stage 1 Composition
 
@@ -927,6 +989,9 @@ IsFieldAssertEq
 IsFieldLoadFromX
 IsFieldStoreToX
 IsFieldLoadImm
+IsFieldLoadWord
+IsFieldLoadWordHi
+IsFieldAdviceLimb
 ```
 
 `jolt-verifier` should compute the selected Spartan outer expected claim using

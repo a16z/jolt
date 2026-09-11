@@ -220,7 +220,21 @@ impl FieldInlineBytecodeRow {
         let Some(shape) = field_inline_operand_shape(row.instruction_kind) else {
             return Ok(Self::default());
         };
-        let rs1 = if shape.reads_fr_rs1 {
+        // The field destination rides the `rs2` slot when the `rd` slot names
+        // a scratch x-register (the memory-sourced loads).
+        let (fr_rd_slot, fr_rd_name) = if shape.fr_rd_in_rs2_slot {
+            (row.operands.rs2, "rs2")
+        } else {
+            (row.operands.rd, "rd")
+        };
+        let rd = if shape.writes_fr_rd {
+            Some(field_register(fr_rd_slot, fr_rd_name)?)
+        } else {
+            None
+        };
+        let rs1 = if shape.fr_rs1_is_fr_rd {
+            rd
+        } else if shape.reads_fr_rs1 {
             Some(field_register(row.operands.rs1, "rs1")?)
         } else {
             None
@@ -230,24 +244,23 @@ impl FieldInlineBytecodeRow {
         } else {
             None
         };
-        let rd = if shape.writes_fr_rd {
-            Some(field_register(row.operands.rd, "rd")?)
+        let write_register = if matches!(
+            shape.bridge_x_register_role,
+            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd)
+        ) {
+            let register = x_register(row.operands.rd, "rd")?;
+            if register == 0 {
+                return Err(FieldInlineMetadataError::ZeroWriteRegister);
+            }
+            Some(register)
         } else {
             None
         };
         let bridge_x_register = match shape.bridge_x_register_role {
-            Some(FieldInlineXRegisterRole::ReadRs1) => Some(x_register(row.operands.rs1, "rs1")?),
-            Some(FieldInlineXRegisterRole::WriteRd) => {
-                // x0 discards writes, so the bridge row `RdWriteValue =
-                // FieldRs1Value` could hold only for a zero field value; the
-                // tracer traps on the same encoding, keeping the two in
-                // agreement instead of leaving an honest trace unprovable.
-                let register = x_register(row.operands.rd, "rd")?;
-                if register == 0 {
-                    return Err(FieldInlineMetadataError::StoreToXZeroRegister);
-                }
-                Some(register)
+            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
+                Some(x_register(row.operands.rs1, "rs1")?)
             }
+            Some(FieldInlineXRegisterRole::WriteRd) => write_register,
             None => None,
         };
         let immediate = if shape.has_immediate {
@@ -345,6 +358,14 @@ pub enum FieldInlineBridge {
         x_register: u8,
         x_value: u64,
     },
+    /// A memory-sourced load: the word read at `x_base + offset` was written
+    /// to the scratch `x_register` and folded into the field destination.
+    LoadWord {
+        x_base: u8,
+        x_register: u8,
+        word: u64,
+        field_value: FieldEncodedValue,
+    },
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,8 +411,8 @@ pub enum FieldInlineMetadataError {
     InvalidFieldRegister { operand: &'static str, register: u8 },
     #[error("field-inline x-register operand {operand} is out of bounds: {register}")]
     InvalidXRegister { operand: &'static str, register: u8 },
-    #[error("field-inline store bridge targets x0, which discards the write")]
-    StoreToXZeroRegister,
+    #[error("field-inline write bridge targets x0, which discards the write")]
+    ZeroWriteRegister,
     #[error("field-inline immediate must be non-negative and fit in u64: {0}")]
     InvalidImmediate(i128),
 }
@@ -425,6 +446,31 @@ fn encoded_immediate(value: i128) -> Result<FieldEncodedValue, FieldInlineMetada
 mod tests {
     use super::*;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+    use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
+
+    #[test]
+    fn field_write_bridges_require_nonzero_integer_destinations() {
+        for instruction_kind in [
+            Kind::FIELD_STORE_TO_X,
+            Kind::FIELD_LOAD_WORD,
+            Kind::FIELD_LOAD_WORD_HI,
+            Kind::FIELD_ADVICE_LIMB,
+        ] {
+            let mut row = JoltInstructionRow {
+                instruction_kind,
+                operands: NormalizedOperands {
+                    rd: Some(0),
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    imm: 0,
+                },
+                ..Default::default()
+            };
+            assert!(FieldInlineBytecodeRow::from_instruction(&row).is_err());
+            row.operands.rd = Some(3);
+            assert!(FieldInlineBytecodeRow::from_instruction(&row).is_ok());
+        }
+    }
 
     fn roundtrip(
         metadata: &FieldInlineBytecodeMetadata,

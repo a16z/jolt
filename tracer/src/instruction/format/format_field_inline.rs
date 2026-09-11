@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
 };
-use jolt_riscv::{FieldInlineOp, FieldInlineXRegisterRole};
+use jolt_riscv::{field_inline_load_word_offset, FieldInlineOp, FieldInlineXRegisterRole};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormatFieldInline {
@@ -74,6 +74,24 @@ impl InstructionFormat for FormatFieldInline {
                 rs2: None,
                 imm: i128::from((word >> 20) & 0xfff),
             },
+            // `rd` is the scratch x-register, `rs1` the x base, `rs2` the
+            // field destination; the word offset rides funct7 as the imm.
+            Some(FieldInlineOp::LoadWord | FieldInlineOp::LoadWordHi) => Self {
+                op,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: Some(rs2),
+                imm: i128::from(field_inline_load_word_offset(word)),
+            },
+            // `rd` is the x-register taking the low limb, `rs1` the field
+            // source, `rs2` the field register taking the quotient.
+            Some(FieldInlineOp::AdviceLimb) => Self {
+                op,
+                rd: Some(rd),
+                rs1: Some(rs1),
+                rs2: Some(rs2),
+                imm: 0,
+            },
             None => Self::default(),
         }
     }
@@ -81,7 +99,7 @@ impl InstructionFormat for FormatFieldInline {
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
         if matches!(
             self.x_register_role(),
-            Some(FieldInlineXRegisterRole::ReadRs1)
+            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd)
         ) {
             if let Some(rs1) = self.rs1 {
                 state.rs1 = Some(normalize_register_value(cpu, rs1 as usize));
@@ -89,7 +107,7 @@ impl InstructionFormat for FormatFieldInline {
         }
         if matches!(
             self.x_register_role(),
-            Some(FieldInlineXRegisterRole::WriteRd)
+            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd)
         ) {
             if let Some(rd) = self.rd {
                 state.rd_pre = Some(normalize_register_value(cpu, rd as usize));
@@ -100,7 +118,7 @@ impl InstructionFormat for FormatFieldInline {
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
         if matches!(
             self.x_register_role(),
-            Some(FieldInlineXRegisterRole::WriteRd)
+            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd)
         ) {
             if let Some(rd) = self.rd {
                 state.rd_post = Some(normalize_register_value(cpu, rd as usize));

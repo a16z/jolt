@@ -67,8 +67,8 @@ use ecall::ECALL;
 use fence::FENCE;
 #[cfg(feature = "field-inline")]
 use field_inline::{
-    FIELD_ADD, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_FROM_X, FIELD_LOAD_IMM, FIELD_MUL,
-    FIELD_STORE_TO_X, FIELD_SUB,
+    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_FROM_X, FIELD_LOAD_IMM,
+    FIELD_LOAD_WORD, FIELD_LOAD_WORD_HI, FIELD_MUL, FIELD_STORE_TO_X, FIELD_SUB,
 };
 use jal::JAL;
 use jalr::JALR;
@@ -629,6 +629,9 @@ macro_rules! define_rv64imac_enums {
                     Cycle::FIELD_LOAD_FROM_X(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_STORE_TO_X(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_WORD(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_WORD_HI(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_ADVICE_LIMB(cycle) => cycle.ram_access.trace,
                     _ => None,
                 }
             }
@@ -972,6 +975,9 @@ fn is_field_inline_instruction(instruction: &Instruction) -> bool {
             | Instruction::FIELD_LOAD_FROM_X(_)
             | Instruction::FIELD_STORE_TO_X(_)
             | Instruction::FIELD_LOAD_IMM(_)
+            | Instruction::FIELD_LOAD_WORD(_)
+            | Instruction::FIELD_LOAD_WORD_HI(_)
+            | Instruction::FIELD_ADVICE_LIMB(_)
     )
 }
 
@@ -1429,6 +1435,15 @@ impl Instruction {
                     }
                     Some(jolt_riscv::FieldInlineOp::LoadImm) => {
                         Ok(FIELD_LOAD_IMM::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::LoadWord) => {
+                        Ok(FIELD_LOAD_WORD::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::LoadWordHi) => {
+                        Ok(FIELD_LOAD_WORD_HI::new(instr, address, true, compressed).into())
+                    }
+                    Some(jolt_riscv::FieldInlineOp::AdviceLimb) => {
+                        Ok(FIELD_ADVICE_LIMB::new(instr, address, true, compressed).into())
                     }
                     None => Err("Invalid field-inline instruction"),
                 }
@@ -2202,7 +2217,7 @@ mod tests {
         #[cfg(not(feature = "field-inline"))]
         let expected = 96;
         #[cfg(feature = "field-inline")]
-        let expected = 368;
+        let expected = 400;
         assert_eq!(
             size, expected,
             "Cycle size should be {expected} bytes, but is {size} bytes"

@@ -50,6 +50,8 @@ use jolt_verifier::stages::relations::OpeningIdOf;
 use std::collections::BTreeMap;
 
 #[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT;
+#[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
@@ -64,6 +66,8 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+#[cfg(feature = "field-inline")]
+use jolt_r1cs::constraints::field_constraints::limb_radix;
 // The COMPOSED jolt-r1cs shapes (feature-aware): identical to the rv64-only
 // constants FR-off, the FR-extended row/column composition under
 // `field-inline` — the same sources the reference kernel folds with.
@@ -462,20 +466,25 @@ impl SpartanOuterRow {
         // FR-active cycles go through `field_group_values` instead; calling
         // this on one is a routing bug the parity tests would surface as a
         // wrong t1 value.
-        // First group [FADD, FSUB, FMUL, FINV]: guards zero; magnitudes
-        // zero except FINV's `inv_product − 1 = −1`.
+        // First group [FADD, FSUB, FMUL, FINV, LOAD_WORD(+HI)]: guards zero;
+        // magnitudes zero except FINV's `inv_product − 1 = −1` and the load
+        // row's `frd − 2^64·frs1 − RdWriteValue = −RdWriteValue`.
         // Second group [ASSERT_EQ, LOAD_FROM_X, STORE_TO_X, LOAD_IMM,
-        // STORE_TO_X_LOOKUP]: guards zero; magnitudes `0`,
+        // STORE_TO_X_LOOKUP, ADVICE_LIMB]: guards zero; magnitudes `0`,
         // `frd − Rs1Value = −Rs1Value`, `RdWriteValue − frs1 = RdWriteValue`,
-        // `frd − Imm = −Imm`, `RightLookupOperand − frs1 = RightLookupOperand`.
+        // `frd − Imm = −Imm`, `RightLookupOperand − frs1 = RightLookupOperand`,
+        // `frs1 − RdWriteValue − 2^64·frd = −RdWriteValue`.
         #[cfg(feature = "field-inline")]
         {
-            values.b_first[DOMAIN - 1] = S192::from_i64(-1);
+            let rd_write_value = S192::from_u64(self.rd_write_value.0);
+            values.b_first[RV64_FIRST_GROUP_LEN + 3] = S192::from_i64(-1);
+            values.b_first[RV64_FIRST_GROUP_LEN + 4] = S192::zero() - rd_write_value;
             values.b_second[RV64_SECOND_GROUP_LEN + 1] =
                 S192::zero() - S192::from_u64(self.rs1_value.0);
-            values.b_second[RV64_SECOND_GROUP_LEN + 2] = S192::from_u64(self.rd_write_value.0);
+            values.b_second[RV64_SECOND_GROUP_LEN + 2] = rd_write_value;
             values.b_second[RV64_SECOND_GROUP_LEN + 3] = S192::zero() - imm;
             values.b_second[RV64_SECOND_GROUP_LEN + 4] = right_lookup;
+            values.b_second[RV64_SECOND_GROUP_LEN + 5] = S192::zero() - rd_write_value;
         }
 
         values
@@ -505,10 +514,15 @@ impl SpartanOuterRow {
         values.a_first[RV64_FIRST_GROUP_LEN + 1] = flag(FieldInlineOpFlag::Sub);
         values.a_first[RV64_FIRST_GROUP_LEN + 2] = flag(FieldInlineOpFlag::Mul);
         values.a_first[RV64_FIRST_GROUP_LEN + 3] = flag(FieldInlineOpFlag::Inv);
+        values.a_first[RV64_FIRST_GROUP_LEN + 4] =
+            flag(FieldInlineOpFlag::LoadWord) + flag(FieldInlineOpFlag::LoadWordHi);
+        let rd_write_value = F::from_u64(self.rd_write_value.0);
         values.b_first[RV64_FIRST_GROUP_LEN] = fr.rs1_value + fr.rs2_value - fr.rd_value;
         values.b_first[RV64_FIRST_GROUP_LEN + 1] = fr.rs1_value - fr.rs2_value - fr.rd_value;
         values.b_first[RV64_FIRST_GROUP_LEN + 2] = fr.product - fr.rd_value;
         values.b_first[RV64_FIRST_GROUP_LEN + 3] = fr.inv_product - F::one();
+        values.b_first[RV64_FIRST_GROUP_LEN + 4] =
+            fr.rd_value - limb_radix::<F>() * fr.rs1_value - rd_write_value;
         values.a_second[RV64_SECOND_GROUP_LEN] = flag(FieldInlineOpFlag::AssertEq);
         values.a_second[RV64_SECOND_GROUP_LEN + 1] = flag(FieldInlineOpFlag::LoadFromX);
         values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::StoreToX);
@@ -521,6 +535,9 @@ impl SpartanOuterRow {
         values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::StoreToX);
         values.b_second[RV64_SECOND_GROUP_LEN + 4] =
             F::from_u128(self.right_lookup_operand.0) - fr.rs1_value;
+        values.a_second[RV64_SECOND_GROUP_LEN + 5] = flag(FieldInlineOpFlag::AdviceLimb);
+        values.b_second[RV64_SECOND_GROUP_LEN + 5] =
+            fr.rs1_value - rd_write_value - limb_radix::<F>() * fr.rd_value;
         values
     }
 }
@@ -1026,7 +1043,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// Az/Bz column weights at both stream values over the composed
     /// opening-column selection, from the same `jolt-r1cs` sources the
     /// verifier's coefficient build uses (35 rv64 columns FR-off; the
-    /// non-contiguous 35 + 13 selection under `field-inline`).
+    /// non-contiguous 35 + 16 selection under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
@@ -1103,13 +1120,13 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         claimed
     }
 
-    /// The 13 FR opening values at the bound cycle point: one eq-weighted
-    /// walk over the sparse FR rows (columns in
+    /// The FR opening values at the bound cycle point: one eq-weighted walk
+    /// over the sparse FR rows (columns in
     /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order
     /// the composed remainder relation folds).
     #[cfg(feature = "field-inline")]
     fn fr_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
-        let mut values = vec![F::zero(); 13];
+        let mut values = vec![F::zero(); FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT];
         for (cycle, row) in &self.fr_rows {
             let weight = weights[*cycle];
             for (value, column) in values.iter_mut().zip(row.columns()) {

@@ -392,14 +392,14 @@ impl<B> ReadRafAddressPhase<B> {
         let stage4_gamma = gamma_public(BytecodeReadRafChallenge::Stage4Gamma);
         let stage5_gamma = gamma_public(BytecodeReadRafChallenge::Stage5Gamma);
 
-        // Stage-1 extension: the eight FieldOpFlag rows at powers
+        // Stage-1 extension: the FieldOpFlag rows at powers
         // `stage1_gamma^(2 + NUM_CIRCUIT_FLAGS + i)` (the ordinary stage-1 power
         // count is `2 + NUM_CIRCUIT_FLAGS`), riding the outer γ⁰.
         let mut extension = ComposedExpr::zero();
         for (index, flag) in FIELD_INLINE_BYTECODE_STAGE1_FLAGS.into_iter().enumerate() {
             #[expect(
                 clippy::arithmetic_side_effects,
-                reason = "2 + NUM_CIRCUIT_FLAGS + index is a small constant sum over the eight FR flags"
+                reason = "2 + NUM_CIRCUIT_FLAGS + index is a small constant sum over the FR flags"
             )]
             let power = 2 + NUM_CIRCUIT_FLAGS + index;
             extension = extension
@@ -458,7 +458,7 @@ mod tests {
     fn symbolic_claims_include_every_extension_opening() {
         let outer = OuterRemainder::new(SpartanOuterDimensions::rv64(3));
         let outer_ids = outer.expected_output_openings::<Fr>();
-        assert_eq!(outer_ids.len(), 48);
+        assert_eq!(outer_ids.len(), 51);
         let outputs = OuterOutputs::<Fr>::from_opening_values(|id| {
             outer_ids.contains(id).then_some(Fr::from_u64(1))
         })

@@ -1,6 +1,6 @@
 //! field_inline Spartan-outer produced claims.
 //!
-//! The field-inline extension appends 13 FR-local columns to the composed
+//! The field-inline extension appends 16 FR-local columns to the composed
 //! Spartan outer R1CS (`jolt-r1cs::constraints::jolt`); their openings are
 //! produced by the same stage-1 remainder sumcheck as the ordinary RV64
 //! openings and appended after them. There is no separate FR Spartan relation
@@ -14,7 +14,7 @@ use crate::OutputClaims;
 
 /// Produced FR-local Spartan-outer openings, in the appended-column order
 /// (`geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS`): the five
-/// value/product columns, then the eight op-flag selectors. All share the
+/// value/product columns, then the eleven op-flag selectors. All share the
 /// stage-1 remainder opening point. Generic over the opening cell (`F` value /
 /// `Vec<F>` point).
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
@@ -52,6 +52,12 @@ pub struct FieldRegistersSpartanOuterOutputClaims<C> {
     pub store_to_x: C,
     #[opening(FieldOpFlag(FieldInlineOpFlag::LoadImm))]
     pub load_imm: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadWord))]
+    pub load_word: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadWordHi))]
+    pub load_word_hi: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::AdviceLimb))]
+    pub advice_limb: C,
 }
 
 #[cfg(test)]
@@ -80,6 +86,9 @@ mod tests {
             load_from_x: value,
             store_to_x: value,
             load_imm: value,
+            load_word: value,
+            load_word_hi: value,
+            advice_limb: value,
         };
         assert_eq!(outputs.canonical_order(), outer_output_openings());
     }

@@ -50,12 +50,15 @@ pub const V_IS_FIELD_ASSERT_EQ: usize = 13;
 pub const V_IS_FIELD_LOAD_FROM_X: usize = 14;
 pub const V_IS_FIELD_STORE_TO_X: usize = 15;
 pub const V_IS_FIELD_LOAD_IMM: usize = 16;
+pub const V_IS_FIELD_LOAD_WORD: usize = 17;
+pub const V_IS_FIELD_LOAD_WORD_HI: usize = 18;
+pub const V_IS_FIELD_ADVICE_LIMB: usize = 19;
 /// The shared RV64 `RightLookupOperand` column: the store bridge's
 /// non-interleaved `RangeCheck` index (see the module doc).
-pub const V_X_RIGHT_LOOKUP_OPERAND: usize = 17;
+pub const V_X_RIGHT_LOOKUP_OPERAND: usize = 20;
 
 pub const NUM_R1CS_INPUTS: usize = NUM_VARS_PER_CYCLE - 1;
-pub const NUM_VARS_PER_CYCLE: usize = 18;
+pub const NUM_VARS_PER_CYCLE: usize = 21;
 
 pub const ROW_FADD: usize = 0;
 pub const ROW_FSUB: usize = 1;
@@ -68,7 +71,23 @@ pub const ROW_LOAD_IMM: usize = 7;
 /// `IsFieldStoreToX · (RightLookupOperand − FieldRs1Value) = 0`: the
 /// range-binding half of the store bridge.
 pub const ROW_STORE_TO_X_LOOKUP: usize = 8;
-pub const NUM_EQ_CONSTRAINTS: usize = 9;
+/// `(IsFieldLoadWord + IsFieldLoadWordHi) ·
+/// (FieldRdValue − 2^64·FieldRs1Value − RdWriteValue) = 0`: the loaded word
+/// (an `LD` into the scratch x-register, so RV64 row 3 pins `RdWriteValue`
+/// to `RamReadValue`) is the field destination, folded under the
+/// accumulator the high-word form reads back as `rs1`. The plain form reads
+/// no field register, so its `FieldRs1Value` is zero (the FR read-write
+/// checking pins a non-reading cycle's read value to zero) and the same row
+/// reduces to `FieldRdValue = RdWriteValue`. One row for both keeps the
+/// Spartan outer uni-skip domain at 15, the largest whose integer power
+/// sums fit the kernels' `i128` accumulators.
+pub const ROW_LOAD_WORD: usize = 9;
+/// `IsFieldAdviceLimb · (FieldRs1Value − RdWriteValue − 2^64·FieldRdValue) = 0`:
+/// the x-register write is a 64-bit advice limb (RV64 row 12 plus the `RangeCheck`
+/// lookup bound it below 2^64, as for the store bridge) and the field
+/// destination the quotient.
+pub const ROW_ADVICE_LIMB: usize = 10;
+pub const NUM_EQ_CONSTRAINTS: usize = 11;
 
 pub const ROW_FIELD_PRODUCT: usize = NUM_EQ_CONSTRAINTS;
 pub const ROW_FIELD_INV_PRODUCT: usize = NUM_EQ_CONSTRAINTS + 1;
@@ -93,6 +112,11 @@ fn row<F: JoltField>(entries: &[(usize, i64)]) -> SparseRow<F> {
         .filter(|(_, coefficient)| *coefficient != 0)
         .map(|&(index, coefficient)| (index, F::from_i64(coefficient)))
         .collect()
+}
+
+/// The two-limb radix: a `LoadWordHi` folds the low word under the high one.
+pub fn limb_radix<F: JoltField>() -> F {
+    F::from_u128(1u128 << 64)
 }
 
 fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
@@ -152,6 +176,25 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
+    a_rows.push(row::<F>(&[
+        (V_IS_FIELD_LOAD_WORD, 1),
+        (V_IS_FIELD_LOAD_WORD_HI, 1),
+    ]));
+    b_rows.push(vec![
+        (V_FIELD_RD_VALUE, F::one()),
+        (V_FIELD_RS1_VALUE, -limb_radix::<F>()),
+        (V_X_RD_WRITE_VALUE, -F::one()),
+    ]);
+    c_rows.push(empty());
+
+    a_rows.push(row::<F>(&[(V_IS_FIELD_ADVICE_LIMB, 1)]));
+    b_rows.push(vec![
+        (V_FIELD_RS1_VALUE, F::one()),
+        (V_X_RD_WRITE_VALUE, -F::one()),
+        (V_FIELD_RD_VALUE, -limb_radix::<F>()),
+    ]);
+    c_rows.push(empty());
+
     (a_rows, b_rows, c_rows)
 }
 
@@ -186,8 +229,8 @@ pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::Constrai
 
 /// Build the full native field-inline R1CS constraint matrices.
 ///
-/// Returns 11 constraints over 18 variables per cycle:
-/// - 9 equality-conditional rows: `guard * (left - right) = 0`
+/// Returns 13 constraints over 21 variables per cycle:
+/// - 11 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
 pub fn field_inline_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = field_eq_constraint_rows();
@@ -386,6 +429,83 @@ mod tests {
             field_inline_trace_constraints::<Fr>().check_witness(&mismatched),
             Err(ROW_STORE_TO_X)
         );
+    }
+
+    /// The memory-sourced loads bind the field destination to the loaded
+    /// word the RV64 load rows pinned into `RdWriteValue`, the Horner form
+    /// under the two-limb radix.
+    #[test]
+    fn load_word_rows_bind_the_loaded_word() {
+        let word = Fr::from_u64(0xdead_beef);
+        let mut load = witness(
+            Fr::from_u64(0),
+            Fr::from_u64(0),
+            word,
+            &[(V_IS_FIELD_LOAD_WORD, one())],
+        );
+        load[V_X_RD_WRITE_VALUE] = word;
+        field_inline_trace_constraints::<Fr>()
+            .check_witness(&load)
+            .expect("a load word writes the loaded word");
+        load[V_FIELD_RD_VALUE] = word + one();
+        assert_eq!(
+            field_inline_trace_constraints::<Fr>().check_witness(&load),
+            Err(ROW_LOAD_WORD)
+        );
+
+        let high = Fr::from_u64(7);
+        let mut load_hi = witness(
+            high,
+            Fr::from_u64(0),
+            high * limb_radix::<Fr>() + word,
+            &[(V_IS_FIELD_LOAD_WORD_HI, one())],
+        );
+        load_hi[V_X_RD_WRITE_VALUE] = word;
+        field_inline_trace_constraints::<Fr>()
+            .check_witness(&load_hi)
+            .expect("a high load folds the word under the radix");
+        load_hi[V_FIELD_RD_VALUE] = high + word;
+        assert_eq!(
+            field_inline_trace_constraints::<Fr>().check_witness(&load_hi),
+            Err(ROW_LOAD_WORD)
+        );
+    }
+
+    /// Advice fixes a residue relation, not a canonical integer decomposition.
+    #[test]
+    fn advice_limb_row_binds_the_low_limb_and_quotient() {
+        let low = Fr::from_u64(0x1234_5678);
+        let quotient = Fr::from_u64(9);
+        let mut split = witness(
+            low + quotient * limb_radix::<Fr>(),
+            Fr::from_u64(0),
+            quotient,
+            &[(V_IS_FIELD_ADVICE_LIMB, one())],
+        );
+        split[V_X_RD_WRITE_VALUE] = low;
+        field_inline_trace_constraints::<Fr>()
+            .check_witness(&split)
+            .expect("a split writes the low limb and keeps the quotient");
+        split[V_FIELD_RD_VALUE] = quotient + one();
+        assert_eq!(
+            field_inline_trace_constraints::<Fr>().check_witness(&split),
+            Err(ROW_ADVICE_LIMB)
+        );
+    }
+
+    #[test]
+    fn advice_limb_permits_noncanonical_choices() {
+        let quotient = -limb_radix::<Fr>().inverse().expect("nonzero limb radix");
+        let mut row = witness(
+            Fr::from_u64(0),
+            Fr::from_u64(0),
+            quotient,
+            &[(V_IS_FIELD_ADVICE_LIMB, one())],
+        );
+        row[V_X_RD_WRITE_VALUE] = one();
+        field_inline_trace_constraints::<Fr>()
+            .check_witness(&row)
+            .expect("canonicality belongs to the complete guest readout");
     }
 
     #[test]

@@ -195,5 +195,8 @@ pub(crate) const fn op(flag: FieldInlineOpFlag) -> FieldInlineOp {
         FieldInlineOpFlag::LoadFromX => FieldInlineOp::LoadFromX,
         FieldInlineOpFlag::StoreToX => FieldInlineOp::StoreToX,
         FieldInlineOpFlag::LoadImm => FieldInlineOp::LoadImm,
+        FieldInlineOpFlag::LoadWord => FieldInlineOp::LoadWord,
+        FieldInlineOpFlag::LoadWordHi => FieldInlineOp::LoadWordHi,
+        FieldInlineOpFlag::AdviceLimb => FieldInlineOp::AdviceLimb,
     }
 }

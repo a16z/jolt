@@ -574,7 +574,7 @@ mod field_inline_tests {
             )
             .unwrap();
 
-        let stage1_powers = powers(challenges.stage1_gamma, 2 + NUM_CIRCUIT_FLAGS + 8);
+        let stage1_powers = powers(challenges.stage1_gamma, 2 + NUM_CIRCUIT_FLAGS + 11);
         let stage4_powers = powers(challenges.stage4_gamma, 6);
         let stage5_powers = powers(
             challenges.stage5_gamma,

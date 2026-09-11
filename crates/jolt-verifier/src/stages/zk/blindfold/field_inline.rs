@@ -60,7 +60,7 @@ pub(super) fn point_suffix<F: JoltField>(
     })
 }
 
-/// The 13 FR-local Spartan-outer rows appended after the 35 ordinary stage-1
+/// The 16 FR-local Spartan-outer rows appended after the 35 ordinary stage-1
 /// columns, in appended-column order — the clear absorb/commit order.
 pub(super) fn stage1_appended_opening_ids() -> impl Iterator<Item = VerifierOpeningId> {
     field_spartan_geometry::outer_output_openings()

@@ -72,6 +72,9 @@ pub enum FieldInlineOpFlag {
     LoadFromX,
     StoreToX,
     LoadImm,
+    LoadWord,
+    LoadWordHi,
+    AdviceLimb,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]

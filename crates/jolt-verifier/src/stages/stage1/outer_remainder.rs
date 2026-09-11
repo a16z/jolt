@@ -294,6 +294,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
                 load_from_x: opening_point.clone(),
                 store_to_x: opening_point.clone(),
                 load_imm: opening_point.clone(),
+                load_word: opening_point.clone(),
+                load_word_hi: opening_point.clone(),
+                advice_limb: opening_point.clone(),
             },
         };
         Ok(output)
@@ -441,14 +444,14 @@ mod tests {
         }
     }
 
-    /// Under `field-inline` the composed coefficient table carries 48 columns
+    /// Under `field-inline` the composed coefficient table carries 51 columns
     /// while the rv64 symbolic relation still names 35 openings; the composed
     /// clear check therefore evaluates the factored form over the full selected
     /// opening vector. This pins both the sizing invariant that used to panic
     /// (weight vectors follow the composed jolt-r1cs column count) and the
     /// composed algebra: the symbolic output evaluates identically
-    /// to `JoltSpartanOuterRemainder::expected_output_claim` over all 48
-    /// openings (35 ordinary in canonical order, then the 13 appended FR-local
+    /// to `JoltSpartanOuterRemainder::expected_output_claim` over all 51
+    /// openings (35 ordinary in canonical order, then the 16 appended FR-local
     /// columns).
     #[cfg(feature = "field-inline")]
     #[test]

@@ -52,6 +52,35 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
 
     jolt::field_assert_eq!(1, 8);
 
+    // Memory ingress and advice egress round-trip an independently pinned
+    // 128-bit integer, below both supported proof fields' moduli.
+    #[cfg(target_arch = "riscv64")]
+    {
+        let limbs = [0x1234_5678_9abc_def0u64, 9];
+        let low: u64;
+        // SAFETY: the two loads read this live two-word array through a0;
+        // a1 is clobbered, and only field registers 12 and 13 are changed.
+        unsafe {
+            core::arch::asm!(
+                ".word {load_high}",
+                ".word {load_low}",
+                ".word {advice}",
+                load_high = const jolt::field_inline_r_word(0x41, 5, 11, 10, 12),
+                load_low = const jolt::field_inline_r_word(0x60, 5, 11, 10, 12),
+                advice = const jolt::field_inline_r_word(1, 6, 11, 12, 13),
+                in("a0") limbs.as_ptr(),
+                out("a1") low,
+                options(nostack, readonly),
+            );
+        }
+        let high = jolt::field_store_to_x!(13);
+        assert_eq!([low, high], limbs);
+    }
+    jolt::field_load_imm!(13, 3);
+    jolt::field_inv!(12, 13);
+    jolt::field_mul!(12, 12, 13);
+    jolt::field_assert_eq!(12, 0);
+
     // acc − expected is zero by the assert above, so the bridged result is
     // exactly 42 and the StoreToX < 2^64 range restriction holds.
     jolt::field_sub!(10, 1, 8);

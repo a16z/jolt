@@ -17,18 +17,20 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     format::{format_field_inline::FormatFieldInline, InstructionFormat},
-    RAMAccess, RISCVInstruction, RISCVTrace,
+    RAMAccess, RAMRead, RISCVInstruction, RISCVTrace,
 };
 use crate::emulator::cpu::Cpu;
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FieldInlineCycleData {
     pub trace: Option<FieldInlineTraceData>,
+    /// The word read by a memory-sourced load; `None` for every other op.
+    pub ram_read: Option<RAMRead>,
 }
 
 impl From<FieldInlineCycleData> for RAMAccess {
-    fn from(_value: FieldInlineCycleData) -> Self {
-        Self::NoOp
+    fn from(value: FieldInlineCycleData) -> Self {
+        value.ram_read.map_or(Self::NoOp, Self::Read)
     }
 }
 
@@ -69,7 +71,7 @@ macro_rules! field_instruction {
             }
 
             fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
-                ram_access.trace = Some(execute_field_inline($op, self.operands, cpu));
+                *ram_access = execute_field_inline($op, self.operands, cpu);
             }
         }
 
@@ -131,6 +133,21 @@ field_instruction!(
     FieldInlineOp::LoadImm,
     SourceInstructionKind::FIELD_LOAD_IMM
 );
+field_instruction!(
+    FIELD_LOAD_WORD,
+    FieldInlineOp::LoadWord,
+    SourceInstructionKind::FIELD_LOAD_WORD
+);
+field_instruction!(
+    FIELD_LOAD_WORD_HI,
+    FieldInlineOp::LoadWordHi,
+    SourceInstructionKind::FIELD_LOAD_WORD_HI
+);
+field_instruction!(
+    FIELD_ADVICE_LIMB,
+    FieldInlineOp::AdviceLimb,
+    SourceInstructionKind::FIELD_ADVICE_LIMB
+);
 
 // The proof field the tracer executes over — the single selection point:
 // `fp128-field-inline` (the akita chain) selects the fp128 akita field, the
@@ -147,7 +164,7 @@ fn execute_field_inline(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
-) -> FieldInlineTraceData {
+) -> FieldInlineCycleData {
     execute_over::<ProofField>(op, operands, cpu)
 }
 
@@ -155,20 +172,141 @@ fn execute_over<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
-) -> FieldInlineTraceData {
+) -> FieldInlineCycleData {
+    let pure = |trace| FieldInlineCycleData {
+        trace: Some(trace),
+        ram_read: None,
+    };
     match op {
-        FieldInlineOp::Add => execute_binary::<F>(op, operands, cpu, |left, right| left + right),
-        FieldInlineOp::Sub => execute_binary::<F>(op, operands, cpu, |left, right| left - right),
+        FieldInlineOp::Add => pure(execute_binary::<F>(op, operands, cpu, |left, right| {
+            left + right
+        })),
+        FieldInlineOp::Sub => pure(execute_binary::<F>(op, operands, cpu, |left, right| {
+            left - right
+        })),
         FieldInlineOp::Mul => {
             let mut trace = execute_binary::<F>(op, operands, cpu, |left, right| left * right);
             trace.product = trace.rd.map(|write| write.post_value);
-            trace
+            pure(trace)
         }
-        FieldInlineOp::Inv => execute_inverse::<F>(op, operands, cpu),
-        FieldInlineOp::AssertEq => execute_assert_eq::<F>(op, operands, cpu),
-        FieldInlineOp::LoadFromX => execute_load_from_x::<F>(op, operands, cpu),
-        FieldInlineOp::StoreToX => execute_store_to_x::<F>(op, operands, cpu),
-        FieldInlineOp::LoadImm => execute_load_imm(op, operands, cpu),
+        FieldInlineOp::Inv => pure(execute_inverse::<F>(op, operands, cpu)),
+        FieldInlineOp::AssertEq => pure(execute_assert_eq::<F>(op, operands, cpu)),
+        FieldInlineOp::LoadFromX => pure(execute_load_from_x::<F>(op, operands, cpu)),
+        FieldInlineOp::StoreToX => pure(execute_store_to_x::<F>(op, operands, cpu)),
+        FieldInlineOp::LoadImm => pure(execute_load_imm(op, operands, cpu)),
+        FieldInlineOp::LoadWord | FieldInlineOp::LoadWordHi => {
+            execute_load_word::<F>(op, operands, cpu)
+        }
+        FieldInlineOp::AdviceLimb => pure(execute_advice_limb::<F>(op, operands, cpu)),
+    }
+}
+
+/// Honest advice generation chooses the canonical low limb and quotient.
+/// Constraints permit other choices; the guest validates the full readout.
+fn execute_advice_limb<F: Field + CanonicalEncoding>(
+    op: FieldInlineOp,
+    operands: FormatFieldInline,
+    cpu: &mut Cpu,
+) -> FieldInlineTraceData {
+    let field_register = operands.rs1.unwrap_or(0);
+    let quotient_register = operands.rs2.unwrap_or(0);
+    let x_register = operands.rd.unwrap_or(0);
+    // x0 discards the write the bridge row equates with the low limb (see
+    // `execute_store_to_x`).
+    assert!(
+        x_register != 0,
+        "FIELD_ADVICE_LIMB to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
+        cpu.read_pc(),
+    );
+    let field_value = cpu.field_registers.read(field_register);
+    let canonical = encode_field(decode_field::<F>(field_value));
+    let mut low = [0u8; 8];
+    low.copy_from_slice(&canonical.bytes_le[..8]);
+    let x_value = u64::from_le_bytes(low);
+    let mut quotient = FieldEncodedValue::zero();
+    quotient.bytes_le[..FieldEncodedValue::BYTE_LEN as usize - 8]
+        .copy_from_slice(&canonical.bytes_le[8..]);
+    cpu.write_register(x_register as usize, x_value as i64);
+    let pre_value = cpu.field_registers.read(quotient_register);
+    cpu.field_registers.write(quotient_register, quotient);
+    FieldInlineTraceData {
+        op: Some(op),
+        rs1: Some(FieldRegisterRead {
+            register: field_register,
+            value: field_value,
+        }),
+        rd: Some(FieldRegisterWrite {
+            register: quotient_register,
+            pre_value,
+            post_value: quotient,
+        }),
+        bridge: Some(FieldInlineBridge::StoreToX {
+            field_register,
+            field_value,
+            x_register,
+            x_value,
+        }),
+        ..Default::default()
+    }
+}
+
+/// `frd = [frd · 2^64 +] mem[x_rs1 + offset]`, the word also written to the
+/// scratch x-register `rd` so the cycle is an ordinary `LD` to the RV64 rows.
+fn execute_load_word<F: Field + CanonicalEncoding>(
+    op: FieldInlineOp,
+    operands: FormatFieldInline,
+    cpu: &mut Cpu,
+) -> FieldInlineCycleData {
+    let x_base = operands.rs1.unwrap_or(0);
+    let x_register = operands.rd.unwrap_or(0);
+    let field_register = operands.rs2.unwrap_or(0);
+    // The scratch register must take the write: x0 would drop it and the
+    // load rows equate the rd write with the loaded word.
+    assert!(
+        x_register != 0,
+        "field-inline load word to x0 at pc 0x{:x}: the scratch register must be a real register",
+        cpu.read_pc(),
+    );
+    let address = (cpu.read_register(x_base) as u64).wrapping_add(operands.imm as u64);
+    let (word, ram_read) = cpu
+        .get_mut_mmu()
+        .load_doubleword(address)
+        .unwrap_or_else(|_| panic!("MMU load error at pc 0x{:x}", cpu.read_pc()));
+    cpu.write_register(x_register as usize, word as i64);
+    let pre_value = cpu.field_registers.read(field_register);
+    let (rs1, value) = match op {
+        FieldInlineOp::LoadWordHi => {
+            let folded =
+                decode_field::<F>(pre_value) * F::from_u128(1u128 << 64) + F::from_u64(word);
+            (
+                Some(FieldRegisterRead {
+                    register: field_register,
+                    value: pre_value,
+                }),
+                encode_field(folded),
+            )
+        }
+        _ => (None, encode_field(F::from_u64(word))),
+    };
+    cpu.field_registers.write(field_register, value);
+    FieldInlineCycleData {
+        trace: Some(FieldInlineTraceData {
+            op: Some(op),
+            rs1,
+            rd: Some(FieldRegisterWrite {
+                register: field_register,
+                pre_value,
+                post_value: value,
+            }),
+            bridge: Some(FieldInlineBridge::LoadWord {
+                x_base,
+                x_register,
+                word,
+                field_value: value,
+            }),
+            ..Default::default()
+        }),
+        ram_read: Some(ram_read),
     }
 }
 

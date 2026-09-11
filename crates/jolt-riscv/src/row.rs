@@ -3,9 +3,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
 
-use crate::JoltInstructionKind;
 #[cfg(feature = "field-inline")]
-use crate::{field_inline_operand_shape, FieldInlineXRegisterRole};
+use crate::field_inline_operand_shape;
+use crate::JoltInstructionKind;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
@@ -88,22 +88,7 @@ impl JoltInstructionRow {
     pub fn integer_operands(&self) -> NormalizedOperands {
         #[cfg(feature = "field-inline")]
         if let Some(shape) = field_inline_operand_shape(self.instruction_kind) {
-            return NormalizedOperands {
-                rs1: matches!(
-                    shape.bridge_x_register_role,
-                    Some(FieldInlineXRegisterRole::ReadRs1)
-                )
-                .then_some(self.operands.rs1)
-                .flatten(),
-                rd: matches!(
-                    shape.bridge_x_register_role,
-                    Some(FieldInlineXRegisterRole::WriteRd)
-                )
-                .then_some(self.operands.rd)
-                .flatten(),
-                rs2: None,
-                imm: self.operands.imm,
-            };
+            return shape.x_operands(self.operands);
         }
         self.operands
     }

@@ -79,9 +79,9 @@ pub fn compose_bytecode_geometry<F: JoltField>(
 /// (the stage-1/2 pattern) and consumed by the composed `input_claim`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafInputs<F> {
-    /// The eight `FieldOpFlag` openings from the stage-1 FR Spartan-outer
-    /// carrier, in `FIELD_INLINE_BYTECODE_STAGE1_FLAGS` order.
-    pub field_op_flags: [F; 8],
+    /// The `FieldOpFlag` openings from the stage-1 FR Spartan-outer carrier,
+    /// in `FIELD_INLINE_BYTECODE_STAGE1_FLAGS` order.
+    pub field_op_flags: [F; FIELD_INLINE_BYTECODE_STAGE1_FLAGS.len()],
     /// `FieldRdWa` / `FieldRs1Ra` / `FieldRs2Ra` from the stage-4 FR
     /// read-write checking.
     pub rd_wa_read_write: F,

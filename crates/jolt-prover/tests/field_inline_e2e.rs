@@ -3,7 +3,8 @@
 //!
 //! Two guests span the composed protocol's envelope: the eq-MLE guest
 //! (`eqpoly-field-guest`) exercises every shipped FR instruction family —
-//! LoadImm, both x-register bridges, add/sub/mul, and FIELD_ASSERT_EQ — and
+//! LoadImm, x-register and memory bridges, limb advice, add/sub/mul/inv,
+//! and FIELD_ASSERT_EQ — and
 //! the FR-profile muldiv build is the uniform-shape degenerate case (an FR-on
 //! proof over a trace with zero FR instructions, so every FR column including
 //! the committed `FieldRdInc` is identically zero). Clear-mode tampers hit
