@@ -2,8 +2,14 @@ use clap::{Parser, Subcommand};
 // Linked for its inline registration: the guest transcripts hash with the
 // Blake2b inline, which the tracer expands only for registered extensions.
 use jolt_inlines_blake2 as _;
+use jolt_sdk::{guest::program::Program as ProverProgram, host::Program as HostProgram};
+#[cfg(feature = "akita")]
+use jolt_sdk::{
+    jolt_prover_legacy::zkvm::packed::{AkitaScheme, AkitaVc},
+    jolt_verifier::{JoltProof, JoltVerifierPreprocessing},
+};
 #[cfg(not(feature = "akita"))]
-use jolt_sdk::guest::program::Program;
+use jolt_sdk::{Curve, ProofTranscript, F, PCS};
 use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::{
@@ -23,15 +29,9 @@ type GuestProof = RV64IMACProof;
 #[cfg(not(feature = "akita"))]
 type GuestVerifierPreprocessing = JoltVerifierPreprocessing;
 #[cfg(feature = "akita")]
-type GuestProof = jolt_sdk::jolt_verifier::JoltProof<
-    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaScheme,
-    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaVc,
->;
+type GuestProof = JoltProof<AkitaScheme, AkitaVc>;
 #[cfg(feature = "akita")]
-type GuestVerifierPreprocessing = jolt_sdk::jolt_verifier::JoltVerifierPreprocessing<
-    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaScheme,
-    jolt_sdk::jolt_prover_legacy::zkvm::packed::AkitaVc,
->;
+type GuestVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
 
 /// Guest records are `[u64 length][body][zero padding to 8 bytes]`, so every
 /// body starts 8-byte aligned relative to the stream: raw payloads (the
@@ -384,10 +384,10 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
 
 #[cfg(not(feature = "akita"))]
 fn preprocess_guest_prover(
-    guest_prog: &mut Program,
+    guest_prog: &mut ProverProgram,
     max_trace_length: usize,
     bytecode_chunk_count: Option<usize>,
-) -> JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS> {
+) -> JoltProverPreprocessing<F, Curve, PCS> {
     if let Some(chunk_count) = bytecode_chunk_count {
         let (bytecode, memory_init, program_size, e_entry) = guest_prog.decode();
         let mut memory_config = guest_prog.memory_config;
@@ -434,7 +434,7 @@ fn collect_guest_proofs(
         heap_size: 32768u64,
         ..Default::default()
     };
-    let mut program = jolt_sdk::host::Program::new(guest.name());
+    let mut program = HostProgram::new(guest.name());
     program.set_func(guest.func());
     program.set_std(false);
     program.set_memory_config(memory_config);
@@ -523,14 +523,13 @@ fn collect_guest_proofs(
         // the setup's `#[serde(skip)]` backend cache is rebuilt inside the
         // guest's verify, so the host must rebuild it too for the operation
         // sequences to agree.
-        let (preprocessing, _): (
-            jolt_sdk::jolt_verifier::JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
-            _,
-        ) = bincode::serde::decode_from_slice(
-            &bincode::serde::encode_to_vec(&preprocessing, bincode::config::standard()).unwrap(),
-            bincode::config::standard(),
-        )
-        .unwrap();
+        let (preprocessing, _): (JoltVerifierPreprocessing<AkitaScheme, AkitaVc>, _) =
+            bincode::serde::decode_from_slice(
+                &bincode::serde::encode_to_vec(&preprocessing, bincode::config::standard())
+                    .unwrap(),
+                bincode::config::standard(),
+            )
+            .unwrap();
         info!("  Verifying...");
         let is_valid = jolt_sdk::jolt_verifier::verify::<
             AkitaField,
@@ -583,7 +582,7 @@ fn collect_guest_proofs(
     };
 
     info!("Creating program...");
-    let mut program = jolt_sdk::host::Program::new(guest.name());
+    let mut program = HostProgram::new(guest.name());
     program.set_func(guest.func());
     program.set_std(false);
     program.set_memory_config(memory_config);
@@ -592,7 +591,7 @@ fn collect_guest_proofs(
     info!("Getting ELF contents...");
     let elf_contents = program.get_elf_contents().unwrap();
     info!("Creating guest program...");
-    let mut guest_prog = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    let mut guest_prog = ProverProgram::new(&elf_contents, &memory_config);
     guest_prog.elf = program.elf;
 
     info!("Preprocessing guest prover...");
@@ -601,9 +600,9 @@ fn collect_guest_proofs(
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
         jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
-            jolt_sdk::F,
-            jolt_sdk::Curve,
-            jolt_sdk::PCS,
+            F,
+            Curve,
+            PCS,
         >(&guest_prover_preprocessing);
     let guest_verifier_preprocessing: JoltVerifierPreprocessing =
         bincode::serde::decode_from_slice(
@@ -651,22 +650,18 @@ fn collect_guest_proofs(
         assert!(!device_io.panic, "Guest program panicked during tracing");
 
         info!("  Proving...");
-        let (proof, io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove::<
-            jolt_sdk::F,
-            jolt_sdk::Curve,
-            jolt_sdk::PCS,
-            jolt_sdk::ProofTranscript,
-        >(
-            &guest_prog,
-            &input_bytes,
-            &[],
-            &[],
-            None,
-            None,
-            &mut output_bytes,
-            &guest_prover_preprocessing,
-        )
-        .expect("prover should produce verifier-native proof");
+        let (proof, io_device, _debug): (RV64IMACProof, _, _) =
+            jolt_sdk::guest::prover::prove::<F, Curve, PCS, ProofTranscript>(
+                &guest_prog,
+                &input_bytes,
+                &[],
+                &[],
+                None,
+                None,
+                &mut output_bytes,
+                &guest_prover_preprocessing,
+            )
+            .expect("prover should produce verifier-native proof");
         let prove_time = now.elapsed().as_secs_f64();
         total_prove_time += prove_time;
         info!(
@@ -843,7 +838,7 @@ fn run_recursion_proof(
 ) {
     let target_dir = "/tmp/jolt-guest-targets";
 
-    let mut program = jolt_sdk::host::Program::new("recursion-guest");
+    let mut program = HostProgram::new("recursion-guest");
     program.set_func("verify");
     program.set_std(true);
     // The verifier guest computes its field arithmetic through the
@@ -867,7 +862,7 @@ fn run_recursion_proof(
         info!("  Trace-only mode: Skipping proof generation and verification.");
         // Streamed to disk: a multi-gigacycle verifier trace does not fit in
         // memory as rows.
-        let trace_path = std::path::PathBuf::from(format!("/tmp/{}-recursion.trace", guest.name()));
+        let trace_path = PathBuf::from(format!("/tmp/{}-recursion.trace", guest.name()));
         let (_, io_device) = program.trace_to_file(&input_bytes, &[], &[], &trace_path);
         let _ = std::fs::remove_file(&trace_path);
         let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
@@ -875,7 +870,7 @@ fn run_recursion_proof(
         let _ = max_trace_length;
         return;
     }
-    let mut recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
+    let mut recursion = ProverProgram::new(&elf_contents, &memory_config);
     recursion.elf = program.elf;
 
     if run_config == RunConfig::Trace || run_config == RunConfig::TraceToFile {
@@ -894,9 +889,9 @@ fn run_recursion_proof(
             jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
         let recursion_verifier_preprocessing =
             jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
-                jolt_sdk::F,
-                jolt_sdk::Curve,
-                jolt_sdk::PCS,
+                F,
+                Curve,
+                PCS,
             >(&recursion_prover_preprocessing);
 
         // update program_size in memory_config now that we know it
@@ -917,12 +912,7 @@ fn run_recursion_proof(
         match run_config {
             RunConfig::Prove => {
                 let (proof, io_device, _debug): (RV64IMACProof, _, _) =
-                    jolt_sdk::guest::prover::prove::<
-                        jolt_sdk::F,
-                        jolt_sdk::Curve,
-                        jolt_sdk::PCS,
-                        jolt_sdk::ProofTranscript,
-                    >(
+                    jolt_sdk::guest::prover::prove::<F, Curve, PCS, ProofTranscript>(
                         &recursion,
                         &input_bytes,
                         &[],

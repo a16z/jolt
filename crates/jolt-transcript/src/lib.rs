@@ -61,37 +61,41 @@ pub use poseidon::PoseidonSponge;
 pub use prover::{OptimizedChallenge, ProverTranscript};
 pub use verifier::VerifierTranscript;
 
+#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
+use blake2::{digest::consts::U32, Blake2b};
+#[cfg(any(
+    feature = "transcript-blake2b",
+    feature = "transcript-keccak",
+    feature = "transcript-poseidon"
+))]
+use jolt_field::Fr;
 #[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
-use jolt_inlines_blake2::digest_adapter::{U32, U64};
+use jolt_inlines_blake2::digest_adapter::{Blake2b, U32, U64};
+#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
+use spongefish::instantiations::hash::Hash;
+#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
+use spongefish::instantiations::Blake2b512;
+#[cfg(feature = "transcript-keccak")]
+use spongefish::instantiations::Keccak;
 
 /// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge).
 #[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
-pub type Blake2bTranscript<F = jolt_field::Fr> =
-    SpongeTranscript<spongefish::instantiations::Blake2b512, F>;
+pub type Blake2bTranscript<F = Fr> = SpongeTranscript<Blake2b512, F>;
 /// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge)
 /// over the inline hasher.
 #[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
-pub type Blake2bTranscript<F = jolt_field::Fr> = SpongeTranscript<
-    spongefish::instantiations::hash::Hash<jolt_inlines_blake2::digest_adapter::Blake2b<U64>>,
-    F,
->;
+pub type Blake2bTranscript<F = Fr> = SpongeTranscript<Hash<Blake2b<U64>>, F>;
 
 /// Blake2b-256 chained-digest transcript, byte-compatible with `jolt-prover-legacy`'s
 /// `Blake2bTranscript`. Required to verify proofs produced by `jolt-prover-legacy`
 /// provers; new modular protocols should use [`Blake2bTranscript`] instead.
-#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
-pub type LegacyBlake2bTranscript<F = jolt_field::Fr> =
-    DigestTranscript<blake2::Blake2b<blake2::digest::consts::U32>, F>;
-/// [`LegacyBlake2bTranscript`] over the inline hasher.
-#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
-pub type LegacyBlake2bTranscript<F = jolt_field::Fr> =
-    DigestTranscript<jolt_inlines_blake2::digest_adapter::Blake2b<U32>, F>;
+#[cfg(feature = "transcript-blake2b")]
+pub type LegacyBlake2bTranscript<F = Fr> = DigestTranscript<Blake2b<U32>, F>;
 
 /// Fiat-Shamir transcript backed by Keccak-f1600 (spongefish duplex sponge).
 #[cfg(feature = "transcript-keccak")]
-pub type KeccakTranscript<F = jolt_field::Fr> =
-    SpongeTranscript<spongefish::instantiations::Keccak, F>;
+pub type KeccakTranscript<F = Fr> = SpongeTranscript<Keccak, F>;
 
 /// Fiat-Shamir transcript backed by Circom-compatible BN254 Poseidon.
 #[cfg(feature = "transcript-poseidon")]
-pub type PoseidonTranscript<F = jolt_field::Fr> = SpongeTranscript<PoseidonSponge, F>;
+pub type PoseidonTranscript<F = Fr> = SpongeTranscript<PoseidonSponge, F>;

@@ -1,7 +1,8 @@
 //! A vector-commitment placeholder for transparent-only protocol
 //! configurations (the packed/lattice Jolt path).
 
-use core::fmt::{self, Debug};
+use core::fmt::{Debug, Formatter, Result as FmtResult};
+use core::marker::PhantomData;
 
 use jolt_field::{CanonicalBytes, JoltField};
 use serde::{Deserialize, Serialize};
@@ -13,16 +14,16 @@ use crate::{Commitment, HomomorphicCommitment, VectorCommitment};
 /// packed/lattice Jolt path): the proof model requires *some*
 /// [`VectorCommitment`] type parameter, but every zk arm is rejected
 /// fail-closed before a commitment could be touched.
-pub struct NoVectorCommitment<F>(core::marker::PhantomData<fn() -> F>);
+pub struct NoVectorCommitment<F>(PhantomData<fn() -> F>);
 
 impl<F> Clone for NoVectorCommitment<F> {
     fn clone(&self) -> Self {
-        Self(core::marker::PhantomData)
+        Self(PhantomData)
     }
 }
 
 impl<F> Debug for NoVectorCommitment<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.write_str("NoVectorCommitment")
     }
 }

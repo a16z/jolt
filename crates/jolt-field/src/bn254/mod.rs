@@ -11,7 +11,7 @@ mod mont;
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
-use ark_bn254::Fr as ArkFr;
+use ark_bn254::{Fq as ArkFq, Fr as ArkFr};
 use ark_ff::{BigInt, BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
 #[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
@@ -260,9 +260,9 @@ wrap_bn254!(
 wrap_bn254!(
     /// BN254 base field element (`#[repr(transparent)]` over `ark_bn254::Fq`).
     Fq,
-    ark_bn254::Fq,
+    ArkFq,
     accumulators(NaiveAccumulator<Fq>, NaiveAccumulator<Fq>, NaiveAccumulator<Fq>),
-    challenge(low, high): ark_bn254::Fq::from_bigint(BigInt::new([0, 0, low, high]))
+    challenge(low, high): ArkFq::from_bigint(BigInt::new([0, 0, low, high]))
 );
 
 impl Ring for Fr {

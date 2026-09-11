@@ -32,7 +32,8 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
 use rayon::{ThreadPool, ThreadPoolBuilder};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_bytes::ByteBuf;
 use tracing::info_span;
 
 use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
@@ -636,14 +637,14 @@ impl AsRef<[u8]> for PreparedBytes {
 }
 
 impl Serialize for PreparedBytes {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(&self.0)
     }
 }
 
 impl<'de> Deserialize<'de> for PreparedBytes {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        serde_bytes::ByteBuf::deserialize(deserializer).map(|bytes| Self::owned(bytes.into_vec()))
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ByteBuf::deserialize(deserializer).map(|bytes| Self::owned(bytes.into_vec()))
     }
 }
 

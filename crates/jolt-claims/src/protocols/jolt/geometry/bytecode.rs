@@ -83,14 +83,14 @@ impl BytecodeReadRafDimensions {
 /// term instead of `exponent` repeated challenge factors (which the guest
 /// verifier paid for on every expression build and evaluation).
 pub(crate) fn challenge_pow_expr<F: Ring>(
-    challenge: BytecodeReadRafChallenge,
+    id: BytecodeReadRafChallenge,
     exponent: usize,
 ) -> JoltExpr<F> {
     match exponent {
         0 => JoltExpr::one(),
-        1 => crate::challenge(challenge),
+        1 => challenge(id),
         _ => derived(BytecodeReadRafPublic::ChallengePow {
-            challenge,
+            challenge: id,
             exponent,
         }),
     }

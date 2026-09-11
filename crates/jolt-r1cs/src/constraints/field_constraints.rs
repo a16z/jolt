@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn advice_limb_permits_noncanonical_choices() {
-        let quotient = -limb_radix::<Fr>().inverse().unwrap();
+        let quotient = -limb_radix::<Fr>().inverse().expect("nonzero limb radix");
         let mut row = witness(
             Fr::from_u64(0),
             Fr::from_u64(0),

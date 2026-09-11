@@ -9,7 +9,7 @@ use ark_serialize::{
     Write,
 };
 
-use crate::NormalizedOperands;
+use crate::{JoltInstruction, NormalizedOperands, SourceInstruction};
 
 pub const FIELD_REGISTER_LOG_K: u8 = 4;
 pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
@@ -407,17 +407,17 @@ pub const fn is_field_inline_jolt(kind: crate::JoltInstructionKind) -> bool {
 )]
 pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Option<FieldInlineOp> {
     match kind {
-        crate::SourceInstruction::FieldAdd(_) => Some(FieldInlineOp::Add),
-        crate::SourceInstruction::FieldSub(_) => Some(FieldInlineOp::Sub),
-        crate::SourceInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
-        crate::SourceInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
-        crate::SourceInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
-        crate::SourceInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
-        crate::SourceInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
-        crate::SourceInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
-        crate::SourceInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
-        crate::SourceInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
-        crate::SourceInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
+        SourceInstruction::FieldAdd(_) => Some(FieldInlineOp::Add),
+        SourceInstruction::FieldSub(_) => Some(FieldInlineOp::Sub),
+        SourceInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
+        SourceInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
+        SourceInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
+        SourceInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
+        SourceInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
+        SourceInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
+        SourceInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
+        SourceInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
+        SourceInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
 }
@@ -428,17 +428,17 @@ pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Optio
 )]
 pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<FieldInlineOp> {
     match kind {
-        crate::JoltInstruction::FieldAdd(_) => Some(FieldInlineOp::Add),
-        crate::JoltInstruction::FieldSub(_) => Some(FieldInlineOp::Sub),
-        crate::JoltInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
-        crate::JoltInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
-        crate::JoltInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
-        crate::JoltInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
-        crate::JoltInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
-        crate::JoltInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
-        crate::JoltInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
-        crate::JoltInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
-        crate::JoltInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
+        JoltInstruction::FieldAdd(_) => Some(FieldInlineOp::Add),
+        JoltInstruction::FieldSub(_) => Some(FieldInlineOp::Sub),
+        JoltInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
+        JoltInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
+        JoltInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
+        JoltInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
+        JoltInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
+        JoltInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
+        JoltInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
+        JoltInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
+        JoltInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
 }

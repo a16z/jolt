@@ -1373,7 +1373,8 @@ impl<const P: u128> Fp128<P> {
     }
     #[inline(always)]
     fn inline_inverse(a: Self) -> Option<Self> {
-        if num_traits::Zero::is_zero(&a) {
+        use num_traits::Zero;
+        if Zero::is_zero(&a) {
             None
         } else {
             Some(a.inv_or_zero())

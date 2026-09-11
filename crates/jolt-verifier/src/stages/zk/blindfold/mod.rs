@@ -59,6 +59,7 @@ use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias, 
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
 #[cfg(not(feature = "field-inline"))]
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
+use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 use jolt_claims::protocols::jolt::relations;
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
@@ -888,8 +889,7 @@ where
     // (`bytecode::challenge_pow_expr` leaves), one public per power.
     {
         use jolt_claims::SumcheckChallenges as _;
-        for (challenge, bound) in bytecode::challenge_power_bounds(bytecode::READ_RAF_CYCLE_STAGES)
-        {
+        for (challenge, bound) in bytecode::challenge_power_bounds(READ_RAF_CYCLE_STAGES) {
             let value = bytecode_challenges
                 .resolve_challenge(&challenge.into())
                 .ok_or(VerifierError::MissingStageClaimChallenge {

@@ -3,9 +3,9 @@
 //! guest verifier). Same bytes either way.
 
 pub(crate) use blake2::Digest;
-
 #[cfg(not(feature = "blake2-inline"))]
-pub(crate) type Blake2b256 = blake2::Blake2b<blake2::digest::consts::U32>;
+use blake2::{digest::consts::U32, Blake2b};
 #[cfg(feature = "blake2-inline")]
-pub(crate) type Blake2b256 =
-    jolt_inlines_blake2::digest_adapter::Blake2b<jolt_inlines_blake2::digest_adapter::U32>;
+use jolt_inlines_blake2::digest_adapter::{Blake2b, U32};
+
+pub(crate) type Blake2b256 = Blake2b<U32>;

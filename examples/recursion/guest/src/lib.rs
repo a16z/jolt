@@ -3,6 +3,14 @@
 use jolt_sdk::{self as jolt};
 
 extern crate alloc;
+use alloc::vec::Vec;
+use embedded_bytes::EMBEDDED_BYTES;
+#[cfg(feature = "akita")]
+use jolt::jolt_verifier::{JoltProof, JoltVerifierPreprocessing as GenericVerifierPreprocessing};
+#[cfg(feature = "akita")]
+use jolt_crypto::NoVectorCommitment;
+#[cfg(feature = "akita")]
+use jolt_transcript::LegacyBlake2bTranscript;
 
 use jolt::JoltDevice;
 #[cfg(not(feature = "akita"))]
@@ -10,14 +18,13 @@ use jolt::{JoltVerifierPreprocessing, RV64IMACProof};
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaField, AkitaScheme};
 #[cfg(feature = "akita")]
-type AkitaVc = jolt_crypto::NoVectorCommitment<AkitaField>;
+type AkitaVc = NoVectorCommitment<AkitaField>;
 #[cfg(feature = "akita")]
-type AkitaTranscript = jolt_transcript::LegacyBlake2bTranscript<AkitaField>;
+type AkitaTranscript = LegacyBlake2bTranscript<AkitaField>;
 #[cfg(feature = "akita")]
-type RV64IMACProof = jolt::jolt_verifier::JoltProof<AkitaScheme, AkitaVc>;
+type RV64IMACProof = JoltProof<AkitaScheme, AkitaVc>;
 #[cfg(feature = "akita")]
-type JoltVerifierPreprocessing =
-    jolt::jolt_verifier::JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
+type JoltVerifierPreprocessing = GenericVerifierPreprocessing<AkitaScheme, AkitaVc>;
 use serde::de::DeserializeOwned;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
@@ -103,8 +110,8 @@ fn verify(bytes: &[u8]) -> u32 {
     let mut input = Records::new(bytes);
     // The verifier setup comes from this image when the host baked it in
     // (then the input carries only the proofs), else from the input.
-    let mut embedded = (!embedded_bytes::EMBEDDED_BYTES.is_empty())
-        .then(|| Records::new(embedded_bytes::EMBEDDED_BYTES));
+    let mut embedded = (!EMBEDDED_BYTES.is_empty())
+        .then(|| Records::new(EMBEDDED_BYTES));
     let setup = embedded.as_mut().unwrap_or(&mut input);
 
     start_cycle_tracking("deserialize preprocessing");
@@ -113,10 +120,10 @@ fn verify(bytes: &[u8]) -> u32 {
     // Setup payloads the host detached from the record (Akita's expanded
     // verifier keys), attached back as views of where they lie.
     let payload_count: u32 = setup.record();
-    let payloads: alloc::vec::Vec<&[u8]> = (0..payload_count).map(|_| setup.raw()).collect();
+    let payloads: Vec<&[u8]> = (0..payload_count).map(|_| setup.raw()).collect();
     #[cfg(feature = "akita")]
     {
-        let payloads: alloc::vec::Vec<&'static [u8]> =
+        let payloads: Vec<&'static [u8]> =
             payloads.iter().map(|payload| assume_static(payload)).collect();
         verifier_preprocessing
             .pcs_setup

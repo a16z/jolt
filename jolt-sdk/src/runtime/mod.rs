@@ -32,19 +32,22 @@ cfg_if::cfg_if! {
         struct SizeClassAllocator;
 
         #[cfg(feature = "guest-size-class-alloc")]
+        use core::alloc::{GlobalAlloc, Layout};
+
+        #[cfg(feature = "guest-size-class-alloc")]
         // SAFETY: the arena is initialized in `__platform_bootstrap` before
         // any Rust allocation, and the guest is single-threaded.
-        unsafe impl core::alloc::GlobalAlloc for SizeClassAllocator {
-            unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        unsafe impl GlobalAlloc for SizeClassAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
                 jolt_platform::size_class_alloc::alloc(layout)
             }
-            unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
                 jolt_platform::size_class_alloc::dealloc(ptr, layout)
             }
             unsafe fn realloc(
                 &self,
                 ptr: *mut u8,
-                layout: core::alloc::Layout,
+                layout: Layout,
                 new_size: usize,
             ) -> *mut u8 {
                 jolt_platform::size_class_alloc::realloc(ptr, layout, new_size)

@@ -16,8 +16,12 @@ use super::rv64;
 #[cfg(feature = "field-inline")]
 use super::field_constraints;
 #[cfg(feature = "field-inline")]
-use super::field_constraints::{ROW_STORE_TO_X_LOOKUP, V_X_RIGHT_LOOKUP_OPERAND};
-#[cfg(feature = "field-inline")]
+use super::field_constraints::{
+    NUM_EQ_CONSTRAINTS as FR_NUM_EQ_CONSTRAINTS, ROW_ADVICE_LIMB, ROW_ASSERT_EQ, ROW_FADD,
+    ROW_FINV, ROW_FMUL, ROW_FSUB, ROW_LOAD_FROM_X, ROW_LOAD_IMM, ROW_LOAD_WORD, ROW_STORE_TO_X,
+    ROW_STORE_TO_X_LOOKUP, V_IS_FIELD_ADVICE_LIMB, V_IS_FIELD_LOAD_WORD, V_IS_FIELD_LOAD_WORD_HI,
+    V_X_RIGHT_LOOKUP_OPERAND,
+};
 use super::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
 #[cfg(feature = "field-inline")]
 use super::rv64::V_RIGHT_LOOKUP_OPERAND;
@@ -53,11 +57,10 @@ pub const NUM_CONSTRAINTS_PER_CYCLE: usize =
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = rv64::NUM_CONSTRAINTS_PER_CYCLE;
 
 #[cfg(feature = "field-inline")]
-pub const SPARTAN_OUTER_ROW_COUNT: usize =
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::NUM_EQ_CONSTRAINTS;
+pub const SPARTAN_OUTER_ROW_COUNT: usize = RV64_NUM_EQ_CONSTRAINTS + FR_NUM_EQ_CONSTRAINTS;
 
 #[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_OUTER_ROW_COUNT: usize = rv64::NUM_EQ_CONSTRAINTS;
+pub const SPARTAN_OUTER_ROW_COUNT: usize = RV64_NUM_EQ_CONSTRAINTS;
 
 pub const SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_OUTER_ROW_COUNT.div_ceil(2);
 pub const SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize =
@@ -94,11 +97,11 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     14,
     17,
     18,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FADD,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FINV,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_WORD,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FADD,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FSUB,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FMUL,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_FINV,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_WORD,
 ];
 
 #[cfg(not(feature = "field-inline"))]
@@ -116,12 +119,12 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     13,
     15,
     16,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ASSERT_EQ,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_FROM_X,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_STORE_TO_X,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_IMM,
     FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
-    rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ADVICE_LIMB,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_ADVICE_LIMB,
 ];
 
 pub fn spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
@@ -366,9 +369,9 @@ pub const fn field_inline_column(local_column: usize) -> Option<usize> {
         field_constraints::V_IS_FIELD_LOAD_FROM_X => Some(FIELD_INLINE_COLUMN_BASE + 10),
         field_constraints::V_IS_FIELD_STORE_TO_X => Some(FIELD_INLINE_COLUMN_BASE + 11),
         field_constraints::V_IS_FIELD_LOAD_IMM => Some(FIELD_INLINE_COLUMN_BASE + 12),
-        field_constraints::V_IS_FIELD_LOAD_WORD => Some(FIELD_INLINE_COLUMN_BASE + 13),
-        field_constraints::V_IS_FIELD_LOAD_WORD_HI => Some(FIELD_INLINE_COLUMN_BASE + 14),
-        field_constraints::V_IS_FIELD_ADVICE_LIMB => Some(FIELD_INLINE_COLUMN_BASE + 15),
+        V_IS_FIELD_LOAD_WORD => Some(FIELD_INLINE_COLUMN_BASE + 13),
+        V_IS_FIELD_LOAD_WORD_HI => Some(FIELD_INLINE_COLUMN_BASE + 14),
+        V_IS_FIELD_ADVICE_LIMB => Some(FIELD_INLINE_COLUMN_BASE + 15),
         _ => None,
     }
 }
@@ -464,7 +467,7 @@ mod tests {
     #[cfg(not(feature = "field-inline"))]
     #[test]
     fn default_spartan_outer_geometry_matches_rv64() {
-        assert_eq!(SPARTAN_OUTER_ROW_COUNT, rv64::NUM_EQ_CONSTRAINTS);
+        assert_eq!(SPARTAN_OUTER_ROW_COUNT, RV64_NUM_EQ_CONSTRAINTS);
         assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 10);
         assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 27);
         assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
@@ -479,7 +482,7 @@ mod tests {
         assert_eq!(
             spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))
                 .map(|weights| weights.len()),
-            Ok(rv64::NUM_EQ_CONSTRAINTS)
+            Ok(RV64_NUM_EQ_CONSTRAINTS)
         );
         assert_eq!(
             spartan_outer_opening_columns(),
@@ -515,7 +518,7 @@ mod tests {
     fn field_inline_spartan_outer_geometry_includes_field_rows() {
         assert_eq!(
             SPARTAN_OUTER_ROW_COUNT,
-            rv64::NUM_EQ_CONSTRAINTS + field_constraints::NUM_EQ_CONSTRAINTS
+            RV64_NUM_EQ_CONSTRAINTS + FR_NUM_EQ_CONSTRAINTS
         );
         assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
         assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
@@ -523,22 +526,22 @@ mod tests {
         assert_eq!(
             &SPARTAN_OUTER_FIRST_GROUP_ROWS[10..],
             &[
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FADD,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FINV,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_WORD,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_FADD,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_FSUB,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_FMUL,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_FINV,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_WORD,
             ]
         );
         assert_eq!(
             &SPARTAN_OUTER_SECOND_GROUP_ROWS[9..],
             &[
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ASSERT_EQ,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_IMM,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_FROM_X,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_STORE_TO_X,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_IMM,
                 FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
-                rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ADVICE_LIMB,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_ADVICE_LIMB,
             ]
         );
         assert_eq!(
