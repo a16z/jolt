@@ -35,7 +35,9 @@ fn main() {
             let value = input.iter().enumerate().fold(0, |sum, (j, a)| {
                 (sum + i64::from(*a) * pow(point, j)).rem_euclid(P)
             });
-            (i as u64 + 1) * value as u64
+            let square = (value * value % P) * pow(mont, P as usize - 2) % P;
+            let accumulated = (value + 6 * square) % P;
+            (i as u64 + 1) * accumulated as u64
         })
         .sum::<u64>();
     let mut program = guest::compile_ntt("/tmp/jolt-guest-targets");
@@ -63,5 +65,5 @@ fn main() {
         io.panic,
         proof
     ));
-    println!("NTT proof verified; output matches direct DFT");
+    println!("NTT and pointwise-dot proof verified; output matches modular reference");
 }

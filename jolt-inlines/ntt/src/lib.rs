@@ -1,22 +1,29 @@
 //! A 64-point Montgomery NTT expanded into existing proved integer instructions.
 #![cfg_attr(not(feature = "host"), no_std)]
 
+mod pointwise;
+pub use pointwise::{pointwise_dot64, DOT_PRODUCTS};
+
 pub const DEGREE: usize = 64;
 pub const OPCODE: u32 = 0x0b;
 pub const FUNCT3: u32 = 0;
 pub const FUNCT7: u32 = 8;
 
 #[cfg(feature = "host")]
+pub mod pointwise_builder;
+#[cfg(feature = "host")]
 pub mod sequence_builder;
 #[cfg(feature = "host")]
 use jolt_inlines_sdk::host::InlineExtension;
+#[cfg(feature = "host")]
+use pointwise_builder::PointwiseDot64;
 #[cfg(feature = "host")]
 use sequence_builder::ForwardNtt64;
 #[cfg(feature = "host")]
 jolt_inlines_sdk::register_inlines! {
     trace_file: "ntt_trace.joltinline",
     extension: InlineExtension::Ntt,
-    ops: [ForwardNtt64],
+    ops: [ForwardNtt64, PointwiseDot64],
 }
 
 /// Twist, then forward DIF NTT, with bit-reversed output in Montgomery form.
@@ -100,7 +107,6 @@ fn mont_mul(a: i32, b: i32, p: i32, pinv: i32) -> i32 {
     (c.wrapping_sub(i64::from(t) * i64::from(p)) >> 32) as i32
 }
 
-#[cfg(not(target_arch = "riscv64"))]
 fn reduce(a: i32, p: i32) -> i32 {
     let p = i64::from(p);
     let diff = i64::from(a) - p;

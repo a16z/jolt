@@ -31,3 +31,15 @@ Akita recursion opts in with the `ntt-inline` feature on the `recursion`
 package. This forwards to the companion Akita algebra crate and registers
 the inline on the host. The companion dependency currently resolves through
 the Jolt workspace's local patch, pending publication of this crate.
+
+
+`pointwise_dot64` adds six Montgomery pointwise products into a 64-coefficient
+accumulator. It keeps 32 wide sums live at a time and expands to 3,427 rows,
+using 52 virtual registers and existing proved integer operations. The six-product
+bound requires canonical operands and an odd prime below `2^30`; shorter batches
+use zero operands. Its safe API uses portable arithmetic for arrays without
+8-byte alignment. No advice or new proof constraints are introduced.
+
+The modular-reference tests cover canonical and wrapping-edge inputs. The NTT
+example also proves this pointwise operation and checks its aligned result against
+an unaligned portable execution and an independent host modular calculation.

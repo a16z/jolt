@@ -1,6 +1,9 @@
 #![expect(clippy::unwrap_used, reason = "fixed-size test harness outputs")]
 
-use super::{forward_ntt64, sequence_builder::ForwardNtt64, DEGREE};
+use super::{
+    forward_ntt64, pointwise_builder::PointwiseDot64, pointwise_dot64,
+    sequence_builder::ForwardNtt64, DEGREE, DOT_PRODUCTS,
+};
 use jolt_inlines_sdk::{
     assert_edge_cases_match_reference, assert_random_cases_match_reference, InlineReference,
     InlineSpec,
@@ -151,5 +154,130 @@ fn expanded_ntt_preserves_wrapping_word_semantics() {
             .map(|x| x as i32)
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DotInput {
+    acc: [i32; DEGREE],
+    lhs: [[i32; DEGREE]; DOT_PRODUCTS],
+    rhs: [[i32; DEGREE]; DOT_PRODUCTS],
+}
+
+impl InlineReference for PointwiseDot64 {
+    type Input = DotInput;
+    type Output = [i32; DEGREE];
+
+    fn reference(input: &Self::Input) -> Self::Output {
+        let inverse = pow(R, P as usize - 2);
+        core::array::from_fn(|lane| {
+            input
+                .lhs
+                .iter()
+                .zip(&input.rhs)
+                .fold(i64::from(input.acc[lane]), |sum, (a, b)| {
+                    (sum + (i64::from(a[lane]) * i64::from(b[lane]) % P) * inverse % P)
+                        .rem_euclid(P)
+                }) as i32
+        })
+    }
+}
+
+impl InlineSpec for PointwiseDot64 {
+    fn edge_cases() -> impl IntoIterator<Item = Self::Input> {
+        [0, 1, P as i32 - 1].map(|value| DotInput {
+            acc: [P as i32 - 1; DEGREE],
+            lhs: [[value; DEGREE]; DOT_PRODUCTS],
+            rhs: [[value; DEGREE]; DOT_PRODUCTS],
+        })
+    }
+    fn random(rng: &mut impl RngCore) -> Self::Input {
+        DotInput {
+            acc: core::array::from_fn(|_| (u64::from(rng.next_u32()) % P as u64) as i32),
+            lhs: core::array::from_fn(|_| {
+                core::array::from_fn(|_| (u64::from(rng.next_u32()) % P as u64) as i32)
+            }),
+            rhs: core::array::from_fn(|_| {
+                core::array::from_fn(|_| (u64::from(rng.next_u32()) % P as u64) as i32)
+            }),
+        }
+    }
+    fn harness() -> InlineTestHarness {
+        InlineTestHarness::new(InlineMemoryLayout::single_input(
+            (2 * DOT_PRODUCTS + 1) * 8 + 2 * DOT_PRODUCTS * DEGREE * 4,
+            DEGREE * 4,
+        ))
+    }
+    fn load(h: &mut InlineTestHarness, input: &Self::Input) {
+        let (_, _, pinv) = parameters();
+        let data = DRAM_BASE + (2 * DOT_PRODUCTS + 1) as u64 * 8;
+        let mut words = (0..2 * DOT_PRODUCTS)
+            .map(|i| data + (i * DEGREE * 4) as u64)
+            .collect::<Vec<_>>();
+        words.push(P as u64 | (u64::from(pinv as u32) << 32));
+        for row in input.lhs.iter().chain(&input.rhs) {
+            for pair in row.chunks_exact(2) {
+                words.push(u64::from(pair[0] as u32) | (u64::from(pair[1] as u32) << 32));
+            }
+        }
+        h.load_input64(&words);
+        h.load_state32(&input.acc.map(|a| a as u32));
+    }
+    fn read(h: &mut InlineTestHarness) -> Self::Output {
+        h.read_output32(DEGREE)
+            .into_iter()
+            .map(|a| a as i32)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap()
+    }
+}
+
+#[test]
+fn expanded_pointwise_dot_matches_modular_relation() {
+    assert_edge_cases_match_reference::<PointwiseDot64>();
+    assert_random_cases_match_reference::<PointwiseDot64>(0x0044_4f54, 16);
+}
+
+#[test]
+fn portable_pointwise_dot_matches_modular_relation() {
+    let (_, _, pinv) = parameters();
+    for input in PointwiseDot64::edge_cases() {
+        let mut actual = input.acc;
+        pointwise_dot64(
+            &mut actual,
+            input.lhs.each_ref(),
+            input.rhs.each_ref(),
+            P as i32,
+            pinv,
+        );
+        assert_eq!(actual, PointwiseDot64::reference(&input));
+    }
+}
+
+#[test]
+fn expanded_pointwise_dot_preserves_wrapping_word_semantics() {
+    use tracer::instruction::RISCVTrace;
+    let (_, _, pinv) = parameters();
+    for value in [i32::MIN, i32::MAX] {
+        let input = DotInput {
+            acc: [value; DEGREE],
+            lhs: [[value; DEGREE]; DOT_PRODUCTS],
+            rhs: [[value; DEGREE]; DOT_PRODUCTS],
+        };
+        let mut expected = input.acc;
+        pointwise_dot64(
+            &mut expected,
+            input.lhs.each_ref(),
+            input.rhs.each_ref(),
+            P as i32,
+            pinv,
+        );
+        let mut harness = PointwiseDot64::harness();
+        harness.setup_registers();
+        PointwiseDot64::load(&mut harness, &input);
+        let mut rows = Vec::new();
+        PointwiseDot64::instruction().trace(&mut harness.cpu, Some(&mut rows));
+        assert_eq!(PointwiseDot64::read(&mut harness), expected);
     }
 }

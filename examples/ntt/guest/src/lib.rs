@@ -21,6 +21,20 @@ fn ntt(input: Vec<i32>, psi: Vec<i32>, twiddles: Vec<i32>, p: i32, pinv: i32) ->
     };
     let twiddles = Aligned(twiddles.as_slice().try_into().unwrap());
     jolt_inlines_ntt::forward_ntt64(&mut state.0, &psi.data, &twiddles.0, p, pinv);
+    let operand = Aligned(state.0);
+    let mut unaligned = WordAligned {
+        pad: 0,
+        data: state.0,
+    };
+    jolt_inlines_ntt::pointwise_dot64(&mut state.0, [&operand.0; 6], [&operand.0; 6], p, pinv);
+    jolt_inlines_ntt::pointwise_dot64(
+        &mut unaligned.data,
+        [&operand.0; 6],
+        [&operand.0; 6],
+        p,
+        pinv,
+    );
+    assert_eq!(state.0, unaligned.data);
     state.0.iter().enumerate().fold(0, |sum, (i, a)| {
         sum + (i as u64 + 1) * i64::from(*a).rem_euclid(i64::from(p)) as u64
     })

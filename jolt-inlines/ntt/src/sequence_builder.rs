@@ -88,13 +88,7 @@ impl NttBuilder {
 
     fn reduce(&mut self, value: u8) {
         let [_, _, p, _, _, diff, mask, _] = self.scratch.map(|r| *r);
-        self.asm.emit_r(Kind::SUB, diff, value, p);
-        self.asm.emit_i(Kind::SRAI, mask, diff, 63);
-        self.asm.emit_r(Kind::AND, mask, mask, p);
-        self.asm.emit_r(Kind::ADD, diff, diff, mask);
-        self.asm.emit_i(Kind::SRAI, mask, diff, 63);
-        self.asm.emit_r(Kind::AND, mask, mask, p);
-        self.asm.emit_r(Kind::ADDW, value, diff, mask);
+        reduce(&mut self.asm, value, p, diff, mask);
     }
 }
 
@@ -119,4 +113,14 @@ impl InlineOp for ForwardNtt64 {
         }
         .build()
     }
+}
+
+pub(super) fn reduce(asm: &mut InlineExpansionBuilder, value: u8, p: u8, diff: u8, mask: u8) {
+    asm.emit_r(Kind::SUB, diff, value, p);
+    asm.emit_i(Kind::SRAI, mask, diff, 63);
+    asm.emit_r(Kind::AND, mask, mask, p);
+    asm.emit_r(Kind::ADD, diff, diff, mask);
+    asm.emit_i(Kind::SRAI, mask, diff, 63);
+    asm.emit_r(Kind::AND, mask, mask, p);
+    asm.emit_r(Kind::ADDW, value, diff, mask);
 }
