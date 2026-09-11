@@ -1,5 +1,17 @@
 # Quickstart
 
+## Choosing a commitment backend
+
+Jolt has two polynomial commitment backends: elliptic-curve-based
+[Dory](../how/dory.md) and lattice-based [Akita](../how/akita.md).
+This quickstart uses Dory, the default backend. The generated SDK project
+currently supports Dory; to run Akita from a Jolt checkout, see the
+[profiling commands](./profiling/zkvm_profiling.md).
+
+Dory supports optional zero-knowledge proofs through the `zk` feature and
+BlindFold. Jolt's Akita integration currently supports non-zero-knowledge
+proofs only; the `akita` and `zk` features are mutually exclusive.
+
 ## AI Coding Skill
 
 Install the Jolt [agent skill](https://vercel.com/docs/agent-resources/skills) to let AI coding agents (Claude Code, Cursor, Codex, etc.) wrap Rust functions in Jolt proofs for you:
