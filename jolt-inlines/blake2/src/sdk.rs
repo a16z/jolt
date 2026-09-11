@@ -116,16 +116,13 @@ impl Blake2b {
         // We need to keep at least one byte to ensure we don't process what might be the final block
         // This guarantees the final block is always processed in finalize() with is_final=true
         while offset + BLOCK_INPUT_SIZE_IN_BYTES < input_len {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    input.as_ptr().add(offset),
-                    self.buffer.as_mut_ptr(),
-                    BLOCK_INPUT_SIZE_IN_BYTES,
-                );
-            }
-
             self.counter += BLOCK_INPUT_SIZE_IN_BYTES as u64;
-            compression_caller(&mut self.h, &self.buffer, self.counter, false);
+            compress(
+                &mut self.h,
+                &input[offset..offset + BLOCK_INPUT_SIZE_IN_BYTES],
+                self.counter,
+                false,
+            );
             offset += BLOCK_INPUT_SIZE_IN_BYTES;
         }
 
