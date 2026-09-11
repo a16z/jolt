@@ -15,9 +15,8 @@
 //! statement shape, bridges Jolt's Fiat-Shamir transcript into Akita's, and
 //! embeds the backend proof bytes wholesale.
 
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{AkitaError, AkitaTranscript};
-use akita_schedules::TrustedScheduleCatalog;
 use std::sync::Arc;
 
 use akita_prover::{
@@ -377,20 +376,21 @@ impl AkitaNativeBatching {
             .iter()
             .map(|entry| &entry.claim.commitment)
             .collect::<Vec<_>>();
-        let schedules = match setup.one_hot_k {
-            AKITA_ONE_HOT_K16 => setup.one_hot_k16_scheme()?.schedules(),
-            AKITA_ONE_HOT_K256 => setup.one_hot_k256_scheme()?.schedules(),
-            _ => unreachable!("one-hot K was validated by setup"),
-        };
-        let (selection, precommitted_backend, main_backend, backend_proof) =
-            crate::shape_guard::deserialize_checked_grouped_backend_payload(
-                schedules,
+        let (selection, precommitted_backend, main_backend, backend_proof) = match setup.one_hot_k {
+            AKITA_ONE_HOT_K16 => crate::shape_guard::deserialize_checked_grouped_backend_payload(
+                setup.one_hot_k16_scheme()?.schedules(),
                 &precommitted_commitments,
                 &main.commitment,
                 proof,
-                &backend_main_point,
-                setup.one_hot_k,
-            )?;
+            ),
+            AKITA_ONE_HOT_K256 => crate::shape_guard::deserialize_checked_grouped_backend_payload(
+                setup.one_hot_k256_scheme()?.schedules(),
+                &precommitted_commitments,
+                &main.commitment,
+                proof,
+            ),
+            _ => unreachable!("one-hot K was validated by setup"),
+        }?;
         let mut akita_transcript =
             bind_grouped_statement_transcripts(transcript, setup, selection, precommitted, main)?;
         let mut group_claims = Vec::with_capacity(precommitted.len() + 1);
@@ -585,7 +585,7 @@ where
 /// prover: the shared point, per-polynomial claimed values, the group
 /// commitment, and the commit-time hint.
 fn single_group_batch<'a, Cfg, P>(
-    schedules: &TrustedScheduleCatalog,
+    schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],
     evaluations: &[AkitaField],
     polynomials: &'a [&'a P],
@@ -818,22 +818,32 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         // Deserializes the proof-controlled backend payloads only after their
         // shapes are validated against the trusted schedule, so a malformed
         // proof cannot drive shape-backed allocations (see `shape_guard`).
-        let schedules = match commitment.backend_flavor {
-            AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules(),
-            AkitaBackendFlavor::OneHot => match setup.one_hot_k {
-                AKITA_ONE_HOT_K16 => setup.one_hot_k16_scheme()?.schedules(),
-                AKITA_ONE_HOT_K256 => setup.one_hot_k256_scheme()?.schedules(),
-                _ => unreachable!("the one-hot setup geometry was validated during setup"),
-            },
-        };
-        let (selection, backend_commitment, backend_proof) =
-            crate::shape_guard::deserialize_checked_backend_payload(
-                schedules,
+        let (selection, backend_commitment, backend_proof) = match commitment.backend_flavor {
+            AkitaBackendFlavor::Dense => crate::shape_guard::deserialize_checked_backend_payload(
+                setup.dense_scheme()?.schedules(),
                 commitment,
                 proof,
                 statement.len(),
                 &backend_point,
-            )?;
+            ),
+            AkitaBackendFlavor::OneHot => match setup.one_hot_k {
+                AKITA_ONE_HOT_K16 => crate::shape_guard::deserialize_checked_backend_payload(
+                    setup.one_hot_k16_scheme()?.schedules(),
+                    commitment,
+                    proof,
+                    statement.len(),
+                    &backend_point,
+                ),
+                AKITA_ONE_HOT_K256 => crate::shape_guard::deserialize_checked_backend_payload(
+                    setup.one_hot_k256_scheme()?.schedules(),
+                    commitment,
+                    proof,
+                    statement.len(),
+                    &backend_point,
+                ),
+                _ => unreachable!("the one-hot setup geometry was validated during setup"),
+            },
+        }?;
 
         let mut akita_transcript =
             bind_statement_transcripts(transcript, setup, statement, commitment, point)?;
