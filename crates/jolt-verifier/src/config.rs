@@ -130,8 +130,27 @@ pub fn validate_proof_config(
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "wire-format test assertions")]
 mod tests {
     use super::*;
+
+    // This is the field-inline-era format, including the disabled extension
+    // axis. The old three-axis format has no implicit decoder fallback.
+    #[test]
+    fn protocol_wire_format_is_explicit() {
+        let protocol = JoltProtocolConfig {
+            zk: ZkConfig::Transparent,
+            commitment: CommitmentConfig::Homomorphic,
+            scalar_challenge_endianness: ScalarChallengeEndianness::Big,
+            field_inline: FieldInlineConfig::disabled(),
+        };
+        assert_eq!(postcard::to_stdvec(&protocol).unwrap(), [0, 0, 0, 0, 4, 0]);
+        assert_eq!(
+            postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0, 0, 4, 0]).unwrap(),
+            protocol
+        );
+        assert!(postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0]).is_err());
+    }
 
     #[test]
     fn matching_protocol_config_is_accepted() {

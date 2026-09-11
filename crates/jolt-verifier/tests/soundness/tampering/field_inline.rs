@@ -11,7 +11,6 @@
         not(feature = "zk")
     ),
     expect(
-        clippy::expect_used,
         clippy::panic,
         reason = "fixture tamper tests should fail loudly when the stored proof shape changes"
     )
@@ -59,11 +58,7 @@ mod active {
         fn outer(
             claims: &mut ClearProofClaims<Fr>,
         ) -> &mut FieldRegistersSpartanOuterOutputClaims<Fr> {
-            claims
-                .stage1
-                .field_inline_outer
-                .as_mut()
-                .expect("FR-on fixture carries stage-1 FR openings")
+            &mut claims.stage1.outer.outer_remainder.field_inline
         }
         offset_each_cell(
             &standard_field_inline_eqpoly_case(),
@@ -82,6 +77,9 @@ mod active {
                 |claims| &mut outer(claims).load_from_x,
                 |claims| &mut outer(claims).store_to_x,
                 |claims| &mut outer(claims).load_imm,
+                |claims| &mut outer(claims).load_word,
+                |claims| &mut outer(claims).load_word_hi,
+                |claims| &mut outer(claims).advice_limb,
             ],
         );
     }
@@ -122,11 +120,7 @@ mod active {
         fn product(
             claims: &mut ClearProofClaims<Fr>,
         ) -> &mut FieldRegistersProductOutputClaims<Fr> {
-            claims
-                .stage2
-                .field_inline_product
-                .as_mut()
-                .expect("FR-on fixture carries the stage-2 FR product appendage")
+            &mut claims.stage2.batch_outputs.product_remainder.field_inline
         }
         offset_each_cell(
             &standard_field_inline_eqpoly_case(),

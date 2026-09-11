@@ -5,12 +5,13 @@
 //! `jolt-verifier` needs to name them, and the verifier crate stays
 //! prover-free.
 
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
-use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId};
+use std::fmt::Debug;
+
+use jolt_claims::protocols::jolt::JoltDerivedId;
 use jolt_claims::MissingOpeningValue;
 use jolt_field::{Field, JoltField};
 use jolt_sumcheck::ProveRounds;
+use jolt_verifier::stages::ids::VerifierOpeningId;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -32,7 +33,7 @@ pub enum SumcheckKernelError<F: Field> {
     Verifier(#[from] VerifierError),
 
     #[error(transparent)]
-    MissingOpeningValue(#[from] MissingOpeningValue<JoltOpeningId>),
+    MissingOpeningValue(MissingOpeningValue<VerifierOpeningId>),
 
     /// Final values were requested before every round was bound.
     #[error("final table values requested with {remaining} unbound rounds")]
@@ -147,21 +148,12 @@ where
     pub challenges: &'a ConcreteSumcheckChallenges<F, R>,
 }
 
-/// The 13 FR-local Spartan-outer opening values (appended-column order) the
-/// composed stage-1 remainder kernel produces beside its typed jolt outputs.
-/// Parked in the [`ProofSession`] by the kernel's `park_residue`; the stage-1
-/// driver composes it into the batch's remainder relation for the curated
-/// absorb and the expected-output fold, and the stage-1 recipe takes it for
-/// the wire claims.
-#[cfg(feature = "field-inline")]
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub struct FieldInlineOuterAppendage<F: JoltField>(pub Vec<F>);
-
-/// The three FR product-row opening values the composed stage-2 remainder
-/// kernel produces beside its typed jolt outputs; the stage-2 counterpart of
-/// [`FieldInlineOuterAppendage`].
-#[cfg(feature = "field-inline")]
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub struct FieldInlineProductAppendage<F: JoltField>(
-    #[cfg_attr(feature = "allocative", allocative(skip))] pub FieldRegistersProductOutputClaims<F>,
-);
+impl<F: Field, O: Debug + Into<VerifierOpeningId>> From<MissingOpeningValue<O>>
+    for SumcheckKernelError<F>
+{
+    fn from(error: MissingOpeningValue<O>) -> Self {
+        Self::MissingOpeningValue(MissingOpeningValue {
+            id: error.id.into(),
+        })
+    }
+}

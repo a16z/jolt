@@ -16,8 +16,6 @@ use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_claims::NoChallenges;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
-#[cfg(feature = "field-inline")]
-use jolt_kernels::FieldInlineProductAppendage;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
@@ -109,11 +107,6 @@ where
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
     // The FR lane inputs enter the composed input claim exactly as on the
     // verifier — composed through the shared seam, before `input_claim`.
-    #[cfg(feature = "field-inline")]
-    let uniskip_relation = jolt_verifier::stages::stage2::field_inline::compose_uniskip_inputs(
-        uniskip_relation,
-        stage1,
-    )?;
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
         uniskip_relation.input_claim(&uniskip_inputs, &NoChallenges::default())?;
@@ -197,23 +190,7 @@ where
     #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof;
 
-    #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-    let mut claims =
-        Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
-    // Attach the FR product appendage the composed remainder kernel parked
-    // in the session (taken here: the driver already composed it into its
-    // batch view): `claims` is the wire carrier `stage2::verify` requires
-    // fail-closed on FR-on proofs.
-    #[cfg(feature = "field-inline")]
-    {
-        let FieldInlineProductAppendage(appendage) = session
-            .take::<FieldInlineProductAppendage<F>>()
-            .ok_or(ProverError::Verifier(VerifierError::MissingProofPayload {
-                field: "stage2 FR product appendage (composed remainder kernel)",
-            }))?;
-        claims.field_inline_product = Some(appendage);
-    }
-
+    let claims = Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     Ok(Stage2ProverOutput {
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
@@ -292,7 +269,12 @@ mod field_inline_round_trip {
         // The FR product appendage is carried, and the spec's alias table
         // holds on honest data: the FR claim-reduction member outputs equal
         // the appendage values polynomial-for-polynomial.
-        let appendage = out.claims.field_inline_product.clone().unwrap();
+        let appendage = out
+            .claims
+            .batch_outputs
+            .product_remainder
+            .field_inline
+            .clone();
         let reduction = &out.claims.batch_outputs.field_registers_claim_reduction;
         assert_eq!(reduction.rs1_value, appendage.rs1_value);
         assert_eq!(reduction.rs2_value, appendage.rs2_value);
@@ -322,12 +304,6 @@ mod field_inline_round_trip {
             };
             let batch_challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
             let input_points = sumchecks.empty_input_points();
-            let (sumchecks, attached) =
-                jolt_verifier::stages::stage1::field_inline::compose_outer_outputs(
-                    sumchecks,
-                    &stage1.claims,
-                )
-                .unwrap();
             let input_values = Stage1BatchInputClaims {
                 outer_remainder: jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output(
                     stage1.claims.uniskip_output_claim,
@@ -345,10 +321,6 @@ mod field_inline_round_trip {
                 )
                 .unwrap();
             sumchecks.append_output_claims(&mut transcript, &stage1.claims.outer);
-            jolt_verifier::stages::stage1::field_inline::append_outer_openings(
-                &mut transcript,
-                &attached,
-            );
         }
 
         // Stage 2 proper.
@@ -361,11 +333,7 @@ mod field_inline_round_trip {
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
         let tau_high: Fr = draw_spartan_product_tau_high(&mut transcript);
-        let uniskip_relation = stage2_field_inline::compose_uniskip_inputs(
-            ProductUniskip::new(product_dimensions, tau_high),
-            &stage1.clear_output,
-        )
-        .unwrap();
+        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation
             .input_claim(&uniskip_inputs, &NoChallenges::default())
@@ -415,8 +383,6 @@ mod field_inline_round_trip {
         sumchecks
             .validate_output_claims(&out.claims.batch_outputs)
             .unwrap();
-        let (sumchecks, attached_product) =
-            stage2_field_inline::compose_product_outputs(sumchecks, &out.claims).unwrap();
         let input_values = stage2_batch_input_values_from_upstream(
             &stage1.clear_output,
             out.claims.product_uniskip_output_claim,
@@ -433,21 +399,14 @@ mod field_inline_round_trip {
                 2,
             )
             .unwrap();
-        sumchecks.append_output_claims(
-            &mut transcript,
-            &out.claims.batch_outputs,
-            &attached_product,
-        );
+        sumchecks.append_output_claims(&mut transcript, &out.claims.batch_outputs);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }
 }
 
-/// FR-on ZK: the curated committed stage-2 shell (21 rows: 18 member
-/// openings with the FR claim reduction, plus the 3 FR product-appendage
-/// rows at the verifier's splice), the honest equality witness behind the
-/// BlindFold `OpeningEquality` lowering, and the verifier replay landing on
-/// the prover's forward transcript bytes.
+/// Committed stage-2 output rows use the same canonical alias layout as
+/// clear claims, and replay to the prover's transcript state.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
@@ -506,10 +465,7 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // 21 curated committed output-claim values: RAM read-write (3),
-        // product remainder (8), the FR product appendage (3, the splice),
-        // instruction claim reduction (2 non-aliased), the FR claim
-        // reduction (3), RAM RAF (1), RAM output check (1).
+        // The three FR reduction openings alias the product member's rows.
         let values: Vec<Fr> = out
             .committed_witness
             .output_claim_rows
@@ -517,15 +473,7 @@ mod field_inline_zk {
             .flatten()
             .copied()
             .collect();
-        assert_eq!(values.len(), 21);
-
-        // The BlindFold `OpeningEquality` witness is honestly satisfied: the
-        // committed rows at the FR claim-reduction member positions equal the
-        // spliced appendage rows for the same polynomial (rd/rs1/rs2 member
-        // order vs rs1/rs2/rd appendage order).
-        assert_eq!(values[16], values[13]); // rd_value
-        assert_eq!(values[17], values[11]); // rs1_value
-        assert_eq!(values[18], values[12]); // rs2_value
+        assert_eq!(values.len(), 18);
 
         // The replay (stage2::verify's zk body over its public constituents),
         // mirroring blindfold.rs's transcript hard check at stage scope.

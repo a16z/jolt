@@ -1,6 +1,6 @@
 //! field_inline Spartan-outer produced claims.
 //!
-//! The field-inline extension appends 13 FR-local columns to the composed
+//! The field-inline extension appends 16 FR-local columns to the composed
 //! Spartan outer R1CS (`jolt-r1cs::constraints::jolt`); their openings are
 //! produced by the same stage-1 remainder sumcheck as the ordinary RV64
 //! openings and appended after them. There is no separate FR Spartan relation
@@ -14,11 +14,11 @@ use crate::OutputClaims;
 
 /// Produced FR-local Spartan-outer openings, in the appended-column order
 /// (`geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS`): the five
-/// value/product columns, then the eight op-flag selectors. All share the
+/// value/product columns, then the eleven op-flag selectors. All share the
 /// stage-1 remainder opening point. Generic over the opening cell (`F` value /
 /// `Vec<F>` point).
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
     deserialize = "C: serde::Deserialize<'de>"

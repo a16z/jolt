@@ -120,7 +120,6 @@ jolt-transcript::legacy.rs::append_length_prefixed::append#1::transcript.append(
 jolt-transcript::legacy.rs::append_length_prefixed::append#2::transcript.append(payload)
 jolt-transcript::poseidon.rs::PoseidonSponge::absorb::absorb_fr_pair#0::self.absorb_fr_pair(len_fr,Fr::zero())
 jolt-transcript::poseidon.rs::PoseidonSponge::absorb::absorb_fr_pair#1::self.absorb_fr_pair(a,b)
-jolt-verifier::stages/stage1/verify.rs::verify::append_outer_openings#0::#[cfg(feature="field-inline")]super::field_inline::append_outer_openings(transcript,&field_inline_outer)
 jolt-verifier::stages/stage4/ram_val_check.rs::RamValCheck<F>::draw_challenges::append_ram_val_check_gamma_domain_separator#0::append_ram_val_check_gamma_domain_separator(transcript)
 jolt-verifier::stages/stage4/ram_val_check.rs::append_ram_val_check_gamma_domain_separator::append#0::transcript.append(&LabelWithCount(b"ram_val_check_gamma",0))
 jolt-verifier::stages/stage4/ram_val_check.rs::append_ram_val_check_gamma_domain_separator::append_bytes#1::transcript.append_bytes(&[])
@@ -201,5 +200,3 @@ jolt-verifier::verifier.rs::append_payload_label::append#1::transcript.append(&L
 jolt-verifier::verifier.rs::validate_and_seed_transcript::absorb_commitments#1::absorb_commitments(preprocessing,proof,trusted_advice_commitment,&muttranscript,)
 jolt-verifier::verifier.rs::validate_and_seed_transcript::absorb_preamble#0::absorb_preamble(&checked,proof,&muttranscript)
 jolt-verifier::verifier.rs::verify::append#0::transcript.append(&Label(b"BlindFold"))
-jolt-verifier::verifier.rs::verify_until_stage1::absorb_commitments#1::absorb_commitments(preprocessing,proof,trusted_advice_commitment,&muttranscript,)
-jolt-verifier::verifier.rs::verify_until_stage1::absorb_preamble#0::absorb_preamble(&checked,proof,&muttranscript)

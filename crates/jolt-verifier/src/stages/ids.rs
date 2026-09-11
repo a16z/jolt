@@ -112,3 +112,9 @@ impl From<FieldInlineChallengeId> for VerifierChallengeId {
         Self::FieldInline(id)
     }
 }
+
+impl FromVerifierOpeningId for VerifierOpeningId {
+    fn from_verifier(id: VerifierOpeningId) -> Option<Self> {
+        Some(id)
+    }
+}

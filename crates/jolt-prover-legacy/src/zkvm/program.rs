@@ -264,9 +264,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         generators: &PCS::ProverSetup,
         bytecode_chunk_count: usize,
         max_log_k_chunk: usize,
-    ) -> (Self, CommittedProgramProverData<PCS>) {
+    ) -> Result<(Self, CommittedProgramProverData<PCS>), PreprocessingError> {
         let Self::Full(full) = self else {
-            panic!("cannot commit already-committed program preprocessing");
+            return Err(PreprocessingError::AlreadyCommitted);
         };
         let meta = full.meta();
         let (bytecode_commitments, bytecode_hints) = TrustedBytecodeCommitments::derive(
@@ -274,11 +274,11 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             generators,
             max_log_k_chunk,
             bytecode_chunk_count,
-        );
+        )?;
         let (program_commitments, program_hints) =
             TrustedProgramCommitments::derive(&full, memory_layout, generators);
 
-        (
+        Ok((
             Self::Committed(CommittedProgramPreprocessing {
                 meta,
                 bytecode_commitments,
@@ -289,7 +289,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 bytecode_hints,
                 program_hints,
             },
-        )
+        ))
     }
 
     pub fn as_full(&self) -> Result<&FullProgramPreprocessing, ProofVerifyError> {

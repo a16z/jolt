@@ -282,29 +282,7 @@ impl JoltTraceRow {
             return Err(TraceRowError::ImmTooWide { imm });
         }
 
-        // FR instructions repurpose the encoded operand slots for FR-register
-        // indices; only the bridge x-register role reaches the ordinary
-        // register plane. Suppress the rest exactly like the bytecode side's
-        // `suppress_field_operand_slots`, so trace-derived one-hots and the
-        // masked bytecode fold agree at FR-active cycles.
-        #[cfg(feature = "field-inline")]
-        let (rs1, rs2, rd) = match crate::field_inline::field_inline_operand_shape(kind) {
-            Some(shape) => {
-                let operands = shape.x_operands(instruction.operands);
-                (operands.rs1, operands.rs2, operands.rd)
-            }
-            None => (
-                instruction.operands.rs1,
-                instruction.operands.rs2,
-                instruction.operands.rd,
-            ),
-        };
-        #[cfg(not(feature = "field-inline"))]
-        let (rs1, rs2, rd) = (
-            instruction.operands.rs1,
-            instruction.operands.rs2,
-            instruction.operands.rd,
-        );
+        let operands = instruction.integer_operands();
 
         Ok(Self {
             values,
@@ -313,9 +291,9 @@ impl JoltTraceRow {
             bytecode_pc,
             meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
             jolt_tag: kind.tag().0,
-            rs1_id: checked_register_id(rs1)?,
-            rs2_id: checked_register_id(rs2)?,
-            rd_id: checked_register_id(rd)?,
+            rs1_id: checked_register_id(operands.rs1)?,
+            rs2_id: checked_register_id(operands.rs2)?,
+            rd_id: checked_register_id(operands.rd)?,
             _reserved: [0; 3],
         })
     }

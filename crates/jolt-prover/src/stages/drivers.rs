@@ -7,66 +7,18 @@
 //! else in this crate.
 
 mod stage1 {
-    #[cfg(feature = "field-inline")]
-    use jolt_kernels::FieldInlineOuterAppendage;
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage1::outputs::{
         Stage1BatchChallenges, Stage1BatchInputClaims, Stage1BatchInputPoints,
         Stage1BatchOutputClaims, Stage1BatchOutputPoints, Stage1BatchSumchecks,
     };
-    #[cfg(feature = "field-inline")]
-    use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
-    #[cfg(not(feature = "field-inline"))]
     jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover);
-
-    // The composed stage-1 committed/absorb order: the 35 member openings,
-    // then the 13 FR-local Spartan-outer appendage values the composed
-    // remainder kernel parked in the session — the verifier's composed row
-    // order, which the generated member absorb cannot express. The batch is
-    // re-composed with the appendage first (the expected-output fold reads it
-    // off the relation), failing closed when a backend parked none, so an
-    // FR-on prover cannot emit a 35-row shell the FR-on verifier would
-    // reject at the committed count.
-    #[cfg(feature = "field-inline")]
-    jolt_verifier::stage1_batch_sumchecks_members!(impl_stage_prover
-        curate = |batch, claims, points| {
-            let mut values = batch.opening_values(claims);
-            let field_inline = batch.outer_remainder.field_inline_outputs().ok_or_else(|| {
-                VerifierError::StageClaimSumcheckFailed {
-                    stage: "Stage1Batch".to_string(),
-                    reason: "the composed stage-1 absorb needs the FR Spartan-outer \
-                             appendage, but the batch was not composed with one"
-                        .to_string(),
-                }
-            })?;
-            values.extend_from_slice(field_inline);
-            Ok(values)
-        },
-        compose = |batch, session| {
-            let appendage = session
-                .state::<FieldInlineOuterAppendage<F>>()
-                .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-                    stage: "Stage1Batch".to_string(),
-                    reason: "the composed stage-1 remainder kernel parked no FR Spartan-outer \
-                             appendage"
-                        .to_string(),
-                })?;
-            Ok(Some(Stage1BatchSumchecks {
-                outer_remainder: batch
-                    .outer_remainder
-                    .clone()
-                    .with_field_inline_outputs(appendage.0.clone()),
-            }))
-        },
-    );
 }
 
 mod stage2 {
-    #[cfg(feature = "field-inline")]
-    use jolt_kernels::FieldInlineProductAppendage;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
     use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
@@ -78,56 +30,10 @@ mod stage2 {
     use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
     use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
     use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-    #[cfg(feature = "field-inline")]
-    use jolt_verifier::VerifierError;
 
     use crate::driver::impl_stage_prover;
 
-    #[cfg(not(feature = "field-inline"))]
     jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover);
-
-    // The field-inline batch suppresses the generated absorb (the verifier's
-    // committed row order splices the FR product appendage after the
-    // product-remainder outputs), so the driver curates through the
-    // verifier's own composed `opening_values`, feeding it the appendage the
-    // composed remainder kernel parked in the session. The batch is
-    // re-composed with the appendage first (the expected-output fold reads
-    // it off the relation), failing closed when a backend parked none.
-    #[cfg(feature = "field-inline")]
-    jolt_verifier::stage2_batch_sumchecks_members!(impl_stage_prover
-        curate = |batch, claims, points| {
-            let appendage = batch.product_remainder.field_inline_outputs().ok_or_else(|| {
-                VerifierError::StageClaimSumcheckFailed {
-                    stage: "Stage2Batch".to_string(),
-                    reason: "the curated stage-2 absorb needs the FR product appendage, \
-                             but the batch was not composed with one"
-                        .to_string(),
-                }
-            })?;
-            Ok(batch.opening_values(claims, appendage))
-        },
-        compose = |batch, session| {
-            let appendage = session
-                .state::<FieldInlineProductAppendage<F>>()
-                .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
-                    stage: "Stage2Batch".to_string(),
-                    reason: "the composed stage-2 remainder kernel parked no FR product \
-                             appendage"
-                        .to_string(),
-                })?;
-            Ok(Some(Stage2BatchSumchecks {
-                ram_read_write: batch.ram_read_write.clone(),
-                product_remainder: batch
-                    .product_remainder
-                    .clone()
-                    .with_field_inline_outputs(appendage.0.clone()),
-                instruction_claim_reduction: batch.instruction_claim_reduction.clone(),
-                field_registers_claim_reduction: batch.field_registers_claim_reduction.clone(),
-                ram_raf_evaluation: batch.ram_raf_evaluation.clone(),
-                ram_output_check: batch.ram_output_check.clone(),
-            }))
-        },
-    );
 }
 
 mod stage3 {

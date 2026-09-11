@@ -72,7 +72,7 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
         ),
         instruction_claim_reduction: instruction_claim_reduction_input_values_from_upstream(stage1),
         #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction: super::field_inline::claim_reduction_inputs(stage1)?,
+        field_registers_claim_reduction: super::field_inline::claim_reduction_inputs(stage1),
         ram_raf_evaluation: ram_raf_evaluation_input_values_from_upstream(stage1),
         ram_output_check: RamOutputCheckInputClaims::default(),
     })
@@ -177,14 +177,8 @@ where
             });
         };
         let consistency = sumchecks.verify_zk(&proof.stages.stage2_sumcheck_proof, transcript)?;
-        // The committed shell carries the curated row order: the member
-        // openings plus (under `field-inline`) the three FR product-appendage
-        // rows spliced after the product-remainder outputs — the clear absorb
-        // order exactly.
+        // Both modes omit aliases from the canonical member output rows.
         let output_claim_count = sumchecks.output_claim_count();
-        #[cfg(feature = "field-inline")]
-        let output_claim_count =
-            super::field_inline::composed_output_claim_count(output_claim_count)?;
         let batch_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage2_sumcheck_proof,
@@ -217,10 +211,6 @@ where
     let claims = &proof.clear_claims()?.stage2;
     sumchecks.validate_output_claims(&claims.batch_outputs)?;
 
-    #[cfg(feature = "field-inline")]
-    let (sumchecks, field_inline_product) =
-        super::field_inline::compose_product_outputs(sumchecks, claims)?;
-
     let input_values =
         stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim)?;
 
@@ -234,12 +224,7 @@ where
         2,
     )?;
 
-    #[cfg(not(feature = "field-inline"))]
     sumchecks.append_output_claims(transcript, &claims.batch_outputs);
-    // The curated FR-on absorb: the FR product appendage splices in after the
-    // product-remainder outputs, per the spec's committed output row order.
-    #[cfg(feature = "field-inline")]
-    sumchecks.append_output_claims(transcript, &claims.batch_outputs, &field_inline_product);
 
     Ok(Stage2Output::Clear(Stage2ClearOutput {
         output_values: claims.batch_outputs.clone(),
@@ -296,9 +281,6 @@ where
         Stage1Output::Clear(stage1) => {
             let claims = &proof.clear_claims()?.stage2;
             let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
-            #[cfg(feature = "field-inline")]
-            let uniskip_relation =
-                super::field_inline::compose_uniskip_inputs(uniskip_relation, stage1)?;
             let uniskip_input_values = product_uniskip_input_values_from_stage1(stage1);
             let uniskip_input_claim =
                 uniskip_relation.input_claim(&uniskip_input_values, &NoChallenges::default())?;

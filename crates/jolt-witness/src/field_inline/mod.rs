@@ -55,7 +55,7 @@ pub trait FieldInlineRegisterReadWriteRows<F: JoltField> {
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
 }
 
-/// One FR-active cycle's composed spartan-outer column values — the 13
+/// One FR-active cycle's composed spartan-outer column values — the 16
 /// appended R1CS columns in `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order:
 /// the five value columns, then the eleven op-flag columns in
 /// [`FieldInlineOpFlag`](jolt_claims::protocols::field_inline::FieldInlineOpFlag)
@@ -113,7 +113,7 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
 
     /// The composed spartan-outer FR column values, sparse over the cycle
     /// domain: `(cycle, row)` pairs sorted strictly increasing by cycle,
-    /// covering at least every cycle where any of the 13 FR columns is
+    /// covering at least every cycle where any of the 16 FR columns is
     /// non-zero (extra all-zero rows are harmless — the columns' values are
     /// what the composed kernels fold). The default derives the rows from the
     /// dense `oracle_table`s so fixture oracles stay valid; the trace-backed

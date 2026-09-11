@@ -76,8 +76,8 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
         let high = jolt::field_store_to_x!(13);
         assert_eq!([low, high], limbs);
     }
-    jolt::field_load_imm!(12, 3);
-    jolt::field_inv!(13, 12);
+    jolt::field_load_imm!(13, 3);
+    jolt::field_inv!(12, 13);
     jolt::field_mul!(12, 12, 13);
     jolt::field_assert_eq!(12, 0);
 

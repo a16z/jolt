@@ -26,15 +26,8 @@ pub use jolt_claims::protocols::field_inline::relations::product::FieldRegisters
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct Stage2OutputClaims<F: JoltField> {
     pub product_uniskip_output_claim: F,
+    #[cfg_attr(feature = "field-inline", serde(with = "canonical_batch"))]
     pub batch_outputs: Stage2BatchOutputClaims<F>,
-    /// The three FR product-row openings (`FieldRs1Value`, `FieldRs2Value`,
-    /// `FieldRdValue` at `FieldRegistersProduct`) the composed remainder's FR
-    /// lanes factor over — `FieldRdValue` is the `FieldInvProduct` lane's
-    /// right factor. Present on every field-inline proof; carried as an
-    /// `Option` for the same producer reasons as the stage-1 FR payload, and
-    /// required fail-closed by `stage2::verify`.
-    #[cfg(feature = "field-inline")]
-    pub field_inline_product: Option<FieldRegistersProductOutputClaims<F>>,
 }
 
 impl<F: JoltField> Stage2OutputClaims<F> {
@@ -46,8 +39,6 @@ impl<F: JoltField> Stage2OutputClaims<F> {
         Self {
             product_uniskip_output_claim,
             batch_outputs,
-            #[cfg(feature = "field-inline")]
-            field_inline_product: None,
         }
     }
 }
@@ -57,6 +48,13 @@ impl<F: JoltField> Stage2BatchOutputClaims<F> {
     /// field-inline semantics use this regardless of the build's feature set —
     /// the FR claim-reduction slot defaults to all-zero claims, inert because
     /// such producers' proofs never declare the FR axis.
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects a composed claim or opening id"
+        )
+    )]
     pub fn new(
         ram_read_write: RamReadWriteOutputClaims<F>,
         product_remainder: ProductRemainderOutputClaims<F>,
@@ -66,7 +64,7 @@ impl<F: JoltField> Stage2BatchOutputClaims<F> {
     ) -> Self {
         Self {
             ram_read_write,
-            product_remainder,
+            product_remainder: product_remainder.into(),
             instruction_claim_reduction,
             #[cfg(feature = "field-inline")]
             field_registers_claim_reduction: Default::default(),
@@ -97,14 +95,10 @@ impl<F: JoltField> Stage2BatchOutputClaims<F> {
 /// copies equal their sources) all derive from those per-member declarations.
 /// The two RAM relations slice their point at the phase-1 `instance_point_offset`.
 ///
-/// Under `field-inline` the batch absorbs 18 member openings (the FR
-/// claim-reduction adds three), the FR product appendage rides beside them,
-/// and the absorb order is curated: the generated absorb is suppressed
-/// (`no_opening_values`) because the spec's committed row order splices the
-/// appendage mid-batch — see [`Stage2BatchSumchecks::opening_values`].
+/// With field-inline, the product contributes three more canonical openings;
+/// the field-register reduction aliases those same-polynomial, same-point claims.
 #[derive(SumcheckBatch)]
 #[sumcheck_batch(crate = "crate")]
-#[cfg_attr(feature = "field-inline", sumcheck_batch(no_opening_values))]
 pub struct Stage2BatchSumchecks<F: JoltField> {
     pub ram_read_write: RamReadWriteChecking<F>,
     /// On the prove side the remainder kernel is minted from the state the
@@ -357,8 +351,16 @@ mod tests {
     /// below perturb one alias each to assert rejection. The aliased cells carry
     /// the product values; the absorb test overrides them with sentinels to prove
     /// they are skipped.
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects composed claim and opening types"
+        )
+    )]
     fn consistent_values() -> Stage2BatchOutputClaims<Fr> {
-        Stage2BatchOutputClaims::<Fr> {
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut claims = Stage2BatchOutputClaims::<Fr> {
             ram_read_write: RamReadWriteOutputClaims {
                 val: fr(1),
                 ra: fr(2),
@@ -373,7 +375,8 @@ mod tests {
                 branch_flag: fr(9),
                 next_is_noop: fr(10),
                 virtual_instruction: fr(11),
-            },
+            }
+            .into(),
             instruction_claim_reduction: InstructionClaimReductionOutputClaims {
                 lookup_output: fr(8),
                 left_lookup_operand: fr(12),
@@ -389,7 +392,16 @@ mod tests {
             },
             ram_raf_evaluation: RamRafEvaluationOutputClaims { ram_ra: fr(14) },
             ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
+        };
+        #[cfg(feature = "field-inline")]
+        {
+            claims.product_remainder.field_inline = FieldRegistersProductOutputClaims {
+                rs1_value: fr(17),
+                rs2_value: fr(18),
+                rd_value: fr(16),
+            };
         }
+        claims
     }
 
     /// Locks the stage-2 batch Fiat-Shamir append order against silent drift: the
@@ -411,20 +423,20 @@ mod tests {
         );
     }
 
-    /// Locks the curated field-inline absorb to the spec's committed output
+    /// Locks the field-inline absorb to the spec's committed output
     /// row order (`specs/field-inline-protocol.md`, "Stage 2 Composition"):
-    /// member declaration order with the FR product appendage spliced after
-    /// the product-remainder outputs and before the instruction
+    /// member declaration order with the FR product claims following
+    /// the base product claims and before the instruction
     /// claim-reduction non-aliased outputs. The aliased instruction cells
     /// carry distinct sentinels to prove the id-driven skip still applies.
     #[cfg(feature = "field-inline")]
     #[test]
-    fn opening_values_follow_curated_field_inline_order() {
+    fn opening_values_follow_canonical_field_inline_order() {
         let mut claims = consistent_values();
         claims.instruction_claim_reduction.lookup_output = fr(101);
         claims.instruction_claim_reduction.left_instruction_input = fr(102);
         claims.instruction_claim_reduction.right_instruction_input = fr(103);
-        let appendage = FieldRegistersProductOutputClaims {
+        claims.product_remainder.field_inline = FieldRegistersProductOutputClaims {
             rs1_value: fr(201),
             rs2_value: fr(202),
             rd_value: fr(203),
@@ -432,50 +444,35 @@ mod tests {
 
         let expected = (1..=11)
             .map(fr)
-            // The FR product appendage, spliced per the spec's row order.
+            // The FR part of the product member.
             .chain([fr(201), fr(202), fr(203)])
             // The instruction claim-reduction non-aliased outputs.
             .chain([fr(12), fr(13)])
-            // The FR claim-reduction member outputs (equality-checked against
-            // the appendage by stage2::verify, absorbed at member position).
-            .chain([fr(16), fr(17), fr(18)])
             // RAM RAF evaluation, RAM output check.
             .chain([fr(14), fr(15)])
             .collect::<Vec<_>>();
-        assert_eq!(sumchecks().opening_values(&claims, &appendage), expected);
+        assert_eq!(sumchecks().opening_values(&claims), expected);
     }
 
     /// The generated `output_claim_count` sums the members' wire sets: 16
     /// expression-referenced openings, minus the reduction's 3 aliases, plus the
     /// product remainder's 2 staged openings — plus, under `field-inline`, the
-    /// FR claim-reduction's 3 (the FR product appendage is not a member and is
-    /// counted separately by the stage).
+    /// product member's 3 FR openings (the FR reduction aliases them).
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
-        #[cfg(not(feature = "field-inline"))]
-        {
-            assert_eq!(sumchecks.output_claim_count(), 15);
-            assert_eq!(
-                sumchecks.opening_values(&consistent_values()).len(),
-                sumchecks.output_claim_count(),
-            );
-        }
-        #[cfg(feature = "field-inline")]
-        {
-            assert_eq!(sumchecks.output_claim_count(), 18);
-            let appendage = FieldRegistersProductOutputClaims {
-                rs1_value: fr(201),
-                rs2_value: fr(202),
-                rd_value: fr(203),
-            };
-            assert_eq!(
-                sumchecks
-                    .opening_values(&consistent_values(), &appendage)
-                    .len(),
-                sumchecks.output_claim_count() + 3,
-            );
-        }
+        assert_eq!(
+            sumchecks.opening_values(&consistent_values()).len(),
+            sumchecks.output_claim_count()
+        );
+        assert_eq!(
+            sumchecks.output_claim_count(),
+            if cfg!(feature = "field-inline") {
+                18
+            } else {
+                15
+            }
+        );
     }
 
     /// Pins the reduction's alias declarations: each aliased id is distinct and
@@ -485,6 +482,13 @@ mod tests {
     /// Fiat-Shamir-bound). The point-slice identity the value-only check relies
     /// on is pinned by `aliased_members_derive_identical_opening_points`.
     #[test]
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects composed claim and opening types"
+        )
+    )]
     fn alias_declarations_are_valid() {
         use jolt_claims::SymbolicSumcheck as _;
         use std::collections::BTreeSet;
@@ -509,10 +513,28 @@ mod tests {
                 "aliased opening {aliased:?} is not referenced by the reduction's output Expr",
             );
             assert!(
-                source_wire_openings.contains(&source),
+                source_wire_openings.contains(&source.into()),
                 "source {source:?} is not absorbed by the product remainder",
             );
         }
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn wire_claims_reconstruct_reduction_aliases_from_the_product() {
+        let claims = Stage2OutputClaims::new(fr(19), consistent_values());
+        let bytes = postcard::to_stdvec(&claims).unwrap();
+        let decoded: Stage2OutputClaims<Fr> = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, claims);
+        let mut inconsistent = claims;
+        inconsistent
+            .batch_outputs
+            .field_registers_claim_reduction
+            .rs1_value += fr(1);
+        assert!(sumchecks()
+            .validate_aliases(&inconsistent.batch_outputs)
+            .is_err());
+        assert_eq!(postcard::to_stdvec(&inconsistent).unwrap(), bytes);
     }
 
     #[test]
@@ -584,7 +606,7 @@ mod tests {
     /// offsets), so they bind the same batch-point suffix and derive the same
     /// reversed opening point. This structural agreement is what makes the
     /// explicit stage-2 equality check between the FR claim-reduction outputs
-    /// and the FR product appendage a same-polynomial-same-point statement.
+    /// and the FR product outputs a same-polynomial-same-point statement.
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_registers_claim_reduction_shares_the_product_remainder_point() {
@@ -612,5 +634,66 @@ mod tests {
         );
         assert_eq!(reduction_points.rd_value, reduction_points.rs1_value);
         assert_eq!(reduction_points.rd_value, reduction_points.rs2_value);
+    }
+}
+
+#[cfg(feature = "field-inline")]
+mod canonical_batch {
+    use super::*;
+    use crate::stages::composed::ProductOutputs;
+    use serde::ser::SerializeStruct;
+    use serde::{Deserializer, Serializer};
+
+    // Alias values remain available to the generic batch evaluator, but are
+    // reconstructed from their canonical source when decoding the wire proof.
+    pub fn serialize<F: JoltField, S: Serializer>(
+        claims: &Stage2BatchOutputClaims<F>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut wire = serializer.serialize_struct("Stage2BatchOutputClaims", 5)?;
+        wire.serialize_field("ram_read_write", &claims.ram_read_write)?;
+        wire.serialize_field("product_remainder", &claims.product_remainder)?;
+        wire.serialize_field(
+            "instruction_claim_reduction",
+            &claims.instruction_claim_reduction,
+        )?;
+        wire.serialize_field("ram_raf_evaluation", &claims.ram_raf_evaluation)?;
+        wire.serialize_field("ram_output_check", &claims.ram_output_check)?;
+        wire.end()
+    }
+
+    #[derive(Deserialize)]
+    #[serde(bound = "F: JoltField")]
+    struct CanonicalBatch<F: JoltField> {
+        ram_read_write: RamReadWriteOutputClaims<F>,
+        product_remainder: ProductOutputs<F>,
+        instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
+        ram_raf_evaluation: RamRafEvaluationOutputClaims<F>,
+        ram_output_check: RamOutputCheckOutputClaims<F>,
+    }
+
+    pub fn deserialize<'de, F: JoltField, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Stage2BatchOutputClaims<F>, D::Error> {
+        let CanonicalBatch {
+            ram_read_write,
+            product_remainder,
+            instruction_claim_reduction,
+            ram_raf_evaluation,
+            ram_output_check,
+        } = CanonicalBatch::<F>::deserialize(deserializer)?;
+        let field_registers_claim_reduction = FieldRegistersClaimReductionOutputClaims {
+            rs1_value: product_remainder.field_inline.rs1_value,
+            rs2_value: product_remainder.field_inline.rs2_value,
+            rd_value: product_remainder.field_inline.rd_value,
+        };
+        Ok(Stage2BatchOutputClaims {
+            ram_read_write,
+            product_remainder,
+            instruction_claim_reduction,
+            field_registers_claim_reduction,
+            ram_raf_evaluation,
+            ram_output_check,
+        })
     }
 }

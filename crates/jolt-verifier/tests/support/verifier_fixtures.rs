@@ -816,7 +816,8 @@ fn generate_committed_muldiv() -> GeneratedVerifierFixture {
             public_io.memory_layout.clone(),
             1 << 16,
             BYTECODE_CHUNK_COUNT,
-        );
+        )
+        .expect("base-profile committed preprocessing");
     let prover_preprocessing = JoltProverPreprocessing::new_committed(
         shared_preprocessing,
         committed_program_prover_data,

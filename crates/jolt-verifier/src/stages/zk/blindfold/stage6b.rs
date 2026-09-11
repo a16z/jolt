@@ -124,7 +124,6 @@ where
         values,
         output_ids,
         aliases,
-        Vec::new(),
     )
 }
 

@@ -21,7 +21,9 @@ pub use jolt_claims::protocols::field_inline::relations::claim_reductions::regis
     FieldRegistersClaimReductionOutputClaims,
 };
 use jolt_claims::protocols::field_inline::{
-    FieldInlineDerivedId, FieldRegistersClaimReductionPublic, FieldRegistersTraceDimensions,
+    FieldInlineDerivedId, FieldInlineOpeningId, FieldInlineRelationId,
+    FieldInlineVirtualPolynomial, FieldRegistersClaimReductionPublic,
+    FieldRegistersTraceDimensions,
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
@@ -58,6 +60,28 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersClaimReduction<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    fn aliased_output_openings() -> Vec<(FieldInlineOpeningId, FieldInlineOpeningId)> {
+        [
+            FieldInlineVirtualPolynomial::FieldRs1Value,
+            FieldInlineVirtualPolynomial::FieldRs2Value,
+            FieldInlineVirtualPolynomial::FieldRdValue,
+        ]
+        .into_iter()
+        .map(|polynomial| {
+            (
+                FieldInlineOpeningId::virtual_polynomial(
+                    polynomial,
+                    FieldInlineRelationId::FieldRegistersClaimReduction,
+                ),
+                FieldInlineOpeningId::virtual_polynomial(
+                    polynomial,
+                    FieldInlineRelationId::FieldRegistersProduct,
+                ),
+            )
+        })
+        .collect()
     }
 
     fn derive_opening_points(

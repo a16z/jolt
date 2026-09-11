@@ -57,8 +57,6 @@ use jolt_field::JoltField;
 #[cfg(feature = "akita")]
 use jolt_poly::BindingOrder;
 use jolt_poly::{IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly};
-#[cfg(feature = "field-inline")]
-use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
@@ -225,17 +223,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             });
         }
         let stage_gammas = inputs.challenges.stage_gamma_powers();
-        // FR-on, the jolt fold sees the ordinary x-register slots only (the
-        // FR-operand slots ride the side table) — the same mask the
-        // reference kernel and the verifier's own fold apply.
-        #[cfg(feature = "field-inline")]
-        let masked_bytecode =
-            jolt_verifier::stages::field_inline_bytecode::suppress_field_operand_slots(
-                &program.bytecode.bytecode,
-            );
-        #[cfg(feature = "field-inline")]
-        let bytecode_rows: &[JoltInstructionRow] = &masked_bytecode;
-        #[cfg(not(feature = "field-inline"))]
         let bytecode_rows = &program.bytecode.bytecode;
         let stage_values = read_raf_stage_values(BytecodeReadRafStageValueInputs {
             bytecode: bytecode_rows,
@@ -614,10 +601,18 @@ impl<F: JoltField> ProveRounds<F> for AddressKernel<F> {
 impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
     type Relation = BytecodeReadRafAddressPhase<F>;
 
+    #[cfg_attr(
+        not(feature = "field-inline"),
+        expect(
+            clippy::useless_conversion,
+            reason = "field-inline selects composed claims and opening ids"
+        )
+    )]
     fn output_claims(
         &mut self,
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
-    ) -> Result<BytecodeReadRafAddressPhaseOutputClaims<F>, SumcheckKernelError<F>> {
+    ) -> Result<SumcheckOutputClaims<F, BytecodeReadRafAddressPhase<F>>, SumcheckKernelError<F>>
+    {
         self.progress.require_complete()?;
         let mut intermediate =
             self.entry_weight * self.entry_trace.evals()[0] * self.entry_expected.evals()[0];
@@ -639,7 +634,8 @@ impl<F: JoltField> SumcheckKernel<F> for AddressKernel<F> {
         Ok(BytecodeReadRafAddressPhaseOutputClaims {
             intermediate,
             val_stages,
-        })
+        }
+        .into())
     }
 }
 
@@ -1196,9 +1192,8 @@ mod tests {
     use jolt_verifier::stages::field_inline_bytecode::{
         convert_field_inline_bytecode, FieldInlineBytecodeFold, FieldInlineBytecodeTable,
     };
-    use jolt_verifier::stages::stage6a::bytecode_read_raf::{
-        BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
-    };
+    use jolt_verifier::stages::relations::SumcheckInputPoints;
+    use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::{
@@ -1310,8 +1305,10 @@ mod tests {
                 stage4_gamma: fr(13),
                 stage5_gamma: fr(17),
             };
-            let address_claims = BytecodeReadRafAddressPhaseInputClaims::<Fr>::default();
-            let address_input_points = BytecodeReadRafAddressPhaseInputClaims::<Vec<Fr>>::default();
+            let address_claims =
+                SumcheckInputClaims::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
+            let address_input_points =
+                SumcheckInputPoints::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
 
             let mut session = ProofSession::default();
             let mut reference =
@@ -1471,13 +1468,13 @@ mod akita_tests {
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-    use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::field_inline_bytecode::{
         FieldInlineBytecodeFold, FieldInlineBytecodeTable,
     };
+    use jolt_verifier::stages::relations::SumcheckInputPoints;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     #[cfg(feature = "field-inline")]
     use jolt_verifier::stages::stage6a::field_inline::FieldInlineBytecodeReadRafGeometry;
@@ -1538,8 +1535,9 @@ mod akita_tests {
                 stage4_gamma: Fr::from_u64(13),
                 stage5_gamma: Fr::from_u64(17),
             };
-            let claims = LatticeReadRafAddressPhaseInputClaims::<Fr>::default();
-            let input_points = LatticeReadRafAddressPhaseInputClaims::<Vec<Fr>>::default();
+            let claims = SumcheckInputClaims::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
+            let input_points =
+                SumcheckInputPoints::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
 
             let mut session = ProofSession::default();
             let mut reference = ReferenceBackend
