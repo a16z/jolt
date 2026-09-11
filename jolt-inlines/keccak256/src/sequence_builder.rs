@@ -1,8 +1,11 @@
 //! Keccak-f[1600] inline expansion.
 //!
-//! Every emitted instruction is one trace row. The ρ/π step follows its
-//! single 24-lane cycle in place, leaving one rotated lane in a temporary
-//! register until χ consumes it. D[3] and D[4] reuse dead C registers.
+//! Every emitted instruction is one trace row. θ's third step (XOR the
+//! column parity D[x] into every lane of column x) is fused into ρ: each
+//! `XORROT` row computes `rotr(A[x,y] ^ D[x])`, so θ itself only touches lane
+//! (0,0), the one lane ρ leaves unrotated. The ρ/π step follows its single
+//! 24-lane cycle in place, leaving one rotated lane in a temporary register
+//! until χ consumes it. D[3] and D[4] reuse dead C registers.
 
 use crate::{
     INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
@@ -141,6 +144,9 @@ impl Keccak256SequenceBuilder {
         }
     }
 
+    /// Column parities C and D. Only lane (0,0) receives its D here; the
+    /// other 24 lanes pick up D[x] inside their ρ rotation
+    /// (`emit_rho_pi_lane`).
     fn theta(&mut self) {
         for x in 0..5 {
             let c = *self.c[x];
@@ -178,6 +184,10 @@ impl Keccak256SequenceBuilder {
         }
     }
 
+    /// `destination = rotl(A[source] ^ D[source.x], offset)`: θ's XOR of the
+    /// source column's parity fused with ρ's rotation. Lane (0,0) never
+    /// comes through here: it is π's fixed point and the only lane with a
+    /// zero offset, so every rotation below is a nonzero rotate-right.
     fn emit_rho_pi_lane(&mut self, source: (usize, usize), destination: u8) {
         let (x, y) = source;
         let kind = match 64 - ROTATION_OFFSETS[x][y] {
@@ -247,6 +257,9 @@ impl Keccak256SequenceBuilder {
 /// First lane rotated in ρ/π. Its destination register still holds an unread
 /// lane at that point, so the result is parked in `pi_temp`.
 const RHO_PI_FIRST_SOURCE: (usize, usize) = (1, 0);
+// Starting anywhere but π's fixed point (0,0) keeps that lane, the only one
+// with a zero ρ offset, out of the 24-lane cycle.
+const _: () = assert!(RHO_PI_FIRST_SOURCE.0 != 0 || RHO_PI_FIRST_SOURCE.1 != 0);
 /// The lane whose ρ/π result lives in `pi_temp` rather than its own register.
 const PI_TEMP_LANE: (usize, usize) = pi_destination(RHO_PI_FIRST_SOURCE);
 

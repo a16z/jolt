@@ -57,72 +57,14 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
         debug_assert_eq!(XLEN, 64);
-        match ROTATION {
-            16 => vec![Suffixes::One, Suffixes::XorRot16],
-            24 => vec![Suffixes::One, Suffixes::XorRot24],
-            32 => vec![Suffixes::One, Suffixes::XorRot32],
-            63 => vec![Suffixes::One, Suffixes::XorRot63],
-            2 => vec![Suffixes::One, Suffixes::XorRot2],
-            3 => vec![Suffixes::One, Suffixes::XorRot3],
-            8 => vec![Suffixes::One, Suffixes::XorRot8],
-            9 => vec![Suffixes::One, Suffixes::XorRot9],
-            19 => vec![Suffixes::One, Suffixes::XorRot19],
-            20 => vec![Suffixes::One, Suffixes::XorRot20],
-            21 => vec![Suffixes::One, Suffixes::XorRot21],
-            23 => vec![Suffixes::One, Suffixes::XorRot23],
-            25 => vec![Suffixes::One, Suffixes::XorRot25],
-            28 => vec![Suffixes::One, Suffixes::XorRot28],
-            36 => vec![Suffixes::One, Suffixes::XorRot36],
-            37 => vec![Suffixes::One, Suffixes::XorRot37],
-            39 => vec![Suffixes::One, Suffixes::XorRot39],
-            43 => vec![Suffixes::One, Suffixes::XorRot43],
-            44 => vec![Suffixes::One, Suffixes::XorRot44],
-            46 => vec![Suffixes::One, Suffixes::XorRot46],
-            49 => vec![Suffixes::One, Suffixes::XorRot49],
-            50 => vec![Suffixes::One, Suffixes::XorRot50],
-            54 => vec![Suffixes::One, Suffixes::XorRot54],
-            56 => vec![Suffixes::One, Suffixes::XorRot56],
-            58 => vec![Suffixes::One, Suffixes::XorRot58],
-            61 => vec![Suffixes::One, Suffixes::XorRot61],
-            62 => vec![Suffixes::One, Suffixes::XorRot62],
-            _ => unimplemented!(),
-        }
+        vec![Suffixes::One, Suffixes::xor_rot(ROTATION)]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, xor_rot] = suffixes.try_into().unwrap();
-        match ROTATION {
-            16 => prefixes[Prefixes::XorRot16] * one + xor_rot,
-            24 => prefixes[Prefixes::XorRot24] * one + xor_rot,
-            32 => prefixes[Prefixes::XorRot32] * one + xor_rot,
-            63 => prefixes[Prefixes::XorRot63] * one + xor_rot,
-            2 => prefixes[Prefixes::XorRot2] * one + xor_rot,
-            3 => prefixes[Prefixes::XorRot3] * one + xor_rot,
-            8 => prefixes[Prefixes::XorRot8] * one + xor_rot,
-            9 => prefixes[Prefixes::XorRot9] * one + xor_rot,
-            19 => prefixes[Prefixes::XorRot19] * one + xor_rot,
-            20 => prefixes[Prefixes::XorRot20] * one + xor_rot,
-            21 => prefixes[Prefixes::XorRot21] * one + xor_rot,
-            23 => prefixes[Prefixes::XorRot23] * one + xor_rot,
-            25 => prefixes[Prefixes::XorRot25] * one + xor_rot,
-            28 => prefixes[Prefixes::XorRot28] * one + xor_rot,
-            36 => prefixes[Prefixes::XorRot36] * one + xor_rot,
-            37 => prefixes[Prefixes::XorRot37] * one + xor_rot,
-            39 => prefixes[Prefixes::XorRot39] * one + xor_rot,
-            43 => prefixes[Prefixes::XorRot43] * one + xor_rot,
-            44 => prefixes[Prefixes::XorRot44] * one + xor_rot,
-            46 => prefixes[Prefixes::XorRot46] * one + xor_rot,
-            49 => prefixes[Prefixes::XorRot49] * one + xor_rot,
-            50 => prefixes[Prefixes::XorRot50] * one + xor_rot,
-            54 => prefixes[Prefixes::XorRot54] * one + xor_rot,
-            56 => prefixes[Prefixes::XorRot56] * one + xor_rot,
-            58 => prefixes[Prefixes::XorRot58] * one + xor_rot,
-            61 => prefixes[Prefixes::XorRot61] * one + xor_rot,
-            62 => prefixes[Prefixes::XorRot62] * one + xor_rot,
-            _ => unimplemented!(),
-        }
+        prefixes[Prefixes::xor_rot(ROTATION)] * one + xor_rot
     }
 }
 

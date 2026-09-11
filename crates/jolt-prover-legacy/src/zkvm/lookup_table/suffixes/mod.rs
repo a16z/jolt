@@ -201,6 +201,41 @@ pub enum Suffixes {
 pub type SuffixEval<F: JoltField> = F;
 
 impl Suffixes {
+    /// The suffix of the XOR-then-rotate-right-by-`rotation` table; see
+    /// [`Prefixes::xor_rot`](super::prefixes::Prefixes::xor_rot).
+    pub const fn xor_rot(rotation: u32) -> Self {
+        match rotation {
+            2 => Suffixes::XorRot2,
+            3 => Suffixes::XorRot3,
+            8 => Suffixes::XorRot8,
+            9 => Suffixes::XorRot9,
+            16 => Suffixes::XorRot16,
+            19 => Suffixes::XorRot19,
+            20 => Suffixes::XorRot20,
+            21 => Suffixes::XorRot21,
+            23 => Suffixes::XorRot23,
+            24 => Suffixes::XorRot24,
+            25 => Suffixes::XorRot25,
+            28 => Suffixes::XorRot28,
+            32 => Suffixes::XorRot32,
+            36 => Suffixes::XorRot36,
+            37 => Suffixes::XorRot37,
+            39 => Suffixes::XorRot39,
+            43 => Suffixes::XorRot43,
+            44 => Suffixes::XorRot44,
+            46 => Suffixes::XorRot46,
+            49 => Suffixes::XorRot49,
+            50 => Suffixes::XorRot50,
+            54 => Suffixes::XorRot54,
+            56 => Suffixes::XorRot56,
+            58 => Suffixes::XorRot58,
+            61 => Suffixes::XorRot61,
+            62 => Suffixes::XorRot62,
+            63 => Suffixes::XorRot63,
+            _ => unimplemented!(),
+        }
+    }
+
     /// Returns true iff this suffix's `suffix_mle` output is guaranteed to be in {0, 1}.
     ///
     /// This is used for micro-optimizations that avoid calling `mul_u64_unreduced(1)`

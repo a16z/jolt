@@ -216,6 +216,45 @@ pub const NUM_PREFIXES: usize = <Prefixes as strum::EnumCount>::COUNT;
 /// All prefix variants in discriminant order.
 pub const ALL_PREFIXES: &[Prefixes] = <Prefixes as strum::VariantArray>::VARIANTS;
 
+impl Prefixes {
+    /// The prefix of the XOR-then-rotate-right-by-`rotation` table. Owns the
+    /// rotation-to-variant map for the table, its prefix evaluator, and the
+    /// Keccak emitter's rotation set; an unsupported rotation fails constant
+    /// evaluation at the table's instantiation.
+    pub const fn xor_rot(rotation: u32) -> Self {
+        match rotation {
+            2 => Prefixes::XorRot2,
+            3 => Prefixes::XorRot3,
+            8 => Prefixes::XorRot8,
+            9 => Prefixes::XorRot9,
+            16 => Prefixes::XorRot16,
+            19 => Prefixes::XorRot19,
+            20 => Prefixes::XorRot20,
+            21 => Prefixes::XorRot21,
+            23 => Prefixes::XorRot23,
+            24 => Prefixes::XorRot24,
+            25 => Prefixes::XorRot25,
+            28 => Prefixes::XorRot28,
+            32 => Prefixes::XorRot32,
+            36 => Prefixes::XorRot36,
+            37 => Prefixes::XorRot37,
+            39 => Prefixes::XorRot39,
+            43 => Prefixes::XorRot43,
+            44 => Prefixes::XorRot44,
+            46 => Prefixes::XorRot46,
+            49 => Prefixes::XorRot49,
+            50 => Prefixes::XorRot50,
+            54 => Prefixes::XorRot54,
+            56 => Prefixes::XorRot56,
+            58 => Prefixes::XorRot58,
+            61 => Prefixes::XorRot61,
+            62 => Prefixes::XorRot62,
+            63 => Prefixes::XorRot63,
+            _ => unreachable!(),
+        }
+    }
+}
+
 /// Dispatches a `SparseDensePrefix` method call to the concrete type for each `Prefixes` variant.
 macro_rules! dispatch_prefix {
     ($self:expr, $method:ident) => {

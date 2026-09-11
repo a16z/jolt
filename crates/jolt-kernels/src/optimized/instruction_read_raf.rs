@@ -72,11 +72,6 @@ use crate::{
 const CHUNK_LEN: usize = 8;
 const CHUNK_SIZE: usize = 1 << CHUNK_LEN;
 
-const _: () = assert!(
-    LookupTableKind::<RISCV_XLEN>::COUNT < u8::MAX as usize,
-    "InstructionCycleRow packs lookup table indices as u8"
-);
-
 /// One packed per-cycle row: the stage-5 facts plus the bytecode/RAM and
 /// packed fused-inc sources used by later one-hot kernels. The lookup index
 /// is split into native limbs and the PC/table/flags share one word, keeping
@@ -101,7 +96,11 @@ const PACKED_RAF_SHIFT: u32 = PACKED_TABLE_SHIFT + PACKED_TABLE_BITS;
 #[cfg(feature = "akita")]
 const PACKED_INC_SIGN_SHIFT: u32 = PACKED_RAF_SHIFT + 1;
 
-const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT < 1 << PACKED_TABLE_BITS);
+// `table_index + 1` shares `PACKED_TABLE_BITS` with the RAF flag, both in the
+// packed row word and in the per-cycle claim byte.
+const _: () = assert!(LookupTableKind::<RISCV_XLEN>::COUNT <= PACKED_TABLE_MASK as usize);
+// Bytecode PCs arrive as `u32`, so the runtime bound below cannot fail for them.
+const _: () = assert!(PACKED_PC_BITS >= u32::BITS);
 
 impl InstructionCycleRow {
     pub(crate) fn new(
@@ -112,7 +111,7 @@ impl InstructionCycleRow {
         remapped_ram_address: Option<u64>,
         #[cfg(feature = "akita")] fused_inc: FusedInc,
     ) -> Self {
-        debug_assert!(table_index.is_none_or(|index| index < u8::MAX as usize));
+        debug_assert!(table_index.is_none_or(|index| index < PACKED_TABLE_MASK as usize));
         #[cfg(feature = "akita")]
         debug_assert!(fused_inc.0.unsigned_abs() <= u64::MAX as u128);
         let pc = bytecode_pc as u64;
@@ -1181,16 +1180,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
         // Snap the packed output-claim facts first: past this handoff the
         // final flag walk reads one byte per cycle, not the 40 B row.
         let rows = self.rows.as_slice();
-        const {
-            assert!(
-                LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
-                "table indices must fit the packed claim byte"
-            );
-        }
         self.claim_columns = map_indices(rows.len(), |j| {
             let row = &rows[j];
             let table = row.table_index().map_or(0, |index| index as u8 + 1);
-            table | (u8::from(row.raf_flag()) << 7)
+            table | (u8::from(row.raf_flag()) << PACKED_TABLE_BITS)
         });
 
         // The tables stay pending: the first cycle message evaluates these

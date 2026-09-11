@@ -147,8 +147,14 @@ fn lean_instr(
         "ADD" | "ADDW" | "SUB" | "SUBW" | "MUL" | "MULW" | "MULHU" | "MULHSU" | "OR" | "XOR"
         | "AND" | "SLT" | "SLTU" | "ANDN" | "VirtualNegateIf" | "VirtualSRL" | "VirtualSRA"
         | "VirtualSRLW" | "VirtualSRAW" | "VirtualPext" | "VirtualPextSigned"
-        | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "VirtualXORROT32"
-        | "VirtualXORROT24" | "VirtualXORROT16" | "VirtualXORROT63" | "VirtualXORROTW16"
+        | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "VirtualXORROT2"
+        | "VirtualXORROT3" | "VirtualXORROT8" | "VirtualXORROT9" | "VirtualXORROT16"
+        | "VirtualXORROT19" | "VirtualXORROT20" | "VirtualXORROT21" | "VirtualXORROT23"
+        | "VirtualXORROT24" | "VirtualXORROT25" | "VirtualXORROT28" | "VirtualXORROT32"
+        | "VirtualXORROT36" | "VirtualXORROT37" | "VirtualXORROT39" | "VirtualXORROT43"
+        | "VirtualXORROT44" | "VirtualXORROT46" | "VirtualXORROT49" | "VirtualXORROT50"
+        | "VirtualXORROT54" | "VirtualXORROT56" | "VirtualXORROT58" | "VirtualXORROT61"
+        | "VirtualXORROT62" | "VirtualXORROT63" | "VirtualXORROTL1" | "VirtualXORROTW16"
         | "VirtualXORROTW12" | "VirtualXORROTW8" | "VirtualXORROTW7" | "VirtualXORROTW22"
         | "VirtualXORROTW19" | "VirtualXORROTW6" => {
             format!("{rd} {rs1} {rs2}")

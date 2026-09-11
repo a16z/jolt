@@ -22,37 +22,7 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
         F: FieldChallengeOps<C>,
     {
         let suffix_len = LOG_K - j - b.len() - 1;
-        let prefix_idx = match ROTATION {
-            16 => Prefixes::XorRot16,
-            24 => Prefixes::XorRot24,
-            32 => Prefixes::XorRot32,
-            63 => Prefixes::XorRot63,
-            2 => Prefixes::XorRot2,
-            3 => Prefixes::XorRot3,
-            8 => Prefixes::XorRot8,
-            9 => Prefixes::XorRot9,
-            19 => Prefixes::XorRot19,
-            20 => Prefixes::XorRot20,
-            21 => Prefixes::XorRot21,
-            23 => Prefixes::XorRot23,
-            25 => Prefixes::XorRot25,
-            28 => Prefixes::XorRot28,
-            36 => Prefixes::XorRot36,
-            37 => Prefixes::XorRot37,
-            39 => Prefixes::XorRot39,
-            43 => Prefixes::XorRot43,
-            44 => Prefixes::XorRot44,
-            46 => Prefixes::XorRot46,
-            49 => Prefixes::XorRot49,
-            50 => Prefixes::XorRot50,
-            54 => Prefixes::XorRot54,
-            56 => Prefixes::XorRot56,
-            58 => Prefixes::XorRot58,
-            61 => Prefixes::XorRot61,
-            62 => Prefixes::XorRot62,
-            _ => unimplemented!(),
-        };
-        let mut result = checkpoints[prefix_idx].unwrap_or(F::zero());
+        let mut result = checkpoints[Prefixes::xor_rot(ROTATION)].unwrap_or(F::zero());
 
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
@@ -101,40 +71,10 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        let prefix_idx = match ROTATION {
-            16 => Prefixes::XorRot16,
-            24 => Prefixes::XorRot24,
-            32 => Prefixes::XorRot32,
-            63 => Prefixes::XorRot63,
-            2 => Prefixes::XorRot2,
-            3 => Prefixes::XorRot3,
-            8 => Prefixes::XorRot8,
-            9 => Prefixes::XorRot9,
-            19 => Prefixes::XorRot19,
-            20 => Prefixes::XorRot20,
-            21 => Prefixes::XorRot21,
-            23 => Prefixes::XorRot23,
-            25 => Prefixes::XorRot25,
-            28 => Prefixes::XorRot28,
-            36 => Prefixes::XorRot36,
-            37 => Prefixes::XorRot37,
-            39 => Prefixes::XorRot39,
-            43 => Prefixes::XorRot43,
-            44 => Prefixes::XorRot44,
-            46 => Prefixes::XorRot46,
-            49 => Prefixes::XorRot49,
-            50 => Prefixes::XorRot50,
-            54 => Prefixes::XorRot54,
-            56 => Prefixes::XorRot56,
-            58 => Prefixes::XorRot58,
-            61 => Prefixes::XorRot61,
-            62 => Prefixes::XorRot62,
-            _ => unimplemented!(),
-        };
         let original_pos = j / 2;
         let rotated_pos = (original_pos + ROTATION as usize) % XLEN;
         let shift = XLEN - 1 - rotated_pos;
-        let updated = checkpoints[prefix_idx].unwrap_or(F::zero())
+        let updated = checkpoints[Prefixes::xor_rot(ROTATION)].unwrap_or(F::zero())
             + F::from_u64(1 << shift) * ((F::one() - r_x) * r_y + r_x * (F::one() - r_y));
         Some(updated).into()
     }
