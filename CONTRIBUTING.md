@@ -71,6 +71,7 @@ Spec analysis can also be triggered externally by adding the `claude-spec-review
 
 - Rust toolchain (see `rust-toolchain.toml`)
 - [cargo-nextest](https://nexte.st/) for running tests
+- [cargo-audit](https://github.com/rustsec/rustsec/tree/main/cargo-audit) for the dependency-advisory check
 
 ### Key Commands
 
@@ -88,6 +89,10 @@ cargo nextest run --cargo-quiet
 # Primary correctness check
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host
 cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk
+
+# Dependency advisories (CI runs this nightly over every tracked Cargo.lock;
+# see .github/workflows/cargo-audit.yml for the policy and triage steps)
+cargo audit --deny unsound --deny yanked
 ```
 
 ## PR Titles and Commit Messages
