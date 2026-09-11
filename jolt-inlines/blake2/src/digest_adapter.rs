@@ -61,6 +61,7 @@ impl<OutSize: ArraySize> Update for Blake2b<OutSize> {
 }
 
 impl<OutSize: ArraySize> FixedOutput for Blake2b<OutSize> {
+    #[inline(always)]
     fn finalize_into(self, out: &mut Output<Self>) {
         self.state.finalize_into(&mut out[..]);
     }
