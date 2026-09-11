@@ -376,6 +376,7 @@ pprof = { version = "0.15", features = ["prost-codec", "frame-pointer"] }
 syn = { version = "3", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.79"
+prettyplease = "0.3"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }

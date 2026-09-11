@@ -1975,4 +1975,99 @@ mod test_cpu {
         // No effect to PC
         assert_eq!(DRAM_BASE, cpu.read_pc());
     }
+
+    #[test]
+    fn advice_tape_reads_back_little_endian_in_fifo_order() {
+        let mut tape = AdviceTape::new();
+        assert!(tape.is_empty());
+        assert_eq!(tape.read(1), None, "reading an empty tape yields None");
+
+        tape.write(&[0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(tape.len(), 4);
+        assert_eq!(tape.remaining(), 4);
+
+        assert_eq!(tape.read(2), Some(0x0201), "bytes assemble little-endian");
+        assert_eq!(tape.remaining(), 2);
+        // A read past the remaining bytes fails without consuming anything
+        assert_eq!(tape.read(4), None);
+        assert_eq!(tape.remaining(), 2);
+        assert_eq!(tape.read(2), Some(0x0403));
+        assert_eq!(tape.remaining(), 0);
+
+        tape.reset_read_position();
+        assert_eq!(tape.read(4), Some(0x0403_0201));
+    }
+
+    #[test]
+    fn cpu_advice_tape_helpers_share_the_cpu_tape() {
+        let mut cpu = create_cpu();
+        advice_tape_write(&mut cpu, &[9, 8, 7]);
+        assert_eq!(advice_tape_remaining(&cpu), 3);
+        assert_eq!(advice_tape_read(&mut cpu, 3), Some(0x070809));
+        assert_eq!(advice_tape_remaining(&cpu), 0);
+    }
+
+    #[test]
+    fn handle_advice_write_copies_guest_memory_onto_the_tape() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(64);
+        for (i, byte) in [0xde_u8, 0xad, 0xbe, 0xef].iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        cpu.handle_advice_write(DRAM_BASE, 4).unwrap();
+        assert_eq!(advice_tape_remaining(&cpu), 4);
+        assert_eq!(advice_tape_read(&mut cpu, 4), Some(0xefbe_adde));
+    }
+
+    #[test]
+    fn reservation_covers_follows_the_lr_sc_width_rules() {
+        let mut cpu = create_cpu();
+        let addr = DRAM_BASE + 64;
+        assert!(!cpu.is_reservation_set());
+
+        // LR.W + SC.W succeeds; LR.W + SC.D fails (set too narrow)
+        cpu.set_reservation(addr, ReservationWidth::Word);
+        assert!(cpu.is_reservation_set());
+        assert!(cpu.reservation_covers(addr, ReservationWidth::Word));
+        assert!(!cpu.reservation_covers(addr, ReservationWidth::Doubleword));
+
+        // LR.D covers both widths
+        cpu.set_reservation(addr, ReservationWidth::Doubleword);
+        assert!(cpu.reservation_covers(addr, ReservationWidth::Word));
+        assert!(cpu.reservation_covers(addr, ReservationWidth::Doubleword));
+
+        // Different address or a cleared reservation never covers
+        assert!(!cpu.reservation_covers(addr + 8, ReservationWidth::Word));
+        cpu.clear_reservation();
+        assert!(!cpu.reservation_covers(addr, ReservationWidth::Word));
+    }
+
+    #[test]
+    fn cycle_markers_track_real_and_virtual_instruction_counts() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        let label = b"my_marker";
+        for (i, byte) in label.iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        let ptr = DRAM_BASE as u32;
+
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+            .unwrap();
+        assert_eq!(cpu.active_markers.len(), 1);
+        assert_eq!(cpu.active_markers[&ptr].label, "my_marker");
+
+        // A second start with the same label logs a warning but replaces nothing
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+            .unwrap();
+        assert_eq!(cpu.active_markers.len(), 1);
+
+        cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_END)
+            .unwrap();
+        assert!(cpu.active_markers.is_empty());
+
+        // Ending a marker that was never started is tolerated
+        cpu.handle_jolt_cycle_marker(ptr + 64, 0, JOLT_CYCLE_MARKER_END)
+            .unwrap();
+    }
 }

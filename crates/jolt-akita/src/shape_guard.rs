@@ -308,4 +308,63 @@ mod tests {
             .expect_err("truncated commitment bytes must be rejected");
         assert!(err.to_string().contains("bytes"));
     }
+
+    /// A real prover run must realize exactly the fold structure the
+    /// schedule prescribes — the shape is derived from the schedule, so this
+    /// ties the derived model to actual backend prover output.
+    #[test]
+    fn real_proof_decodes_under_the_schedule_derived_shape() {
+        use crate::{AkitaScheme, AkitaSetupParams};
+        use jolt_openings::CommitmentScheme;
+        use jolt_poly::Polynomial;
+        use jolt_transcript::{Blake2bTranscript, Transcript};
+
+        let num_vars = 14;
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (prover_setup, _) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            num_vars, 1, [7; 32], artifacts,
+        ))
+        .expect("dense setup should build");
+        let poly = Polynomial::new(
+            (0..1u64 << num_vars)
+                .map(|index| AkitaField::from_u64(index + 1))
+                .collect(),
+        );
+        let (_, hint) =
+            AkitaScheme::commit(&poly, &prover_setup).expect("dense commit should succeed");
+        let point = point(num_vars);
+        let eval = poly.evaluate(&point);
+        let mut transcript = Blake2bTranscript::<AkitaField>::new(b"shape-guard-fixture");
+        let proof = AkitaScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut transcript,
+        )
+        .expect("open should succeed");
+
+        let layout = OpeningClaimsLayout::new(num_vars, 1).expect("layout");
+        let schedules = dense_schedules();
+        let resolved = resolve_schedule_row::<AkitaConfig>(&schedules, proof.selection(), &layout)
+            .expect("schedule");
+        let schedule = resolved.schedule();
+        let derived = derive_proof_shape::<AkitaConfig>(schedule, &layout)
+            .expect("schedule-derived shape must build");
+        derived
+            .validate_decode_budget(
+                proof.backend_proof.len(),
+                field_elem_bytes(),
+                field_elem_bytes(),
+            )
+            .expect("honest proof must fit the derived byte budget");
+        let _ = deserialize_akita::<AkitaBackendProof>(&proof.backend_proof, &derived)
+            .expect("honest proof must decode under the derived shape");
+        assert_eq!(
+            derived.recursive_folds.len(),
+            schedule.recursive_folds.len(),
+            "derived shape must realize the scheduled fold depth"
+        );
+    }
 }
