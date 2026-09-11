@@ -26,4 +26,5 @@ rand_core = { workspace = true }
 [features]
 default = ["parallel"]
 field-inline = ["jolt-claims/field-inline"]
+implicit-carry = ["jolt-claims/implicit-carry"]
 parallel = ["rayon", "jolt-poly/parallel"]

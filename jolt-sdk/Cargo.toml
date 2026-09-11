@@ -23,6 +23,11 @@ field-inline = [
   "jolt-program?/field-inline",
   "tracer?/field-inline",
 ]
+implicit-carry = [
+  "jolt-prover-legacy?/implicit-carry",
+  "jolt-program?/implicit-carry",
+  "tracer?/implicit-carry",
+]
 
 host = [
   "jolt-prover-legacy/default",

@@ -12,6 +12,8 @@ pub enum SourceExtension {
     JoltInline,
     #[cfg(feature = "field-inline")]
     FieldInline,
+    #[cfg(feature = "implicit-carry")]
+    ImplicitCarry,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -28,6 +30,8 @@ pub enum JoltTargetExtension {
     BitManipulation,
     #[cfg(feature = "field-inline")]
     FieldInline,
+    #[cfg(feature = "implicit-carry")]
+    ImplicitCarry,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -107,6 +111,22 @@ pub const RV64IMAC_JOLT_FIELD_INLINE: JoltInstructionProfile = JoltInstructionPr
     inline_extensions: RV64IMAC_JOLT_ALL_INLINES.inline_extensions,
 };
 
+#[cfg(feature = "implicit-carry")]
+pub const RV64IMAC_JOLT_IMPLICIT_CARRY: JoltInstructionProfile = JoltInstructionProfile {
+    source_extensions: &[
+        SourceExtension::Rv64I,
+        SourceExtension::Rv64M,
+        SourceExtension::Rv64A,
+        SourceExtension::Rv64C,
+        SourceExtension::Zicsr,
+        SourceExtension::RvPrivileged,
+        SourceExtension::JoltCustom,
+        SourceExtension::JoltInline,
+        SourceExtension::ImplicitCarry,
+    ],
+    inline_extensions: RV64IMAC_JOLT_ALL_INLINES.inline_extensions,
+};
+
 impl JoltInstructionProfile {
     pub fn supports_source(self, kind: SourceInstructionKind) -> bool {
         match source_extension(kind) {
@@ -130,6 +150,12 @@ impl JoltInstructionProfile {
     pub fn supports_field_inline(self) -> bool {
         self.source_extensions
             .contains(&SourceExtension::FieldInline)
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    pub fn supports_implicit_carry(self) -> bool {
+        self.source_extensions
+            .contains(&SourceExtension::ImplicitCarry)
     }
 
     pub fn source_dense_index(
@@ -205,6 +231,8 @@ impl JoltInstructionProfile {
             }
             #[cfg(feature = "field-inline")]
             JoltTargetExtension::FieldInline => self.supports_field_inline(),
+            #[cfg(feature = "implicit-carry")]
+            JoltTargetExtension::ImplicitCarry => self.supports_implicit_carry(),
         }
     }
 }
@@ -271,6 +299,8 @@ const fn source_extension_code(extension: SourceExtension) -> u8 {
         SourceExtension::JoltInline => 7,
         #[cfg(feature = "field-inline")]
         SourceExtension::FieldInline => 8,
+        #[cfg(feature = "implicit-carry")]
+        SourceExtension::ImplicitCarry => 9,
     }
 }
 

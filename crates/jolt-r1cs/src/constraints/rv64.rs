@@ -58,15 +58,39 @@ pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
 pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
 
-pub const V_BRANCH: usize = 36;
-pub const V_NEXT_IS_NOOP: usize = 37;
+#[cfg(feature = "implicit-carry")]
+pub const V_FLAG_USES_CARRY: usize = 36;
+#[cfg(feature = "implicit-carry")]
+pub const V_FLAG_PRODUCES_CARRY: usize = 37;
+#[cfg(feature = "implicit-carry")]
+pub const V_CARRY_USED: usize = 38;
+#[cfg(feature = "implicit-carry")]
+pub const V_NEXT_CARRY: usize = 39;
 
-pub const NUM_R1CS_INPUTS: usize = 35;
-pub const NUM_PRODUCT_FACTORS: usize = 2;
-pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 38
-pub const NUM_EQ_CONSTRAINTS: usize = 19;
-pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
-pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
+/// Number of implicit-carry extension inputs appended after the base 35.
+#[cfg(not(feature = "implicit-carry"))]
+pub const IMPLICIT_CARRY_EXTRA_INPUTS: usize = 0;
+#[cfg(feature = "implicit-carry")]
+pub const IMPLICIT_CARRY_EXTRA_INPUTS: usize = 4;
+
+pub const V_BRANCH: usize = 36 + IMPLICIT_CARRY_EXTRA_INPUTS;
+pub const V_NEXT_IS_NOOP: usize = 37 + IMPLICIT_CARRY_EXTRA_INPUTS;
+/// Committed Carry as the right factor of the CarryUsed product row.
+#[cfg(feature = "implicit-carry")]
+pub const V_CARRY: usize = 38 + IMPLICIT_CARRY_EXTRA_INPUTS;
+
+pub const NUM_R1CS_INPUTS: usize = 35 + IMPLICIT_CARRY_EXTRA_INPUTS;
+pub const NUM_PRODUCT_FACTORS: usize = 2 + cfg!(feature = "implicit-carry") as usize;
+pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS;
+pub const NUM_EQ_CONSTRAINTS: usize = 19 + 2 * cfg!(feature = "implicit-carry") as usize;
+/// Row of `LookupSplitsIntoOutputAndNextCarry` (second-to-last rv64 eq row).
+#[cfg(feature = "implicit-carry")]
+pub const ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY: usize = NUM_EQ_CONSTRAINTS - 2;
+/// Row of `NextCarryZeroIfNotProducesCarry` (the last rv64 eq row).
+#[cfg(feature = "implicit-carry")]
+pub const ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY: usize = NUM_EQ_CONSTRAINTS - 1;
+pub const NUM_PRODUCT_CONSTRAINTS: usize = 3 + cfg!(feature = "implicit-carry") as usize;
+pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS;
 
 pub const fn const_column() -> usize {
     V_CONST
@@ -209,10 +233,18 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     //    left  = RightLookupOperand
     //    right = LeftInstructionInput + RightInstructionInput
     a_rows.push(row::<F>(&[(V_FLAG_ADD_OPERANDS, 1)]));
+    #[cfg(not(feature = "implicit-carry"))]
     b_rows.push(row::<F>(&[
         (V_RIGHT_LOOKUP_OPERAND, 1),
         (V_LEFT_INSTRUCTION_INPUT, -1),
         (V_RIGHT_INSTRUCTION_INPUT, -1),
+    ]));
+    #[cfg(feature = "implicit-carry")]
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_LOOKUP_OPERAND, 1),
+        (V_LEFT_INSTRUCTION_INPUT, -1),
+        (V_RIGHT_INSTRUCTION_INPUT, -1),
+        (V_CARRY_USED, -1),
     ]));
     c_rows.push(empty());
 
@@ -234,7 +266,14 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     //    left  = RightLookupOperand
     //    right = Product
     a_rows.push(row::<F>(&[(V_FLAG_MULTIPLY_OPERANDS, 1)]));
+    #[cfg(not(feature = "implicit-carry"))]
     b_rows.push(row::<F>(&[(V_RIGHT_LOOKUP_OPERAND, 1), (V_PRODUCT, -1)]));
+    #[cfg(feature = "implicit-carry")]
+    b_rows.push(row::<F>(&[
+        (V_RIGHT_LOOKUP_OPERAND, 1),
+        (V_PRODUCT, -1),
+        (V_CARRY_USED, -1),
+    ]));
     c_rows.push(empty());
 
     // 10: RightLookupEqRightInputOtherwise
@@ -363,6 +402,30 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
+    // Implicit-carry rows (19-20), appended to match the legacy enum order.
+    #[cfg(feature = "implicit-carry")]
+    {
+        // 19: LookupSplitsIntoOutputAndNextCarry
+        //     guard = ProducesCarry
+        //     left  = RightLookupOperand
+        //     right = LookupOutput + 2^64 * NextCarry
+        a_rows.push(row::<F>(&[(V_FLAG_PRODUCES_CARRY, 1)]));
+        b_rows.push(row_wide::<F>(&[
+            (V_RIGHT_LOOKUP_OPERAND, 1),
+            (V_LOOKUP_OUTPUT, -1),
+            (V_NEXT_CARRY, -TWOS_COMPLEMENT_BIAS),
+        ]));
+        c_rows.push(empty());
+
+        // 20: NextCarryZeroIfNotProducesCarry
+        //     guard = 1 − ProducesCarry
+        //     left  = NextCarry
+        //     right = 0
+        a_rows.push(row::<F>(&[(V_CONST, 1), (V_FLAG_PRODUCES_CARRY, -1)]));
+        b_rows.push(row::<F>(&[(V_NEXT_CARRY, 1)]));
+        c_rows.push(empty());
+    }
+
     (a_rows, b_rows, c_rows)
 }
 
@@ -388,6 +451,14 @@ fn append_product_constraints<F: Field>(
     a_rows.push(row::<F>(&[(V_FLAG_JUMP, 1)]));
     b_rows.push(row::<F>(&[(V_CONST, 1), (V_NEXT_IS_NOOP, -1)]));
     c_rows.push(row::<F>(&[(V_SHOULD_JUMP, 1)]));
+
+    // CarryUsed = UsesCarry × Carry (committed)
+    #[cfg(feature = "implicit-carry")]
+    {
+        a_rows.push(row::<F>(&[(V_FLAG_USES_CARRY, 1)]));
+        b_rows.push(row::<F>(&[(V_CARRY, 1)]));
+        c_rows.push(row::<F>(&[(V_CARRY_USED, 1)]));
+    }
 }
 
 /// Build only the Jolt RV64 equality-conditional constraints.
@@ -465,10 +536,12 @@ mod tests {
 
     #[test]
     fn constraint_count() {
+        // 19 eq + 3 product rows; implicit-carry adds 2 eq + 1 product row.
+        let expected = 22 + 3 * cfg!(feature = "implicit-carry") as usize;
         let matrices = rv64_trace_constraints::<Fr>();
-        assert_eq!(matrices.a.len(), 22);
-        assert_eq!(matrices.b.len(), 22);
-        assert_eq!(matrices.c.len(), 22);
+        assert_eq!(matrices.a.len(), expected);
+        assert_eq!(matrices.b.len(), expected);
+        assert_eq!(matrices.c.len(), expected);
     }
 
     #[test]
@@ -497,10 +570,13 @@ mod tests {
     fn input_columns_follow_const_then_inputs_layout() {
         assert_eq!(const_column(), V_CONST);
         assert_eq!(input_column(0), Some(V_LEFT_INSTRUCTION_INPUT));
+        #[cfg(not(feature = "implicit-carry"))]
         assert_eq!(
             input_column(NUM_R1CS_INPUTS - 1),
             Some(V_FLAG_IS_LAST_IN_SEQUENCE)
         );
+        #[cfg(feature = "implicit-carry")]
+        assert_eq!(input_column(NUM_R1CS_INPUTS - 1), Some(V_NEXT_CARRY));
         assert_eq!(input_column(NUM_R1CS_INPUTS), None);
     }
 }

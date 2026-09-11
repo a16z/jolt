@@ -283,6 +283,8 @@ impl CanonicalSerialize for CommittedPolynomial {
                 (u8::try_from(*i).unwrap()).serialize_with_mode(writer, compress)
             }
             Self::BalancedIncCarry => 10u8.serialize_with_mode(writer, compress),
+            #[cfg(feature = "implicit-carry")]
+            Self::Carry => 11u8.serialize_with_mode(writer, compress),
         }
     }
 
@@ -294,6 +296,8 @@ impl CanonicalSerialize for CommittedPolynomial {
             | Self::UntrustedAdvice
             | Self::ProgramImageInit
             | Self::BalancedIncCarry => 1,
+            #[cfg(feature = "implicit-carry")]
+            Self::Carry => 1,
             Self::InstructionRa(_)
             | Self::BytecodeRa(_)
             | Self::RamRa(_)
@@ -343,6 +347,8 @@ impl CanonicalDeserialize for CommittedPolynomial {
                     Self::BalancedIncDigit(i as usize)
                 }
                 10 => Self::BalancedIncCarry,
+                #[cfg(feature = "implicit-carry")]
+                11 => Self::Carry,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -418,6 +424,10 @@ impl CanonicalSerialize for VirtualPolynomial {
             }
             Self::ProgramImageInitContributionRw => 43u8.serialize_with_mode(&mut writer, compress),
             Self::FusedInc => 44u8.serialize_with_mode(&mut writer, compress),
+            #[cfg(feature = "implicit-carry")]
+            Self::CarryUsed => 45u8.serialize_with_mode(&mut writer, compress),
+            #[cfg(feature = "implicit-carry")]
+            Self::NextCarry => 46u8.serialize_with_mode(&mut writer, compress),
         }
     }
 
@@ -463,6 +473,8 @@ impl CanonicalSerialize for VirtualPolynomial {
             | Self::BytecodeClaimReductionIntermediate
             | Self::ProgramImageInitContributionRw
             | Self::FusedInc => 1,
+            #[cfg(feature = "implicit-carry")]
+            Self::CarryUsed | Self::NextCarry => 1,
             Self::InstructionRa(_)
             | Self::OpFlags(_)
             | Self::InstructionFlags(_)
@@ -550,6 +562,10 @@ impl CanonicalDeserialize for VirtualPolynomial {
                 42 => Self::BytecodeClaimReductionIntermediate,
                 43 => Self::ProgramImageInitContributionRw,
                 44 => Self::FusedInc,
+                #[cfg(feature = "implicit-carry")]
+                45 => Self::CarryUsed,
+                #[cfg(feature = "implicit-carry")]
+                46 => Self::NextCarry,
                 _ => return Err(SerializationError::InvalidData),
             },
         )
@@ -596,6 +612,8 @@ mod tests {
                 | CommittedPolynomial::ProgramImageInit
                 | CommittedPolynomial::BalancedIncDigit(_)
                 | CommittedPolynomial::BalancedIncCarry => {}
+                #[cfg(feature = "implicit-carry")]
+                CommittedPolynomial::Carry => {}
             }
         }
         let all = vec![
@@ -610,6 +628,8 @@ mod tests {
             CommittedPolynomial::ProgramImageInit,
             CommittedPolynomial::BalancedIncDigit(5),
             CommittedPolynomial::BalancedIncCarry,
+            #[cfg(feature = "implicit-carry")]
+            CommittedPolynomial::Carry,
         ];
         all.iter().copied().for_each(coverage_witness);
         all
@@ -665,6 +685,8 @@ mod tests {
                 | VirtualPolynomial::BytecodeClaimReductionIntermediate
                 | VirtualPolynomial::ProgramImageInitContributionRw
                 | VirtualPolynomial::FusedInc => {}
+                #[cfg(feature = "implicit-carry")]
+                VirtualPolynomial::CarryUsed | VirtualPolynomial::NextCarry => {}
             }
         }
         let all = vec![
@@ -713,6 +735,10 @@ mod tests {
             VirtualPolynomial::BytecodeClaimReductionIntermediate,
             VirtualPolynomial::ProgramImageInitContributionRw,
             VirtualPolynomial::FusedInc,
+            #[cfg(feature = "implicit-carry")]
+            VirtualPolynomial::CarryUsed,
+            #[cfg(feature = "implicit-carry")]
+            VirtualPolynomial::NextCarry,
         ];
         all.iter().copied().for_each(coverage_witness);
         all

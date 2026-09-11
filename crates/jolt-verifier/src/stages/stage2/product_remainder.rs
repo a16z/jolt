@@ -112,6 +112,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
             lookup_output: opening_point.clone(),
             branch_flag: opening_point.clone(),
             next_is_noop: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: opening_point.clone(),
+            #[cfg(feature = "implicit-carry")]
+            carry: opening_point.clone(),
             virtual_instruction: opening_point,
         })
     }

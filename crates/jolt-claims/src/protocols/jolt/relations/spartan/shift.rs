@@ -37,6 +37,11 @@ pub struct SpartanShiftOutputClaims<C> {
     pub is_first_in_sequence: C,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
     pub is_noop: C,
+    /// The committed Carry column at the shift point (the shifted output of
+    /// the NextCarry term).
+    #[cfg(feature = "implicit-carry")]
+    #[opening(committed = Carry)]
+    pub carry: C,
 }
 
 /// Consumed shift openings: the `Next*` PC/flag columns from stage 1's outer
@@ -54,6 +59,9 @@ pub struct SpartanShiftInputClaims<C> {
     pub next_is_first_in_sequence: C,
     #[opening(NextIsNoop, from = SpartanProductVirtualization)]
     pub next_is_noop: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(NextCarry, from = SpartanOuter)]
+    pub next_carry: C,
 }
 
 /// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
@@ -101,20 +109,34 @@ impl SymbolicSumcheck for Shift {
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
-        opening(next_unexpanded_pc_outer())
+        let base = opening(next_unexpanded_pc_outer())
             + gamma.clone() * opening(next_pc_outer())
             + gamma.clone().pow(2) * opening(next_is_virtual_outer())
             + gamma.clone().pow(3) * opening(next_is_first_in_sequence_outer())
-            + gamma.pow(4) * (JoltExpr::one() - opening(next_is_noop_product()))
+            + gamma.clone().pow(4) * (JoltExpr::one() - opening(next_is_noop_product()));
+        #[cfg(feature = "implicit-carry")]
+        {
+            base + gamma.pow(5)
+                * opening(crate::protocols::jolt::geometry::spartan::next_carry_outer())
+        }
+        #[cfg(not(feature = "implicit-carry"))]
+        {
+            let _ = gamma;
+            base
+        }
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(SpartanShiftChallenge::Gamma);
-        derived(SpartanShiftPublic::EqPlusOneOuter)
-            * (opening(unexpanded_pc_shift())
-                + gamma.clone() * opening(pc_shift())
-                + gamma.clone().pow(2) * opening(is_virtual_shift())
-                + gamma.clone().pow(3) * opening(is_first_in_sequence_shift()))
+        let outer_terms = opening(unexpanded_pc_shift())
+            + gamma.clone() * opening(pc_shift())
+            + gamma.clone().pow(2) * opening(is_virtual_shift())
+            + gamma.clone().pow(3) * opening(is_first_in_sequence_shift());
+        #[cfg(feature = "implicit-carry")]
+        let outer_terms = outer_terms
+            + gamma.clone().pow(5)
+                * opening(crate::protocols::jolt::geometry::spartan::carry_shift());
+        derived(SpartanShiftPublic::EqPlusOneOuter) * outer_terms
             + derived(SpartanShiftPublic::EqPlusOneProduct)
                 * gamma.pow(4)
                 * (JoltExpr::one() - opening(is_noop_shift()))

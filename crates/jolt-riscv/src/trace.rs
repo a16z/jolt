@@ -31,6 +31,13 @@ pub trait JoltCycle {
 
     /// RAM write value (post-access value). `None` if no RAM access.
     fn ram_write_value(&self) -> Option<u64>;
+
+    /// The row's incoming implicit carry (the previous row's carry-out).
+    /// Defaults to zero for cycle views that do not track carry.
+    #[cfg(feature = "implicit-carry")]
+    fn carry(&self) -> u64 {
+        0
+    }
 }
 
 impl<T: JoltCycle> JoltCycle for &T {
@@ -69,5 +76,11 @@ impl<T: JoltCycle> JoltCycle for &T {
     #[inline]
     fn ram_write_value(&self) -> Option<u64> {
         (**self).ram_write_value()
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    #[inline]
+    fn carry(&self) -> u64 {
+        (**self).carry()
     }
 }

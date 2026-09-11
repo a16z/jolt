@@ -17,6 +17,7 @@ serialization = ["dep:ark-serialize", "dep:serde", "jolt-riscv/serialization"]
 std = ["common/std"]
 image = ["dep:object"]
 field-inline = ["jolt-riscv/field-inline"]
+implicit-carry = ["jolt-riscv/implicit-carry"]
 
 [dependencies]
 ark-serialize = { workspace = true, optional = true }

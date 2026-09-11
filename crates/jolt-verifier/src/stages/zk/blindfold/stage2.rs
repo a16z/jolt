@@ -193,6 +193,10 @@ where
         branch_flag: PCS::Field::zero(),
         next_is_noop: PCS::Field::zero(),
         virtual_instruction: PCS::Field::zero(),
+        #[cfg(feature = "implicit-carry")]
+        uses_carry: PCS::Field::zero(),
+        #[cfg(feature = "implicit-carry")]
+        carry: PCS::Field::zero(),
     }
     .canonical_order();
     let instruction_outputs =

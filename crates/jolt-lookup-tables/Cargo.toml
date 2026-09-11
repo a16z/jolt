@@ -18,6 +18,11 @@ field-inline = [
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
+implicit-carry = [
+  "jolt-prover-legacy/implicit-carry",
+  "jolt-riscv/implicit-carry",
+  "tracer/implicit-carry",
+]
 
 [dependencies]
 jolt-field = { workspace = true }

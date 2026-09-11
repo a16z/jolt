@@ -12,6 +12,10 @@ use crate::SparseRow;
 use crate::{ConstraintMatrices, ConstraintMatrixEvalError};
 
 use super::rv64;
+#[cfg(feature = "implicit-carry")]
+use super::rv64::{
+    ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY, ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY,
+};
 
 #[cfg(feature = "field-inline")]
 use super::field_constraints;
@@ -60,14 +64,30 @@ pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = field_constraints::NUM_PRO
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = 0;
 
-pub const SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE: usize =
-    SPARTAN_PRODUCT_BASE_LANES + SPARTAN_PRODUCT_FIELD_INLINE_LANES;
+/// The CarryUsed product lane (implicit-carry).
+pub const SPARTAN_PRODUCT_IMPLICIT_CARRY_LANES: usize = cfg!(feature = "implicit-carry") as usize;
+
+pub const SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_PRODUCT_BASE_LANES
+    + SPARTAN_PRODUCT_FIELD_INLINE_LANES
+    + SPARTAN_PRODUCT_IMPLICIT_CARRY_LANES;
 pub const SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize =
     3 * (SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE - 1);
 
 #[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] =
-    [1, 2, 3, 4, 5, 6, 11, 14, 17, 18];
+pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] = [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    11,
+    14,
+    17,
+    18,
+    #[cfg(feature = "implicit-carry")]
+    ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY,
+];
 
 #[cfg(feature = "field-inline")]
 pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] = [
@@ -81,6 +101,8 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     14,
     17,
     18,
+    #[cfg(feature = "implicit-carry")]
+    ROW_NEXT_CARRY_ZERO_IF_NOT_PRODUCES_CARRY,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FADD,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FSUB,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_FMUL,
@@ -88,8 +110,19 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
 ];
 
 #[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] =
-    [0, 7, 8, 9, 10, 12, 13, 15, 16];
+pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] = [
+    0,
+    7,
+    8,
+    9,
+    10,
+    12,
+    13,
+    15,
+    16,
+    #[cfg(feature = "implicit-carry")]
+    ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY,
+];
 
 #[cfg(feature = "field-inline")]
 pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT] = [
@@ -102,6 +135,8 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     13,
     15,
     16,
+    #[cfg(feature = "implicit-carry")]
+    ROW_LOOKUP_SPLITS_INTO_OUTPUT_AND_NEXT_CARRY,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_ASSERT_EQ,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_LOAD_FROM_X,
     rv64::NUM_EQ_CONSTRAINTS + field_constraints::ROW_STORE_TO_X,
@@ -437,17 +472,33 @@ mod tests {
     #[test]
     fn default_spartan_outer_geometry_matches_rv64() {
         assert_eq!(SPARTAN_OUTER_ROW_COUNT, rv64::NUM_EQ_CONSTRAINTS);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 10);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 27);
         assert_eq!(SPARTAN_OUTER_REMAINDER_DEGREE, 3);
-        assert_eq!(
-            SPARTAN_OUTER_FIRST_GROUP_ROWS,
-            [1, 2, 3, 4, 5, 6, 11, 14, 17, 18]
-        );
-        assert_eq!(
-            SPARTAN_OUTER_SECOND_GROUP_ROWS,
-            [0, 7, 8, 9, 10, 12, 13, 15, 16]
-        );
+        #[cfg(not(feature = "implicit-carry"))]
+        {
+            assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 10);
+            assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 27);
+            assert_eq!(
+                SPARTAN_OUTER_FIRST_GROUP_ROWS,
+                [1, 2, 3, 4, 5, 6, 11, 14, 17, 18]
+            );
+            assert_eq!(
+                SPARTAN_OUTER_SECOND_GROUP_ROWS,
+                [0, 7, 8, 9, 10, 12, 13, 15, 16]
+            );
+        }
+        #[cfg(feature = "implicit-carry")]
+        {
+            assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 11);
+            assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 30);
+            assert_eq!(
+                SPARTAN_OUTER_FIRST_GROUP_ROWS,
+                [1, 2, 3, 4, 5, 6, 11, 14, 17, 18, 20]
+            );
+            assert_eq!(
+                SPARTAN_OUTER_SECOND_GROUP_ROWS,
+                [0, 7, 8, 9, 10, 12, 13, 15, 16, 19]
+            );
+        }
         assert_eq!(
             spartan_outer_row_weights(Fr::from_u64(2), Fr::from_u64(3))
                 .map(|weights| weights.len()),

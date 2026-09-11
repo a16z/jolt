@@ -13,6 +13,8 @@ use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 // generated stage-6b aggregates keep resolving them through `stage6b::outputs`.
 pub use super::booleanity::BooleanityOutputClaims;
 pub use super::bytecode_read_raf::BytecodeReadRafOutputClaims;
+#[cfg(feature = "implicit-carry")]
+pub use super::carry_claim_reduction::CarryClaimReductionOutputClaims;
 pub use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
 };
@@ -27,6 +29,8 @@ pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::BytecodeReadRafCycle;
+#[cfg(feature = "implicit-carry")]
+use super::carry_claim_reduction::CarryClaimReduction;
 use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
 };
@@ -85,6 +89,9 @@ pub struct Stage6bSumchecks<F: JoltField> {
     /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
+    /// Reduces the committed Carry openings (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    pub carry_claim_reduction: CarryClaimReduction<F>,
     /// On the prove side the precommitted reduction kernels span the 6b→7 batch
     /// boundary as `ProofSession` carries: each cycle kernel parks the shared
     /// two-phase state at prepare, and stage 7's address-phase members reclaim it.
@@ -124,6 +131,12 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     #[cfg(not(feature = "akita"))]
     pub fn inc_opening_point(&self) -> &[F] {
         &self.inc_claim_reduction.ram_inc
+    }
+
+    /// The carry claim-reduction opening point (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    pub fn carry_opening_point(&self) -> &[F] {
+        &self.carry_claim_reduction.carry
     }
 
     /// The packed fused-inc opening point: the read-raf cycle suffix (the

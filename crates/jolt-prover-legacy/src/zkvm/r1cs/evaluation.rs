@@ -138,6 +138,8 @@ pub struct AzFirstGroup {
     pub should_jump: bool,            // ShouldJump
     pub virtual_instr_not_last: bool, // VirtualInstruction && !IsLastInSequence
     pub must_start_sequence: bool,    // NextIsVirtual && !NextIsFirstInSequence
+    #[cfg(feature = "implicit-carry")]
+    pub not_produces_carry: bool, // !ProducesCarry
 }
 
 impl AzFirstGroup {
@@ -160,6 +162,8 @@ impl AzFirstGroup {
         acc.fmadd(&w[7], &self.should_jump);
         acc.fmadd(&w[8], &self.virtual_instr_not_last);
         acc.fmadd(&w[9], &self.must_start_sequence);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &self.not_produces_carry);
     }
 }
 
@@ -176,6 +180,8 @@ pub struct BzFirstGroup {
     pub next_unexp_pc_minus_lookup_output: S64,      // NextUnexpandedPC - LookupOutput
     pub next_pc_minus_pc_plus_one: S64,              // NextPC - (PC + 1)
     pub one_minus_do_not_update_unexpanded_pc: bool, // 1 - DoNotUpdateUnexpandedPC
+    #[cfg(feature = "implicit-carry")]
+    pub next_carry: u64, // NextCarry - 0
 }
 
 impl BzFirstGroup {
@@ -198,6 +204,8 @@ impl BzFirstGroup {
         acc.fmadd(&w[7], &self.next_unexp_pc_minus_lookup_output);
         acc.fmadd(&w[8], &self.next_pc_minus_pc_plus_one);
         acc.fmadd(&w[9], &self.one_minus_do_not_update_unexpanded_pc);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &self.next_carry);
     }
 }
 
@@ -213,6 +221,8 @@ pub struct AzSecondGroup {
     pub write_pc_to_rd: bool,         // OpFlags(Jump)
     pub should_branch: bool,          // ShouldBranch
     pub not_jump_or_branch: bool,     // !(Jump || ShouldBranch)
+    #[cfg(feature = "implicit-carry")]
+    pub produces_carry: bool, // ProducesCarry
 }
 
 impl AzSecondGroup {
@@ -234,6 +244,8 @@ impl AzSecondGroup {
         acc.fmadd(&w[6], &self.write_pc_to_rd);
         acc.fmadd(&w[7], &self.should_branch);
         acc.fmadd(&w[8], &self.not_jump_or_branch);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &self.produces_carry);
     }
 }
 
@@ -249,6 +261,8 @@ pub struct BzSecondGroup {
     pub rd_write_minus_pc_plus_const: S64, // RdWrite - (UnexpandedPC + const)
     pub next_unexp_pc_minus_pc_plus_imm: i128, // NextUnexpandedPC - (UnexpandedPC + Imm)
     pub next_unexp_pc_minus_expected: S64, // NextUnexpandedPC - (UnexpandedPC + const)
+    #[cfg(feature = "implicit-carry")]
+    pub right_lookup_minus_split: S160, // RightLookup - (LookupOutput + 2^64 * NextCarry)
 }
 
 impl BzSecondGroup {
@@ -270,6 +284,8 @@ impl BzSecondGroup {
         acc.fmadd(&w[6], &self.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &self.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &self.next_unexp_pc_minus_expected);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &self.right_lookup_minus_split);
     }
 }
 
@@ -311,6 +327,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             should_jump: self.row.should_jump,
             virtual_instr_not_last: inline_seq && !self.row.flags[CircuitFlags::IsLastInSequence],
             must_start_sequence: self.row.next_is_virtual && !self.row.next_is_first_in_sequence,
+            #[cfg(feature = "implicit-carry")]
+            not_produces_carry: !flags[CircuitFlags::ProducesCarry],
         }
     }
 
@@ -346,6 +364,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             ),
             one_minus_do_not_update_unexpanded_pc: !self.row.flags
                 [CircuitFlags::DoNotUpdateUnexpandedPC],
+            #[cfg(feature = "implicit-carry")]
+            next_carry: self.row.next_carry,
         }
     }
 
@@ -363,6 +383,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[7], &az.should_jump);
         acc.fmadd(&w[8], &az.virtual_instr_not_last);
         acc.fmadd(&w[9], &az.must_start_sequence);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &az.not_produces_carry);
         acc.barrett_reduce()
     }
 
@@ -380,6 +402,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_lookup_output);
         acc.fmadd(&w[8], &bz.next_pc_minus_pc_plus_one);
         acc.fmadd(&w[9], &bz.one_minus_do_not_update_unexpanded_pc);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[10], &bz.next_carry);
         acc.barrett_reduce()
     }
 
@@ -481,6 +505,16 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             bz_eval_s128.fmadd(&c9_i32, &bz.one_minus_do_not_update_unexpanded_pc);
         }
 
+        #[cfg(feature = "implicit-carry")]
+        {
+            let c10_i32 = coeffs_i32[10];
+            if az.not_produces_carry {
+                az_eval_i32 += c10_i32;
+            } else {
+                bz_eval_s128.fmadd(&c10_i32, &bz.next_carry);
+            }
+        }
+
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
         az_eval_s64.mul_trunc::<2, 3>(&bz_eval_s128.sum)
     }
@@ -537,6 +571,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             az.must_start_sequence,
             !bz.one_minus_do_not_update_unexpanded_pc,
         );
+        #[cfg(feature = "implicit-carry")]
+        self.assert_constraint_first_group(10, az.not_produces_carry, bz.next_carry == 0);
     }
 
     #[inline]
@@ -562,6 +598,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             write_pc_to_rd: flags[CircuitFlags::Jump],
             should_branch: self.row.should_branch,
             not_jump_or_branch: next_update_otherwise,
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: flags[CircuitFlags::ProducesCarry],
         }
     }
 
@@ -580,14 +618,27 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         let right_sub_expected =
             (self.row.left_input as i128) - self.row.right_input.to_i128() + (1i128 << 64);
 
+        #[cfg(not(feature = "implicit-carry"))]
         let right_lookup_minus_add_result =
             S160::from(self.row.right_lookup) - S160::from(right_add_expected);
+        #[cfg(feature = "implicit-carry")]
+        let right_lookup_minus_add_result = S160::from(self.row.right_lookup)
+            - S160::from(right_add_expected + self.row.carry_used as i128);
         let right_lookup_minus_sub_result =
             S160::from(self.row.right_lookup) - S160::from(right_sub_expected);
+        #[cfg(not(feature = "implicit-carry"))]
         let right_lookup_minus_product =
             S160::from(self.row.right_lookup) - S160::from(self.row.product);
+        #[cfg(feature = "implicit-carry")]
+        let right_lookup_minus_product = S160::from(self.row.right_lookup)
+            - S160::from(self.row.product)
+            - S160::from(self.row.carry_used as i128);
         let right_lookup_minus_right_input =
             S160::from(self.row.right_lookup) - S160::from(self.row.right_input);
+        // LookupSplitsIntoOutputAndNextCarry: RightLookup - (LookupOutput + 2^64 * NextCarry)
+        #[cfg(feature = "implicit-carry")]
+        let right_lookup_minus_split = S160::from(self.row.right_lookup)
+            - S160::from(self.row.lookup_output as u128 + ((self.row.next_carry as u128) << 64));
 
         // Rd write checks (fit in i64 range by construction)
         let rd_write_minus_lookup_output =
@@ -628,6 +679,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             rd_write_minus_pc_plus_const,
             next_unexp_pc_minus_pc_plus_imm,
             next_unexp_pc_minus_expected,
+            #[cfg(feature = "implicit-carry")]
+            right_lookup_minus_split,
         }
     }
 
@@ -645,6 +698,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &az.write_pc_to_rd);
         acc.fmadd(&w[7], &az.should_branch);
         acc.fmadd(&w[8], &az.not_jump_or_branch);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &az.produces_carry);
         acc.barrett_reduce()
     }
 
@@ -662,6 +717,8 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
         acc.fmadd(&w[6], &bz.rd_write_minus_pc_plus_const);
         acc.fmadd(&w[7], &bz.next_unexp_pc_minus_pc_plus_imm);
         acc.fmadd(&w[8], &bz.next_unexp_pc_minus_expected);
+        #[cfg(feature = "implicit-carry")]
+        acc.fmadd(&w[9], &bz.right_lookup_minus_split);
         acc.barrett_reduce()
     }
 
@@ -756,6 +813,16 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             bz_eval_s192.fmadd(&c8, &bz.next_unexp_pc_minus_expected);
         }
 
+        #[cfg(feature = "implicit-carry")]
+        {
+            let c9 = coeffs_i32[9];
+            if az.produces_carry {
+                az_eval_i32 += c9;
+            } else {
+                bz_eval_s192.fmadd(&c9, &bz.right_lookup_minus_split);
+            }
+        }
+
         let az_eval_s64 = S64::from_i64(az_eval_i32 as i64);
         az_eval_s64.mul_trunc::<3, 3>(&bz_eval_s192.sum)
     }
@@ -811,6 +878,12 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             az.not_jump_or_branch,
             bz.next_unexp_pc_minus_expected.is_zero(),
         );
+        #[cfg(feature = "implicit-carry")]
+        self.assert_constraint_second_group(
+            9,
+            az.produces_carry,
+            bz.right_lookup_minus_split.is_zero(),
+        );
     }
 
     /// Compute `z(r_cycle) = Σ_t eq(r_cycle, t) * P_i(t)` for all inputs i, without
@@ -859,6 +932,10 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                 let mut acc_flags: Vec<SmallAccumU<F>> = (0..NUM_CIRCUIT_FLAGS)
                     .map(|_| SmallAccumU::zero())
                     .collect();
+                #[cfg(feature = "implicit-carry")]
+                let mut acc_carry_used: MedAccumU<F> = MedAccumU::zero();
+                #[cfg(feature = "implicit-carry")]
+                let mut acc_next_carry: MedAccumU<F> = MedAccumU::zero();
 
                 let eq_two_len = eq_two.len();
                 for x2 in 0..eq_two_len {
@@ -891,6 +968,11 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     acc_next_is_first_in_sequence.fmadd(&e_in, &row.next_is_first_in_sequence);
                     for flag in CircuitFlags::iter() {
                         acc_flags[flag as usize].fmadd(&e_in, &row.flags[flag as usize]);
+                    }
+                    #[cfg(feature = "implicit-carry")]
+                    {
+                        acc_carry_used.fmadd(&e_in, &row.carry_used);
+                        acc_next_carry.fmadd(&e_in, &row.next_carry);
                     }
                 }
 
@@ -943,6 +1025,13 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
                     let f_idx = flag as usize;
                     out_unr[idx] = eq1_val.mul_to_product_accum(acc_flags[f_idx].barrett_reduce());
                 }
+                #[cfg(feature = "implicit-carry")]
+                {
+                    out_unr[JoltR1CSInputs::CarryUsed.to_index()] =
+                        eq1_val.mul_to_product_accum(acc_carry_used.barrett_reduce());
+                    out_unr[JoltR1CSInputs::NextCarry.to_index()] =
+                        eq1_val.mul_to_product_accum(acc_next_carry.barrett_reduce());
+                }
                 out_unr
             })
             .reduce(
@@ -957,6 +1046,14 @@ impl<'a, F: JoltField> R1CSEval<'a, F> {
             .map(|unr| F::reduce_product_accum(unr))
     }
 }
+
+/// Number of factor claims computed at the product-virtualization cycle
+/// point: the `PRODUCT_UNIQUE_FACTOR_VIRTUALS` list, plus (implicit-carry)
+/// the committed `Carry` column as the final entry.
+#[cfg(not(feature = "implicit-carry"))]
+pub const NUM_PRODUCT_CLAIMED_FACTORS: usize = 8;
+#[cfg(feature = "implicit-carry")]
+pub const NUM_PRODUCT_CLAIMED_FACTORS: usize = 10;
 
 /// Struct for implementation of evaluation logic for product virtualization
 #[derive(Clone, Copy, Debug)]
@@ -975,12 +1072,19 @@ impl ProductVirtualEval {
         left_acc.fmadd(&weights_at_r0[0], &row.instruction_left_input);
         left_acc.fmadd(&weights_at_r0[1], &row.should_branch_lookup_output);
         left_acc.fmadd(&weights_at_r0[2], &row.jump_flag);
+        #[cfg(feature = "implicit-carry")]
+        left_acc.fmadd(&weights_at_r0[3], &row.uses_carry_flag);
 
         // Right: i128/bool
         let mut right_acc: MedAccumS<F> = MedAccumS::zero();
         right_acc.fmadd(&weights_at_r0[0], &row.instruction_right_input);
         right_acc.fmadd(&weights_at_r0[1], &row.should_branch_flag);
         right_acc.fmadd(&weights_at_r0[2], &row.not_next_noop);
+        #[cfg(feature = "implicit-carry")]
+        {
+            let carry = row.carry as i128;
+            right_acc.fmadd(&weights_at_r0[3], &carry);
+        }
 
         (left_acc.barrett_reduce(), right_acc.barrett_reduce())
     }
@@ -1012,6 +1116,13 @@ impl ProductVirtualEval {
         left_w[2] = if row.jump_flag { c[2] as i128 } else { 0 };
         right_w[2] = if row.not_next_noop { c[2] as i128 } else { 0 };
 
+        // 3: CarryUsed (UsesCarry_flag × committed Carry)
+        #[cfg(feature = "implicit-carry")]
+        {
+            left_w[3] = if row.uses_carry_flag { c[3] as i128 } else { 0 };
+            right_w[3] = (c[3] as i128) * (row.carry as i128);
+        }
+
         // Fuse in i128, then multiply as S128×S128 → S256
         let mut left_sum: i128 = 0;
         let mut right_sum: i128 = 0;
@@ -1040,7 +1151,7 @@ impl ProductVirtualEval {
     pub fn compute_claimed_factors<F: JoltField>(
         trace: &[tracer::instruction::Cycle],
         r_cycle: &OpeningPoint<BIG_ENDIAN, F>,
-    ) -> [F; 8] {
+    ) -> [F; NUM_PRODUCT_CLAIMED_FACTORS] {
         let m = r_cycle.len() / 2;
         let (r2, r1) = r_cycle.split_at_r(m);
         let (eq_one, eq_two) = rayon::join(|| EqPolynomial::evals(r2), || EqPolynomial::evals(r1));
@@ -1061,6 +1172,10 @@ impl ProductVirtualEval {
                 let mut acc_branch_flag: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_next_is_noop: SmallAccumU<F> = SmallAccumU::zero();
                 let mut acc_virtual_instr_flag: SmallAccumU<F> = SmallAccumU::zero();
+                #[cfg(feature = "implicit-carry")]
+                let mut acc_uses_carry_flag: SmallAccumU<F> = SmallAccumU::zero();
+                #[cfg(feature = "implicit-carry")]
+                let mut acc_carry: MedAccumU<F> = MedAccumU::zero();
 
                 for x2 in 0..eq_two_len {
                     let e_in = eq_two[x2];
@@ -1083,9 +1198,15 @@ impl ProductVirtualEval {
                     acc_next_is_noop.fmadd(&e_in, &(!row.not_next_noop));
                     // 7: OpFlags(VirtualInstruction) (bool)
                     acc_virtual_instr_flag.fmadd(&e_in, &row.virtual_instruction_flag);
+                    // 8: OpFlags(UsesCarry) (bool); 9: committed Carry (u64)
+                    #[cfg(feature = "implicit-carry")]
+                    {
+                        acc_uses_carry_flag.fmadd(&e_in, &row.uses_carry_flag);
+                        acc_carry.fmadd(&e_in, &row.carry);
+                    }
                 }
 
-                let mut out_unr = [F::UnreducedProductAccum::zero(); 8];
+                let mut out_unr = [F::UnreducedProductAccum::zero(); NUM_PRODUCT_CLAIMED_FACTORS];
                 out_unr[0] = eq1_val.mul_to_product_accum(acc_left_u64.barrett_reduce());
                 out_unr[1] = eq1_val.mul_to_product_accum(acc_right_i128.barrett_reduce());
                 out_unr[2] = eq1_val.mul_to_product_accum(acc_jump_flag.barrett_reduce());
@@ -1094,12 +1215,17 @@ impl ProductVirtualEval {
                 out_unr[5] = eq1_val.mul_to_product_accum(acc_branch_flag.barrett_reduce());
                 out_unr[6] = eq1_val.mul_to_product_accum(acc_next_is_noop.barrett_reduce());
                 out_unr[7] = eq1_val.mul_to_product_accum(acc_virtual_instr_flag.barrett_reduce());
+                #[cfg(feature = "implicit-carry")]
+                {
+                    out_unr[8] = eq1_val.mul_to_product_accum(acc_uses_carry_flag.barrett_reduce());
+                    out_unr[9] = eq1_val.mul_to_product_accum(acc_carry.barrett_reduce());
+                }
                 out_unr
             })
             .reduce(
-                || [F::UnreducedProductAccum::zero(); 8],
+                || [F::UnreducedProductAccum::zero(); NUM_PRODUCT_CLAIMED_FACTORS],
                 |mut acc, item| {
-                    for i in 0..8 {
+                    for i in 0..NUM_PRODUCT_CLAIMED_FACTORS {
                         acc[i] += item[i];
                     }
                     acc
