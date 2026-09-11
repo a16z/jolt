@@ -309,7 +309,7 @@ mod field_inc_limbs {
     )]
 
     use akita_config::CommitmentConfig;
-    use akita_schedules::TrustedScheduleCatalog;
+    use akita_schedules::ValidatedScheduleCatalog;
     use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams, PolynomialGroupLayout};
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::{
@@ -351,7 +351,7 @@ mod field_inc_limbs {
     }
 
     fn limb_profile(
-        dense: &TrustedScheduleCatalog,
+        dense: &ValidatedScheduleCatalog,
         params: FieldIncLimbScheduleParams,
         final_num_vars: usize,
     ) -> GroupCommitPhaseParams {
