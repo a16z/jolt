@@ -57,26 +57,14 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
 {
     fn suffixes(&self) -> Vec<Suffixes> {
         debug_assert_eq!(XLEN, 64);
-        match ROTATION {
-            16 => vec![Suffixes::One, Suffixes::XorRot16],
-            24 => vec![Suffixes::One, Suffixes::XorRot24],
-            32 => vec![Suffixes::One, Suffixes::XorRot32],
-            63 => vec![Suffixes::One, Suffixes::XorRot63],
-            _ => unimplemented!(),
-        }
+        vec![Suffixes::One, Suffixes::xor_rot(ROTATION)]
     }
 
     fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(XLEN, 64);
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, xor_rot] = suffixes.try_into().unwrap();
-        match ROTATION {
-            16 => prefixes[Prefixes::XorRot16] * one + xor_rot,
-            24 => prefixes[Prefixes::XorRot24] * one + xor_rot,
-            32 => prefixes[Prefixes::XorRot32] * one + xor_rot,
-            63 => prefixes[Prefixes::XorRot63] * one + xor_rot,
-            _ => unimplemented!(),
-        }
+        prefixes[Prefixes::xor_rot(ROTATION)] * one + xor_rot
     }
 }
 
@@ -96,6 +84,48 @@ mod test {
     type VirtualXORROT24Table<const XLEN: usize> = VirtualXORROTTable<XLEN, 24>;
     type VirtualXORROT32Table<const XLEN: usize> = VirtualXORROTTable<XLEN, 32>;
     type VirtualXORROT63Table<const XLEN: usize> = VirtualXORROTTable<XLEN, 63>;
+
+    macro_rules! keccak_xor_rot_tests {
+        ($($n:literal => ($ps:ident, $random:ident)),+ $(,)?) => {
+            $(
+                #[test]
+                fn $ps() {
+                    prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, $n>>();
+                }
+
+                #[test]
+                fn $random() {
+                    lookup_table_mle_random_test::<Fr, VirtualXORROTTable<XLEN, $n>>();
+                }
+            )+
+        };
+    }
+
+    keccak_xor_rot_tests!(
+        2 => (prefix_suffix_2, mle_random_2),
+        3 => (prefix_suffix_3, mle_random_3),
+        8 => (prefix_suffix_8, mle_random_8),
+        9 => (prefix_suffix_9, mle_random_9),
+        19 => (prefix_suffix_19, mle_random_19),
+        20 => (prefix_suffix_20, mle_random_20),
+        21 => (prefix_suffix_21, mle_random_21),
+        23 => (prefix_suffix_23, mle_random_23),
+        25 => (prefix_suffix_25, mle_random_25),
+        28 => (prefix_suffix_28, mle_random_28),
+        36 => (prefix_suffix_36, mle_random_36),
+        37 => (prefix_suffix_37, mle_random_37),
+        39 => (prefix_suffix_39, mle_random_39),
+        43 => (prefix_suffix_43, mle_random_43),
+        44 => (prefix_suffix_44, mle_random_44),
+        46 => (prefix_suffix_46, mle_random_46),
+        49 => (prefix_suffix_49, mle_random_49),
+        50 => (prefix_suffix_50, mle_random_50),
+        54 => (prefix_suffix_54, mle_random_54),
+        56 => (prefix_suffix_56, mle_random_56),
+        58 => (prefix_suffix_58, mle_random_58),
+        61 => (prefix_suffix_61, mle_random_61),
+        62 => (prefix_suffix_62, mle_random_62),
+    );
 
     // Tests for rotation by 16
     #[test]

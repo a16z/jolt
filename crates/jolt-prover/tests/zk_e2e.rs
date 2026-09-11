@@ -330,8 +330,8 @@ mod zk {
 
     use super::support;
 
-    // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
-    const KECCAK_ROTRI_ROWS: usize = 576;
+    // The rho step rotates lane (1, 0) once per round.
+    const KECCAK_XORROT63_ROWS: usize = 24;
     // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
     // `digest` takes its unaligned path: two fused absorb-permute blocks staged
     // through stack copies, then a padded final block. The clear-mode byte-diff
@@ -458,10 +458,10 @@ mod zk {
                     assert_eq!(
                         rows.iter()
                             .filter(|row| {
-                                row.instruction_kind() == JoltInstructionKind::VirtualROTRI
+                                row.instruction_kind() == JoltInstructionKind::VirtualXORROT63
                             })
                             .count(),
-                        KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
+                        KECCAK_XORROT63_ROWS * SHA3_PERMUTATIONS,
                         "two unaligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
                     );
                 },

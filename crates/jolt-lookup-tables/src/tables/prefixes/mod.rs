@@ -185,6 +185,29 @@ pub enum Prefixes {
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
+    XorRot2,
+    XorRot3,
+    XorRot8,
+    XorRot9,
+    XorRot19,
+    XorRot20,
+    XorRot21,
+    XorRot23,
+    XorRot25,
+    XorRot28,
+    XorRot36,
+    XorRot37,
+    XorRot39,
+    XorRot43,
+    XorRot44,
+    XorRot46,
+    XorRot49,
+    XorRot50,
+    XorRot54,
+    XorRot56,
+    XorRot58,
+    XorRot61,
+    XorRot62,
 }
 
 /// Total number of prefix variants.
@@ -192,6 +215,45 @@ pub const NUM_PREFIXES: usize = <Prefixes as strum::EnumCount>::COUNT;
 
 /// All prefix variants in discriminant order.
 pub const ALL_PREFIXES: &[Prefixes] = <Prefixes as strum::VariantArray>::VARIANTS;
+
+impl Prefixes {
+    /// The prefix of the XOR-then-rotate-right-by-`rotation` table. Owns the
+    /// rotation-to-variant map for the table, its prefix evaluator, and the
+    /// Keccak emitter's rotation set; an unsupported rotation fails constant
+    /// evaluation at the table's instantiation.
+    pub const fn xor_rot(rotation: u32) -> Self {
+        match rotation {
+            2 => Prefixes::XorRot2,
+            3 => Prefixes::XorRot3,
+            8 => Prefixes::XorRot8,
+            9 => Prefixes::XorRot9,
+            16 => Prefixes::XorRot16,
+            19 => Prefixes::XorRot19,
+            20 => Prefixes::XorRot20,
+            21 => Prefixes::XorRot21,
+            23 => Prefixes::XorRot23,
+            24 => Prefixes::XorRot24,
+            25 => Prefixes::XorRot25,
+            28 => Prefixes::XorRot28,
+            32 => Prefixes::XorRot32,
+            36 => Prefixes::XorRot36,
+            37 => Prefixes::XorRot37,
+            39 => Prefixes::XorRot39,
+            43 => Prefixes::XorRot43,
+            44 => Prefixes::XorRot44,
+            46 => Prefixes::XorRot46,
+            49 => Prefixes::XorRot49,
+            50 => Prefixes::XorRot50,
+            54 => Prefixes::XorRot54,
+            56 => Prefixes::XorRot56,
+            58 => Prefixes::XorRot58,
+            61 => Prefixes::XorRot61,
+            62 => Prefixes::XorRot62,
+            63 => Prefixes::XorRot63,
+            _ => unreachable!(),
+        }
+    }
+}
 
 /// Dispatches a `SparseDensePrefix` method call to the concrete type for each `Prefixes` variant.
 macro_rules! dispatch_prefix {
@@ -237,6 +299,29 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRot24 => xor_rot::XorRotPrefix::<24>::$method($($args),*),
             Prefixes::XorRot32 => xor_rot::XorRotPrefix::<32>::$method($($args),*),
             Prefixes::XorRot63 => xor_rot::XorRotPrefix::<63>::$method($($args),*),
+            Prefixes::XorRot2 => xor_rot::XorRotPrefix::<2>::$method($($args),*),
+            Prefixes::XorRot3 => xor_rot::XorRotPrefix::<3>::$method($($args),*),
+            Prefixes::XorRot8 => xor_rot::XorRotPrefix::<8>::$method($($args),*),
+            Prefixes::XorRot9 => xor_rot::XorRotPrefix::<9>::$method($($args),*),
+            Prefixes::XorRot19 => xor_rot::XorRotPrefix::<19>::$method($($args),*),
+            Prefixes::XorRot20 => xor_rot::XorRotPrefix::<20>::$method($($args),*),
+            Prefixes::XorRot21 => xor_rot::XorRotPrefix::<21>::$method($($args),*),
+            Prefixes::XorRot23 => xor_rot::XorRotPrefix::<23>::$method($($args),*),
+            Prefixes::XorRot25 => xor_rot::XorRotPrefix::<25>::$method($($args),*),
+            Prefixes::XorRot28 => xor_rot::XorRotPrefix::<28>::$method($($args),*),
+            Prefixes::XorRot36 => xor_rot::XorRotPrefix::<36>::$method($($args),*),
+            Prefixes::XorRot37 => xor_rot::XorRotPrefix::<37>::$method($($args),*),
+            Prefixes::XorRot39 => xor_rot::XorRotPrefix::<39>::$method($($args),*),
+            Prefixes::XorRot43 => xor_rot::XorRotPrefix::<43>::$method($($args),*),
+            Prefixes::XorRot44 => xor_rot::XorRotPrefix::<44>::$method($($args),*),
+            Prefixes::XorRot46 => xor_rot::XorRotPrefix::<46>::$method($($args),*),
+            Prefixes::XorRot49 => xor_rot::XorRotPrefix::<49>::$method($($args),*),
+            Prefixes::XorRot50 => xor_rot::XorRotPrefix::<50>::$method($($args),*),
+            Prefixes::XorRot54 => xor_rot::XorRotPrefix::<54>::$method($($args),*),
+            Prefixes::XorRot56 => xor_rot::XorRotPrefix::<56>::$method($($args),*),
+            Prefixes::XorRot58 => xor_rot::XorRotPrefix::<58>::$method($($args),*),
+            Prefixes::XorRot61 => xor_rot::XorRotPrefix::<61>::$method($($args),*),
+            Prefixes::XorRot62 => xor_rot::XorRotPrefix::<62>::$method($($args),*),
             Prefixes::XorRotW7 => xor_rotw::XorRotWPrefix::<7>::$method($($args),*),
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),

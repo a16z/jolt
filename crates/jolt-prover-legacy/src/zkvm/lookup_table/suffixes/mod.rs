@@ -173,11 +173,69 @@ pub enum Suffixes {
     XorRotL1Pairs,
     TopYBit,
     BottomXBit,
+    XorRot2,
+    XorRot3,
+    XorRot8,
+    XorRot9,
+    XorRot19,
+    XorRot20,
+    XorRot21,
+    XorRot23,
+    XorRot25,
+    XorRot28,
+    XorRot36,
+    XorRot37,
+    XorRot39,
+    XorRot43,
+    XorRot44,
+    XorRot46,
+    XorRot49,
+    XorRot50,
+    XorRot54,
+    XorRot56,
+    XorRot58,
+    XorRot61,
+    XorRot62,
 }
 
 pub type SuffixEval<F: JoltField> = F;
 
 impl Suffixes {
+    /// The suffix of the XOR-then-rotate-right-by-`rotation` table; see
+    /// [`Prefixes::xor_rot`](super::prefixes::Prefixes::xor_rot).
+    pub const fn xor_rot(rotation: u32) -> Self {
+        match rotation {
+            2 => Suffixes::XorRot2,
+            3 => Suffixes::XorRot3,
+            8 => Suffixes::XorRot8,
+            9 => Suffixes::XorRot9,
+            16 => Suffixes::XorRot16,
+            19 => Suffixes::XorRot19,
+            20 => Suffixes::XorRot20,
+            21 => Suffixes::XorRot21,
+            23 => Suffixes::XorRot23,
+            24 => Suffixes::XorRot24,
+            25 => Suffixes::XorRot25,
+            28 => Suffixes::XorRot28,
+            32 => Suffixes::XorRot32,
+            36 => Suffixes::XorRot36,
+            37 => Suffixes::XorRot37,
+            39 => Suffixes::XorRot39,
+            43 => Suffixes::XorRot43,
+            44 => Suffixes::XorRot44,
+            46 => Suffixes::XorRot46,
+            49 => Suffixes::XorRot49,
+            50 => Suffixes::XorRot50,
+            54 => Suffixes::XorRot54,
+            56 => Suffixes::XorRot56,
+            58 => Suffixes::XorRot58,
+            61 => Suffixes::XorRot61,
+            62 => Suffixes::XorRot62,
+            63 => Suffixes::XorRot63,
+            _ => unimplemented!(),
+        }
+    }
+
     /// Returns true iff this suffix's `suffix_mle` output is guaranteed to be in {0, 1}.
     ///
     /// This is used for micro-optimizations that avoid calling `mul_u64_unreduced(1)`
@@ -271,6 +329,29 @@ impl Suffixes {
             Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
             Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
             Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
+            Suffixes::XorRot2 => XorRotSuffix::<2>::suffix_mle(b),
+            Suffixes::XorRot3 => XorRotSuffix::<3>::suffix_mle(b),
+            Suffixes::XorRot8 => XorRotSuffix::<8>::suffix_mle(b),
+            Suffixes::XorRot9 => XorRotSuffix::<9>::suffix_mle(b),
+            Suffixes::XorRot19 => XorRotSuffix::<19>::suffix_mle(b),
+            Suffixes::XorRot20 => XorRotSuffix::<20>::suffix_mle(b),
+            Suffixes::XorRot21 => XorRotSuffix::<21>::suffix_mle(b),
+            Suffixes::XorRot23 => XorRotSuffix::<23>::suffix_mle(b),
+            Suffixes::XorRot25 => XorRotSuffix::<25>::suffix_mle(b),
+            Suffixes::XorRot28 => XorRotSuffix::<28>::suffix_mle(b),
+            Suffixes::XorRot36 => XorRotSuffix::<36>::suffix_mle(b),
+            Suffixes::XorRot37 => XorRotSuffix::<37>::suffix_mle(b),
+            Suffixes::XorRot39 => XorRotSuffix::<39>::suffix_mle(b),
+            Suffixes::XorRot43 => XorRotSuffix::<43>::suffix_mle(b),
+            Suffixes::XorRot44 => XorRotSuffix::<44>::suffix_mle(b),
+            Suffixes::XorRot46 => XorRotSuffix::<46>::suffix_mle(b),
+            Suffixes::XorRot49 => XorRotSuffix::<49>::suffix_mle(b),
+            Suffixes::XorRot50 => XorRotSuffix::<50>::suffix_mle(b),
+            Suffixes::XorRot54 => XorRotSuffix::<54>::suffix_mle(b),
+            Suffixes::XorRot56 => XorRotSuffix::<56>::suffix_mle(b),
+            Suffixes::XorRot58 => XorRotSuffix::<58>::suffix_mle(b),
+            Suffixes::XorRot61 => XorRotSuffix::<61>::suffix_mle(b),
+            Suffixes::XorRot62 => XorRotSuffix::<62>::suffix_mle(b),
         }
     }
 }

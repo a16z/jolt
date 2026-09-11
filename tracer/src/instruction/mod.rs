@@ -167,6 +167,13 @@ use virtual_window_mask_b::VirtualWindowMaskB;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
 use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use virtual_xor_rot::{
+    VirtualXORROT19, VirtualXORROT2, VirtualXORROT20, VirtualXORROT21, VirtualXORROT23,
+    VirtualXORROT25, VirtualXORROT28, VirtualXORROT3, VirtualXORROT36, VirtualXORROT37,
+    VirtualXORROT39, VirtualXORROT43, VirtualXORROT44, VirtualXORROT46, VirtualXORROT49,
+    VirtualXORROT50, VirtualXORROT54, VirtualXORROT56, VirtualXORROT58, VirtualXORROT61,
+    VirtualXORROT62, VirtualXORROT8, VirtualXORROT9,
+};
 use virtual_xor_rotl1::VirtualXORROTL1;
 use virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,
