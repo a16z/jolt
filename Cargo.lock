@@ -205,6 +205,7 @@ dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-types",
+ "bincode 2.0.1",
  "serde",
  "serde_json",
 ]

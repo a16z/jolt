@@ -16,6 +16,7 @@ use akita_pcs::{
 };
 use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
 use akita_schedules::ValidatedScheduleCatalog;
+use akita_serialization::{Compress, Validate};
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
     AkitaCommitmentHint as AkitaBackendCommitmentHint, AkitaExpandedSetup,
@@ -28,7 +29,6 @@ use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial}
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
 #[cfg(all(
     feature = "parallel",
-    not(feature = "field-inline"),
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -193,14 +193,12 @@ const SCHEDULE_SELECTION_BYTES: usize = 32;
 /// so oversizing costs virtual address space only.
 #[cfg(all(
     feature = "parallel",
-    not(feature = "field-inline"),
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
 const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
 #[cfg(all(
     feature = "parallel",
-    not(feature = "field-inline"),
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
 #[expect(
@@ -221,7 +219,6 @@ fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> ThreadP
 
 #[cfg(all(
     feature = "parallel",
-    not(feature = "field-inline"),
     not(any(target_arch = "riscv32", target_arch = "riscv64"))
 ))]
 fn backend_pool() -> &'static ThreadPool {
@@ -313,14 +310,12 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     #[cfg(any(
         target_arch = "riscv32",
         target_arch = "riscv64",
-        feature = "field-inline",
         not(feature = "parallel")
     ))]
     return f();
     #[cfg(not(any(
         target_arch = "riscv32",
         target_arch = "riscv64",
-        feature = "field-inline",
         not(feature = "parallel")
     )))]
     {
@@ -804,8 +799,11 @@ impl AkitaVerifierSetup {
                 .as_ref()
                 .map(PreparedBytes::as_ref)
             {
-                Some(binary) => AkitaBackendScheme::from_schedule_artifact_binary(binary)
-                    .map_err(|error| error.to_string()),
+                Some(binary) => {
+                    TrustedScheduleCatalog::<AkitaConfig>::from_trusted_artifact_binary(binary)
+                        .map(AkitaBackendScheme::new)
+                        .map_err(|error| error.to_string())
+                }
                 None => self
                     .schedule_artifacts
                     .dense()
@@ -831,8 +829,13 @@ impl AkitaVerifierSetup {
                 .as_ref()
                 .map(PreparedBytes::as_ref)
             {
-                Some(binary) => AkitaOneHotK16BackendScheme::from_schedule_artifact_binary(binary)
-                    .map_err(|error| error.to_string()),
+                Some(binary) => {
+                    TrustedScheduleCatalog::<AkitaOneHotK16Config>::from_trusted_artifact_binary(
+                        binary,
+                    )
+                    .map(AkitaOneHotK16BackendScheme::new)
+                    .map_err(|error| error.to_string())
+                }
                 None => self
                     .schedule_artifacts
                     .one_hot()
@@ -860,8 +863,13 @@ impl AkitaVerifierSetup {
                 .as_ref()
                 .map(PreparedBytes::as_ref)
             {
-                Some(binary) => AkitaOneHotK256BackendScheme::from_schedule_artifact_binary(binary)
-                    .map_err(|error| error.to_string()),
+                Some(binary) => {
+                    TrustedScheduleCatalog::<AkitaOneHotK256Config>::from_trusted_artifact_binary(
+                        binary,
+                    )
+                    .map(AkitaOneHotK256BackendScheme::new)
+                    .map_err(|error| error.to_string())
+                }
                 None => self
                     .schedule_artifacts
                     .one_hot()
@@ -921,16 +929,20 @@ impl AkitaVerifierSetup {
     fn schedule_catalog(
         &self,
         flavor: AkitaBackendFlavor,
-    ) -> Result<Option<&TrustedScheduleCatalog>, OpeningsError> {
+    ) -> Result<Option<&ValidatedScheduleCatalog>, OpeningsError> {
         Ok(match flavor {
             AkitaBackendFlavor::Dense => self
                 .schedule_artifacts
                 .dense()
-                .map(|_| self.dense_scheme().map(|scheme| scheme.schedules()))
+                .map(|_| {
+                    self.dense_scheme()
+                        .map(|scheme| scheme.schedules().catalog())
+                })
                 .transpose()?,
+            AkitaBackendFlavor::OneHot if self.schedule_artifacts.one_hot().is_none() => None,
             AkitaBackendFlavor::OneHot => match self.one_hot_k {
-                AKITA_ONE_HOT_K16 => Some(self.one_hot_k16_scheme()?.schedules()),
-                AKITA_ONE_HOT_K256 => Some(self.one_hot_k256_scheme()?.schedules()),
+                AKITA_ONE_HOT_K16 => Some(self.one_hot_k16_scheme()?.schedules().catalog()),
+                AKITA_ONE_HOT_K256 => Some(self.one_hot_k256_scheme()?.schedules().catalog()),
                 _ => None,
             },
         })
@@ -1009,15 +1021,13 @@ impl AkitaVerifierSetup {
         let terminal_ntt_caches =
             std::mem::take(&mut self.prepared_backend_verifiers.terminal_ntt_caches);
         let dense_catalog = self
-            .schedule_artifacts
-            .dense()
-            .map(TrustedScheduleCatalog::artifact_binary_from_json)
+            .schedule_catalog(AkitaBackendFlavor::Dense)?
+            .map(ValidatedScheduleCatalog::to_artifact_binary)
             .transpose()
             .map_err(invalid_setup)?;
         let one_hot_catalog = self
-            .schedule_artifacts
-            .one_hot()
-            .map(TrustedScheduleCatalog::artifact_binary_from_json)
+            .schedule_catalog(AkitaBackendFlavor::OneHot)?
+            .map(ValidatedScheduleCatalog::to_artifact_binary)
             .transpose()
             .map_err(invalid_setup)?;
         self.prepared_backend_verifiers = PreparedBackendVerifiers {

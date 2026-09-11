@@ -5,7 +5,7 @@
 
 //! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
 
-use akita_config::{SetupRequirements, TrustedScheduleCatalog};
+use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
@@ -309,7 +309,7 @@ mod field_inc_limbs {
     )]
 
     use akita_config::CommitmentConfig;
-    use akita_schedules::TrustedScheduleCatalog;
+    use akita_schedules::ValidatedScheduleCatalog;
     use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams, PolynomialGroupLayout};
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::{
@@ -351,7 +351,7 @@ mod field_inc_limbs {
     }
 
     fn limb_profile(
-        dense: &TrustedScheduleCatalog,
+        dense: &ValidatedScheduleCatalog,
         params: FieldIncLimbScheduleParams,
         final_num_vars: usize,
     ) -> GroupCommitPhaseParams {
@@ -494,4 +494,35 @@ mod field_inc_limbs {
             assert_eq!(row.profiles().precommitteds.last(), Some(&limb));
         }
     }
+}
+
+#[test]
+fn prepared_binary_catalogs_preserve_identity_and_config_binding() {
+    fn check<Cfg: CommitmentConfig>(catalog: ValidatedScheduleCatalog) {
+        let binary = catalog.to_artifact_binary().expect("prepare catalog");
+        let loaded = TrustedScheduleCatalog::<Cfg>::from_trusted_artifact_binary(&binary)
+            .expect("load prepared catalog");
+        assert_eq!(loaded.catalog_digest(), catalog.catalog_digest());
+        assert_eq!(
+            loaded.to_artifact_bytes().expect("JSON"),
+            catalog.to_artifact_bytes().expect("JSON")
+        );
+        assert!(TrustedScheduleCatalog::<Cfg>::from_trusted_artifact_binary(
+            &binary[..binary.len() - 1]
+        )
+        .is_err());
+        let mut trailing = binary;
+        trailing.push(0);
+        assert!(TrustedScheduleCatalog::<Cfg>::from_trusted_artifact_binary(&trailing).is_err());
+    }
+    let dense = dense_catalog();
+    assert!(
+        TrustedScheduleCatalog::<JoltOneHotK16>::from_trusted_artifact_binary(
+            &dense.to_artifact_binary().expect("prepare dense catalog")
+        )
+        .is_err()
+    );
+    check::<JoltDenseBounded>(dense);
+    check::<JoltOneHotK16>(one_hot_catalog(AKITA_ONE_HOT_K16));
+    check::<JoltOneHotK256>(one_hot_catalog(AKITA_ONE_HOT_K256));
 }
