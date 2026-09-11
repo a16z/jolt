@@ -140,9 +140,17 @@ impl<F: Ring + Clone, O: Clone, P: Clone, C: Clone> Neg for &Expr<F, O, P, C> {
 impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
     type Output = Self;
 
-    fn mul(self, rhs: Self) -> Self::Output {
+    fn mul(mut self, rhs: Self) -> Self::Output {
         if self.is_zero() || rhs.is_zero() {
             return Self::zero();
+        }
+
+        if let [rhs_term] = rhs.terms.as_slice() {
+            for lhs_term in &mut self.terms {
+                lhs_term.coefficient *= rhs_term.coefficient;
+                lhs_term.factors.extend_from_slice(&rhs_term.factors);
+            }
+            return self;
         }
 
         // Each left term's factor list is copied once per right term except
