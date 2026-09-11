@@ -1334,6 +1334,9 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.field_inline.load_from_x",
             "claims.stage1.outer.outer_remainder.field_inline.store_to_x",
             "claims.stage1.outer.outer_remainder.field_inline.load_imm",
+            "claims.stage1.outer.outer_remainder.field_inline.load_word",
+            "claims.stage1.outer.outer_remainder.field_inline.load_word_hi",
+            "claims.stage1.outer.outer_remainder.field_inline.advice_limb",
         ],
         #[cfg(feature = "field-inline")]
         "claims.stage2.batch_outputs.product_remainder.field_inline.*" => vec![

@@ -395,11 +395,11 @@ mod tests {
     }
 
     /// FR-on, the composed outer domain carries the appended FR rows — the
-    /// spec's 14-point domain and its degree-39 first round.
+    /// spec's 15-point domain and its degree-42 first round.
     #[cfg(feature = "field-inline")]
     #[test]
     fn outer_uniskip_constants_are_the_composed_fr_domains() {
-        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 14);
-        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 39);
+        assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
+        assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
     }
 }
