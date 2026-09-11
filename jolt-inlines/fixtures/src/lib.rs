@@ -3,6 +3,7 @@ extern crate jolt_inlines_blake2 as _;
 extern crate jolt_inlines_blake3 as _;
 extern crate jolt_inlines_grumpkin as _;
 extern crate jolt_inlines_keccak256 as _;
+extern crate jolt_inlines_ntt as _;
 extern crate jolt_inlines_p256 as _;
 extern crate jolt_inlines_secp256k1 as _;
 extern crate jolt_inlines_sha2 as _;
@@ -243,7 +244,7 @@ mod tests {
         let expected = unique_summaries(&expected_cases);
         let actual = unique_summaries(&compute_cases()?);
 
-        assert_eq!(actual.len(), 25);
+        assert_eq!(actual.len(), 26);
         assert_eq!(actual, expected);
         Ok(())
     }

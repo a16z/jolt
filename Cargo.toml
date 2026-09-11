@@ -66,10 +66,13 @@ members = [
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
   "jolt-inlines/p256",
+  "jolt-inlines/ntt",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
   "examples/collatz/guest",
+  "examples/ntt",
+  "examples/ntt/guest",
   "examples/fibonacci",
   "examples/fibonacci/guest",
   "examples/secp256k1-ecdsa-verify",
@@ -203,6 +206,7 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 [patch."https://github.com/a16z/jolt"]
 jolt-field = { path = "crates/jolt-field" }
 jolt-inlines-blake2 = { path = "jolt-inlines/blake2" }
+jolt-inlines-ntt = { path = "jolt-inlines/ntt" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -465,6 +469,7 @@ jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }
 jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
 jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
+jolt-inlines-ntt = { path = "./jolt-inlines/ntt", default-features = false }
 jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }

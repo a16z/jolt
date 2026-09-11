@@ -9,6 +9,7 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+ntt-inline = ["akita-algebra/ntt-inline"]
 default = ["parallel"]
 # Rayon-backed akita kernels and the host backend thread pool. A zkVM guest
 # builds without it: single-core, and the join/split machinery is pure cost.

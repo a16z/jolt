@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 field-inline = ["jolt_sdk/field-inline", "jolt-field/field-inline-guest"]
 akita = ["jolt_sdk/akita", "dep:jolt-akita", "dep:jolt-crypto", "dep:jolt-transcript"]

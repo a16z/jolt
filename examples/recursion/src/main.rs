@@ -1,4 +1,6 @@
 use clap::{Parser, Subcommand};
+#[cfg(feature = "ntt-inline")]
+use jolt_inlines_ntt as _;
 // Linked for its inline registration: the guest transcripts hash with the
 // Blake2b inline, which the tracer expands only for registered extensions.
 use jolt_inlines_blake2 as _;
@@ -848,6 +850,8 @@ fn run_recursion_proof(
     program.enable_field_inline();
     #[cfg(feature = "akita")]
     program.add_guest_feature("akita");
+    #[cfg(feature = "ntt-inline")]
+    program.add_guest_feature("ntt-inline");
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("blake2-inline");
     // The verifier preprocessing is the recursion circuit's own trusted

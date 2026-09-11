@@ -108,6 +108,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "jolt-field",
+ "jolt-inlines-ntt",
  "rand_core 0.6.4",
  "rayon",
  "tracing",
@@ -3437,6 +3438,7 @@ dependencies = [
  "jolt-inlines-blake3",
  "jolt-inlines-grumpkin",
  "jolt-inlines-keccak256",
+ "jolt-inlines-ntt",
  "jolt-inlines-p256",
  "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
@@ -3471,6 +3473,15 @@ dependencies = [
  "rand 0.8.7",
  "sha3 0.12.0",
  "tiny-keccak",
+ "tracer",
+]
+
+[[package]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-sdk",
+ "rand 0.8.7",
  "tracer",
 ]
 
@@ -4384,6 +4395,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "ntt-example"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-ntt",
+ "jolt-sdk",
+ "ntt-guest",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "ntt-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-ntt",
+ "jolt-sdk",
+ "serde",
 ]
 
 [[package]]
@@ -5531,6 +5561,7 @@ dependencies = [
  "clap",
  "jolt-field",
  "jolt-inlines-blake2",
+ "jolt-inlines-ntt",
  "jolt-openings",
  "jolt-sdk",
  "postcard",

@@ -59,7 +59,52 @@ Reproduction commands and PC-profile reporting are in
 `RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1` and the same
 saved proof input when comparing candidates.
 
-## Validation status
+## NTT inline experiment (2026-09-11)
+
+The guest-optimization branch now includes refreshed field-inline PR #1808
+(`a48725375`) through merge `4d7dbff30`. This experiment is separate from that PR.
+The new `jolt-inlines-ntt` crate expands a 64-point i32 Montgomery forward NTT
+into 4,456 existing proved integer rows. It retains all coefficients in virtual
+registers across the butterfly stages and introduces no advice or new proof
+constraints. Akita's `ntt-inline` feature opts into the guest dispatch
+(companion commit `15ac1a447`).
+
+The comparison uses the proof hash above and identical release, field-inline,
+fast-allocator, Blake2-inline, and PC-profiling settings. One Rayon thread and
+`RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1` were used throughout.
+
+| Version | Verification cycles | Total rows | Guest output |
+| --- | ---: | ---: | ---: |
+| Refreshed field-inline base, NTT off | 123,936,530 | 129,306,724 | 1 |
+| Initial scalar alignment fallback (rejected) | 128,308,526 | 133,678,858 | 1 |
+| NTT with aligned stack buffers (two identical runs) | 114,181,432 | 119,551,764 | 1 |
+
+The retained implementation saves 9,755,098 verification cycles (7.87%) and
+9,754,960 total rows. Akita's arrays did not meet the paired-access alignment
+guard in the first candidate, so all calls used its slower scalar fallback.
+The repaired RISC-V path copies misaligned arrays to aligned stack buffers;
+other targets retain the portable transform. The added copies are included
+in the reported totals. Symbol attribution now folds the inline into its
+matrix-vector caller, so that caller's larger profile bucket is not a regression.
+
+The standalone NTT example generates and verifies a real Dory-backed Jolt proof,
+checks its output against a direct DFT checksum, and deliberately supplies a
+4-byte-aligned table. The full Akita recursion figures remain trace-only;
+the entire outer recursion proof was not generated. No 50M result or transfer
+to other inner workloads is claimed.
+
+Validation for this change: 43 NTT/expansion-fixture/ISA-profile tests, standard
+and ZK workspace Clippy, the Akita/field-inline/NTT Clippy lane, formatting and
+style guards, and the companion's 84 Python checks. The new companion dependency
+requires Jolt's local path patch until the NTT crate is published; standalone
+companion dependency checks are not established.
+
+Commands and arithmetic contract: [NTT inline README](../jolt-inlines/ntt/README.md).
+Raw logs, frozen proof, harnesses, ELFs, and profiles are retained locally in
+`/private/tmp/ntt-inline-campaign/`. The retained guest ELF SHA-256 is
+`1ab743cee2505fb68090a10314d9d0ada52a9744469b951739a4754f38e6ea30`.
+
+## Prior catch-up validation
 
 All 21 Clippy matrix configurations passed, including workspace `host` and
 `host,zk`, recursion, field-inline, profiling/allocative, and fixture lanes.

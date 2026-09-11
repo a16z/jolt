@@ -20,6 +20,7 @@ host = [
   "jolt-inlines-grumpkin/host",
   "jolt-inlines-keccak256/host",
   "jolt-inlines-p256/host",
+  "jolt-inlines-ntt/host",
   "jolt-inlines-secp256k1/host",
   "jolt-inlines-sha2/host",
 ]
@@ -33,6 +34,7 @@ jolt-inlines-blake3.workspace = true
 jolt-inlines-grumpkin.workspace = true
 jolt-inlines-keccak256.workspace = true
 jolt-inlines-p256.workspace = true
+jolt-inlines-ntt.workspace = true
 jolt-inlines-secp256k1.workspace = true
 jolt-inlines-sha2.workspace = true
 jolt-program = { workspace = true, features = ["serialization"] }

@@ -8,12 +8,14 @@ name = "recursion"
 path = "src/main.rs"
 
 [features]
+ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default, like eqpoly-field: default workspace builds must not unify
 # field-inline into the verifier stack. The recursion flow needs it.
 field-inline = ["jolt-sdk/field-inline", "dep:jolt-field", "jolt-field/field-inline-guest"]
 akita = ["jolt-sdk/akita"]
 
 [dependencies]
+jolt-inlines-ntt = { workspace = true, features = ["host"], optional = true }
 jolt-openings = { path = "../../crates/jolt-openings" }
 # Registers the Blake2b inline with the tracer for the guest transcripts.
 jolt-inlines-blake2 = { workspace = true, features = ["host"] }
