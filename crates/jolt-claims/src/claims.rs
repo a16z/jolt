@@ -40,6 +40,8 @@ impl<F: Ring, O, P, C> Term<F, O, P, C> {
 }
 
 /// A symbolic sum-of-products expression.
+/// Products and powers require `Copy` identifiers so factor lists can copy
+/// complete values without cloning individual enum variants.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Expr<F, O, P = (), C = usize> {
     pub terms: Vec<Term<F, O, P, C>>,
@@ -125,7 +127,7 @@ impl<F: Ring, O, P, C> Expr<F, O, P, C> {
     }
 }
 
-impl<F: Ring, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
+impl<F: Ring, O: Copy, P: Copy, C: Copy> Expr<F, O, P, C> {
     pub fn pow(self, mut exponent: usize) -> Self {
         // A single source (a challenge, typically) raised to a power is one
         // term with the factor repeated: build it directly instead of
@@ -142,7 +144,7 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Expr<F, O, P, C> {
                 return Self {
                     terms: vec![Term {
                         coefficient,
-                        factors: vec![source.clone(); exponent],
+                        factors: vec![*source; exponent],
                     }],
                 };
             }

@@ -137,7 +137,7 @@ impl<F: Ring + Clone, O: Clone, P: Clone, C: Clone> Neg for &Expr<F, O, P, C> {
     }
 }
 
-impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
+impl<F: Ring, O: Copy, P: Copy, C: Copy> Mul for Expr<F, O, P, C> {
     type Output = Self;
 
     fn mul(mut self, rhs: Self) -> Self::Output {
@@ -148,7 +148,7 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
         if let [rhs_term] = rhs.terms.as_slice() {
             for lhs_term in &mut self.terms {
                 lhs_term.coefficient *= rhs_term.coefficient;
-                lhs_term.factors.extend_from_slice(&rhs_term.factors);
+                lhs_term.factors.extend(rhs_term.factors.iter().copied());
             }
             return self;
         }
@@ -164,15 +164,15 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
             for rhs_term in rhs_init {
                 let mut factors =
                     Vec::with_capacity(lhs_term.factors.len() + rhs_term.factors.len());
-                factors.extend_from_slice(&lhs_term.factors);
-                factors.extend_from_slice(&rhs_term.factors);
+                factors.extend(lhs_term.factors.iter().copied());
+                factors.extend(rhs_term.factors.iter().copied());
                 terms.push(Term {
                     coefficient: lhs_term.coefficient * rhs_term.coefficient,
                     factors,
                 });
             }
             let mut factors = lhs_term.factors;
-            factors.extend_from_slice(&rhs_last.factors);
+            factors.extend(rhs_last.factors.iter().copied());
             terms.push(Term {
                 coefficient: lhs_term.coefficient * rhs_last.coefficient,
                 factors,
@@ -182,7 +182,7 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
     }
 }
 
-impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul<&Expr<F, O, P, C>> for Expr<F, O, P, C> {
+impl<F: Ring, O: Copy, P: Copy, C: Copy> Mul<&Expr<F, O, P, C>> for Expr<F, O, P, C> {
     type Output = Self;
 
     fn mul(self, rhs: &Expr<F, O, P, C>) -> Self::Output {
@@ -190,7 +190,7 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul<&Expr<F, O, P, C>> for Expr<F, O
     }
 }
 
-impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul<Expr<F, O, P, C>> for &Expr<F, O, P, C> {
+impl<F: Ring, O: Copy, P: Copy, C: Copy> Mul<Expr<F, O, P, C>> for &Expr<F, O, P, C> {
     type Output = Expr<F, O, P, C>;
 
     fn mul(self, rhs: Expr<F, O, P, C>) -> Self::Output {
@@ -198,7 +198,7 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul<Expr<F, O, P, C>> for &Expr<F, O
     }
 }
 
-impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul<&Expr<F, O, P, C>> for &Expr<F, O, P, C> {
+impl<F: Ring, O: Copy, P: Copy, C: Copy> Mul<&Expr<F, O, P, C>> for &Expr<F, O, P, C> {
     type Output = Expr<F, O, P, C>;
 
     fn mul(self, rhs: &Expr<F, O, P, C>) -> Self::Output {
