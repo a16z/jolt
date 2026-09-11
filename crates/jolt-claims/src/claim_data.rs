@@ -267,3 +267,68 @@ mod sumcheck_challenges_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod opening_family_tests {
+    use crate::protocols::jolt::{
+        JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
+    };
+    use crate::{InputClaims, OutputClaims};
+    use jolt_field::{Fr, Ring};
+
+    #[derive(OutputClaims)]
+    #[relation(Booleanity)]
+    struct Produced<C> {
+        #[opening(committed = InstructionRa)]
+        values: Vec<C>,
+    }
+
+    #[derive(InputClaims)]
+    struct Consumed<C> {
+        #[opening(LookupTableFlag, from = SpartanOuter)]
+        values: Vec<C>,
+    }
+
+    #[test]
+    fn indexed_openings_check_family_relation_and_bounds() {
+        for len in [0, 3] {
+            let values = (0..len)
+                .map(|i| Fr::from_u64(i as u64 + 11))
+                .collect::<Vec<_>>();
+            let produced = Produced {
+                values: values.clone(),
+            };
+            let consumed = Consumed {
+                values: values.clone(),
+            };
+            for index in [0, 1, 2, 3, usize::MAX] {
+                let output = JoltOpeningId::committed(
+                    JoltCommittedPolynomial::InstructionRa(index),
+                    JoltRelationId::Booleanity,
+                );
+                let input = JoltOpeningId::virtual_polynomial(
+                    JoltVirtualPolynomial::LookupTableFlag(index),
+                    JoltRelationId::SpartanOuter,
+                );
+                assert_eq!(produced.resolve_output(&output), values.get(index).copied());
+                assert_eq!(consumed.resolve_input(&input), values.get(index).copied());
+                assert_eq!(produced.resolve_output(&input), None);
+                assert_eq!(consumed.resolve_input(&output), None);
+                assert_eq!(
+                    produced.resolve_output(&JoltOpeningId::committed(
+                        JoltCommittedPolynomial::InstructionRa(index),
+                        JoltRelationId::SpartanOuter,
+                    )),
+                    None
+                );
+                assert_eq!(
+                    consumed.resolve_input(&JoltOpeningId::virtual_polynomial(
+                        JoltVirtualPolynomial::LookupTableFlag(index),
+                        JoltRelationId::Booleanity,
+                    )),
+                    None
+                );
+            }
+        }
+    }
+}

@@ -145,6 +145,7 @@ pub fn derive_sumcheck_challenges(input: TokenStream) -> TokenStream {
 /// derives stay a single implementation instantiated per namespace.
 struct Namespace {
     opening_id: TokenStream2,
+    polynomial_id: TokenStream2,
     relation_id: TokenStream2,
     virtual_polynomial: TokenStream2,
     committed_polynomial: TokenStream2,
@@ -158,6 +159,7 @@ impl Namespace {
         let module = quote!(::jolt_claims::protocols::jolt);
         Self {
             opening_id: quote!(#module::JoltOpeningId),
+            polynomial_id: quote!(#module::JoltPolynomialId),
             relation_id: quote!(#module::JoltRelationId),
             virtual_polynomial: quote!(#module::JoltVirtualPolynomial),
             committed_polynomial: quote!(#module::JoltCommittedPolynomial),
@@ -170,6 +172,7 @@ impl Namespace {
         let module = quote!(::jolt_claims::protocols::field_inline);
         Self {
             opening_id: quote!(#module::FieldInlineOpeningId),
+            polynomial_id: quote!(#module::FieldInlinePolynomialId),
             relation_id: quote!(#module::FieldInlineRelationId),
             virtual_polynomial: quote!(#module::FieldInlineVirtualPolynomial),
             committed_polynomial: quote!(#module::FieldInlineCommittedPolynomial),
@@ -463,6 +466,7 @@ fn id_expr(
     index: Option<TokenStream2>,
 ) -> TokenStream2 {
     let opening_id = &ns.opening_id;
+    let polynomial_id = &ns.polynomial_id;
     let relation_id = &ns.relation_id;
     let virtual_polynomial = &ns.virtual_polynomial;
     let committed_polynomial = &ns.committed_polynomial;
@@ -482,7 +486,7 @@ fn id_expr(
                 // Single unit variant: `Variant`.
                 (None, None) => quote!(#virtual_polynomial::#variant),
             };
-            quote!(#opening_id::virtual_polynomial(#polynomial, #rel))
+            quote!(#opening_id::Polynomial { polynomial: #polynomial_id::Virtual(#polynomial), relation: #rel })
         }
         LeafKind::Committed(variant) => {
             let polynomial = if let Some(index) = index {
@@ -490,10 +494,10 @@ fn id_expr(
             } else {
                 quote!(#committed_polynomial::#variant)
             };
-            quote!(#opening_id::committed(#polynomial, #rel))
+            quote!(#opening_id::Polynomial { polynomial: #polynomial_id::Committed(#polynomial), relation: #rel })
         }
-        LeafKind::TrustedAdvice => quote!(#opening_id::trusted_advice(#rel)),
-        LeafKind::UntrustedAdvice => quote!(#opening_id::untrusted_advice(#rel)),
+        LeafKind::TrustedAdvice => quote!(#opening_id::TrustedAdvice { relation: #rel }),
+        LeafKind::UntrustedAdvice => quote!(#opening_id::UntrustedAdvice { relation: #rel }),
     }
 }
 
@@ -531,8 +535,8 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             value_chains.push(quote!(.chain(self.#ident.iter().copied())));
             resolve_arms.push(quote! {
-                for (index, __value) in self.#ident.iter().enumerate() {
-                    if *id == #id {
+                if let #id = *id {
+                    if let ::core::option::Option::Some(__value) = self.#ident.get(index) {
                         return ::core::option::Option::Some(*__value);
                     }
                 }
@@ -557,7 +561,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             value_chains.push(quote!(.chain(self.#ident.iter().copied())));
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__value) = &self.#ident {
-                    if *id == #id {
+                    if *id == (#id) {
                         return ::core::option::Option::Some(*__value);
                     }
                 }
@@ -569,7 +573,7 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
             value_chains.push(quote!(.chain(::core::iter::once(self.#ident))));
             resolve_arms.push(quote! {
-                if *id == #id {
+                if *id == (#id) {
                     return ::core::option::Option::Some(self.#ident);
                 }
             });
@@ -719,8 +723,8 @@ fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
             let id = id_expr(&namespace, kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
-                for (index, __value) in self.#ident.iter().enumerate() {
-                    if *id == #id {
+                if let #id = *id {
+                    if let ::core::option::Option::Some(__value) = self.#ident.get(index) {
                         return ::core::option::Option::Some(*__value);
                     }
                 }
@@ -739,7 +743,7 @@ fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
                 quote!(return ::core::option::Option::Some(self.#ident);)
             };
             resolve_arms.push(quote! {
-                if *id == #id {
+                if *id == (#id) {
                     #hit
                 }
             });
@@ -858,7 +862,7 @@ fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
         field_idents.push(ident.clone());
         let id = quote!(#challenge_id_ty::from(#path));
         resolve_arms.push(quote! {
-            if *id == #id {
+            if *id == (#id) {
                 return ::core::option::Option::Some(self.#ident);
             }
         });
