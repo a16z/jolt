@@ -522,33 +522,40 @@ fn collect_guest_proofs(
             .embed_prepared_terminal_ntt_cache(proof.joint_opening_proof.schedule_row_digest())
             .expect("embed prepared Akita terminal NTT cache");
         info!("  Embedded prepared Akita terminal NTT cache: {ntt_cache} bytes");
-        // Record against the preprocessing exactly as the guest receives it:
-        // the setup's `#[serde(skip)]` backend cache is rebuilt inside the
-        // guest's verify, so the host must rebuild it too for the operation
-        // sequences to agree.
-        let (preprocessing, _): (JoltVerifierPreprocessing<AkitaScheme, AkitaVc>, _) =
-            bincode::serde::decode_from_slice(
-                &bincode::serde::encode_to_vec(&preprocessing, bincode::config::standard())
-                    .unwrap(),
-                bincode::config::standard(),
-            )
-            .unwrap();
-        info!("  Verifying...");
-        let is_valid = jolt_sdk::jolt_verifier::verify::<
-            AkitaField,
-            AkitaScheme,
-            AkitaVc,
-            AkitaTranscript,
-        >(&preprocessing, &public_io, &proof, None)
-        .inspect_err(|error| error!("  Verification failed: {error:?}"))
-        .is_ok();
-        info!("  Verification result: {is_valid}");
         records.push((proof, public_io));
         verifier_preprocessing = Some(preprocessing);
     }
     // The multi-megabyte setup payloads travel out of line, so the guest reads
     // them where they lie instead of copying them out of the bincode record.
     let mut verifier_preprocessing = verifier_preprocessing.unwrap();
+    let selections: Vec<_> = records
+        .iter()
+        .map(|(proof, _)| proof.joint_opening_proof.schedule_row_digest())
+        .collect();
+    let catalog_bytes = verifier_preprocessing
+        .pcs_setup
+        .embed_prepared_schedule_catalog_views(&selections)
+        .expect("prepare Akita verifier catalog views");
+    info!("  Prepared Akita verifier catalog views: {catalog_bytes} bytes");
+    // Rebuild skipped caches and verify every proof against the exact setup
+    // transported to the guest, including the restricted catalog coverage.
+    let (mut verifier_preprocessing, _): (GuestVerifierPreprocessing, _) =
+        bincode::serde::decode_from_slice(
+            &bincode::serde::encode_to_vec(&verifier_preprocessing, bincode::config::standard())
+                .unwrap(),
+            bincode::config::standard(),
+        )
+        .unwrap();
+    for (proof, public_io) in &records {
+        jolt_sdk::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            &verifier_preprocessing,
+            public_io,
+            proof,
+            None,
+        )
+        .expect("verify proof against prepared guest setup");
+        info!("  Verification result: true");
+    }
     let payloads = verifier_preprocessing
         .pcs_setup
         .detach_prepared_payloads()

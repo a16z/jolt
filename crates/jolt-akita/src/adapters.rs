@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
     fmt,
     io::Cursor,
     path::{Path, PathBuf},
@@ -947,6 +948,72 @@ impl AkitaVerifierSetup {
                 _ => None,
             },
         })
+    }
+
+    /// Restrict prepared catalogs to the rows these proofs use, preserving the
+    /// complete catalog commitment and the existing verifier keys. Omitted rows
+    /// cannot subsequently be verified with this setup. Requires attached,
+    /// prepared keys; rejects empty or unavailable selections before mutation.
+    pub fn embed_prepared_schedule_catalog_views(
+        &mut self,
+        row_digests: &[[u8; SCHEDULE_SELECTION_BYTES]],
+    ) -> Result<usize, OpeningsError> {
+        let mut missing: BTreeSet<_> = row_digests.iter().copied().collect();
+        if missing.is_empty() {
+            return Err(invalid_setup("empty verifier catalog selection"));
+        }
+        let mut views = Vec::new();
+        for flavor in [AkitaBackendFlavor::Dense, AkitaBackendFlavor::OneHot] {
+            let Some(catalog) = self.schedule_catalog(flavor)? else {
+                continue;
+            };
+            let selections: Vec<_> = row_digests
+                .iter()
+                .map(|digest| OpeningScheduleSelection {
+                    row_digest: ScheduleRowDigest::from_bytes(*digest),
+                })
+                .filter(|selection| catalog.resolve_selection(*selection).is_ok())
+                .collect();
+            if selections.is_empty() {
+                continue;
+            }
+            if self
+                .prepared_backend_verifiers
+                .bytes(flavor)
+                .is_none_or(PreparedBytes::is_detached)
+            {
+                return Err(invalid_setup(
+                    "catalog views require attached prepared keys",
+                ));
+            }
+            let bytes = catalog
+                .to_verifier_artifact_binary(&selections)
+                .map_err(invalid_setup)?;
+            for selection in selections {
+                let _ = missing.remove(selection.row_digest.as_bytes());
+            }
+            views.push((flavor, bytes));
+        }
+        if !missing.is_empty() {
+            return Err(invalid_setup("unavailable verifier catalog selection"));
+        }
+        let total = views.iter().map(|(_, bytes)| bytes.len()).sum();
+        for (flavor, bytes) in views {
+            match flavor {
+                AkitaBackendFlavor::Dense => {
+                    self.prepared_backend_verifiers.dense_catalog =
+                        Some(PreparedBytes::owned(bytes));
+                    self.backend_cache.dense_scheme = Arc::default();
+                }
+                AkitaBackendFlavor::OneHot => {
+                    self.prepared_backend_verifiers.one_hot_catalog =
+                        Some(PreparedBytes::owned(bytes));
+                    self.backend_cache.one_hot_k16_scheme = Arc::default();
+                    self.backend_cache.one_hot_k256_scheme = Arc::default();
+                }
+            }
+        }
+        Ok(total)
     }
 
     /// Precompute the terminal NTT cache for the schedule row a proof selected

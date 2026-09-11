@@ -1268,6 +1268,51 @@ mod tests {
             &mut original_transcript,
         )
         .unwrap();
+
+        let mut view_setup = verifier_setup.clone();
+        let selection_bytes = *selected.row_digest.as_bytes();
+        assert!(view_setup
+            .embed_prepared_schedule_catalog_views(&[selection_bytes])
+            .is_err());
+        let _ = view_setup.embed_prepared_backend_verifiers().unwrap();
+        let before = serde_json::to_string(&view_setup).unwrap();
+        assert!(view_setup
+            .embed_prepared_schedule_catalog_views(&[selection_bytes, [0; 32]])
+            .is_err());
+        assert_eq!(serde_json::to_string(&view_setup).unwrap(), before);
+        let _ = view_setup
+            .embed_prepared_schedule_catalog_views(&[selection_bytes])
+            .unwrap();
+        // The live cache and the transported setup must both enforce coverage.
+        for setup in [
+            view_setup.clone(),
+            serde_json::from_str(&serde_json::to_string(&view_setup).unwrap()).unwrap(),
+        ] {
+            let catalog = setup.dense_scheme().unwrap().schedules();
+            assert_eq!(catalog.catalog_digest(), full_catalog.catalog_digest());
+            assert!(catalog.resolve_selection(omitted).is_err());
+            let mut transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+            <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+                &setup,
+                &statement,
+                &proof,
+                &mut transcript,
+            )
+            .unwrap();
+        }
+        let mut alternate_view = alternate_verifier_setup;
+        let _ = alternate_view.embed_prepared_backend_verifiers().unwrap();
+        let _ = alternate_view
+            .embed_prepared_schedule_catalog_views(&[selection_bytes])
+            .unwrap();
+        let mut transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &alternate_view,
+            &statement,
+            &proof,
+            &mut transcript,
+        )
+        .expect_err("selected-row views must preserve cross-catalog replay rejection");
     }
 
     #[test]
