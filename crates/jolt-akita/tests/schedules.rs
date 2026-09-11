@@ -466,12 +466,11 @@ mod field_inc_limbs {
         );
     }
 
-    /// With both advice kinds declared, every advice presence combination is
-    /// provisioned with the FR profile as its last group and no FR-absent row
-    /// exists: an FR-on prover commits the group on every proof, so none is
-    /// constructible.
+    /// A field-inline build supports both active and inactive traces. Each
+    /// advice combination needs both shapes; the limb-only row covers an
+    /// active trace without advice. The base catalog owns the empty shape.
     #[test]
-    fn fr_rows_append_the_limb_group_to_every_advice_combination() {
+    fn fr_rows_cover_active_and_inactive_advice_combinations() {
         let dense = dense_catalog();
         let base = one_hot_catalog(AKITA_ONE_HOT_K16);
         let params = law_derived_params(AKITA_ONE_HOT_K16);
@@ -488,10 +487,26 @@ mod field_inc_limbs {
             final_num_vars,
         )
         .expect("FR-composed provisioning must plan every combination");
-        assert_eq!(rows.rows().len(), 4);
         let limb = limb_profile(&dense, params, final_num_vars);
-        for row in rows.rows() {
-            assert_eq!(row.profiles().precommitteds.last(), Some(&limb));
+        let untrusted_profile =
+            dense_precommit_profile(&dense, PolynomialGroupLayout::new(trusted + 1, 1))
+                .expect("untrusted advice profile");
+        let trusted_profile = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
+            .expect("trusted advice profile");
+        let expected = [
+            vec![untrusted_profile],
+            vec![trusted_profile],
+            vec![untrusted_profile, trusted_profile],
+            vec![limb],
+            vec![untrusted_profile, limb],
+            vec![trusted_profile, limb],
+            vec![untrusted_profile, trusted_profile, limb],
+        ];
+        assert_eq!(rows.rows().len(), expected.len());
+        for combination in expected {
+            assert!(rows
+                .rows()
+                .any(|row| row.profiles().precommitteds == combination));
         }
     }
 }

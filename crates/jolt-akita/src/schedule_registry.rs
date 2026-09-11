@@ -335,9 +335,8 @@ impl AdvicePrecommitLayouts {
 pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(14, 1);
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
-/// Adapt grouped rows for optional advice followed by the mandatory groups —
-/// (field-inline) the FR limb group, then the direct committed-program
-/// objects — all in canonical precommit order.
+/// Adapt grouped rows for optional advice and FR limbs followed by mandatory
+/// direct committed-program objects, all in canonical precommit order.
 #[cfg_attr(
     feature = "field-inline",
     expect(
