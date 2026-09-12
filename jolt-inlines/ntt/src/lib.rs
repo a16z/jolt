@@ -31,7 +31,8 @@ jolt_inlines_sdk::register_inlines! {
 /// `psi[i]` is the Montgomery form of psi^i. Stage twiddles occupy
 /// `twiddles[len - 1..2*len - 1]`, for half-lengths 32 down to 1.
 /// For NTT semantics, the caller supplies an odd prime `0 < p < 2^30`,
-/// `pinv = p^-1 mod 2^32`, valid roots, and coefficients in `(-p, p)`.
+/// `pinv = p^-1 mod 2^32`, valid roots, and coefficients and table entries
+/// in `(-p, p)`. The final pass adds `p` only to negative coefficients.
 /// Arithmetic outside that domain still follows signed wrapping i32/i64
 /// operations; the inline introduces no trusted advice or unchecked equation.
 /// Arrays without doubleword alignment use aligned stack buffers on RISC-V.
@@ -138,8 +139,12 @@ fn scalar_forward(
         }
         len /= 2;
     }
+    // With |a| < 2p, |w| < p and p < 2^30, signed Montgomery reduction
+    // has magnitude < p: |a*w|/2^32 + p/2 < p. Butterfly sums have
+    // magnitude < 2p and reduce maps them back into (-p, p). These are
+    // caller parameter bounds, not extra constraints imposed by the inline.
     for a in state {
-        *a = reduce(*a, p);
+        *a = a.wrapping_add((*a >> 31) & p);
     }
 }
 

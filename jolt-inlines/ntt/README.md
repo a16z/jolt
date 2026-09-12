@@ -6,7 +6,7 @@ caller supplies the modulus, Montgomery inverse, twist powers, and stage
 twiddles. See the function's API contract for their bounds and layout.
 
 The inline keeps all 64 coefficients in virtual registers across the six
-butterfly stages. It expands to 4,200 rows of existing proved integer
+butterfly stages. It expands to 3,944 rows of existing proved integer
 instructions, including register resets. It adds no advice or new proof
 constraints. Arithmetic has explicit wrapping semantics even outside the
 NTT parameter domain; supplying valid roots remains the caller's job.

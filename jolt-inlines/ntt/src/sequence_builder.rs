@@ -58,8 +58,13 @@ impl NttBuilder {
             }
             len /= 2;
         }
+        // Valid NTT parameters keep every stage output in (-p, p), so the
+        // final pass only adds p to negative coefficients (see scalar_forward).
         for i in 0..DEGREE {
-            self.reduce(*self.values[i]);
+            let value = *self.values[i];
+            self.asm.emit_i(Kind::SRAI, temp, value, 63);
+            self.asm.emit_r(Kind::AND, temp, temp, p);
+            self.asm.emit_r(Kind::ADDW, value, value, temp);
         }
         for i in (0..DEGREE).step_by(2) {
             self.asm.store_paired_u32(
