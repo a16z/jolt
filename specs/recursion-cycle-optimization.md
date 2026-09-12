@@ -1,4 +1,12 @@
-# Recursion cycle optimization: upstream catch-up
+# Recursion cycle optimization
+
+The retained guest stack verifies the frozen Fibonacci proof in **72,342,179
+verification cycles /75,915,308 total rows**, with an exact repeat and output 1.
+That saves 41.63% of verification cycles against the refreshed field-inline baseline
+before the NTT work. These are trace measurements; the full outer recursion proof
+has not been generated. The [per-commit table](#guest-optimization-campaign) records
+changes on the guest branches, separate from field-inline PR #1808. The 50M target
+remains unachieved.
 
 The Akita recursion guest now checks that field-inline limb advice is canonical.
 Memory-sourced field loads also retain their ordinary address and destination
@@ -134,11 +142,106 @@ failures and their successful reruns; the last result for each lane is final.
 Companion checks also passed formatting, artifact/dependency guards through
 Jolt, and 84 Python tests. The standalone dependency limitation above remains.
 
-## Remaining cost
+## Guest optimization campaign
 
-The retained profile attributes about 17.77M rows to forward NTTs and 14.37M to
-integer NTT matrix-vector multiplication. Memory copying accounts for another
-10.02M rows across callers. Reaching 50M has not been demonstrated; even removing
-the measured NTT/matrix cost would leave roughly 92M verification cycles. A new
-provable arithmetic instruction or a protocol change needs a separate design
-and soundness argument, with complete guest proof coverage from its first use.
+The following changes remain separate commits on `feat/fast-recursion` and the
+companion's `feat/fast-recursion-companion`. They are not part of field-inline
+PR #1808. Measurements use the frozen proof above. Apply or revert paired Jolt/
+companion changes together; later mechanisms can depend on earlier APIs. Values
+are cumulative, so the gains need not add in a different order.
+
+| Mechanism | Commit (Jolt / companion) | Verification cycles | Total rows |
+| --- | --- | ---: | ---: |
+| Initial NTT inline | `d6b8f27ce` / `15ac1a447` | 114,181,432 | 119,551,764 |
+| Native Rice bit decoder | companion `99308ccbb` | 113,964,328 | 119,334,660 |
+| Aligned NTT tables | companion `0605c41db` | 112,775,250 | 118,151,977 |
+| Reuse monomial expression storage | `b7b94220f` | 112,408,462 | 117,778,575 |
+| Stream bytecode evaluation rows | `18d38fbf6` | 112,014,074 | 117,384,380 |
+| Inline equality-window lookup | companion `5a29719df` | 111,725,705 | 117,096,011 |
+| Hash full input blocks directly | `c2c4aeb88` | 111,607,322 | 116,977,511 |
+| Reuse certified first-octant enclosures | companion `30d472938` | 110,372,005 | 115,742,194 |
+| Batch compression scalar dots | companion `e7daf0730` | 110,307,871 | 115,639,353 |
+| Factor residual tensor weights | companion `55c68452c` | 109,532,605 | 114,864,225 |
+| Six-product lazy Montgomery dot | companion `f951ea400` | 105,918,450 | 111,250,070 |
+| Proved pointwise inline | `05d5e6a96` / `4c13f29a1` | 102,240,164 | 107,571,821 |
+| Compress aligned streaming hash buffer directly | `a0a35475d` | 101,717,438 | 107,049,058 |
+| Fuse signed-digit conversion into NTT twist | companion `67b793dcb` | 98,352,632 | 103,721,026 |
+| Resolve indexed claim families directly | `f7dbb3a98` | 97,084,717 | 100,691,490 |
+| Rice unary-prefix word table | companion `d85fbcd71` | 96,840,163 | 100,446,936 |
+| Use canonical factored Spartan output check | `f7d419d35` | 92,170,363 | 95,763,469 |
+| Remove redundant NTT sign-extension rows | `40d7b59ca` | 91,727,611 | 95,320,717 |
+| Inline hash finalization to avoid state movement | `d8c1cb766` | 90,571,969 | 94,155,100 |
+| Audit only selected catalog rows, preserving catalog identity | `f3eac4f54` / `0b2fe8e3d` | 76,946,007 | 80,515,127 |
+| Copy complete symbolic factors | `1eec24402` | 73,425,623 | 76,998,752 |
+| Specialize compression-event insertion | companion `e9f8d2a6a` | 72,735,395 | 76,308,524 |
+| Shorten final NTT canonicalization | `d44ea8b47` | 72,342,179 | 75,915,308 |
+
+Every retained trace returned output 1. The pointwise inline depends on the portable
+lazy-dot arithmetic, and its guest dispatch requires the paired companion commit.
+The sign-extension change requires a rebuilt host expansion registry; replaying the
+same ELF first with the old registry reproduced the baseline, then removed exactly
+442,752 rows with the new registry. The later final-canonicalization change removes another 393,216 rows on the same
+ELF and passes the small Dory proof again. NTT and pointwise expansions now use 3,944 and
+3,363 existing proved integer rows respectively. The full small Dory example passed
+again after that change; these are not new unconstrained host operations.
+
+Rejected trials remain in the local experiment ledger: inactive-field-row skipping
+had no effect; stack-batching setup rows added 108,482 verification cycles; caching
+repeated bytecode-tail rows added 67,427. Two geometric compression-weight variants added 430,704 and 55,699 verification
+cycles. Reusing the RHS for constant expression multiplication added 1,538 despite
+reducing total rows. An earlier supported quotient-free cutover added 764,959; see
+[the controlled experiment](recursion-quotient-cutover.md). Compiled embedded bytecode reduced total rows by 2,428,932 but increased
+verification cycles by 87,954; it was also rejected under the two-metric gate.
+Forcing the two ring shift add/sub loops to inline added 54,146 cycles; its
+18 algebra tests and Clippy passed, but the patch was reverted.
+Their patches were removed. Each retained
+mechanism has targeted nextest and Clippy evidence. The combined validation passed
+all 21 Clippy configurations and 16 nextest configurations: six core modes, five
+modular prover fixture modes, two verifier fixture modes, and legacy muldiv in
+standard, ZK, and Akita modes. Formatting and the style-invariant guard passed.
+The NTT and pointwise example also generated and verified a complete small Dory
+proof after the final expansion change. Whole outer recursion proving remains
+unmeasured.
+
+The current evaluator is `/private/tmp/guest-optimization-campaign/28-harness`
+(SHA-256 `dd4012ee6b97552f2e621a0b7f2653f9cf66ec716f401fd46e32888476e8623f`).
+Logs, rejected patches, captured ELFs, profiles, and per-trial measurements are in
+that directory's `STATE.md` and `events.jsonl`. Earlier harnesses retain the old
+inline expansion lengths and cannot be used for current comparisons.
+
+## Retained artifacts and remaining costs
+
+Selected-row catalog loading is retained; see
+[its contract and security argument](recursion-catalog-view.md). It preserves the
+full catalog commitment and the original 81,560-byte proof/device section while
+auditing every available row. The resulting stream is 6,211,264 bytes, SHA-256
+`7741abc8f433b972ef68af9b8b3804840c74740537d403f93bf427ed218b53fa`.
+The original full-catalog stream remains available for rollback.
+
+The later symbolized profile still contains substantial
+NTT/conversion, pointwise arithmetic, field dot products, bytecode claim evaluation,
+expression copying, setup scans, ring shifts, and input decoding. Symbol buckets
+include inline expansions and must not be added again to their callers. Reaching
+50M remains unverified. Earlier quotient cutovers and new arithmetic instructions
+require separate protocol/proof work; no savings from them are assumed here.
+
+The final guest rebuild reproduced 72,342,179 verification cycles and 75,915,308
+total rows. ELF SHA-256:
+`fdb5f53b72415ce35fb21e0a8aad3d8b0463eefa374c3a3d1c0e024ee7a52d06`.
+The largest exclusive PC-symbol regions in that full trace are:
+
+| Region | Rows |
+| --- | ---: |
+| Signed-digit conversion and forward NTT | 7,078,400 |
+| Field dot kernel | 3,931,980 |
+| Shared `memcpy` | 3,809,570 |
+| Bytecode read-RAF evaluation | 3,127,463 |
+| Weighted base-row dot | 2,938,715 |
+| Compression-weight MLE evaluation | 2,783,371 |
+| NTT matrix-vector product | 2,712,027 |
+| Program preprocessing deserialization | 2,649,774 |
+| Rice decoding | 2,240,501 |
+
+These are symbol-attributed rows, not complete logical-component costs or predicted
+savings. Shared helpers have their own attribution. Profile and symbol report:
+`/private/tmp/guest-optimization-campaign/final-retained-{profile,symbols}.txt`.
