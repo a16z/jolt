@@ -16,6 +16,10 @@
 //! final-opening order, and the ragged advice hints pad with identity rows in
 //! `combine_hints`).
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{
+    FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
+};
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
 };
@@ -23,6 +27,8 @@ use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
+#[cfg(feature = "field-inline")]
+use jolt_kernels::optimized::opening::DenseTraceColumnPoly;
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{
@@ -38,6 +44,8 @@ use jolt_openings::{
     AdditivelyHomomorphic, CommitmentScheme, EvaluationClaim, HomomorphicBatch,
     VerifierOpeningClaim, ZkOpeningScheme,
 };
+#[cfg(feature = "field-inline")]
+use jolt_poly::MultilinearPoly;
 use jolt_poly::Point;
 use jolt_transcript::Transcript;
 use jolt_verifier::proof::JoltCommitments;
@@ -74,6 +82,10 @@ pub fn prove_stage8<F, PCS, VC, T>(
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     hints: impl Into<Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>>,
+    #[cfg(feature = "field-inline")] field_inline_hints: &[(
+        FieldInlineCommittedPolynomial,
+        PCS::OpeningHint,
+    )],
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
@@ -145,6 +157,25 @@ where
         &precommitted_finals,
         Some((&stage6b.output_values, &stage7.output_values)),
     )?;
+    // The composed plan splice, exactly as `stage8::verify` performs it: the
+    // reduced `FieldRdInc` joins the batch after `RdInc@IncClaimReduction`.
+    #[cfg(feature = "field-inline")]
+    let entries = {
+        let mut entries = entries;
+        jolt_verifier::stages::stage8::field_inline::splice_final_opening(
+            &mut entries,
+            commitments,
+            &opening_point,
+            stage6b.output_points.field_registers_inc_opening_point(),
+            Some(
+                stage6b
+                    .output_values
+                    .field_registers_inc_claim_reduction
+                    .rd_inc,
+            ),
+        )?;
+        entries
+    };
     let statement: Vec<VerifierOpeningClaim<F, PCS::Output>> = entries
         .iter()
         .map(|entry| {
@@ -238,6 +269,49 @@ where
         })
         .collect::<Result<_, _>>()?;
     drop(hint_by_id);
+
+    // The witness-side twin of the composed plan splice above: the statement
+    // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and
+    // `batch_entries` emits entries 1:1 with `order`, so the polynomial and
+    // hint join at `order`'s RdInc position + 1. The column is read off the FR
+    // oracle rather than through the backend's joint-opening slot (typed over
+    // the base polynomial family) and opened as a lazy grid view placed
+    // exactly as its stage-0 commitment fed it — never the dense
+    // `2^total_vars` embedding.
+    #[cfg(feature = "field-inline")]
+    let (polynomials, ordered_hints) = {
+        let mut polynomials = polynomials;
+        let mut ordered_hints = ordered_hints;
+        let position = order
+            .iter()
+            .position(|polynomial| *polynomial == JoltCommittedPolynomial::RdInc)
+            .and_then(|position| position.checked_add(1))
+            .ok_or(ProverError::InvariantViolation {
+                reason: "the final opening order has no RdInc to anchor the FieldRdInc splice",
+            })?;
+        let oracle = witness.field_inline().ok_or(ProverError::Unsupported {
+            reason:
+                "the stage-8 FieldRdInc opening requires a witness plane serving the field-inline \
+                         oracle",
+        })?;
+        let table = oracle.oracle_table(FieldInlinePolynomialId::Committed(
+            FieldInlineCommittedPolynomial::FieldRdInc,
+        ))?;
+        let column =
+            DenseTraceColumnPoly::new(table, grid).ok_or(ProverError::InvariantViolation {
+                reason: "FieldRdInc table exceeds the commitment grid",
+            })?;
+        polynomials.insert(position, Box::new(column) as Box<dyn MultilinearPoly<F>>);
+        let hint = field_inline_hints
+            .iter()
+            .find(|(id, _)| *id == FieldInlineCommittedPolynomial::FieldRdInc)
+            .map(|(_, hint)| hint.clone())
+            .ok_or(ProverError::InvariantViolation {
+                reason: "missing stage-0 opening hint for FieldRdInc",
+            })?;
+        ordered_hints.insert(position, hint);
+        (polynomials, ordered_hints)
+    };
 
     // The transcript tails are twins of the verifier's two stage-8 arms:
     // clear absorbs the scaled claims and opens transparently

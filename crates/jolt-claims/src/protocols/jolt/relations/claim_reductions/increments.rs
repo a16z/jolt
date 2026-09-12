@@ -1,18 +1,18 @@
 //! Increment claim-reduction symbolic sumcheck relation.
 
-use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::increments::{
-    inc_consumers_input, ram_inc_reduced, rd_inc_reduced,
+    ram_inc_reduced, rd_inc_reduced,
 };
+use crate::protocols::jolt::geometry::ram::{ram_inc, ram_inc_val_check};
+use crate::protocols::jolt::geometry::registers::{rd_inc_read_write, rd_inc_val_evaluation};
 use crate::protocols::jolt::{
-    IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltDerivedId, JoltExpr,
+    IncClaimReductionChallenge, IncClaimReductionPublic, JoltChallengeId, JoltDerivedId,
     JoltOpeningId, JoltRelationId, TraceDimensions,
 };
-use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
-};
+use crate::twist::claim_reductions as twist;
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
@@ -58,46 +58,36 @@ pub struct ClaimReduction {
     shape: TraceDimensions,
 }
 
-impl SymbolicSumcheck for ClaimReduction {
-    type RelationId = JoltRelationId;
-    type OpeningId = JoltOpeningId;
-    type DerivedId = JoltDerivedId;
-    type ChallengeId = JoltChallengeId;
-    type Shape = TraceDimensions;
-    type Challenges<F> = IncClaimReductionChallenges<F>;
-    type Inputs<C> = IncClaimReductionInputClaims<C>;
-    type Outputs<C> = IncClaimReductionOutputClaims<C>;
-
-    fn new(shape: TraceDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::IncClaimReduction
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.log_t()
-    }
-
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        inc_consumers_input(challenge(IncClaimReductionChallenge::Gamma))
-    }
-
-    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(IncClaimReductionChallenge::Gamma);
-
-        let ram_output_coeff = derived(IncClaimReductionPublic::EqRamReadWrite)
-            + gamma.clone() * derived(IncClaimReductionPublic::EqRamValCheck);
-        let rd_output_coeff = derived(IncClaimReductionPublic::EqRegistersReadWrite)
-            + gamma.clone() * derived(IncClaimReductionPublic::EqRegistersValEvaluation);
-        ram_output_coeff * opening(ram_inc_reduced())
-            + gamma.pow(2) * rd_output_coeff * opening(rd_inc_reduced())
-    }
+// RAM group first, registers group second — the relation's γ offset order.
+// The lattice `read_raf` fold consumes the same four openings in this order at
+// its own gamma powers.
+twist::instantiate_increment_reduction! {
+    relation = ClaimReduction,
+    id = JoltRelationId::IncClaimReduction,
+    ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),
+    dimensions = TraceDimensions,
+    challenges = IncClaimReductionChallenges,
+    inputs = IncClaimReductionInputClaims,
+    outputs = IncClaimReductionOutputClaims,
+    groups = vec![
+        twist::IncrementReductionGroup {
+            consumed: [ram_inc(), ram_inc_val_check()],
+            eq_publics: [
+                IncClaimReductionPublic::EqRamReadWrite.into(),
+                IncClaimReductionPublic::EqRamValCheck.into(),
+            ],
+            reduced: ram_inc_reduced(),
+        },
+        twist::IncrementReductionGroup {
+            consumed: [rd_inc_read_write(), rd_inc_val_evaluation()],
+            eq_publics: [
+                IncClaimReductionPublic::EqRegistersReadWrite.into(),
+                IncClaimReductionPublic::EqRegistersValEvaluation.into(),
+            ],
+            reduced: rd_inc_reduced(),
+        },
+    ],
+    gamma = IncClaimReductionChallenge::Gamma,
 }
 
 #[cfg(test)]
@@ -105,6 +95,7 @@ mod tests {
     use super::*;
     use crate::protocols::jolt::geometry::ram::{ram_inc, ram_inc_val_check};
     use crate::protocols::jolt::geometry::registers::{rd_inc_read_write, rd_inc_val_evaluation};
+    use crate::SymbolicSumcheck;
     use jolt_field::{Fr, Ring};
 
     fn dimensions() -> TraceDimensions {

@@ -145,7 +145,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRaClaimReduction<F> {
         _challenges: &RamRaClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRaClaimReduction(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let output_cycle = output_points
             .ram_ra()

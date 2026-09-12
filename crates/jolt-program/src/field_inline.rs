@@ -13,6 +13,15 @@ use jolt_riscv::{
     JoltInstructionRow, FIELD_REGISTER_LOG_K,
 };
 
+/// A field element in canonical little-endian bytes.
+///
+/// The buffer is 32 bytes under every encoding: a narrower field (e.g.
+/// [`FieldValueEncoding::TWO_LIMB_128_CANONICAL`]) occupies the low
+/// `byte_len` bytes and leaves the rest zero. Sizing the buffer per encoding
+/// would push a width parameter through the register file, trace rows, and
+/// bytecode metadata for no versioning benefit; the encoding (plus the
+/// profile fingerprint) already stamps preprocessing artifacts, so the valid
+/// width is tagged by [`FieldValueEncoding::byte_len`] instead.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
@@ -65,6 +74,27 @@ impl FieldValueEncoding {
         limb_count: 4,
         canonical: true,
     };
+
+    /// 128-bit canonical two-limb encoding: two 64-bit limbs in the low 16
+    /// bytes of the value buffer, upper 16 bytes zero. Active under
+    /// `fp128-field-inline` (the packed/akita configuration's proof field).
+    pub const TWO_LIMB_128_CANONICAL: Self = Self {
+        byte_len: 16,
+        limb_bits: 64,
+        limb_count: 2,
+        canonical: true,
+    };
+
+    /// The encoding this build emits and accepts. Metadata carrying any other
+    /// encoding fails validation, so preprocessing built under a different
+    /// proof field is rejected at load time rather than misdecoded during
+    /// proving. The `fp128-field-inline` feature (the packed/akita chain)
+    /// selects the two-limb encoding together with the tracer's `ProofField`
+    /// alias; homomorphic (Dory) builds keep the BN254 form.
+    #[cfg(not(feature = "fp128-field-inline"))]
+    pub const ACTIVE: Self = Self::BN254_SCALAR_CANONICAL;
+    #[cfg(feature = "fp128-field-inline")]
+    pub const ACTIVE: Self = Self::TWO_LIMB_128_CANONICAL;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +160,7 @@ impl FieldInlineBytecodeMetadata {
         let metadata = Self {
             rows,
             field_register_log_k: FIELD_REGISTER_LOG_K,
-            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            value_encoding: FieldValueEncoding::ACTIVE,
             profile_fingerprint,
         };
         metadata.validate(bytecode.len())?;
@@ -149,11 +179,11 @@ impl FieldInlineBytecodeMetadata {
                 log_k: self.field_register_log_k,
             });
         }
-        if self.value_encoding.byte_len != FieldEncodedValue::BYTE_LEN
-            || self.value_encoding.limb_bits != 64
-            || self.value_encoding.limb_count != 4
-            || !self.value_encoding.canonical
-        {
+        // Fail closed on any encoding other than the build's own, including
+        // well-formed ones: row immediates only decode correctly under the
+        // field ACTIVE describes, so metadata from a different-field build
+        // must never reach proving.
+        if self.value_encoding != FieldValueEncoding::ACTIVE {
             return Err(FieldInlineMetadataError::InvalidValueEncoding(
                 self.value_encoding,
             ));
@@ -190,7 +220,21 @@ impl FieldInlineBytecodeRow {
         let Some(shape) = field_inline_operand_shape(row.instruction_kind) else {
             return Ok(Self::default());
         };
-        let rs1 = if shape.reads_fr_rs1 {
+        // The field destination rides the `rs2` slot when the `rd` slot names
+        // a scratch x-register (the memory-sourced loads).
+        let (fr_rd_slot, fr_rd_name) = if shape.fr_rd_in_rs2_slot {
+            (row.operands.rs2, "rs2")
+        } else {
+            (row.operands.rd, "rd")
+        };
+        let rd = if shape.writes_fr_rd {
+            Some(field_register(fr_rd_slot, fr_rd_name)?)
+        } else {
+            None
+        };
+        let rs1 = if shape.fr_rs1_is_fr_rd {
+            rd
+        } else if shape.reads_fr_rs1 {
             Some(field_register(row.operands.rs1, "rs1")?)
         } else {
             None
@@ -200,14 +244,23 @@ impl FieldInlineBytecodeRow {
         } else {
             None
         };
-        let rd = if shape.writes_fr_rd {
-            Some(field_register(row.operands.rd, "rd")?)
+        let write_register = if matches!(
+            shape.bridge_x_register_role,
+            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd)
+        ) {
+            let register = x_register(row.operands.rd, "rd")?;
+            if register == 0 {
+                return Err(FieldInlineMetadataError::ZeroWriteRegister);
+            }
+            Some(register)
         } else {
             None
         };
         let bridge_x_register = match shape.bridge_x_register_role {
-            Some(FieldInlineXRegisterRole::ReadRs1) => Some(x_register(row.operands.rs1, "rs1")?),
-            Some(FieldInlineXRegisterRole::WriteRd) => Some(x_register(row.operands.rd, "rd")?),
+            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
+                Some(x_register(row.operands.rs1, "rs1")?)
+            }
+            Some(FieldInlineXRegisterRole::WriteRd) => write_register,
             None => None,
         };
         let immediate = if shape.has_immediate {
@@ -305,6 +358,14 @@ pub enum FieldInlineBridge {
         x_register: u8,
         x_value: u64,
     },
+    /// A memory-sourced load: the word read at `x_base + offset` was written
+    /// to the scratch `x_register` and folded into the field destination.
+    LoadWord {
+        x_base: u8,
+        x_register: u8,
+        word: u64,
+        field_value: FieldEncodedValue,
+    },
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,6 +411,8 @@ pub enum FieldInlineMetadataError {
     InvalidFieldRegister { operand: &'static str, register: u8 },
     #[error("field-inline x-register operand {operand} is out of bounds: {register}")]
     InvalidXRegister { operand: &'static str, register: u8 },
+    #[error("field-inline write bridge targets x0, which discards the write")]
+    ZeroWriteRegister,
     #[error("field-inline immediate must be non-negative and fit in u64: {0}")]
     InvalidImmediate(i128),
 }
@@ -383,6 +446,31 @@ fn encoded_immediate(value: i128) -> Result<FieldEncodedValue, FieldInlineMetada
 mod tests {
     use super::*;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+    use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
+
+    #[test]
+    fn field_write_bridges_require_nonzero_integer_destinations() {
+        for instruction_kind in [
+            Kind::FIELD_STORE_TO_X,
+            Kind::FIELD_LOAD_WORD,
+            Kind::FIELD_LOAD_WORD_HI,
+            Kind::FIELD_ADVICE_LIMB,
+        ] {
+            let mut row = JoltInstructionRow {
+                instruction_kind,
+                operands: NormalizedOperands {
+                    rd: Some(0),
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    imm: 0,
+                },
+                ..Default::default()
+            };
+            assert!(FieldInlineBytecodeRow::from_instruction(&row).is_err());
+            row.operands.rd = Some(3);
+            assert!(FieldInlineBytecodeRow::from_instruction(&row).is_ok());
+        }
+    }
 
     fn roundtrip(
         metadata: &FieldInlineBytecodeMetadata,
@@ -408,10 +496,74 @@ mod tests {
         let tampered = FieldInlineBytecodeMetadata {
             rows: Vec::new(),
             field_register_log_k: FIELD_REGISTER_LOG_K + 1,
-            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            value_encoding: FieldValueEncoding::ACTIVE,
             profile_fingerprint: 0,
         };
         assert!(roundtrip(&tampered, Validate::Yes).is_err());
         assert!(roundtrip(&tampered, Validate::No).is_ok());
+    }
+
+    fn metadata_with_encoding(value_encoding: FieldValueEncoding) -> FieldInlineBytecodeMetadata {
+        FieldInlineBytecodeMetadata {
+            rows: Vec::new(),
+            field_register_log_k: FIELD_REGISTER_LOG_K,
+            value_encoding,
+            profile_fingerprint: 0,
+        }
+    }
+
+    // The declared encoding this build is NOT on: the other side of the
+    // ACTIVE equality gate, so the mismatch tests cover both directions
+    // (BN254 rejects two-limb, and under fp128-field-inline vice versa).
+    const FOREIGN: FieldValueEncoding = if cfg!(feature = "fp128-field-inline") {
+        FieldValueEncoding::BN254_SCALAR_CANONICAL
+    } else {
+        FieldValueEncoding::TWO_LIMB_128_CANONICAL
+    };
+
+    #[test]
+    fn metadata_with_foreign_encoding_rejects_fail_closed() {
+        // A well-formed encoding that is not the build's own must reject: this
+        // metadata decodes correctly only under the field it was built for.
+        let foreign = metadata_with_encoding(FOREIGN);
+        assert!(matches!(
+            foreign.validate(0),
+            Err(FieldInlineMetadataError::InvalidValueEncoding(encoding))
+                if encoding == FOREIGN
+        ));
+        assert!(roundtrip(&foreign, Validate::Yes).is_err());
+    }
+
+    #[test]
+    fn active_encoding_tracks_the_proof_field_feature() {
+        let expected = if cfg!(feature = "fp128-field-inline") {
+            FieldValueEncoding::TWO_LIMB_128_CANONICAL
+        } else {
+            FieldValueEncoding::BN254_SCALAR_CANONICAL
+        };
+        assert_eq!(FieldValueEncoding::ACTIVE, expected);
+    }
+
+    #[test]
+    fn foreign_encoding_metadata_roundtrips_unvalidated() {
+        // The other build's variant must survive the wire byte-faithfully so
+        // that build can read back what it wrote.
+        let metadata = metadata_with_encoding(FOREIGN);
+        assert_eq!(roundtrip(&metadata, Validate::No).unwrap(), metadata);
+    }
+
+    #[test]
+    fn declared_encodings_fit_the_value_buffer() {
+        for encoding in [
+            FieldValueEncoding::BN254_SCALAR_CANONICAL,
+            FieldValueEncoding::TWO_LIMB_128_CANONICAL,
+        ] {
+            assert!(encoding.byte_len <= FieldEncodedValue::BYTE_LEN);
+            assert_eq!(
+                u32::from(encoding.byte_len) * 8,
+                u32::from(encoding.limb_bits) * u32::from(encoding.limb_count)
+            );
+            assert!(encoding.canonical);
+        }
     }
 }

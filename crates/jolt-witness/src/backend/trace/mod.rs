@@ -199,8 +199,6 @@ impl<T: TraceSource> TraceBackend<T> {
         }
         let mut trace_rows = Vec::new();
         let mut trailing_padding = 0;
-        #[cfg(feature = "field-inline")]
-        let mut raw_rows = Vec::new();
         for row in physical {
             let compact = Self::compact_trace_row(row, &inputs.preprocessing)?;
             if compact == JoltTraceRow::default() {
@@ -210,9 +208,14 @@ impl<T: TraceSource> TraceBackend<T> {
                 trailing_padding = 0;
                 trace_rows.push(compact);
             }
-            #[cfg(feature = "field-inline")]
-            raw_rows.push(row.clone());
         }
+        // The FR view replays the raw rows (payloads, register file, bridge
+        // facts); share the source's allocation when it offers one, copying
+        // only for sources that cannot.
+        #[cfg(feature = "field-inline")]
+        let raw_rows = source
+            .shared_rows()
+            .unwrap_or_else(|| Arc::new(physical.to_vec()));
         let trace = TraceOutput::new(Arc::new(trace_rows), device, final_memory, advice_tape);
         let backend = Self {
             config,
@@ -220,7 +223,7 @@ impl<T: TraceSource> TraceBackend<T> {
             preprocessing: inputs.preprocessing,
             trace,
             #[cfg(feature = "field-inline")]
-            raw_trace_rows: Arc::new(raw_rows),
+            raw_trace_rows: raw_rows,
             source: std::marker::PhantomData,
             #[cfg(feature = "field-inline")]
             field_inline: None,

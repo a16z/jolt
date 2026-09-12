@@ -1,5 +1,9 @@
-//! Stage 2 product uni-skip and five-instance batch verifier.
+//! Stage 2 product uni-skip and batch verifier.
 
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_claim_reduction;
 pub mod instruction_claim_reduction;
 pub mod outputs;
 pub mod product_remainder;

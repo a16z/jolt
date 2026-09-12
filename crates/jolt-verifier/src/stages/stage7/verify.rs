@@ -273,7 +273,7 @@ fn address_phase_member<F: JoltField, L: PrecommittedReductionLayout, M>(
     };
     let cycle_phase_variables =
         cycle_phase_variables.ok_or(VerifierError::MissingOpeningClaim {
-            id: missing_cycle_opening,
+            id: missing_cycle_opening.into(),
         })?;
     Ok(Some(build(layout, cycle_phase_variables)))
 }
@@ -312,7 +312,7 @@ pub fn stage7_input_values_from_upstream<F: JoltField>(
                     .as_ref()
                     .and_then(|reduction| reduction.intermediate)
                     .ok_or(VerifierError::MissingOpeningClaim {
-                        id: bytecode_reduction::cycle_phase_intermediate_opening(),
+                        id: bytecode_reduction::cycle_phase_intermediate_opening().into(),
                     })
                     .map(
                         |cycle_phase_intermediate| BytecodeReductionAddressPhaseInputClaims {
@@ -330,7 +330,7 @@ pub fn stage7_input_values_from_upstream<F: JoltField>(
                     .as_ref()
                     .map(|claim| claim.program_image)
                     .ok_or(VerifierError::MissingOpeningClaim {
-                        id: program_image::cycle_phase_program_image_opening(),
+                        id: program_image::cycle_phase_program_image_opening().into(),
                     })
                     .map(|value| ProgramImageReductionAddressPhaseInputClaims {
                         cycle_phase: value,

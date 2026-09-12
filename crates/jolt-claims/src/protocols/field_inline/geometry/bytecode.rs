@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::super::FieldInlineOpFlag;
-use crate::protocols::jolt::geometry::dimensions::JoltFormulaPointError;
+use crate::formula_error::JoltFormulaPointError;
 
-pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 8] = [
+pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 11] = [
     FieldInlineOpFlag::Add,
     FieldInlineOpFlag::Sub,
     FieldInlineOpFlag::Mul,
@@ -17,6 +17,9 @@ pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 8] = [
     FieldInlineOpFlag::LoadFromX,
     FieldInlineOpFlag::StoreToX,
     FieldInlineOpFlag::LoadImm,
+    FieldInlineOpFlag::LoadWord,
+    FieldInlineOpFlag::LoadWordHi,
+    FieldInlineOpFlag::AdviceLimb,
 ];
 
 pub const FIELD_INLINE_BYTECODE_STAGE1_GAMMA_COUNT: usize =
@@ -47,6 +50,9 @@ pub struct FieldInlineBytecodeFlags {
     pub load_from_x: bool,
     pub store_to_x: bool,
     pub load_imm: bool,
+    pub load_word: bool,
+    pub load_word_hi: bool,
+    pub advice_limb: bool,
 }
 
 impl FieldInlineBytecodeFlags {
@@ -60,6 +66,9 @@ impl FieldInlineBytecodeFlags {
             FieldInlineOpFlag::LoadFromX => self.load_from_x,
             FieldInlineOpFlag::StoreToX => self.store_to_x,
             FieldInlineOpFlag::LoadImm => self.load_imm,
+            FieldInlineOpFlag::LoadWord => self.load_word,
+            FieldInlineOpFlag::LoadWordHi => self.load_word_hi,
+            FieldInlineOpFlag::AdviceLimb => self.advice_limb,
         }
     }
 
@@ -350,17 +359,21 @@ fn validate_operand_layout(
         FieldInlineOpFlag::Add | FieldInlineOpFlag::Sub | FieldInlineOpFlag::Mul => {
             operands.rd.is_some() && operands.rs1.is_some() && operands.rs2.is_some()
         }
-        FieldInlineOpFlag::Inv => {
+        FieldInlineOpFlag::Inv | FieldInlineOpFlag::AdviceLimb => {
             operands.rd.is_some() && operands.rs1.is_some() && operands.rs2.is_none()
         }
         FieldInlineOpFlag::AssertEq => {
             operands.rd.is_none() && operands.rs1.is_some() && operands.rs2.is_some()
         }
-        FieldInlineOpFlag::LoadFromX | FieldInlineOpFlag::LoadImm => {
+        FieldInlineOpFlag::LoadFromX | FieldInlineOpFlag::LoadImm | FieldInlineOpFlag::LoadWord => {
             operands.rd.is_some() && operands.rs1.is_none() && operands.rs2.is_none()
         }
         FieldInlineOpFlag::StoreToX => {
             operands.rd.is_none() && operands.rs1.is_some() && operands.rs2.is_none()
+        }
+        // The Horner step reads the accumulator it writes.
+        FieldInlineOpFlag::LoadWordHi => {
+            operands.rd.is_some() && operands.rs1 == operands.rd && operands.rs2.is_none()
         }
     };
     if valid {

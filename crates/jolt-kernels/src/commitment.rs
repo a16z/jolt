@@ -6,6 +6,8 @@
 //! opening combines the commitments homomorphically, which is only meaningful
 //! when they share row geometry.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
@@ -14,6 +16,8 @@ use jolt_openings::StreamingCommitment;
 #[cfg(feature = "zk")]
 use jolt_openings::ZkStreamingCommitment;
 use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
+#[cfg(feature = "field-inline")]
+use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{JoltWitnessOracle, RowSource, WitnessBundle};
 
 use crate::{KernelError, ProofSession};
@@ -124,6 +128,15 @@ pub struct WitnessCommitment<PCS: CommitmentScheme> {
     pub hint: PCS::OpeningHint,
 }
 
+/// One committed field-inline witness polynomial — the FR sibling of
+/// [`WitnessCommitment`], keeping the two id namespaces disjoint.
+#[cfg(feature = "field-inline")]
+pub struct FieldInlineWitnessCommitment<PCS: CommitmentScheme> {
+    pub id: FieldInlineCommittedPolynomial,
+    pub commitment: PCS::Output,
+    pub hint: PCS::OpeningHint,
+}
+
 /// The witness-commitment slot: commit every trace-derived polynomial in
 /// `ids` as a consumer of the witness stream over the shared embedding grid.
 /// Results are returned in `ids` order; execution order, batching, and
@@ -147,6 +160,20 @@ where
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>;
+
+    /// Commit the field-inline committed columns in the same embedding grid
+    /// as the main witness, sourced from the plane's field-inline oracle.
+    /// Fails closed when the plane serves none: an FR-on build proves only
+    /// FR-profile witnesses.
+    #[cfg(feature = "field-inline")]
+    fn commit_field_inline_witness(
+        &self,
+        session: &mut ProofSession,
+        source: &dyn JoltWitnessPlane<F>,
+        ids: &[FieldInlineCommittedPolynomial],
+        grid: CommitmentGrid,
+        setup: &PCS::ProverSetup,
+    ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>>;
 
     /// Commit one advice polynomial in its dedicated cycle-major grid.
     fn commit_advice(

@@ -282,6 +282,8 @@ impl JoltTraceRow {
             return Err(TraceRowError::ImmTooWide { imm });
         }
 
+        let operands = instruction.integer_operands();
+
         Ok(Self {
             values,
             unexpanded_pc: instruction.address as u64,
@@ -289,9 +291,9 @@ impl JoltTraceRow {
             bytecode_pc,
             meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
             jolt_tag: kind.tag().0,
-            rs1_id: checked_register_id(instruction.operands.rs1)?,
-            rs2_id: checked_register_id(instruction.operands.rs2)?,
-            rd_id: checked_register_id(instruction.operands.rd)?,
+            rs1_id: checked_register_id(operands.rs1)?,
+            rs2_id: checked_register_id(operands.rs2)?,
+            rd_id: checked_register_id(operands.rd)?,
             _reserved: [0; 3],
         })
     }

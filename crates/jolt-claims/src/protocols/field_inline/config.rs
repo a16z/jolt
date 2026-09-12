@@ -25,6 +25,14 @@ impl FieldInlineConfig {
         }
     }
 
+    pub const fn enabled() -> Self {
+        Self {
+            enabled: true,
+            field_register_log_k: FIELD_REGISTERS_LOG_K,
+            representation: FieldInlineRepresentation::NativeFieldElement,
+        }
+    }
+
     pub const fn read_write_dimensions(self, log_t: usize) -> FieldRegistersReadWriteDimensions {
         FieldRegistersReadWriteDimensions::new(
             log_t,

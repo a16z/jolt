@@ -4,7 +4,7 @@
 )]
 
 #[cfg(feature = "field-inline")]
-use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
+use jolt_riscv::{field_inline_load_word_offset, FieldInlineOp, FIELD_INLINE_OPCODE};
 use jolt_riscv::{
     JoltInstructionProfile, NormalizedOperands, SourceInlineKey, SourceInstruction,
     SourceInstructionKind, SourceInstructionRow,
@@ -203,7 +203,7 @@ fn decode_custom(word: u32) -> Result<SourceInstructionKind, ProgramError> {
 
 #[cfg(feature = "field-inline")]
 fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError> {
-    match FieldInlineOp::from_funct3(funct3(word) as u8) {
+    match FieldInlineOp::from_word(word) {
         Some(FieldInlineOp::Add) => Ok(SourceInstructionKind::FIELD_ADD),
         Some(FieldInlineOp::Sub) => Ok(SourceInstructionKind::FIELD_SUB),
         Some(FieldInlineOp::Mul) => Ok(SourceInstructionKind::FIELD_MUL),
@@ -212,7 +212,10 @@ fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError>
         Some(FieldInlineOp::LoadFromX) => Ok(SourceInstructionKind::FIELD_LOAD_FROM_X),
         Some(FieldInlineOp::StoreToX) => Ok(SourceInstructionKind::FIELD_STORE_TO_X),
         Some(FieldInlineOp::LoadImm) => Ok(SourceInstructionKind::FIELD_LOAD_IMM),
-        None => invalid("invalid field-inline funct3"),
+        Some(FieldInlineOp::LoadWord) => Ok(SourceInstructionKind::FIELD_LOAD_WORD),
+        Some(FieldInlineOp::LoadWordHi) => Ok(SourceInstructionKind::FIELD_LOAD_WORD_HI),
+        Some(FieldInlineOp::AdviceLimb) => Ok(SourceInstructionKind::FIELD_ADVICE_LIMB),
+        None => invalid("invalid field-inline encoding"),
     }
 }
 
@@ -289,7 +292,8 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_ADD
         | SourceInstructionKind::FIELD_SUB
-        | SourceInstructionKind::FIELD_MUL => format_r_operands(word),
+        | SourceInstructionKind::FIELD_MUL
+        | SourceInstructionKind::FIELD_ADVICE_LIMB => format_r_operands(word),
         // FIELD_ASSERT_EQ has no destination register; decoding it with `rd: None`
         // keeps the bytecode operands consistent with the tracer's parsed shape and
         // avoids the rd=x0 virtual-register rewrite during expansion.
@@ -301,6 +305,10 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         | SourceInstructionKind::FIELD_STORE_TO_X => format_field_unary_operands(word),
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_LOAD_IMM => format_field_load_imm_operands(word),
+        #[cfg(feature = "field-inline")]
+        SourceInstructionKind::FIELD_LOAD_WORD | SourceInstructionKind::FIELD_LOAD_WORD_HI => {
+            format_field_load_word_operands(word)
+        }
         SourceInstructionKind::Inline => format_inline_operands(word),
         SourceInstructionKind::ECALL
         | SourceInstructionKind::EBREAK
@@ -329,6 +337,19 @@ fn format_field_binary_no_rd_operands(word: u32) -> NormalizedOperands {
         rs1: Some(rs1(word)),
         rs2: Some(rs2(word)),
         imm: 0,
+    }
+}
+
+/// `rd` scratch x-register, `rs1` x base, `rs2` field destination; the word
+/// offset in funct7 is the load's immediate (the tracer parses the same word
+/// the same way).
+#[cfg(feature = "field-inline")]
+fn format_field_load_word_operands(word: u32) -> NormalizedOperands {
+    NormalizedOperands {
+        rd: Some(rd(word)),
+        rs1: Some(rs1(word)),
+        rs2: Some(rs2(word)),
+        imm: i128::from(field_inline_load_word_offset(word)),
     }
 }
 
@@ -547,15 +568,22 @@ fn invalid<T>(message: &'static str) -> Result<T, ProgramError> {
 mod tests {
     use super::*;
     use jolt_riscv::RV64IMAC_JOLT;
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 
     fn field_word(funct3: u32, rd: u8, rs1: u8, rs2_or_imm: u32) -> u32 {
         0x7b | (funct3 << 12) | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (rs2_or_imm << 20)
     }
 
     #[cfg(feature = "field-inline")]
+    fn field_r_word(funct7: u32, funct3: u32, rd: u8, rs1: u8, rs2: u8) -> u32 {
+        field_word(funct3, rd, rs1, u32::from(rs2)) | (funct7 << 25)
+    }
+
+    #[cfg(feature = "field-inline")]
     #[test]
     fn decodes_field_inline_source_rows_only_for_fr_on_profile() {
-        let word = field_word(jolt_riscv::FieldInlineOp::Mul.funct3().into(), 1, 2, 3);
+        let word = field_word(FieldInlineOp::Mul.funct3().into(), 1, 2, 3);
         let fr_off = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT);
         assert!(matches!(
             fr_off,
@@ -564,12 +592,7 @@ mod tests {
             ))
         ));
 
-        let fr_on = decode_instruction(
-            word,
-            0x8000_0000,
-            false,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        );
+        let fr_on = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE);
         let instruction = match fr_on {
             Ok(instruction) => instruction,
             Err(error) => panic!("field-inline decode failed: {error:?}"),
@@ -578,6 +601,18 @@ mod tests {
         assert_eq!(instruction.row().operands.rd, Some(1));
         assert_eq!(instruction.row().operands.rs1, Some(2));
         assert_eq!(instruction.row().operands.rs2, Some(3));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn rejects_unknown_field_inline_r_type_funct7() {
+        let word = field_r_word(1, u32::from(FieldInlineOp::Mul.funct3()), 1, 2, 3);
+        assert!(matches!(
+            decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE),
+            Err(ProgramError::MalformedImage(
+                "invalid field-inline encoding"
+            ))
+        ));
     }
 
     #[cfg(not(feature = "field-inline"))]

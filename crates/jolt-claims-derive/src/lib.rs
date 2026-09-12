@@ -27,6 +27,10 @@
 //! `Some` (used for advice / committed-program openings that are present only in
 //! some proof configurations).
 //!
+//! A struct whose fields are all plain scalar cells additionally gets
+//! `from_shared_point` on the point cell: the constructor for a relation whose
+//! produced openings all open at one derived point.
+//!
 //! ## `#[derive(InputClaims)]`
 //!
 //! For a relation's *consumed*-claim struct. Each leaf field carries its own
@@ -71,6 +75,17 @@
 //! Generates both halves of [`SumcheckChallenges`]: `resolve_challenge` (id →
 //! value) and `from_transcript_values` (consume one drawn scalar per field in
 //! declaration order, erroring if the stream runs dry).
+//!
+//! ## `#[protocol(..)]` (all three derives)
+//!
+//! Selects the protocol id namespace the emitted impls resolve against. The
+//! claim traits are generic over their id type (`OutputClaims<F, O>`,
+//! `InputClaims<F, O>`, `SumcheckChallenges<F, C>`, defaulting to the jolt ids),
+//! so each namespace is one more instantiation, not a new trait. Absent, the
+//! namespace is `jolt` (`JoltOpeningId` / `JoltChallengeId` / ..); with
+//! `#[protocol(field_inline)]` the impls target the field-inline id family
+//! (`FieldInlineOpeningId` / `FieldInlineChallengeId` / ..). Advice openings are
+//! a jolt-protocol concept and are rejected under any other namespace.
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -90,36 +105,107 @@
 // where wildcard fallbacks to Err/None are the correct, version-stable idiom.
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Fields, GenericParam, Ident, Type};
+use syn::{
+    parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields, GenericParam, Generics,
+    Ident, Path, Result, Type,
+};
 
 /// Owning relation comes from the struct-level `#[relation(..)]`.
-#[proc_macro_derive(OutputClaims, attributes(relation, opening))]
+#[proc_macro_derive(OutputClaims, attributes(relation, opening, protocol))]
 pub fn derive_output_claims(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_output(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 /// Owning relation comes from each leaf field's `from = ..`.
-#[proc_macro_derive(InputClaims, attributes(opening))]
+#[proc_macro_derive(InputClaims, attributes(opening, protocol))]
 pub fn derive_input_claims(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_input(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
 }
 
 /// Each field names its challenge via `#[challenge(SubEnum::Variant)]`; the id is
-/// `JoltChallengeId::from(SubEnum::Variant)`.
-#[proc_macro_derive(SumcheckChallenges, attributes(challenge))]
+/// `ChallengeId::from(SubEnum::Variant)` in the selected protocol namespace.
+#[proc_macro_derive(SumcheckChallenges, attributes(challenge, protocol))]
 pub fn derive_sumcheck_challenges(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_challenges(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
+        .unwrap_or_else(Error::into_compile_error)
         .into()
+}
+
+/// The protocol id namespace the emitted impls resolve against. Each namespace
+/// names the id-family types of one `jolt_claims::protocols::*` module; the
+/// derives stay a single implementation instantiated per namespace.
+struct Namespace {
+    opening_id: TokenStream2,
+    relation_id: TokenStream2,
+    virtual_polynomial: TokenStream2,
+    committed_polynomial: TokenStream2,
+    challenge_id: TokenStream2,
+    /// Advice openings are jolt-protocol ids; other namespaces reject them.
+    allows_advice: bool,
+}
+
+impl Namespace {
+    fn jolt() -> Self {
+        let module = quote!(::jolt_claims::protocols::jolt);
+        Self {
+            opening_id: quote!(#module::JoltOpeningId),
+            relation_id: quote!(#module::JoltRelationId),
+            virtual_polynomial: quote!(#module::JoltVirtualPolynomial),
+            committed_polynomial: quote!(#module::JoltCommittedPolynomial),
+            challenge_id: quote!(#module::JoltChallengeId),
+            allows_advice: true,
+        }
+    }
+
+    fn field_inline() -> Self {
+        let module = quote!(::jolt_claims::protocols::field_inline);
+        Self {
+            opening_id: quote!(#module::FieldInlineOpeningId),
+            relation_id: quote!(#module::FieldInlineRelationId),
+            virtual_polynomial: quote!(#module::FieldInlineVirtualPolynomial),
+            committed_polynomial: quote!(#module::FieldInlineCommittedPolynomial),
+            challenge_id: quote!(#module::FieldInlineChallengeId),
+            allows_advice: false,
+        }
+    }
+}
+
+/// Reads the optional struct-level `#[protocol(..)]` namespace selector;
+/// defaults to the jolt namespace.
+fn parse_namespace(attrs: &[Attribute]) -> Result<Namespace> {
+    let mut selected: Option<(Ident, Namespace)> = None;
+    for attr in attrs {
+        if attr.path().is_ident("protocol") {
+            if selected.is_some() {
+                return Err(Error::new_spanned(
+                    attr,
+                    "duplicate #[protocol(..)] attribute",
+                ));
+            }
+            let ident = attr.parse_args::<Ident>()?;
+            let namespace = match ident.to_string().as_str() {
+                "jolt" => Namespace::jolt(),
+                "field_inline" => Namespace::field_inline(),
+                other => {
+                    return Err(Error::new_spanned(
+                        &ident,
+                        format!("unknown protocol namespace `{other}` (expected `jolt` or `field_inline`)"),
+                    ));
+                }
+            };
+            selected = Some((ident, namespace));
+        }
+    }
+    Ok(selected.map_or_else(Namespace::jolt, |(_, namespace)| namespace))
 }
 
 enum LeafKind {
@@ -127,7 +213,7 @@ enum LeafKind {
     /// (`OpFlags(CircuitFlags::VirtualInstruction)` carries the `CircuitFlags::..`
     /// path as `payload`). A payload variant is always scalar — never indexed.
     Virtual {
-        variant: syn::Path,
+        variant: Path,
         payload: Option<TokenStream2>,
     },
     Committed(Ident),
@@ -151,16 +237,16 @@ struct FieldPlan {
     relation: Ident,
 }
 
-fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Field>> {
+fn named_fields(data: &Data, span: Span) -> Result<Vec<Field>> {
     match data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => Ok(fields.named.iter().cloned().collect()),
-            _ => Err(syn::Error::new(
+            _ => Err(Error::new(
                 span,
                 "OutputClaims/InputClaims require a struct with named fields",
             )),
         },
-        _ => Err(syn::Error::new(
+        _ => Err(Error::new(
             span,
             "OutputClaims/InputClaims can only be derived for structs",
         )),
@@ -172,14 +258,14 @@ fn named_fields(data: &Data, span: proc_macro2::Span) -> syn::Result<Vec<syn::Fi
 /// derive instantiates it at `F` (value form) and `Vec<F>` (point form), so any
 /// other shape would make those instantiations ill-formed. Errors clearly rather
 /// than emitting a wrongly instantiated impl.
-fn ensure_single_cell_generic(generics: &syn::Generics) -> syn::Result<()> {
+fn ensure_single_cell_generic(generics: &Generics) -> Result<()> {
     let type_params = generics
         .params
         .iter()
         .filter(|param| matches!(param, GenericParam::Type(_)))
         .count();
     if generics.where_clause.is_some() || generics.params.len() != 1 || type_params != 1 {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             generics,
             "OutputClaims/InputClaims require exactly one generic type parameter (the opening cell, e.g. `<C>`)",
         ));
@@ -187,12 +273,12 @@ fn ensure_single_cell_generic(generics: &syn::Generics) -> syn::Result<()> {
     Ok(())
 }
 
-fn parse_struct_relation(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
+fn parse_struct_relation(attrs: &[Attribute]) -> Result<Option<Ident>> {
     let mut relation = None;
     for attr in attrs {
         if attr.path().is_ident("relation") {
             if relation.is_some() {
-                return Err(syn::Error::new_spanned(
+                return Err(Error::new_spanned(
                     attr,
                     "duplicate #[relation(..)] attribute",
                 ));
@@ -203,15 +289,15 @@ fn parse_struct_relation(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
     Ok(relation)
 }
 
-fn opening_attr(field: &syn::Field) -> Option<&Attribute> {
+fn opening_attr(field: &Field) -> Option<&Attribute> {
     field
         .attrs
         .iter()
         .find(|attr| attr.path().is_ident("opening"))
 }
 
-fn parse_opening(attr: &Attribute) -> syn::Result<OpeningSpec> {
-    let mut virtual_variant: Option<(syn::Path, Option<TokenStream2>)> = None;
+fn parse_opening(attr: &Attribute) -> Result<OpeningSpec> {
+    let mut virtual_variant: Option<(Path, Option<TokenStream2>)> = None;
     let mut committed: Option<Ident> = None;
     let mut trusted_advice = false;
     let mut untrusted_advice = false;
@@ -253,9 +339,9 @@ fn parse_opening(attr: &Attribute) -> syn::Result<OpeningSpec> {
     let mut selected = kinds.into_iter().flatten();
     let kind = selected
         .next()
-        .ok_or_else(|| syn::Error::new_spanned(attr, "#[opening(..)] must name one opening"))?;
+        .ok_or_else(|| Error::new_spanned(attr, "#[opening(..)] must name one opening"))?;
     if selected.next().is_some() {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             attr,
             "#[opening(..)] must name exactly one opening",
         ));
@@ -287,23 +373,38 @@ fn is_vec_type(ty: &Type) -> bool {
     type_named(ty, "Vec")
 }
 
-fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Result<FieldPlan> {
+fn plan_field(
+    field: &Field,
+    struct_relation: Option<&Ident>,
+    namespace: &Namespace,
+) -> Result<FieldPlan> {
     let ident = field
         .ident
         .clone()
-        .ok_or_else(|| syn::Error::new_spanned(field, "fields must be named"))?;
+        .ok_or_else(|| Error::new_spanned(field, "fields must be named"))?;
     let attr = opening_attr(field).ok_or_else(|| {
-        syn::Error::new_spanned(
+        Error::new_spanned(
             field,
             "every field needs an #[opening(..)] annotation (nested aggregates are not supported)",
         )
     })?;
     let spec = parse_opening(attr)?;
+    if !namespace.allows_advice
+        && matches!(
+            spec.kind,
+            LeafKind::TrustedAdvice | LeafKind::UntrustedAdvice
+        )
+    {
+        return Err(Error::new_spanned(
+            attr,
+            "advice openings are jolt-protocol ids; this protocol namespace has no advice variant",
+        ));
+    }
     let relation = match (struct_relation, spec.from) {
         // OutputClaims: relation is struct-level; `from` is not allowed.
         (Some(relation), None) => relation.clone(),
         (Some(_), Some(from)) => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 from,
                 "`from = ..` is only used by InputClaims; OutputClaims uses #[relation(..)]",
             ));
@@ -311,7 +412,7 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
         // InputClaims: relation is the per-field `from`.
         (None, Some(from)) => from,
         (None, None) => {
-            return Err(syn::Error::new_spanned(
+            return Err(Error::new_spanned(
                 attr,
                 "missing `from = ProducingRelation` on an input opening (or missing struct-level #[relation(..)] for an output opening)",
             ));
@@ -324,7 +425,7 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
             LeafKind::TrustedAdvice | LeafKind::UntrustedAdvice
         )
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "advice openings are scalar; a `Vec` advice field has no indexed id",
         ));
@@ -338,7 +439,7 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
             }
         )
     {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "per-element payload arrays (e.g. `OpFlags(CIRCUIT_FLAGS)` on a `Vec`) are not \
              supported; declare one field per element instead",
@@ -353,11 +454,19 @@ fn plan_field(field: &syn::Field, struct_relation: Option<&Ident>) -> syn::Resul
     })
 }
 
-/// `JoltOpeningId` constructor for a leaf, with an optional index expression for
-/// indexed (`many`) families.
-fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> TokenStream2 {
-    let jolt = quote!(::jolt_claims::protocols::jolt);
-    let rel = quote!(#jolt::JoltRelationId::#relation);
+/// Opening-id constructor for a leaf in the selected namespace, with an optional
+/// index expression for indexed (`many`) families.
+fn id_expr(
+    ns: &Namespace,
+    kind: &LeafKind,
+    relation: &Ident,
+    index: Option<TokenStream2>,
+) -> TokenStream2 {
+    let opening_id = &ns.opening_id;
+    let relation_id = &ns.relation_id;
+    let virtual_polynomial = &ns.virtual_polynomial;
+    let committed_polynomial = &ns.committed_polynomial;
+    let rel = quote!(#relation_id::#relation);
     match kind {
         LeafKind::Virtual { variant, payload } => {
             let polynomial = match (index, payload) {
@@ -367,38 +476,39 @@ fn id_expr(kind: &LeafKind, relation: &Ident, index: Option<TokenStream2>) -> To
                     unreachable!("Vec fields with payload annotations are rejected in plan_field")
                 }
                 // Indexed family over a `usize` payload: `Variant(i)`.
-                (Some(index), None) => quote!(#jolt::JoltVirtualPolynomial::#variant(#index)),
+                (Some(index), None) => quote!(#virtual_polynomial::#variant(#index)),
                 // Single payload-carrying variant: `Variant(PAYLOAD)`.
-                (None, Some(payload)) => quote!(#jolt::JoltVirtualPolynomial::#variant(#payload)),
+                (None, Some(payload)) => quote!(#virtual_polynomial::#variant(#payload)),
                 // Single unit variant: `Variant`.
-                (None, None) => quote!(#jolt::JoltVirtualPolynomial::#variant),
+                (None, None) => quote!(#virtual_polynomial::#variant),
             };
-            quote!(#jolt::JoltOpeningId::virtual_polynomial(#polynomial, #rel))
+            quote!(#opening_id::virtual_polynomial(#polynomial, #rel))
         }
         LeafKind::Committed(variant) => {
             let polynomial = if let Some(index) = index {
-                quote!(#jolt::JoltCommittedPolynomial::#variant(#index))
+                quote!(#committed_polynomial::#variant(#index))
             } else {
-                quote!(#jolt::JoltCommittedPolynomial::#variant)
+                quote!(#committed_polynomial::#variant)
             };
-            quote!(#jolt::JoltOpeningId::committed(#polynomial, #rel))
+            quote!(#opening_id::committed(#polynomial, #rel))
         }
-        LeafKind::TrustedAdvice => quote!(#jolt::JoltOpeningId::trusted_advice(#rel)),
-        LeafKind::UntrustedAdvice => quote!(#jolt::JoltOpeningId::untrusted_advice(#rel)),
+        LeafKind::TrustedAdvice => quote!(#opening_id::trusted_advice(#rel)),
+        LeafKind::UntrustedAdvice => quote!(#opening_id::untrusted_advice(#rel)),
     }
 }
 
-fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
     ensure_single_cell_generic(&input.generics)?;
+    let namespace = parse_namespace(&input.attrs)?;
     let struct_relation = parse_struct_relation(&input.attrs)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
         .iter()
-        .map(|field| plan_field(field, struct_relation.as_ref()))
-        .collect::<syn::Result<Vec<_>>>()?;
+        .map(|field| plan_field(field, struct_relation.as_ref(), &namespace))
+        .collect::<Result<Vec<_>>>()?;
 
-    let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
+    let id_ty = namespace.opening_id.clone();
     // `order_chains` lists each leaf's id (per `Vec` element, per `Some` `Option`) in
     // field-declaration order, so it lists exactly the ids `resolve_output` hits.
     // `OutputClaims::opening_values` reconstructs the values from this order via
@@ -416,7 +526,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             relation,
         } = plan;
         if *is_many {
-            let id = id_expr(kind, relation, Some(quote!(index)));
+            let id = id_expr(&namespace, kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
                 for (index, __value) in self.#ident.iter().enumerate() {
@@ -440,7 +550,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
                 },
             });
         } else if *is_option {
-            let id = id_expr(kind, relation, None);
+            let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__value) = &self.#ident {
@@ -452,7 +562,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
             // An `Option` field is present iff the source answers its id.
             construct_fields.push(quote!(#ident: resolve(&#id),));
         } else {
-            let id = id_expr(kind, relation, None);
+            let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
             resolve_arms.push(quote! {
                 if *id == #id {
@@ -477,11 +587,36 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     let point_accessors = plans.iter().map(point_accessor);
+    // The shared-point constructor exists only for the all-scalar shape: a `Vec`
+    // family or `Option` leaf has no single "every opening at one point" form.
+    let from_shared_point = (!plans.is_empty()
+        && plans.iter().all(|plan| !plan.is_many && !plan.is_option))
+    .then(|| {
+        let fields = plans.iter().enumerate().map(|(index, plan)| {
+            let ident = &plan.ident;
+            // the last field takes ownership of the point; the rest clone it
+            if index + 1 == plans.len() {
+                quote!(#ident: point,)
+            } else {
+                quote!(#ident: point.clone(),)
+            }
+        });
+        quote! {
+            /// Every produced opening at the one shared opening `point` — the
+            /// point form of a relation whose produced openings all open at a
+            /// single derived point. Its `derive_opening_points` builds the
+            /// struct here, so the field enumeration stays owned by this derive
+            /// instead of a hand-written struct literal.
+            pub fn from_shared_point(point: ::std::vec::Vec<F>) -> Self {
+                Self { #(#fields)* }
+            }
+        }
+    });
 
     Ok(quote! {
         // The value resolver lives on the value cell (`C = F`): each field is read
         // as `F` (or `Vec<F>` / `Option<F>`) directly.
-        impl<F: ::jolt_field::JoltField> ::jolt_claims::OutputClaims<F> for #name<F> {
+        impl<F: ::jolt_field::JoltField> ::jolt_claims::OutputClaims<F, #id_ty> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -490,7 +625,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             fn resolve_output(
                 &self,
-                id: &::jolt_claims::protocols::jolt::JoltOpeningId,
+                id: &#id_ty,
             ) -> ::core::option::Option<F> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
@@ -510,6 +645,7 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         // `Option<Vec<F>>`). A field and its accessor share a name; `x` reads the
         // field, `x()` calls the accessor.
         impl<F: ::jolt_field::JoltField> #name<::std::vec::Vec<F>> {
+            #from_shared_point
             #(#point_accessors)*
         }
     })
@@ -541,16 +677,17 @@ fn point_accessor(plan: &FieldPlan) -> TokenStream2 {
     }
 }
 
-fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_input(input: DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
     ensure_single_cell_generic(&input.generics)?;
+    let namespace = parse_namespace(&input.attrs)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
         .iter()
-        .map(|field| plan_field(field, None))
-        .collect::<syn::Result<Vec<_>>>()?;
+        .map(|field| plan_field(field, None, &namespace))
+        .collect::<Result<Vec<_>>>()?;
 
-    let id_ty = quote!(::jolt_claims::protocols::jolt::JoltOpeningId);
+    let id_ty = namespace.opening_id.clone();
     let mut resolve_arms = Vec::new();
     // Mirrors the resolve iteration (id per leaf, per `Vec` element, per `Some`
     // `Option`), so `canonical_order()` lists exactly the ids `resolve_input`
@@ -565,7 +702,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
             relation,
         } = plan;
         if *is_many {
-            let id = id_expr(kind, relation, Some(quote!(index)));
+            let id = id_expr(&namespace, kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
             resolve_arms.push(quote! {
                 for (index, __value) in self.#ident.iter().enumerate() {
@@ -575,7 +712,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
                 }
             });
         } else {
-            let id = id_expr(kind, relation, None);
+            let id = id_expr(&namespace, kind, relation, None);
             if *is_option {
                 order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
             } else {
@@ -598,7 +735,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
     let point_accessors = plans.iter().map(point_accessor);
 
     Ok(quote! {
-        impl<F: ::jolt_field::JoltField> ::jolt_claims::InputClaims<F> for #name<F> {
+        impl<F: ::jolt_field::JoltField> ::jolt_claims::InputClaims<F, #id_ty> for #name<F> {
             fn canonical_order(&self) -> ::std::vec::Vec<#id_ty> {
                 ::core::iter::empty::<#id_ty>()
                     #(#order_chains)*
@@ -607,7 +744,7 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             fn resolve_input(
                 &self,
-                id: &::jolt_claims::protocols::jolt::JoltOpeningId,
+                id: &#id_ty,
             ) -> ::core::option::Option<F> {
                 #(#resolve_arms)*
                 ::core::option::Option::None
@@ -624,41 +761,41 @@ fn expand_input(input: DeriveInput) -> syn::Result<TokenStream2> {
 /// Challenge fields are always a scalar `F` (one drawn Fiat-Shamir scalar).
 struct ChallengeFieldPlan {
     ident: Ident,
-    path: syn::Path,
+    path: Path,
 }
 
-fn challenge_attr(field: &syn::Field) -> Option<&Attribute> {
+fn challenge_attr(field: &Field) -> Option<&Attribute> {
     field
         .attrs
         .iter()
         .find(|attr| attr.path().is_ident("challenge"))
 }
 
-fn parse_challenge(attr: &Attribute) -> syn::Result<syn::Path> {
-    attr.parse_args::<syn::Path>()
+fn parse_challenge(attr: &Attribute) -> Result<Path> {
+    attr.parse_args::<Path>()
 }
 
-fn plan_challenge_field(field: &syn::Field) -> syn::Result<ChallengeFieldPlan> {
+fn plan_challenge_field(field: &Field) -> Result<ChallengeFieldPlan> {
     let ident = field
         .ident
         .clone()
-        .ok_or_else(|| syn::Error::new_spanned(field, "fields must be named"))?;
+        .ok_or_else(|| Error::new_spanned(field, "fields must be named"))?;
     let attr = challenge_attr(field).ok_or_else(|| {
-        syn::Error::new_spanned(
+        Error::new_spanned(
             field,
             "every field needs a #[challenge(SubEnum::Variant)] annotation",
         )
     })?;
     let path = parse_challenge(attr)?;
     if is_vec_type(&field.ty) {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "challenges are scalar; a `Vec` challenge field has no indexed id \
              (every challenge sub-enum variant is a unit variant)",
         ));
     }
     if is_option_type(&field.ty) {
-        return Err(syn::Error::new_spanned(
+        return Err(Error::new_spanned(
             &field.ty,
             "challenge fields are an unconditional scalar `F`; a conditional \
              `Option<F>` challenge is not supported (no relation draws one, and the \
@@ -669,7 +806,7 @@ fn plan_challenge_field(field: &syn::Field) -> syn::Result<ChallengeFieldPlan> {
 }
 
 /// The single field type generic parameter (the field type, conventionally `F`).
-fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
+fn field_type_param(generics: &Generics) -> Result<Ident> {
     generics
         .params
         .iter()
@@ -678,21 +815,23 @@ fn field_type_param(generics: &syn::Generics) -> syn::Result<Ident> {
             _ => None,
         })
         .ok_or_else(|| {
-            syn::Error::new_spanned(
+            Error::new_spanned(
                 generics,
                 "expected a field-type generic parameter (e.g. `<F>`)",
             )
         })
 }
 
-fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
+    let namespace = parse_namespace(&input.attrs)?;
+    let challenge_id_ty = namespace.challenge_id.clone();
     let field = field_type_param(&input.generics)?;
     let fields = named_fields(&input.data, name.span())?;
     let plans = fields
         .iter()
         .map(plan_challenge_field)
-        .collect::<syn::Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?;
 
     let mut resolve_arms = Vec::new();
     let mut build_stmts = Vec::new();
@@ -703,7 +842,7 @@ fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
     for (index, plan) in plans.iter().enumerate() {
         let ChallengeFieldPlan { ident, path } = plan;
         field_idents.push(ident.clone());
-        let id = quote!(::jolt_claims::protocols::jolt::JoltChallengeId::from(#path));
+        let id = quote!(#challenge_id_ty::from(#path));
         resolve_arms.push(quote! {
             if *id == #id {
                 return ::core::option::Option::Some(self.#ident);
@@ -723,7 +862,7 @@ fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
     }
 
     Ok(quote! {
-        impl<#field: ::jolt_field::JoltField> ::jolt_claims::SumcheckChallenges<#field> for #name<#field> {
+        impl<#field: ::jolt_field::JoltField> ::jolt_claims::SumcheckChallenges<#field, #challenge_id_ty> for #name<#field> {
             fn from_transcript_values<__I: ::core::iter::Iterator<Item = #field>>(
                 values: __I,
             ) -> ::core::result::Result<Self, ::jolt_claims::ChallengeDrawError> {
@@ -736,7 +875,7 @@ fn expand_challenges(input: DeriveInput) -> syn::Result<TokenStream2> {
 
             fn resolve_challenge(
                 &self,
-                id: &::jolt_claims::protocols::jolt::JoltChallengeId,
+                id: &#challenge_id_ty,
             ) -> ::core::option::Option<#field> {
                 #(#resolve_arms)*
                 ::core::option::Option::None

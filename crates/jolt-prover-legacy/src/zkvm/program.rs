@@ -17,7 +17,7 @@ use crate::zkvm::bytecode::{
 };
 use crate::zkvm::ram::RAMPreprocessing;
 use common::jolt_device::MemoryLayout;
-use jolt_riscv::{JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
 use tracer::instruction::Cycle;
 
 #[derive(Debug, Clone, CanonicalSerialize, CanonicalDeserialize)]
@@ -45,11 +45,25 @@ impl FullProgramPreprocessing {
         memory_init: Vec<(u64, u8)>,
         entry_address: u64,
     ) -> Result<Self, PreprocessingError> {
+        Self::preprocess_with_profile(instructions, memory_init, entry_address, RV64IMAC_JOLT)
+    }
+
+    /// [`Self::preprocess`] under an explicit instruction profile. FR-profile
+    /// guests must preprocess under the same profile they decode and trace
+    /// under: the profile legality check rejects FIELD_* rows otherwise, and
+    /// the field-inline bytecode side-table metadata is derived only for
+    /// FR-capable profiles.
+    pub fn preprocess_with_profile(
+        instructions: Vec<JoltInstructionRow>,
+        memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
+        profile: JoltInstructionProfile,
+    ) -> Result<Self, PreprocessingError> {
         Ok(Self {
             bytecode: Arc::new(BytecodePreprocessing::preprocess(
                 instructions,
                 entry_address,
-                RV64IMAC_JOLT,
+                profile,
             )?),
             ram: RAMPreprocessing::preprocess(memory_init),
         })
@@ -225,15 +239,34 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
         )?))
     }
 
+    /// [`Self::preprocess`] under an explicit instruction profile — required
+    /// for FR-profile guests (see
+    /// [`FullProgramPreprocessing::preprocess_with_profile`]).
+    pub fn preprocess_with_profile(
+        instructions: Vec<JoltInstructionRow>,
+        memory_init: Vec<(u64, u8)>,
+        entry_address: u64,
+        profile: JoltInstructionProfile,
+    ) -> Result<Self, PreprocessingError> {
+        Ok(Self::Full(
+            FullProgramPreprocessing::preprocess_with_profile(
+                instructions,
+                memory_init,
+                entry_address,
+                profile,
+            )?,
+        ))
+    }
+
     pub fn commit(
         self,
         memory_layout: &MemoryLayout,
         generators: &PCS::ProverSetup,
         bytecode_chunk_count: usize,
         max_log_k_chunk: usize,
-    ) -> (Self, CommittedProgramProverData<PCS>) {
+    ) -> Result<(Self, CommittedProgramProverData<PCS>), PreprocessingError> {
         let Self::Full(full) = self else {
-            panic!("cannot commit already-committed program preprocessing");
+            return Err(PreprocessingError::AlreadyCommitted);
         };
         let meta = full.meta();
         let (bytecode_commitments, bytecode_hints) = TrustedBytecodeCommitments::derive(
@@ -241,11 +274,11 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
             generators,
             max_log_k_chunk,
             bytecode_chunk_count,
-        );
+        )?;
         let (program_commitments, program_hints) =
             TrustedProgramCommitments::derive(&full, memory_layout, generators);
 
-        (
+        Ok((
             Self::Committed(CommittedProgramPreprocessing {
                 meta,
                 bytecode_commitments,
@@ -256,7 +289,7 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
                 bytecode_hints,
                 program_hints,
             },
-        )
+        ))
     }
 
     pub fn as_full(&self) -> Result<&FullProgramPreprocessing, ProofVerifyError> {

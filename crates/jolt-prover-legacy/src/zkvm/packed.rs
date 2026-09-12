@@ -26,6 +26,8 @@ use std::{
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 pub use jolt_akita::AkitaScheduleArtifacts;
+#[cfg(feature = "field-inline")]
+use jolt_akita::FieldIncLimbScheduleParams;
 use jolt_akita::{AkitaSetupParams, PrecommittedScheduleParams};
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
     is_valid_committed_program_immediate, INVALID_COMMITTED_PROGRAM_IMMEDIATE,
@@ -44,7 +46,7 @@ use jolt_poly::Polynomial;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_transcript::append_length_prefixed;
 use jolt_verifier::config::{
-    CommitmentConfig, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
+    CommitmentConfig, FieldInlineConfig, JoltProtocolConfig, ScalarChallengeEndianness, ZkConfig,
 };
 use jolt_verifier::preprocessing::{
     CommittedProgramPreprocessing as VerifierCommittedProgramPreprocessing,
@@ -447,6 +449,65 @@ fn advice_physical_num_vars(
     Ok(plan.packing().packed_num_vars())
 }
 
+/// The FR limb group's arity-line params from the jolt-claims laws: the
+/// packed trace's arity overhead over its own `log_T` (the chunk + selector
+/// variables, constant per K), the dense object floor, and the limb-count
+/// selector width. The registry pairs the line with the setup's final
+/// arity; the jolt-akita FR provisioning pin test holds it to the packing
+/// law.
+#[cfg(feature = "field-inline")]
+pub fn field_inc_limb_schedule_params(
+    one_hot_k: usize,
+) -> Result<FieldIncLimbScheduleParams, VerifierError> {
+    use jolt_claims::lattice::MIN_DENSE_OBJECT_NUM_VARS;
+    use jolt_claims::protocols::field_inline::lattice::field_inc_limb_count;
+    use jolt_claims::protocols::jolt::lattice::packing::one_hot_trace_column_capacity;
+    let log_k_chunk = one_hot_k.log_2();
+    let capacity = one_hot_trace_column_capacity(log_k_chunk).map_err(|error| {
+        VerifierError::FinalOpeningVerificationFailed {
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(FieldIncLimbScheduleParams::new(
+        log_k_chunk + capacity.log_2(),
+        MIN_DENSE_OBJECT_NUM_VARS,
+        field_inc_limb_count::<AkitaField>()
+            .next_power_of_two()
+            .log_2(),
+    ))
+}
+
+/// The FR-on transparent packed setup for a trace with no advice and no
+/// committed program: the one-hot trace group plus the always-present FR limb
+/// group, whose arity line joins the grouped schedule (the derivation
+/// [`one_hot_trace_setup_params`](AkitaPackedProver::one_hot_trace_setup_params)
+/// performs for a legacy prover instance). One owner for the modular packed
+/// FR provers — the profile harness, the packed FR e2e, and the verifier's
+/// packed FR fixture — so none restates the grouped capacity law.
+#[cfg(feature = "field-inline")]
+pub fn field_inline_one_hot_trace_setup_params(
+    setup_num_vars: usize,
+    setup_num_polys: usize,
+    layout_digest: [u8; 32],
+    one_hot_k: usize,
+    schedule_artifacts: Arc<AkitaScheduleArtifacts>,
+) -> Result<AkitaSetupParams, VerifierError> {
+    let precommitted_schedule = PrecommittedScheduleParams::new(None, None, setup_num_vars)
+        .with_field_inc_limbs(field_inc_limb_schedule_params(one_hot_k)?);
+    Ok(AkitaSetupParams::one_hot_only_grouped(
+        setup_num_vars,
+        setup_num_polys,
+        grouped_batch_poly_capacity(0, 0, 0),
+        layout_digest,
+        one_hot_k,
+        Some(precommitted_schedule),
+        schedule_artifacts,
+    ))
+}
+
+/// The grouped packed setup's polynomial capacity: the one-hot trace group,
+/// the direct program objects, one slot per configured advice kind, and the
+/// FR limb group on FR-on builds.
 fn grouped_batch_poly_capacity(
     max_untrusted_advice_bytes: usize,
     max_trusted_advice_bytes: usize,
@@ -455,6 +516,7 @@ fn grouped_batch_poly_capacity(
     1 + direct_program_objects
         + usize::from(max_untrusted_advice_bytes > 0)
         + usize::from(max_trusted_advice_bytes > 0)
+        + usize::from(cfg!(feature = "field-inline"))
 }
 
 /// An advice commitment object: the canonical word polynomial used by
@@ -549,6 +611,10 @@ pub fn commit_direct_program(
     bytecode_chunk_count: usize,
 ) -> Result<DirectProgramObjects, VerifierError> {
     let commit_failed = |reason: String| VerifierError::FinalOpeningVerificationFailed { reason };
+    program
+        .bytecode
+        .validate_committed_profile()
+        .map_err(|error| commit_failed(error.to_string()))?;
     if program
         .bytecode
         .bytecode
@@ -772,6 +838,17 @@ impl AkitaPackedProver<'_> {
         } else {
             None
         };
+        // An FR-on prover commits the limb group on every proof, so the FR
+        // arity line joins the schedule even with nothing else precommitted.
+        #[cfg(feature = "field-inline")]
+        let precommitted_schedule = Some(
+            precommitted_schedule
+                .unwrap_or_else(|| PrecommittedScheduleParams::new(None, None, shape.num_vars))
+                .with_field_inc_limbs(
+                    field_inc_limb_schedule_params(one_hot_k)
+                        .expect("the FR limb arity line must derive for a canonical K"),
+                ),
+        );
         AkitaSetupParams::one_hot_only_grouped(
             shape.num_vars,
             shape.num_polys,
@@ -1368,6 +1445,22 @@ impl AkitaPackedProver<'_> {
             !self.program_io.trusted_advice.is_empty(),
             "the precommitted dense trusted-advice object must be passed exactly when trusted advice exists"
         );
+        // Same fail-closed gate as the Dory path (`RV64IMACProver::prove`):
+        // field-inline cycles have no legacy proving semantics, so an FR-active
+        // trace must not reach the packed pipeline (which would otherwise
+        // panic on the FR kinds' lookup queries).
+        #[cfg(feature = "field-inline")]
+        if self
+            .trace
+            .iter()
+            .any(|cycle| cycle.field_inline_trace().is_some())
+        {
+            return Err(VerifierError::ProtocolAxisUnimplemented {
+                axis: "field-inline",
+                pending: "the legacy packed prover has no field-inline semantics; the modular \
+                          jolt-prover owns FR proving",
+            });
+        }
         let preprocessing_digest = self.preprocessing.shared.digest();
         fiat_shamir_preamble(
             &self.program_io,
@@ -1633,27 +1726,29 @@ impl AkitaPackedProver<'_> {
             stage7_sumcheck_proof: crate::zkvm::proof::convert_sumcheck(stage7_sumcheck_proof),
         };
 
-        Ok(JoltProof {
-            protocol: JoltProtocolConfig {
+        // Legacy has no packed FR path: `JoltProof::new` leaves the FR
+        // limb-group slot empty and the disabled FR config makes an FR-on
+        // verifier reject the proof fail-closed.
+        Ok(JoltProof::new(
+            JoltProtocolConfig {
                 zk: ZkConfig::Transparent,
                 commitment: CommitmentConfig::Packed,
                 scalar_challenge_endianness: ScalarChallengeEndianness::Little,
+                field_inline: FieldInlineConfig::disabled(),
             },
-            commitments: commitment,
+            commitment,
             stages,
             joint_opening_proof,
-            untrusted_advice_commitment: advice_object
+            advice_object
                 .as_ref()
                 .map(|object| object.commitment.clone()),
-            claims: JoltProofClaims::Clear(claims),
-            trace_length: self.trace.len(),
-            ram_K: self.one_hot_params.ram_k,
-            rw_config: crate::zkvm::proof::convert_read_write_config(self.rw_config.clone()),
-            one_hot_config: crate::zkvm::proof::convert_one_hot_config(
-                self.one_hot_params.to_config(),
-            ),
-            trace_polynomial_order: TracePolynomialOrder::CycleMajor,
-        })
+            JoltProofClaims::Clear(claims),
+            self.trace.len(),
+            self.one_hot_params.ram_k,
+            crate::zkvm::proof::convert_read_write_config(self.rw_config.clone()),
+            crate::zkvm::proof::convert_one_hot_config(self.one_hot_params.to_config()),
+            TracePolynomialOrder::CycleMajor,
+        ))
     }
 }
 

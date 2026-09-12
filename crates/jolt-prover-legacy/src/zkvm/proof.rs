@@ -11,7 +11,7 @@ use crate::zkvm::clear_claims::build_clear_claims;
 pub use jolt_verifier::VerifierError;
 #[cfg(not(feature = "akita"))]
 use jolt_verifier::{
-    config::JoltProtocolConfig,
+    config::{FieldInlineConfig, JoltProtocolConfig},
     preprocessing::CommittedProgramPreprocessing,
     proof::{JoltCommitments, JoltProofClaims, JoltStageProofs},
 };
@@ -264,6 +264,19 @@ where
     verifier_preprocessing_from_parts(&shared, generators, blindfold_setup.as_ref())
 }
 
+/// The protocol axes a legacy proof declares. Legacy proofs never carry FR
+/// payloads, so the field-inline axis is pinned disabled regardless of the
+/// verifier crate's compile-time selection: a build graph may unify
+/// `jolt-verifier/field-inline` for the modular producers, and the FR-on
+/// verifier must then reject legacy proofs at the protocol-config gate,
+/// fail-closed, instead of the proof misdeclaring the axis.
+#[cfg(not(feature = "akita"))]
+fn legacy_protocol_config(zk: bool) -> JoltProtocolConfig {
+    let mut protocol = JoltProtocolConfig::for_zk(zk);
+    protocol.field_inline = FieldInlineConfig::disabled();
+    protocol
+}
+
 pub fn verifier_preprocessing_from_prover<F, C, PCS>(
     preprocessing: &JoltProverPreprocessing<F, C, PCS>,
 ) -> JoltVerifierPreprocessing<
@@ -452,7 +465,7 @@ where
     };
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+        protocol: legacy_protocol_config(false),
         commitments,
         stages,
         joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),
@@ -508,7 +521,7 @@ where
     };
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(true),
+        protocol: legacy_protocol_config(true),
         commitments,
         stages,
         joint_opening_proof: PCS::opening_proof_into_verifier(proof.joint_opening_proof),

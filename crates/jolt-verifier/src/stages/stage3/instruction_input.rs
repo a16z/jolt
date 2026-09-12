@@ -103,7 +103,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionInput<F> {
         _challenges: &InstructionInputChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionInput(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // Every instruction-input output shares the one opening point.

@@ -83,7 +83,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamHammingBooleanity<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamHammingBooleanity(RamHammingBooleanityPublic::EqCycle) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         // `cycle_opening_point` reverses the sumcheck point, so recover the raw
         // sumcheck point (what `EqCycle` compares against) by reversing back.

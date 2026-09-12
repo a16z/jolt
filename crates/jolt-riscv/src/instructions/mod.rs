@@ -36,8 +36,8 @@ pub use assert::AssertValidUnsignedRemainder;
 pub use assert::AssertWordAlignment;
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
-    FieldSub,
+    FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm,
+    FieldLoadWord, FieldLoadWordHi, FieldMul, FieldStoreToX, FieldSub,
 };
 pub use i::Add;
 pub use i::AddW;
@@ -458,6 +458,12 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     FieldStoreToX(FieldStoreToX<T>),
     #[cfg(feature = "field-inline")]
     FieldLoadImm(FieldLoadImm<T>),
+    #[cfg(feature = "field-inline")]
+    FieldLoadWord(FieldLoadWord<T>),
+    #[cfg(feature = "field-inline")]
+    FieldLoadWordHi(FieldLoadWordHi<T>),
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb(FieldAdviceLimb<T>),
 }
 
 macro_rules! impl_jolt_instruction_try_from_row {
@@ -682,6 +688,12 @@ impl_jolt_instructions_flags! {
     FieldStoreToX => FIELD_STORE_TO_X,
     #[cfg(feature = "field-inline")]
     FieldLoadImm => FIELD_LOAD_IMM,
+    #[cfg(feature = "field-inline")]
+    FieldLoadWord => FIELD_LOAD_WORD,
+    #[cfg(feature = "field-inline")]
+    FieldLoadWordHi => FIELD_LOAD_WORD_HI,
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb => FIELD_ADVICE_LIMB,
 }
 #[cfg(test)]
 mod tests {

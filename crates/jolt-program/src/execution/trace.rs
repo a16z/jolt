@@ -41,13 +41,24 @@ impl Default for JoltProgram {
 
 impl JoltProgram {
     pub fn from_elf_bytes(elf_bytes: Vec<u8>) -> Self {
+        Self::from_elf_bytes_with_profile(elf_bytes, RV64IMAC_JOLT)
+    }
+
+    /// [`Self::from_elf_bytes`] under an explicit instruction profile. The
+    /// profile is load-bearing beyond decode: the field-inline witness plane
+    /// fails closed on FR trace data unless the program declares an
+    /// FR-capable profile, so FR guests must be constructed through here.
+    pub fn from_elf_bytes_with_profile(
+        elf_bytes: Vec<u8>,
+        profile: JoltInstructionProfile,
+    ) -> Self {
         Self {
             elf_bytes,
             expanded_bytecode: Vec::new(),
             memory_init: Vec::new(),
             program_end: 0,
             entry_address: 0,
-            profile: RV64IMAC_JOLT,
+            profile,
         }
     }
 
@@ -246,5 +257,9 @@ impl TraceSource for OwnedTrace {
 
     fn rows(&self) -> Option<&[TraceRow]> {
         (self.next == 0).then(|| self.rows.as_slice())
+    }
+
+    fn shared_rows(&self) -> Option<Arc<Vec<TraceRow>>> {
+        (self.next == 0).then(|| Arc::clone(&self.rows))
     }
 }

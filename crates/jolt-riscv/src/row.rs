@@ -3,6 +3,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 #[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline_operand_shape;
 use crate::JoltInstructionKind;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,4 +80,16 @@ pub struct JoltInstructionRow {
     pub virtual_sequence_remaining: Option<u16>,
     pub is_first_in_sequence: bool,
     pub is_compressed: bool,
+}
+
+impl JoltInstructionRow {
+    /// Operands belonging to the integer register file. Field-register slots
+    /// are absent; bridge instructions retain their integer source or destination.
+    pub fn integer_operands(&self) -> NormalizedOperands {
+        #[cfg(feature = "field-inline")]
+        if let Some(shape) = field_inline_operand_shape(self.instruction_kind) {
+            return shape.x_operands(self.operands);
+        }
+        self.operands
+    }
 }

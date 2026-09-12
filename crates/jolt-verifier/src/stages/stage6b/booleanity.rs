@@ -149,7 +149,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
         _challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         // Recover the raw two-phase sumcheck point from a produced opening point
         // (`r_address ++ r_cycle`): each half is the reverse of its phase's

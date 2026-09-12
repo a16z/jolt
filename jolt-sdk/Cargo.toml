@@ -18,6 +18,11 @@ edition = "2021"
 default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover-legacy?/zk", "jolt-verifier?/zk"]
+# Guest-side field-inline instruction macros plus FR-profile decoding,
+# tracing, and preprocessing. Proving an FR guest needs the modular
+# `jolt-prover` (see examples/eqpoly-field): the generated `prove_*` routes
+# to the legacy prover, which refuses FR-active traces with a typed
+# `ProtocolAxisUnimplemented` error.
 field-inline = [
   "jolt-prover-legacy?/field-inline",
   "jolt-program?/field-inline",

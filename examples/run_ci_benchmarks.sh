@@ -20,7 +20,9 @@ failures=0
 export RUST_LOG=info
 
 # Define the exclude list
-exclusion_list=("advice-consumer" "collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery")
+# eqpoly-field is feature-gated (field-inline) and exits non-zero without it;
+# its smoke run lives in the field-inline CI lane instead.
+exclusion_list=("advice-consumer" "collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery" "eqpoly-field")
 # JSON file to store results
 output_file="benchmark_results.json"
 

@@ -364,3 +364,72 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
         vec![fr(19), fr(0), fr(0), fr(0)]
     );
 }
+
+#[test]
+fn plane_accessor_serves_the_attached_field_inline_view() {
+    let (bytecode, rows) = public_fixture();
+    let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
+    let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
+
+    // Fail-closed default: an FR-profile backend without the attached view
+    // serves no field-inline oracle.
+    let detached = witness(&program, &preprocessing, rows.clone(), 2);
+    assert!(JoltWitnessOracle::<Fr>::field_inline(&detached).is_none());
+
+    let attached = witness(&program, &preprocessing, rows, 2)
+        .with_field_inline()
+        .unwrap();
+    let oracle: &dyn JoltWitnessOracle<Fr> = &attached;
+    let provider = oracle.field_inline().unwrap();
+    assert_eq!(
+        provider.committed_order(),
+        vec![FieldInlineCommittedPolynomial::FieldRdInc]
+    );
+    // The dyn seam serves the same column as the inherent view.
+    assert_eq!(
+        provider
+            .oracle_table(FieldInlinePolynomialId::Committed(
+                FieldInlineCommittedPolynomial::FieldRdInc,
+            ))
+            .unwrap(),
+        vec![fr(13), fr(17), fr(221), fr(0)]
+    );
+}
+
+#[test]
+fn plane_accessor_stays_absent_for_fr_off_profile() {
+    let bytecode = vec![instruction(
+        JoltInstructionKind::ADDI,
+        0,
+        Some(1),
+        Some(2),
+        None,
+        3,
+    )];
+    let program = program(bytecode.clone(), RV64IMAC_JOLT);
+    let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT);
+    let backend = witness(
+        &program,
+        &preprocessing,
+        vec![TraceRow::from_instruction(instruction(
+            JoltInstructionKind::ADDI,
+            0,
+            Some(1),
+            Some(2),
+            None,
+            3,
+        ))
+        .unwrap()],
+        2,
+    );
+
+    assert!(JoltWitnessOracle::<Fr>::field_inline(&backend).is_none());
+    // The view cannot be attached for an FR-off guest, so the accessor can
+    // never become Some.
+    assert!(matches!(
+        backend.with_field_inline(),
+        Err(WitnessError::UnavailableView {
+            label: FIELD_INLINE_LABEL,
+        })
+    ));
+}

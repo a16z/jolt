@@ -8,20 +8,20 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+#[cfg(all(feature = "allocative", feature = "field-inline"))]
+use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
 use allocative::{Allocative, Key, Visitor};
-use jolt_claims::protocols::jolt::JoltChallengeId;
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
-};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
@@ -30,8 +30,12 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking
 use jolt_verifier::stages::stage3::outputs::{
     InstructionInput, RegistersClaimReduction, SpartanShift,
 };
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
@@ -43,6 +47,8 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
 };
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
 use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
 use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
 use jolt_verifier::stages::stage6b::ram_hamming_booleanity::RamHammingBooleanity;
@@ -98,13 +104,13 @@ pub trait BuildRoundScheduler<F: JoltField> {
 /// field yields no impl). That match is single-bound: a `Box<dyn
 /// PrepareKernel<F, R> + Send>` (any extra bound) is silently skipped and
 /// surfaces the same distant way.
+// No claim-trait where-clauses: `R: ConcreteSumcheck<F>` already implies them
+// (the ConcreteSumcheck where-clauses are elaborated at every use site), and
+// the relation-family-generic spellings would restate them for nothing.
 pub trait PrepareKernel<F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     fn prepare(
         &self,
@@ -139,17 +145,23 @@ where
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_claim_reduction: Box<dyn PrepareKernel<F, FieldRegistersClaimReduction<F>>>,
     pub ram_raf_evaluation: Box<dyn PrepareKernel<F, RamRafEvaluation<F>>>,
     pub ram_output_check: Box<dyn PrepareKernel<F, RamOutputCheck<F>>>,
     pub spartan_shift: Box<dyn PrepareKernel<F, SpartanShift<F>>>,
     pub instruction_input: Box<dyn PrepareKernel<F, InstructionInput<F>>>,
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write: Box<dyn PrepareKernel<F, FieldRegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
     pub advice_opening: Box<dyn AdviceOpeningEvaluation<F>>,
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_val_evaluation: Box<dyn PrepareKernel<F, FieldRegistersValEvaluation<F>>>,
     pub bytecode_read_raf_address: Box<dyn PrepareKernel<F, BytecodeReadRafAddressPhase<F>>>,
     pub booleanity_address: Box<dyn PrepareKernel<F, BooleanityAddressPhase<F>>>,
     pub bytecode_read_raf_cycle: Box<dyn PrepareKernel<F, BytecodeReadRafCycle<F>>>,
@@ -158,6 +170,9 @@ where
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
+    #[cfg(feature = "field-inline")]
+    pub field_registers_inc_claim_reduction:
+        Box<dyn PrepareKernel<F, FieldRegistersIncClaimReduction<F>>>,
     pub trusted_advice_cycle: Box<dyn PrepareKernel<F, TrustedAdviceCyclePhase<F>>>,
     pub untrusted_advice_cycle: Box<dyn PrepareKernel<F, UntrustedAdviceCyclePhase<F>>>,
     pub bytecode_reduction_cycle: Box<dyn PrepareKernel<F, BytecodeReductionCyclePhase<F>>>,
@@ -240,6 +255,14 @@ fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) 
 pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor<'_>) {
     const { assert!(!std::mem::needs_drop::<T>()) };
     visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
+}
+
+/// [`visit_heap_free_elements`] through an `Arc`: the shared buffer's bytes
+/// are reported by whichever holder the visitor reaches. Used by the
+/// session-shared FR register rows.
+#[cfg(all(feature = "allocative", feature = "field-inline"))]
+pub(crate) fn visit_shared_heap_free_elements<T>(values: &Arc<Vec<T>>, visitor: &mut Visitor<'_>) {
+    visit_heap_free_elements(values, visitor);
 }
 
 /// [`visit_heap_free_elements`] for a table keyed by a foreign type.

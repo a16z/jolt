@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use jolt_riscv::JoltInstructionProfile;
+use jolt_riscv::{JoltInstructionProfile, RV64IMAC_JOLT};
 
 #[cfg(feature = "host")]
 pub mod analyze;
@@ -11,6 +11,12 @@ pub mod program;
 
 pub trait JoltProgramSource {
     fn get_elf_contents(&self) -> Option<Vec<u8>>;
+    /// The instruction profile the program decodes and traces under;
+    /// preprocessing must use the same profile
+    /// (`ProgramPreprocessing::preprocess_with_profile`).
+    fn instruction_profile(&self) -> JoltInstructionProfile {
+        RV64IMAC_JOLT
+    }
     fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>>;
     fn decode(
         &mut self,
@@ -28,6 +34,10 @@ pub trait JoltProgramSource {
 impl JoltProgramSource for Program {
     fn get_elf_contents(&self) -> Option<Vec<u8>> {
         Program::get_elf_contents(self)
+    }
+
+    fn instruction_profile(&self) -> JoltInstructionProfile {
+        Program::instruction_profile(self)
     }
 
     fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {

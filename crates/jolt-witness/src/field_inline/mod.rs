@@ -55,6 +55,178 @@ pub trait FieldInlineRegisterReadWriteRows<F: JoltField> {
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
 }
 
+/// One FR-active cycle's composed spartan-outer column values — the 16
+/// appended R1CS columns in `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order:
+/// the five value columns, then the eleven op-flag columns in
+/// [`FieldInlineOpFlag`](jolt_claims::protocols::field_inline::FieldInlineOpFlag)
+/// declaration order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FieldInlineSpartanRow<F> {
+    pub rs1_value: F,
+    pub rs2_value: F,
+    pub rd_value: F,
+    pub product: F,
+    pub inv_product: F,
+    pub flags: [F; 11],
+}
+
+impl<F: Copy> FieldInlineSpartanRow<F> {
+    /// The row's 16 column values in the composed opening-column order.
+    pub fn columns(&self) -> [F; 16] {
+        [
+            self.rs1_value,
+            self.rs2_value,
+            self.rd_value,
+            self.product,
+            self.inv_product,
+            self.flags[0],
+            self.flags[1],
+            self.flags[2],
+            self.flags[3],
+            self.flags[4],
+            self.flags[5],
+            self.flags[6],
+            self.flags[7],
+            self.flags[8],
+            self.flags[9],
+            self.flags[10],
+        ]
+    }
+}
+
+/// The object-safe field-inline witness surface a prover reads off the
+/// witness plane: shapes and dense tables over the field-inline id
+/// vocabulary, the committed-order tail, and (via the supertrait) the
+/// register replay rows the read-write kernels fold. Deliberately minimal —
+/// later units extend it as the FR kernels land.
+pub trait FieldInlineWitnessOracle<F: JoltField>:
+    FieldInlineRegisterReadWriteRows<F> + Send + Sync
+{
+    fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError>;
+
+    /// Materializes the oracle's dense field-element evaluations, row-major
+    /// over the domain declared by [`shape`](Self::shape).
+    fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError>;
+
+    /// The proof-payload order of the field-inline committed polynomials.
+    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial>;
+
+    /// The composed spartan-outer FR column values, sparse over the cycle
+    /// domain: `(cycle, row)` pairs sorted strictly increasing by cycle,
+    /// covering at least every cycle where any of the 16 FR columns is
+    /// non-zero (extra all-zero rows are harmless — the columns' values are
+    /// what the composed kernels fold). The default derives the rows from the
+    /// dense `oracle_table`s so fixture oracles stay valid; the trace-backed
+    /// oracle overrides it with a direct sparse walk that never materializes
+    /// the 13 dense tables.
+    fn field_inline_spartan_rows(
+        &self,
+    ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
+        use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
+
+        let tables = FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
+            .iter()
+            .map(|&id| self.oracle_table(FieldInlinePolynomialId::Virtual(id)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let cycles = tables.first().map_or(0, Vec::len);
+        if tables.iter().any(|table| table.len() != cycles) {
+            return Err(WitnessError::InvalidDimensions {
+                label: FIELD_INLINE_LABEL,
+                reason: "FR spartan column tables disagree on the cycle domain".to_owned(),
+            });
+        }
+        let mut rows = Vec::new();
+        for cycle in 0..cycles {
+            let column = |index: usize| tables[index][cycle];
+            let values: Vec<F> = (0..tables.len()).map(column).collect();
+            if values.iter().all(F::is_zero) {
+                continue;
+            }
+            rows.push((
+                cycle,
+                FieldInlineSpartanRow {
+                    rs1_value: values[0],
+                    rs2_value: values[1],
+                    rd_value: values[2],
+                    product: values[3],
+                    inv_product: values[4],
+                    flags: [
+                        values[5], values[6], values[7], values[8], values[9], values[10],
+                        values[11], values[12], values[13], values[14], values[15],
+                    ],
+                },
+            ));
+        }
+        Ok(rows)
+    }
+}
+
+impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness {
+    fn shape(&self, id: FieldInlinePolynomialId) -> Result<Shape, WitnessError> {
+        TraceBackedFieldInlineWitness::shape(self, id)
+    }
+
+    fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError> {
+        TraceBackedFieldInlineWitness::oracle_table::<F>(self, id)
+    }
+
+    fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
+        TraceBackedFieldInlineWitness::committed_order(self)
+    }
+
+    /// Direct sparse walk: exactly the rows carrying a field-inline payload,
+    /// decoded once — the 13 dense tables the trait default would
+    /// materialize never exist. Value-for-value equal to the default (the
+    /// dense extractors read the same payload fields, and a payload row
+    /// always sets its op flag, so no non-zero cycle is skipped).
+    fn field_inline_spartan_rows(
+        &self,
+    ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
+        use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
+
+        const FLAGS: [FieldInlineOpFlag; 11] = [
+            FieldInlineOpFlag::Add,
+            FieldInlineOpFlag::Sub,
+            FieldInlineOpFlag::Mul,
+            FieldInlineOpFlag::Inv,
+            FieldInlineOpFlag::AssertEq,
+            FieldInlineOpFlag::LoadFromX,
+            FieldInlineOpFlag::StoreToX,
+            FieldInlineOpFlag::LoadImm,
+            FieldInlineOpFlag::LoadWord,
+            FieldInlineOpFlag::LoadWordHi,
+            FieldInlineOpFlag::AdviceLimb,
+        ];
+        let mut rows = Vec::new();
+        for (cycle, row) in self.trace_rows.iter().enumerate() {
+            let Some(data) = row.field_inline.as_deref() else {
+                continue;
+            };
+            let value = |encoded: Option<FieldEncodedValue>| {
+                encoded.map_or_else(F::zero, |encoded| decode_value(encoded))
+            };
+            let rs1_value = value(data.rs1.map(|read| read.value));
+            let rs2_value = value(data.rs2.map(|read| read.value));
+            let rd_value = value(data.rd.map(|write| write.post_value));
+            rows.push((
+                cycle,
+                FieldInlineSpartanRow {
+                    rs1_value,
+                    rs2_value,
+                    rd_value,
+                    // Extractor-derived, like the dense `FieldProduct` /
+                    // `FieldInvProduct` columns — NOT the trace payloads,
+                    // which exist only on the rows whose op requires them.
+                    product: rs1_value * rs2_value,
+                    inv_product: rs1_value * rd_value,
+                    flags: FLAGS.map(|flag| F::from_bool(data.op == Some(witnesses::op(flag)))),
+                },
+            ));
+        }
+        Ok(rows)
+    }
+}
+
 pub struct TraceBackedFieldInlineWitness {
     log_t: usize,
     program: Arc<JoltProgram>,
@@ -331,7 +503,9 @@ impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlin
         &self,
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
         let env = WitnessEnv::new(&self.preprocessing);
+        // Trace-sized: one parallel pass, padding rows default past the trace.
         (0..self.rows)
+            .into_par_iter()
             .map(|index| {
                 self.trace_rows.get(index).map_or_else(
                     || Ok(FieldInlineRegisterReadWriteRow::default()),
@@ -420,9 +594,21 @@ fn validate_trace_data(
         ));
     }
     let operands = row.instruction().operands;
-    validate_read(index, "rs1", data.rs1, operands.rs1, shape.reads_fr_rs1)?;
+    // The memory-sourced loads keep their field destination in the `rs2`
+    // slot and read it back as `rs1` on the Horner step.
+    let fr_rd = if shape.fr_rd_in_rs2_slot {
+        operands.rs2
+    } else {
+        operands.rd
+    };
+    let fr_rs1 = if shape.fr_rs1_is_fr_rd {
+        fr_rd
+    } else {
+        operands.rs1
+    };
+    validate_read(index, "rs1", data.rs1, fr_rs1, shape.reads_fr_rs1)?;
     validate_read(index, "rs2", data.rs2, operands.rs2, shape.reads_fr_rs2)?;
-    validate_write(index, data.rd, operands.rd, shape.writes_fr_rd)?;
+    validate_write(index, data.rd, fr_rd, shape.writes_fr_rd)?;
 
     if data.product.is_some() != shape.requires_product_payload() {
         return Err(invalid_row(
@@ -534,6 +720,28 @@ fn validate_bridge(
                 return Err(invalid_row(
                     index,
                     "field-inline store bridge payload is inconsistent",
+                ));
+            }
+            Ok(())
+        }
+        (
+            Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
+            Some(FieldInlineBridge::LoadWord {
+                x_base,
+                x_register,
+                word,
+                field_value,
+            }),
+        ) => {
+            let operands = row.instruction().operands;
+            if Some(x_base) != operands.rs1
+                || Some(x_register) != operands.rd
+                || Some(word) != row.rd_write().map(|write| write.post_value)
+                || Some(field_value) != data.rd.map(|write| write.post_value)
+            {
+                return Err(invalid_row(
+                    index,
+                    "field-inline load word bridge payload is inconsistent",
                 ));
             }
             Ok(())
