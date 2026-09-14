@@ -403,7 +403,18 @@ mod guest {
     #[inline(always)]
     pub fn dot<const N: usize>(a: &[[u64; N]], b: &[[u64; N]]) -> [u64; N] {
         emit::acc_zero();
-        for (x, y) in a.iter().zip(b) {
+        let len = a.len().min(b.len());
+        let mut a = a[..len].chunks_exact(4);
+        let mut b = b[..len].chunks_exact(4);
+        for (xs, ys) in a.by_ref().zip(b.by_ref()) {
+            for k in 0..4 {
+                load(REG_A, &xs[k]);
+                load(REG_B, &ys[k]);
+                emit::mul_out();
+                emit::acc_add_out();
+            }
+        }
+        for (x, y) in a.remainder().iter().zip(b.remainder()) {
             load(REG_A, x);
             load(REG_B, y);
             emit::mul_out();
