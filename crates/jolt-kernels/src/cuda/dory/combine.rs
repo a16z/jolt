@@ -166,11 +166,17 @@ mod tests {
     use ark_ec::PrimeGroup as _;
     use jolt_field::FromPrimitiveInt as _;
 
-    use super::{combine_window, CycleWindow, DoryHint, Fr};
-    use crate::cuda::common::context::shared_context;
+    use jolt_openings::AdditivelyHomomorphic as _;
+
+    use super::{combine_window, CycleWindow, DoryHint, DoryScheme, Fr};
+    use crate::cuda::common::context::{device_count, shared_context};
 
     const ROWS: usize = 37;
     const HINTS: usize = 6;
+
+    const SHARED_WINDOW_HINTS: usize = 8;
+
+    const SHARED_WINDOW_ROWS_PER_DEVICE: usize = 128;
 
     fn hints() -> Vec<DoryHint> {
         let generator = ark_bn254::G1Projective::generator();
@@ -247,5 +253,71 @@ mod tests {
         expected: crate::cuda::common::msm::JacobianLimbs,
     ) -> bool {
         super::jolt_g1(got) != super::jolt_g1(expected)
+    }
+
+    fn shared_window_hints(rows: usize) -> Vec<DoryHint> {
+        let generator = ark_bn254::G1Projective::generator();
+        (0..SHARED_WINDOW_HINTS)
+            .map(|hint| {
+                let commitments = (0..rows)
+                    .map(|row| {
+                        let scalar = ark_bn254::Fr::from((hint * rows + row + 1) as u64);
+                        jolt_crypto::Bn254G1::from(generator * scalar)
+                    })
+                    .collect();
+                DoryHint::new(commitments, Fr::from_u64(hint as u64 + 1))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_shared_window_hint_combination_matches_the_dory_scheme() {
+        let Some(shared) = shared_context() else {
+            return;
+        };
+        let rows = SHARED_WINDOW_ROWS_PER_DEVICE * device_count().max(1).next_power_of_two();
+        let hints = shared_window_hints(rows);
+        let wide = Fr::from_u64(u64::MAX) * Fr::from_u64(u64::MAX);
+        let scalars = vec![
+            Fr::from_u64(1),
+            -Fr::from_u64(1),
+            wide,
+            -wide,
+            wide + Fr::from_u64(7),
+            Fr::from_u64(0),
+            Fr::from_u64(13),
+            -wide - Fr::from_u64(11),
+        ];
+        assert_eq!(scalars.len(), SHARED_WINDOW_HINTS);
+
+        for (ordinal, window) in super::device_windows(rows, 1).iter().enumerate() {
+            let context = super::context_for(ordinal).unwrap_or(shared);
+            assert!(
+                context
+                    .admits_shared_window_schedule(window.len, SHARED_WINDOW_HINTS)
+                    .expect("query the shared-window schedule guard"),
+                "device {ordinal} declined the shared window schedule at {} rows x \
+                 {SHARED_WINDOW_HINTS} terms, so this gate never reaches the shared window \
+                 kernel and its parity claim is vacuous",
+                window.len,
+            );
+        }
+
+        let got = super::combine_on_device(&hints, &scalars).expect("device hint combination");
+        let expected = DoryScheme::combine_hints(hints, &scalars);
+        assert_eq!(
+            got.row_commitments.len(),
+            expected.row_commitments.len(),
+            "row count diverged"
+        );
+        assert_eq!(
+            got.row_commitments
+                .iter()
+                .zip(&expected.row_commitments)
+                .position(|(got, expected)| got != expected),
+            None,
+            "the shared window schedule changed a combined row commitment",
+        );
+        assert_eq!(got.commit_blind, expected.commit_blind);
     }
 }

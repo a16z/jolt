@@ -316,6 +316,16 @@ const BATCHED_WINDOW_BYTES: usize = 64 << 20;
 
 const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
 
+const SHARED_WINDOW_BITS: usize = 4;
+
+const SHARED_WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(SHARED_WINDOW_BITS);
+
+const SHARED_WINDOW_BUCKETS: usize = 1 << SHARED_WINDOW_BITS;
+
+const SHARED_WINDOW_MIN_ROWS: usize = 128;
+
+const SHARED_WINDOW_MIN_TERMS: usize = 8;
+
 struct DeviceScalars<'a> {
     values: &'a CudaSlice<u64>,
     limbs: usize,
@@ -1068,6 +1078,33 @@ impl CudaKernelContext {
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
 
+    fn shared_window_bytes(rows: usize, terms: usize) -> usize {
+        let point_bytes = 3 * FQ_LIMBS * size_of::<u64>();
+        let components = terms.saturating_mul(2);
+        components
+            .saturating_add(SHARED_WINDOWS)
+            .saturating_mul(rows)
+            .saturating_mul(point_bytes)
+            .saturating_add(
+                components
+                    .saturating_mul(SHARED_WINDOWS)
+                    .saturating_add(SHARED_WINDOWS * SHARED_WINDOW_BUCKETS + 1)
+                    .saturating_mul(size_of::<u32>()),
+            )
+    }
+
+    pub(crate) fn admits_shared_window_schedule(
+        &self,
+        rows: usize,
+        terms: usize,
+    ) -> Result<bool, CudaError> {
+        if rows < SHARED_WINDOW_MIN_ROWS || terms < SHARED_WINDOW_MIN_TERMS {
+            return Ok(false);
+        }
+        let (free, _) = self.stream().context().mem_get_info()?;
+        Ok(Self::shared_window_bytes(rows, terms) <= (free / 8).min(MAX_G1_BATCHED_WINDOW_BYTES))
+    }
+
     fn msm_rows_shared_windows(
         &self,
         bases: &CudaSlice<u64>,
@@ -1076,45 +1113,26 @@ impl CudaKernelContext {
         rows: usize,
         output: &mut CudaSlice<u64>,
     ) -> Result<bool, CudaError> {
-        const WINDOW_BITS: usize = 4;
-        const WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(WINDOW_BITS);
-        const BUCKETS: usize = 1 << WINDOW_BITS;
         let terms = signs.len() / 2;
-        if rows < 128 || terms < 8 {
-            return Ok(false);
-        }
-        let point_bytes = 3 * FQ_LIMBS * size_of::<u64>();
-        let bytes = signs
-            .len()
-            .saturating_add(WINDOWS)
-            .saturating_mul(rows)
-            .saturating_mul(point_bytes)
-            .saturating_add(
-                signs
-                    .len()
-                    .saturating_mul(WINDOWS)
-                    .saturating_add(WINDOWS * BUCKETS + 1)
-                    .saturating_mul(size_of::<u32>()),
-            );
-        let (free, _) = self.stream().context().mem_get_info()?;
-        if bytes > (free / 8).min(MAX_G1_BATCHED_WINDOW_BYTES) {
+        if !self.admits_shared_window_schedule(rows, terms)? {
             return Ok(false);
         }
 
         // The coefficients are shared by every row, so build one small signed
         // bucket schedule and reuse it across the entire point matrix.
         let coefficients = self.download_u64(scalars)?;
-        let mut indices = Vec::with_capacity(signs.len() * WINDOWS);
-        let mut offsets = Vec::with_capacity(WINDOWS * BUCKETS + 1);
+        let mut indices = Vec::with_capacity(signs.len() * SHARED_WINDOWS);
+        let mut offsets = Vec::with_capacity(SHARED_WINDOWS * SHARED_WINDOW_BUCKETS + 1);
         offsets.push(0);
-        for window in 0..WINDOWS {
-            for bucket in 0..BUCKETS {
+        for window in 0..SHARED_WINDOWS {
+            for bucket in 0..SHARED_WINDOW_BUCKETS {
                 if bucket != 0 {
                     for (term, (limbs, &sign)) in
                         coefficients.chunks_exact(FQ_LIMBS).zip(signs).enumerate()
                     {
                         let magnitude = u128::from(limbs[0]) | (u128::from(limbs[1]) << 64);
-                        let digit = (magnitude >> (window * WINDOW_BITS)) & (BUCKETS - 1) as u128;
+                        let digit = (magnitude >> (window * SHARED_WINDOW_BITS))
+                            & (SHARED_WINDOW_BUCKETS - 1) as u128;
                         if digit == bucket as u128 {
                             indices.push(Self::count_of(term)? | (u32::from(sign) << 31));
                         }
@@ -1126,11 +1144,11 @@ impl CudaKernelContext {
         let indices = self.upload_u32_slice(&indices)?;
         let offsets = self.upload_u32_slice(&offsets)?;
         let mapped = self.g1_endomorphism_span(bases, 0, rows * terms)?;
-        let mut window_points = self.alloc_u64(WINDOWS * rows * 3 * FQ_LIMBS)?;
+        let mut window_points = self.alloc_u64(SHARED_WINDOWS * rows * 3 * FQ_LIMBS)?;
         let rows_arg = Self::count_of(rows)?;
-        let buckets_arg = BUCKETS as u32;
-        let windows_arg = WINDOWS as u32;
-        let bits_arg = WINDOW_BITS as u32;
+        let buckets_arg = SHARED_WINDOW_BUCKETS as u32;
+        let windows_arg = SHARED_WINDOWS as u32;
+        let bits_arg = SHARED_WINDOW_BITS as u32;
         let mut builder = self
             .stream()
             .launch_builder(self.msm_shared_scalar_windows());

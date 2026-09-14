@@ -99,7 +99,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let result = Command::new(&nvcc)
         .arg(format!("-arch={arch}"))
-        .arg("--split-compile=0")
         .arg("-Wno-deprecated-declarations")
         .arg("-cubin")
         .arg("-o")
