@@ -15,6 +15,7 @@ field-inline = ["jolt-sdk/field-inline", "dep:jolt-field", "jolt-field/field-inl
 akita = ["jolt-sdk/akita"]
 
 [dependencies]
+jolt-riscv = { path = "../../crates/jolt-riscv" }
 jolt-inlines-ntt = { workspace = true, features = ["host"], optional = true }
 jolt-openings = { path = "../../crates/jolt-openings" }
 # Registers the Blake2b inline with the tracer for the guest transcripts.

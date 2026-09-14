@@ -3,8 +3,11 @@
 use jolt_sdk::{self as jolt};
 
 extern crate alloc;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use embedded_bytecode::EMBEDDED_BYTECODE;
 use embedded_bytes::EMBEDDED_BYTES;
+use jolt::jolt_verifier::preprocessing::ProgramPreprocessing;
 #[cfg(feature = "akita")]
 use jolt::jolt_verifier::{JoltProof, JoltVerifierPreprocessing as GenericVerifierPreprocessing};
 #[cfg(feature = "akita")]
@@ -28,6 +31,10 @@ type JoltVerifierPreprocessing = GenericVerifierPreprocessing<AkitaScheme, Akita
 use serde::de::DeserializeOwned;
 
 use jolt::{end_cycle_tracking, start_cycle_tracking};
+
+mod embedded_bytecode {
+    include!("./embedded_bytecode.rs");
+}
 
 mod embedded_bytes {
     include!("./embedded_bytes.rs");
@@ -88,6 +95,27 @@ impl<'a> Records<'a> {
         bytes
     }
 
+    #[inline(never)]
+    fn preprocessing(&mut self) -> JoltVerifierPreprocessing {
+        let mut verifier_preprocessing: JoltVerifierPreprocessing = self.record();
+        if !EMBEDDED_BYTES.is_empty() && !EMBEDDED_BYTECODE.is_empty() {
+            let ProgramPreprocessing::Full(program) = &mut verifier_preprocessing.program else {
+                panic!("compiled bytecode requires full program preprocessing");
+            };
+            let program = Arc::make_mut(program);
+            assert!(
+                program.bytecode.bytecode.is_empty(),
+                "compiled bytecode placeholder is not empty"
+            );
+            assert_eq!(
+                program.bytecode.code_size, EMBEDDED_BYTECODE.len(),
+                "compiled bytecode shape mismatch"
+            );
+            program.bytecode.bytecode = EMBEDDED_BYTECODE.to_vec();
+        }
+        verifier_preprocessing
+    }
+
     fn record<T: DeserializeOwned>(&mut self) -> T {
         let bytes = self.raw();
         let (value, consumed) =
@@ -116,7 +144,8 @@ fn verify(bytes: &[u8]) -> u32 {
 
     start_cycle_tracking("deserialize preprocessing");
     #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
-    let mut verifier_preprocessing: JoltVerifierPreprocessing = setup.record();
+    let mut verifier_preprocessing = setup.preprocessing();
+
     // Setup payloads the host detached from the record (Akita's expanded
     // verifier keys), attached back as views of where they lie.
     let payload_count: u32 = setup.record();

@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
+use jolt_riscv::JoltInstructionRow;
+use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
 // Linked for its inline registration: the guest transcripts hash with the
 // Blake2b inline, which the tracer expands only for registered extensions.
 use jolt_inlines_blake2 as _;
@@ -21,6 +23,7 @@ use jolt_sdk::{
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info};
 
@@ -702,6 +705,20 @@ fn collect_guest_proofs(
 /// `embedded_bytes.rs`. The guest then takes its verifier setup from its own
 /// image and only the proofs from its input.
 fn generate_embedded_bytes(guest: GuestProgram, setup_section: &[u8], output_dir: &Path) {
+    let mut offset = 0;
+    let mut preprocessing: GuestVerifierPreprocessing =
+        read_record(setup_section, &mut offset).unwrap();
+    let bytecode = match &mut preprocessing.program {
+        VerifierProgramPreprocessing::Full(program) => {
+            std::mem::take(&mut Arc::make_mut(program).bytecode.bytecode)
+        }
+        VerifierProgramPreprocessing::Committed(_) => Vec::new(),
+    };
+    let mut compiled_setup = Vec::new();
+    push_record(&mut compiled_setup, &preprocessing);
+    compiled_setup.extend_from_slice(&setup_section[offset..]);
+    let setup_section = compiled_setup.as_slice();
+
     info!(
         "Generating embedded setup for {} guest program ({} bytes)...",
         guest.name(),
@@ -723,15 +740,45 @@ fn generate_embedded_bytes(guest: GuestProgram, setup_section: &[u8], output_dir
          pub static EMBEDDED_BYTES: &[u8] = &ALIGNED.0;\n",
         len = image.len()
     );
+    std::fs::write(
+        output_dir.join("embedded_bytecode.rs"),
+        render_embedded_bytecode(&bytecode),
+    )
+    .unwrap();
     let source_path = output_dir.join("embedded_bytes.rs");
     std::fs::write(&source_path, source).unwrap();
     info!("Embedded setup written to {}", bin_path.display());
+}
+
+/// Render owned program rows as typed constants for the already-embedded setup.
+fn render_embedded_bytecode(rows: &[JoltInstructionRow]) -> String {
+    use std::fmt::Write;
+
+    if rows.is_empty() {
+        return "use jolt_riscv::JoltInstructionRow;\npub static EMBEDDED_BYTECODE: &[JoltInstructionRow] = &[];\n".to_owned();
+    }
+    let mut source = String::from("use jolt_riscv::{JoltInstructionKind as Kind, JoltInstructionRow, JoltInstructionTag, NormalizedOperands};\npub static EMBEDDED_BYTECODE: &[JoltInstructionRow] = &[\n");
+    for row in rows {
+        writeln!(source,
+            "JoltInstructionRow {{ instruction_kind: Kind::from_tag(JoltInstructionTag({})).unwrap(), address: {}, operands: NormalizedOperands {{ rs1: {:?}, rs2: {:?}, rd: {:?}, imm: {} }}, virtual_sequence_remaining: {:?}, is_first_in_sequence: {}, is_compressed: {} }},",
+            row.instruction_kind.tag().0, row.address, row.operands.rs1, row.operands.rs2,
+            row.operands.rd, row.operands.imm, row.virtual_sequence_remaining,
+            row.is_first_in_sequence, row.is_compressed,
+        ).unwrap();
+    }
+    source.push_str("];\n");
+    source
 }
 
 /// Undo [`generate_embedded_bytes`]: an input-mode build must not carry a
 /// stale baked setup.
 fn clear_embedded_bytes(output_dir: &Path) {
     std::fs::create_dir_all(output_dir).unwrap();
+    std::fs::write(
+        output_dir.join("embedded_bytecode.rs"),
+        render_embedded_bytecode(&[]),
+    )
+    .unwrap();
     std::fs::write(
         output_dir.join("embedded_bytes.rs"),
         "pub static EMBEDDED_BYTES: &[u8] = &[];\n",

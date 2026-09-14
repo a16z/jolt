@@ -13,6 +13,7 @@ fast-alloc = ["jolt_sdk/guest-size-class-alloc", "jolt_sdk/guest-fast-mem"]
 blake2-inline = ["jolt_sdk/blake2-inline", "jolt-transcript?/blake2-inline", "jolt-akita?/blake2-inline"]
 
 [dependencies]
+jolt-riscv = { path = "../../../crates/jolt-riscv" }
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "guest-verifier",
   "thread",
