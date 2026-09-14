@@ -5,7 +5,7 @@
 | Author(s)   | @0xAndoroid                    |
 | Created     | 2026-09-14                     |
 | Status      | proposed                       |
-| PR          | TBD                            |
+| PR          | [#1863](https://github.com/a16z/jolt/pull/1863) |
 
 ## Summary
 
