@@ -1,12 +1,12 @@
 # Recursion cycle optimization
 
-The retained guest stack verifies the frozen Fibonacci proof in **72,342,179
-verification cycles /75,915,308 total rows**, with an exact repeat and output 1.
-That saves 41.63% of verification cycles against the refreshed field-inline baseline
-before the NTT work. These are trace measurements; the full outer recursion proof
-has not been generated. The [per-commit table](#guest-optimization-campaign) records
-changes on the guest branches, separate from field-inline PR #1808. The 50M target
-remains unachieved.
+The retained **embedded-setup** guest verifies the frozen Fibonacci proof in
+**65,788,119 verification cycles /66,843,409 total rows**, with an exact fresh-build
+repeat and output 1. The full trace is **265,455 rows below 2^26**. Compared with
+the preceding 75,915,308-row checkpoint, this campaign saves 9,071,899 rows
+(11.95%). These are trace measurements; the full outer recursion proof has not
+been generated. The optimizations remain on the guest branches, separate from
+field-inline PR #1808. The 50M target remains unachieved.
 
 The Akita recursion guest now checks that field-inline limb advice is canonical.
 Memory-sourced field loads also retain their ordinary address and destination
@@ -19,6 +19,93 @@ ordinal are unchanged. Its constraint binds a residue, not a canonical integer.
 The BN254 and Fp128 wrappers reject readout integers at or above the modulus.
 See [the protocol contract](field-inline-protocol.md#memory-sourced-loads-and-limb-readout).
 Previously compiled recursion guests need rebuilding.
+
+## 2^26 checkpoint (2026-09-14)
+
+The target for this campaign is the **whole expanded trace**, including setup and
+proof decoding. Its primary metric supersedes the earlier rule that both total
+rows and the verification region must be nonincreasing. In particular, compiling
+immutable bytecode into the existing `--embed` mode saves 2.43M total rows while
+adding 87,955 verification cycles. The same instruction rows are reconstructed;
+proof bytes, setup bindings, and verifier checks remain unchanged.
+
+Thirteen retained optimizations are separate commits: eight in Jolt and five in the
+Akita companion. The initial checkpoint is Jolt `12a3cd05f`, companion `17a911d6f`;
+the final implementation heads are Jolt `f37f72f81`, companion `37d8f3548`.
+
+| Optimization | Commit | Total rows | Rows saved |
+| --- | --- | ---: | ---: |
+| compiled embedded bytecode | `fef5d8240` | 73,488,357 | 2,426,951 |
+| preweighted register equality | `f55b0c5de` | 73,106,344 | 382,013 |
+| field load registers | `5f7f4221c` | 71,673,993 | 1,432,351 |
+| in-place equality merge | `bf8357db9` | 71,489,550 | 184,443 |
+| Montgomery initialization guards | `e9771da09` | 69,178,001 | 2,311,549 |
+| cached bit-pair factors | `9f4e0bb09` | 69,081,503 | 96,498 |
+| field readout registers | `423550ae8` | 68,669,341 | 412,162 |
+| dot-loop unrolling | `05fb41c01` | 68,528,069 | 141,272 |
+| aligned Rice reads | `a0ca3eac6` | 68,120,986 | 407,083 |
+| stack transcript frames | `ba4825774` | 67,919,526 | 201,460 |
+| direct SHAKE lanes | `69181ccd4` | 67,752,822 | 166,704 |
+| prepared residual tensors | `37d8f3548` | 66,855,759 | 897,063 |
+| direct ordinary-setup decode | `f37f72f81` | 66,843,409 | 12,350 |
+
+The mode distinction matters: the verification region is below 2^26 in both
+modes, while only embedded setup currently fits the entire trace into 2^26 rows.
+Both modes return 1 on the frozen proof. The final routing change saves 10,155
+rows in ordinary input mode as well as the embedded saving shown above.
+
+| Final mode | Verification cycles | Total rows |
+| --- | ---: | ---: |
+| Embedded setup | 65,788,119 | 66,843,409 |
+| Ordinary input | 65,788,163 | 71,073,184 |
+
+The source changes use the existing proved instruction families. Canonical field
+readout checks remain in place. SHAKE challenge bytes and transcript framing are
+unchanged; transcript appends retain one absorb call, including for Poseidon.
+Residual tensor tables are constructed only after the original work bound passes;
+empty destination axes return without allocating a residual expansion.
+
+Rejected experiments: binary-searching the compression cache (+378,128 rows),
+field-inline `mul_add` (+113,337), and field-inline standalone addition/subtraction
+(+752,911). Their patches and raw logs are retained in the scratch campaign.
+
+Reproduction uses `/private/tmp/akita-2pow26`, with fixed host evaluator
+`/private/tmp/guest-optimization-campaign/29-harness` and the frozen proof stream in
+`/private/tmp/guest-optimization-campaign/22-input`. Replaying the original ELF
+under this evaluator reproduces **72,342,179 /75,915,308 /output 1** exactly.
+The final guest also repeats exactly after a fresh build.
+
+```bash
+RUST_LOG=info JOLT_BACKTRACE=1 RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 \
+  JOLT_PATH=/private/tmp/jolt-field-inline-cli/bin/jolt \
+  /private/tmp/guest-optimization-campaign/29-harness trace \
+  --example fibonacci \
+  --workdir /private/tmp/guest-optimization-campaign/22-input --embed
+```
+
+Use `trace` without `--disk`: this trace-only path already streams rows to disk.
+The frozen harness contains the same embedding generator now committed in Jolt
+and the retained NTT expansion registry. A newly built `recursion` binary with
+`akita,field-inline,ntt-inline` features provides the same command.
+
+Pinned SHA-256 values:
+
+- Host evaluator: `b491719bdca2f28e72111a58a5345d38ccd155a89872b73ba2e724816c9931fd`.
+- Frozen input: `7741abc8f433b972ef68af9b8b3804840c74740537d403f93bf427ed218b53fa`.
+- Embedded guest ELF: `d45c2f391cc40b6aa7bc5fda25e2005731d9118fae27df43ab338dddda5946ac`.
+
+Validation completed during the campaign includes 30 bytecode claim tests,
+44 equality/tensor tests, 15 Rice decoding tests, 50 SHAKE challenge tests, and
+62 transcript tests. The final Akita field-inline fixture suite passes all 26
+tests; the final clear and ZK field-inline fixture suites pass 28 and 18 tests,
+respectively, including actual proof acceptance and tamper rejection. Final Clippy
+passes the full standard and ZK workspaces plus the Akita and ZK field-inline
+lanes. Legacy muldiv passes all three Akita cases and all three ZK cases.
+Formatting and the style-invariant guard pass.
+
+The comparison fixes the Fibonacci proof and compiler configuration; it is not a
+cycle bound for other programs or compiler versions. The full outer recursion
+proof remains unrun. See the scratch manifest and logs for the validation record.
 
 ## Source alignment
 
@@ -203,13 +290,13 @@ The NTT and pointwise example also generated and verified a complete small Dory
 proof after the final expansion change. Whole outer recursion proving remains
 unmeasured.
 
-The current evaluator is `/private/tmp/guest-optimization-campaign/28-harness`
+That campaign used `/private/tmp/guest-optimization-campaign/28-harness`
 (SHA-256 `dd4012ee6b97552f2e621a0b7f2653f9cf66ec716f401fd46e32888476e8623f`).
 Logs, rejected patches, captured ELFs, profiles, and per-trial measurements are in
 that directory's `STATE.md` and `events.jsonl`. Earlier harnesses retain the old
 inline expansion lengths and cannot be used for current comparisons.
 
-## Retained artifacts and remaining costs
+## Previous checkpoint: retained artifacts and remaining costs
 
 Selected-row catalog loading is retained; see
 [its contract and security argument](recursion-catalog-view.md). It preserves the
@@ -225,7 +312,7 @@ include inline expansions and must not be added again to their callers. Reaching
 50M remains unverified. Earlier quotient cutovers and new arithmetic instructions
 require separate protocol/proof work; no savings from them are assumed here.
 
-The final guest rebuild reproduced 72,342,179 verification cycles and 75,915,308
+The previous checkpoint guest rebuild reproduced 72,342,179 verification cycles and 75,915,308
 total rows. ELF SHA-256:
 `fdb5f53b72415ce35fb21e0a8aad3d8b0463eefa374c3a3d1c0e024ee7a52d06`.
 The largest exclusive PC-symbol regions in that full trace are:
