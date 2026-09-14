@@ -484,6 +484,12 @@ where
     }
 }
 
+impl<F: JoltField> BytecodeReadRafRegisterEqEvals<F> {
+    fn weighted_read_write(&self, gammas: &[F]) -> [Vec<F>; 3] {
+        std::array::from_fn(|i| self.read_write.iter().map(|eq| *eq * gammas[i]).collect())
+    }
+}
+
 /// Every bytecode row's staged values: the five gamma-folded stages, plus
 /// (lattice) the store circuit flag as the sixth staged value, folded like
 /// the others by the read-raf consumers.
@@ -497,15 +503,15 @@ where
         inputs.register_read_write_point,
         inputs.register_val_evaluation_point,
     );
+    let weighted_read_write = register_eq.weighted_read_write(inputs.stage4_gammas);
     inputs.bytecode.iter().map(move |instruction| {
         read_raf_row_values::<F>(
             instruction,
-            &register_eq.read_write,
+            &weighted_read_write,
             &register_eq.val_evaluation,
             inputs.stage1_gammas,
             inputs.stage2_gammas,
             inputs.stage3_gammas,
-            inputs.stage4_gammas,
             inputs.stage5_gammas,
         )
     })
@@ -535,6 +541,7 @@ where
         inputs.register_read_write_point,
         inputs.register_val_evaluation_point,
     );
+    let weighted_read_write = register_eq.weighted_read_write(inputs.stage4_gammas);
     let address_eq_evals = EqPolynomial::<F>::evals(inputs.r_address, None);
 
     // The base monolith publics carry the five gamma'd stages only; the
@@ -544,12 +551,11 @@ where
     for (instruction, eq_address) in inputs.bytecode.iter().zip(address_eq_evals) {
         let row_values = read_raf_row_values::<F>(
             instruction,
-            &register_eq.read_write,
+            &weighted_read_write,
             &register_eq.val_evaluation,
             inputs.stage1_gammas,
             inputs.stage2_gammas,
             inputs.stage3_gammas,
-            inputs.stage4_gammas,
             inputs.stage5_gammas,
         );
         for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
@@ -582,18 +588,13 @@ where
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Each gamma slice corresponds to one protocol subexpression."
-)]
 fn read_raf_row_values<F>(
     instruction: &JoltInstructionRow,
-    register_read_write_eq: &[F],
+    register_read_write_eq: &[Vec<F>; 3],
     register_val_evaluation_eq: &[F],
     stage1_gammas: &[F],
     stage2_gammas: &[F],
     stage3_gammas: &[F],
-    stage4_gammas: &[F],
     stage5_gammas: &[F],
 ) -> [F; NUM_BYTECODE_VAL_STAGES]
 where
@@ -651,9 +652,9 @@ where
     }
 
     let operands = instruction.integer_operands();
-    let stage4 = register_eq(operands.rd, register_read_write_eq) * stage4_gammas[0]
-        + register_eq(operands.rs1, register_read_write_eq) * stage4_gammas[1]
-        + register_eq(operands.rs2, register_read_write_eq) * stage4_gammas[2];
+    let stage4 = register_eq(operands.rd, &register_read_write_eq[0])
+        + register_eq(operands.rs1, &register_read_write_eq[1])
+        + register_eq(operands.rs2, &register_read_write_eq[2]);
 
     let mut stage5 = register_eq(operands.rd, register_val_evaluation_eq);
     if !circuit_flags.is_interleaved_operands() {
@@ -932,17 +933,17 @@ mod tests {
             stage5_gammas: &stage5_gammas,
         })
         .collect::<Vec<_>>();
+        let weighted_read_write = register_eq.weighted_read_write(&stage4_gammas);
         let expected = bytecode
             .iter()
             .map(|row| {
                 read_raf_row_values(
                     row,
-                    &register_eq.read_write,
+                    &weighted_read_write,
                     &register_eq.val_evaluation,
                     &stage1_gammas,
                     &stage2_gammas,
                     &stage3_gammas,
-                    &stage4_gammas,
                     &stage5_gammas,
                 )
             })
