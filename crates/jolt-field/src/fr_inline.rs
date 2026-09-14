@@ -33,10 +33,9 @@ pub const FUNCT3_STORE_TO_X: u32 = 6;
 pub const FUNCT3_LOAD_IMM: u32 = 7;
 /// funct7 of `FIELD_ADVICE_LIMB` (shares `FIELD_STORE_TO_X`'s funct3).
 pub const FUNCT7_ADVICE_LIMB: u32 = 1;
-/// The x-register the bridge instructions read (`a0`); the memory-sourced
-/// loads take their address base from it.
+/// The x-register read by the fixed-register bridge instructions (`a0`).
 pub const BRIDGE_X_REGISTER: u32 = 10;
-/// The scratch x-register a memory-sourced load also writes the word to (`a1`).
+/// The scratch x-register used by the fixed-register readout bridge (`a1`).
 pub const LOAD_WORD_SCRATCH_X_REGISTER: u32 = 11;
 /// funct7 of the memory-sourced loads: the family bit, the high-word bit, and
 /// the word offset (see `jolt_riscv::field_inline_load_word_funct7`).
@@ -51,20 +50,6 @@ const fn r_word(funct3: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
 #[cfg(target_arch = "riscv64")]
 const fn i_word(funct3: u32, rd: u32, imm: u32) -> u32 {
     OPCODE | (rd << 7) | (funct3 << 12) | (imm << 20)
-}
-
-/// `FIELD_LOAD_WORD[_HI] fr[fr_rd] <- mem[a0 + 8·offset_words]`, the word
-/// also written to the scratch `a1`.
-#[cfg(target_arch = "riscv64")]
-const fn load_word_encoding(fr_rd: u32, high: bool, offset_words: u32) -> u32 {
-    let funct7 =
-        FUNCT7_LOAD_WORD_FAMILY | if high { FUNCT7_LOAD_WORD_HIGH } else { 0 } | offset_words;
-    r_word(
-        FUNCT3_LOAD_FROM_X,
-        LOAD_WORD_SCRATCH_X_REGISTER,
-        BRIDGE_X_REGISTER,
-        fr_rd,
-    ) | (funct7 << 25)
 }
 
 /// `FIELD_ADVICE_LIMB a1, fr[src] -> fr[quotient]`: the low limb lands in the
@@ -155,10 +140,21 @@ mod emit {
     pub fn load_word(dst: u32, high: bool, offset: usize, base: *const u64) {
         macro_rules! word {
             ($rd:expr, $high:expr, $offset:expr) => {
-                // SAFETY: one fixed field-inline word; a0 carries the address
-                // base, a1 receives the loaded word.
+                // SAFETY: one field-inline load from the live limb pointer.
+                // The integer destination is scratch; the field destination
+                // remains fixed while LLVM allocates the address register.
                 unsafe {
-                    core::arch::asm!(".word {w}", w = const load_word_encoding($rd, $high, $offset), in("x10") base, out("x11") _, options(nostack, readonly));
+                    core::arch::asm!(
+                        ".insn r {opcode}, {funct3}, {funct7}, {scratch}, {base}, x{field}",
+                        opcode = const OPCODE,
+                        funct3 = const FUNCT3_LOAD_FROM_X,
+                        funct7 = const FUNCT7_LOAD_WORD_FAMILY
+                            | if $high { FUNCT7_LOAD_WORD_HIGH } else { 0 } | $offset,
+                        field = const $rd,
+                        base = in(reg) base,
+                        scratch = lateout(reg) _,
+                        options(nostack, readonly),
+                    );
                 }
             };
         }
