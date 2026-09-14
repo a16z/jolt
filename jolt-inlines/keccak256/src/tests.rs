@@ -1,7 +1,11 @@
 #![cfg(all(test, feature = "host"))]
 
 mod exec {
-    use crate::sequence_builder::{Keccak256AbsorbPermutation, Keccak256Permutation};
+    use crate::sequence_builder::{
+        Keccak256AbsorbPermutation, Keccak256AbsorbPermutationUnaligned,
+        Keccak256InitAbsorbPermutation, Keccak256InitAbsorbPermutationUnaligned,
+        Keccak256Permutation,
+    };
     use jolt_inlines_sdk::{
         assert_edge_cases_match_reference, assert_random_cases_match_reference,
     };
@@ -20,6 +24,30 @@ mod exec {
     fn test_keccak256_absorb_permute_direct_execution() {
         assert_edge_cases_match_reference::<Keccak256AbsorbPermutation>();
         assert_random_cases_match_reference::<Keccak256AbsorbPermutation>(0x00AB_50BB, 100);
+    }
+
+    #[test]
+    fn test_keccak256_init_absorb_permute_direct_execution() {
+        assert_edge_cases_match_reference::<Keccak256InitAbsorbPermutation>();
+        assert_random_cases_match_reference::<Keccak256InitAbsorbPermutation>(0x1A17_AB50, 100);
+    }
+
+    #[test]
+    fn test_keccak256_absorb_permute_unaligned_direct_execution() {
+        assert_edge_cases_match_reference::<Keccak256AbsorbPermutationUnaligned>();
+        assert_random_cases_match_reference::<Keccak256AbsorbPermutationUnaligned>(
+            0x0AB5_0BB7,
+            100,
+        );
+    }
+
+    #[test]
+    fn test_keccak256_init_absorb_permute_unaligned_direct_execution() {
+        assert_edge_cases_match_reference::<Keccak256InitAbsorbPermutationUnaligned>();
+        assert_random_cases_match_reference::<Keccak256InitAbsorbPermutationUnaligned>(
+            0x1A17_0BB7,
+            100,
+        );
     }
 
     #[test]
@@ -147,5 +175,47 @@ mod exec_unit {
         // Iota has a different signature; apply it separately and check final snapshot.
         execute_iota(&mut state, ROUND_CONSTANTS[round]);
         assert_eq!(state, expected_states.iota, "round 1: mismatch after iota");
+    }
+}
+
+mod rows {
+    use std::collections::BTreeMap;
+
+    use tracer::instruction::Instruction;
+    use tracer::utils::inline_test_harness::InlineTestHarness;
+    use tracer::utils::virtual_registers::VirtualRegisterAllocator;
+
+    use crate::{
+        INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3,
+        KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3,
+        KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3,
+    };
+
+    fn inline_rows(funct3: u32) -> (usize, BTreeMap<&'static str, usize>) {
+        let instruction =
+            InlineTestHarness::create_default_instruction(INLINE_OPCODE, funct3, KECCAK256_FUNCT7);
+        let sequence = instruction.inline_sequence(&VirtualRegisterAllocator::default());
+        let mut histogram = BTreeMap::new();
+        for instruction in &sequence {
+            let mnemonic: &'static str = <&Instruction>::into(instruction);
+            *histogram.entry(mnemonic).or_default() += 1;
+        }
+        (sequence.len(), histogram)
+    }
+
+    /// Exact row counts: the 24 rounds plus state/block traffic and the 37
+    /// register resets. A change that adds rows edits these on purpose.
+    #[test]
+    fn test_keccak256_inline_rows() {
+        for (funct3, expected) in [
+            (KECCAK256_FUNCT3, 3087),
+            (KECCAK256_ABSORB_PERMUTE_FUNCT3, 3121),
+            (KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3, 3066),
+            (KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3, 3181),
+            (KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3, 3126),
+        ] {
+            let (rows, histogram) = inline_rows(funct3);
+            assert_eq!(rows, expected, "funct3 {funct3:#x}: {histogram:?}");
+        }
     }
 }

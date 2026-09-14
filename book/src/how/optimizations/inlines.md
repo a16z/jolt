@@ -64,6 +64,10 @@ Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order
 | SHA256        | 0x0B   | 0x00   | 0x00   | SHA-256 compression with existing state and big-endian input block    |
 | SHA256INIT    | 0x0B   | 0x00   | 0x01   | SHA-256 compression with initial constants and big-endian input block |
 | KECCAK256     | 0x0B   | 0x01   | 0x00   | Keccak-256 permutation                     |
+| KECCAK256ABSORB | 0x0B | 0x01   | 0x01   | Keccak-256 absorb of an 8-aligned 136-byte block, then permutation |
+| KECCAK256INIT | 0x0B   | 0x01   | 0x02   | Keccak-256 absorb of an 8-aligned block into the zero state, then permutation |
+| KECCAK256ABSORBUNALIGNED | 0x0B | 0x01 | 0x03 | KECCAK256ABSORB for a block at any alignment |
+| KECCAK256INITUNALIGNED | 0x0B | 0x01 | 0x04 | KECCAK256INIT for a block at any alignment |
 | BLAKE2B       | 0x0B   | 0x02   | 0x00   | BLAKE2b compression                        |
 | BLAKE3        | 0x0B   | 0x03   | 0x00   | BLAKE3 compression                         |
 | BLAKE3KEYED64 | 0x0B   | 0x03   | 0x01   | BLAKE3 compression keyed                   |
