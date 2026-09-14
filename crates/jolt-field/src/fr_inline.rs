@@ -337,11 +337,10 @@ mod guest {
     }
 
     #[inline(always)]
-    fn ensure_constants() {
+    fn ensure_montgomery_constants() {
         if READY.load(Ordering::Relaxed) {
             return;
         }
-        emit::load_imm_zero();
         load(REG_RINV, &BN254_RINV);
         load(REG_R2, &BN254_R2);
         READY.store(true, Ordering::Relaxed);
@@ -375,7 +374,6 @@ mod guest {
 
     #[inline(always)]
     pub fn add<const N: usize>(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
-        ensure_constants();
         load(REG_A, a);
         load(REG_B, b);
         emit::add_out();
@@ -383,7 +381,6 @@ mod guest {
     }
     #[inline(always)]
     pub fn sub<const N: usize>(a: &[u64; N], b: &[u64; N]) -> [u64; N] {
-        ensure_constants();
         load(REG_A, a);
         load(REG_B, b);
         emit::sub_out();
@@ -391,7 +388,7 @@ mod guest {
     }
     #[inline(always)]
     pub fn neg<const N: usize>(a: &[u64; N]) -> [u64; N] {
-        ensure_constants();
+        emit::load_imm_zero();
         load(REG_A, a);
         emit::neg_out();
         finish()
@@ -399,11 +396,11 @@ mod guest {
     /// `montgomery`: correct the product of two Montgomery representatives by R⁻¹.
     #[inline(always)]
     pub fn mul<const N: usize>(a: &[u64; N], b: &[u64; N], montgomery: bool) -> [u64; N] {
-        ensure_constants();
         load(REG_A, a);
         load(REG_B, b);
         emit::mul_out();
         if montgomery {
+            ensure_montgomery_constants();
             emit::mul_out_rinv();
         }
         finish()
@@ -416,7 +413,6 @@ mod guest {
     /// Canonical (non-Montgomery) limbs only.
     #[inline(always)]
     pub fn dot<const N: usize>(a: &[[u64; N]], b: &[[u64; N]]) -> [u64; N] {
-        ensure_constants();
         emit::acc_zero();
         for (x, y) in a.iter().zip(b) {
             load(REG_A, x);
@@ -439,7 +435,6 @@ mod guest {
         weights: &[[u64; N]],
         pows: &[[u64; N]],
     ) -> [u64; N] {
-        ensure_constants();
         let len = pows.len();
         assert_eq!(rows.len(), weights.len(), "one weight per row");
         assert!(
@@ -500,10 +495,10 @@ mod guest {
 
     #[inline(always)]
     pub fn inv<const N: usize>(a: &[u64; N], montgomery: bool) -> [u64; N] {
-        ensure_constants();
         load(REG_A, a);
         emit::inv_out();
         if montgomery {
+            ensure_montgomery_constants();
             emit::mul_out_r2();
         }
         finish()
