@@ -33,10 +33,6 @@ pub const FUNCT3_STORE_TO_X: u32 = 6;
 pub const FUNCT3_LOAD_IMM: u32 = 7;
 /// funct7 of `FIELD_ADVICE_LIMB` (shares `FIELD_STORE_TO_X`'s funct3).
 pub const FUNCT7_ADVICE_LIMB: u32 = 1;
-/// The x-register read by the fixed-register bridge instructions (`a0`).
-pub const BRIDGE_X_REGISTER: u32 = 10;
-/// The scratch x-register used by the fixed-register readout bridge (`a1`).
-pub const LOAD_WORD_SCRATCH_X_REGISTER: u32 = 11;
 /// funct7 of the memory-sourced loads: the family bit, the high-word bit, and
 /// the word offset (see `jolt_riscv::field_inline_load_word_funct7`).
 pub const FUNCT7_LOAD_WORD_FAMILY: u32 = 0x40;
@@ -50,24 +46,6 @@ const fn r_word(funct3: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
 #[cfg(target_arch = "riscv64")]
 const fn i_word(funct3: u32, rd: u32, imm: u32) -> u32 {
     OPCODE | (rd << 7) | (funct3 << 12) | (imm << 20)
-}
-
-/// `FIELD_ADVICE_LIMB a1, fr[src] -> fr[quotient]`: the low limb lands in the
-/// scratch `a1`, the quotient in `fr[quotient]`.
-#[cfg(target_arch = "riscv64")]
-const fn advice_limb_word(src: u32, quotient: u32) -> u32 {
-    r_word(
-        FUNCT3_STORE_TO_X,
-        LOAD_WORD_SCRATCH_X_REGISTER,
-        src,
-        quotient,
-    ) | (FUNCT7_ADVICE_LIMB << 25)
-}
-
-/// `FIELD_STORE_TO_X a1, fr[src]`: the (sub-2^64) value lands in `a1`.
-#[cfg(target_arch = "riscv64")]
-const fn store_to_x_word(src: u32) -> u32 {
-    r_word(FUNCT3_STORE_TO_X, LOAD_WORD_SCRATCH_X_REGISTER, src, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +158,7 @@ mod emit {
         }
     }
 
-    /// Supply a 64-bit limb with `fr[quotient] = (fr[src] − a1) / 2^64`.
+    /// Supply a 64-bit limb with `fr[quotient] = (fr[src] − limb) / 2^64`.
     /// The honest tracer chooses the canonical low limb. This row alone
     /// does not enforce that choice.
     #[inline(always)]
@@ -188,9 +166,15 @@ mod emit {
         macro_rules! word {
             ($src:expr, $quotient:expr) => {{
                 let low: u64;
-                // SAFETY: one fixed field-inline word; a1 receives the limb.
+                // SAFETY: one field-inline word, with a compiler-allocated integer output.
                 unsafe {
-                    core::arch::asm!(".word {w}", w = const advice_limb_word($src, $quotient), out("x11") low, options(nostack, nomem));
+                    core::arch::asm!(
+                        ".insn r {opcode}, {funct3}, {funct7}, {low}, x{src}, x{quotient}",
+                        opcode = const OPCODE, funct3 = const FUNCT3_STORE_TO_X,
+                        funct7 = const FUNCT7_ADVICE_LIMB,
+                        src = const $src, quotient = const $quotient,
+                        low = lateout(reg) low, options(nostack, nomem),
+                    );
                 }
                 low
             }};
@@ -212,15 +196,20 @@ mod emit {
         }
     }
 
-    /// `a1 = fr[src]` for a value below 2^64 (the last quotient of a readout).
+    /// Read `fr[src]` below 2^64 (the last quotient of a readout).
     #[inline(always)]
     pub fn store_to_x(src: u32) -> u64 {
         macro_rules! word {
             ($src:expr) => {{
                 let value: u64;
-                // SAFETY: one fixed field-inline word; a1 receives the value.
+                // SAFETY: one field-inline word, with a compiler-allocated integer output.
                 unsafe {
-                    core::arch::asm!(".word {w}", w = const store_to_x_word($src), out("x11") value, options(nostack, nomem));
+                    core::arch::asm!(
+                        ".insn r {opcode}, {funct3}, 0, {value}, x{src}, x0",
+                        opcode = const OPCODE, funct3 = const FUNCT3_STORE_TO_X,
+                        src = const $src, value = lateout(reg) value,
+                        options(nostack, nomem),
+                    );
                 }
                 value
             }};
