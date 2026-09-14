@@ -108,7 +108,8 @@ impl<'a> Records<'a> {
                 "compiled bytecode placeholder is not empty"
             );
             assert_eq!(
-                program.bytecode.code_size, EMBEDDED_BYTECODE.len(),
+                program.bytecode.code_size,
+                EMBEDDED_BYTECODE.len(),
                 "compiled bytecode shape mismatch"
             );
             program.bytecode.bytecode = EMBEDDED_BYTECODE.to_vec();
@@ -144,7 +145,11 @@ fn verify(bytes: &[u8]) -> u32 {
 
     start_cycle_tracking("deserialize preprocessing");
     #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
-    let mut verifier_preprocessing = setup.preprocessing();
+    let mut verifier_preprocessing = if EMBEDDED_BYTES.is_empty() {
+        setup.record()
+    } else {
+        setup.preprocessing()
+    };
 
     // Setup payloads the host detached from the record (Akita's expanded
     // verifier keys), attached back as views of where they lie.
