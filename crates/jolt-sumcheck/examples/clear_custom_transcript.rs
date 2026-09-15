@@ -2,8 +2,8 @@ use jolt_field::{Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof, ClearSumcheckRecorder,
-    ProveRounds, SequentialRounds, SumcheckClaim, SumcheckProof, SumcheckRecorder,
-    SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
+    SumcheckVerifier, SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_transcript::Transcript;
 
@@ -42,20 +42,20 @@ impl ProveRounds<F> for LinearRound {
         bind: Option<F>,
         round: usize,
         previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, jolt_sumcheck::SumcheckError<F>> {
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         assert!(bind.is_none());
         assert_eq!(round, 0);
         assert_eq!(previous_claim, F::from_u64(8));
         Ok(UnivariatePoly::new(vec![F::from_u64(3), F::from_u64(2)]))
     }
 
-    fn finish_rounds(&mut self, bind: F) -> Result<(), jolt_sumcheck::SumcheckError<F>> {
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
         assert_eq!(bind, F::from_u64(7));
         Ok(())
     }
 }
 
-fn main() -> Result<(), jolt_sumcheck::SumcheckError<F>> {
+fn main() -> Result<(), SumcheckError<F>> {
     // g(X) = 3 + 2X, so g(0) + g(1) = 8.
     let claim = SumcheckClaim::new(1, 1, F::from_u64(8));
     let prelude = BatchPrelude::try_new(
@@ -86,10 +86,7 @@ fn main() -> Result<(), jolt_sumcheck::SumcheckError<F>> {
     };
 
     let mut verifier_transcript = FixedTranscript::new(b"external-sumcheck-example");
-    verifier_transcript.append_labeled(
-        jolt_sumcheck::SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
-        &claim.claimed_sum,
-    );
+    verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &claim.claimed_sum);
     let reduced = SumcheckVerifier::verify_compressed(
         &claim,
         &proof,

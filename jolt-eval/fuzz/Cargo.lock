@@ -1401,6 +1401,7 @@ dependencies = [
  "cc",
  "num-traits",
  "rand_core 0.6.4",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -1498,6 +1499,7 @@ name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -1621,7 +1623,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
- "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",

@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Point, HIGH_TO_LOW};
 
+#[cfg(feature = "transcript")]
+use jolt_field::JoltField;
+#[cfg(feature = "transcript")]
+use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+
 /// An evaluation of a multilinear polynomial at a point.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationClaim<F> {
@@ -19,13 +24,11 @@ impl<F> EvaluationClaim<F> {
 }
 
 #[cfg(feature = "transcript")]
-impl<F> jolt_transcript::AppendToTranscript for EvaluationClaim<F>
+impl<F> AppendToTranscript for EvaluationClaim<F>
 where
-    F: jolt_field::JoltField,
+    F: JoltField,
 {
-    fn append_to_transcript<T: jolt_transcript::Transcript>(&self, transcript: &mut T) {
-        use jolt_transcript::{Label, LabelWithCount};
-
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         transcript.append(&LabelWithCount(b"opening_point", self.point.len() as u64));
         for coordinate in self.point.as_slice() {
             coordinate.append_to_transcript(transcript);

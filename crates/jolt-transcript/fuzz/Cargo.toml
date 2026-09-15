@@ -21,7 +21,11 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-transcript = { path = "..", features = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"] }
+jolt-transcript = { path = "..", features = [
+  "transcript-blake2b",
+  "transcript-keccak",
+  "transcript-poseidon",
+] }
 
 [[bin]]
 name = "transcript_no_panic"

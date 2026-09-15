@@ -37,7 +37,11 @@ akita-transcript.workspace = true
 akita-types.workspace = true
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
 criterion = { workspace = true }
-jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b", "transcript-keccak"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+  "transcript-keccak",
+] }
 serde_json = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }

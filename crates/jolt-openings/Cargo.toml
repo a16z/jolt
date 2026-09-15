@@ -11,8 +11,10 @@ workspace = true
 [dependencies]
 jolt-crypto = { path = "../jolt-crypto", default-features = false }
 jolt-field = { path = "../jolt-field", default-features = false }
-jolt-poly = { path = "../jolt-poly", default-features = false, features = ["transcript"] }
-jolt-transcript.workspace = true
+jolt-poly = { path = "../jolt-poly", default-features = false, features = [
+  "transcript",
+] }
+jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -25,7 +27,10 @@ parallel = ["jolt-crypto/parallel", "jolt-poly/parallel"]
 [dev-dependencies]
 jolt-dory.workspace = true
 jolt-crypto = { workspace = true, features = ["bn254"] }
-jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 rand.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true

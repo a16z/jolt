@@ -12,10 +12,15 @@ categories = ["cryptography", "no-std"]
 workspace = true
 
 [features]
-default = []
+default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 spongefish = ["dep:rand", "dep:spongefish", "spongefish/sha3"]
 digest = ["dep:digest"]
-bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254", "spongefish?/ark-ff"]
+bn254 = [
+  "dep:ark-bn254",
+  "dep:ark-ff",
+  "jolt-field/bn254",
+  "spongefish?/ark-ff",
+]
 transcript-blake2b = ["spongefish", "digest", "spongefish/blake2", "dep:blake2"]
 transcript-keccak = ["spongefish", "spongefish/keccak"]
 transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
@@ -37,7 +42,11 @@ criterion = { workspace = true }
 [[bench]]
 name = "transcript_ops"
 harness = false
-required-features = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
+required-features = [
+  "transcript-blake2b",
+  "transcript-keccak",
+  "transcript-poseidon",
+]
 
 [[test]]
 name = "blake2b_tests"

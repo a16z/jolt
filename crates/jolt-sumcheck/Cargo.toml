@@ -7,7 +7,12 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
 default = []
-parallel = ["jolt-field/parallel", "jolt-poly/parallel", "jolt-crypto?/parallel", "jolt-r1cs?/parallel"]
+parallel = [
+  "jolt-field/parallel",
+  "jolt-poly/parallel",
+  "jolt-crypto?/parallel",
+  "jolt-r1cs?/parallel",
+]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
@@ -31,7 +36,11 @@ thiserror.workspace = true
 [dev-dependencies]
 jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["bn254", "solinas"] }
-jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b", "transcript-keccak"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+  "transcript-keccak",
+] }
 num-traits = { workspace = true }
 rand_core = { workspace = true }
 

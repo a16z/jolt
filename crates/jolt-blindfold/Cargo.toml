@@ -24,6 +24,9 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jolt-field = { workspace = true, features = ["bn254"] }
-jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 rand_chacha.workspace = true
 rand_core.workspace = true

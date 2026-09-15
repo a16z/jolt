@@ -3191,7 +3191,6 @@ dependencies = [
  "akita-planner",
  "akita-prover",
  "akita-schedules",
- "akita-transcript",
  "akita-types",
  "bincode 2.0.1",
  "jolt-crypto",
