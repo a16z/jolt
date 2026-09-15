@@ -62,6 +62,7 @@ mod compressed_univariate;
 mod dense;
 mod eq;
 mod eq_plus_one;
+mod evaluation_claim;
 mod identity;
 pub mod lagrange;
 mod lt;
@@ -79,6 +80,7 @@ pub use eq::{
     boolean_bits_msb, boolean_index_msb, boolean_point_msb, eq_index_msb, try_eq_mle, EqPolynomial,
 };
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
+pub use evaluation_claim::EvaluationClaim;
 pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;
 pub use mle::{

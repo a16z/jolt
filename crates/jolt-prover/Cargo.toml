@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 default = ["parallel"]
-parallel = ["jolt-kernels/parallel", "dep:rayon"]
+parallel = ["jolt-crypto/parallel", "jolt-kernels/parallel", "jolt-sumcheck/parallel", "dep:rayon"]
 prover-fixtures = ["jolt-prover-legacy/host"]
 # The packed (lattice/Akita) protocol. Like jolt-verifier, one compiled
 # prover proves exactly one protocol: this feature swaps the proof shape to
@@ -40,6 +40,7 @@ zk = [
   "jolt-kernels/zk",
   "dep:jolt-blindfold",
   "dep:rand_core",
+  "jolt-sumcheck/committed",
   # Dev-dependency forward (the jolt-verifier `zk` feature does the same):
   # the ZK e2e builds its preprocessing through legacy host code, which
   # carries the BlindFold vector-commitment setup only in its own zk mode.

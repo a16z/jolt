@@ -7,6 +7,7 @@ use ark_bn254::{Fr, G2Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};
 use ark_std::Zero;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::decomp_4d::decompose_scalar_4d;
@@ -18,8 +19,7 @@ use super::frobenius::frobenius_psi_power_projective;
 pub fn glv_four_scalar_mul_online(scalar: Fr, points: &[G2Projective]) -> Vec<G2Projective> {
     let (coeffs, signs) = decompose_scalar_4d(scalar);
 
-    points
-        .par_iter()
+    cfg_iter!(points)
         .map(|point| {
             let bases = [
                 *point,

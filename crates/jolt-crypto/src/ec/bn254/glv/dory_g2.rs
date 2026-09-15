@@ -1,6 +1,7 @@
 //! Vector-scalar operations on G2 using 4D GLV with Frobenius, for Dory inner-product argument rounds.
 
 use ark_bn254::{Fr, G2Projective};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::decomp_4d::decompose_scalar_4d;
@@ -16,8 +17,8 @@ pub fn vector_add_scalar_mul_g2_online(
     assert_eq!(v.len(), generators.len());
     let (coeffs, signs) = decompose_scalar_4d(scalar);
 
-    v.par_iter_mut()
-        .zip(generators.par_iter())
+    cfg_iter_mut!(v)
+        .zip(cfg_iter!(generators))
         .for_each(|(vi, gen)| {
             let bases = [
                 *gen,
@@ -38,8 +39,8 @@ pub fn vector_scalar_mul_add_gamma_g2_online(
     assert_eq!(v.len(), gamma.len());
     let (coeffs, signs) = decompose_scalar_4d(scalar);
 
-    v.par_iter_mut()
-        .zip(gamma.par_iter())
+    cfg_iter_mut!(v)
+        .zip(cfg_iter!(gamma))
         .for_each(|(vi, &gamma_i)| {
             let bases = [
                 *vi,

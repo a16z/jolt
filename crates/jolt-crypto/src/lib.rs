@@ -21,8 +21,38 @@
     clippy::wildcard_enum_match_arm
 )]
 
+#[cfg(all(feature = "bn254", feature = "parallel"))]
+macro_rules! cfg_iter {
+    ($values:expr) => {
+        $values.par_iter()
+    };
+}
+
+#[cfg(all(feature = "bn254", not(feature = "parallel")))]
+macro_rules! cfg_iter {
+    ($values:expr) => {
+        $values.iter()
+    };
+}
+
+#[cfg(all(feature = "bn254", feature = "parallel"))]
+macro_rules! cfg_iter_mut {
+    ($values:expr) => {
+        $values.par_iter_mut()
+    };
+}
+
+#[cfg(all(feature = "bn254", not(feature = "parallel")))]
+macro_rules! cfg_iter_mut {
+    ($values:expr) => {
+        $values.iter_mut()
+    };
+}
+
 pub mod ec;
-pub use ec::{JoltGroup, PairingGroup, Pedersen, PedersenSetup};
+pub use ec::{JoltGroup, PairingGroup};
+#[cfg(feature = "bn254")]
+pub use ec::{Pedersen, PedersenSetup};
 
 mod commitment;
 pub use commitment::{

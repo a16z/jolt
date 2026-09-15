@@ -53,6 +53,6 @@ common = { workspace = true, features = ["std"] }
 jolt-claims = { workspace = true, features = ["test-utils"] }
 jolt-dory.workspace = true
 jolt-witness = { workspace = true, features = ["test-utils"] }
-jolt-transcript.workspace = true
+jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
 rand_chacha.workspace = true
 rand_core.workspace = true

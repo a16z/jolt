@@ -1,0 +1,13 @@
+[package]
+name = "jolt-sumcheck-external-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+jolt-field = { path = "../../../jolt-field", default-features = false, features = ["solinas"] }
+jolt-poly = { path = "../../../jolt-poly", default-features = false }
+jolt-sumcheck = { path = "../..", default-features = false }
+jolt-transcript = { path = "../../../jolt-transcript", default-features = false }

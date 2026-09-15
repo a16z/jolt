@@ -286,9 +286,7 @@ blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false, features = [
-  "sha3",
-] }
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.4.2", features = [
   "backends",

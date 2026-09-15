@@ -19,7 +19,7 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-default = ["bn254"]
+default = ["bn254", "parallel"]
 bn254 = [
   "dep:ark-bn254",
   "dep:ark-ec",
@@ -29,14 +29,14 @@ bn254 = [
   "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
-  "parallel",
+  "jolt-field/bn254",
 ]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
 
 [dependencies]
-jolt-field = { path = "../jolt-field" }
+jolt-field = { path = "../jolt-field", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
-jolt-transcript = { path = "../jolt-transcript" }
+jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 
@@ -57,6 +57,7 @@ rand_chacha = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
+jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
 
 [[test]]
 name = "coverage"

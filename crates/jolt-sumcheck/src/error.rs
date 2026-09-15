@@ -40,6 +40,36 @@ pub enum SumcheckError<F: Field> {
         max_num_vars: usize,
     },
 
+    /// A batch member declared more rounds than the batch contains.
+    #[error("batch member {member} has {rounds} rounds, exceeding batch size {max_num_vars}")]
+    BatchMemberRoundsOutOfRange {
+        member: usize,
+        rounds: usize,
+        max_num_vars: usize,
+    },
+
+    /// The field implementation cannot represent this batch's padding scale.
+    #[error("batch member {member} requires unsupported padding exponent {exponent}")]
+    BatchPaddingExponentOutOfRange { member: usize, exponent: usize },
+
+    /// A batch activation window overflowed `usize`.
+    #[error(
+        "batch member {member}: activation window overflow for offset {offset}, rounds {rounds}"
+    )]
+    BatchMemberWindowOverflow {
+        member: usize,
+        offset: usize,
+        rounds: usize,
+    },
+
+    /// The selected field has no multiplicative inverse for two.
+    #[error("sumcheck batching requires a field where 2 is invertible")]
+    TwoNotInvertible,
+
+    /// Adding one to the declared degree overflowed `usize`.
+    #[error("sumcheck degree {degree} cannot be represented with its coefficient count")]
+    DegreeOverflow { degree: usize },
+
     /// A round polynomial encoded in compressed form had fewer than two
     /// coefficients, so there is no linear term to omit. Any valid
     /// compressed sumcheck round polynomial has degree ≥ 1.

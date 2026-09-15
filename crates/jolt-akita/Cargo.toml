@@ -37,6 +37,7 @@ tracing.workspace = true
 bincode.workspace = true
 criterion = { workspace = true }
 jolt-dory = { workspace = true }
+jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
 # Subscriber stack only (bench tracing setup); no summary pipeline.
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
 serde_json = { workspace = true, features = ["std"] }

@@ -14,7 +14,7 @@ jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
-jolt-sumcheck = { workspace = true, features = ["r1cs"] }
+jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rand_core.workspace = true
@@ -24,5 +24,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 jolt-field = { workspace = true, features = ["bn254"] }
+jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
 rand_chacha.workspace = true
 rand_core.workspace = true

@@ -3616,6 +3616,7 @@ dependencies = [
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
+ "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand 0.8.7",
@@ -3832,7 +3833,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
- "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
