@@ -43,22 +43,33 @@ pub enum SumcheckError<F: Field> {
     /// A batch member declared more rounds than the batch contains.
     #[error("batch member {member} has {rounds} rounds, exceeding batch size {max_num_vars}")]
     BatchMemberRoundsOutOfRange {
+        /// Zero-indexed member position (declaration order).
         member: usize,
+        /// Round count declared for this member.
         rounds: usize,
+        /// The batch's total round count.
         max_num_vars: usize,
     },
 
     /// The field implementation cannot represent this batch's padding scale.
     #[error("batch member {member} requires unsupported padding exponent {exponent}")]
-    BatchPaddingExponentOutOfRange { member: usize, exponent: usize },
+    BatchPaddingExponentOutOfRange {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// `max_num_vars - rounds`, which `Ring::mul_pow_2` cannot represent above 255.
+        exponent: usize,
+    },
 
     /// A batch activation window overflowed `usize`.
     #[error(
         "batch member {member}: activation window overflow for offset {offset}, rounds {rounds}"
     )]
     BatchMemberWindowOverflow {
+        /// Zero-indexed member position (declaration order).
         member: usize,
+        /// The member's activation offset.
         offset: usize,
+        /// The member's round count.
         rounds: usize,
     },
 

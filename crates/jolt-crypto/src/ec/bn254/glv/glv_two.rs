@@ -56,23 +56,21 @@ impl PrecomputedShamir2Table {
     fn new(bases: &[G1Projective; 2]) -> Self {
         let mut table = [G1Projective::zero(); 16];
 
-        cfg_iter_mut!(&mut table)
-            .enumerate()
-            .for_each(|(idx, point)| {
-                let point_mask = idx & 0x3;
-                let sign_mask = idx >> 2;
+        cfg_iter_mut!(table).enumerate().for_each(|(idx, point)| {
+            let point_mask = idx & 0x3;
+            let sign_mask = idx >> 2;
 
-                *point = G1Projective::zero();
-                for (i, &base) in bases.iter().enumerate() {
-                    if (point_mask >> i) & 1 == 1 {
-                        if (sign_mask >> i) & 1 == 1 {
-                            *point -= base;
-                        } else {
-                            *point += base;
-                        }
+            *point = G1Projective::zero();
+            for (i, &base) in bases.iter().enumerate() {
+                if (point_mask >> i) & 1 == 1 {
+                    if (sign_mask >> i) & 1 == 1 {
+                        *point -= base;
+                    } else {
+                        *point += base;
                     }
                 }
-            });
+            }
+        });
 
         Self { table }
     }

@@ -72,36 +72,7 @@ impl<F: JoltField> BatchPrelude<F> {
         max_num_vars: usize,
         max_degree: usize,
     ) -> Result<Self, SumcheckError<F>> {
-        for (member, described) in members.iter().enumerate() {
-            let exponent = max_num_vars.checked_sub(described.rounds).ok_or(
-                SumcheckError::BatchMemberRoundsOutOfRange {
-                    member,
-                    rounds: described.rounds,
-                    max_num_vars,
-                },
-            )?;
-            if exponent > 255 {
-                return Err(SumcheckError::BatchPaddingExponentOutOfRange { member, exponent });
-            }
-            let window_end = described.offset.checked_add(described.rounds).ok_or(
-                SumcheckError::BatchMemberWindowOverflow {
-                    member,
-                    offset: described.offset,
-                    rounds: described.rounds,
-                },
-            )?;
-            if window_end > max_num_vars {
-                return Err(SumcheckError::BatchMemberWindowOutOfRange {
-                    member,
-                    offset: described.offset,
-                    rounds: described.rounds,
-                    max_num_vars,
-                });
-            }
-        }
-        if max_num_vars > 0 && max_degree == 0 {
-            return Err(SumcheckError::ZeroBatchDegree { max_num_vars });
-        }
+        validate_batch_dimensions(&members, max_num_vars, max_degree)?;
         let claimed_sum = members
             .iter()
             .map(|member| {
@@ -115,6 +86,49 @@ impl<F: JoltField> BatchPrelude<F> {
             max_degree,
         })
     }
+
+    pub(crate) fn validate(&self) -> Result<(), SumcheckError<F>> {
+        validate_batch_dimensions(&self.members, self.max_num_vars, self.max_degree)
+    }
+}
+
+fn validate_batch_dimensions<F: JoltField>(
+    members: &[BatchMember<F>],
+    max_num_vars: usize,
+    max_degree: usize,
+) -> Result<(), SumcheckError<F>> {
+    for (member, described) in members.iter().enumerate() {
+        let exponent = max_num_vars.checked_sub(described.rounds).ok_or(
+            SumcheckError::BatchMemberRoundsOutOfRange {
+                member,
+                rounds: described.rounds,
+                max_num_vars,
+            },
+        )?;
+        // `Ring::mul_pow_2` panics above 255.
+        if exponent > 255 {
+            return Err(SumcheckError::BatchPaddingExponentOutOfRange { member, exponent });
+        }
+        let window_end = described.offset.checked_add(described.rounds).ok_or(
+            SumcheckError::BatchMemberWindowOverflow {
+                member,
+                offset: described.offset,
+                rounds: described.rounds,
+            },
+        )?;
+        if window_end > max_num_vars {
+            return Err(SumcheckError::BatchMemberWindowOutOfRange {
+                member,
+                offset: described.offset,
+                rounds: described.rounds,
+                max_num_vars,
+            });
+        }
+    }
+    if max_num_vars > 0 && max_degree == 0 {
+        return Err(SumcheckError::ZeroBatchDegree { max_num_vars });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

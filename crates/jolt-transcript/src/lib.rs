@@ -77,10 +77,13 @@ pub use verifier::VerifierTranscript;
 
 #[cfg(feature = "transcript-blake2b")]
 use blake2::{digest::consts::U32, Blake2b};
-#[cfg(any(
-    all(feature = "bn254", feature = "transcript-blake2b"),
-    all(feature = "bn254", feature = "transcript-keccak"),
-    feature = "transcript-poseidon"
+#[cfg(all(
+    feature = "bn254",
+    any(
+        feature = "transcript-blake2b",
+        feature = "transcript-keccak",
+        feature = "transcript-poseidon"
+    )
 ))]
 use jolt_field::Fr;
 #[cfg(feature = "transcript-blake2b")]

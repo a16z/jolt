@@ -48,10 +48,6 @@ jolt-poly = { git = "https://github.com/a16z/jolt", rev = "FULL_COMMIT_SHA", def
 jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "FULL_COMMIT_SHA", default-features = false }
 ```
 
-This branch's external-consumer validation used implementation revision
-`5a01f83ce8da90afc942be8af7256fcd5e627fd0`. Use a reachable revision from the
-upstream repository after the branch is pushed.
-
 Cargo only honors `[patch]` tables in the consuming workspace root. The minimal
 configuration above does not require Jolt's Arkworks patches. BN254 and Poseidon
 consumers must copy the exact Arkworks patch/source requirements documented by

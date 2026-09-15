@@ -220,29 +220,9 @@ where
                 got: member.num_rounds(),
             });
         }
-        // An oversized window would silently truncate: the round loop would
-        // never consult the member's final local rounds, yet every in-engine
-        // round check would still pass.
-        let window_end = described.offset.checked_add(described.rounds).ok_or(
-            SumcheckError::BatchMemberWindowOverflow {
-                member: index,
-                offset: described.offset,
-                rounds: described.rounds,
-            },
-        )?;
-        if window_end > prelude.max_num_vars {
-            return Err(SumcheckError::BatchMemberWindowOutOfRange {
-                member: index,
-                offset: described.offset,
-                rounds: described.rounds,
-                max_num_vars: prelude.max_num_vars,
-            });
-        }
     }
+    prelude.validate()?;
     let max_num_vars = prelude.max_num_vars;
-    if max_num_vars > 0 && prelude.max_degree < 1 {
-        return Err(SumcheckError::ZeroBatchDegree { max_num_vars });
-    }
 
     let two_inv = F::from_u64(2)
         .inverse()

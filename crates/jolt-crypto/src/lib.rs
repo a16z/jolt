@@ -21,32 +21,26 @@
     clippy::wildcard_enum_match_arm
 )]
 
-#[cfg(all(feature = "bn254", feature = "parallel"))]
+#[cfg(feature = "bn254")]
 macro_rules! cfg_iter {
-    ($values:expr) => {
-        $values.par_iter()
-    };
+    ($values:expr) => {{
+        #[cfg(feature = "parallel")]
+        let it = $values.par_iter();
+        #[cfg(not(feature = "parallel"))]
+        let it = $values.iter();
+        it
+    }};
 }
 
-#[cfg(all(feature = "bn254", not(feature = "parallel")))]
-macro_rules! cfg_iter {
-    ($values:expr) => {
-        $values.iter()
-    };
-}
-
-#[cfg(all(feature = "bn254", feature = "parallel"))]
+#[cfg(feature = "bn254")]
 macro_rules! cfg_iter_mut {
-    ($values:expr) => {
-        $values.par_iter_mut()
-    };
-}
-
-#[cfg(all(feature = "bn254", not(feature = "parallel")))]
-macro_rules! cfg_iter_mut {
-    ($values:expr) => {
-        $values.iter_mut()
-    };
+    ($values:expr) => {{
+        #[cfg(feature = "parallel")]
+        let it = $values.par_iter_mut();
+        #[cfg(not(feature = "parallel"))]
+        let it = $values.iter_mut();
+        it
+    }};
 }
 
 pub mod ec;
