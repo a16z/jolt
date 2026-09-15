@@ -14,14 +14,15 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::adapters::{
-    akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
-    invalid_batch, invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackendCommitment,
-    AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
-    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor,
-    AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
+    akita_error, akita_ordered_evaluations, backend_stack, commit_failed, cpu_backend,
+    dense_polynomials, invalid_batch, invalid_setup, one_hot_polynomial, owned_one_hot_polynomial,
+    serialize_akita, transparent_zk_error, validate_one_hot_k, with_backend_pool,
+    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
+    AkitaHintPolynomials, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
+    AkitaScheduleArtifacts, AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts,
+    AkitaVerifierSetup, BackendVerifierCache, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -525,6 +526,7 @@ impl CommitmentScheme for AkitaScheme {
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
+        let backend = cpu_backend()?;
         if params
             .precommitted_schedule
             .as_ref()
@@ -586,7 +588,7 @@ impl CommitmentScheme for AkitaScheme {
                 })
                 .map_err(invalid_setup)?;
                 let prepared_backend_setup =
-                    with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
+                    with_backend_pool(|| backend.prepare_setup(&backend_prover_setup))
                         .map_err(invalid_setup)?;
                 let backend_verifier_setup =
                     with_backend_pool(|| scheme.setup_verifier(&backend_prover_setup))
@@ -609,7 +611,7 @@ impl CommitmentScheme for AkitaScheme {
             )
             .map_err(invalid_setup)?;
             let prepared_backend_setup =
-                with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
+                with_backend_pool(|| backend.prepare_setup(&backend_prover_setup))
                     .map_err(invalid_setup)?;
             let backend_verifier_setup =
                 crate::adapters::one_hot_setup_verifier(&verifier, &backend_prover_setup)?;
