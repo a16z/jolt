@@ -2,6 +2,8 @@
 
 Hosts are where we can invoke the Jolt prover to prove functions defined within the guest.
 
+The generated SDK host APIs described here currently use the [Dory](../../how/dory.md) backend. For the lattice [Akita](../../how/akita.md) backend, see the [modular prover profiling commands](../profiling/zkvm_profiling.md).
+
 The host imports the guest package, and will have automatically generated functions to build each of the Jolt functions. For the SHA3 example we looked at in the [guest](./guests.md) section, the `jolt::provable` procedural macro generates several functions that can be invoked from the host (shown below):
 
 - `compile_sha3(target_dir)` compiles the SHA3 guest to RISC-V.
