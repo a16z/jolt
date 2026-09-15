@@ -257,7 +257,7 @@ packages previously received from dependency defaults.
 | `jolt-dory` | Add an explicit default `parallel` owner feature and explicit stock transcript features for tests. | Dory tests exercise commitment/opening paths; sequential crypto remains independently compilable. |
 | `jolt-blindfold` | Select the concrete transcript features used by its tests. | BlindFold and modular ZK tests preserve committed verification. |
 | `jolt-kernels` | Select the BN254 Blake2b transcript used by its tests explicitly. | Modular prover checks cover reference and optimized kernel integration. |
-| `jolt-akita` | Select the transcript backend used by its tests explicitly. | Akita no longer relies on transcript defaults; its backend selection remains Solinas-oriented. |
+| `jolt-akita` | Select only Blake2b for tests; disable BN254-bearing field, crypto, and openings defaults. Move the mixed Akita/Dory comparison benchmark to `jolt-dory`. | `scripts/check-akita-dependencies.sh` inspects normal, build, and dev dependencies with all Akita features; none may introduce Arkworks or Dory. |
 
 No source changes were needed in `jolt-verifier-derive`, stage drivers, BlindFold,
 Dory, Akita, kernels, or either prover. Keeping the recorder envelope compatible
@@ -497,6 +497,10 @@ The branch was validated with the repository's Rust 1.95 toolchain:
 - The isolated Solinas/custom-transcript consumer builds and runs with its own
   workspace and lockfile. Its normal/build graph contains no Arkworks, crypto,
   openings, R1CS, Spongefish, Rayon, or `getrandom` packages.
+- A fresh project under `/tmp`, with no Jolt workspace or root patches, builds
+  and runs from the local Git URL pinned to implementation commit
+  `5a01f83ce8da90afc942be8af7256fcd5e627fd0`; its dependency graph satisfies
+  the same absence checks.
 - Sumcheck passes 25 minimal tests and 84 `committed,r1cs` tests. All documented
   feature combinations compile, and minimal/all-feature rustdoc builds succeed.
 - Transcript passes 62 tests, crypto 133, openings 18, R1CS 74, BlindFold 76,
