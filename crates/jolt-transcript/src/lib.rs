@@ -68,7 +68,7 @@ pub mod domain {
 
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
-#[cfg(feature = "bn254")]
+#[cfg(all(feature = "bn254", feature = "spongefish"))]
 pub use prover::OptimizedChallenge;
 #[cfg(feature = "spongefish")]
 pub use prover::ProverTranscript;
@@ -77,7 +77,11 @@ pub use verifier::VerifierTranscript;
 
 #[cfg(feature = "transcript-blake2b")]
 use blake2::{digest::consts::U32, Blake2b};
-#[cfg(feature = "bn254")]
+#[cfg(any(
+    all(feature = "bn254", feature = "transcript-blake2b"),
+    all(feature = "bn254", feature = "transcript-keccak"),
+    feature = "transcript-poseidon"
+))]
 use jolt_field::Fr;
 #[cfg(feature = "transcript-blake2b")]
 use spongefish::instantiations::Blake2b512;

@@ -3,6 +3,7 @@ set -euo pipefail
 
 fixture="crates/jolt-sumcheck/tests/external-consumer/Cargo.toml"
 
+cargo check -p jolt-transcript --no-default-features --features bn254 --locked --offline
 cargo check --manifest-path "$fixture" --locked --offline
 cargo run --manifest-path "$fixture" --locked --offline
 
