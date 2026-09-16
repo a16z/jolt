@@ -31,6 +31,20 @@ pub const DEFAULT_MAX_INPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 4096;
 pub const DEFAULT_MAX_TRACE_LENGTH: u64 = 1 << 24;
 
+// The BlindFold vector-commitment budget: committed sumcheck rounds cap
+// their coefficient count at this capacity, and output-claim values are
+// row-committed in capacity-sized chunks. WHY feature-dependent rather than
+// raised outright: the capacity is wire-shape-affecting (chunk boundaries,
+// commitment counts, blinding draws), so raising it globally would change
+// every FR-off ZK proof byte-for-byte. The composed field-inline Spartan
+// outer uni-skip first round has degree 39 (40 coefficients), and the
+// BlindFold witness grid rounds its row length up to a power of two, so
+// FR-on builds need next_pow2(40) = 64; FR-off builds keep the legacy 32
+// (already a power of two). Feature unification makes every crate in one
+// build graph agree on the value.
+#[cfg(feature = "field-inline")]
+pub const MAX_BLINDFOLD_GENERATORS: usize = 64;
+#[cfg(not(feature = "field-inline"))]
 pub const MAX_BLINDFOLD_GENERATORS: usize = 32;
 
 // Layout of the witness (where || denotes concatenation):

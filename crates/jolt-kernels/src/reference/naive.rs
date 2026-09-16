@@ -39,7 +39,7 @@ use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims, SumcheckOutputPoints,
+    SumcheckOutputClaims, SumcheckOutputPoints, SymbolicOf,
 };
 use jolt_verifier::VerifierError;
 #[cfg(feature = "parallel")]
@@ -57,6 +57,13 @@ where
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    // The leaf tables are keyed by the jolt id enums, so this kernel serves
+    // jolt-family relations; `ConcreteSumcheck` itself is id-family-generic.
+    SymbolicOf<F, R>: SymbolicSumcheck<
+        OpeningId = JoltOpeningId,
+        DerivedId = JoltDerivedId,
+        ChallengeId = JoltChallengeId,
+    >,
 {
     /// The kernel's own clone of the stage's relation, taken from
     /// [`ProverInputs`] at prepare time; geometry (`rounds`/`degree`) and the
@@ -87,6 +94,11 @@ where
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SymbolicOf<F, R>: SymbolicSumcheck<
+        OpeningId = JoltOpeningId,
+        DerivedId = JoltDerivedId,
+        ChallengeId = JoltChallengeId,
+    >,
 {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         fn visit_tables<K, F>(
@@ -135,6 +147,11 @@ where
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SymbolicOf<F, R>: SymbolicSumcheck<
+        OpeningId = JoltOpeningId,
+        DerivedId = JoltDerivedId,
+        ChallengeId = JoltChallengeId,
+    >,
 {
     /// Validate that every leaf of the relation's output expression is
     /// resolvable — each `Opening`/`Derived` factor has a table of exactly
@@ -249,6 +266,11 @@ where
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SymbolicOf<F, R>: SymbolicSumcheck<
+        OpeningId = JoltOpeningId,
+        DerivedId = JoltDerivedId,
+        ChallengeId = JoltChallengeId,
+    >,
 {
     fn num_rounds(&self) -> usize {
         self.relation.rounds()
@@ -338,6 +360,11 @@ where
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SymbolicOf<F, R>: SymbolicSumcheck<
+        OpeningId = JoltOpeningId,
+        DerivedId = JoltDerivedId,
+        ChallengeId = JoltChallengeId,
+    >,
 {
     type Relation = R;
 
@@ -544,7 +571,7 @@ mod tests {
                 JoltDerivedId::Test => {
                     Ok(EqPolynomial::new(self.reference_point.clone()).evaluate(output_points.a()))
                 }
-                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
             }
         }
     }
@@ -984,7 +1011,7 @@ mod tests {
                 JoltDerivedId::Test => {
                     Ok(EqPolynomial::new(self.reference_point.clone()).evaluate(output_points.a()))
                 }
-                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
             }
         }
     }

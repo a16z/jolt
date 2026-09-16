@@ -1,15 +1,15 @@
 use std::fs::File;
 
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "prover", feature = "zk"))]
 use crate::poly::opening_proof::OpeningId;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "prover", feature = "zk"))]
 use crate::poly::opening_proof::SumcheckId;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "prover", feature = "zk"))]
 use crate::zkvm::config::OneHotParams;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "prover", feature = "zk"))]
 use crate::zkvm::config::ProgramMode;
 use crate::zkvm::config::{OneHotConfig, ReadWriteConfig};
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "prover", feature = "zk"))]
 use crate::zkvm::witness::CommittedPolynomial;
 #[cfg(feature = "prover")]
 use crate::{curve::Bn254Curve, poly::commitment::dory::DoryCommitmentScheme};
@@ -104,7 +104,9 @@ pub mod spartan;
 mod trace_row_parity;
 pub mod witness;
 
-#[cfg(feature = "zk")]
+// `all(prover, zk)`: the only consumer is the ZK prove pipeline (`mod prover`,
+// gated on `prover`), so a `minimal,zk` build would otherwise see dead code.
+#[cfg(all(feature = "prover", feature = "zk"))]
 pub(crate) fn stage8_opening_ids(
     one_hot_params: &OneHotParams,
     include_trusted_advice: bool,

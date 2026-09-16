@@ -1,10 +1,16 @@
 //! Stage 4 verifier entry point.
 
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
+#[cfg(feature = "field-inline")]
+pub mod field_registers_read_write_checking;
 pub mod outputs;
 pub mod ram_val_check;
 pub mod registers_read_write_checking;
 mod verify;
 
+#[cfg(feature = "field-inline")]
+pub use field_registers_read_write_checking::FieldRegistersReadWriteOutputClaims;
 pub use outputs::{
     Stage4ClearOutput, Stage4Output, Stage4OutputClaims, Stage4OutputPoints, Stage4ZkOutput,
 };

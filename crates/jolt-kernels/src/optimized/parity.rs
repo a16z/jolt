@@ -9,15 +9,11 @@
 //! per-kernel tests.
 #![expect(clippy::expect_used, clippy::panic, reason = "test-only module")]
 
-use jolt_claims::protocols::jolt::JoltChallengeId;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, JoltField, Ring};
 use jolt_sumcheck::SumcheckError;
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
-};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 #[cfg(not(feature = "akita"))]
 use jolt_witness::JoltWitnessOracle;
 
@@ -64,9 +60,6 @@ pub(crate) fn probe_input_claim<F: JoltField, R>(
 ) -> F
 where
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     match kernel.prove_round(None, 0, F::zero()) {
         Ok(_) => F::zero(),
@@ -87,18 +80,31 @@ pub(crate) fn run_lockstep<F: JoltField, R>(
     challenges: &[F],
 ) where
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+{
+    assert!(
+        initial_claim != F::zero(),
+        "zero input claim: the fixture degenerated and parity would be vacuous"
+    );
+    run_lockstep_degenerate(reference, optimized, initial_claim, challenges);
+}
+
+/// [`run_lockstep`] without the nonzero-claim guard, for fixtures whose
+/// input claim is HONESTLY zero — the FR kernels' zero-short-circuit paths
+/// are exercised by FR-inactive traces where every FR column vanishes, and
+/// parity over the (zero) round polynomials is exactly the statement under
+/// test. Use `run_lockstep` everywhere else.
+pub(crate) fn run_lockstep_degenerate<F: JoltField, R>(
+    reference: &mut dyn SumcheckKernel<F, Relation = R>,
+    optimized: &mut dyn SumcheckKernel<F, Relation = R>,
+    initial_claim: F,
+    challenges: &[F],
+) where
+    R: ConcreteSumcheck<F>,
 {
     let rounds = reference.num_rounds();
     assert_eq!(rounds, optimized.num_rounds(), "round count mismatch");
     assert_eq!(rounds, challenges.len(), "challenge count mismatch");
     assert!(rounds > 0, "zero-round parity run proves nothing");
-    assert!(
-        initial_claim != F::zero(),
-        "zero input claim: the fixture degenerated and parity would be vacuous"
-    );
 
     let mut claim = initial_claim;
     for round in 0..rounds {

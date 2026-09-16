@@ -110,11 +110,13 @@ where
 
         let remainder_consistency =
             sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
+        // Clear and committed proofs share the composed member's canonical order.
+        let output_claim_count = sumchecks.output_claim_count();
         let remainder_output_claims = committed::verify_output_claim_commitments(
             checked,
             &proof.stages.stage1_sumcheck_proof,
             "stage1_sumcheck_proof",
-            sumchecks.output_claim_count(),
+            output_claim_count,
             JoltRelationId::SpartanOuter,
         )?;
         let output_points =

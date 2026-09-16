@@ -25,6 +25,17 @@ parallel = [
 # Compile-time ZK mode: witness commitments finish through the hiding
 # streaming paths. Selected by jolt-prover's `zk` feature.
 zk = []
+# Field-inline (FR) protocol composition: the FR kernel slots (composed
+# Spartan lanes, FR register read-write / val-evaluation / claim reductions,
+# bytecode read-RAF FR legs) in both tiers. Selected by jolt-prover's
+# `field-inline` feature.
+field-inline = [
+  "jolt-claims/field-inline",
+  "jolt-verifier/field-inline",
+  # The commit kernel reads the FR columns off the witness plane's
+  # field-inline oracle seam.
+  "jolt-witness/field-inline",
+]
 
 [dependencies]
 allocative = { workspace = true, optional = true }

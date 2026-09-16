@@ -20,14 +20,20 @@ pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 /// per-relation claim plumbing it composes. See `specs/sumcheck-batch-derive.md`.
 pub use jolt_verifier_derive::SumcheckBatch;
 
+use core::fmt::Debug;
 use std::collections::BTreeSet;
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId};
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_transcript::Transcript;
 
+use crate::stages::ids::{FromVerifierOpeningId, VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
+
+/// Re-exported for the `#[derive(SumcheckBatch)]`-generated batch-wide alias
+/// resolver, whose closure is typed at the composite id so members from any
+/// protocol family can chain into it.
+pub use crate::stages::ids::VerifierOpeningId;
 
 /// Transcript-side companion to [`OutputClaims`]: append a relation's produced
 /// openings to the Fiat-Shamir transcript in canonical order.
@@ -72,6 +78,17 @@ pub type SumcheckOutputClaims<F, S> =
 pub type SumcheckOutputPoints<F, S> =
     <<S as ConcreteSumcheck<F>>::Symbolic as SymbolicSumcheck>::Outputs<::std::vec::Vec<F>>;
 
+/// A [`ConcreteSumcheck`]'s symbolic relation.
+pub type SymbolicOf<F, S> = <S as ConcreteSumcheck<F>>::Symbolic;
+/// A [`ConcreteSumcheck`]'s relation-id type, projected through its symbolic relation.
+pub type RelationIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::RelationId;
+/// A [`ConcreteSumcheck`]'s opening-id type, projected through its symbolic relation.
+pub type OpeningIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::OpeningId;
+/// A [`ConcreteSumcheck`]'s derived-id type, projected through its symbolic relation.
+pub type DerivedIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::DerivedId;
+/// A [`ConcreteSumcheck`]'s challenge-id type, projected through its symbolic relation.
+pub type ChallengeIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::ChallengeId;
+
 /// A single sumcheck instance, driven identically by the prover (while producing
 /// its proof) and the verifier (after checking it).
 ///
@@ -86,23 +103,25 @@ pub type SumcheckOutputPoints<F, S> =
 /// "a ZK opening carries no value" a compile-time fact.
 pub trait ConcreteSumcheck<F: JoltField>: Clone + Send + Sync
 where
-    SumcheckInputClaims<F, Self>: InputClaims<F>,
-    SumcheckOutputClaims<F, Self>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, JoltChallengeId>,
+    SumcheckInputClaims<F, Self>: InputClaims<F, OpeningIdOf<F, Self>>,
+    SumcheckOutputClaims<F, Self>: OutputClaims<F, OpeningIdOf<F, Self>>,
+    ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, ChallengeIdOf<F, Self>>,
+    RelationIdOf<F, Self>: Debug + Copy,
+    OpeningIdOf<F, Self>: Copy + Ord + Debug + Into<VerifierOpeningId>,
+    DerivedIdOf<F, Self>: Copy + Debug + Into<VerifierDerivedId>,
+    ChallengeIdOf<F, Self>: Copy + Debug + Into<VerifierChallengeId>,
 {
     /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
     /// input/output `Expr`s. The concrete instance holds its `Self::Symbolic` and
-    /// sources its claim expressions and spec from it.
-    type Symbolic: SymbolicSumcheck<
-        RelationId = JoltRelationId,
-        OpeningId = JoltOpeningId,
-        DerivedId = JoltDerivedId,
-        ChallengeId = JoltChallengeId,
-    >;
+    /// sources its claim expressions and spec from it. The id family is the
+    /// symbolic relation's own — every id this trait exposes is a projection of
+    /// it, so relations from any protocol family (jolt, field-inline) implement
+    /// one trait.
+    type Symbolic: SymbolicSumcheck;
 
     fn symbolic(&self) -> &Self::Symbolic;
 
-    fn id(&self) -> JoltRelationId {
+    fn id(&self) -> RelationIdOf<F, Self> {
         Self::Symbolic::id()
     }
 
@@ -168,7 +187,7 @@ where
     /// the declaring relation, each source absorbed by another member binding an
     /// identical point slice) are pinned by hand-written tests in each declaring
     /// stage (`alias_declarations_are_valid`).
-    fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)>
+    fn aliased_output_openings() -> Vec<(OpeningIdOf<F, Self>, OpeningIdOf<F, Self>)>
     where
         Self: Sized,
     {
@@ -182,7 +201,7 @@ where
     /// against them. A relation that absorbs openings its own output `Expr` does
     /// not reference (values whose constraining fold happens downstream, e.g. the
     /// product remainder's stage-6a-consumed flags) overrides this to add them.
-    fn wire_output_openings(&self) -> BTreeSet<JoltOpeningId>
+    fn wire_output_openings(&self) -> BTreeSet<OpeningIdOf<F, Self>>
     where
         Self: Sized,
     {
@@ -250,10 +269,10 @@ where
     /// `InitEval`/`InitSelector`).
     fn derive_input_term(
         &self,
-        id: &JoltDerivedId,
+        id: &DerivedIdOf<F, Self>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
-        Err(VerifierError::MissingStageClaimDerived { id: *id })
+        Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
 
     /// Resolve a `Derived` in this relation's **output** expression: from the input
@@ -264,12 +283,12 @@ where
     /// "no output deriveds"; overridden by relations that have them.
     fn derive_output_term(
         &self,
-        id: &JoltDerivedId,
+        id: &DerivedIdOf<F, Self>,
         _input_points: &SumcheckInputPoints<F, Self>,
         _output_points: &SumcheckOutputPoints<F, Self>,
         _challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
-        Err(VerifierError::MissingStageClaimDerived { id: *id })
+        Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
 
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
@@ -287,12 +306,12 @@ where
             |id| {
                 input_values
                     .resolve_input(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: *id })
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges
                     .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| self.derive_input_term(id, challenges),
         )
@@ -313,12 +332,12 @@ where
             |id| {
                 output_values
                     .resolve_output(id)
-                    .ok_or(VerifierError::MissingOpeningClaim { id: *id })
+                    .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges
                     .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| self.derive_output_term(id, input_points, output_points, challenges),
         )
@@ -334,7 +353,8 @@ pub fn absorbed_opening_values<F, I>(claims: &SumcheckOutputClaims<F, I>) -> Vec
 where
     F: JoltField,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Ord,
 {
     let skip: BTreeSet<_> = I::aliased_output_openings()
         .into_iter()
@@ -361,22 +381,45 @@ pub fn validate_member_presence<F, I>(
 where
     F: JoltField,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    // The diagnostic formats the relation id, so the helper spans every
+    // protocol family a batch mixes (the derive's own presence errors use the
+    // same string-typed variant).
+    <SymbolicOf<F, I> as SymbolicSumcheck>::RelationId: Debug,
 {
     match (member, claims) {
         (Some(_), Some(_)) | (None, None) => Ok(()),
-        (Some(member), None) => Err(VerifierError::StageClaimPublicInputFailed {
-            stage: member.id(),
+        (Some(member), None) => Err(VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", member.id()),
             reason: "present instance is missing its output claims".to_string(),
         }),
         (None, Some(claims)) => Err(match claims.canonical_order().into_iter().next() {
-            Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening },
-            None => VerifierError::StageClaimPublicInputFailed {
-                stage: <I::Symbolic as SymbolicSumcheck>::id(),
+            Some(opening) => VerifierError::UnexpectedOpeningClaim { id: opening.into() },
+            None => VerifierError::StageClaimSumcheckFailed {
+                stage: format!("{:?}", <I::Symbolic as SymbolicSumcheck>::id()),
                 reason: "output claims supplied for an absent instance".to_string(),
             },
         }),
     }
+}
+
+/// Resolve one batch member's produced opening by composite id: downcast the
+/// composite to the member's own opening-id family, then resolve within the
+/// member's claims. A foreign-family or unknown id is a miss (`None`), so the
+/// generated batch-wide alias resolver can chain members across protocol
+/// families. Called by the generated `validate_aliases` per member.
+pub fn resolve_member_opening<F, I>(
+    claims: &SumcheckOutputClaims<F, I>,
+    id: &VerifierOpeningId,
+) -> Option<F>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: FromVerifierOpeningId,
+{
+    let native = OpeningIdOf::<F, I>::from_verifier(*id)?;
+    claims.resolve_output(&native)
 }
 
 /// Enforce one member's declared cross-relation opening aliases: each aliased
@@ -389,24 +432,31 @@ where
 pub fn validate_member_aliases<F, I>(
     member: &I,
     claims: &SumcheckOutputClaims<F, I>,
-    resolve_source: impl Fn(&JoltOpeningId) -> Option<F>,
+    // The resolver is keyed by the composite id so a mixed-family batch can
+    // serve every member through one closure; alias PAIRS stay within the
+    // declaring member's own family (`aliased_output_openings` returns its
+    // family's ids on both sides), so cross-family aliasing remains
+    // unrepresentable at the declaration level.
+    resolve_source: impl Fn(&VerifierOpeningId) -> Option<F>,
 ) -> Result<(), VerifierError>
 where
     F: JoltField,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Copy + Into<VerifierOpeningId>,
+    RelationIdOf<F, I>: Debug,
 {
     for (aliased, source) in I::aliased_output_openings() {
         let target = claims
             .resolve_output(&aliased)
-            .ok_or(VerifierError::MissingOpeningClaim { id: aliased })?;
-        let source_value =
-            resolve_source(&source).ok_or(VerifierError::MissingOpeningClaim { id: source })?;
+            .ok_or(VerifierError::MissingOpeningClaim { id: aliased.into() })?;
+        let source_value = resolve_source(&source.into())
+            .ok_or(VerifierError::MissingOpeningClaim { id: source.into() })?;
         if target != source_value {
             return Err(VerifierError::StageClaimOpeningMismatch {
                 stage: format!("{:?}", member.id()),
-                left: aliased,
-                right: source,
+                left: aliased.into(),
+                right: source.into(),
             });
         }
     }
@@ -418,7 +468,9 @@ where
 /// (absorbed via their canonical source; their value equality is enforced
 /// separately by `validate_aliases`), must equal the member's
 /// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings). Called by
-/// the generated `validate_output_claims` per member.
+/// the generated `validate_output_claims` per member. Family-agnostic (the
+/// mismatch is attributed by the member's Debug-formatted relation id), so
+/// mixed-family batches validate every member through it.
 pub fn validate_member_output_shape<F, I>(
     member: &I,
     claims: &SumcheckOutputClaims<F, I>,
@@ -426,7 +478,8 @@ pub fn validate_member_output_shape<F, I>(
 where
     F: JoltField,
     I: ConcreteSumcheck<F>,
-    SumcheckOutputClaims<F, I>: OutputClaims<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Ord,
 {
     let expected = member.wire_output_openings();
     let aliased: BTreeSet<_> = I::aliased_output_openings()
@@ -439,8 +492,8 @@ where
         .filter(|id| !aliased.contains(id))
         .collect();
     if provided != expected {
-        return Err(VerifierError::StageClaimPublicInputFailed {
-            stage: member.id(),
+        return Err(VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{:?}", member.id()),
             reason: format!(
                 "output claim shape mismatch: expected {} openings, got {}",
                 expected.len(),
@@ -449,6 +502,30 @@ where
         });
     }
     Ok(())
+}
+
+/// Project a composite-family derived id onto one relation's own public enum —
+/// the typed destructure every `derive_output_term` starts with, driven by the
+/// id family's generated `TryFrom` inverses of its `From` embeddings. A foreign
+/// relation's id is the same `MissingStageClaimDerived` miss the hand-written
+/// destructures returned. Family-generic: no protocol ids appear here.
+pub fn project_public<D, P>(id: &D) -> Result<P, VerifierError>
+where
+    D: Copy + Into<VerifierDerivedId>,
+    P: TryFrom<D>,
+{
+    P::try_from(*id).map_err(|_| VerifierError::MissingStageClaimDerived { id: (*id).into() })
+}
+
+/// Wrap a point-geometry failure in the uniform stage error, keyed by the
+/// relation's Debug-formatted id. Shared by the relations whose
+/// `derive_opening_points` / `derive_output_term` residue is point geometry, so
+/// none carries its own error-wrapping helper.
+pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierError {
+    VerifierError::StageClaimSumcheckFailed {
+        stage: format!("{stage:?}"),
+        reason: reason.to_string(),
+    }
 }
 
 /// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]

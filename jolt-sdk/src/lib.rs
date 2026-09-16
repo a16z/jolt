@@ -25,29 +25,65 @@ pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get number of remaining bytes in adv
 #[doc(hidden)]
 pub const FIELD_INLINE_OPCODE: u32 = 0x7b;
 #[doc(hidden)]
-pub const FIELD_INLINE_ADD: u32 = 0;
+pub const FIELD_INLINE_R_TYPE_FUNCT7: u32 = 0;
 #[doc(hidden)]
-pub const FIELD_INLINE_SUB: u32 = 1;
+pub const FIELD_INLINE_ADD_FUNCT3: u32 = 0;
 #[doc(hidden)]
-pub const FIELD_INLINE_MUL: u32 = 2;
+pub const FIELD_INLINE_SUB_FUNCT3: u32 = 1;
 #[doc(hidden)]
-pub const FIELD_INLINE_INV: u32 = 3;
+pub const FIELD_INLINE_MUL_FUNCT3: u32 = 2;
 #[doc(hidden)]
-pub const FIELD_INLINE_ASSERT_EQ: u32 = 4;
+pub const FIELD_INLINE_INV_FUNCT3: u32 = 3;
 #[doc(hidden)]
-pub const FIELD_INLINE_LOAD_FROM_X: u32 = 5;
+pub const FIELD_INLINE_ASSERT_EQ_FUNCT3: u32 = 4;
 #[doc(hidden)]
-pub const FIELD_INLINE_STORE_TO_X: u32 = 6;
+pub const FIELD_INLINE_LOAD_FROM_X_FUNCT3: u32 = 5;
 #[doc(hidden)]
-pub const FIELD_INLINE_LOAD_IMM: u32 = 7;
+pub const FIELD_INLINE_STORE_TO_X_FUNCT3: u32 = 6;
+#[doc(hidden)]
+pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u32 = 7;
+
+/// Number of field registers the field-inline extension addresses.
+pub const FIELD_REGISTER_COUNT: u32 = 16;
+/// The x-register the bridge macros move values through (`a0`), pinned by the
+/// asm operand constraints of [`field_load_from_x!`] / [`field_store_to_x!`].
+#[doc(hidden)]
+pub const FIELD_INLINE_BRIDGE_X_REGISTER: u32 = 10;
+
+/// A field-register operand; out-of-range literals fail at compile time
+/// instead of wrapping into the encoding of a different register.
+#[doc(hidden)]
+pub const fn fr_register(index: u32) -> u32 {
+    assert!(
+        index < FIELD_REGISTER_COUNT,
+        "field-inline field register index must be below 16"
+    );
+    index
+}
+
+/// A 12-bit LoadImm immediate; wider literals fail at compile time.
+#[doc(hidden)]
+pub const fn field_inline_imm12(imm: u32) -> u32 {
+    assert!(imm < 1 << 12, "field-inline immediates are 12 bits");
+    imm
+}
 
 #[doc(hidden)]
-pub const fn field_inline_word(funct3: u32, rd: u32, rs1: u32, rs2_or_imm: u32) -> u32 {
-    FIELD_INLINE_OPCODE
-        | ((rd & 0x1f) << 7)
-        | ((funct3 & 0x7) << 12)
-        | ((rs1 & 0x1f) << 15)
-        | ((rs2_or_imm & 0xfff) << 20)
+pub const fn field_inline_r_word(funct7: u32, funct3: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
+    assert!(
+        funct7 < 1 << 7 && funct3 < 1 << 3 && rd < 32 && rs1 < 32 && rs2 < 32,
+        "field-inline instruction word field out of range"
+    );
+    FIELD_INLINE_OPCODE | (rd << 7) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (funct7 << 25)
+}
+
+#[doc(hidden)]
+pub const fn field_inline_i_word(funct3: u32, rd: u32, imm: u32) -> u32 {
+    assert!(
+        funct3 < 1 << 3 && rd < 32 && imm < 1 << 12,
+        "field-inline instruction word field out of range"
+    );
+    FIELD_INLINE_OPCODE | (rd << 7) | (funct3 << 12) | (imm << 20)
 }
 
 #[doc(hidden)]
@@ -73,11 +109,10 @@ macro_rules! __field_inline_word {
 #[macro_export]
 macro_rules! field_load_imm {
     ($rd:literal, $imm:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_LOAD_IMM,
-            $rd,
-            0,
-            $imm
+        $crate::__field_inline_word!($crate::field_inline_i_word(
+            $crate::FIELD_INLINE_LOAD_IMM_FUNCT3,
+            $crate::fr_register($rd),
+            $crate::field_inline_imm12($imm)
         ))
     };
 }
@@ -85,11 +120,12 @@ macro_rules! field_load_imm {
 #[macro_export]
 macro_rules! field_add {
     ($rd:literal, $rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_ADD,
-            $rd,
-            $rs1,
-            $rs2
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_ADD_FUNCT3,
+            $crate::fr_register($rd),
+            $crate::fr_register($rs1),
+            $crate::fr_register($rs2)
         ))
     };
 }
@@ -97,11 +133,12 @@ macro_rules! field_add {
 #[macro_export]
 macro_rules! field_sub {
     ($rd:literal, $rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_SUB,
-            $rd,
-            $rs1,
-            $rs2
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_SUB_FUNCT3,
+            $crate::fr_register($rd),
+            $crate::fr_register($rs1),
+            $crate::fr_register($rs2)
         ))
     };
 }
@@ -109,11 +146,12 @@ macro_rules! field_sub {
 #[macro_export]
 macro_rules! field_mul {
     ($rd:literal, $rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_MUL,
-            $rd,
-            $rs1,
-            $rs2
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_MUL_FUNCT3,
+            $crate::fr_register($rd),
+            $crate::fr_register($rs1),
+            $crate::fr_register($rs2)
         ))
     };
 }
@@ -121,10 +159,11 @@ macro_rules! field_mul {
 #[macro_export]
 macro_rules! field_inv {
     ($rd:literal, $rs1:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_INV,
-            $rd,
-            $rs1,
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_INV_FUNCT3,
+            $crate::fr_register($rd),
+            $crate::fr_register($rs1),
             0
         ))
     };
@@ -133,13 +172,92 @@ macro_rules! field_inv {
 #[macro_export]
 macro_rules! field_assert_eq {
     ($rs1:literal, $rs2:literal) => {
-        $crate::__field_inline_word!($crate::field_inline_word(
-            $crate::FIELD_INLINE_ASSERT_EQ,
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+            $crate::FIELD_INLINE_ASSERT_EQ_FUNCT3,
             0,
-            $rs1,
-            $rs2
+            $crate::fr_register($rs1),
+            $crate::fr_register($rs2)
         ))
     };
+}
+
+/// Loads a `u64` into field register `$rd` through the LoadFromX bridge.
+///
+/// The bridge names an x-register in the instruction word, so the value must
+/// live in that register when the word executes; the only placement the
+/// compiler guarantees is an operand bound in the same asm block, which pins
+/// it to `a0` here.
+#[macro_export]
+macro_rules! field_load_from_x {
+    ($rd:literal, $value:expr) => {{
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        {
+            const WORD: u32 = $crate::field_inline_r_word(
+                $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+                $crate::FIELD_INLINE_LOAD_FROM_X_FUNCT3,
+                $crate::fr_register($rd),
+                $crate::FIELD_INLINE_BRIDGE_X_REGISTER,
+                0,
+            );
+            let value: u64 = $value;
+            // SAFETY: emits one fixed field-inline instruction word; its only
+            // register contract is the value living in a0 for the duration of
+            // the block, which the operand constraint provides. No memory is
+            // touched.
+            unsafe {
+                core::arch::asm!(
+                    ".word {word}",
+                    word = const WORD,
+                    in("x10") value,
+                    options(nostack),
+                );
+            }
+        }
+        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+        {
+            let _: u64 = $value;
+        }
+    }};
+}
+
+/// Reads field register `$rs1` back as a `u64` through the StoreToX bridge.
+/// The bridge is range-bound: the traced store traps, and the constraint
+/// system is unsatisfiable, unless the field value fits in 64 bits. Same
+/// single-asm-block rationale as [`field_load_from_x!`]: the word writes
+/// `a0`, so the output constraint must live in the block that executes it.
+/// Host-architecture builds carry no FR semantics and evaluate to zero.
+#[macro_export]
+macro_rules! field_store_to_x {
+    ($rs1:literal) => {{
+        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+        {
+            const WORD: u32 = $crate::field_inline_r_word(
+                $crate::FIELD_INLINE_R_TYPE_FUNCT7,
+                $crate::FIELD_INLINE_STORE_TO_X_FUNCT3,
+                $crate::FIELD_INLINE_BRIDGE_X_REGISTER,
+                $crate::fr_register($rs1),
+                0,
+            );
+            let out: u64;
+            // SAFETY: emits one fixed field-inline instruction word whose only
+            // register effect is writing a0, declared as the output. No memory
+            // is touched.
+            unsafe {
+                core::arch::asm!(
+                    ".word {word}",
+                    word = const WORD,
+                    lateout("x10") out,
+                    options(nostack),
+                );
+            }
+            out
+        }
+        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+        {
+            0u64
+        }
+    }};
 }
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]

@@ -314,7 +314,8 @@ fn preprocess_guest_prover(
                 memory_layout,
                 max_trace_length,
                 chunk_count,
-            );
+            )
+            .expect("base-profile committed preprocessing");
         JoltProverPreprocessing::new_committed(shared, committed_program_prover_data, generators)
     } else {
         jolt_sdk::guest::prover::preprocess(guest_prog, max_trace_length).unwrap()

@@ -118,7 +118,7 @@ where
 /// The ZK uni-skip step's outputs: the committed round consistency and output
 /// claim commitments (carried downstream for BlindFold), plus the reduction
 /// challenge.
-pub(crate) struct UniskipZk<F: JoltField, C> {
+pub struct UniskipZk<F: JoltField, C> {
     pub consistency: CommittedSumcheckConsistency<F, C>,
     pub output_claims: CommittedOutputClaimOutput<C>,
     pub challenge: F,
@@ -173,7 +173,7 @@ where
 /// Verify a ZK-mode uni-skip round: committed round consistency plus the
 /// output-claim commitment count. The claims themselves stay committed
 /// (BlindFold verifies them at stage 8).
-pub(crate) fn verify_zk<F, C, T>(
+pub fn verify_zk<F, C, T>(
     checked: &CheckedInputs,
     proof: &SumcheckProof<F, C>,
     params: &UniskipParams,

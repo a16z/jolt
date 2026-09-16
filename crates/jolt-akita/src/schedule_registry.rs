@@ -36,6 +36,10 @@ pub struct PrecommittedScheduleParams {
     #[serde(default)]
     direct_program_physical_arities: Vec<usize>,
     final_arity: usize,
+    /// The always-present FR limb group's arity line (field-inline proofs
+    /// only). `None` keeps provisioning identical to the base protocol.
+    #[cfg(feature = "field-inline")]
+    field_inc_limbs: Option<FieldIncLimbScheduleParams>,
 }
 
 impl PrecommittedScheduleParams {
@@ -49,7 +53,19 @@ impl PrecommittedScheduleParams {
             trusted_physical_arity: trusted_physical_num_vars,
             direct_program_physical_arities: Vec::new(),
             final_arity: final_num_vars,
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs: None,
         }
+    }
+
+    /// Attach the FR limb-group arity line: the provisioned rows then carry
+    /// the setup arity's FR profile as a mandatory group after the advice
+    /// (an FR-on prover commits the group on every proof, so no FR-absent
+    /// row is reachable).
+    #[cfg(feature = "field-inline")]
+    pub fn with_field_inc_limbs(mut self, field_inc_limbs: FieldIncLimbScheduleParams) -> Self {
+        self.field_inc_limbs = Some(field_inc_limbs);
+        self
     }
 
     pub fn with_direct_program_physical_arities(
@@ -76,6 +92,8 @@ impl PrecommittedScheduleParams {
             self.untrusted_physical_arity,
             self.trusted_physical_arity,
             &self.direct_program_physical_arities,
+            #[cfg(feature = "field-inline")]
+            self.field_inc_limbs,
             one_hot_k,
             self.final_arity,
         )?;
@@ -86,6 +104,48 @@ impl PrecommittedScheduleParams {
                 "unsupported one-hot K {other} for grouped schedule catalog"
             ))),
         }
+    }
+}
+
+/// The FR limb group's physical-arity line: `physical = max(log_T +
+/// selector_num_vars, min_physical_arity)` with `log_T = final_num_vars -
+/// trace_arity_overhead`. All three terms are caller-derived from the
+/// jolt-claims packing laws and carried here as serialized data (this crate
+/// is claims-free); the FR provisioning pin test holds the line to
+/// `FieldIncLimbPackingPlan` across every final arity.
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldIncLimbScheduleParams {
+    trace_arity_overhead: usize,
+    min_physical_arity: usize,
+    selector_num_vars: usize,
+}
+
+#[cfg(feature = "field-inline")]
+impl FieldIncLimbScheduleParams {
+    pub fn new(
+        trace_arity_overhead: usize,
+        min_physical_arity: usize,
+        selector_num_vars: usize,
+    ) -> Self {
+        Self {
+            trace_arity_overhead,
+            min_physical_arity,
+            selector_num_vars,
+        }
+    }
+
+    /// The FR limb group's physical arity at final arity `final_num_vars`,
+    /// or `None` below the packed trace's own overhead (no trace exists
+    /// there, so no FR pairing either).
+    pub fn physical_num_vars(self, final_num_vars: usize) -> Option<usize> {
+        let log_t = final_num_vars.checked_sub(self.trace_arity_overhead)?;
+        Some(
+            log_t
+                .checked_add(self.selector_num_vars)?
+                .max(self.min_physical_arity),
+        )
     }
 }
 
@@ -275,13 +335,23 @@ impl AdvicePrecommitLayouts {
 pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(14, 1);
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
-/// Adapt grouped rows for optional advice followed by committed-program objects.
+/// Adapt grouped rows for optional advice followed by the mandatory groups —
+/// (field-inline) the FR limb group, then the direct committed-program
+/// objects — all in canonical precommit order.
+#[cfg_attr(
+    feature = "field-inline",
+    expect(
+        clippy::too_many_arguments,
+        reason = "the FR limb arity line is one more caller-derived precommit input beside the advice and program lines"
+    )
+)]
 pub fn provision_precommitted_for_k(
     dense_catalog: &ValidatedScheduleCatalog,
     one_hot_catalog: &ValidatedScheduleCatalog,
     untrusted_physical_vars: Option<usize>,
     trusted_physical_vars: Option<usize>,
     direct_program_physical_vars: &[usize],
+    #[cfg(feature = "field-inline")] field_inc_limbs: Option<FieldIncLimbScheduleParams>,
     one_hot_k: usize,
     final_num_vars: usize,
 ) -> Result<RegisteredRows, AkitaError> {
@@ -295,10 +365,27 @@ pub fn provision_precommitted_for_k(
         untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
         trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
     };
-    let mandatory = direct_program_physical_vars
-        .iter()
-        .map(|vars| dense_precommit_profile(dense_catalog, PolynomialGroupLayout::new(*vars, 1)))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut mandatory = Vec::with_capacity(
+        usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
+    );
+    #[cfg(feature = "field-inline")]
+    if let Some(field_inc_limbs) = field_inc_limbs {
+        // Below the packed trace's own arity overhead no trace exists, so
+        // there is nothing to pair the limb group with.
+        let Some(limb_physical) = field_inc_limbs.physical_num_vars(final_num_vars) else {
+            return Ok(RegisteredRows::default());
+        };
+        mandatory.push(dense_precommit_profile(
+            dense_catalog,
+            PolynomialGroupLayout::new(limb_physical, 1),
+        )?);
+    }
+    for vars in direct_program_physical_vars {
+        mandatory.push(dense_precommit_profile(
+            dense_catalog,
+            PolynomialGroupLayout::new(*vars, 1),
+        )?);
+    }
     let mut combinations = layouts.precommit_combinations(dense_catalog)?;
     if mandatory.is_empty() {
         if combinations.is_empty() {

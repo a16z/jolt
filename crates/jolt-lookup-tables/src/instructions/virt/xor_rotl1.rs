@@ -26,28 +26,20 @@ mod tests {
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
         materialize_entry_test,
     };
+    use tracer::instruction::virtual_xor_rotl1::VirtualXORROTL1;
 
     #[test]
     fn materialize_entry_virtualxorrotl1() {
-        materialize_entry_test!(
-            VirtualXorRotL1,
-            tracer::instruction::virtual_xor_rotl1::VirtualXORROTL1
-        );
+        materialize_entry_test!(VirtualXorRotL1, VirtualXORROTL1);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualxorrotl1() {
-        instruction_inputs_match_constraint_test!(
-            VirtualXorRotL1,
-            tracer::instruction::virtual_xor_rotl1::VirtualXORROTL1
-        );
+        instruction_inputs_match_constraint_test!(VirtualXorRotL1, VirtualXORROTL1);
     }
 
     #[test]
     fn lookup_output_matches_trace_virtualxorrotl1() {
-        lookup_output_matches_trace_test!(
-            VirtualXorRotL1,
-            tracer::instruction::virtual_xor_rotl1::VirtualXORROTL1
-        );
+        lookup_output_matches_trace_test!(VirtualXorRotL1, VirtualXORROTL1);
     }
 }

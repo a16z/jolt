@@ -7,11 +7,18 @@ use jolt_transcript::Transcript;
 use crate::stages::relations::{OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 
-use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation};
-use super::registers_read_write_checking::RegistersReadWriteChecking;
+#[cfg(feature = "field-inline")]
+pub use super::field_registers_read_write_checking::{
+    FieldRegistersReadWriteChecking, FieldRegistersReadWriteOutputClaims,
+};
+use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims};
+use super::registers_read_write_checking::{
+    RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
+};
 
-/// Source-of-truth for stage 4's sumcheck batch: the two instances in
-/// Fiat-Shamir batch order (registers read-write, then RAM value-check).
+/// Source-of-truth for stage 4's sumcheck batch, in Fiat-Shamir batch order
+/// (registers read-write, the field-inline FR read-write when composed, then
+/// RAM value-check).
 /// `#[derive(SumcheckBatch)]` generates the `Stage4InputClaims<F>`,
 /// `Stage4InputPoints<F>`, `Stage4OutputClaims<F>`, `Stage4OutputPoints<F>`, and
 /// `Stage4Challenges<F>` aggregates — one field per instance, in this declaration
@@ -37,7 +44,31 @@ use super::registers_read_write_checking::RegistersReadWriteChecking;
 #[sumcheck_batch(no_opening_values, crate = "crate")]
 pub struct Stage4Sumchecks<F: JoltField> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
+    /// The FR Twist read/write instance over `T * 2^log_k`. Declaration
+    /// position (after the ordinary registers read-write, before the RAM
+    /// value-check) is the spec's stage-4 batch order and gamma draw order
+    /// (`specs/field-inline-protocol.md`, "Stage 4 Composition").
+    #[cfg(feature = "field-inline")]
+    pub field_registers_read_write: FieldRegistersReadWriteChecking<F>,
     pub ram_val_check: RamValCheck<F>,
+}
+
+impl<F: JoltField> Stage4OutputClaims<F> {
+    /// Construct the ordinary stage-4 claims. Producers without field-inline
+    /// semantics use this regardless of the build's feature set — the FR
+    /// read-write slot defaults to all-zero claims, inert because such
+    /// producers' proofs never declare the FR axis.
+    pub fn new(
+        registers_read_write: RegistersReadWriteOutputClaims<F>,
+        ram_val_check: RamValCheckOutputClaims<F>,
+    ) -> Self {
+        Self {
+            registers_read_write,
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: Default::default(),
+            ram_val_check,
+        }
+    }
 }
 
 impl<F: JoltField> Stage4Sumchecks<F> {
@@ -56,19 +87,25 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     /// The produced opening claims in canonical (Fiat-Shamir) order, matching the
     /// prover's commitment (flush) order exactly: the `Val_init` advice openings,
     /// the committed program-image contribution, the register read-write openings,
-    /// then the RAM value-check `ram_ra`/`ram_inc` openings. The advice and
+    /// under `field-inline` the five FR read-write openings (the spec's committed
+    /// row order: after the ordinary register openings, before the RAM value-check
+    /// ones), then the RAM value-check `ram_ra`/`ram_inc` openings. The advice and
     /// program-image openings are produced by the RAM value-check instance but are
     /// *appended first* (before the registers), so this is hand-written rather than
     /// a per-instance concatenation — see [`Stage4Sumchecks`].
     pub fn opening_values(&self) -> Vec<F> {
         let ram = &self.ram_val_check;
-        ram.untrusted_advice
+        let mut values: Vec<F> = ram
+            .untrusted_advice
             .into_iter()
             .chain(ram.trusted_advice)
             .chain(ram.program_image)
             .chain(self.registers_read_write.opening_values())
-            .chain([ram.ram_ra, ram.ram_inc])
-            .collect()
+            .collect();
+        #[cfg(feature = "field-inline")]
+        super::field_inline::splice_read_write_values(&mut values, self);
+        values.extend([ram.ram_ra, ram.ram_inc]);
+        values
     }
 
     /// Append every produced opening to the transcript in canonical order, each
@@ -86,6 +123,12 @@ impl<F: JoltField> Stage4OutputPoints<F> {
     /// openings).
     pub fn registers_read_write_point(&self) -> &[F] {
         self.registers_read_write.registers_val()
+    }
+
+    /// The FR read-write opening point (shared by all five FR openings).
+    #[cfg(feature = "field-inline")]
+    pub fn field_registers_read_write_point(&self) -> &[F] {
+        self.field_registers_read_write.registers_val()
     }
 
     /// The RAM value-check opening point (shared by `ram_ra`/`ram_inc`).
@@ -153,11 +196,20 @@ impl<F: JoltField, C> Stage4Output<F, C> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::field_inline::FieldInlineConfig;
+    use jolt_claims::protocols::jolt::geometry::dimensions::{
+        ReadWriteDimensions, TraceDimensions, REGISTER_ADDRESS_BITS,
+    };
+    use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
     use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
     use jolt_field::{Fr, Ring};
+    use jolt_transcript::Transcript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -173,57 +225,148 @@ mod tests {
         }
     }
 
-    /// Locks the stage-4 Fiat-Shamir append order against silent drift: with no
-    /// staged advice / program-image openings, the order is the five register
-    /// openings then the two RAM value-check openings. A wrong order here silently
-    /// breaks soundness, so it is pinned with distinct sentinels.
-    #[test]
-    fn opening_values_follow_canonical_order_without_advice() {
-        let claims = Stage4OutputClaims::<Fr> {
+    fn claims_with_advice(with_advice: bool) -> Stage4OutputClaims<Fr> {
+        Stage4OutputClaims::<Fr> {
             registers_read_write: registers_claims(),
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: FieldRegistersReadWriteOutputClaims {
+                registers_val: fr(21),
+                rs1_ra: fr(22),
+                rs2_ra: fr(23),
+                rd_wa: fr(24),
+                rd_inc: fr(25),
+            },
             ram_val_check: RamValCheckOutputClaims {
-                untrusted_advice: None,
-                trusted_advice: None,
-                program_image: None,
+                untrusted_advice: with_advice.then(|| fr(1)),
+                trusted_advice: with_advice.then(|| fr(2)),
+                program_image: with_advice.then(|| fr(10)),
                 ram_ra: fr(8),
                 ram_inc: fr(9),
             },
-        };
+        }
+    }
 
-        assert_eq!(claims.opening_values(), (3..=9).map(fr).collect::<Vec<_>>());
+    /// Under `field-inline` the five FR read-write openings splice between the
+    /// register and RAM value-check openings — the spec's committed row order
+    /// (`specs/field-inline-protocol.md`, "Stage 4 Composition").
+    #[cfg(feature = "field-inline")]
+    fn field_inline_splice() -> Vec<Fr> {
+        (21..=25).map(fr).collect()
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    fn field_inline_splice() -> Vec<Fr> {
+        Vec::new()
+    }
+
+    /// Locks the stage-4 Fiat-Shamir append order against silent drift: with no
+    /// staged advice / program-image openings, the order is the five register
+    /// openings, under `field-inline` the five FR openings, then the two RAM
+    /// value-check openings. A wrong order here silently breaks soundness, so it
+    /// is pinned with distinct sentinels.
+    #[test]
+    fn opening_values_follow_canonical_order_without_advice() {
+        let expected: Vec<Fr> = (3..=7)
+            .map(fr)
+            .chain(field_inline_splice())
+            .chain([fr(8), fr(9)])
+            .collect();
+        assert_eq!(claims_with_advice(false).opening_values(), expected);
     }
 
     /// The full interleaved order: advice (untrusted, trusted) and the
     /// program-image contribution come *first*, then the five register openings,
-    /// then `ram_ra`/`ram_inc` last — exactly matching the prover's stage-4
-    /// `pending_claims` flush order.
+    /// under `field-inline` the five FR openings, then `ram_ra`/`ram_inc` last —
+    /// exactly matching the prover's stage-4 `pending_claims` flush order.
     #[test]
     fn opening_values_interleave_advice_then_registers_then_ram() {
-        let claims = Stage4OutputClaims::<Fr> {
-            registers_read_write: registers_claims(),
-            ram_val_check: RamValCheckOutputClaims {
-                untrusted_advice: Some(fr(1)),
-                trusted_advice: Some(fr(2)),
-                program_image: Some(fr(10)),
-                ram_ra: fr(8),
-                ram_inc: fr(9),
-            },
-        };
+        let expected: Vec<Fr> = [fr(1), fr(2), fr(10)]
+            .into_iter()
+            .chain((3..=7).map(fr))
+            .chain(field_inline_splice())
+            .chain([fr(8), fr(9)])
+            .collect();
+        assert_eq!(claims_with_advice(true).opening_values(), expected);
+    }
 
+    fn sumchecks() -> Stage4Sumchecks<Fr> {
+        let log_t = 4usize;
+        let ram_log_k = 3usize;
+        Stage4Sumchecks::<Fr> {
+            registers_read_write: RegistersReadWriteChecking::new(ReadWriteDimensions::new(
+                log_t,
+                REGISTER_ADDRESS_BITS,
+                2,
+                1,
+            )),
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: FieldRegistersReadWriteChecking::new(
+                FieldInlineConfig::enabled().read_write_dimensions(log_t),
+            ),
+            ram_val_check: RamValCheck::new(
+                TraceDimensions::new(log_t),
+                ram_log_k,
+                RamValCheckInit::from(fr(0)),
+            ),
+        }
+    }
+
+    /// Pins the batch's `draw_challenges` to the inline draw order: one
+    /// `challenge_scalar` per leading member — the registers gamma, under
+    /// `field-inline` the FR read-write gamma (the spec's draw slot: after the
+    /// registers gamma, before the RAM value-check draw) — then the RAM
+    /// value-check draw (its domain separator + gamma; that draw's byte
+    /// exactness is pinned by its own member test). The replica reuses the RAM
+    /// member's `draw_challenges` so this test pins the member ORDER.
+    #[test]
+    fn draw_challenges_matches_inline_draw_sequence() {
+        use crate::stages::relations::ConcreteSumcheck as _;
+
+        let sumchecks = sumchecks();
+        #[cfg(not(feature = "field-inline"))]
+        let leading_gamma_draws = 1usize;
+        #[cfg(feature = "field-inline")]
+        let leading_gamma_draws = 2usize;
+        let (inline_events, (inline_gammas, inline_ram_gamma)) = record(|t| {
+            let gammas = (0..leading_gamma_draws)
+                .map(|_| t.challenge_scalar())
+                .collect::<Vec<Fr>>();
+            let ram = sumchecks.ram_val_check.draw_challenges(t).unwrap();
+            (gammas, ram.gamma)
+        });
+        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
+
+        assert_eq!(draw_events, inline_events);
+        // The RAM value-check domain separator lands after the leading gammas.
+        assert!(matches!(draw_events.first(), Some(DrawEvent::Squeeze(1))));
+        assert!(draw_events
+            .iter()
+            .any(|event| matches!(event, DrawEvent::Append(_))));
+        #[cfg(not(feature = "field-inline"))]
+        let drawn_gammas = vec![challenges.registers_read_write.gamma];
+        #[cfg(feature = "field-inline")]
+        let drawn_gammas = vec![
+            challenges.registers_read_write.gamma,
+            challenges.field_registers_read_write.gamma,
+        ];
+        assert_eq!(drawn_gammas, inline_gammas);
+        assert_eq!(challenges.ram_val_check.gamma, inline_ram_gamma);
+    }
+
+    /// The generated `output_claim_count` sums the members' wire sets: the five
+    /// register openings and the two RAM value-check ones (no staged advice /
+    /// program-image contributions in this fixture) — plus, under
+    /// `field-inline`, the FR read-write member's five.
+    #[test]
+    fn output_claim_count_matches_absorbed_openings() {
+        let sumchecks = sumchecks();
+        #[cfg(not(feature = "field-inline"))]
+        assert_eq!(sumchecks.output_claim_count(), 7);
+        #[cfg(feature = "field-inline")]
+        assert_eq!(sumchecks.output_claim_count(), 12);
         assert_eq!(
-            claims.opening_values(),
-            vec![
-                fr(1),  // untrusted advice
-                fr(2),  // trusted advice
-                fr(10), // program-image contribution
-                fr(3),  // registers_val
-                fr(4),  // rs1_ra
-                fr(5),  // rs2_ra
-                fr(6),  // rd_wa
-                fr(7),  // rd_inc
-                fr(8),  // ram_ra
-                fr(9),  // ram_inc
-            ]
+            claims_with_advice(false).opening_values().len(),
+            sumchecks.output_claim_count(),
         );
     }
 }
