@@ -1,6 +1,7 @@
 //! Vector-scalar operations on G2 using 4D GLV with Frobenius, for Dory inner-product argument rounds.
 
 use ark_bn254::{Fr, G2Projective};
+use ark_std::{cfg_iter, cfg_iter_mut};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

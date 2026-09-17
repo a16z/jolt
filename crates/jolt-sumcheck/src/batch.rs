@@ -97,6 +97,9 @@ fn validate_batch_dimensions<F: JoltField>(
     max_num_vars: usize,
     max_degree: usize,
 ) -> Result<(), SumcheckError<F>> {
+    if max_degree.checked_add(1).is_none() {
+        return Err(SumcheckError::DegreeOverflow { degree: max_degree });
+    }
     for (member, described) in members.iter().enumerate() {
         let exponent = max_num_vars.checked_sub(described.rounds).ok_or(
             SumcheckError::BatchMemberRoundsOutOfRange {
@@ -183,6 +186,14 @@ mod tests {
                 rounds: 2,
                 max_num_vars: 2
             })
+        ));
+    }
+
+    #[test]
+    fn checked_constructor_rejects_degree_overflow() {
+        assert!(matches!(
+            BatchPrelude::<F>::try_new(Vec::new(), 0, usize::MAX),
+            Err(SumcheckError::DegreeOverflow { degree: usize::MAX })
         ));
     }
 }

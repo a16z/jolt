@@ -224,9 +224,8 @@ where
     prelude.validate()?;
     let max_num_vars = prelude.max_num_vars;
 
-    let two_inv = F::from_u64(2)
-        .inverse()
-        .ok_or(SumcheckError::TwoNotInvertible)?;
+    let two_inv = F::two_inv();
+    let coefficient_count = prelude.max_degree + 1;
     // Each member's running claim, at the dummy-round padding scale: a member
     // starts at `input_claim * 2^(max - rounds)` and halves once per inactive
     // round. A tail-aligned member reaches its true input claim exactly when
@@ -249,13 +248,6 @@ where
         // spans nest under it, never inside per-index inner loops.
         let _round_span = tracing::info_span!("sumcheck_round", round).entered();
 
-        let coefficient_count =
-            prelude
-                .max_degree
-                .checked_add(1)
-                .ok_or(SumcheckError::DegreeOverflow {
-                    degree: prelude.max_degree,
-                })?;
         let mut batched_coefficients = vec![F::zero(); coefficient_count];
         let mut work: Vec<MemberRound<'_, F>> = Vec::with_capacity(members.len());
         for (index, ((member, described), (member_claim, pending_bind))) in members

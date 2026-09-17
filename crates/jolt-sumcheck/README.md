@@ -27,12 +27,20 @@ Run the minimal example with:
 cargo run -p jolt-sumcheck --example clear_custom_transcript --no-default-features
 ```
 
-The fixed transcript in that example makes the algebraic API easy to inspect;
-it is not a production Fiat–Shamir transcript. Applications must use a
-cryptographic transcript with adequate challenge entropy.
+The example transcript tracks every absorb but returns fixed challenges, which
+makes the Fiat–Shamir schedule and algebraic API easy to inspect. It is not a
+production transcript; applications must use a cryptographic transcript with
+adequate challenge entropy.
 
-The isolated fixture is checked outside Cargo's Jolt workspace feature
-unification with:
+The isolated fixture runs outside Cargo's Jolt workspace feature unification:
+
+```bash
+cargo nextest run \
+  --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml \
+  --locked
+```
+
+Check its minimal dependency boundary separately with:
 
 ```bash
 scripts/check-external-sumcheck.sh

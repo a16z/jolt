@@ -4,8 +4,6 @@ set -euo pipefail
 fixture="crates/jolt-sumcheck/tests/external-consumer/Cargo.toml"
 
 cargo check -p jolt-transcript --no-default-features --features bn254 --locked --offline
-cargo check --manifest-path "$fixture" --locked --offline
-cargo run --manifest-path "$fixture" --locked --offline
 
 for forbidden in ark-bn254 ark-ec ark-ff getrandom jolt-crypto jolt-openings jolt-r1cs rayon spongefish; do
   if cargo tree --manifest-path "$fixture" --edges normal,build --offline --prefix none | rg -q "^${forbidden} "; then

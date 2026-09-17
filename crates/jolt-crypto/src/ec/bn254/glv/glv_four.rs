@@ -6,7 +6,7 @@
 use ark_bn254::{Fr, G2Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};
-use ark_std::Zero;
+use ark_std::{cfg_iter, Zero};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

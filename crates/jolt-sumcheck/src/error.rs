@@ -41,7 +41,9 @@ pub enum SumcheckError<F: Field> {
     },
 
     /// A batch member declared more rounds than the batch contains.
-    #[error("batch member {member} has {rounds} rounds, exceeding batch size {max_num_vars}")]
+    #[error(
+        "batch member {member} has {rounds} rounds, exceeding the batch's {max_num_vars} rounds"
+    )]
     BatchMemberRoundsOutOfRange {
         /// Zero-indexed member position (declaration order).
         member: usize,
@@ -72,10 +74,6 @@ pub enum SumcheckError<F: Field> {
         /// The member's round count.
         rounds: usize,
     },
-
-    /// The selected field has no multiplicative inverse for two.
-    #[error("sumcheck batching requires a field where 2 is invertible")]
-    TwoNotInvertible,
 
     /// Adding one to the declared degree overflowed `usize`.
     #[error("sumcheck degree {degree} cannot be represented with its coefficient count")]

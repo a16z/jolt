@@ -3,6 +3,7 @@
 use ark_bn254::G1Affine;
 use ark_ec::CurveGroup;
 use ark_ff::Zero;
+use ark_std::cfg_iter;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

@@ -21,28 +21,6 @@
     clippy::wildcard_enum_match_arm
 )]
 
-#[cfg(feature = "bn254")]
-macro_rules! cfg_iter {
-    ($values:expr) => {{
-        #[cfg(feature = "parallel")]
-        let it = $values.par_iter();
-        #[cfg(not(feature = "parallel"))]
-        let it = $values.iter();
-        it
-    }};
-}
-
-#[cfg(feature = "bn254")]
-macro_rules! cfg_iter_mut {
-    ($values:expr) => {{
-        #[cfg(feature = "parallel")]
-        let it = $values.par_iter_mut();
-        #[cfg(not(feature = "parallel"))]
-        let it = $values.iter_mut();
-        it
-    }};
-}
-
 pub mod ec;
 pub use ec::{JoltGroup, PairingGroup};
 #[cfg(feature = "bn254")]
