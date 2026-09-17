@@ -1,7 +1,8 @@
 //! Verifier error types.
 
 use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltRelationId,
+    JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOneHotConfig, JoltOpeningId,
+    JoltReadWriteConfig, JoltRelationId,
 };
 
 use crate::config::JoltProtocolConfig;
@@ -50,11 +51,20 @@ pub enum VerifierError {
     #[error("public output length {got} exceeds configured maximum {max}")]
     OutputTooLarge { got: usize, max: usize },
 
-    #[error("invalid trace length {got}; expected a power of two no larger than {max}")]
-    InvalidTraceLength { got: usize, max: usize },
+    #[error("invalid trace length {got}; expected a power of two in [{min}, {max}]")]
+    InvalidTraceLength { got: usize, min: usize, max: usize },
 
     #[error("invalid RAM domain size {got}; expected a power of two in [{min}, {max}]")]
     InvalidRamK { got: usize, min: usize, max: usize },
+
+    #[error("read-write config {got:?} does not match the phase-split policy {expected:?}")]
+    InvalidReadWriteConfig {
+        expected: JoltReadWriteConfig,
+        got: JoltReadWriteConfig,
+    },
+
+    #[error("one-hot config {got:?} is not an admissible chunking regime")]
+    InvalidOneHotConfig { got: JoltOneHotConfig },
 
     #[error("invalid verifier memory layout: {reason}")]
     InvalidMemoryLayout { reason: String },

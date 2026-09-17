@@ -240,18 +240,18 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
     checked_standard(
         "proof.rw_config",
         "proof.rw_config",
-        VerifierPhase::Stage2,
+        VerifierPhase::Preamble,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "stage 2 consumes RAM read-write phase lengths when slicing batched points",
+        "input validation requires the read-write phase split to match the verifier's policy",
     ),
-    later_standard(
+    checked_standard(
         "proof.one_hot_config",
         "proof.one_hot_config",
-        VerifierPhase::Stage6,
+        VerifierPhase::Preamble,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::Deferred,
-        "one-hot configuration is transcript-bound now but substantively checked by later RA virtualization stages",
+        TamperCoverage::Active,
+        "input validation requires the one-hot config to be an admissible chunking regime",
     ),
     checked_standard(
         "proof.trace_polynomial_order",

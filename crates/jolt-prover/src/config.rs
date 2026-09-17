@@ -3,23 +3,22 @@
 //! These five values are exactly the proof's wire config block
 //! (`JoltProof::{trace_length, ram_K, rw_config, one_hot_config,
 //! trace_polynomial_order}`) plus the Fiat-Shamir preamble inputs. The
-//! derivation policies here must match `jolt-prover-legacy`'s choices
-//! byte-for-byte while it remains the parity oracle; the byte-diff harness
-//! pins them.
+//! chunking and phase-split policies are the verifier's
+//! (`jolt_verifier::config`), which validates every proof against them; they
+//! must match `jolt-prover-legacy`'s choices byte-for-byte while it remains
+//! the parity oracle, and the byte-diff harness pins them.
 
-use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_program::execution::{RamAccess, TraceRow};
 use jolt_riscv::JoltTraceRow;
+use jolt_verifier::config::{one_hot_config_policy, read_write_config_policy};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::ProverError;
 
-/// The full instruction lookup key width: two `XLEN`-bit operands.
-const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
 #[cfg(feature = "parallel")]
 const PARALLEL_DERIVE_MIN_ROWS: usize = 1 << 16;
 
@@ -147,11 +146,16 @@ impl ProverConfig {
         let ram_K = touched.max(image_end).next_power_of_two() as usize;
 
         let log_T = trace_length.ilog2() as usize;
+        let rw_config = read_write_config_policy(log_T, ram_K.ilog2() as usize).ok_or(
+            ProverError::Unsupported {
+                reason: "read-write phase round counts do not fit the wire config",
+            },
+        )?;
         Ok(Self {
             trace_length,
             ram_K,
-            rw_config: read_write_config(log_T, ram_K.ilog2() as usize),
-            one_hot_config: one_hot_config(log_T),
+            rw_config,
+            one_hot_config: one_hot_config_policy(log_T),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
         })
     }
@@ -196,39 +200,6 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
     let lowest = memory_layout.get_lowest_address();
     assert!(address >= lowest, "Unexpected address {address}");
     Some((address - lowest) / 8)
-}
-
-/// Read-write checking phase splits: cycle variables in phase 1, address
-/// variables in phase 2 (registers have a fixed 2^7 address space).
-#[expect(non_snake_case)]
-fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
-    JoltReadWriteConfig {
-        ram_rw_phase1_num_rounds: log_T as u8,
-        ram_rw_phase2_num_rounds: ram_log_K as u8,
-        registers_rw_phase1_num_rounds: log_T as u8,
-        registers_rw_phase2_num_rounds: REGISTER_COUNT.ilog2() as u8,
-    }
-}
-
-/// One-hot chunking policy, mirroring `jolt-prover-legacy`'s
-/// `OneHotConfig::new`: below the trace-length threshold (`log_T < 25`),
-/// 4-bit committed chunks and `LOG_K/8 = 16`-bit virtual-RA chunks; at or
-/// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks
-/// (a branch that requires a 2^25-cycle trace and may never have run in
-/// practice — kept for parity).
-#[expect(non_snake_case)]
-fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
-    if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
-        JoltOneHotConfig {
-            log_k_chunk: 4,
-            lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 8) as u8,
-        }
-    } else {
-        JoltOneHotConfig {
-            log_k_chunk: 8,
-            lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
-        }
-    }
 }
 
 /// The committed-program precommitted candidates' variable counts, folded

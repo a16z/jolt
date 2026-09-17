@@ -12,10 +12,40 @@ use super::{
 };
 
 pub const REGISTER_ADDRESS_BITS: usize = 7;
-pub const OUTER_UNISKIP_DOMAIN_SIZE: usize = 10;
-pub const OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize = 27;
-pub const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = 3;
-pub const PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize = 6;
+
+/// Spartan outer eq-constraint rows and product lanes per cycle, per
+/// constraint table. `jolt-r1cs` builds the tables and depends on this crate,
+/// so it cannot own the uni-skip geometry below; instead each table module
+/// statically asserts its counts against these
+/// (`jolt_r1cs::constraints::{rv64, field_constraints}`).
+pub const RV64_SPARTAN_OUTER_ROW_COUNT: usize = 19;
+pub const RV64_SPARTAN_PRODUCT_LANES: usize = 3;
+pub const FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT: usize = 8;
+pub const FIELD_INLINE_SPARTAN_PRODUCT_LANES: usize = 2;
+
+/// Row and lane counts of the composed Spartan R1CS: the RV64 table plus,
+/// under `field-inline`, the appended native-field table.
+pub const SPARTAN_OUTER_ROW_COUNT: usize = RV64_SPARTAN_OUTER_ROW_COUNT
+    + if cfg!(feature = "field-inline") {
+        FIELD_INLINE_SPARTAN_OUTER_ROW_COUNT
+    } else {
+        0
+    };
+pub const SPARTAN_PRODUCT_LANES: usize = RV64_SPARTAN_PRODUCT_LANES
+    + if cfg!(feature = "field-inline") {
+        FIELD_INLINE_SPARTAN_PRODUCT_LANES
+    } else {
+        0
+    };
+
+/// Uni-skip geometry: the outer first round skips over half the constraint
+/// rows (each row group is one Lagrange node), the product first round over one
+/// node per lane; both have a cubic per-node relation, so the first-round
+/// degree is `3 * (domain_size - 1)`.
+pub const OUTER_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_OUTER_ROW_COUNT.div_ceil(2);
+pub const OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize = 3 * (OUTER_UNISKIP_DOMAIN_SIZE - 1);
+pub const PRODUCT_UNISKIP_DOMAIN_SIZE: usize = SPARTAN_PRODUCT_LANES;
+pub const PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize = 3 * (PRODUCT_UNISKIP_DOMAIN_SIZE - 1);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TracePolynomialOrder {

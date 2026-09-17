@@ -367,6 +367,7 @@ impl<
             );
             return Err(jolt_verifier::VerifierError::InvalidTraceLength {
                 got: padded_trace_len,
+                min: PCS::MIN_PADDED_TRACE_LENGTH,
                 max: max_padded_trace_length,
             });
         }
