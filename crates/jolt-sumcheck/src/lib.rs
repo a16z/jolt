@@ -66,6 +66,12 @@
 //! optional: jolt-crypto (`committed`), jolt-r1cs (`r1cs`)
 //! ```
 //!
+//! Polynomial and clear sumcheck arithmetic is generic over
+//! [`Field`](jolt_field::Field). Stock clear transcript adapters additionally
+//! require [`AppendToTranscript`](jolt_transcript::AppendToTranscript) where
+//! field values are absorbed. Optimized Jolt kernels and commitment backends
+//! retain their stronger capability bounds at their own integration points.
+//!
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).

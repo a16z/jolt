@@ -15,9 +15,15 @@ pool. Its default feature set is empty.
 - `r1cs`: lowering of sumcheck verifier equations into the dependency-light
   R1CS builder.
 
-For a custom transcript, implement `jolt_transcript::Transcript`. Scalar types
-used with the stock proof and prover types implement `jolt_field::JoltField`;
-the verifier's custom-round surface uses the smaller `SumcheckScalar` bundle.
+Polynomial storage, compression, round generation, and the shared prover and
+verifier engines require `jolt_field::Field`. The stock clear recorder and
+proof-verification conveniences additionally require
+`jolt_transcript::AppendToTranscript`, because they absorb field elements.
+Implement `jolt_transcript::Transcript` to choose challenge generation; stock
+hash transcripts retain their `CanonicalEncoding` requirement. Jolt's own
+optimized kernels and commitment-backed modes may require the broader
+`JoltField` bundle at their integration boundary.
+
 After verification, the caller must check the returned `EvaluationClaim`
 against its polynomial oracle or commitment. This includes zero-variable claims.
 

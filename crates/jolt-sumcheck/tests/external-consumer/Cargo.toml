@@ -17,3 +17,5 @@ jolt-field = { path = "../../../jolt-field", default-features = false, features 
 jolt-poly = { path = "../../../jolt-poly", default-features = false }
 jolt-sumcheck = { path = "../..", default-features = false }
 jolt-transcript = { path = "../../../jolt-transcript", default-features = false }
+num-traits = { version = "0.2.19", default-features = false }
+rand_core = { version = "0.6.4", default-features = false }
