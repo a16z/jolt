@@ -591,11 +591,11 @@ fn akita_prover_commit_dense(
         .commit(
             &setup.dense_prover,
             black_box(std::slice::from_ref(poly)),
-            &stack,
+            stack.commitment(),
             GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("Akita backend dense commit should succeed");
-    (output.committed_group, output.hint)
+    (output.committed_group, output.prover_state)
 }
 
 fn akita_prover_commit_one_hot(
@@ -613,11 +613,11 @@ fn akita_prover_commit_one_hot(
         .commit(
             &setup.one_hot_prover,
             black_box(std::slice::from_ref(poly)),
-            &stack,
+            stack.commitment(),
             GroupContext::scheduler_without_precommitted_groups(),
         )
         .expect("Akita backend one-hot commit should succeed");
-    (output.committed_group, output.hint)
+    (output.committed_group, output.prover_state)
 }
 
 fn akita_prover_claims<'a, Cfg, P>(

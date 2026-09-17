@@ -1,5 +1,5 @@
-use akita_pcs::{AkitaError, ComputeBackendSetup, CpuBackend};
-use akita_prover::{GroupContext, RootPolyMeta};
+use akita_pcs::{AkitaError, ComputeBackendSetup};
+use akita_prover::{CommitOutput, CommitmentSource, GroupContext};
 use akita_types::PrecommittedGroupProfiles;
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
@@ -31,9 +31,9 @@ use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 pub struct AkitaScheme;
 
 fn split_commit_output(
-    output: akita_prover::CommitOutput<AkitaField>,
+    output: CommitOutput<AkitaField, AkitaBackendHint>,
 ) -> (AkitaBackendCommitment, AkitaBackendHint) {
-    (output.committed_group, output.hint)
+    (output.committed_group, output.prover_state)
 }
 
 /// Prover seam for committing the packed trace directly from selected one-hot rows.
@@ -232,7 +232,7 @@ impl AkitaScheme {
             rows,
         )
         .map_err(commit_failed)?;
-        let num_vars = RootPolyMeta::num_vars(&source);
+        let num_vars = source.descriptor().map_err(commit_failed)?.num_vars();
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
@@ -242,40 +242,40 @@ impl AkitaScheme {
                     .verifier
                     .one_hot_k16_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_without_precommitted_groups(),
                     ),
                 (AKITA_ONE_HOT_K16, Some(profiles)) => setup
                     .verifier
                     .one_hot_k16_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_with_precommitted_groups(profiles),
                     ),
                 (AKITA_ONE_HOT_K256, None) => setup
                     .verifier
                     .one_hot_k256_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_without_precommitted_groups(),
                     ),
                 (AKITA_ONE_HOT_K256, Some(profiles)) => setup
                     .verifier
                     .one_hot_k256_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_with_precommitted_groups(profiles),
                     ),
                 _ => unreachable!("the one-hot setup geometry was validated during setup"),
@@ -305,7 +305,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_without_precommitted_groups(),
                 ),
             AKITA_ONE_HOT_K256 => setup
@@ -315,7 +315,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_without_precommitted_groups(),
                 ),
             _ => unreachable!("the one-hot setup geometry was validated during setup"),
@@ -339,7 +339,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_with_precommitted_groups(profiles),
                 ),
             AKITA_ONE_HOT_K256 => setup
@@ -349,7 +349,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_with_precommitted_groups(profiles),
                 ),
             _ => unreachable!("the one-hot setup geometry was validated during setup"),
@@ -473,7 +473,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     dense.as_slice(),
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_without_precommitted_groups(),
                 )
         })
