@@ -1,5 +1,5 @@
 use std::{
-    fmt::{Display, Formatter},
+    fmt::{Display, Formatter, Result as FmtResult},
     iter::{Product, Sum},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
@@ -14,12 +14,13 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
+use rand_core::RngCore;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct ExternalField(Prime64Offset59);
 
 impl Display for ExternalField {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         Display::fmt(&self.0, formatter)
     }
 }
@@ -167,7 +168,7 @@ impl Field for ExternalField {
         self.0.inverse().map(Self)
     }
 
-    fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
+    fn random<R: RngCore>(rng: &mut R) -> Self {
         Self(Prime64Offset59::random(rng))
     }
 }

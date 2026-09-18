@@ -17,6 +17,7 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use num_traits::{One, Zero};
+use serde::{Deserialize, Serialize};
 
 trait ChallengeField: Field + AppendToTranscript + 'static {
     fn challenge_from_seed(seed: u64) -> Self;
@@ -210,7 +211,7 @@ fn affine_table<F: Field>(coefficients: [F; 3]) -> Vec<F> {
 
 fn run_batched_roundtrip<F>(left_coefficients: [F; 3], right_coefficients: [F; 3])
 where
-    F: ChallengeField + serde::Serialize + for<'de> serde::Deserialize<'de>,
+    F: ChallengeField + Serialize + for<'de> Deserialize<'de>,
 {
     let left = affine_table(left_coefficients);
     let right = affine_table(right_coefficients);

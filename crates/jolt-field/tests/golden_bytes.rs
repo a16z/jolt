@@ -27,7 +27,7 @@
 
 use jolt_field as two;
 
-use two::{CanonicalBytes, CanonicalEncoding};
+use two::CanonicalEncoding;
 
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -367,7 +367,7 @@ mod solinas {
     #![expect(clippy::unreadable_literal, reason = "generated fixture data")]
 
     use super::*;
-    use two::ExtField;
+    use two::{CanonicalBytes, ExtField};
 
     const FIX_PRIME24_OFFSET3: &[(&str, &str)] = &[
         ("00000000", "00000000"),
