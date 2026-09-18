@@ -442,16 +442,7 @@ macro_rules! source_extension_for_marker {
     (AlignAddr) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualXorRot32) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot24) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot16) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualXorRotW16) => {
@@ -491,75 +482,6 @@ macro_rules! source_extension_for_marker {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualXorRotL1) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot2) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot3) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot8) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot9) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot19) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot20) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot21) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot23) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot25) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot28) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot36) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot37) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot39) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot43) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot44) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot46) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot49) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot50) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot54) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot56) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot58) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot61) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot62) => {
         Some(SourceExtension::JoltCustom)
     };
     (FieldAdd) => {
@@ -994,16 +916,7 @@ macro_rules! source_side_effects_for_marker {
     (AlignAddr) => {
         false
     };
-    (VirtualXorRot32) => {
-        false
-    };
-    (VirtualXorRot24) => {
-        false
-    };
-    (VirtualXorRot16) => {
-        false
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         false
     };
     (VirtualXorRotW16) => {
@@ -1043,75 +956,6 @@ macro_rules! source_side_effects_for_marker {
         false
     };
     (VirtualXorRotL1) => {
-        false
-    };
-    (VirtualXorRot2) => {
-        false
-    };
-    (VirtualXorRot3) => {
-        false
-    };
-    (VirtualXorRot8) => {
-        false
-    };
-    (VirtualXorRot9) => {
-        false
-    };
-    (VirtualXorRot19) => {
-        false
-    };
-    (VirtualXorRot20) => {
-        false
-    };
-    (VirtualXorRot21) => {
-        false
-    };
-    (VirtualXorRot23) => {
-        false
-    };
-    (VirtualXorRot25) => {
-        false
-    };
-    (VirtualXorRot28) => {
-        false
-    };
-    (VirtualXorRot36) => {
-        false
-    };
-    (VirtualXorRot37) => {
-        false
-    };
-    (VirtualXorRot39) => {
-        false
-    };
-    (VirtualXorRot43) => {
-        false
-    };
-    (VirtualXorRot44) => {
-        false
-    };
-    (VirtualXorRot46) => {
-        false
-    };
-    (VirtualXorRot49) => {
-        false
-    };
-    (VirtualXorRot50) => {
-        false
-    };
-    (VirtualXorRot54) => {
-        false
-    };
-    (VirtualXorRot56) => {
-        false
-    };
-    (VirtualXorRot58) => {
-        false
-    };
-    (VirtualXorRot61) => {
-        false
-    };
-    (VirtualXorRot62) => {
         false
     };
     (FieldAdd) => {
@@ -1357,16 +1201,7 @@ macro_rules! jolt_target_extension_for_marker {
     (VirtualRev8W) => {
         Some(JoltTargetExtension::BitManipulation)
     };
-    (VirtualXorRot32) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot24) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot16) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRotW16) => {
@@ -1406,75 +1241,6 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::VirtualShifts)
     };
     (VirtualXorRotL1) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot2) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot3) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot8) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot9) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot19) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot20) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot21) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot23) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot25) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot28) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot36) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot37) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot39) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot43) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot44) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot46) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot49) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot50) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot54) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot56) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot58) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot61) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot62) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (FieldAdd) => {
@@ -1744,16 +1510,7 @@ macro_rules! jolt_side_effects_for_marker {
     (AlignAddr) => {
         false
     };
-    (VirtualXorRot32) => {
-        false
-    };
-    (VirtualXorRot24) => {
-        false
-    };
-    (VirtualXorRot16) => {
-        false
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         false
     };
     (VirtualXorRotW16) => {
@@ -1793,75 +1550,6 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRotL1) => {
-        false
-    };
-    (VirtualXorRot2) => {
-        false
-    };
-    (VirtualXorRot3) => {
-        false
-    };
-    (VirtualXorRot8) => {
-        false
-    };
-    (VirtualXorRot9) => {
-        false
-    };
-    (VirtualXorRot19) => {
-        false
-    };
-    (VirtualXorRot20) => {
-        false
-    };
-    (VirtualXorRot21) => {
-        false
-    };
-    (VirtualXorRot23) => {
-        false
-    };
-    (VirtualXorRot25) => {
-        false
-    };
-    (VirtualXorRot28) => {
-        false
-    };
-    (VirtualXorRot36) => {
-        false
-    };
-    (VirtualXorRot37) => {
-        false
-    };
-    (VirtualXorRot39) => {
-        false
-    };
-    (VirtualXorRot43) => {
-        false
-    };
-    (VirtualXorRot44) => {
-        false
-    };
-    (VirtualXorRot46) => {
-        false
-    };
-    (VirtualXorRot49) => {
-        false
-    };
-    (VirtualXorRot50) => {
-        false
-    };
-    (VirtualXorRot54) => {
-        false
-    };
-    (VirtualXorRot56) => {
-        false
-    };
-    (VirtualXorRot58) => {
-        false
-    };
-    (VirtualXorRot61) => {
-        false
-    };
-    (VirtualXorRot62) => {
         false
     };
 }

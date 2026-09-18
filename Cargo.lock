@@ -3582,7 +3582,6 @@ dependencies = [
  "jolt-field",
  "jolt-prover-legacy",
  "jolt-riscv",
- "paste",
  "rand 0.8.7",
  "serde",
  "strum 0.28.0",

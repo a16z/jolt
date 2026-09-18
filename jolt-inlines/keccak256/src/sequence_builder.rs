@@ -187,38 +187,15 @@ impl Keccak256SequenceBuilder {
     /// `destination = rotl(A[source] ^ D[source.x], offset)`: θ's XOR of the
     /// source column's parity fused with ρ's rotation. Lane (0,0) never
     /// comes through here: it is π's fixed point and the only lane with a
-    /// zero offset, so every rotation below is a nonzero rotate-right.
+    /// zero offset, so the rotate-right amount is always in `1..64`.
     fn emit_rho_pi_lane(&mut self, source: (usize, usize), destination: u8) {
         let (x, y) = source;
-        let kind = match 64 - ROTATION_OFFSETS[x][y] {
-            2 => Kind::VirtualXORROT2,
-            3 => Kind::VirtualXORROT3,
-            8 => Kind::VirtualXORROT8,
-            9 => Kind::VirtualXORROT9,
-            19 => Kind::VirtualXORROT19,
-            20 => Kind::VirtualXORROT20,
-            21 => Kind::VirtualXORROT21,
-            23 => Kind::VirtualXORROT23,
-            25 => Kind::VirtualXORROT25,
-            28 => Kind::VirtualXORROT28,
-            36 => Kind::VirtualXORROT36,
-            37 => Kind::VirtualXORROT37,
-            39 => Kind::VirtualXORROT39,
-            43 => Kind::VirtualXORROT43,
-            44 => Kind::VirtualXORROT44,
-            46 => Kind::VirtualXORROT46,
-            49 => Kind::VirtualXORROT49,
-            50 => Kind::VirtualXORROT50,
-            54 => Kind::VirtualXORROT54,
-            56 => Kind::VirtualXORROT56,
-            58 => Kind::VirtualXORROT58,
-            61 => Kind::VirtualXORROT61,
-            62 => Kind::VirtualXORROT62,
-            63 => Kind::VirtualXORROT63,
-            _ => unreachable!("nonzero Keccak rho rotation"),
-        };
-        self.asm
-            .emit_r(kind, destination, self.lane(x, y), self.d_lane(x));
+        self.asm.emit_xor_rot(
+            destination,
+            self.lane(x, y),
+            self.d_lane(x),
+            64 - ROTATION_OFFSETS[x][y],
+        );
     }
 
     fn chi(&mut self) {

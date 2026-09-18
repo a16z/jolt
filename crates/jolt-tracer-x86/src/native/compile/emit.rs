@@ -458,7 +458,9 @@ impl Emitter {
 
 impl DynasmEmitter {
     /// `(x[rs1] ^ x[rs2]).rotate_right(n)`, 64-bit.
-    fn emit_xor_rot(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
+    /// `(x[rs1] ^ x[rs2]).rotate_right(imm)`; the rotation is the row immediate.
+    fn emit_xor_rot(e: &mut Emitter, row: &JoltInstructionRow) {
+        let n = row.operands.imm as i8;
         e.load_reg(RAX, row.operands.rs1);
         e.load_reg(RCX, row.operands.rs2);
         dynasm!(e.ops ; .arch x64 ; xor rax, rcx ; ror rax, n);
@@ -1009,33 +1011,7 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; sar rax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
-            K::VirtualXorRot32(_) => Self::emit_xor_rot(e, row, 32),
-            K::VirtualXorRot24(_) => Self::emit_xor_rot(e, row, 24),
-            K::VirtualXorRot16(_) => Self::emit_xor_rot(e, row, 16),
-            K::VirtualXorRot63(_) => Self::emit_xor_rot(e, row, 63),
-            K::VirtualXorRot2(_) => Self::emit_xor_rot(e, row, 2),
-            K::VirtualXorRot3(_) => Self::emit_xor_rot(e, row, 3),
-            K::VirtualXorRot8(_) => Self::emit_xor_rot(e, row, 8),
-            K::VirtualXorRot9(_) => Self::emit_xor_rot(e, row, 9),
-            K::VirtualXorRot19(_) => Self::emit_xor_rot(e, row, 19),
-            K::VirtualXorRot20(_) => Self::emit_xor_rot(e, row, 20),
-            K::VirtualXorRot21(_) => Self::emit_xor_rot(e, row, 21),
-            K::VirtualXorRot23(_) => Self::emit_xor_rot(e, row, 23),
-            K::VirtualXorRot25(_) => Self::emit_xor_rot(e, row, 25),
-            K::VirtualXorRot28(_) => Self::emit_xor_rot(e, row, 28),
-            K::VirtualXorRot36(_) => Self::emit_xor_rot(e, row, 36),
-            K::VirtualXorRot37(_) => Self::emit_xor_rot(e, row, 37),
-            K::VirtualXorRot39(_) => Self::emit_xor_rot(e, row, 39),
-            K::VirtualXorRot43(_) => Self::emit_xor_rot(e, row, 43),
-            K::VirtualXorRot44(_) => Self::emit_xor_rot(e, row, 44),
-            K::VirtualXorRot46(_) => Self::emit_xor_rot(e, row, 46),
-            K::VirtualXorRot49(_) => Self::emit_xor_rot(e, row, 49),
-            K::VirtualXorRot50(_) => Self::emit_xor_rot(e, row, 50),
-            K::VirtualXorRot54(_) => Self::emit_xor_rot(e, row, 54),
-            K::VirtualXorRot56(_) => Self::emit_xor_rot(e, row, 56),
-            K::VirtualXorRot58(_) => Self::emit_xor_rot(e, row, 58),
-            K::VirtualXorRot61(_) => Self::emit_xor_rot(e, row, 61),
-            K::VirtualXorRot62(_) => Self::emit_xor_rot(e, row, 62),
+            K::VirtualXorRot(_) => Self::emit_xor_rot(e, row),
             K::VirtualXorRotW16(_) => Self::emit_xor_rotw(e, row, 16),
             K::VirtualXorRotW12(_) => Self::emit_xor_rotw(e, row, 12),
             K::VirtualXorRotW8(_) => Self::emit_xor_rotw(e, row, 8),

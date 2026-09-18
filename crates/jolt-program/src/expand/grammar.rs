@@ -238,6 +238,26 @@ impl ExpansionBuilder {
         ));
     }
 
+    /// `rd = rotr(rs1 ^ rs2, rotation)`, one `VirtualXORROT` row whose
+    /// immediate selects the rotation's lookup table.
+    pub(super) fn emit_xor_rot(
+        &mut self,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
+        rotation: u32,
+    ) {
+        self.instruction(SourceInstructionRowTemplate {
+            instruction_kind: SourceInstructionKind::VirtualXORROT,
+            operands: TemplateOperands {
+                rd: Some(rd.into()),
+                rs1: Some(rs1.into()),
+                rs2: Some(rs2.into()),
+                imm: i128::from(rotation),
+            },
+        });
+    }
+
     pub(super) fn emit_i(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,

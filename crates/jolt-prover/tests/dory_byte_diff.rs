@@ -1855,8 +1855,8 @@ mod inline_sha3 {
 
     use super::support;
 
-    // The rho step rotates lane (1, 0) once per round.
-    const KECCAK_XORROT63_ROWS: usize = 24;
+    // The theta-fused rho step rotates 24 lanes per round.
+    const KECCAK_XORROT_ROWS: usize = 24 * 24;
     // The `[[u64; 17]; 2]` message is 8-byte aligned in the guest, so `digest`
     // takes its aligned path: two fused absorb-permute blocks read straight
     // from the caller's memory through `rs2`, then the pad-only final block.
@@ -1904,9 +1904,9 @@ mod inline_sha3 {
                 .trace
                 .rows()
                 .iter()
-                .filter(|row| row.instruction_kind() == JoltInstructionKind::VirtualXORROT63)
+                .filter(|row| row.instruction_kind() == JoltInstructionKind::VirtualXORROT)
                 .count(),
-            KECCAK_XORROT63_ROWS * SHA3_PERMUTATIONS,
+            KECCAK_XORROT_ROWS * SHA3_PERMUTATIONS,
             "two aligned fused-absorb blocks and the padded final Keccak permutation must be expanded into the modular trace",
         );
         let program_preprocessing = verifier_preprocessing

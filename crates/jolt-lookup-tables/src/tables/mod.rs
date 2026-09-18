@@ -307,6 +307,42 @@ macro_rules! dispatch {
 }
 
 impl<const XLEN: usize> LookupTableKind<XLEN> {
+    /// The XOR-then-rotate-right-by-`rotation` table selected by a
+    /// `VirtualXorRot` row's immediate. Owns the rotation-to-variant map;
+    /// the supported set is `jolt_riscv::instructions::XOR_ROT_ROTATIONS`.
+    pub const fn xor_rot(rotation: u32) -> Self {
+        match rotation {
+            2 => Self::VirtualXORROT2(VirtualXORROTTable),
+            3 => Self::VirtualXORROT3(VirtualXORROTTable),
+            8 => Self::VirtualXORROT8(VirtualXORROTTable),
+            9 => Self::VirtualXORROT9(VirtualXORROTTable),
+            16 => Self::VirtualXORROT16(VirtualXORROTTable),
+            19 => Self::VirtualXORROT19(VirtualXORROTTable),
+            20 => Self::VirtualXORROT20(VirtualXORROTTable),
+            21 => Self::VirtualXORROT21(VirtualXORROTTable),
+            23 => Self::VirtualXORROT23(VirtualXORROTTable),
+            24 => Self::VirtualXORROT24(VirtualXORROTTable),
+            25 => Self::VirtualXORROT25(VirtualXORROTTable),
+            28 => Self::VirtualXORROT28(VirtualXORROTTable),
+            32 => Self::VirtualXORROT32(VirtualXORROTTable),
+            36 => Self::VirtualXORROT36(VirtualXORROTTable),
+            37 => Self::VirtualXORROT37(VirtualXORROTTable),
+            39 => Self::VirtualXORROT39(VirtualXORROTTable),
+            43 => Self::VirtualXORROT43(VirtualXORROTTable),
+            44 => Self::VirtualXORROT44(VirtualXORROTTable),
+            46 => Self::VirtualXORROT46(VirtualXORROTTable),
+            49 => Self::VirtualXORROT49(VirtualXORROTTable),
+            50 => Self::VirtualXORROT50(VirtualXORROTTable),
+            54 => Self::VirtualXORROT54(VirtualXORROTTable),
+            56 => Self::VirtualXORROT56(VirtualXORROTTable),
+            58 => Self::VirtualXORROT58(VirtualXORROTTable),
+            61 => Self::VirtualXORROT61(VirtualXORROTTable),
+            62 => Self::VirtualXORROT62(VirtualXORROTTable),
+            63 => Self::VirtualXORROT63(VirtualXORROTTable),
+            _ => unreachable!(),
+        }
+    }
+
     pub const COUNT: usize = <Self as strum::EnumCount>::COUNT;
 
     pub fn iter() -> <Self as strum::IntoEnumIterator>::Iterator {

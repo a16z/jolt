@@ -167,20 +167,20 @@ impl Blake2SequenceBuilder {
             add va, va, vb;
             add va, va, mx;
             // v[d] = rotr64(v[d] ^ v[a], 32)
-            xorrot32 vd, vd, va;
+            xorrot vd, vd, va, 32;
             // v[c] = v[c] + v[d]
             add vc, vc, vd;
             // v[b] = rotr64(v[b] ^ v[c], 24)
-            xorrot24 vb, vb, vc;
+            xorrot vb, vb, vc, 24;
             // v[a] = v[a] + v[b] + m[y]
             add va, va, vb;
             add va, va, my;
             // v[d] = rotr64(v[d] ^ v[a], 16)
-            xorrot16 vd, vd, va;
+            xorrot vd, vd, va, 16;
             // v[c] = v[c] + v[d]
             add vc, vc, vd;
             // v[b] = rotr64(v[b] ^ v[c], 63)
-            xorrot63 vb, vb, vc;
+            xorrot vb, vb, vc, 63;
         });
     }
 
