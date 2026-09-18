@@ -367,7 +367,7 @@ mod solinas {
     #![expect(clippy::unreadable_literal, reason = "generated fixture data")]
 
     use super::*;
-    use two::ExtField;
+    use two::{CanonicalBytes, ExtField};
 
     const FIX_PRIME24_OFFSET3: &[(&str, &str)] = &[
         ("00000000", "00000000"),
@@ -943,5 +943,30 @@ mod solinas {
         check_ext_rows::<F128, two::FpExt2<F128, two::TwoNr>>(FIX_EXT2_P128);
         check_ext_rows::<F128, two::FpExt4<F128>>(FIX_EXT4_P128);
         check_ext_rows::<F128, two::FpExt8<F128>>(FIX_EXT8_P128);
+    }
+
+    #[test]
+    fn extension_transcript_bytes_follow_basis_order() {
+        use two::{Ext2, FpExt4, Prime32Offset99, Prime64Offset59, Ring};
+
+        type F32 = Prime32Offset99;
+        type F64 = Prime64Offset59;
+
+        let quadratic = Ext2::<F64>::new(F64::from_u64(1), F64::from_u64(2));
+        assert_eq!(
+            quadratic.to_bytes_le_vec(),
+            unhex("01000000000000000200000000000000")
+        );
+
+        let quartic = FpExt4::<F32>::new([
+            F32::from_u64(1),
+            F32::from_u64(2),
+            F32::from_u64(3),
+            F32::from_u64(4),
+        ]);
+        assert_eq!(
+            quartic.to_bytes_le_vec(),
+            unhex("01000000020000000300000004000000")
+        );
     }
 }

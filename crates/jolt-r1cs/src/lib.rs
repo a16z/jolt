@@ -31,6 +31,7 @@ pub mod column;
 pub mod constraint;
 pub mod constraints;
 pub mod key;
+#[cfg(feature = "claim-lowering")]
 pub mod lowering;
 pub mod provider;
 
@@ -41,6 +42,7 @@ pub use constraint::{
     WeightedMatrixColumns,
 };
 pub use key::R1csKey;
+#[cfg(feature = "claim-lowering")]
 pub use lowering::{
     assert_claim_expr_eq, lower_claim_expr, ClaimLoweringError, ClaimSourceTable, ClaimSources,
     SourceValue,

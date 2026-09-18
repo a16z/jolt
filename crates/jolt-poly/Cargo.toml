@@ -13,8 +13,9 @@ workspace = true
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-jolt-field = { workspace = true }
+jolt-field = { path = "../jolt-field", default-features = false }
 jolt-utils = { workspace = true }
+jolt-transcript = { path = "../jolt-transcript", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 rayon = { workspace = true, optional = true }
@@ -23,6 +24,7 @@ num-traits = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+jolt-field = { workspace = true, features = ["bn254"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 bincode = { workspace = true }
@@ -42,3 +44,4 @@ parallel = ["rayon"]
 # Forwards to jolt-field so `F: JoltField` implies `F: Allocative`; without
 # it this crate's field-generic derives cannot discharge their scalar bound.
 allocative = ["dep:allocative", "jolt-field/allocative"]
+transcript = ["dep:jolt-transcript"]
