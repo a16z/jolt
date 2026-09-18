@@ -6,7 +6,10 @@
 
 use crate::{
     INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_ABSORB_PERMUTE_NAME,
-    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_NAME, NUM_LANES, RATE_IN_U64,
+    KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3, KECCAK256_ABSORB_PERMUTE_UNALIGNED_NAME,
+    KECCAK256_FUNCT3, KECCAK256_FUNCT7, KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3,
+    KECCAK256_INIT_ABSORB_PERMUTE_NAME, KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3,
+    KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_NAME, KECCAK256_NAME, NUM_LANES, RATE_IN_U64,
 };
 use jolt_inlines_sdk::host::{
     ExpandedInstructionSequence, ExpansionError, InlineBuilderExt, InlineExpansionBuilder,
@@ -39,6 +42,30 @@ pub(crate) const ROTATION_OFFSETS: [[u32; 5]; 5] = [
     [27, 20, 39,  8, 14],
 ];
 
+/// How the rate block at `rs2` enters the lanes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Absorb {
+    /// `a[i] ^= block[i]` over the state loaded from `rs1`.
+    IntoState,
+    /// `a[0..17] = block`, `a[17..25] = 0`; `rs1` is only written.
+    Init,
+}
+
+/// Alignment the sequence may assume for the block pointer in `rs2`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlockAlignment {
+    /// 17 aligned doubleword loads.
+    Aligned,
+    /// 18 loads of the containing doublewords, funnel-shifted into lanes.
+    Any,
+}
+
+#[derive(Clone, Copy)]
+struct Block {
+    absorb: Absorb,
+    alignment: BlockAlignment,
+}
+
 /// Register plan (37 virtual registers): A[25], C[5], D[3], one ρ/π
 /// temporary, two χ temporaries, and one scratch register.
 struct Keccak256SequenceBuilder {
@@ -50,7 +77,11 @@ struct Keccak256SequenceBuilder {
     pi_temp: InlineRegister,
     chi_temp: [InlineRegister; 2],
     scratch: InlineRegister,
-    absorb_block: bool,
+    block: Option<Block>,
+    /// Lanes whose value is zero and whose register has not been written:
+    /// the capacity lanes of an [`Absorb::Init`] state before round 0, which
+    /// θ folds instead of materializing.
+    zero_lanes: [bool; NUM_LANES],
     operands: InlineOperands,
 }
 
@@ -58,7 +89,7 @@ impl Keccak256SequenceBuilder {
     fn new(
         mut asm: InlineExpansionBuilder,
         operands: InlineOperands,
-        absorb_block: bool,
+        block: Option<Block>,
     ) -> Result<Self, ExpansionError> {
         let a = asm.allocate_inline_array::<NUM_LANES>()?;
         let c = asm.allocate_inline_array::<5>()?;
@@ -75,7 +106,8 @@ impl Keccak256SequenceBuilder {
             pi_temp,
             chi_temp,
             scratch,
-            absorb_block,
+            block,
+            zero_lanes: [false; NUM_LANES],
             operands,
         })
     }
@@ -101,17 +133,93 @@ impl Keccak256SequenceBuilder {
     }
 
     fn load_state(&mut self) {
-        self.asm.load_u64_range(self.operands.rs1, 0, &self.a);
-        if self.absorb_block {
-            let scratch = *self.scratch;
-            for i in 0..RATE_IN_U64 {
-                self.asm.emit_ld(
-                    Kind::LD,
-                    scratch,
-                    self.operands.rs2,
-                    i as i64 * size_of::<u64>() as i64,
-                );
-                self.asm.xor(Reg(*self.a[i]), Reg(scratch), *self.a[i]);
+        let Some(block) = self.block else {
+            self.asm.load_u64_range(self.operands.rs1, 0, &self.a);
+            return;
+        };
+        match block.absorb {
+            Absorb::IntoState => self.asm.load_u64_range(self.operands.rs1, 0, &self.a),
+            Absorb::Init => {
+                for zero in &mut self.zero_lanes[RATE_IN_U64..] {
+                    *zero = true;
+                }
+            }
+        }
+        match block.alignment {
+            BlockAlignment::Aligned => self.load_block_aligned(block.absorb),
+            BlockAlignment::Any => self.load_block_unaligned(block.absorb),
+        }
+    }
+
+    fn load_block_aligned(&mut self, absorb: Absorb) {
+        match absorb {
+            Absorb::Init => {
+                self.asm
+                    .load_u64_range(self.operands.rs2, 0, &self.a[..RATE_IN_U64]);
+            }
+            Absorb::IntoState => {
+                let scratch = *self.scratch;
+                for i in 0..RATE_IN_U64 {
+                    self.asm.emit_ld(
+                        Kind::LD,
+                        scratch,
+                        self.operands.rs2,
+                        i as i64 * size_of::<u64>() as i64,
+                    );
+                    self.asm.xor(Reg(*self.a[i]), Reg(scratch), *self.a[i]);
+                }
+            }
+        }
+    }
+
+    /// Reads the block through the 18 aligned doublewords `w[0..18]` at
+    /// `rs2 & !7` that contain it. With `sh = 8 * (rs2 & 7)`, lane `i` is
+    /// `w[i] >> sh | w[i + 1] << (64 - sh)`. Both shift operands are
+    /// computed once: the right shift is a `VirtualSRL` by the bitmask
+    /// `-(2^sh) = !0 << sh`, the left shift a `MUL` by `2^(64 - sh) mod 2^64`,
+    /// which is zero for an aligned `rs2`, so the sequence is also correct
+    /// there (it then reads the doubleword after the block).
+    ///
+    /// The C and D registers are dead until θ and serve as temporaries.
+    fn load_block_unaligned(&mut self, absorb: Absorb) {
+        let rs2 = self.operands.rs2;
+        let [base, srl_bitmask, mul_pow2, w_even, w_odd] = self.c.map(|register| *register);
+        let [shifted, carried, _] = self.d.map(|register| *register);
+
+        self.asm.emit_i(Kind::VirtualAlignAddr, base, rs2, 0);
+        // `srl_bitmask` holds `sh` until the bitmask is formed from it.
+        self.asm.emit_i(Kind::ANDI, srl_bitmask, rs2, 7);
+        self.asm
+            .emit_i(Kind::VirtualMULI, srl_bitmask, srl_bitmask, 8);
+        // 2^(64 - sh) mod 2^64 = 2 * 2^(63 - sh); 63 - sh == sh ^ 63 for sh <= 63.
+        self.asm.emit_i(Kind::XORI, mul_pow2, srl_bitmask, 63);
+        self.asm.emit_i(Kind::VirtualPow2, mul_pow2, mul_pow2, 0);
+        self.asm.emit_r(Kind::ADD, mul_pow2, mul_pow2, mul_pow2);
+        self.asm
+            .emit_i(Kind::VirtualPow2, srl_bitmask, srl_bitmask, 0);
+        self.asm.emit_r(Kind::SUB, srl_bitmask, 0, srl_bitmask);
+
+        self.asm.emit_ld(Kind::LD, w_even, base, 0);
+        for i in 0..RATE_IN_U64 {
+            let (low, high) = if i % 2 == 0 {
+                (w_even, w_odd)
+            } else {
+                (w_odd, w_even)
+            };
+            self.asm.emit_ld(
+                Kind::LD,
+                high,
+                base,
+                (i as i64 + 1) * size_of::<u64>() as i64,
+            );
+            self.asm.emit_r(Kind::VirtualSRL, shifted, low, srl_bitmask);
+            self.asm.emit_r(Kind::MUL, carried, high, mul_pow2);
+            match absorb {
+                Absorb::Init => self.asm.emit_r(Kind::OR, *self.a[i], shifted, carried),
+                Absorb::IntoState => {
+                    self.asm.emit_r(Kind::OR, shifted, shifted, carried);
+                    self.asm.xor(Reg(*self.a[i]), Reg(shifted), *self.a[i]);
+                }
             }
         }
     }
@@ -132,21 +240,30 @@ impl Keccak256SequenceBuilder {
         }
     }
 
-    fn d_lane(&self, x: usize) -> u8 {
+    fn d_register(&mut self, x: usize) -> &mut InlineRegister {
         match x {
-            0..=2 => *self.d[x],
-            3 => *self.c[1],
-            4 => *self.c[2],
+            0..=2 => &mut self.d[x],
+            3 => &mut self.c[1],
+            4 => &mut self.c[2],
             _ => unreachable!("keccak D index out of range"),
         }
+    }
+
+    fn d_lane(&mut self, x: usize) -> u8 {
+        **self.d_register(x)
     }
 
     fn theta(&mut self) {
         for x in 0..5 {
             let c = *self.c[x];
-            self.asm.xor(Reg(self.lane(x, 0)), Reg(self.lane(x, 1)), c);
-            for y in 2..5 {
-                self.asm.xor(Reg(c), Reg(self.lane(x, y)), c);
+            // Rows 0..3 of every column are live, so at least three lanes remain.
+            let live: Vec<u8> = (0..5)
+                .filter(|&y| !self.zero_lanes[5 * y + x])
+                .map(|y| self.lane(x, y))
+                .collect();
+            self.asm.xor(Reg(live[0]), Reg(live[1]), c);
+            for &lane in &live[2..] {
+                self.asm.xor(Reg(c), Reg(lane), c);
             }
         }
 
@@ -160,11 +277,32 @@ impl Keccak256SequenceBuilder {
 
         for x in 0..5 {
             let d = self.d_lane(x);
+            // A zero lane becomes D[x] itself: the first one in the column
+            // takes over D[x]'s register, the others copy it.
+            let mut adopter = None;
             for y in 0..5 {
                 let a = self.lane(x, y);
-                self.asm.xor(Reg(a), Reg(d), a);
+                if !self.zero_lanes[5 * y + x] {
+                    self.asm.xor(Reg(a), Reg(d), a);
+                } else if adopter.is_none() {
+                    adopter = Some(5 * y + x);
+                } else {
+                    self.asm.xor(Reg(d), Imm(0), a);
+                }
+            }
+            if let Some(lane) = adopter {
+                self.adopt_d_register(lane, x);
             }
         }
+        self.zero_lanes = [false; NUM_LANES];
+    }
+
+    /// Swaps the unwritten register of `lane` with D[x]'s: the lane now holds
+    /// D[x]'s value and D[x] is recomputed into the spare register next round.
+    fn adopt_d_register(&mut self, lane: usize, x: usize) {
+        let mut spare = self.a[lane];
+        core::mem::swap(&mut spare, self.d_register(x));
+        self.a[lane] = spare;
     }
 
     /// Walks the 24-lane π cycle backwards from `RHO_PI_FIRST_SOURCE`: each
@@ -238,6 +376,7 @@ const fn pi_source((x, y): (usize, usize)) -> (usize, usize) {
     ((x + 3 * y) % 5, x)
 }
 
+/// Keccak-f[1600] over the 25 lanes at `rs1`, in place.
 pub struct Keccak256Permutation;
 
 impl InlineOp for Keccak256Permutation {
@@ -252,10 +391,12 @@ impl InlineOp for Keccak256Permutation {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Keccak256SequenceBuilder::new(asm, operands, false)?.build()
+        Keccak256SequenceBuilder::new(asm, operands, None)?.build()
     }
 }
 
+/// XORs the 136-byte block at `rs2` (8-byte aligned) into the state at `rs1`,
+/// then Keccak-f[1600], in place.
 pub struct Keccak256AbsorbPermutation;
 
 impl InlineOp for Keccak256AbsorbPermutation {
@@ -270,6 +411,101 @@ impl InlineOp for Keccak256AbsorbPermutation {
         asm: InlineExpansionBuilder,
         operands: InlineOperands,
     ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-        Keccak256SequenceBuilder::new(asm, operands, true)?.build()
+        Keccak256SequenceBuilder::new(
+            asm,
+            operands,
+            Some(Block {
+                absorb: Absorb::IntoState,
+                alignment: BlockAlignment::Aligned,
+            }),
+        )?
+        .build()
+    }
+}
+
+/// Keccak-f[1600] of the zero state XOR the 136-byte block at `rs2` (8-byte
+/// aligned), written to `rs1`. The prior contents of `rs1` are not read.
+pub struct Keccak256InitAbsorbPermutation;
+
+impl InlineOp for Keccak256InitAbsorbPermutation {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_INIT_ABSORB_PERMUTE_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Keccak256SequenceBuilder::new(
+            asm,
+            operands,
+            Some(Block {
+                absorb: Absorb::Init,
+                alignment: BlockAlignment::Aligned,
+            }),
+        )?
+        .build()
+    }
+}
+
+/// [`Keccak256AbsorbPermutation`] for a block at any alignment. The sequence
+/// reads the 18 aligned doublewords `[rs2 & !7, (rs2 & !7) + 144)`: for a
+/// misaligned `rs2` exactly the doublewords containing the block, for an
+/// aligned `rs2` the block plus the doubleword after it (the SDK never issues
+/// that case).
+pub struct Keccak256AbsorbPermutationUnaligned;
+
+impl InlineOp for Keccak256AbsorbPermutationUnaligned {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_ABSORB_PERMUTE_UNALIGNED_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Keccak256SequenceBuilder::new(
+            asm,
+            operands,
+            Some(Block {
+                absorb: Absorb::IntoState,
+                alignment: BlockAlignment::Any,
+            }),
+        )?
+        .build()
+    }
+}
+
+/// [`Keccak256InitAbsorbPermutation`] for a block at any alignment, with the
+/// memory contract of [`Keccak256AbsorbPermutationUnaligned`].
+pub struct Keccak256InitAbsorbPermutationUnaligned;
+
+impl InlineOp for Keccak256InitAbsorbPermutationUnaligned {
+    type Advice = NoAdvice;
+
+    const OPCODE: u32 = INLINE_OPCODE;
+    const FUNCT3: u32 = KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3;
+    const FUNCT7: u32 = KECCAK256_FUNCT7;
+    const NAME: &'static str = KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_NAME;
+
+    fn build_sequence(
+        asm: InlineExpansionBuilder,
+        operands: InlineOperands,
+    ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+        Keccak256SequenceBuilder::new(
+            asm,
+            operands,
+            Some(Block {
+                absorb: Absorb::Init,
+                alignment: BlockAlignment::Any,
+            }),
+        )?
+        .build()
     }
 }

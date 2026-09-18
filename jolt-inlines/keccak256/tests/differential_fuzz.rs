@@ -3,7 +3,8 @@
 //! Two layers:
 //! - The expanded inline sequence, executed instruction-by-instruction in the
 //!   tracer emulator (`InlineTestHarness`), vs `tiny_keccak::keccakf`. This is
-//!   the layer that exercises `VirtualXORROTL1` and the in-place rho/pi/chi schedule.
+//!   the layer that exercises `VirtualXORROTL1`, the in-place rho/pi/chi schedule,
+//!   the INIT lane folding, and the unaligned-block funnel shift.
 //! - The `Keccak256` sponge (one-shot `digest` and chunked `update`/`finalize`:
 //!   buffering, padding, absorption, squeezing) vs `tiny_keccak::Keccak::v256`
 //!   over lengths and split points straddling the rate.
@@ -14,13 +15,15 @@
 #![cfg(feature = "host")]
 
 use jolt_inlines_keccak256::{
-    Keccak256, INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
+    Keccak256, INLINE_OPCODE, KECCAK256_ABSORB_PERMUTE_FUNCT3,
+    KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3, KECCAK256_FUNCT3, KECCAK256_FUNCT7,
+    KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3, KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3,
     NUM_LANES, RATE_IN_BYTES, RATE_IN_U64,
 };
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use tiny_keccak::{Hasher, Keccak};
-use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
+use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness, INLINE_RS2};
 
 const STATE_IN_BYTES: usize = NUM_LANES * size_of::<u64>();
 
@@ -105,6 +108,85 @@ fn fuzz_absorb_permute_inline_vs_tiny_keccak() {
         tiny_keccak::keccakf(&mut state);
 
         assert_eq!(actual.as_slice(), state.as_slice(), "iteration {i}");
+    }
+}
+
+/// Runs a block-absorbing inline over `state` and `block`, the block placed
+/// `offset` bytes into the input region with junk around it.
+fn run_absorb_inline(
+    funct3: u32,
+    state: &[u64; NUM_LANES],
+    block: &[u64; RATE_IN_U64],
+    offset: usize,
+) -> Vec<u64> {
+    let mut bytes = [0xA5u8; RATE_IN_BYTES + 8];
+    for (bytes, word) in bytes[offset..offset + RATE_IN_BYTES]
+        .chunks_exact_mut(8)
+        .zip(block)
+    {
+        bytes.copy_from_slice(&word.to_le_bytes());
+    }
+    let words: Vec<u64> = bytes
+        .chunks_exact(8)
+        .map(|word| u64::from_le_bytes(word.try_into().unwrap()))
+        .collect();
+
+    let mut harness = InlineTestHarness::new(InlineMemoryLayout::single_input(
+        RATE_IN_BYTES + 8,
+        STATE_IN_BYTES,
+    ));
+    harness.setup_registers();
+    harness.load_state64(state);
+    harness.load_input64(&words);
+    harness.cpu.x[INLINE_RS2 as usize] += offset as i64;
+    harness.execute_inline(InlineTestHarness::create_default_instruction(
+        INLINE_OPCODE,
+        funct3,
+        KECCAK256_FUNCT7,
+    ));
+    harness.read_output64(NUM_LANES)
+}
+
+#[test]
+fn fuzz_init_and_unaligned_inlines_vs_tiny_keccak() {
+    let iters = fuzz_iters(2_000);
+    let mut rng = StdRng::seed_from_u64(0x1A17_0FF5);
+
+    for i in 0..iters {
+        let mut state = [0u64; NUM_LANES];
+        let mut block = [0u64; RATE_IN_U64];
+        for lane in &mut state {
+            *lane = rng.next_u64();
+        }
+        for lane in &mut block {
+            *lane = rng.next_u64();
+        }
+        let offset = 1 + (rng.next_u32() % 7) as usize;
+
+        let mut absorbed = state;
+        let mut initialized = [0u64; NUM_LANES];
+        for (target, block_lane) in absorbed.iter_mut().zip(block) {
+            *target ^= block_lane;
+        }
+        initialized[..RATE_IN_U64].copy_from_slice(&block);
+        tiny_keccak::keccakf(&mut absorbed);
+        tiny_keccak::keccakf(&mut initialized);
+
+        for (funct3, offset, expected) in [
+            (KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3, 0, initialized),
+            (KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3, offset, absorbed),
+            (
+                KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3,
+                offset,
+                initialized,
+            ),
+        ] {
+            assert_eq!(
+                run_absorb_inline(funct3, &state, &block, offset).as_slice(),
+                expected.as_slice(),
+                "iteration {i}, funct3 {funct3}, offset {offset}"
+            );
+        }
     }
 }
 

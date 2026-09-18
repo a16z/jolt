@@ -1,7 +1,7 @@
 use crate::sequence_builder::{pi_destination, ROTATION_OFFSETS, ROUND_CONSTANTS};
 #[cfg(test)]
 use crate::RATE_IN_BYTES;
-use crate::{Keccak256State, NUM_LANES};
+use crate::{Keccak256State, NUM_LANES, RATE_IN_U64};
 
 // Host-side Keccak-256 implementation for reference and testing.
 #[cfg(test)]
@@ -10,35 +10,20 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
     let mut state = [0u64; NUM_LANES];
 
     // 1. Absorb full RATE blocks.
-    let mut offset = 0;
-    while offset + RATE_IN_BYTES <= msg.len() {
-        // XOR message block into the state.
-        for (i, lane_bytes) in msg[offset..offset + RATE_IN_BYTES]
-            .chunks_exact(8)
-            .enumerate()
-        {
-            state[i] ^= u64::from_le_bytes(lane_bytes.try_into().unwrap());
-        }
-
-        // Apply the Keccak-f permutation after each full block.
-        execute_keccak_f(&mut state);
-        offset += RATE_IN_BYTES;
+    let mut blocks = msg.chunks_exact(RATE_IN_BYTES);
+    for block in &mut blocks {
+        execute_absorb_permute(&mut state, &block_words(block));
     }
 
     // 2. Absorb the final (possibly empty) partial block with padding.
     let mut block = [0u8; RATE_IN_BYTES];
-    let remaining = &msg[offset..];
+    let remaining = blocks.remainder();
     block[..remaining.len()].copy_from_slice(remaining);
 
     // Domain separation / padding (Keccak: 0x01 .. 0x80).
     block[remaining.len()] ^= 0x01; // 0x01 delimiter after the message.
     block[RATE_IN_BYTES - 1] ^= 0x80; // Final bit of padding.
-
-    // XOR padded block into the state and permute once more.
-    for (i, lane_bytes) in block.chunks_exact(8).enumerate() {
-        state[i] ^= u64::from_le_bytes(lane_bytes.try_into().unwrap());
-    }
-    execute_keccak_f(&mut state);
+    execute_absorb_permute(&mut state, &block_words(&block));
 
     // 3. Squeeze the first 32 bytes of the state as the hash output.
     let mut hash = [0u8; 32];
@@ -47,6 +32,28 @@ pub(crate) fn execute_keccak256(msg: &[u8]) -> [u8; 32] {
         hash[i * 8..(i + 1) * 8].copy_from_slice(&lane.to_le_bytes());
     }
     hash
+}
+
+/// The little-endian lanes of a `RATE_IN_BYTES`-byte block.
+#[cfg(test)]
+fn block_words(block: &[u8]) -> [u64; RATE_IN_U64] {
+    core::array::from_fn(|i| u64::from_le_bytes(block[8 * i..8 * i + 8].try_into().unwrap()))
+}
+
+/// XORs a rate block into the state and applies Keccak-f[1600]: the model of
+/// the absorb-and-permute inlines.
+pub(crate) fn execute_absorb_permute(state: &mut Keccak256State, block: &[u64; RATE_IN_U64]) {
+    for (lane, word) in state.iter_mut().zip(block) {
+        *lane ^= word;
+    }
+    execute_keccak_f(state);
+}
+
+/// Absorbs a rate block into the zero state: the model of the INIT inlines.
+pub(crate) fn execute_init_absorb_permute(block: &[u64; RATE_IN_U64]) -> Keccak256State {
+    let mut state = [0; NUM_LANES];
+    execute_absorb_permute(&mut state, block);
+    state
 }
 
 /// Executes the 24-round Keccak-f[1600] permutation.
@@ -58,7 +65,6 @@ pub(crate) fn execute_keccak_f(state: &mut Keccak256State) {
         execute_iota(state, rc);
     }
 }
-
 /// The `theta` step of the Keccak-f permutation mixes columns to provide diffusion.
 /// This step XORs each bit in the state with the parities of two columns in the state array.
 pub(crate) fn execute_theta(state: &mut Keccak256State) {
