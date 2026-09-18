@@ -28,18 +28,13 @@ use super::source::{TracePackedOneHot, TracePackedOneHotBatchView, TracePackedOn
 use super::traversal::coefficient_packing_partials_packed;
 use crate::AkitaField;
 
-struct TracePackedOneHotCommitAlgorithm;
-
 pub(super) struct TracePackedOneHotCommitOperation;
-
-pub(super) static TRACE_COMMITMENT_OPERATION: TracePackedOneHotCommitOperation =
-    TracePackedOneHotCommitOperation;
 
 pub(super) fn trace_commitment_capability() -> Result<ExternalInnerCommitmentCapability, AkitaError>
 {
     cpu_external_inner_commitment_capability::<
         TracePackedOneHot,
-        TracePackedOneHotCommitAlgorithm,
+        TracePackedOneHotCommitOperation,
         AkitaField,
     >("jolt-trace-packed-one-hot")
 }
@@ -48,7 +43,7 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TracePackedOneHotCommitOpe
     fn identity(&self) -> ExternalOperationIdentity {
         ExternalOperationIdentity::of::<
             TracePackedOneHot,
-            TracePackedOneHotCommitAlgorithm,
+            TracePackedOneHotCommitOperation,
             CpuPreparedSetup<AkitaField>,
         >()
     }

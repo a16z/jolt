@@ -12,7 +12,7 @@ use akita_prover::{
     RootPolyShape,
 };
 
-use super::kernels::{trace_commitment_capability, TRACE_COMMITMENT_OPERATION};
+use super::kernels::{trace_commitment_capability, TracePackedOneHotCommitOperation};
 use super::NO_SELECTED_ROW;
 use crate::AkitaField;
 
@@ -258,7 +258,12 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
                 "trace-packed one-hot source selected a non-CPU commitment operation".into(),
             ));
         }
-        PreparedExternalInnerCommitment::new(selected, self, &TRACE_COMMITMENT_OPERATION, None)
+        PreparedExternalInnerCommitment::new(
+            selected,
+            self,
+            &TracePackedOneHotCommitOperation,
+            None,
+        )
     }
 }
 

@@ -259,24 +259,8 @@ impl AkitaNativeBatching {
                 })
                 .collect::<Result<Vec<[&AkitaBackendDensePoly; 1]>, OpeningsError>>()?;
 
-            enum MainSourceRefs<'a> {
-                OneHot([&'a AkitaBackendOneHotPoly; 1]),
-                Trace([&'a TracePackedOneHot; 1]),
-            }
-            let main_refs = match &main_hint.polynomials {
-                AkitaHintPolynomials::TraceOneHot(poly) => MainSourceRefs::Trace([poly]),
-                AkitaHintPolynomials::OneHot(polys) if polys.len() == 1 => {
-                    let poly = polys.first().ok_or_else(|| {
-                        invalid_batch("Akita main-trace hint retained an empty one-hot source")
-                    })?;
-                    MainSourceRefs::OneHot([poly])
-                }
-                AkitaHintPolynomials::Dense(_) | AkitaHintPolynomials::OneHot(_) => {
-                    return Err(invalid_batch(
-                        "Akita main-trace hint must retain one one-hot source",
-                    ));
-                }
-            };
+            let trace_refs;
+            let one_hot_refs;
             let mut groups = precommitted_refs
                 .iter()
                 .map(|refs| {
@@ -288,21 +272,31 @@ impl AkitaNativeBatching {
                     .map_err(akita_error)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let main_group = match &main_refs {
-                MainSourceRefs::OneHot(refs) => ErasedPreparedProverGroup::<
-                    AkitaField,
-                    AkitaBackendExtField,
-                    CpuBackend,
-                >::from_refs::<AkitaBackendOneHotPoly>(
-                    refs
-                ),
-                MainSourceRefs::Trace(refs) => ErasedPreparedProverGroup::<
-                    AkitaField,
-                    AkitaBackendExtField,
-                    CpuBackend,
-                >::from_refs::<TracePackedOneHot>(
-                    refs
-                ),
+            let main_group = match &main_hint.polynomials {
+                AkitaHintPolynomials::TraceOneHot(poly) => {
+                    trace_refs = [poly];
+                    ErasedPreparedProverGroup::<
+                        AkitaField,
+                        AkitaBackendExtField,
+                        CpuBackend,
+                    >::from_refs::<TracePackedOneHot>(&trace_refs)
+                }
+                AkitaHintPolynomials::OneHot(polys) if polys.len() == 1 => {
+                    let poly = polys.first().ok_or_else(|| {
+                        invalid_batch("Akita main-trace hint retained an empty one-hot source")
+                    })?;
+                    one_hot_refs = [poly];
+                    ErasedPreparedProverGroup::<
+                        AkitaField,
+                        AkitaBackendExtField,
+                        CpuBackend,
+                    >::from_refs::<AkitaBackendOneHotPoly>(&one_hot_refs)
+                }
+                AkitaHintPolynomials::Dense(_) | AkitaHintPolynomials::OneHot(_) => {
+                    return Err(invalid_batch(
+                        "Akita main-trace hint must retain one one-hot source",
+                    ));
+                }
             }
             .map_err(akita_error)?;
             groups.push(main_group);
