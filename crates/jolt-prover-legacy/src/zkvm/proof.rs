@@ -40,6 +40,8 @@ use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(not(feature = "akita"))]
 use jolt_program::preprocess::ProgramMetadata;
+#[cfg(not(feature = "zk"))]
+use jolt_riscv::CircuitFlags as RiscvCircuitFlags;
 use jolt_sumcheck::{
     ClearProof, ClearSumcheckProof, CommittedOutputClaims, CommittedRound, CommittedSumcheckProof,
     CompressedSumcheckProof, SumcheckProof,
@@ -378,40 +380,60 @@ fn commitments_from_proof_payload_order<C>(
     instruction_ra_count: usize,
     ram_ra_count: usize,
 ) -> Result<JoltCommitments<C>, VerifierError> {
-    let minimum = 2 + instruction_ra_count + ram_ra_count;
-    if commitments.len() < minimum {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: commitments.len(),
-        });
+    use jolt_claims::protocols::jolt::geometry::{
+        committed_openings::proof_commitment_order, ra::JoltRaPolynomialLayout,
+    };
+    use jolt_claims::protocols::jolt::JoltCommittedPolynomial as P;
+
+    let got = commitments.len();
+    let fixed = 2 + instruction_ra_count + ram_ra_count + cfg!(feature = "implicit-carry") as usize;
+    let count_mismatch = || VerifierError::InvalidCommitmentCount {
+        expected: fixed,
+        got,
+    };
+    // The bytecode chunk count is not on the wire: it is the remainder once
+    // the fixed columns are accounted for. Any future committed column must
+    // be added to `proof_commitment_order` (and counted here), or the
+    // remainder inference breaks with an explicit error below.
+    let Some(bytecode_ra_count) = got.checked_sub(fixed) else {
+        return Err(count_mismatch());
+    };
+    let layout = JoltRaPolynomialLayout::new(instruction_ra_count, bytecode_ra_count, ram_ra_count)
+        .map_err(|_| count_mismatch())?;
+    // jolt-claims' order table is the single source of truth for the payload
+    // layout; dispatch each commitment by the kind the table assigns to its
+    // position instead of splitting positionally.
+    let order = proof_commitment_order(layout);
+    debug_assert_eq!(order.len(), commitments.len());
+
+    let mut rd_inc = None;
+    let mut ram_inc = None;
+    let mut instruction_ra = Vec::with_capacity(instruction_ra_count);
+    let mut ram_ra = Vec::with_capacity(ram_ra_count);
+    let mut bytecode_ra = Vec::with_capacity(bytecode_ra_count);
+    #[cfg(feature = "implicit-carry")]
+    let mut carry = None;
+    for (kind, commitment) in order.into_iter().zip(commitments) {
+        match kind {
+            P::RdInc => rd_inc = Some(commitment),
+            P::RamInc => ram_inc = Some(commitment),
+            P::InstructionRa(_) => instruction_ra.push(commitment),
+            P::RamRa(_) => ram_ra.push(commitment),
+            P::BytecodeRa(_) => bytecode_ra.push(commitment),
+            #[cfg(feature = "implicit-carry")]
+            P::Carry => carry = Some(commitment),
+            _ => return Err(count_mismatch()),
+        }
     }
 
-    let mut commitments = commitments.into_iter();
-    let Some(rd_inc) = commitments.next() else {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: 0,
-        });
-    };
-    let Some(ram_inc) = commitments.next() else {
-        return Err(VerifierError::InvalidCommitmentCount {
-            expected: minimum,
-            got: 1,
-        });
-    };
-    let instruction_ra = commitments
-        .by_ref()
-        .take(instruction_ra_count)
-        .collect::<Vec<_>>();
-    let ram_ra = commitments.by_ref().take(ram_ra_count).collect::<Vec<_>>();
-    let bytecode_ra = commitments.collect::<Vec<_>>();
-
     Ok(JoltCommitments::new(
-        rd_inc,
-        ram_inc,
+        rd_inc.ok_or_else(count_mismatch)?,
+        ram_inc.ok_or_else(count_mismatch)?,
         instruction_ra,
         ram_ra,
         bytecode_ra,
+        #[cfg(feature = "implicit-carry")]
+        carry.ok_or_else(count_mismatch)?,
     ))
 }
 
@@ -855,6 +877,8 @@ pub(crate) fn convert_sumcheck_id(id: prover_opening::SumcheckId) -> JoltRelatio
             JoltRelationId::ProgramImageClaimReduction
         }
         prover_opening::SumcheckId::IncClaimReduction => JoltRelationId::IncClaimReduction,
+        #[cfg(feature = "implicit-carry")]
+        prover_opening::SumcheckId::CarryClaimReduction => JoltRelationId::CarryClaimReduction,
         prover_opening::SumcheckId::HammingWeightClaimReduction => {
             JoltRelationId::HammingWeightClaimReduction
         }
@@ -893,6 +917,8 @@ fn convert_committed_polynomial(
         prover_witness::CommittedPolynomial::BalancedIncCarry => {
             JoltCommittedPolynomial::BalancedIncCarry
         }
+        #[cfg(feature = "implicit-carry")]
+        prover_witness::CommittedPolynomial::Carry => JoltCommittedPolynomial::Carry,
     }
 }
 
@@ -978,40 +1004,40 @@ fn convert_virtual_polynomial(poly: prover_witness::VirtualPolynomial) -> JoltVi
             JoltVirtualPolynomial::ProgramImageInitContributionRw
         }
         prover_witness::VirtualPolynomial::FusedInc => JoltVirtualPolynomial::FusedInc,
+        #[cfg(feature = "implicit-carry")]
+        prover_witness::VirtualPolynomial::CarryUsed => JoltVirtualPolynomial::CarryUsed,
+        #[cfg(feature = "implicit-carry")]
+        prover_witness::VirtualPolynomial::NextCarry => JoltVirtualPolynomial::NextCarry,
     }
 }
 
 #[cfg(not(feature = "zk"))]
-fn convert_circuit_flag(flag: prover_instruction::CircuitFlags) -> jolt_riscv::CircuitFlags {
+fn convert_circuit_flag(flag: prover_instruction::CircuitFlags) -> RiscvCircuitFlags {
     match flag {
-        prover_instruction::CircuitFlags::AddOperands => jolt_riscv::CircuitFlags::AddOperands,
-        prover_instruction::CircuitFlags::SubtractOperands => {
-            jolt_riscv::CircuitFlags::SubtractOperands
-        }
-        prover_instruction::CircuitFlags::MultiplyOperands => {
-            jolt_riscv::CircuitFlags::MultiplyOperands
-        }
-        prover_instruction::CircuitFlags::Load => jolt_riscv::CircuitFlags::Load,
-        prover_instruction::CircuitFlags::Store => jolt_riscv::CircuitFlags::Store,
-        prover_instruction::CircuitFlags::Jump => jolt_riscv::CircuitFlags::Jump,
+        prover_instruction::CircuitFlags::AddOperands => RiscvCircuitFlags::AddOperands,
+        prover_instruction::CircuitFlags::SubtractOperands => RiscvCircuitFlags::SubtractOperands,
+        prover_instruction::CircuitFlags::MultiplyOperands => RiscvCircuitFlags::MultiplyOperands,
+        prover_instruction::CircuitFlags::Load => RiscvCircuitFlags::Load,
+        prover_instruction::CircuitFlags::Store => RiscvCircuitFlags::Store,
+        prover_instruction::CircuitFlags::Jump => RiscvCircuitFlags::Jump,
         prover_instruction::CircuitFlags::WriteLookupOutputToRD => {
-            jolt_riscv::CircuitFlags::WriteLookupOutputToRD
+            RiscvCircuitFlags::WriteLookupOutputToRD
         }
         prover_instruction::CircuitFlags::VirtualInstruction => {
-            jolt_riscv::CircuitFlags::VirtualInstruction
+            RiscvCircuitFlags::VirtualInstruction
         }
-        prover_instruction::CircuitFlags::Assert => jolt_riscv::CircuitFlags::Assert,
+        prover_instruction::CircuitFlags::Assert => RiscvCircuitFlags::Assert,
         prover_instruction::CircuitFlags::DoNotUpdateUnexpandedPC => {
-            jolt_riscv::CircuitFlags::DoNotUpdateUnexpandedPC
+            RiscvCircuitFlags::DoNotUpdateUnexpandedPC
         }
-        prover_instruction::CircuitFlags::Advice => jolt_riscv::CircuitFlags::Advice,
-        prover_instruction::CircuitFlags::IsCompressed => jolt_riscv::CircuitFlags::IsCompressed,
-        prover_instruction::CircuitFlags::IsFirstInSequence => {
-            jolt_riscv::CircuitFlags::IsFirstInSequence
-        }
-        prover_instruction::CircuitFlags::IsLastInSequence => {
-            jolt_riscv::CircuitFlags::IsLastInSequence
-        }
+        prover_instruction::CircuitFlags::Advice => RiscvCircuitFlags::Advice,
+        prover_instruction::CircuitFlags::IsCompressed => RiscvCircuitFlags::IsCompressed,
+        prover_instruction::CircuitFlags::IsFirstInSequence => RiscvCircuitFlags::IsFirstInSequence,
+        prover_instruction::CircuitFlags::IsLastInSequence => RiscvCircuitFlags::IsLastInSequence,
+        #[cfg(feature = "implicit-carry")]
+        prover_instruction::CircuitFlags::UsesCarry => RiscvCircuitFlags::UsesCarry,
+        #[cfg(feature = "implicit-carry")]
+        prover_instruction::CircuitFlags::ProducesCarry => RiscvCircuitFlags::ProducesCarry,
     }
 }
 

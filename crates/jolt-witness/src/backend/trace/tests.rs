@@ -264,6 +264,8 @@ fn committed_polynomial_order_uses_proof_payload_order() {
     expected.extend((0..32).map(JoltCommittedPolynomial::InstructionRa));
     expected.extend((0..2).map(JoltCommittedPolynomial::RamRa));
     expected.extend((0..2).map(JoltCommittedPolynomial::BytecodeRa));
+    #[cfg(feature = "implicit-carry")]
+    expected.push(JoltCommittedPolynomial::Carry);
     expected.push(JoltCommittedPolynomial::TrustedAdvice);
     expected.push(JoltCommittedPolynomial::UntrustedAdvice);
 
@@ -1113,6 +1115,8 @@ fn advice_rejects_disabled_and_oversized_advice() {
 
 #[test]
 fn excluded_ids_report_their_classification() {
+    #[cfg(feature = "implicit-carry")]
+    use super::oracle::CARRY_STAGED_REASON;
     use super::oracle::{COMMITTED_PROGRAM_REASON, PROTOCOL_INTERMEDIATE_REASON, UNSERVED_REASON};
     let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
@@ -1158,6 +1162,19 @@ fn excluded_ids_report_their_classification() {
         JoltVirtualPolynomial::ProgramImageInitContributionRw,
     ] {
         assert_reason(JoltPolynomialId::Virtual(id), PROTOCOL_INTERMEDIATE_REASON);
+    }
+    #[cfg(feature = "implicit-carry")]
+    {
+        assert_reason(
+            JoltPolynomialId::Committed(JoltCommittedPolynomial::Carry),
+            CARRY_STAGED_REASON,
+        );
+        for id in [
+            JoltVirtualPolynomial::CarryUsed,
+            JoltVirtualPolynomial::NextCarry,
+        ] {
+            assert_reason(JoltPolynomialId::Virtual(id), CARRY_STAGED_REASON);
+        }
     }
 }
 

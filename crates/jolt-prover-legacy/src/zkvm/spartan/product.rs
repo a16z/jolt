@@ -41,6 +41,8 @@ use crate::zkvm::r1cs::constraints::{
 };
 use crate::zkvm::r1cs::evaluation::ProductVirtualEval;
 use crate::zkvm::r1cs::inputs::{ProductCycleInputs, PRODUCT_UNIQUE_FACTOR_VIRTUALS};
+#[cfg(feature = "implicit-carry")]
+use crate::zkvm::witness::CommittedPolynomial;
 use crate::zkvm::witness::VirtualPolynomial;
 use rayon::prelude::*;
 use tracer::instruction::Cycle;
@@ -461,6 +463,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
                 VirtualPolynomial::OpFlags(CircuitFlags::Jump),
                 SumcheckId::SpartanProductVirtualization,
             ),
+            #[cfg(feature = "implicit-carry")]
+            OpeningId::virt(
+                VirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+                SumcheckId::SpartanProductVirtualization,
+            ),
         ];
 
         let right_openings = [
@@ -474,6 +481,11 @@ impl<F: JoltField> SumcheckInstanceParams<F> for ProductVirtualRemainderParams<F
             ),
             OpeningId::virt(
                 VirtualPolynomial::NextIsNoop,
+                SumcheckId::SpartanProductVirtualization,
+            ),
+            #[cfg(feature = "implicit-carry")]
+            OpeningId::committed(
+                CommittedPolynomial::Carry,
                 SumcheckId::SpartanProductVirtualization,
             ),
         ];
@@ -533,10 +545,16 @@ impl<F: JoltField> ProductVirtualRemainderParams<F> {
         >(&self.r0);
 
         // Left coefficients
+        #[cfg(not(feature = "implicit-carry"))]
         let alpha = [w[0], w[1], w[2]];
+        #[cfg(feature = "implicit-carry")]
+        let alpha = [w[0], w[1], w[2], w[3]];
 
-        // Right coefficients
+        // Right coefficients (slot 2 is negated: ShouldJump's right factor is 1 - NextIsNoop)
+        #[cfg(not(feature = "implicit-carry"))]
         let beta = [w[0], w[1], -w[2]];
+        #[cfg(feature = "implicit-carry")]
+        let beta = [w[0], w[1], -w[2], w[3]];
 
         let mut challenges = vec![];
 
@@ -801,6 +819,16 @@ impl<F: JoltField, T: Transcript> SumcheckInstanceProver<F, T>
                 claim,
             );
         }
+        // The CarryUsed right factor is the committed Carry column, opened
+        // directly (no second virtual carry source); its claim is the final
+        // entry of `compute_claimed_factors`.
+        #[cfg(feature = "implicit-carry")]
+        accumulator.append_dense(
+            CommittedPolynomial::Carry,
+            SumcheckId::SpartanProductVirtualization,
+            r_cycle.r.clone(),
+            claims[claims.len() - 1],
+        );
     }
 
     #[cfg(feature = "allocative")]
@@ -877,9 +905,30 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
             )
             .1;
 
-        // 3 products: Instruction, ShouldBranch, ShouldJump
-        let fused_left = w[0] * l_inst + w[1] * lookup_out + w[2] * j_flag;
-        let fused_right = w[0] * r_inst + w[1] * branch_flag + w[2] * (F::one() - next_is_noop);
+        // Products: Instruction, ShouldBranch, ShouldJump (+ CarryUsed)
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+        let mut fused_left = w[0] * l_inst + w[1] * lookup_out + w[2] * j_flag;
+        #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+        let mut fused_right = w[0] * r_inst + w[1] * branch_flag + w[2] * (F::one() - next_is_noop);
+        // Weight slot 3 = the CarryUsed row's position in
+        // `PRODUCT_CONSTRAINTS`, pinned there by a const assertion.
+        #[cfg(feature = "implicit-carry")]
+        {
+            let uses_carry = accumulator
+                .get_virtual_polynomial_opening(
+                    VirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+                    SumcheckId::SpartanProductVirtualization,
+                )
+                .1;
+            let carry = accumulator
+                .get_committed_polynomial_opening(
+                    CommittedPolynomial::Carry,
+                    SumcheckId::SpartanProductVirtualization,
+                )
+                .1;
+            fused_left += w[3] * uses_carry;
+            fused_right += w[3] * carry;
+        }
 
         // Multiply by L(τ_high, r0) and Eq(τ_low, r_tail^rev)
         let tau_high = &self.params.tau[self.params.tau.len() - 1];
@@ -908,5 +957,11 @@ impl<F: JoltField, T: Transcript, A: AbstractVerifierOpeningAccumulator<F>>
                 opening_point.clone(),
             );
         }
+        #[cfg(feature = "implicit-carry")]
+        accumulator.append_dense(
+            CommittedPolynomial::Carry,
+            SumcheckId::SpartanProductVirtualization,
+            opening_point.r,
+        );
     }
 }

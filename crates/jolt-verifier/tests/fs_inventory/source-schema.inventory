@@ -37,6 +37,7 @@ jolt-program::preprocess/program.rs::ProgramMetadata.entry_bytecode_index
 jolt-program::preprocess/program.rs::ProgramMetadata.min_bytecode_address
 jolt-program::preprocess/program.rs::ProgramMetadata.program_image_len_words
 jolt-verifier::config.rs::JoltProtocolConfig.commitment
+jolt-verifier::config.rs::JoltProtocolConfig.isa
 jolt-verifier::config.rs::JoltProtocolConfig.scalar_challenge_endianness
 jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
@@ -64,6 +65,7 @@ jolt-verifier::proof.rs::ClearProofClaims.stage6a
 jolt-verifier::proof.rs::ClearProofClaims.stage6b
 jolt-verifier::proof.rs::ClearProofClaims.stage7
 jolt-verifier::proof.rs::JoltCommitments.bytecode_ra
+jolt-verifier::proof.rs::JoltCommitments.carry
 jolt-verifier::proof.rs::JoltCommitments.instruction_ra
 jolt-verifier::proof.rs::JoltCommitments.ram_inc
 jolt-verifier::proof.rs::JoltCommitments.ram_ra

@@ -16,6 +16,10 @@ pub const FUNCT7_ADVICE_LW: u32 = 0x02; // Load word from advice tape
 pub const FUNCT7_ADVICE_LD: u32 = 0x03; // Load doubleword from advice tape
 pub const FUNCT7_ADVICE_LEN: u32 = 0x04; // Get remaining bytes in advice tape
 pub const FUNCT7_VIRTUAL_REV8W: u32 = 0x05; // Reverse bytes in a word
+                                            // The ADDC/MULC funct7 slots are allocated even when the `implicit-carry`
+                                            // feature (which compiles the instructions) is off.
+pub const FUNCT7_ADDC: u32 = 0x06; // Add with implicit carry-in
+pub const FUNCT7_MULC: u32 = 0x07; // Multiply with implicit carry-in
 
 use add::ADD;
 use addi::ADDI;
@@ -173,6 +177,8 @@ use virtual_xor_rotw::{
     VirtualXORROTW7, VirtualXORROTW8,
 };
 use virtual_zero_extend_word::VirtualZeroExtendWord;
+#[cfg(feature = "implicit-carry")]
+use {addc::ADDC, mulc::MULC};
 
 use self::inline::INLINE;
 
@@ -232,6 +238,8 @@ pub(crate) fn trace_inline_sequence_with_advice(
 }
 
 pub mod add;
+#[cfg(feature = "implicit-carry")]
+pub mod addc;
 pub mod addi;
 pub mod addiw;
 pub mod addw;
@@ -293,6 +301,8 @@ pub mod lw;
 pub mod lwu;
 pub mod mret;
 pub mod mul;
+#[cfg(feature = "implicit-carry")]
+pub mod mulc;
 pub mod mulh;
 pub mod mulhsu;
 pub mod mulhu;
@@ -443,6 +453,13 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }
 
+    /// Whether this instruction writes the implicit carry (`ADD`, `MUL`,
+    /// `ADDC`, `MULC`). Every other instruction clobbers the carry to zero;
+    /// enforced once for all impls in `RISCVTrace::trace`, the single point
+    /// every executed row passes through. Only consulted under the
+    /// `implicit-carry` feature.
+    const PRODUCES_CARRY: bool = false;
+
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
     fn has_side_effects(&self) -> bool {
@@ -459,10 +476,22 @@ where
             instruction: *self,
             register_state: Default::default(),
             ram_access: Default::default(),
+            // The row's incoming carry: `cpu.carry` is read before `execute`
+            // below updates it to this row's carry-out.
+            #[cfg(feature = "implicit-carry")]
+            carry: cpu.carry,
         };
         self.operands()
             .capture_pre_execution_state(&mut cycle.register_state, cpu);
         self.execute(cpu, &mut cycle.ram_access);
+        // Non-producers clobber the implicit carry to zero; producers set
+        // `cpu.carry` inside `execute`. Clobbering here (rather than in each
+        // `execute` impl) covers manual `RISCVInstruction` impls too — both
+        // trace and execute-only modes dispatch through this method.
+        #[cfg(feature = "implicit-carry")]
+        if !Self::PRODUCES_CARRY {
+            cpu.carry = 0;
+        }
         self.operands()
             .capture_post_execution_state(&mut cycle.register_state, cpu);
         match trace {
@@ -633,6 +662,19 @@ macro_rules! define_rv64imac_enums {
                 }
             }
 
+            /// The row's incoming implicit carry (the previous row's carry-out).
+            #[cfg(feature = "implicit-carry")]
+            pub fn carry(&self) -> u64 {
+                match self {
+                    Cycle::NoOp => 0,
+                    $(
+                        $(#[$meta])*
+                        Cycle::$instr(cycle) => cycle.carry,
+                    )*
+                    Cycle::INLINE(cycle) => cycle.carry,
+                }
+            }
+
             /// Returns a freshly randomized cycle of the same variant.
             /// Used by jolt-prover-legacy fuzz tests that need to iterate all
             /// instruction variants via `Cycle::iter()`.
@@ -652,9 +694,17 @@ macro_rules! define_rv64imac_enums {
         impl Instruction {
             /// Whether tracing rewrites this instruction through its inline
             /// sequence so the constraint system never sees rd=x0.
+            ///
+            /// Only top-level (unexpanded) instructions qualify: a row inside
+            /// a virtual sequence is final bytecode — re-expanding it as a
+            /// source would strip its sequence stamp and execute a row that
+            /// diverges from the bytecode (the implicit-carry trailing
+            /// clobber row `ADDI x0,x0,0` is exactly such a row; its raw
+            /// rd=x0 semantics are consistent because it writes 0).
             #[inline]
             fn takes_rd0_expansion(&self) -> bool {
                 self.normalized_rd() == Some(0)
+                    && self.virtual_sequence_remaining().is_none()
                     && !matches!(
                         self,
                         Instruction::SCW(_)
@@ -1393,6 +1443,10 @@ impl Instruction {
                         FUNCT7_VIRTUAL_REV8W => {
                             Ok(VirtualRev8W::new(instr, address, true, compressed).into())
                         }
+                        #[cfg(feature = "implicit-carry")]
+                        FUNCT7_ADDC => Ok(ADDC::new(instr, address, true, compressed).into()),
+                        #[cfg(feature = "implicit-carry")]
+                        FUNCT7_MULC => Ok(MULC::new(instr, address, true, compressed).into()),
                         _ => Err("Invalid funct7 for virtual R-type instruction"),
                     }
                 } else if funct3 == FUNCT3_VIRTUAL_ASSERT_EQ {
@@ -1985,11 +2039,16 @@ pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
     pub register_state: <T::Format as InstructionFormat>::RegisterState,
     pub ram_access: T::RAMAccess,
+    /// Incoming implicit carry for this row (the previous row's carry-out).
+    #[cfg(feature = "implicit-carry")]
+    pub carry: u64,
 }
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
+        #[cfg(feature = "implicit-carry")]
+        use rand::RngCore;
         let instruction = T::random(rng);
         let concrete: Instruction = instruction.into();
         let source_instruction = concrete.source_instruction();
@@ -2002,6 +2061,8 @@ impl<T: RISCVInstruction> RISCVCycle<T> {
             instruction,
             ram_access: Default::default(),
             register_state,
+            #[cfg(feature = "implicit-carry")]
+            carry: rng.next_u64(),
         }
     }
 }
@@ -2041,6 +2102,241 @@ mod tests {
     fn field_inline_opcode_is_unknown_without_feature() {
         let word = 0x7b | (2 << 12) | (1 << 7) | (2 << 15) | (3 << 20);
         assert!(Instruction::decode(word, 0x8000_0000, false).is_err());
+    }
+
+    fn r_type_word(opcode: u32, funct3: u32, funct7: u32, rd: u8, rs1: u8, rs2: u8) -> u32 {
+        opcode
+            | (u32::from(rd) << 7)
+            | (funct3 << 12)
+            | (u32::from(rs1) << 15)
+            | (u32::from(rs2) << 20)
+            | (funct7 << 25)
+    }
+
+    /// Operand bits on top of an instruction's `MATCH` constant, like
+    /// `MULHSU::with_regs`.
+    #[cfg(feature = "implicit-carry")]
+    fn r_word_from_match(match_: u32, rd: u8, rs1: u8, rs2: u8) -> u32 {
+        match_ | (u32::from(rd) << 7) | (u32::from(rs1) << 15) | (u32::from(rs2) << 20)
+    }
+
+    #[cfg(not(feature = "implicit-carry"))]
+    #[test]
+    fn addc_mulc_opcodes_are_unknown_without_feature() {
+        for funct7 in [FUNCT7_ADDC, FUNCT7_MULC] {
+            let word = r_type_word(
+                u32::from(CUSTOM_OPCODE),
+                u32::from(FUNCT3_VIRTUAL_R),
+                funct7,
+                5,
+                6,
+                7,
+            );
+            assert!(Instruction::decode(word, 0x8000_0000, false).is_err());
+        }
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    mod implicit_carry {
+        use super::super::*;
+        use crate::emulator::default_terminal::DefaultTerminal;
+
+        const ADD_WORD: fn(u8, u8, u8) -> u32 =
+            |rd, rs1, rs2| super::r_word_from_match(ADD::MATCH, rd, rs1, rs2);
+        const MUL_WORD: fn(u8, u8, u8) -> u32 =
+            |rd, rs1, rs2| super::r_word_from_match(MUL::MATCH, rd, rs1, rs2);
+        // ADDC/MULC have `mask = match = 0` (decoded via the custom-opcode
+        // switch), so their words are built from the named encoding constants
+        // rather than `MATCH`.
+        const ADDC_WORD: fn(u8, u8, u8) -> u32 = |rd, rs1, rs2| {
+            super::r_type_word(
+                u32::from(CUSTOM_OPCODE),
+                u32::from(FUNCT3_VIRTUAL_R),
+                FUNCT7_ADDC,
+                rd,
+                rs1,
+                rs2,
+            )
+        };
+        const MULC_WORD: fn(u8, u8, u8) -> u32 = |rd, rs1, rs2| {
+            super::r_type_word(
+                u32::from(CUSTOM_OPCODE),
+                u32::from(FUNCT3_VIRTUAL_R),
+                FUNCT7_MULC,
+                rd,
+                rs1,
+                rs2,
+            )
+        };
+
+        fn trace_one(cpu: &mut Cpu, word: u32) -> Cycle {
+            let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
+            let mut trace = Vec::new();
+            instruction.trace(cpu, Some(&mut trace));
+            assert_eq!(trace.len(), 1);
+            trace.remove(0)
+        }
+
+        fn fresh_cpu() -> Cpu {
+            Cpu::new(Box::new(DefaultTerminal::default()))
+        }
+
+        /// Edge-case operand corpus: zero, one, max, and values with large
+        /// high halves.
+        const OPERANDS: [u64; 6] = [
+            0,
+            1,
+            u64::MAX,
+            u64::MAX - 1,
+            0x8000_0000_0000_0000,
+            0xdead_beef_cafe_f00d,
+        ];
+
+        #[test]
+        fn producer_consumer_pairs_propagate_carry() {
+            type Encoder = fn(u8, u8, u8) -> u32;
+            type Producer = (fn(u64, u64) -> u128, Encoder);
+            type Consumer = (fn(u64, u64, u64) -> u128, Encoder);
+            let producers: [Producer; 2] = [
+                (|a, b| a as u128 + b as u128, ADD_WORD),
+                (|a, b| a as u128 * b as u128, MUL_WORD),
+            ];
+            let consumers: [Consumer; 2] = [
+                (|a, b, c| a as u128 + b as u128 + c as u128, ADDC_WORD),
+                (|a, b, c| a as u128 * b as u128 + c as u128, MULC_WORD),
+            ];
+            for (produce, producer_word) in producers {
+                for (consume, consumer_word) in consumers {
+                    for &a in &OPERANDS {
+                        for &b in &OPERANDS {
+                            for &c in &OPERANDS {
+                                let mut cpu = fresh_cpu();
+                                cpu.write_register(5, a as i64);
+                                cpu.write_register(6, b as i64);
+                                cpu.write_register(7, c as i64);
+
+                                let expected_p = produce(a, b);
+                                let first = trace_one(&mut cpu, producer_word(10, 5, 6));
+                                assert_eq!(first.carry(), 0, "row 0 consumes carry 0");
+                                assert_eq!(
+                                    cpu.x[10] as u64, expected_p as u64,
+                                    "producer rd = low 64 bits"
+                                );
+                                assert_eq!(
+                                    cpu.carry,
+                                    (expected_p >> 64) as u64,
+                                    "producer carry-out = high 64 bits"
+                                );
+
+                                let expected_c = consume(cpu.x[10] as u64, c, cpu.carry);
+                                let second = trace_one(&mut cpu, consumer_word(11, 10, 7));
+                                assert_eq!(
+                                    second.carry(),
+                                    (expected_p >> 64) as u64,
+                                    "consumer row records producer's carry-out as incoming"
+                                );
+                                assert_eq!(
+                                    cpu.x[11] as u64, expected_c as u64,
+                                    "consumer rd = low 64 bits with carry-in"
+                                );
+                                assert_eq!(
+                                    cpu.carry,
+                                    (expected_c >> 64) as u64,
+                                    "consumer carry-out = high 64 bits"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn intervening_instruction_clobbers_carry_to_zero() {
+            let mut cpu = fresh_cpu();
+            cpu.write_register(5, u64::MAX as i64);
+            cpu.write_register(6, 2);
+            cpu.write_register(7, 0);
+
+            // ADD overflows: carry-out = 1.
+            trace_one(&mut cpu, ADD_WORD(10, 5, 6));
+            assert_eq!(cpu.carry, 1);
+
+            // XOR is not carry-producing: clobbers carry to 0.
+            trace_one(&mut cpu, super::r_word_from_match(XOR::MATCH, 12, 5, 6));
+            assert_eq!(cpu.carry, 0);
+
+            // ADDC after the clobber consumes 0.
+            let cycle = trace_one(&mut cpu, ADDC_WORD(11, 10, 7));
+            assert_eq!(cycle.carry(), 0);
+            assert_eq!(cpu.x[11] as u64, (u64::MAX).wrapping_add(2));
+        }
+
+        #[test]
+        fn addc_on_fresh_cpu_consumes_zero() {
+            let mut cpu = fresh_cpu();
+            cpu.write_register(5, 3);
+            cpu.write_register(6, 4);
+            let cycle = trace_one(&mut cpu, ADDC_WORD(10, 5, 6));
+            assert_eq!(cycle.carry(), 0);
+            assert_eq!(cpu.x[10], 7);
+            assert_eq!(cpu.carry, 0);
+        }
+
+        #[test]
+        fn expanding_non_producers_clobber_carry_to_zero() {
+            // MULH and SLL lower to virtual sequences whose interiors use
+            // ADD/MUL; at the guest level they are still non-producers, so
+            // their expansions must leave carry = 0 (the expansion boundary
+            // appends a non-producing noop row when needed).
+            for word in [
+                super::r_word_from_match(MULH::MATCH, 12, 5, 6),
+                super::r_word_from_match(SLL::MATCH, 12, 5, 6),
+            ] {
+                let mut cpu = fresh_cpu();
+                cpu.write_register(5, u64::MAX as i64);
+                cpu.write_register(6, 2);
+                cpu.write_register(7, 1);
+
+                // Seed a nonzero carry: u64::MAX * 2 has carry-out 1.
+                trace_one(&mut cpu, MUL_WORD(10, 5, 6));
+                assert_eq!(cpu.carry, 1);
+
+                let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
+                let mut rows = Vec::new();
+                instruction.trace(&mut cpu, Some(&mut rows));
+                assert!(rows.len() > 1, "expected a virtual expansion");
+                assert_eq!(cpu.carry, 0, "expansion leaked a nonzero carry");
+
+                // A following ADDC consumes 0, not expansion-internal state.
+                let cycle = trace_one(&mut cpu, ADDC_WORD(11, 5, 7));
+                assert_eq!(cycle.carry(), 0);
+                assert_eq!(cpu.x[11] as u64, u64::MAX.wrapping_add(1));
+            }
+        }
+
+        #[test]
+        fn execute_only_mode_maintains_carry_like_trace_mode() {
+            let mut traced = fresh_cpu();
+            let mut executed = fresh_cpu();
+            for cpu in [&mut traced, &mut executed] {
+                cpu.write_register(5, u64::MAX as i64);
+                cpu.write_register(6, u64::MAX as i64);
+                cpu.write_register(7, 1);
+            }
+            let program = [
+                MUL_WORD(10, 5, 6),
+                MULC_WORD(11, 6, 7),
+                ADDC_WORD(12, 10, 11),
+            ];
+            for word in program {
+                trace_one(&mut traced, word);
+                let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
+                instruction.trace(&mut executed, None);
+                assert_eq!(traced.carry, executed.carry);
+            }
+            assert_eq!(traced.x, executed.x);
+        }
     }
 
     #[cfg(feature = "field-inline")]

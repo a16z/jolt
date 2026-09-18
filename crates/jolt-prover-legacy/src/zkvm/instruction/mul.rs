@@ -16,6 +16,10 @@ impl Flags for MUL {
         let mut flags = [false; NUM_CIRCUIT_FLAGS];
         flags[CircuitFlags::MultiplyOperands] = true;
         flags[CircuitFlags::WriteLookupOutputToRD] = true;
+        #[cfg(feature = "implicit-carry")]
+        {
+            flags[CircuitFlags::ProducesCarry] = true;
+        }
         flags[CircuitFlags::VirtualInstruction] = self.virtual_sequence_remaining.is_some();
         flags[CircuitFlags::DoNotUpdateUnexpandedPC] =
             self.virtual_sequence_remaining.unwrap_or(0) != 0;

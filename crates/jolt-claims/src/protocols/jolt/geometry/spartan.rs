@@ -3,6 +3,9 @@ use jolt_riscv::{CircuitFlags, InstructionFlags};
 
 use crate::derived;
 
+#[cfg(feature = "implicit-carry")]
+use super::super::JoltCommittedPolynomial;
+
 use super::super::{
     JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     SpartanProductVirtualizationPublic,
@@ -12,7 +15,8 @@ pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
 pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
 
-pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
+pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial;
+    35 + 4 * cfg!(feature = "implicit-carry") as usize] = [
     JoltVirtualPolynomial::LeftInstructionInput,
     JoltVirtualPolynomial::RightInstructionInput,
     JoltVirtualPolynomial::Product,
@@ -48,6 +52,14 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsCompressed),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsLastInSequence),
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::ProducesCarry),
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::CarryUsed,
+    #[cfg(feature = "implicit-carry")]
+    JoltVirtualPolynomial::NextCarry,
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,6 +180,51 @@ pub fn product_should_branch_outer_opening() -> JoltOpeningId {
 
 pub fn product_should_jump_outer_opening() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::ShouldJump)
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn uses_carry_product() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::OpFlags(CircuitFlags::UsesCarry),
+        JoltRelationId::SpartanProductVirtualization,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_product() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::Carry,
+        JoltRelationId::SpartanProductVirtualization,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_reduced() -> JoltOpeningId {
+    JoltOpeningId::committed(
+        JoltCommittedPolynomial::Carry,
+        JoltRelationId::CarryClaimReduction,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn carry_shift() -> JoltOpeningId {
+    JoltOpeningId::committed(JoltCommittedPolynomial::Carry, JoltRelationId::SpartanShift)
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn next_carry_outer() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::NextCarry,
+        JoltRelationId::SpartanOuter,
+    )
+}
+
+#[cfg(feature = "implicit-carry")]
+pub fn product_carry_used_outer_opening() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::CarryUsed,
+        JoltRelationId::SpartanOuter,
+    )
 }
 
 pub fn left_instruction_input_product() -> JoltOpeningId {

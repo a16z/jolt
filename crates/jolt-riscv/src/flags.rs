@@ -50,6 +50,13 @@ pub enum CircuitFlags {
     IsFirstInSequence,
     /// Last instruction in a virtual sequence.
     IsLastInSequence,
+    /// Instruction consumes the implicit carry from the previous row (`ADDC`, `MULC`).
+    #[cfg(feature = "implicit-carry")]
+    UsesCarry,
+    /// Instruction's arithmetic result splits into a low-64-bit `rd` and a
+    /// high-64-bit carry-out (`ADD`, `MUL`, `ADDC`, `MULC`).
+    #[cfg(feature = "implicit-carry")]
+    ProducesCarry,
 }
 
 /// Number of circuit flags.
@@ -70,6 +77,10 @@ pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
     CircuitFlags::IsCompressed,
     CircuitFlags::IsFirstInSequence,
     CircuitFlags::IsLastInSequence,
+    #[cfg(feature = "implicit-carry")]
+    CircuitFlags::UsesCarry,
+    #[cfg(feature = "implicit-carry")]
+    CircuitFlags::ProducesCarry,
 ];
 
 /// Boolean flags that are NOT part of Jolt's R1CS constraints.
@@ -100,8 +111,13 @@ pub enum InstructionFlags {
 pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
 /// Packed bitfield of [`CircuitFlags`].
+///
+/// WARNING: `JoltTraceRow::meta` parks [`InstructionFlags`] at bit 16, so a
+/// 17th circuit flag would silently collide rather than fail to build.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct CircuitFlagSet(u16);
+
+const _: () = assert!(NUM_CIRCUIT_FLAGS <= 16, "CircuitFlagSet(u16) is full");
 
 impl CircuitFlagSet {
     #[inline]

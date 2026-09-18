@@ -72,6 +72,12 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence), from = SpartanOuter)]
     pub outer_is_last_in_sequence: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::UsesCarry), from = SpartanOuter)]
+    pub outer_uses_carry: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::ProducesCarry), from = SpartanOuter)]
+    pub outer_produces_carry: C,
     #[opening(PC, from = SpartanOuter)]
     pub outer_pc: C,
     #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]
@@ -82,6 +88,9 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub product_write_lookup_output_to_rd: C,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanProductVirtualization)]
     pub product_virtual_instruction: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::UsesCarry), from = SpartanProductVirtualization)]
+    pub product_uses_carry: C,
     #[opening(Imm, from = InstructionInputVirtualization)]
     pub instruction_input_imm: C,
     #[opening(UnexpandedPC, from = SpartanShift)]

@@ -31,6 +31,10 @@ use crate::zkvm::Serializable;
 use crate::utils::profiling::print_current_memory_usage;
 #[cfg(feature = "allocative")]
 use crate::utils::profiling::{print_data_structure_heap_usage, write_flamegraph_svg};
+#[cfg(feature = "implicit-carry")]
+use crate::zkvm::claim_reductions::{
+    CarryClaimReductionSumcheckParams, CarryClaimReductionSumcheckProver,
+};
 use crate::{
     field::JoltField,
     guest,
@@ -1367,6 +1371,12 @@ impl<
             &self.opening_accumulator,
             &mut self.transcript,
         );
+        #[cfg(feature = "implicit-carry")]
+        let carry_reduction_params = CarryClaimReductionSumcheckParams::new(
+            self.trace.len(),
+            &self.opening_accumulator,
+            &mut self.transcript,
+        );
 
         let main_total_vars = self.trace.len().log_2() + self.one_hot_params.log_k_chunk;
         let precommitted_candidates = self.preprocessing.shared.precommitted_candidate_total_vars(
@@ -1491,6 +1501,11 @@ impl<
             LookupsRaSumcheckProver::initialize(lookups_ra_virtual_params, &self.trace);
         let mut inc_reduction =
             IncClaimReductionSumcheckProver::initialize(inc_reduction_params, self.trace.clone());
+        #[cfg(feature = "implicit-carry")]
+        let mut carry_reduction = CarryClaimReductionSumcheckProver::initialize(
+            carry_reduction_params,
+            self.trace.clone(),
+        );
 
         #[cfg(feature = "allocative")]
         {
@@ -1527,6 +1542,8 @@ impl<
             &mut lookups_ra_virtual,
             &mut inc_reduction,
         ];
+        #[cfg(feature = "implicit-carry")]
+        instances.push(&mut carry_reduction);
         if let Some(ref mut advice) = advice_trusted {
             instances.push(advice);
         }
@@ -1554,6 +1571,8 @@ impl<
         drop_in_background_thread(ram_ra_virtual);
         drop_in_background_thread(lookups_ra_virtual);
         drop_in_background_thread(inc_reduction);
+        #[cfg(feature = "implicit-carry")]
+        drop_in_background_thread(carry_reduction);
 
         self.advice_reduction_prover_trusted = advice_trusted;
         self.advice_reduction_prover_untrusted = advice_untrusted;
@@ -2152,6 +2171,22 @@ impl<
         scaling_factors.push(ram_inc_lagrange);
         polynomial_claims.push((CommittedPolynomial::RdInc, rd_inc_claim * rd_inc_lagrange));
         scaling_factors.push(rd_inc_lagrange);
+
+        // WARNING: the stage-8 batch order must match jolt-claims'
+        // `final_opening_polynomial_order` entry-for-entry; that table puts
+        // Carry right after the Inc pair (unlike the commitment payload,
+        // where it is appended last).
+        #[cfg(feature = "implicit-carry")]
+        {
+            let (carry_point, carry_claim) =
+                self.opening_accumulator.get_committed_polynomial_opening(
+                    CommittedPolynomial::Carry,
+                    SumcheckId::CarryClaimReduction,
+                );
+            let carry_lagrange = compute_lagrange_factor::<F>(&opening_point.r, &carry_point.r);
+            polynomial_claims.push((CommittedPolynomial::Carry, carry_claim * carry_lagrange));
+            scaling_factors.push(carry_lagrange);
+        }
 
         // Sparse polynomials: all RA polys (from HammingWeightClaimReduction)
         // These are at (r_address_stage7, r_cycle_stage6)
@@ -2797,6 +2832,8 @@ mod tests {
     #[cfg(feature = "zk")]
     use crate::{curve::JoltCurve, field::JoltField};
     use jolt_riscv::JoltInstructionRow;
+    #[cfg(feature = "implicit-carry")]
+    use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 
     type TestCommittedSharedPreprocessing = (
         JoltSharedPreprocessing,
@@ -3615,6 +3652,207 @@ mod tests {
         >(&verifier_preprocessing, &io_device, &proof, None)
         .expect("canonical verifier rejected prover-native proof");
         eprintln!("dory verify: {:.2?}", verify_start.elapsed());
+    }
+
+    /// End-to-end prove+verify over a guest exercising every
+    /// `{ADD, MUL} -> {ADDC, MULC}` implicit-carry pairing via `.insn`
+    /// assembly, with the guest output checked against a u128-arithmetic
+    /// reference; plus carry-specific tamper rejection.
+    #[cfg(feature = "implicit-carry")]
+    #[test]
+    #[serial]
+    fn carry_chain_e2e_dory() {
+        DoryGlobals::reset();
+        let mut program = Program::new("carry-chain-guest");
+        program.enable_implicit_carry();
+        // The guest holds several provable functions (the mul256 benchmark
+        // variants); select the carry-chain entry explicitly.
+        program.set_func("carry_chain");
+        let (bytecode, init_memory_state, _, e_entry) = program.decode();
+        let (a, b, c) = (u64::MAX - 5, u64::MAX / 3, 0x8000_0000_0000_0001u64);
+        let inputs = postcard::to_stdvec(&(a, b, c)).unwrap();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+
+        // Mirrors examples/carry-chain/guest's reference in u128 arithmetic.
+        fn carry_chain_reference(a: u64, b: u64, c: u64) -> u64 {
+            let sum = a as u128 + b as u128;
+            let add_lo = sum as u64;
+            let add_hi = (c as u128 + a as u128 + (sum >> 64)) as u64;
+            let product = a as u128 * b as u128;
+            let (mul_lo, mul_hi) = (product as u64, (product >> 64) as u64);
+            let mac = b as u128 * c as u128 + ((a as u128 + b as u128) >> 64);
+            let (addc_lo, addc_hi) = (mac as u64, (mac >> 64) as u64);
+            let product = a as u128 * c as u128;
+            let mulc_lo = product as u64;
+            let mulc_hi = (b as u128 * c as u128 + (product >> 64)) as u64;
+            add_lo
+                .wrapping_mul(3)
+                .wrapping_add(add_hi.wrapping_mul(5))
+                .wrapping_add(mul_lo.wrapping_mul(7))
+                .wrapping_add(mul_hi.wrapping_mul(11))
+                .wrapping_add(addc_lo.wrapping_mul(13))
+                .wrapping_add(addc_hi.wrapping_mul(17))
+                .wrapping_add(mulc_lo.wrapping_mul(19))
+                .wrapping_add(mulc_hi.wrapping_mul(23))
+        }
+        let expected = carry_chain_reference(a, b, c);
+        let actual: u64 =
+            postcard::from_bytes(&io_device.outputs).expect("guest output should decode as u64");
+        assert_eq!(
+            actual, expected,
+            "guest carry chains disagree with the u128 reference"
+        );
+
+        let (shared_preprocessing, _program_data) = test_shared_preprocessing(
+            bytecode,
+            init_memory_state,
+            e_entry,
+            io_device.memory_layout.clone(),
+            1 << 16,
+        )
+        .unwrap();
+        let prover_preprocessing = JoltProverPreprocessing::new(shared_preprocessing.clone());
+        let elf_contents_opt = program.get_elf_contents();
+        let elf_contents = elf_contents_opt.as_deref().expect("elf contents is None");
+        let prover = RV64IMACProver::gen_from_elf(
+            &prover_preprocessing,
+            elf_contents,
+            &inputs,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let io_device = prover.program_io.clone();
+        let (jolt_proof, _debug_info) = prover
+            .prove()
+            .expect("prover should produce verifier-native proof");
+
+        // Tamper coverage across the distinct carry grounding paths: each
+        // mutation must be rejected.
+        let tamper = |mutate: &dyn Fn(&mut ClearProofClaims<_>)| {
+            let mut tampered = jolt_proof.clone();
+            let JoltProofClaims::Clear(claims) = &mut tampered.claims else {
+                panic!("clear proofs carry clear claims");
+            };
+            mutate(claims);
+            tampered
+        };
+        let one = <jolt_field::Fr as jolt_field::Ring>::from_u64(1);
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage1.outer.outer_remainder.next_carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered outer NextCarry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage2.batch_outputs.product_remainder.uses_carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered product-remainder UsesCarry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage2.batch_outputs.product_remainder.carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered product-remainder committed Carry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage3.shift.carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered shift Carry claim must be rejected"
+        );
+        assert!(
+            canonical_verify_result(
+                &prover_preprocessing,
+                tamper(&|claims| claims.stage6b.carry_claim_reduction.carry += one),
+                io_device.clone(),
+                None,
+            )
+            .is_err(),
+            "tampered reduced Carry final claim must be rejected"
+        );
+
+        verify_verifier_proof(&prover_preprocessing, jolt_proof, io_device, None);
+    }
+
+    /// Measures the spec's motivating performance claim: the same 256x256
+    /// schoolbook multiplication via MULC/ADDC carry chains vs the portable
+    /// u128 version the compiler lowers today. Trace-only (no proving); the
+    /// noop control isolates the shared startup and IO cost.
+    #[cfg(feature = "implicit-carry")]
+    #[test]
+    #[serial]
+    fn mul256_carry_vs_baseline_trace_length() {
+        let a: [u64; 4] = [u64::MAX, u64::MAX - 1, 0xdead_beef_0bad_cafe, u64::MAX / 7];
+        let b: [u64; 4] = [u64::MAX - 2, 0x8000_0000_0000_0001, u64::MAX / 3, u64::MAX];
+        let inputs = postcard::to_stdvec(&(a, b)).unwrap();
+
+        let run = |func: &str| {
+            let mut program = Program::new("carry-chain-guest");
+            program.enable_implicit_carry();
+            program.set_func(func);
+            let (_, trace, _, io_device) = program.trace(&inputs, &[], &[]);
+            let output: u64 = postcard::from_bytes(&io_device.outputs)
+                .expect("guest output should decode as u64");
+            (trace.len(), output)
+        };
+
+        let (noop_len, _) = run("mul256_noop");
+        let (carry_len, carry_out) = run("mul256_carry");
+        let (baseline_len, baseline_out) = run("mul256_baseline");
+
+        // Mirrors the guest's portable schoolbook and checksum fold.
+        let expected = {
+            let mut r = [0u64; 8];
+            for i in 0..4 {
+                let mut carry = 0u128;
+                for j in 0..4 {
+                    let acc = r[i + j] as u128 + (a[j] as u128) * (b[i] as u128) + carry;
+                    r[i + j] = acc as u64;
+                    carry = acc >> 64;
+                }
+                r[i + 4] = carry as u64;
+            }
+            r.iter()
+                .zip([3u64, 5, 7, 11, 13, 17, 19, 23])
+                .fold(0u64, |acc, (limb, weight)| {
+                    acc.wrapping_add(limb.wrapping_mul(weight))
+                })
+        };
+        assert_eq!(carry_out, expected, "carry-chain mul256 output mismatch");
+        assert_eq!(baseline_out, expected, "portable mul256 output mismatch");
+
+        let net_carry = carry_len - noop_len;
+        let net_baseline = baseline_len - noop_len;
+        eprintln!(
+            "mul256 net cycles: carry={net_carry}, baseline={net_baseline} \
+             (raw carry={carry_len}, baseline={baseline_len}, noop={noop_len})"
+        );
+        assert!(
+            2 * net_carry < net_baseline,
+            "implicit-carry mul256 should cost less than half the portable \
+             sequence: {net_carry} vs {net_baseline} net cycles"
+        );
     }
 
     #[test]

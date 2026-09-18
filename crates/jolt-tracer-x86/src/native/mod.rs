@@ -275,7 +275,8 @@ impl ExecutionBackend for X86TracerBackend {
                 "record pass emitted a different row count than the fast pass",
             ));
         }
-        let rows = Observation::reassemble_rows(&program.expanded_bytecode, &record.observations)?;
+        let rows =
+            Observation::reassemble_rows(&program.expanded_bytecode, &record.observations, 0)?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
             record.device,
@@ -295,35 +296,88 @@ struct RecordRunOutput {
 
 impl Observation {
     /// Combines static bytecode with recorded values into validated rows.
+    ///
+    /// The first `skip_rows` observations produce no rows (chunk replay
+    /// resumes from a boundary at or before its window) but are still walked:
+    /// the implicit carry is cross-row state, and the first kept row's
+    /// incoming carry is the carry-out of the last skipped observation.
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
         observations: &[Self],
+        skip_rows: usize,
     ) -> Result<Vec<TraceRow>, TraceError> {
-        let mut rows = Vec::with_capacity(observations.len());
-        for observation in observations {
+        let mut rows = Vec::with_capacity(observations.len().saturating_sub(skip_rows));
+        // Seeding the walk with carry = 0 mirrors the interpreter at the
+        // program's initial boundary, and is immaterial at any other:
+        // checkpoint selection guarantees `skip_rows >= 1` there (feature-on),
+        // so the seed never reaches a kept row.
+        #[cfg(feature = "implicit-carry")]
+        let mut carry = 0u64;
+        for (index, observation) in observations.iter().enumerate() {
             let row = bytecode
                 .get(observation.row_index as usize)
                 .ok_or(TraceError::Backend("observation row index out of range"))?;
-            rows.push(TraceRow::new(
-                *row,
-                RegisterState {
-                    rs1: Self::register_read(row.operands.rs1, observation.rs1),
-                    rs2: Self::register_read(row.operands.rs2, observation.rs2),
-                    rd: row.operands.rd.map(|register| RegisterWrite {
-                        register,
-                        // x0 reads as zero on both sides of a write.
-                        pre_value: if register == 0 { 0 } else { observation.rd_pre },
-                        post_value: if register == 0 {
-                            0
-                        } else {
-                            observation.rd_post
-                        },
-                    }),
-                },
-                observation.ram_access(row.instruction_kind),
-            )?);
+            if index >= skip_rows {
+                let trace_row = TraceRow::new(
+                    *row,
+                    RegisterState {
+                        rs1: Self::register_read(row.operands.rs1, observation.rs1),
+                        rs2: Self::register_read(row.operands.rs2, observation.rs2),
+                        rd: row.operands.rd.map(|register| RegisterWrite {
+                            register,
+                            // x0 reads as zero on both sides of a write.
+                            pre_value: if register == 0 { 0 } else { observation.rd_pre },
+                            post_value: if register == 0 {
+                                0
+                            } else {
+                                observation.rd_post
+                            },
+                        }),
+                    },
+                    observation.ram_access(row.instruction_kind),
+                )?;
+                // The row's incoming carry: the previous row's carry-out,
+                // matching the interpreter's pre-execute `cpu.carry` read.
+                #[cfg(feature = "implicit-carry")]
+                let trace_row = trace_row.with_carry(carry);
+                rows.push(trace_row);
+            }
+            #[cfg(feature = "implicit-carry")]
+            {
+                carry = observation.carry_out(row);
+            }
         }
         Ok(rows)
+    }
+
+    /// This row's carry-out, mirroring the interpreter's `cpu.carry` updates:
+    /// `Add` and `Mul` write the high 64 bits of their true 128-bit result
+    /// (computed from the recorded pre-execute reads); every other kind
+    /// clobbers the carry to zero. The carry consumers (`AddC`/`MulC`) never
+    /// reach reassembly — the emitter declines them, so programs containing
+    /// them fail to compile — hence carry consumption needs no modeling here.
+    #[cfg(feature = "implicit-carry")]
+    fn carry_out(&self, row: &JoltInstructionRow) -> u64 {
+        // x0 reads as zero, as in `register_read`.
+        let source = |register: Option<u8>, value: u64| -> u128 {
+            match register {
+                Some(0) | None => 0,
+                Some(_) => u128::from(value),
+            }
+        };
+        match row.instruction_kind {
+            JoltInstructionKind::ADD => {
+                let rs1 = source(row.operands.rs1, self.rs1);
+                let rs2 = source(row.operands.rs2, self.rs2);
+                ((rs1 + rs2) >> 64) as u64
+            }
+            JoltInstructionKind::MUL => {
+                let rs1 = source(row.operands.rs1, self.rs1);
+                let rs2 = source(row.operands.rs2, self.rs2);
+                ((rs1 * rs2) >> 64) as u64
+            }
+            _ => 0,
+        }
     }
 
     fn register_read(register: Option<u8>, value: u64) -> Option<RegisterRead> {
@@ -557,7 +611,19 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         let mut index = 0usize;
         for chunk in 0..trace_len.div_ceil(chunk_size) {
             let mark = chunk * chunk_size;
-            while index + 1 < boundaries.len() && boundaries[index + 1].0 <= mark {
+            // Feature-on, a mid-trace chunk must resume from a boundary
+            // strictly before its mark: the implicit carry is cross-row state
+            // no boundary snapshot holds (the AOT machine has no carry
+            // register), and reassembly derives the first kept row's incoming
+            // carry from the replayed-then-discarded predecessor, so at least
+            // one row must be skipped. The initial boundary is exempt — the
+            // machine starts with carry = 0.
+            let latest = if cfg!(feature = "implicit-carry") {
+                mark.saturating_sub(1)
+            } else {
+                mark
+            };
+            while index + 1 < boundaries.len() && boundaries[index + 1].0 <= latest {
                 index += 1;
             }
             let (rows_before, boundary) = &boundaries[index];
@@ -638,7 +704,8 @@ impl ChunkedExecutionBackend for X86TracerBackend {
         observations.truncate(needed);
         let rows = Observation::reassemble_rows(
             &checkpoint.bytecode,
-            &observations[checkpoint.skip_rows..],
+            &observations,
+            checkpoint.skip_rows,
         )?;
         Ok(OwnedTrace::new(rows))
     }

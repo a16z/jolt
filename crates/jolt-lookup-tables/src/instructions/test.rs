@@ -31,6 +31,8 @@ where
             instruction,
             register_state,
             ram_access: T::RAMAccess::default(),
+            #[cfg(feature = "implicit-carry")]
+            carry: rng.next_u64(),
         }
     }
 }
@@ -162,6 +164,11 @@ where
         }
         if let Some(rs2_val) = raw.rs2_val() {
             cpu.write_register(rs2_idx.unwrap() as usize, rs2_val as i64);
+        }
+        // The incoming implicit carry is pre-state, same as rs1/rs2.
+        #[cfg(feature = "implicit-carry")]
+        {
+            cpu.carry = raw.carry();
         }
 
         instr.trace(&mut cpu, None);

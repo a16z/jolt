@@ -366,6 +366,8 @@ fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
         row.field_inline = cycle.field_inline_trace().map(Into::into);
         row
     };
+    #[cfg(feature = "implicit-carry")]
+    let row = row.with_carry(cycle.carry());
     Ok(row)
 }
 

@@ -4,7 +4,7 @@ use allocative::Allocative;
 use jolt_riscv::{
     CircuitFlagSet as RiscvCircuitFlagSet, Flags as RiscvFlags,
     InstructionFlagSet as RiscvInstructionFlagSet, JoltInstruction, JoltInstructionKind,
-    JoltInstructionRow, SourceInstructionKind,
+    JoltInstructionRow, SourceInstructionKind, NUM_CIRCUIT_FLAGS as RISCV_NUM_CIRCUIT_FLAGS,
 };
 use strum::EnumCount;
 use strum_macros::{EnumCount as EnumCountMacro, EnumIter, FromRepr};
@@ -132,6 +132,13 @@ pub enum CircuitFlags {
     /// Is instruction at the end of a virtual sequence (virtual_sequence_remaining == Some(0)).
     /// Used to skip NextPCEqPCPlusOneIfInline for ECALL sequences that may jump to trap handlers.
     IsLastInSequence,
+    /// 1 if the instruction consumes the implicit carry from the previous row (`ADDC`, `MULC`).
+    #[cfg(feature = "implicit-carry")]
+    UsesCarry,
+    /// 1 if the instruction's arithmetic result splits into a low-64-bit `rd` and a
+    /// high-64-bit carry-out (`ADD`, `MUL`, `ADDC`, `MULC`).
+    #[cfg(feature = "implicit-carry")]
+    ProducesCarry,
 }
 
 /// Boolean flags that are not part of Jolt's R1CS constraints
@@ -167,6 +174,11 @@ pub enum InstructionFlags {
 
 pub const NUM_CIRCUIT_FLAGS: usize = CircuitFlags::COUNT;
 pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
+
+// `circuit_flags_from_riscv` converts by bit position, so the legacy enum must
+// mirror `jolt_riscv::CircuitFlags` variant-for-variant or flags silently
+// vanish from the witness.
+const _: () = assert!(NUM_CIRCUIT_FLAGS == RISCV_NUM_CIRCUIT_FLAGS);
 
 pub trait InterleavedBitsMarker {
     fn is_interleaved_operands(&self) -> bool;
@@ -390,6 +402,13 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             | JoltInstruction::FieldLoadFromX(_)
             | JoltInstruction::FieldStoreToX(_)
             | JoltInstruction::FieldLoadImm(_) => return None,
+            // Same combined-operand range-check lookup as ADD/MUL; the legacy
+            // prover has no implicit-carry constraint support yet, so proving
+            // a trace containing these is unsupported until then.
+            #[cfg(feature = "implicit-carry")]
+            JoltInstruction::AddC(_) | JoltInstruction::MulC(_) => {
+                LookupTables::RangeCheck(Default::default())
+            }
             JoltInstructionKind::NoOp
             | JoltInstructionKind::LD
             | JoltInstructionKind::SD
@@ -441,6 +460,17 @@ impl<const XLEN: usize> LookupQuery<XLEN> for JoltTraceCycle<'_> {
 }
 
 fn circuit_flags_from_riscv(flags: RiscvCircuitFlagSet) -> [bool; NUM_CIRCUIT_FLAGS] {
+    // The legacy layout must be at least as wide as jolt_riscv's flag set
+    // (both grow to 16 under implicit-carry); silently truncating a set flag
+    // would prove wrong semantics. This runs at preprocessing time, not per
+    // cycle.
+    // Widened before shifting: bits() is u16 and the implicit-carry layout is
+    // exactly 16 flags wide, where `u16 >> 16` would overflow.
+    assert!(
+        u32::from(flags.bits()) >> NUM_CIRCUIT_FLAGS == 0,
+        "circuit flags {:#018b} exceed the legacy prover's {NUM_CIRCUIT_FLAGS}-flag layout",
+        flags.bits()
+    );
     let mut converted = [false; NUM_CIRCUIT_FLAGS];
     for (index, value) in converted.iter_mut().enumerate() {
         *value = flags.bits() & (1 << index) != 0;
@@ -449,6 +479,7 @@ fn circuit_flags_from_riscv(flags: RiscvCircuitFlagSet) -> [bool; NUM_CIRCUIT_FL
 }
 
 fn instruction_flags_from_riscv(flags: RiscvInstructionFlagSet) -> [bool; NUM_INSTRUCTION_FLAGS] {
+    assert!(u32::from(flags.bits()) >> NUM_INSTRUCTION_FLAGS == 0);
     let mut converted = [false; NUM_INSTRUCTION_FLAGS];
     for (index, value) in converted.iter_mut().enumerate() {
         *value = flags.bits() & (1 << index) != 0;
@@ -458,12 +489,13 @@ fn instruction_flags_from_riscv(flags: RiscvInstructionFlagSet) -> [bool; NUM_IN
 
 macro_rules! define_rv64imac_trait_impls {
     (
-        instructions: [$($instr:ident),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident),* $(,)?]
     ) => {
         impl SupportedInstruction for Instruction {
             fn is_supported_instruction(&self) -> bool {
                 match self {
                     $(
+                        $(#[$meta])*
                         Instruction::$instr(_) => true,
                     )*
                     _ => false,
@@ -476,6 +508,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => (0, 0),
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_instruction_inputs(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -486,6 +519,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => 0,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_index(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -496,6 +530,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => (0, 0),
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_operands(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -506,6 +541,7 @@ macro_rules! define_rv64imac_trait_impls {
                 match self {
                     Cycle::NoOp => 0,
                     $(
+                        $(#[$meta])*
                         Cycle::$instr(cycle) => LookupQuery::<XLEN>::to_lookup_output(cycle),
                     )*
                     _ => panic!("Unexpected instruction: {:?}", self),
@@ -537,11 +573,17 @@ define_rv64imac_trait_impls! {
         VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
         VirtualAlignAddr,
         VirtualShiftDataB, VirtualShiftDataH, VirtualShiftDataW,
-        VirtualXORROTL1
+        VirtualXORROTL1,
+        #[cfg(feature = "implicit-carry")]
+        ADDC,
+        #[cfg(feature = "implicit-carry")]
+        MULC
     ]
 }
 
 pub mod add;
+#[cfg(feature = "implicit-carry")]
+pub mod addc;
 pub mod addi;
 pub mod addiw;
 pub mod addw;
@@ -563,6 +605,8 @@ pub mod jalr;
 pub mod ld;
 pub mod lui;
 pub mod mul;
+#[cfg(feature = "implicit-carry")]
+pub mod mulc;
 pub mod mulhu;
 pub mod mulw;
 pub mod or;

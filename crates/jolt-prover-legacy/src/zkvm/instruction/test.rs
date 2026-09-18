@@ -345,6 +345,11 @@ where
         if let Some(rs2_val) = random_cycle.register_state.rs2_value() {
             cpu.write_register(normalized_operands.rs2.unwrap() as usize, rs2_val as i64);
         }
+        // The incoming implicit carry is pre-state, same as rs1/rs2.
+        #[cfg(feature = "implicit-carry")]
+        {
+            cpu.carry = random_cycle.carry;
+        }
 
         random_cycle.instruction.trace(&mut cpu, None);
         let lookup_result = LookupQuery::<XLEN>::to_lookup_output(&random_cycle);
