@@ -5,7 +5,6 @@ use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::error::SumcheckError;
-use crate::scalar::SumcheckScalar;
 use crate::{SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL};
 
 /// Common interface for one sumcheck round message.
@@ -16,7 +15,7 @@ pub trait RoundMessage {
 }
 
 /// A round message whose polynomial is available to the verifier.
-pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
+pub trait ClearRound<F: Field>: RoundMessage {
     fn evaluate(&self, challenge: F) -> F;
 
     fn coefficient_linear_combination(&self, coefficients: &[F]) -> F;

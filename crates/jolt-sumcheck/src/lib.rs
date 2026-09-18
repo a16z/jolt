@@ -100,7 +100,6 @@ pub mod prover;
 pub mod r1cs;
 pub mod recorder;
 pub mod round_proof;
-pub mod scalar;
 pub mod verifier;
 
 #[cfg(all(test, feature = "committed"))]
@@ -154,5 +153,4 @@ pub use r1cs::{
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
-pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;
