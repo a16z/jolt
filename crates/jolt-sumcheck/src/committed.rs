@@ -2,7 +2,7 @@
 
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
+use jolt_field::{Field, JoltField};
 #[cfg(feature = "committed")]
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
@@ -108,14 +108,14 @@ impl<F: Copy, C: Clone> CommittedSumcheckConsistency<F, C> {
 /// precommitted claim-reduction phases) bind the leading challenges and need
 /// their offset supplied explicitly via [`Self::try_instance_point_at`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BatchedCommittedSumcheckConsistency<F: JoltField, C> {
+pub struct BatchedCommittedSumcheckConsistency<F: Field, C> {
     pub consistency: CommittedSumcheckConsistency<F, C>,
     pub batching_coefficients: Vec<F>,
     pub max_num_vars: usize,
     pub max_degree: usize,
 }
 
-impl<F: JoltField, C> BatchedCommittedSumcheckConsistency<F, C> {
+impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
     /// Returns the tail-aligned default offset (`max_num_vars - num_vars`)
     /// for an instance with `num_vars` — the suffix start when the instance's
     /// dummy rounds are front-loaded. Head-aligned instances must not use

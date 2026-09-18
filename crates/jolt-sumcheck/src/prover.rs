@@ -19,9 +19,11 @@
 
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
+use jolt_field::Field;
+#[cfg(feature = "committed")]
 use jolt_field::JoltField;
-use jolt_poly::UnivariatePoly;
-use jolt_transcript::Transcript;
+use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_transcript::{AppendToTranscript, Transcript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -53,7 +55,7 @@ use crate::OPENING_CLAIM_TRANSCRIPT_LABEL;
 /// engine threads the challenge bookkeeping: `bind` is `None` exactly on the
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
-pub trait ProveRounds<F: JoltField> {
+pub trait ProveRounds<F: Field> {
     /// The number of rounds/variables in this member's sumcheck.
     fn num_rounds(&self) -> usize;
 
@@ -76,7 +78,7 @@ pub trait ProveRounds<F: JoltField> {
 }
 
 /// One active member for a single batch round.
-pub struct MemberRound<'a, F: JoltField> {
+pub struct MemberRound<'a, F: Field> {
     pub index: usize,
     pub local_round: usize,
     pub bind: Option<F>,
@@ -85,7 +87,7 @@ pub struct MemberRound<'a, F: JoltField> {
     pub message: Option<UnivariatePoly<F>>,
 }
 
-impl<F: JoltField> MemberRound<'_, F> {
+impl<F: Field> MemberRound<'_, F> {
     pub fn run(&mut self) -> Result<(), SumcheckError<F>> {
         self.message = Some(
             self.member
@@ -96,12 +98,12 @@ impl<F: JoltField> MemberRound<'_, F> {
 }
 
 /// One ever-active member and its final bind, for after the round loop.
-pub struct MemberFinish<'a, F: JoltField> {
+pub struct MemberFinish<'a, F: Field> {
     pub bind: F,
     pub member: &'a mut dyn ProveRounds<F>,
 }
 
-impl<F: JoltField> MemberFinish<'_, F> {
+impl<F: Field> MemberFinish<'_, F> {
     pub fn run(&mut self) -> Result<(), SumcheckError<F>> {
         self.member.finish_rounds(self.bind)
     }
@@ -111,7 +113,7 @@ impl<F: JoltField> MemberFinish<'_, F> {
 /// activity, padding, fold, round-sum checks, and transcript stay in
 /// [`prove_batch`]. Leaving a handle's message unset is
 /// [`SumcheckError::MissingRoundMessage`].
-pub trait RoundScheduler<F: JoltField> {
+pub trait RoundScheduler<F: Field> {
     fn batch_prove_round(
         &mut self,
         work: &mut [MemberRound<'_, F>],
@@ -127,7 +129,7 @@ pub trait RoundScheduler<F: JoltField> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SequentialRounds;
 
-impl<F: JoltField> RoundScheduler<F> for SequentialRounds {
+impl<F: Field> RoundScheduler<F> for SequentialRounds {
     fn batch_prove_round(
         &mut self,
         work: &mut [MemberRound<'_, F>],
@@ -164,7 +166,7 @@ pub struct ProvedBatch<F> {
 /// compressed wire form requires. The batched polynomial is assembled over
 /// `max_degree + 1` slots, so rounds where every active member's degree is
 /// lower carry trailing zeros that must not reach the wire.
-fn trim_round_polynomial<F: JoltField>(mut coefficients: Vec<F>) -> UnivariatePoly<F> {
+fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F> {
     while coefficients.len() > 2 && coefficients.last().is_some_and(|value| *value == F::zero()) {
         let _ = coefficients.pop();
     }
@@ -202,7 +204,7 @@ pub fn prove_batch<F, R, T>(
     transcript: &mut T,
 ) -> Result<ProvedBatch<F>, SumcheckError<F>>
 where
-    F: JoltField,
+    F: Field,
     R: SumcheckRecorder<F>,
     T: Transcript<Challenge = F>,
 {
@@ -283,7 +285,7 @@ where
                 .message
                 .as_ref()
                 .ok_or(SumcheckError::MissingRoundMessage { member: item.index })?;
-            let poly_degree = poly.degree();
+            let poly_degree = UnivariatePolynomial::degree(poly);
             if poly_degree > prelude.max_degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
                     got: poly_degree,
@@ -354,7 +356,7 @@ where
 /// challenge — the batch driver absorbs it again as the remainder's input
 /// claim).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProvedUniskip<F: JoltField, C = ()> {
+pub struct ProvedUniskip<F: Field, C = ()> {
     pub proof: SumcheckProof<F, C>,
     pub challenge: F,
     pub output_claim: F,
@@ -364,7 +366,7 @@ pub struct ProvedUniskip<F: JoltField, C = ()> {
 /// witness (for BlindFold), the reduction challenge, and the (prover-internal,
 /// never absorbed) output claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProvedUniskipCommitted<F: JoltField, C> {
+pub struct ProvedUniskipCommitted<F: Field, C> {
     pub proof: SumcheckProof<F, C>,
     pub witness: CommittedSumcheckWitness<F>,
     pub challenge: F,
@@ -374,15 +376,16 @@ pub struct ProvedUniskipCommitted<F: JoltField, C> {
 /// Self-check the uni-skip round polynomial against the verifier's round
 /// checks before anything reaches the transcript: degree bound and
 /// centered-integer-domain round sum.
-fn check_uniskip_round<F: JoltField>(
+fn check_uniskip_round<F: Field + AppendToTranscript>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
     domain_size: usize,
 ) -> Result<(), SumcheckError<F>> {
-    if round_poly.degree() > degree {
+    let round_degree = UnivariatePolynomial::degree(round_poly);
+    if round_degree > degree {
         return Err(SumcheckError::DegreeBoundExceeded {
-            got: round_poly.degree(),
+            got: round_degree,
             max: degree,
         });
     }
@@ -408,7 +411,7 @@ pub fn prove_uniskip_clear<F, C, T>(
     transcript: &mut T,
 ) -> Result<ProvedUniskip<F, C>, SumcheckError<F>>
 where
-    F: JoltField,
+    F: Field + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;

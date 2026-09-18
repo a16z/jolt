@@ -2,8 +2,7 @@
 
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use jolt_field::JoltField;
-use serde::de::DeserializeOwned;
+use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 /// Shared interface for univariate polynomial types.
@@ -13,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// access are deliberately left as inherent methods because the two representations
 /// require different calling conventions (compressed evaluation needs an external
 /// hint value).
-pub trait UnivariatePolynomial<F: JoltField>: Send + Sync {
+pub trait UnivariatePolynomial<F: Field>: Send + Sync {
     /// Degree of the polynomial, or 0 for the zero polynomial.
     fn degree(&self) -> usize;
 }
@@ -23,12 +22,12 @@ pub trait UnivariatePolynomial<F: JoltField>: Send + Sync {
 /// Coefficients are stored in ascending degree order: `coefficients[i]` is the
 /// coefficient of $x^i$. An empty coefficient vector represents the zero polynomial.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
-pub struct UnivariatePoly<F: JoltField> {
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct UnivariatePoly<F: Field> {
     coefficients: Vec<F>,
 }
 
-impl<F: JoltField> UnivariatePolynomial<F> for UnivariatePoly<F> {
+impl<F: Field> UnivariatePolynomial<F> for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         if self.coefficients.is_empty() {
             0
@@ -38,7 +37,7 @@ impl<F: JoltField> UnivariatePolynomial<F> for UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> UnivariatePoly<F> {
+impl<F: Field> UnivariatePoly<F> {
     /// Creates a polynomial from coefficients in ascending degree order.
     pub fn new(coefficients: Vec<F>) -> Self {
         Self { coefficients }
@@ -357,7 +356,7 @@ impl<F: JoltField> UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> Neg for UnivariatePoly<F> {
+impl<F: Field> Neg for UnivariatePoly<F> {
     type Output = Self;
 
     fn neg(mut self) -> Self {
@@ -368,7 +367,7 @@ impl<F: JoltField> Neg for UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> Add for UnivariatePoly<F> {
+impl<F: Field> Add for UnivariatePoly<F> {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self {
@@ -377,7 +376,7 @@ impl<F: JoltField> Add for UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> Add for &UnivariatePoly<F> {
+impl<F: Field> Add for &UnivariatePoly<F> {
     type Output = UnivariatePoly<F>;
 
     fn add(self, rhs: Self) -> UnivariatePoly<F> {
@@ -394,7 +393,7 @@ impl<F: JoltField> Add for &UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> AddAssign<&Self> for UnivariatePoly<F> {
+impl<F: Field> AddAssign<&Self> for UnivariatePoly<F> {
     fn add_assign(&mut self, rhs: &Self) {
         if rhs.coefficients.len() > self.coefficients.len() {
             self.coefficients.resize(rhs.coefficients.len(), F::zero());
@@ -405,7 +404,7 @@ impl<F: JoltField> AddAssign<&Self> for UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> Sub for UnivariatePoly<F> {
+impl<F: Field> Sub for UnivariatePoly<F> {
     type Output = Self;
 
     fn sub(mut self, rhs: Self) -> Self {
@@ -414,7 +413,7 @@ impl<F: JoltField> Sub for UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> Sub for &UnivariatePoly<F> {
+impl<F: Field> Sub for &UnivariatePoly<F> {
     type Output = UnivariatePoly<F>;
 
     fn sub(self, rhs: Self) -> UnivariatePoly<F> {
@@ -430,7 +429,7 @@ impl<F: JoltField> Sub for &UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> SubAssign<&Self> for UnivariatePoly<F> {
+impl<F: Field> SubAssign<&Self> for UnivariatePoly<F> {
     fn sub_assign(&mut self, rhs: &Self) {
         if rhs.coefficients.len() > self.coefficients.len() {
             self.coefficients.resize(rhs.coefficients.len(), F::zero());
@@ -441,7 +440,7 @@ impl<F: JoltField> SubAssign<&Self> for UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> Mul<F> for UnivariatePoly<F> {
+impl<F: Field> Mul<F> for UnivariatePoly<F> {
     type Output = Self;
 
     fn mul(mut self, rhs: F) -> Self {
@@ -450,7 +449,7 @@ impl<F: JoltField> Mul<F> for UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> Mul<F> for &UnivariatePoly<F> {
+impl<F: Field> Mul<F> for &UnivariatePoly<F> {
     type Output = UnivariatePoly<F>;
 
     fn mul(self, rhs: F) -> UnivariatePoly<F> {
@@ -458,7 +457,7 @@ impl<F: JoltField> Mul<F> for &UnivariatePoly<F> {
     }
 }
 
-impl<F: JoltField> MulAssign<F> for UnivariatePoly<F> {
+impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
     fn mul_assign(&mut self, rhs: F) {
         for c in &mut self.coefficients {
             *c *= rhs;
@@ -467,7 +466,7 @@ impl<F: JoltField> MulAssign<F> for UnivariatePoly<F> {
 }
 
 /// Gaussian elimination on a Vandermonde system for evaluations at `0, 1, ..., n-1`.
-fn gaussian_elimination_vandermonde<F: JoltField>(evals: &[F]) -> Vec<F> {
+fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
     let n = evals.len();
     let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
 
@@ -496,7 +495,7 @@ fn gaussian_elimination_vandermonde<F: JoltField>(evals: &[F]) -> Vec<F> {
 ///
 /// Panics if the matrix is singular (no nonzero pivot in some column).
 #[expect(clippy::expect_used)]
-fn gaussian_elimination_augmented<F: JoltField>(matrix: &mut [Vec<F>]) -> Vec<F> {
+fn gaussian_elimination_augmented<F: Field>(matrix: &mut [Vec<F>]) -> Vec<F> {
     let size = matrix.len();
     debug_assert_eq!(size, matrix[0].len() - 1);
 

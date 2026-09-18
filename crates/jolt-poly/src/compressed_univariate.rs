@@ -3,8 +3,7 @@
 //! Used in sumcheck proofs to save one field element per round polynomial.
 //! The linear term is recoverable from the sumcheck claim `f(0) + f(1)`.
 
-use jolt_field::JoltField;
-use serde::de::DeserializeOwned;
+use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
 use crate::univariate::{UnivariatePoly, UnivariatePolynomial};
@@ -18,12 +17,12 @@ use crate::univariate::{UnivariatePoly, UnivariatePolynomial};
 /// This saves one field element per sumcheck round polynomial in proof
 /// serialization (32 bytes for BN254).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
-pub struct CompressedPoly<F: JoltField> {
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct CompressedPoly<F: Field> {
     coeffs_except_linear_term: Vec<F>,
 }
 
-impl<F: JoltField> UnivariatePolynomial<F> for CompressedPoly<F> {
+impl<F: Field> UnivariatePolynomial<F> for CompressedPoly<F> {
     /// Degree of the polynomial.
     ///
     /// A degree-d polynomial has d+1 coefficients; the compressed form stores
@@ -33,7 +32,7 @@ impl<F: JoltField> UnivariatePolynomial<F> for CompressedPoly<F> {
     }
 }
 
-impl<F: JoltField> CompressedPoly<F> {
+impl<F: Field> CompressedPoly<F> {
     /// Creates a compressed polynomial from the stored coefficients `[c0, c2, c3, ...]`.
     pub fn new(coeffs_except_linear_term: Vec<F>) -> Self {
         Self {

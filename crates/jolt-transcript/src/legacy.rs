@@ -8,7 +8,9 @@
 #[cfg(feature = "spongefish")]
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, CanonicalEncoding, JoltField, Ring};
+#[cfg(feature = "spongefish")]
+use jolt_field::CanonicalEncoding;
+use jolt_field::{CanonicalBytes, Ring};
 #[cfg(feature = "spongefish")]
 use spongefish::{DuplexSpongeInterface, Encoding};
 
@@ -33,8 +35,10 @@ pub const MAX_LABEL_LEN: usize = 32;
 /// spongefish session value, so distinct labels carry distinct domain
 /// barriers.
 pub trait Transcript: Default + Sync + Send + 'static {
-    /// The challenge type produced by this transcript.
-    type Challenge: CanonicalEncoding;
+    /// The challenge type produced by this transcript. Concrete transcript
+    /// implementations state any decoding or canonical-encoding capability
+    /// they need; custom transcripts may return an algebra-only field type.
+    type Challenge;
 
     /// Creates a new transcript with the given domain separation label.
     ///
@@ -85,7 +89,7 @@ pub trait Transcript: Default + Sync + Send + 'static {
     #[must_use]
     fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge>
     where
-        Self::Challenge: JoltField,
+        Self::Challenge: Ring,
     {
         let gamma = self.challenge_scalar();
         let one = Self::Challenge::from_u64(1);
