@@ -1,5 +1,12 @@
 # Verifier testing gates
 
+## Tamper rejection phases
+
+The tamper harness asserts *where* a rejection fires: each manifest target in
+`jolt-verifier`'s tamper manifest documents the verifier phase that is its
+last line of defense, and `assert_verifier_fixture_tamper_rejects` fails if
+the observed rejection maps to a later phase than documented.
+
 ## Fiat-Shamir soundness
 
 The `fs-obligations` and `fs-attacks-smoke` jobs protect the Fiat-Shamir
