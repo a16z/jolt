@@ -6,7 +6,8 @@
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};
-use ark_std::Zero;
+use ark_std::{cfg_iter, cfg_iter_mut, Zero};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::decomp_2d::{decompose_scalar_2d, glv_endomorphism};
@@ -55,7 +56,7 @@ impl PrecomputedShamir2Table {
     fn new(bases: &[G1Projective; 2]) -> Self {
         let mut table = [G1Projective::zero(); 16];
 
-        table.par_iter_mut().enumerate().for_each(|(idx, point)| {
+        cfg_iter_mut!(table).enumerate().for_each(|(idx, point)| {
             let point_mask = idx & 0x3;
             let sign_mask = idx >> 2;
 
@@ -153,8 +154,7 @@ impl FixedBasePrecomputedG1 {
     }
 
     fn mul_scalars(&self, scalars: &[Fr]) -> Vec<G1Projective> {
-        scalars
-            .par_iter()
+        cfg_iter!(scalars)
             .map(|&scalar| self.mul_scalar(scalar))
             .collect()
     }

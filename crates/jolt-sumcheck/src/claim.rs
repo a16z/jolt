@@ -2,7 +2,7 @@
 
 use jolt_field::Field;
 
-pub use jolt_openings::EvaluationClaim;
+pub use jolt_poly::EvaluationClaim;
 
 /// Round count and degree bound for a sumcheck instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
