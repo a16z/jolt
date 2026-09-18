@@ -9,9 +9,9 @@ description = "R1CS constraint data structures for the Jolt proving system"
 workspace = true
 
 [dependencies]
-jolt-claims.workspace = true
-jolt-field = { path = "../jolt-field" }
-jolt-poly = { path = "../jolt-poly" }
+jolt-claims = { workspace = true, optional = true }
+jolt-field = { path = "../jolt-field", default-features = false }
+jolt-poly = { path = "../jolt-poly", default-features = false }
 num-traits.workspace = true
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -24,7 +24,8 @@ rand_chacha = { workspace = true }
 rand_core = { workspace = true }
 
 [features]
-default = ["parallel"]
-field-inline = ["jolt-claims/field-inline"]
-implicit-carry = ["jolt-claims/implicit-carry"]
+default = ["parallel", "claim-lowering"]
+claim-lowering = ["dep:jolt-claims"]
+field-inline = ["claim-lowering", "jolt-claims/field-inline"]
+implicit-carry = ["jolt-claims?/implicit-carry"]
 parallel = ["rayon", "jolt-poly/parallel"]

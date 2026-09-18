@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rustfmt
           cache: false
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Require one jolt-field identity (no akita-field post-cutover)
@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: clippy
           cache: false
@@ -236,7 +236,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -253,7 +253,7 @@ jobs:
     name: Test jolt-prover-legacy
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -288,7 +288,7 @@ jobs:
     name: Tracer serial/parallel equivalence
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -323,7 +323,7 @@ jobs:
     name: x86 AOT tracer backend (native x86-64)
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -360,7 +360,7 @@ jobs:
     name: Test jolt-prover-legacy (zk)
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -461,7 +461,7 @@ jobs:
     name: Test jolt-prover-legacy (akita)
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -498,7 +498,7 @@ jobs:
     name: Test jolt-prover (akita)
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -542,7 +542,7 @@ jobs:
     name: Test jolt-verifier (akita fixtures)
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -578,7 +578,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: crate-ci/typos@v1.50.0
+      - uses: crate-ci/typos@v1.50.1
         with:
           files: .
 
@@ -587,7 +587,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -622,7 +622,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -687,7 +687,7 @@ jobs:
         shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -735,6 +735,15 @@ jobs:
       - name: Test jolt-utils with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
+      - name: Test jolt-sumcheck with committed proofs
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
+      - name: Test isolated external sumcheck consumer
+        if: matrix.shard == 0
+        run: cargo nextest run --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml --locked --cargo-quiet
+      - name: Check external sumcheck dependency boundary
+        if: matrix.shard == 0
+        run: scripts/check-external-sumcheck.sh
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet
@@ -783,7 +792,7 @@ jobs:
     name: Byte parity vs legacy prover
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -816,7 +825,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -826,10 +835,9 @@ jobs:
           cache-directories: ~/.cache/dory
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # Regenerates every checked-in schedule through the planner DP and
-      # compares token streams — guards the generated catalogs against
-      # planner drift. Ignored by default (minutes of DP solves), so it needs
-      # its own lane.
+      # Regenerates every external `.aks` catalog through the planner DP and
+      # compares canonical artifact bytes. Ignored by default (minutes of DP
+      # solves), so it needs its own lane.
       - name: Regenerate schedule catalogs through the planner
         run: cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
 
@@ -838,7 +846,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -870,7 +878,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -892,7 +900,7 @@ jobs:
     name: Test tracer
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2

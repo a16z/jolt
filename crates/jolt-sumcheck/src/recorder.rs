@@ -17,13 +17,17 @@
 
 use std::marker::PhantomData;
 
+#[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::Transcript;
+#[cfg(feature = "committed")]
 use rand_core::RngCore;
 
-use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
+#[cfg(feature = "committed")]
+use crate::committed::CommittedSumcheckBuilder;
+use crate::committed::CommittedSumcheckWitness;
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, CompressedSumcheckProof, SumcheckProof};
 use crate::round_proof::{CompressedLabeledRoundPoly, RoundMessage};
@@ -83,7 +87,7 @@ pub struct RecordedSumcheck<F: JoltField, C> {
 /// transcript in the clear and collects the rounds into a
 /// [`CompressedSumcheckProof`]. Its transcript writes are byte-identical to
 /// what the clear verifier reads back.
-pub struct ClearSumcheckRecorder<F: JoltField, C> {
+pub struct ClearSumcheckRecorder<F: JoltField, C = ()> {
     round_polynomials: Vec<CompressedPoly<F>>,
     _commitment: PhantomData<C>,
 }
@@ -155,6 +159,7 @@ impl<F: JoltField, C> SumcheckRecorder<F> for ClearSumcheckRecorder<F, C> {
 /// claims' commitments were already absorbed by the stage that produced them.
 /// The retained witness (coefficients, rows, blindings) is returned by
 /// [`finish`](SumcheckRecorder::finish) for BlindFold.
+#[cfg(feature = "committed")]
 pub struct CommittedSumcheckRecorder<'a, F, VC, R>
 where
     F: JoltField,
@@ -164,6 +169,7 @@ where
     builder: CommittedSumcheckBuilder<'a, F, VC, R>,
 }
 
+#[cfg(feature = "committed")]
 impl<'a, F, VC, R> CommittedSumcheckRecorder<'a, F, VC, R>
 where
     F: JoltField,
@@ -177,6 +183,7 @@ where
     }
 }
 
+#[cfg(feature = "committed")]
 impl<F, VC, R> SumcheckRecorder<F> for CommittedSumcheckRecorder<'_, F, VC, R>
 where
     F: JoltField,

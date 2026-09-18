@@ -5,12 +5,16 @@
 //! the legacy `Transcript` / `AppendToTranscript` API. Removed once
 //! jolt-prover-legacy migrates to the split-trait surface.
 
+#[cfg(feature = "spongefish")]
 use std::marker::PhantomData;
 
 use jolt_field::{CanonicalBytes, CanonicalEncoding, JoltField, Ring};
+#[cfg(feature = "spongefish")]
 use spongefish::{DuplexSpongeInterface, Encoding};
 
+#[cfg(feature = "spongefish")]
 use crate::codec::BytesMsg;
+#[cfg(feature = "spongefish")]
 use crate::setup::{EmptyInstance, PROTOCOL_ID};
 
 /// Maximum label length in bytes accepted by [`Transcript::new`] and the
@@ -202,7 +206,8 @@ impl AppendToTranscript for U64Word {
 ///
 /// Construction mirrors spongefish's `DomainSeparator` builder:
 /// `protocol_id || session(label) || instance(())` are absorbed in order.
-pub struct SpongeTranscript<H, F = jolt_field::Fr>
+#[cfg(feature = "spongefish")]
+pub struct SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
     F: CanonicalEncoding,
@@ -211,6 +216,7 @@ where
     _field: PhantomData<F>,
 }
 
+#[cfg(feature = "spongefish")]
 impl<H, F> Default for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
@@ -221,6 +227,7 @@ where
     }
 }
 
+#[cfg(feature = "spongefish")]
 fn absorb_encoded<H, T>(sponge: &mut H, value: &T)
 where
     H: DuplexSpongeInterface<U = u8>,
@@ -230,6 +237,7 @@ where
 }
 
 /// Peeks 32 bytes from a clone of the sponge so the real state stays put.
+#[cfg(feature = "spongefish")]
 fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] {
     let mut clone = sponge.clone();
     let mut buf = [0u8; 32];
@@ -237,6 +245,7 @@ fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] 
     buf
 }
 
+#[cfg(feature = "spongefish")]
 impl<H, F> Transcript for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,

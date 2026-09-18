@@ -23,9 +23,12 @@ const PAR_THRESHOLD: usize = 1024;
 ///   [`evaluate`](Polynomial::evaluate), and arithmetic operators.
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
 ///   [`bind_to_field`](Polynomial::bind_to_field) for on-demand field promotion.
-#[expect(
-    clippy::unsafe_derive_deserialize,
-    reason = "deserialization goes through PolynomialRaw and validates the polynomial dimensions"
+#[cfg_attr(
+    feature = "parallel",
+    expect(
+        clippy::unsafe_derive_deserialize,
+        reason = "deserialization goes through PolynomialRaw and validates the polynomial dimensions"
+    )
 )]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

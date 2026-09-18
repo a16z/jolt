@@ -1,6 +1,8 @@
 //! Vector-scalar operations on G1 using 2D GLV, for Dory inner-product argument rounds.
 
 use ark_bn254::{Fr, G1Projective};
+use ark_std::{cfg_iter, cfg_iter_mut};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::decomp_2d::{decompose_scalar_2d, glv_endomorphism};
@@ -15,8 +17,8 @@ pub fn vector_add_scalar_mul_g1_online(
     assert_eq!(v.len(), generators.len());
     let (coeffs, signs) = decompose_scalar_2d(scalar);
 
-    v.par_iter_mut()
-        .zip(generators.par_iter())
+    cfg_iter_mut!(v)
+        .zip(cfg_iter!(generators))
         .for_each(|(vi, gen)| {
             let bases = [*gen, glv_endomorphism(gen)];
             *vi += shamir_glv_mul_2d(&bases, &coeffs, &signs);
@@ -32,8 +34,8 @@ pub fn vector_scalar_mul_add_gamma_g1_online(
     assert_eq!(v.len(), gamma.len());
     let (coeffs, signs) = decompose_scalar_2d(scalar);
 
-    v.par_iter_mut()
-        .zip(gamma.par_iter())
+    cfg_iter_mut!(v)
+        .zip(cfg_iter!(gamma))
         .for_each(|(vi, &gamma_i)| {
             let bases = [*vi, glv_endomorphism(vi)];
             *vi = shamir_glv_mul_2d(&bases, &coeffs, &signs) + gamma_i;
