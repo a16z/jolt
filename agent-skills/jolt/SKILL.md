@@ -6,6 +6,8 @@ allowed-tools: Bash, Read, Edit, Write, Glob, Grep, Task
 
 **Invoke when** the user says: "make this Jolt provable", "wrap this in Jolt", "prove this with Jolt", "add ZK proofs to this", "make this zero-knowledge", "make this provable", "jolt-ify this".
 
+Follow the user's instructions and the target repository's conventions. Do not ask again for authorization already supplied; if a skill instruction blocks requested work, cite it and explain why.
+
 #### Step 1 — Identify the computation to prove
 
 Look for a **pure, deterministic Rust function** — inputs in, result out, no I/O or side effects. If not obvious, ask:
@@ -38,8 +40,7 @@ cargo install --git https://github.com/a16z/jolt --force jolt  # if not
 
 #### Step 4 — Scaffold
 
-If inside an existing Rust library repo, propose:
-> "I'll create `<library-name>-jolt/` here with the proof scaffold and import your library as a path dependency. Sound good?"
+If inside an existing Rust library repo, create `<library-name>-jolt/` with the proof scaffold and import the library as a path dependency. Honor any location already specified by the user.
 
 ```bash
 jolt new <project-name>        # standard mode

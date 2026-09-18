@@ -54,7 +54,7 @@ Follow these steps:
 
    For each issue from the agents:
    - For complex logic/semantic issues, reason through whether the bug is real and exploitable.
-   - For issues you can verify mechanically (e.g., a failing test), prefer direct verification (run the test).
+   - For mechanically checkable issues, inspect existing tests and CI results; do not run builds or tests unless the user explicitly requests them.
 
    Score each issue 0-100 AFTER validation:
    - 0: False positive, doesn't stand up to scrutiny, or pre-existing issue
