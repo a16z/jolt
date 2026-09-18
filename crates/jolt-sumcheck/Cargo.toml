@@ -6,22 +6,47 @@ license = "MIT"
 description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
+default = []
+parallel = [
+  "jolt-field/parallel",
+  "jolt-poly/parallel",
+  "jolt-crypto?/parallel",
+  "jolt-r1cs?/parallel",
+]
+transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
+transcript-keccak = ["jolt-transcript/transcript-keccak"]
+transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
+committed = ["dep:jolt-crypto", "dep:rand_core"]
 r1cs = ["dep:jolt-r1cs"]
 
 [lints]
 workspace = true
 
 [dependencies]
-jolt-crypto.workspace = true
-jolt-field.workspace = true
-jolt-openings.workspace = true
-jolt-poly.workspace = true
-jolt-r1cs = { workspace = true, optional = true }
-jolt-transcript.workspace = true
-rand_core = { workspace = true, features = ["getrandom"] }
+jolt-crypto = { path = "../jolt-crypto", default-features = false, optional = true }
+jolt-field = { path = "../jolt-field", default-features = false }
+jolt-poly = { path = "../jolt-poly", default-features = false }
+jolt-r1cs = { path = "../jolt-r1cs", default-features = false, optional = true }
+jolt-transcript = { path = "../jolt-transcript", default-features = false }
+rand_core = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+jolt-crypto = { workspace = true, features = ["bn254"] }
+jolt-field = { workspace = true, features = ["bn254", "solinas"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+  "transcript-keccak",
+] }
 num-traits = { workspace = true }
+rand_core = { workspace = true }
+
+[[test]]
+name = "committed"
+required-features = ["committed"]
+
+[[example]]
+name = "clear_custom_transcript"

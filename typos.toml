@@ -25,6 +25,8 @@ extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 # (A_tru, A_unt) in the packed (Akita) prove path docs.
 "tru" = "tru"
 "unt" = "unt"
+# Canonical Akita schedule artifact extension.
+"aks" = "aks"
 
 [type.ocaml.extend-words]
 # HOL Light tactic identifiers.

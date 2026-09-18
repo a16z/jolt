@@ -1,13 +1,17 @@
 //! Committed sumcheck round messages.
 
+#[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
+#[cfg(feature = "committed")]
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+#[cfg(feature = "committed")]
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SumcheckError;
+#[cfg(feature = "committed")]
 use crate::proof::SumcheckProof;
 use crate::round_proof::RoundMessage;
 
@@ -187,6 +191,7 @@ pub struct CommittedSumcheckWitness<F> {
 }
 
 impl<F> CommittedSumcheckWitness<F> {
+    #[cfg(feature = "committed")]
     fn new() -> Self {
         Self {
             round_coefficients: Vec::new(),
@@ -203,6 +208,7 @@ impl<F> CommittedSumcheckWitness<F> {
 /// flattened output-claim values and absorb those commitments. Blindings are
 /// drawn from the caller-supplied `rng` and retained in the witness — the
 /// caller owns the randomness source, so a fixed seed reproduces the proof.
+#[cfg(feature = "committed")]
 pub struct CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: JoltField,
@@ -215,6 +221,7 @@ where
     witness: CommittedSumcheckWitness<F>,
 }
 
+#[cfg(feature = "committed")]
 impl<'a, F, VC, R> CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: JoltField,
@@ -310,6 +317,7 @@ pub struct CommittedRoundWitness<F> {
 }
 
 impl<F: JoltField> CommittedRoundWitness<F> {
+    #[cfg(feature = "committed")]
     pub fn commit<VC>(
         &self,
         setup: &VC::Setup,

@@ -10,21 +10,25 @@
 //! this engine and the recorder touch the transcript; batch members compute
 //! pure field data.
 //!
-//! [`prove_uniskip_clear`] / [`prove_uniskip_committed`] mirror
+//! [`prove_uniskip_clear`] and the `committed` feature's uni-skip prover mirror
 //! `jolt-verifier/src/stages/uniskip.rs`'s two verify arms: a univariate-skip
 //! round is a genuinely different round type (separate wire proof, single
 //! degree-bounded round over a centered integer domain, full — not compressed
 //! — coefficients in the clear), so it is not a batch member and does not go
 //! through the recorder.
 
+#[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
 use jolt_transcript::Transcript;
+#[cfg(feature = "committed")]
 use rand_core::RngCore;
 
 use crate::batch::BatchPrelude;
-use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
+#[cfg(feature = "committed")]
+use crate::committed::CommittedSumcheckBuilder;
+use crate::committed::CommittedSumcheckWitness;
 use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, ClearSumcheckProof, SumcheckProof};
@@ -216,28 +220,12 @@ where
                 got: member.num_rounds(),
             });
         }
-        // An oversized window would silently truncate: the round loop would
-        // never consult the member's final local rounds, yet every in-engine
-        // round check would still pass.
-        if described.offset + described.rounds > prelude.max_num_vars {
-            return Err(SumcheckError::BatchMemberWindowOutOfRange {
-                member: index,
-                offset: described.offset,
-                rounds: described.rounds,
-                max_num_vars: prelude.max_num_vars,
-            });
-        }
     }
+    prelude.validate()?;
     let max_num_vars = prelude.max_num_vars;
-    if max_num_vars > 0 && prelude.max_degree < 1 {
-        return Err(SumcheckError::ZeroBatchDegree { max_num_vars });
-    }
 
-    #[expect(
-        clippy::unwrap_used,
-        reason = "2 is invertible in any field of characteristic != 2, and Jolt fields are large-prime"
-    )]
-    let two_inv = F::from_u64(2).inverse().unwrap();
+    let two_inv = F::two_inv();
+    let coefficient_count = prelude.max_degree + 1;
     // Each member's running claim, at the dummy-round padding scale: a member
     // starts at `input_claim * 2^(max - rounds)` and halves once per inactive
     // round. A tail-aligned member reaches its true input claim exactly when
@@ -260,7 +248,7 @@ where
         // spans nest under it, never inside per-index inner loops.
         let _round_span = tracing::info_span!("sumcheck_round", round).entered();
 
-        let mut batched_coefficients = vec![F::zero(); prelude.max_degree + 1];
+        let mut batched_coefficients = vec![F::zero(); coefficient_count];
         let mut work: Vec<MemberRound<'_, F>> = Vec::with_capacity(members.len());
         for (index, ((member, described), (member_claim, pending_bind))) in members
             .iter_mut()
@@ -366,7 +354,7 @@ where
 /// challenge — the batch driver absorbs it again as the remainder's input
 /// claim).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProvedUniskip<F: JoltField, C> {
+pub struct ProvedUniskip<F: JoltField, C = ()> {
     pub proof: SumcheckProof<F, C>,
     pub challenge: F,
     pub output_claim: F,
@@ -445,6 +433,7 @@ where
 /// output claim. The claim scalar never reaches the transcript. Blindings
 /// come from the caller-supplied `rng`.
 #[tracing::instrument(skip_all, name = "prove_uniskip_committed")]
+#[cfg(feature = "committed")]
 pub fn prove_uniskip_committed<F, VC, T, R>(
     round_poly: UnivariatePoly<F>,
     input_claim: F,

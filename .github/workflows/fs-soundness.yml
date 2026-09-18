@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           cache: false
       - uses: Swatinem/rust-cache@v2
@@ -83,7 +83,7 @@ jobs:
             features: akita,fs-audit,prover-fixtures
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
