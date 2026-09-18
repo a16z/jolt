@@ -40,29 +40,21 @@ mod tests {
         materialize_entry_test, XLEN,
     };
     use jolt_riscv::instructions::XOR_ROT_ROTATIONS;
+    use tracer::instruction::virtual_xor_rot::VirtualXORROT;
 
     #[test]
     fn materialize_entry_virtualxorrot() {
-        materialize_entry_test!(
-            VirtualXorRot,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT
-        );
+        materialize_entry_test!(VirtualXorRot, VirtualXORROT);
     }
 
     #[test]
     fn instruction_inputs_match_constraint_virtualxorrot() {
-        instruction_inputs_match_constraint_test!(
-            VirtualXorRot,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT
-        );
+        instruction_inputs_match_constraint_test!(VirtualXorRot, VirtualXORROT);
     }
 
     #[test]
     fn lookup_output_matches_trace_virtualxorrot() {
-        lookup_output_matches_trace_test!(
-            VirtualXorRot,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT
-        );
+        lookup_output_matches_trace_test!(VirtualXorRot, VirtualXORROT);
     }
 
     #[test]

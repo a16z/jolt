@@ -29,6 +29,7 @@ num-bigint = "0.4"
 jolt-prover-legacy = { path = "../crates/jolt-prover-legacy" }
 common = { path = "../common" }
 tracer = { path = "../tracer" }
+jolt-riscv.workspace = true
 
 [dev-dependencies]
 proptest = "1.11.0"

@@ -750,7 +750,7 @@ difftests! {
     diff_rotriw => |r| shift_imm(r, K::VirtualROTRIW);
     diff_shift_right_bitmaski => |r| imm_j_u64(r, K::VirtualShiftRightBitmaskI);
     diff_sra_reg => |r| shift_reg(r, K::VirtualSRA);
-    diff_xorrot => |r| xor_rot(r);
+    diff_xorrot => xor_rot;
     diff_xorrotw16 => |r| alu_rr(r, K::VirtualXORROTW16);
     diff_xorrotw12 => |r| alu_rr(r, K::VirtualXORROTW12);
     diff_xorrotw8 => |r| alu_rr(r, K::VirtualXORROTW8);

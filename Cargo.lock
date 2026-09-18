@@ -7937,6 +7937,7 @@ dependencies = [
  "clap",
  "common",
  "jolt-prover-legacy",
+ "jolt-riscv",
  "num-bigint",
  "proptest",
  "rand_core 0.6.4",
