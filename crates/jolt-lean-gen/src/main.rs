@@ -147,10 +147,9 @@ fn lean_instr(
         "ADD" | "ADDW" | "SUB" | "SUBW" | "MUL" | "MULW" | "MULHU" | "MULHSU" | "OR" | "XOR"
         | "AND" | "SLT" | "SLTU" | "ANDN" | "VirtualNegateIf" | "VirtualSRL" | "VirtualSRA"
         | "VirtualSRLW" | "VirtualSRAW" | "VirtualPext" | "VirtualPextSigned"
-        | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "VirtualXORROT32"
-        | "VirtualXORROT24" | "VirtualXORROT16" | "VirtualXORROT63" | "VirtualXORROTW16"
-        | "VirtualXORROTW12" | "VirtualXORROTW8" | "VirtualXORROTW7" | "VirtualXORROTW22"
-        | "VirtualXORROTW19" | "VirtualXORROTW6" => {
+        | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "VirtualXORROTL1"
+        | "VirtualXORROTW16" | "VirtualXORROTW12" | "VirtualXORROTW8" | "VirtualXORROTW7"
+        | "VirtualXORROTW22" | "VirtualXORROTW19" | "VirtualXORROTW6" => {
             format!("{rd} {rs1} {rs2}")
         }
         "ADDI" | "ADDIW" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "VirtualMULI"

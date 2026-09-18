@@ -442,16 +442,7 @@ macro_rules! source_extension_for_marker {
     (AlignAddr) => {
         Some(SourceExtension::JoltCustom)
     };
-    (VirtualXorRot32) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot24) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot16) => {
-        Some(SourceExtension::JoltCustom)
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         Some(SourceExtension::JoltCustom)
     };
     (VirtualXorRotW16) => {
@@ -925,16 +916,7 @@ macro_rules! source_side_effects_for_marker {
     (AlignAddr) => {
         false
     };
-    (VirtualXorRot32) => {
-        false
-    };
-    (VirtualXorRot24) => {
-        false
-    };
-    (VirtualXorRot16) => {
-        false
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         false
     };
     (VirtualXorRotW16) => {
@@ -1219,16 +1201,7 @@ macro_rules! jolt_target_extension_for_marker {
     (VirtualRev8W) => {
         Some(JoltTargetExtension::BitManipulation)
     };
-    (VirtualXorRot32) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot24) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot16) => {
-        Some(JoltTargetExtension::BitManipulation)
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRotW16) => {
@@ -1537,16 +1510,7 @@ macro_rules! jolt_side_effects_for_marker {
     (AlignAddr) => {
         false
     };
-    (VirtualXorRot32) => {
-        false
-    };
-    (VirtualXorRot24) => {
-        false
-    };
-    (VirtualXorRot16) => {
-        false
-    };
-    (VirtualXorRot63) => {
+    (VirtualXorRot) => {
         false
     };
     (VirtualXorRotW16) => {

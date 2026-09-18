@@ -4,6 +4,7 @@ use jolt_prover_legacy::zkvm::{
     },
     r1cs::inputs::JoltR1CSInputs,
 };
+use jolt_riscv::instructions::XOR_ROT_ROTATIONS;
 use strum::IntoEnumIterator as _;
 use tracer::instruction::{Instruction, JoltInstructionRow};
 
@@ -78,16 +79,34 @@ impl<J: JoltParameterSet> ZkLeanInstruction<J> {
         let name = <&'static str>::from(&self.instruction);
         let word_size = J::XLEN;
 
-        format!("{name}_{word_size}")
+        match &self.instruction {
+            // The rotation selects the lookup table, so each rotation is its own Lean table.
+            Instruction::VirtualXORROT(instr) => {
+                format!("{name}{}_{word_size}", instr.operands.rotation)
+            }
+            _ => format!("{name}_{word_size}"),
+        }
     }
 
     pub fn iter() -> impl Iterator<Item = Self> {
-        Instruction::iter().filter_map(|instr| match instr {
-            Instruction::NoOp | Instruction::UNIMPL | Instruction::INLINE(_) => None,
-            _ if instr.is_supported_instruction() && instr.try_jolt_instruction_row().is_ok() => {
-                Some(Self::from(instr))
+        Instruction::iter().flat_map(|instr| -> Vec<Self> {
+            match instr {
+                Instruction::NoOp | Instruction::UNIMPL | Instruction::INLINE(_) => vec![],
+                Instruction::VirtualXORROT(xor_rot) => XOR_ROT_ROTATIONS
+                    .iter()
+                    .map(|&rotation| {
+                        let mut xor_rot = xor_rot;
+                        xor_rot.operands.rotation = rotation;
+                        Self::from(Instruction::VirtualXORROT(xor_rot))
+                    })
+                    .collect(),
+                _ if instr.is_supported_instruction()
+                    && instr.try_jolt_instruction_row().is_ok() =>
+                {
+                    vec![Self::from(instr)]
+                }
+                _ => vec![],
             }
-            _ => None,
         })
     }
 

@@ -192,6 +192,29 @@ pub enum LookupTableKind<const XLEN: usize> {
     ShiftDataH(ShiftDataHTable<XLEN>),
     ShiftDataW(ShiftDataWTable<XLEN>),
     VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
+    VirtualXORROT2(VirtualXORROTTable<XLEN, 2>),
+    VirtualXORROT3(VirtualXORROTTable<XLEN, 3>),
+    VirtualXORROT8(VirtualXORROTTable<XLEN, 8>),
+    VirtualXORROT9(VirtualXORROTTable<XLEN, 9>),
+    VirtualXORROT19(VirtualXORROTTable<XLEN, 19>),
+    VirtualXORROT20(VirtualXORROTTable<XLEN, 20>),
+    VirtualXORROT21(VirtualXORROTTable<XLEN, 21>),
+    VirtualXORROT23(VirtualXORROTTable<XLEN, 23>),
+    VirtualXORROT25(VirtualXORROTTable<XLEN, 25>),
+    VirtualXORROT28(VirtualXORROTTable<XLEN, 28>),
+    VirtualXORROT36(VirtualXORROTTable<XLEN, 36>),
+    VirtualXORROT37(VirtualXORROTTable<XLEN, 37>),
+    VirtualXORROT39(VirtualXORROTTable<XLEN, 39>),
+    VirtualXORROT43(VirtualXORROTTable<XLEN, 43>),
+    VirtualXORROT44(VirtualXORROTTable<XLEN, 44>),
+    VirtualXORROT46(VirtualXORROTTable<XLEN, 46>),
+    VirtualXORROT49(VirtualXORROTTable<XLEN, 49>),
+    VirtualXORROT50(VirtualXORROTTable<XLEN, 50>),
+    VirtualXORROT54(VirtualXORROTTable<XLEN, 54>),
+    VirtualXORROT56(VirtualXORROTTable<XLEN, 56>),
+    VirtualXORROT58(VirtualXORROTTable<XLEN, 58>),
+    VirtualXORROT61(VirtualXORROTTable<XLEN, 61>),
+    VirtualXORROT62(VirtualXORROTTable<XLEN, 62>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -256,11 +279,70 @@ macro_rules! dispatch {
             Self::ShiftDataH($t) => $expr,
             Self::ShiftDataW($t) => $expr,
             Self::VirtualXORROTL1($t) => $expr,
+            Self::VirtualXORROT2($t) => $expr,
+            Self::VirtualXORROT3($t) => $expr,
+            Self::VirtualXORROT8($t) => $expr,
+            Self::VirtualXORROT9($t) => $expr,
+            Self::VirtualXORROT19($t) => $expr,
+            Self::VirtualXORROT20($t) => $expr,
+            Self::VirtualXORROT21($t) => $expr,
+            Self::VirtualXORROT23($t) => $expr,
+            Self::VirtualXORROT25($t) => $expr,
+            Self::VirtualXORROT28($t) => $expr,
+            Self::VirtualXORROT36($t) => $expr,
+            Self::VirtualXORROT37($t) => $expr,
+            Self::VirtualXORROT39($t) => $expr,
+            Self::VirtualXORROT43($t) => $expr,
+            Self::VirtualXORROT44($t) => $expr,
+            Self::VirtualXORROT46($t) => $expr,
+            Self::VirtualXORROT49($t) => $expr,
+            Self::VirtualXORROT50($t) => $expr,
+            Self::VirtualXORROT54($t) => $expr,
+            Self::VirtualXORROT56($t) => $expr,
+            Self::VirtualXORROT58($t) => $expr,
+            Self::VirtualXORROT61($t) => $expr,
+            Self::VirtualXORROT62($t) => $expr,
         }
     };
 }
 
 impl<const XLEN: usize> LookupTableKind<XLEN> {
+    /// The XOR-then-rotate-right-by-`rotation` table selected by a
+    /// `VirtualXorRot` row's immediate. Owns the rotation-to-variant map;
+    /// the supported set is `jolt_riscv::instructions::XOR_ROT_ROTATIONS`.
+    pub const fn xor_rot(rotation: u32) -> Self {
+        match rotation {
+            2 => Self::VirtualXORROT2(VirtualXORROTTable),
+            3 => Self::VirtualXORROT3(VirtualXORROTTable),
+            8 => Self::VirtualXORROT8(VirtualXORROTTable),
+            9 => Self::VirtualXORROT9(VirtualXORROTTable),
+            16 => Self::VirtualXORROT16(VirtualXORROTTable),
+            19 => Self::VirtualXORROT19(VirtualXORROTTable),
+            20 => Self::VirtualXORROT20(VirtualXORROTTable),
+            21 => Self::VirtualXORROT21(VirtualXORROTTable),
+            23 => Self::VirtualXORROT23(VirtualXORROTTable),
+            24 => Self::VirtualXORROT24(VirtualXORROTTable),
+            25 => Self::VirtualXORROT25(VirtualXORROTTable),
+            28 => Self::VirtualXORROT28(VirtualXORROTTable),
+            32 => Self::VirtualXORROT32(VirtualXORROTTable),
+            36 => Self::VirtualXORROT36(VirtualXORROTTable),
+            37 => Self::VirtualXORROT37(VirtualXORROTTable),
+            39 => Self::VirtualXORROT39(VirtualXORROTTable),
+            43 => Self::VirtualXORROT43(VirtualXORROTTable),
+            44 => Self::VirtualXORROT44(VirtualXORROTTable),
+            46 => Self::VirtualXORROT46(VirtualXORROTTable),
+            49 => Self::VirtualXORROT49(VirtualXORROTTable),
+            50 => Self::VirtualXORROT50(VirtualXORROTTable),
+            54 => Self::VirtualXORROT54(VirtualXORROTTable),
+            56 => Self::VirtualXORROT56(VirtualXORROTTable),
+            58 => Self::VirtualXORROT58(VirtualXORROTTable),
+            61 => Self::VirtualXORROT61(VirtualXORROTTable),
+            62 => Self::VirtualXORROT62(VirtualXORROTTable),
+            63 => Self::VirtualXORROT63(VirtualXORROTTable),
+            _ => unreachable!(),
+        }
+    }
+
     pub const COUNT: usize = <Self as strum::EnumCount>::COUNT;
 
     pub fn iter() -> <Self as strum::IntoEnumIterator>::Iterator {

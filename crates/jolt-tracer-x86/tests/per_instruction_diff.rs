@@ -94,10 +94,7 @@ const SUPPORTED: &[&str] = &[
     "VirtualRotriw",
     "VirtualShiftRightBitmaski",
     "VirtualSra",
-    "VirtualXorRot32",
-    "VirtualXorRot24",
-    "VirtualXorRot16",
-    "VirtualXorRot63",
+    "VirtualXorRot",
     "VirtualXorRotW16",
     "VirtualXorRotW12",
     "VirtualXorRotW8",
@@ -268,6 +265,13 @@ fn alu_rr(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     i.row.operands.rs1 = Some(reg(rng));
     i.row.operands.rs2 = Some(reg(rng));
     i.row.operands.rd = Some(rd(rng));
+    i
+}
+
+/// `rd = rotr(rs1 ^ rs2, imm)` for any rotation the emulator accepts.
+fn xor_rot(rng: &mut StdRng) -> Instance {
+    let mut i = alu_rr(rng, JoltInstructionKind::VirtualXORROT);
+    i.row.operands.imm = rng.gen_range(1..64);
     i
 }
 
@@ -746,10 +750,7 @@ difftests! {
     diff_rotriw => |r| shift_imm(r, K::VirtualROTRIW);
     diff_shift_right_bitmaski => |r| imm_j_u64(r, K::VirtualShiftRightBitmaskI);
     diff_sra_reg => |r| shift_reg(r, K::VirtualSRA);
-    diff_xorrot32 => |r| alu_rr(r, K::VirtualXORROT32);
-    diff_xorrot24 => |r| alu_rr(r, K::VirtualXORROT24);
-    diff_xorrot16 => |r| alu_rr(r, K::VirtualXORROT16);
-    diff_xorrot63 => |r| alu_rr(r, K::VirtualXORROT63);
+    diff_xorrot => xor_rot;
     diff_xorrotw16 => |r| alu_rr(r, K::VirtualXORROTW16);
     diff_xorrotw12 => |r| alu_rr(r, K::VirtualXORROTW12);
     diff_xorrotw8 => |r| alu_rr(r, K::VirtualXORROTW8);
@@ -792,5 +793,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 88);
+    assert_eq!(SUPPORTED.len(), 85);
 }

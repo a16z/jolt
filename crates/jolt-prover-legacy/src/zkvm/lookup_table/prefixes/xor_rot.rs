@@ -22,14 +22,7 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
         F: FieldChallengeOps<C>,
     {
         let suffix_len = LOG_K - j - b.len() - 1;
-        let prefix_idx = match ROTATION {
-            16 => Prefixes::XorRot16,
-            24 => Prefixes::XorRot24,
-            32 => Prefixes::XorRot32,
-            63 => Prefixes::XorRot63,
-            _ => unimplemented!(),
-        };
-        let mut result = checkpoints[prefix_idx].unwrap_or(F::zero());
+        let mut result = checkpoints[Prefixes::xor_rot(ROTATION)].unwrap_or(F::zero());
 
         if let Some(r_x) = r_x {
             let y = F::from_u8(c as u8);
@@ -78,17 +71,10 @@ impl<const XLEN: usize, const ROTATION: u32, F: JoltField> SparseDensePrefix<F>
         C: ChallengeFieldOps<F>,
         F: FieldChallengeOps<C>,
     {
-        let prefix_idx = match ROTATION {
-            16 => Prefixes::XorRot16,
-            24 => Prefixes::XorRot24,
-            32 => Prefixes::XorRot32,
-            63 => Prefixes::XorRot63,
-            _ => unimplemented!(),
-        };
         let original_pos = j / 2;
         let rotated_pos = (original_pos + ROTATION as usize) % XLEN;
         let shift = XLEN - 1 - rotated_pos;
-        let updated = checkpoints[prefix_idx].unwrap_or(F::zero())
+        let updated = checkpoints[Prefixes::xor_rot(ROTATION)].unwrap_or(F::zero())
             + F::from_u64(1 << shift) * ((F::one() - r_x) * r_y + r_x * (F::one() - r_y));
         Some(updated).into()
     }

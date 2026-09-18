@@ -166,7 +166,7 @@ use virtual_srlw::VirtualSRLW;
 use virtual_window_mask_b::VirtualWindowMaskB;
 use virtual_window_mask_h::VirtualWindowMaskH;
 use virtual_window_mask_w::VirtualWindowMaskW;
-use virtual_xor_rot::{VirtualXORROT16, VirtualXORROT24, VirtualXORROT32, VirtualXORROT63};
+use virtual_xor_rot::VirtualXORROT;
 use virtual_xor_rotl1::VirtualXORROTL1;
 use virtual_xor_rotw::{
     VirtualXORROTW12, VirtualXORROTW16, VirtualXORROTW19, VirtualXORROTW22, VirtualXORROTW6,

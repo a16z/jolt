@@ -327,18 +327,7 @@ impl<const XLEN: usize> InstructionLookup<XLEN> for JoltInstructionRow {
             JoltInstructionKind::VirtualAssertMulUNoOverflow => {
                 LookupTables::MulUNoOverflow(Default::default())
             }
-            JoltInstructionKind::VirtualXORROT32 => {
-                LookupTables::VirtualXORROT32(Default::default())
-            }
-            JoltInstructionKind::VirtualXORROT24 => {
-                LookupTables::VirtualXORROT24(Default::default())
-            }
-            JoltInstructionKind::VirtualXORROT16 => {
-                LookupTables::VirtualXORROT16(Default::default())
-            }
-            JoltInstructionKind::VirtualXORROT63 => {
-                LookupTables::VirtualXORROT63(Default::default())
-            }
+            JoltInstruction::VirtualXorRot(_) => LookupTables::xor_rot(self.operands.imm as u32),
             JoltInstructionKind::VirtualXORROTW16 => {
                 LookupTables::VirtualXORROTW16(Default::default())
             }
@@ -529,7 +518,7 @@ define_rv64imac_trait_impls! {
         VirtualPow2, VirtualPow2I, VirtualPow2W, VirtualPow2IW, VirtualRev8W, VirtualShiftRightBitmask, VirtualShiftRightBitmaskI,
         VirtualROTRI, VirtualROTRIW,
         VirtualSRA, VirtualSRAI, VirtualSRL, VirtualSRLI,
-        VirtualXORROT32, VirtualXORROT24, VirtualXORROT16, VirtualXORROT63,
+        VirtualXORROT,
         VirtualXORROTW16, VirtualXORROTW12, VirtualXORROTW8, VirtualXORROTW7,
         VirtualXORROTW22, VirtualXORROTW19, VirtualXORROTW6,
         VirtualWindowMaskW, VirtualPextSigned,
@@ -537,7 +526,7 @@ define_rv64imac_trait_impls! {
         VirtualPext, VirtualWindowMaskB, VirtualWindowMaskH,
         VirtualAlignAddr,
         VirtualShiftDataB, VirtualShiftDataH, VirtualShiftDataW,
-        VirtualXORROTL1
+        VirtualXORROTL1,
     ]
 }
 

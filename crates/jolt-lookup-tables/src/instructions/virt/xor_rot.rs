@@ -1,33 +1,21 @@
-use crate::traits::impl_lookup_table;
-use crate::traits::LookupQuery;
-use jolt_riscv::instructions::{
-    VirtualXorRot16, VirtualXorRot24, VirtualXorRot32, VirtualXorRot63,
-};
-use jolt_riscv::JoltCycle;
+use crate::tables::virtual_xor_rot::rotate_right_xlen;
+use crate::tables::LookupTableKind;
+use crate::traits::{InstructionLookupTable, LookupQuery};
+use jolt_riscv::instructions::VirtualXorRot;
+use jolt_riscv::{JoltCycle, JoltInstructionRow, JoltInstructionRowData};
 
-impl_lookup_table!(VirtualXorRot32, Some(VirtualXORROT32));
-impl_lookup_table!(VirtualXorRot24, Some(VirtualXORROT24));
-impl_lookup_table!(VirtualXorRot16, Some(VirtualXORROT16));
-impl_lookup_table!(VirtualXorRot63, Some(VirtualXORROT63));
-
-impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRot32<C> {
-    fn to_instruction_inputs(&self) -> (u64, i128) {
-        (
-            self.0.rs1_val().unwrap_or(0),
-            self.0.rs2_val().unwrap_or(0) as i128,
-        )
-    }
-
-    fn to_lookup_output(&self) -> u64 {
-        let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        let xor_result = (rs1 ^ (rs2 as u64)) & mask;
-        let v = xor_result as u128;
-        (((v >> 32) | (v << (XLEN - 32))) as u64) & mask
+impl<const XLEN: usize, T: JoltInstructionRowData> InstructionLookupTable<XLEN>
+    for VirtualXorRot<T>
+{
+    #[inline]
+    fn lookup_table(&self) -> Option<LookupTableKind<XLEN>> {
+        Some(LookupTableKind::xor_rot(
+            self.0.jolt_instruction_row().operands.imm as u32,
+        ))
     }
 }
 
-impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRot24<C> {
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRot<C> {
     fn to_instruction_inputs(&self) -> (u64, i128) {
         (
             self.0.rs1_val().unwrap_or(0),
@@ -37,44 +25,10 @@ impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRot24<C> {
 
     fn to_lookup_output(&self) -> u64 {
         let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        let xor_result = (rs1 ^ (rs2 as u64)) & mask;
-        let v = xor_result as u128;
-        (((v >> 24) | (v << (XLEN - 24))) as u64) & mask
-    }
-}
-
-impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRot16<C> {
-    fn to_instruction_inputs(&self) -> (u64, i128) {
-        (
-            self.0.rs1_val().unwrap_or(0),
-            self.0.rs2_val().unwrap_or(0) as i128,
-        )
-    }
-
-    fn to_lookup_output(&self) -> u64 {
-        let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        let xor_result = (rs1 ^ (rs2 as u64)) & mask;
-        let v = xor_result as u128;
-        (((v >> 16) | (v << (XLEN - 16))) as u64) & mask
-    }
-}
-
-impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for VirtualXorRot63<C> {
-    fn to_instruction_inputs(&self) -> (u64, i128) {
-        (
-            self.0.rs1_val().unwrap_or(0),
-            self.0.rs2_val().unwrap_or(0) as i128,
-        )
-    }
-
-    fn to_lookup_output(&self) -> u64 {
-        let (rs1, rs2) = LookupQuery::<XLEN>::to_instruction_inputs(self);
-        let mask = (1u128 << XLEN).wrapping_sub(1) as u64;
-        let xor_result = (rs1 ^ (rs2 as u64)) & mask;
-        let v = xor_result as u128;
-        (((v >> 63) | (v << (XLEN - 63))) as u64) & mask
+        let rotation = Into::<JoltInstructionRow>::into(self.0.instruction())
+            .operands
+            .imm as u32;
+        rotate_right_xlen::<XLEN>(rs1 ^ (rs2 as u64), rotation)
     }
 }
 
@@ -83,102 +37,37 @@ mod tests {
     use super::*;
     use crate::{
         instruction_inputs_match_constraint_test, lookup_output_matches_trace_test,
-        materialize_entry_test,
+        materialize_entry_test, XLEN,
     };
+    use jolt_riscv::instructions::XOR_ROT_ROTATIONS;
+    use tracer::instruction::virtual_xor_rot::VirtualXORROT;
 
     #[test]
-    fn materialize_entry_virtualxorrot32() {
-        materialize_entry_test!(
-            VirtualXorRot32,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT32
-        );
+    fn materialize_entry_virtualxorrot() {
+        materialize_entry_test!(VirtualXorRot, VirtualXORROT);
     }
 
     #[test]
-    fn instruction_inputs_match_constraint_virtualxorrot32() {
-        instruction_inputs_match_constraint_test!(
-            VirtualXorRot32,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT32
-        );
+    fn instruction_inputs_match_constraint_virtualxorrot() {
+        instruction_inputs_match_constraint_test!(VirtualXorRot, VirtualXORROT);
     }
 
     #[test]
-    fn lookup_output_matches_trace_virtualxorrot32() {
-        lookup_output_matches_trace_test!(
-            VirtualXorRot32,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT32
-        );
+    fn lookup_output_matches_trace_virtualxorrot() {
+        lookup_output_matches_trace_test!(VirtualXorRot, VirtualXORROT);
     }
 
     #[test]
-    fn materialize_entry_virtualxorrot24() {
-        materialize_entry_test!(
-            VirtualXorRot24,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT24
-        );
-    }
-
-    #[test]
-    fn instruction_inputs_match_constraint_virtualxorrot24() {
-        instruction_inputs_match_constraint_test!(
-            VirtualXorRot24,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT24
-        );
-    }
-
-    #[test]
-    fn lookup_output_matches_trace_virtualxorrot24() {
-        lookup_output_matches_trace_test!(
-            VirtualXorRot24,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT24
-        );
-    }
-
-    #[test]
-    fn materialize_entry_virtualxorrot16() {
-        materialize_entry_test!(
-            VirtualXorRot16,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT16
-        );
-    }
-
-    #[test]
-    fn instruction_inputs_match_constraint_virtualxorrot16() {
-        instruction_inputs_match_constraint_test!(
-            VirtualXorRot16,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT16
-        );
-    }
-
-    #[test]
-    fn lookup_output_matches_trace_virtualxorrot16() {
-        lookup_output_matches_trace_test!(
-            VirtualXorRot16,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT16
-        );
-    }
-
-    #[test]
-    fn materialize_entry_virtualxorrot63() {
-        materialize_entry_test!(
-            VirtualXorRot63,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT63
-        );
-    }
-
-    #[test]
-    fn instruction_inputs_match_constraint_virtualxorrot63() {
-        instruction_inputs_match_constraint_test!(
-            VirtualXorRot63,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT63
-        );
-    }
-
-    #[test]
-    fn lookup_output_matches_trace_virtualxorrot63() {
-        lookup_output_matches_trace_test!(
-            VirtualXorRot63,
-            tracer::instruction::virtual_xor_rot::VirtualXORROT63
-        );
+    fn every_supported_rotation_selects_its_table() {
+        for rotation in XOR_ROT_ROTATIONS {
+            let table = LookupTableKind::<XLEN>::xor_rot(rotation);
+            let index = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128;
+            let (x, y) = crate::uninterleave_bits(index);
+            assert_eq!(
+                table.materialize_entry(index),
+                rotate_right_xlen::<XLEN>(x ^ y, rotation),
+                "rotation {rotation}"
+            );
+        }
     }
 }

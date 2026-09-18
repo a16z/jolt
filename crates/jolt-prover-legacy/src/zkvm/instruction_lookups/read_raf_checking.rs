@@ -520,7 +520,7 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                     .zip(&outputs)
                     .all(|(position, output)| *position == output.len()));
             });
-        let lookup_indices_by_table = uninit_lookup_indices_by_table
+        let lookup_indices_by_table: Vec<Vec<usize>> = uninit_lookup_indices_by_table
             .into_iter()
             .map(|bucket| {
                 // SAFETY: each chunk writes exactly the per-table count used to
@@ -532,13 +532,17 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
         drop(_guard);
         drop(span);
 
+        // A table no cycle selects contributes exactly zero to every
+        // read-checking message, so it gets no suffix polynomials at all.
         let suffix_polys: Vec<Vec<DensePolynomial<F>>> = LookupTables::<XLEN>::iter()
-            .collect::<Vec<_>>()
-            .par_iter()
-            .map(|table| {
+            .zip(&lookup_indices_by_table)
+            .map(|(table, lookup_indices)| {
+                if lookup_indices.is_empty() {
+                    return Vec::new();
+                }
                 table
                     .suffixes()
-                    .par_iter()
+                    .iter()
                     .map(|_| DensePolynomial::default()) // Will be properly initialized in `init_phase`
                     .collect()
             })
@@ -664,9 +668,8 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                     let num_suffixes = suffixes.len();
                     debug_assert!(num_suffixes <= MAX_SUFFIXES);
 
-                    // Early exit: if no cycles use this table, return zero polynomials
                     if lookup_indices.is_empty() {
-                        return vec![unsafe_allocate_zero_vec(m); num_suffixes];
+                        return Vec::new();
                     }
 
                     // Pre-partition suffixes using fixed-size arrays to avoid heap allocation.
@@ -1217,9 +1220,15 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
     /// table-specific suffix families, then returns [g(0), g(2)] by the standard
     /// quadratic interpolation trick.
     fn prover_msg_read_checking(&self, j: usize) -> [F; 2] {
-        let lookup_tables: Vec<_> = LookupTables::<XLEN>::iter().collect();
+        let present_tables: Vec<_> = LookupTables::<XLEN>::iter()
+            .zip(&self.suffix_polys)
+            .filter(|(_, suffixes)| !suffixes.is_empty())
+            .collect();
+        let Some((_, first_suffixes)) = present_tables.first() else {
+            return [F::zero(), F::zero()];
+        };
 
-        let len = self.suffix_polys[0][0].len();
+        let len = first_suffixes[0].len();
         let log_len = len.log_2();
 
         let r_x = if j % 2 == 1 {
@@ -1254,22 +1263,19 @@ impl<F: JoltField> InstructionReadRafSumcheckProver<F> {
                         )
                     })
                     .collect();
-                lookup_tables
-                    .iter()
-                    .zip(self.suffix_polys.iter())
-                    .map(move |(table, suffixes)| {
-                        let suffixes_left: Vec<_> =
-                            suffixes.iter().map(|suffix| suffix[b.into()]).collect();
-                        let suffixes_right: Vec<_> = suffixes
-                            .iter()
-                            .map(|suffix| suffix[usize::from(b) + len / 2])
-                            .collect();
-                        [
-                            table.combine(&prefixes_c0, &suffixes_left),
-                            table.combine(&prefixes_c2, &suffixes_left),
-                            table.combine(&prefixes_c2, &suffixes_right),
-                        ]
-                    })
+                present_tables.iter().map(move |(table, suffixes)| {
+                    let suffixes_left: Vec<_> =
+                        suffixes.iter().map(|suffix| suffix[b.into()]).collect();
+                    let suffixes_right: Vec<_> = suffixes
+                        .iter()
+                        .map(|suffix| suffix[usize::from(b) + len / 2])
+                        .collect();
+                    [
+                        table.combine(&prefixes_c0, &suffixes_left),
+                        table.combine(&prefixes_c2, &suffixes_left),
+                        table.combine(&prefixes_c2, &suffixes_right),
+                    ]
+                })
             })
             .fold_with([F::UnreducedMulU64::zero(); 3], |running, new| {
                 [

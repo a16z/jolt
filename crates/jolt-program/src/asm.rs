@@ -69,22 +69,9 @@ macro_rules! __jolt_asm_stmt {
         use $crate::expand::asm_support::Kind;
         $asm.emit_r(Kind::VIRTUAL_NEGATE_IF, $rd, $condition, $value)
     }};
-    ($asm:expr, xorrot16 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::expand::asm_support::Kind;
-        $asm.emit_r(Kind::VirtualXORROT16, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrot24 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::expand::asm_support::Kind;
-        $asm.emit_r(Kind::VirtualXORROT24, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrot32 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::expand::asm_support::Kind;
-        $asm.emit_r(Kind::VirtualXORROT32, $rd, $rs1, $rs2)
-    }};
-    ($asm:expr, xorrot63 $rd:expr, $rs1:expr, $rs2:expr) => {{
-        use $crate::expand::asm_support::Kind;
-        $asm.emit_r(Kind::VirtualXORROT63, $rd, $rs1, $rs2)
-    }};
+    ($asm:expr, xorrot $rd:expr, $rs1:expr, $rs2:expr, $rotation:expr) => {
+        $asm.emit_xor_rot($rd, $rs1, $rs2, $rotation)
+    };
     ($asm:expr, xorrotw7 $rd:expr, $rs1:expr, $rs2:expr) => {{
         use $crate::expand::asm_support::Kind;
         $asm.emit_r(Kind::VirtualXORROTW7, $rd, $rs1, $rs2)

@@ -458,7 +458,9 @@ impl Emitter {
 
 impl DynasmEmitter {
     /// `(x[rs1] ^ x[rs2]).rotate_right(n)`, 64-bit.
-    fn emit_xor_rot(e: &mut Emitter, row: &JoltInstructionRow, n: i8) {
+    /// `(x[rs1] ^ x[rs2]).rotate_right(imm)`; the rotation is the row immediate.
+    fn emit_xor_rot(e: &mut Emitter, row: &JoltInstructionRow) {
+        let n = row.operands.imm as i8;
         e.load_reg(RAX, row.operands.rs1);
         e.load_reg(RCX, row.operands.rs2);
         dynasm!(e.ops ; .arch x64 ; xor rax, rcx ; ror rax, n);
@@ -1009,10 +1011,7 @@ impl DynasmEmitter {
                 dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; sar rax, cl);
                 e.store_rd(RAX, row.operands.rd);
             }
-            K::VirtualXorRot32(_) => Self::emit_xor_rot(e, row, 32),
-            K::VirtualXorRot24(_) => Self::emit_xor_rot(e, row, 24),
-            K::VirtualXorRot16(_) => Self::emit_xor_rot(e, row, 16),
-            K::VirtualXorRot63(_) => Self::emit_xor_rot(e, row, 63),
+            K::VirtualXorRot(_) => Self::emit_xor_rot(e, row),
             K::VirtualXorRotW16(_) => Self::emit_xor_rotw(e, row, 16),
             K::VirtualXorRotW12(_) => Self::emit_xor_rotw(e, row, 12),
             K::VirtualXorRotW8(_) => Self::emit_xor_rotw(e, row, 8),

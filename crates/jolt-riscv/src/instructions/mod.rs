@@ -139,10 +139,6 @@ pub use virt::VirtualSrl;
 pub use virt::VirtualSrli;
 pub use virt::VirtualSrliw;
 pub use virt::VirtualSrlw;
-pub use virt::VirtualXorRot16;
-pub use virt::VirtualXorRot24;
-pub use virt::VirtualXorRot32;
-pub use virt::VirtualXorRot63;
 pub use virt::VirtualXorRotL1;
 pub use virt::VirtualXorRotW12;
 pub use virt::VirtualXorRotW16;
@@ -155,6 +151,7 @@ pub use virt::VirtualZeroExtendWord;
 pub use virt::WindowMaskB;
 pub use virt::WindowMaskH;
 pub use virt::WindowMaskW;
+pub use virt::{VirtualXorRot, XOR_ROT_ROTATIONS};
 
 // Atomic + system + advice-load + virtual lw/sw additions
 pub use a::AmoAddD;
@@ -412,10 +409,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     VirtualShiftRightBitmaski(VirtualShiftRightBitmaski<T>),
     VirtualRotri(VirtualRotri<T>),
     VirtualRotriw(VirtualRotriw<T>),
-    VirtualXorRot32(VirtualXorRot32<T>),
-    VirtualXorRot24(VirtualXorRot24<T>),
-    VirtualXorRot16(VirtualXorRot16<T>),
-    VirtualXorRot63(VirtualXorRot63<T>),
+    VirtualXorRot(VirtualXorRot<T>),
     VirtualXorRotW16(VirtualXorRotW16<T>),
     VirtualXorRotW12(VirtualXorRotW12<T>),
     VirtualXorRotW8(VirtualXorRotW8<T>),
@@ -636,10 +630,7 @@ impl_jolt_instructions_flags! {
     VirtualShiftRightBitmaski => VirtualShiftRightBitmaskI,
     VirtualRotri => VirtualROTRI,
     VirtualRotriw => VirtualROTRIW,
-    VirtualXorRot32 => VirtualXORROT32,
-    VirtualXorRot24 => VirtualXORROT24,
-    VirtualXorRot16 => VirtualXORROT16,
-    VirtualXorRot63 => VirtualXORROT63,
+    VirtualXorRot => VirtualXORROT,
     VirtualXorRotW16 => VirtualXORROTW16,
     VirtualXorRotW12 => VirtualXORROTW12,
     VirtualXorRotW8 => VirtualXORROTW8,

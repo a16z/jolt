@@ -202,6 +202,17 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit or expand an I-format row with an unsigned immediate.
+    /// Emit `rd = rotr(rs1 ^ rs2, rotation)` as one row; `rotation` must be
+    /// one of `jolt_riscv::instructions::XOR_ROT_ROTATIONS`.
+    pub fn emit_xor_rot(&mut self, rd: u8, rs1: u8, rs2: u8, rotation: u32) {
+        self.inner.emit_xor_rot(
+            Self::register_operand(rd),
+            Self::register_operand(rs1),
+            Self::register_operand(rs2),
+            rotation,
+        );
+    }
+
     pub fn emit_i(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
