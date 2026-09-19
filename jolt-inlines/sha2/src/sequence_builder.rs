@@ -338,7 +338,7 @@ impl Sha256SequenceBuilder {
     fn sha_word_sigma_0(&mut self, rs1: u8, rd: u8, ss: u8) {
         self.asm.rotri32(Reg(rs1), 11, ss);
         self.asm.emit_r(Kind::VirtualXORROTW7, rd, rs1, ss);
-        self.word_shr(rs1, 3, ss);
+        self.asm.srli(Reg(rs1), 3, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
     }
 
@@ -346,14 +346,8 @@ impl Sha256SequenceBuilder {
     fn sha_word_sigma_1(&mut self, rs1: u8, rd: u8, ss: u8) {
         self.asm.rotri32(Reg(rs1), 30, ss);
         self.asm.emit_r(Kind::VirtualXORROTW19, rd, rs1, ss);
-        self.word_shr(rs1, 10, ss);
+        self.asm.srli(Reg(rs1), 10, ss);
         self.asm.xor(Reg(rd), Reg(ss), rd);
-    }
-
-    fn word_shr(&mut self, rs1: u8, shift: u32, rd: u8) {
-        let rotated = self.asm.rotri32(Reg(rs1), shift, rd);
-        let mask = (1u64 << (32 - shift)) - 1;
-        self.asm.and(rotated, Imm(mask), rd);
     }
 }
 

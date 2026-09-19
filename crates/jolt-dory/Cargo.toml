@@ -23,8 +23,25 @@ ark-bn254 = { workspace = true }
 ark-ec = { workspace = true }
 ark-serialize = { workspace = true }
 
+[features]
+default = ["parallel"]
+parallel = ["jolt-crypto/parallel", "jolt-poly/parallel"]
+profiling = ["jolt-akita/profiling"]
+
 [dev-dependencies]
+jolt-akita.workspace = true
+akita-config.workspace = true
+akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
+akita-prover = { workspace = true, features = ["parallel"] }
+akita-transcript.workspace = true
+akita-types.workspace = true
+jolt-profiling = { path = "../jolt-profiling", default-features = false }
 criterion = { workspace = true }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+  "transcript-keccak",
+] }
 serde_json = { workspace = true }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true }
@@ -37,6 +54,10 @@ getrandom_v02 = { workspace = true, features = ["js"] }
 
 [[bench]]
 name = "dory"
+harness = false
+
+[[bench]]
+name = "akita_paths"
 harness = false
 
 [package.metadata.cargo-machete]

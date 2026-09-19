@@ -9,9 +9,11 @@
 mod akita_tests {
     use std::sync::Arc;
 
+    use common::constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE;
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-    use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
+    use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
+    use jolt_field::Ring;
     use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -19,9 +21,10 @@ mod akita_tests {
         self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
     };
     use jolt_prover::akita::{self, JoltAkitaBackend};
-    use jolt_prover::ProverConfig;
+    use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
     use jolt_riscv::JoltTraceRow;
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+    use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -129,6 +132,7 @@ mod akita_tests {
     ) -> ProvedGuest {
         let has_trusted_advice = !trusted_advice.is_empty();
         let preprocessing = preprocessing::preprocess_full_with_advice(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
             run.preprocessing,
             &config,
             untrusted_advice,
@@ -165,7 +169,7 @@ mod akita_tests {
         }
     }
 
-    fn verify(proved: &ProvedGuest) -> Result<(), jolt_verifier::VerifierError> {
+    fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
             &proved.preprocessing.verifier,
             &proved.public_io,
@@ -238,15 +242,23 @@ mod akita_tests {
         let (run, mut config) = muldiv_run();
         config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
 
-        let result = preprocessing::preprocess_full(run.preprocessing, &config);
+        let result = preprocessing::preprocess_full(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            run.preprocessing,
+            &config,
+        );
         assert!(matches!(
             result,
-            Err(jolt_prover::PreprocessingError::InvalidConfiguration { .. })
+            Err(PreprocessingError::InvalidConfiguration { .. })
         ));
 
         let (run, mut config) = muldiv_run();
-        let preprocessing = preprocessing::preprocess_full(run.preprocessing, &config)
-            .expect("cycle-major preprocessing");
+        let preprocessing = preprocessing::preprocess_full(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            run.preprocessing,
+            &config,
+        )
+        .expect("cycle-major preprocessing");
         config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
         let program_preprocessing = preprocessing.program_arc().expect("full program");
         let public_io = run.trace.device.clone();
@@ -264,7 +276,7 @@ mod akita_tests {
         );
         assert!(matches!(
             result,
-            Err(jolt_prover::ProverError::Unsupported {
+            Err(ProverError::Unsupported {
                 reason: "Akita supports only cycle-major trace polynomials"
             })
         ));
@@ -293,7 +305,7 @@ mod akita_tests {
     fn advice_e2e_akita_full_advice() {
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
         let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
-        let capacity = common::constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE as usize;
+        let capacity = DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE as usize;
         let mut untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
         untrusted.extend((untrusted.len()..capacity).map(|index| (index * 31 + 7) as u8));
         let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
@@ -304,9 +316,13 @@ mod akita_tests {
 
     fn committed_e2e(bytecode_chunk_count: usize) {
         let (run, config) = muldiv_run();
-        let preprocessing =
-            preprocessing::preprocess_committed(run.preprocessing, &config, bytecode_chunk_count)
-                .expect("committed Akita preprocessing");
+        let preprocessing = preprocessing::preprocess_committed(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            run.preprocessing,
+            &config,
+            bytecode_chunk_count,
+        )
+        .expect("committed Akita preprocessing");
         let program_preprocessing = preprocessing.program_arc().expect("retained full program");
         let public_io = run.trace.device.clone();
         let witness = TraceBackend::<OwnedTrace>::from_compact(
@@ -360,6 +376,7 @@ mod akita_tests {
         let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
         let config = derive_config(&run);
         let preprocessing = preprocessing::preprocess_committed_with_advice(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
             run.preprocessing,
             &config,
             1,

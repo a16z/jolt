@@ -76,9 +76,9 @@ where
 /// Hand-written because the id-keyed table maps cannot go through the derive:
 /// `JoltChallengeId`/`JoltOpeningId`/`JoltDerivedId` have no `Allocative`
 /// impl, and giving them one cascades through jolt-claims for types that own
-/// no heap. Sized arithmetically instead, like the scalar tables — table
-/// bytes by `len()`, exact at the mid-stage snapshot (see
-/// [`jolt_poly::visit_scalars`]).
+/// no heap. Sized arithmetically instead — table bytes by `len()`, exact at
+/// the mid-stage snapshot (see
+/// [`visit_heap_free_elements`](crate::backend::visit_heap_free_elements)).
 #[cfg(feature = "allocative")]
 impl<F, R> allocative::Allocative for NaiveSumcheckProver<F, R>
 where

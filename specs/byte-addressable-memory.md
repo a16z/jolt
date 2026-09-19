@@ -351,7 +351,8 @@ right places and has named watch-items:
 - The **full-mode verifier** does an O(K) fold (committed-bytecode/ZK modes skip it) — 2–3×
   bytecode is 2–3× that term.
 - Committed-program preprocessing materializes `512 × bytecode_len` densely (268 MB at 2^14 →
-  1 GB at 2^16); the akita `SparseUnitPolynomial` path avoids this. `MAX_BYTECODE_D = 6` caps
+  1 GB at 2^16). The Akita adapter rejects unsupported sparse-unit one-hot shapes instead of
+  densifying them, so this remains an unresolved memory bound. `MAX_BYTECODE_D = 6` caps
   `log K ≤ 24` — ample. The read-raf `F_s` scratch (`2·S·K·threads`) is the other memory term
   to watch on wide boxes.
 

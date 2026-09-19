@@ -14,8 +14,9 @@ use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::claims::{EvaluationClaim, VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
+use crate::claims::{VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
+use crate::EvaluationClaim;
 
 /// Self-describing metadata a group commitment carries: the backend flavor,
 /// the protocol-owned layout digest binding the ordered member identities,
@@ -134,16 +135,22 @@ pub trait CommitmentScheme: Commitment {
     }
 }
 
-/// Transparent derivation of a singleton commitment-object setup from the
-/// object's public shape alone (one polynomial at `num_vars`, seeded by the
-/// object plan's layout digest): prover and verifier re-derive
-/// byte-identical setups independently, so packed objects need no setup
-/// ceremony or transport.
+/// Transparent derivation of a singleton commitment-object setup from an
+/// immutable application-owned context plus the object's public shape.
+/// Prover and verifier use the exact catalog admitted by that context; packed
+/// objects need no per-object setup ceremony or transport.
 pub trait TransparentObjectSetup: CommitmentScheme {
+    type SetupContext: Send + Sync;
+
     fn transparent_object_setup(
+        context: &Self::SetupContext,
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Return the immutable context that admitted `setup`, for objects created
+    /// later in the same preprocessing/proving run.
+    fn transparent_setup_context(setup: &Self::ProverSetup) -> &Self::SetupContext;
 
     /// Reuses an object's backend setup for another layout at the same arity.
     fn retag_transparent_object_setup(

@@ -57,13 +57,12 @@
     clippy::wildcard_enum_match_arm
 )]
 
-#[cfg(feature = "allocative")]
-mod allocative_support;
 mod binding;
 mod compressed_univariate;
 mod dense;
 mod eq;
 mod eq_plus_one;
+mod evaluation_claim;
 mod identity;
 pub mod lagrange;
 mod lt;
@@ -74,8 +73,6 @@ mod point;
 mod split_eq;
 mod univariate;
 
-#[cfg(feature = "allocative")]
-pub use allocative_support::{visit_scalar_rows, visit_scalars};
 pub use binding::BindingOrder;
 pub use compressed_univariate::CompressedPoly;
 pub use dense::Polynomial;
@@ -83,6 +80,7 @@ pub use eq::{
     boolean_bits_msb, boolean_index_msb, boolean_point_msb, eq_index_msb, try_eq_mle, EqPolynomial,
 };
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
+pub use evaluation_claim::EvaluationClaim;
 pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;
 pub use mle::{

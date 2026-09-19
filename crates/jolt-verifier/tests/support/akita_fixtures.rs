@@ -8,7 +8,7 @@
 use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheme};
+use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_host::Program;
 use jolt_program::execution::OwnedTrace;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
@@ -70,8 +70,12 @@ fn generate_muldiv() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
     let config = derive_config(&run);
-    let preprocessing = preprocessing::preprocess_full(run.program_preprocessing.clone(), &config)
-        .expect("Akita preprocessing");
+    let preprocessing = preprocessing::preprocess_full(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        run.program_preprocessing.clone(),
+        &config,
+    )
+    .expect("Akita preprocessing");
     prove_prepared(run, config, preprocessing, &[])
 }
 
@@ -87,6 +91,7 @@ fn generate_advice() -> AkitaFixtureCase {
     );
     let config = derive_config(&run);
     let preprocessing = preprocessing::preprocess_full_with_advice(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
         run.program_preprocessing.clone(),
         &config,
         true,
@@ -100,9 +105,13 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
     let config = derive_config(&run);
-    let preprocessing =
-        preprocessing::preprocess_committed(run.program_preprocessing.clone(), &config, 2)
-            .expect("committed Akita preprocessing");
+    let preprocessing = preprocessing::preprocess_committed(
+        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        run.program_preprocessing.clone(),
+        &config,
+        2,
+    )
+    .expect("committed Akita preprocessing");
     prove_prepared(run, config, preprocessing, &[])
 }
 

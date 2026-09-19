@@ -63,7 +63,6 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
     /// offset-major — `tables[i][offset · stride_i + k]` with
     /// `stride_i = tables[i].len() / width` — plus the compact index source.
     Lazy {
-        #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
         tables: Vec<Vec<F>>,
         /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
         width: usize,
@@ -166,7 +165,13 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                         source,
                     }
                 } else {
-                    Self::Dense(materialize(&tables, &source, width * 2))
+                    let log_t = source.cycles().ilog2() as usize;
+                    let dense = Self::Dense(materialize(&tables, &source, width * 2));
+                    // Return branch tables and the final shared index handle.
+                    drop(tables);
+                    drop(source);
+                    crate::mem::purge_retained_memory(log_t);
+                    dense
                 }
             }
             Self::Dense(mut polys) => {

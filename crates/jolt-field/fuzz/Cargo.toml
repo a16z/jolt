@@ -19,31 +19,31 @@ jolt-field = { path = "..", default-features = false, features = [
 num-traits = "0.2"
 
 [[bin]]
-name = "from_bytes"
+name = "from-bytes"
 path = "fuzz_targets/from_bytes.rs"
 doc = false
 
 [[bin]]
-name = "field_arith"
+name = "field-arith"
 path = "fuzz_targets/field_arith.rs"
 doc = false
 
 [[bin]]
-name = "wide_accumulator_fmadd"
+name = "wide-accumulator-fmadd"
 path = "fuzz_targets/wide_accumulator_fmadd.rs"
 doc = false
 
 [[bin]]
-name = "wide_accumulator_merge"
+name = "wide-accumulator-merge"
 path = "fuzz_targets/wide_accumulator_merge.rs"
 doc = false
 
 [[bin]]
-name = "solinas_field_arith"
+name = "solinas-field-arith"
 path = "fuzz_targets/solinas_field_arith.rs"
 doc = false
 
 [[bin]]
-name = "fp128_asm_differential"
+name = "fp128-asm-differential"
 path = "fuzz_targets/fp128_asm_differential.rs"
 doc = false

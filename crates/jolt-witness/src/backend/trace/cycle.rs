@@ -56,17 +56,12 @@ impl<T: TraceSource> TraceBackend<T> {
     {
         let selector = RaChunkSelector::new(index, chunks, chunk_bits)?;
         let cycles = checked_pow2(self.config.log_t)?;
-        let log_rows = chunk_bits.checked_add(self.config.log_t).ok_or_else(|| {
-            WitnessError::InvalidDimensions {
-                label: JOLT_VM_LABEL,
-                reason: "one-hot rows overflow".to_owned(),
-            }
-        })?;
+        let len = checked_dense_grid_len::<F>(checked_pow2(chunk_bits)?, cycles)?;
         let hot_addresses: Vec<Option<usize>> = self.walk_cycles(|row, next, env| {
             W::extract_indexed(selector, row, next, env).map(W::into)
         })?;
         // The selector's mask bounds every hot address below `2^chunk_bits`.
-        let mut values = jolt_utils::unsafe_allocate_zero_vec(checked_pow2(log_rows)?);
+        let mut values = jolt_utils::unsafe_allocate_zero_vec(len);
         for (cycle, address) in hot_addresses.into_iter().enumerate() {
             if let Some(address) = address {
                 values[address * cycles + cycle] = F::one();
@@ -85,11 +80,12 @@ impl<T: TraceSource> TraceBackend<T> {
     ) -> Result<Vec<F>, WitnessError> {
         let chunk_bits = self.config.one_hot.committed_chunk_bits();
         let cycles = checked_pow2(self.config.log_t)?;
+        let len = checked_dense_grid_len::<F>(checked_pow2(chunk_bits)?, cycles)?;
         let selected_rows: Vec<usize> = self.walk_cycles(|row, next, env| {
             crate::witnesses::BalancedIncRow::extract_indexed(column, row, next, env)
                 .map(|selected| selected.0)
         })?;
-        let mut values = vec![F::zero(); checked_pow2(self.one_hot_log_rows()?)?];
+        let mut values = vec![F::zero(); len];
         for (cycle, selected_row) in selected_rows.into_iter().enumerate() {
             if selected_row >> chunk_bits != 0 {
                 return Err(WitnessError::InvalidWitnessData {

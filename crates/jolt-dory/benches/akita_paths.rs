@@ -35,9 +35,10 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use akita_config::CommitmentConfig;
+use akita_config::TrustedScheduleCatalog;
 use akita_pcs::{AkitaCommitmentScheme, ComputeBackendSetup, CpuBackend};
 use akita_prover::{
-    AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, OneHotPoly,
+    AkitaProverSetup as BackendProverSetup, CpuPreparedSetup, DensePoly, GroupContext, OneHotPoly,
     PreparedProverGroup, SelectedProverOpeningData,
 };
 use akita_transcript::AkitaTranscript;
@@ -48,10 +49,10 @@ use criterion::{criterion_group, BatchSize, BenchmarkGroup, BenchmarkId, Criteri
 use jolt_akita::{
     configs::{JoltDenseBounded as AkitaConfig, JoltOneHotK256 as AkitaOneHotConfig},
     jolt_to_akita_evals, reverse_point, AkitaField, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K256,
 };
 use jolt_dory::{DoryCommitment, DoryHint, DoryScheme};
-use jolt_field::{Fr, JoltField, Ring};
+use jolt_field::{Fr, JoltField, Ring, Zero};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, PrefixPackedClaims, PrefixPackedLayout,
     VerifierOpeningClaim,
@@ -74,8 +75,6 @@ type BackendHint = AkitaCommitmentHint<AkitaField>;
 type BackendSetup = BackendProverSetup<AkitaField>;
 type BackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 type BackendOneHotPoly = OneHotPoly<AkitaField, u8>;
-
-const AKITA_D: usize = <AkitaConfig as CommitmentConfig>::D;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum BatchId {
@@ -113,8 +112,10 @@ impl DataPath {
 }
 
 struct AkitaProverBenchSetup {
+    dense_scheme: BackendScheme,
     dense_prover: BackendSetup,
     dense_prepared: BackendPreparedSetup,
+    one_hot_scheme: OneHotBackendScheme,
     one_hot_prover: BackendSetup,
     one_hot_prepared: BackendPreparedSetup,
 }
@@ -300,13 +301,13 @@ fn materialize_packed(
 }
 
 fn make_backend_one_hot_poly(poly: &OneHotPolynomial) -> BackendOneHotPoly {
-    BackendOneHotPoly::new(AKITA_ONE_HOT_K256, AKITA_D, poly.indices().to_vec())
+    BackendOneHotPoly::new(AKITA_ONE_HOT_K256, poly.indices().to_vec())
         .expect("valid one-hot backend polynomial")
 }
 
 fn make_backend_dense_poly(poly: &Polynomial<AkitaField>) -> BackendDensePoly {
     let evals = jolt_to_akita_evals(poly.num_vars(), poly.evals()).expect("valid dimensions");
-    BackendDensePoly::from_field_evals(poly.num_vars(), AKITA_D, &evals)
+    BackendDensePoly::from_field_evals(poly.num_vars(), evals)
         .expect("valid dense backend polynomial")
 }
 
@@ -318,14 +319,34 @@ fn akita_case(num_vars: usize) -> AkitaCase {
     let dense_eval = dense_poly.evaluate(&point);
     let sparse_eval =
         <OneHotPolynomial as MultilinearPoly<AkitaField>>::evaluate(&sparse_one_hot, &point);
-    let (setup, _) =
-        AkitaScheme::setup(AkitaSetupParams::new(num_vars, NUM_POLYS, LAYOUT_DIGEST)).unwrap();
-    let backend_prover = BackendScheme::setup_prover(num_vars, NUM_POLYS)
+    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let (setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
+        num_vars,
+        NUM_POLYS,
+        LAYOUT_DIGEST,
+        artifacts.clone(),
+    ))
+    .unwrap();
+    let dense_scheme = BackendScheme::new(
+        TrustedScheduleCatalog::new(artifacts.dense_catalog().expect("dense catalog"))
+            .expect("dense scheme"),
+    );
+    let one_hot_scheme = OneHotBackendScheme::new(
+        TrustedScheduleCatalog::new(
+            artifacts
+                .one_hot_catalog(AKITA_ONE_HOT_K256)
+                .expect("one-hot catalog"),
+        )
+        .expect("one-hot scheme"),
+    );
+    let backend_prover = dense_scheme
+        .setup_prover(num_vars, NUM_POLYS)
         .expect("Akita backend setup should succeed");
     let backend_prepared = CpuBackend::DEFAULT
         .prepare_setup(&backend_prover)
         .expect("Akita backend setup preparation should succeed");
-    let one_hot_backend_prover = OneHotBackendScheme::setup_prover(num_vars, NUM_POLYS)
+    let one_hot_backend_prover = one_hot_scheme
+        .setup_prover(num_vars, NUM_POLYS)
         .expect("Akita one-hot backend setup should succeed");
     let one_hot_backend_prepared = CpuBackend::DEFAULT
         .prepare_setup(&one_hot_backend_prover)
@@ -343,8 +364,10 @@ fn akita_case(num_vars: usize) -> AkitaCase {
         sparse_eval,
         setup,
         akita_prover_setup: AkitaProverBenchSetup {
+            dense_scheme,
             dense_prover: backend_prover,
             dense_prepared: backend_prepared,
+            one_hot_scheme,
             one_hot_prover: one_hot_backend_prover,
             one_hot_prepared: one_hot_backend_prepared,
         },
@@ -398,16 +421,19 @@ fn akita_batch_case(logical_num_vars: usize) -> AkitaBatchCase {
     assert_eq!(packing.packed_num_vars(), physical_num_vars);
     let packed_claims =
         PrefixPackedClaims::new(LAYOUT_DIGEST, logical_point.clone(), evaluations.clone());
+    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let (native_setup, _) = AkitaScheme::setup(AkitaSetupParams::new(
         logical_num_vars,
         BATCH_POLYS,
         LAYOUT_DIGEST,
+        artifacts.clone(),
     ))
     .unwrap();
     let (packed_pcs, _) = AkitaScheme::setup(AkitaSetupParams::new(
         physical_num_vars,
         NUM_POLYS,
         LAYOUT_DIGEST,
+        artifacts,
     ))
     .unwrap();
 
@@ -560,14 +586,16 @@ fn akita_prover_commit_dense(
         setup.dense_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
-    let output = BackendScheme::commit(
-        &setup.dense_prover,
-        black_box(std::slice::from_ref(poly)),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("Akita backend dense commit should succeed");
-    (output.committed_group, output.hint)
+    let output = setup
+        .dense_scheme
+        .commit(
+            &setup.dense_prover,
+            black_box(std::slice::from_ref(poly)),
+            stack.commitment(),
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("Akita backend dense commit should succeed");
+    (output.committed_group, output.prover_state)
 }
 
 fn akita_prover_commit_one_hot(
@@ -580,17 +608,20 @@ fn akita_prover_commit_one_hot(
         setup.one_hot_prover.expanded.as_ref(),
     )
     .expect("uniform backend stack");
-    let output = OneHotBackendScheme::commit(
-        &setup.one_hot_prover,
-        black_box(std::slice::from_ref(poly)),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("Akita backend one-hot commit should succeed");
-    (output.committed_group, output.hint)
+    let output = setup
+        .one_hot_scheme
+        .commit(
+            &setup.one_hot_prover,
+            black_box(std::slice::from_ref(poly)),
+            stack.commitment(),
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("Akita backend one-hot commit should succeed");
+    (output.committed_group, output.prover_state)
 }
 
 fn akita_prover_claims<'a, Cfg, P>(
+    schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],
     evaluations: Vec<AkitaField>,
     polynomials: &'a [&'a P],
@@ -604,8 +635,13 @@ where
     let group = PolynomialGroupClaims::new(point.to_vec(), evaluations, commitment.clone())
         .expect("prover group claims");
     let claims = OpeningClaims::from_groups(vec![group]).expect("prover claims");
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, vec![hint], vec![polynomials])
-        .expect("prover opening data")
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(
+        claims,
+        vec![hint],
+        vec![polynomials],
+        schedules,
+    )
+    .expect("prover opening data")
 }
 
 fn akita_prover_open_dense(
@@ -623,20 +659,23 @@ fn akita_prover_open_dense(
     .expect("uniform backend stack");
     let poly_refs = [poly];
     let mut transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/native-bench");
-    BackendScheme::batched_prove(
-        &case.akita_prover_setup.dense_prover,
-        akita_prover_claims::<AkitaConfig, _>(
-            &case.point,
-            vec![evaluation],
-            &poly_refs,
-            &commitment,
-            hint,
-        ),
-        &stack,
-        &mut transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("Akita backend dense proof should succeed")
+    case.akita_prover_setup
+        .dense_scheme
+        .batched_prove(
+            &case.akita_prover_setup.dense_prover,
+            akita_prover_claims::<AkitaConfig, _>(
+                case.akita_prover_setup.dense_scheme.schedules(),
+                &case.point,
+                vec![evaluation],
+                &poly_refs,
+                &commitment,
+                hint,
+            ),
+            &stack,
+            &mut transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("Akita backend dense proof should succeed")
 }
 
 fn akita_prover_open_one_hot(
@@ -655,20 +694,23 @@ fn akita_prover_open_one_hot(
     let poly_refs = [poly];
     let backend_point = reverse_point(&case.point);
     let mut transcript = AkitaTranscript::<AkitaField>::new(b"jolt-akita/native-bench");
-    OneHotBackendScheme::batched_prove(
-        &case.akita_prover_setup.one_hot_prover,
-        akita_prover_claims::<AkitaOneHotConfig, _>(
-            &backend_point,
-            vec![evaluation],
-            &poly_refs,
-            &commitment,
-            hint,
-        ),
-        &stack,
-        &mut transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("Akita backend one-hot proof should succeed")
+    case.akita_prover_setup
+        .one_hot_scheme
+        .batched_prove(
+            &case.akita_prover_setup.one_hot_prover,
+            akita_prover_claims::<AkitaOneHotConfig, _>(
+                case.akita_prover_setup.one_hot_scheme.schedules(),
+                &backend_point,
+                vec![evaluation],
+                &poly_refs,
+                &commitment,
+                hint,
+            ),
+            &stack,
+            &mut transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("Akita backend one-hot proof should succeed")
 }
 
 fn dory_commit(case: &DoryCase, path: DataPath) -> (DoryCommitment, DoryHint) {

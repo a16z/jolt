@@ -1,6 +1,8 @@
 # Dory
 
-Dory is the [polynomial commitment scheme](./appendix/pcs.md) used in Jolt. It is based on the scheme described in [Lee21](https://eprint.iacr.org/2020/1274) and implemented in the [`a16z/dory`](https://github.com/a16z/dory/) repository.
+Dory is Jolt's default elliptic curve [polynomial commitment backend](./appendix/pcs.md), using pairings over BN254 and its scalar field. It is based on the scheme described in [Lee21](https://eprint.iacr.org/2020/1274) and implemented in the [`a16z/dory`](https://github.com/a16z/dory/) repository. Jolt also supports the lattice-based [Akita](./akita.md) backend.
+
+Dory supports both ordinary proofs and zero-knowledge proofs via [BlindFold](./blindfold.md), selected with the `zk` Cargo feature. The matrix layout, group operations, and homomorphic batching described in this chapter apply to Dory.
 
 ## Background: AFGHO commitments
 

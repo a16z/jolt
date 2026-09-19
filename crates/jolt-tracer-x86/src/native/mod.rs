@@ -294,10 +294,7 @@ struct RecordRunOutput {
 }
 
 impl Observation {
-    /// Rebuild `TraceRow`s from the static bytecode plus the recorded dynamic
-    /// values. Generated code cannot construct `TraceRow` directly (its
-    /// `Option` fields have no guaranteed layout), so this is the seam between
-    /// the two.
+    /// Combines static bytecode with recorded values into validated rows.
     fn reassemble_rows(
         bytecode: &[JoltInstructionRow],
         observations: &[Self],
@@ -307,9 +304,9 @@ impl Observation {
             let row = bytecode
                 .get(observation.row_index as usize)
                 .ok_or(TraceError::Backend("observation row index out of range"))?;
-            rows.push(TraceRow {
-                instruction: *row,
-                registers: RegisterState {
+            rows.push(TraceRow::new(
+                *row,
+                RegisterState {
                     rs1: Self::register_read(row.operands.rs1, observation.rs1),
                     rs2: Self::register_read(row.operands.rs2, observation.rs2),
                     rd: row.operands.rd.map(|register| RegisterWrite {
@@ -323,10 +320,8 @@ impl Observation {
                         },
                     }),
                 },
-                ram_access: observation.ram_access(row.instruction_kind),
-                #[cfg(feature = "field-inline")]
-                field_inline: None,
-            });
+                observation.ram_access(row.instruction_kind),
+            )?);
         }
         Ok(rows)
     }

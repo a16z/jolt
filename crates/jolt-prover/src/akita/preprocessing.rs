@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use ark_serialize::CanonicalSerialize;
 use jolt_akita::{
-    AkitaField, AkitaProverSetup, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
-    PrecommittedScheduleParams,
+    AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AkitaVerifierSetup, PrecommittedScheduleParams,
 };
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
-use jolt_openings::CommitmentScheme;
+use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_transcript::LegacyBlake2bTranscript;
 use jolt_verifier::{
@@ -32,21 +32,29 @@ pub type AkitaProverPreprocessing = JoltProverPreprocessing<AkitaScheme, AkitaVc
 pub type AkitaVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
 
 pub fn preprocess_full(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: JoltProgramPreprocessing,
     config: &ProverConfig,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
-    preprocess_full_with_advice(program, config, false, false)
+    preprocess_full_with_advice(schedule_artifacts, program, config, false, false)
 }
 
 pub fn preprocess_full_with_advice(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: JoltProgramPreprocessing,
     config: &ProverConfig,
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     validate_trace_order(config)?;
-    let (pcs_setup, verifier_setup) =
-        grouped_setup(&program, config, untrusted_advice, trusted_advice, &[])?;
+    let (pcs_setup, verifier_setup) = grouped_setup(
+        schedule_artifacts,
+        &program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        &[],
+    )?;
     let preprocessing_digest = full_preprocessing_digest(&program)?;
     let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Full(Arc::new(program)),
@@ -66,6 +74,7 @@ pub fn preprocess_full_with_advice(
 /// batch. Building it provisions the grouped schedule rows that commit,
 /// prove, and verify later resolve without planning.
 fn grouped_setup(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: &JoltProgramPreprocessing,
     config: &ProverConfig,
     untrusted_advice: bool,
@@ -102,19 +111,29 @@ fn grouped_setup(
         layout_digest,
         one_hot_k,
         precommitted_schedule,
+        Arc::clone(schedule_artifacts),
     );
     Ok(AkitaScheme::setup(params)?)
 }
 
 pub fn preprocess_committed(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: JoltProgramPreprocessing,
     config: &ProverConfig,
     bytecode_chunk_count: usize,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
-    preprocess_committed_with_advice(program, config, bytecode_chunk_count, false, false)
+    preprocess_committed_with_advice(
+        schedule_artifacts,
+        program,
+        config,
+        bytecode_chunk_count,
+        false,
+        false,
+    )
 }
 
 pub fn preprocess_committed_with_advice(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: JoltProgramPreprocessing,
     config: &ProverConfig,
     bytecode_chunk_count: usize,
@@ -129,12 +148,15 @@ pub fn preprocess_committed_with_advice(
                 reason: "entry address is absent from bytecode preprocessing".to_owned(),
             })?;
     let trace_order = config.trace_polynomial_order;
-    let direct_program =
-        commit_direct_program::<AkitaScheme>(&program, bytecode_chunk_count, trace_order).map_err(
-            |error| PreprocessingError::InvalidCommittedProgram {
-                reason: error.to_string(),
-            },
-        )?;
+    let direct_program = commit_direct_program::<AkitaScheme>(
+        schedule_artifacts,
+        &program,
+        bytecode_chunk_count,
+        trace_order,
+    )
+    .map_err(|error| PreprocessingError::InvalidCommittedProgram {
+        reason: error.to_string(),
+    })?;
     let direct_program_physical_vars: Vec<usize> = direct_program
         .objects
         .iter()
@@ -154,6 +176,7 @@ pub fn preprocess_committed_with_advice(
     };
     let preprocessing_digest = committed_program_digest(&committed_program)?;
     let (pcs_setup, verifier_setup) = grouped_setup(
+        schedule_artifacts,
         &program,
         config,
         untrusted_advice,
@@ -229,11 +252,15 @@ pub fn commit_trusted_advice(
     .map_err(|_| PreprocessingError::InvalidAdvice {
         reason: "trusted advice size does not fit usize".to_owned(),
     })?;
-    commit_advice::<AkitaScheme>(JoltAdviceKind::Trusted, advice_bytes, max_bytes).map_err(
-        |error| PreprocessingError::InvalidAdvice {
-            reason: error.to_string(),
-        },
+    commit_advice::<AkitaScheme>(
+        AkitaScheme::transparent_setup_context(&preprocessing.pcs_setup),
+        JoltAdviceKind::Trusted,
+        advice_bytes,
+        max_bytes,
     )
+    .map_err(|error| PreprocessingError::InvalidAdvice {
+        reason: error.to_string(),
+    })
 }
 
 /// The physical arity of an advice object sized to the program's advice capacity.

@@ -26,7 +26,7 @@ type F = Fr;
 fn prove_product(
     polys: &[Vec<F>],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript,
+    transcript: &mut Blake2bTranscript<F>,
 ) -> (ClearSumcheckProof<F>, F) {
     let degree = polys.len();
     let n = 1 << num_vars;

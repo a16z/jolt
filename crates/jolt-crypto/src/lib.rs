@@ -22,7 +22,9 @@
 )]
 
 pub mod ec;
-pub use ec::{JoltGroup, PairingGroup, Pedersen, PedersenSetup};
+pub use ec::{JoltGroup, PairingGroup};
+#[cfg(feature = "bn254")]
+pub use ec::{Pedersen, PedersenSetup};
 
 mod commitment;
 pub use commitment::{

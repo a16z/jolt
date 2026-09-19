@@ -139,17 +139,11 @@ fn extended_products(
 
 /// The uni-skip carry: the typed rows (reused by the remainder), the low
 /// challenge vector, and all extended-node values of `t1`.
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     t1_values: Vec<F>,
 }
 
@@ -294,23 +288,18 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 
 /// The linear-time product remainder rounds over the cycle domain
 /// (bound `LowToHigh`).
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
-    scratch: Vec<F>,
+    /// Whether the first-shrink purge ran.
+    purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     pending_endpoints: Option<(F, F)>,
     challenges: RoundChallenges<F>,
     rows: BundleStore<SpartanProductRow>,
     /// `L_i(r₀)` — the values of the constant `LagrangeWeight(i)` leaves.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     lagrange_weights: Vec<F>,
 }
 impl<F: JoltField> ProductRemainderKernel<F> {
@@ -422,7 +411,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         Ok(Self {
             left: Polynomial::new(left),
             right: Polynomial::new(right),
-            scratch: Vec::new(),
+            purged: false,
             split_eq,
             pending_endpoints: Some(endpoints),
             challenges: RoundChallenges::new(rounds),
@@ -432,10 +421,13 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        self.left
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
-        self.right
-            .bind_low_to_high_reusing_scratch(challenge, &mut self.scratch);
+        let shrunk = self.left.bind_low_to_high_in_place(challenge);
+        let _ = self.right.bind_low_to_high_in_place(challenge);
+        // Purge once after the first shrink.
+        if shrunk && !self.purged {
+            self.purged = true;
+            crate::mem::purge_retained_memory(self.challenges.total());
+        }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
         self.pending_endpoints = None;

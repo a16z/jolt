@@ -55,9 +55,9 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
     });
     let program = Arc::new(JoltProgram::default());
     let rows = vec![
-        TraceRow {
+        TraceRow::new(
             instruction,
-            registers: RegisterState {
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 5,
@@ -69,13 +69,12 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::NoOp,
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        },
-        TraceRow {
-            instruction: store,
-            registers: RegisterState {
+            RamAccess::NoOp,
+        )
+        .unwrap(),
+        TraceRow::new(
+            store,
+            RegisterState {
                 rs1: Some(RegisterRead {
                     register: 2,
                     value: 0x8000_1008,
@@ -86,14 +85,13 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
                 }),
                 ..Default::default()
             },
-            ram_access: RamAccess::Write(RamWrite {
+            RamAccess::Write(RamWrite {
                 address: 0x8000_1008,
                 pre_value: 7,
                 post_value: 11,
             }),
-            #[cfg(feature = "field-inline")]
-            field_inline: None,
-        },
+        )
+        .unwrap(),
     ];
     let config = JoltVmWitnessConfig::new(
         2,

@@ -83,11 +83,7 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedRamHammingBooleanityKernel<F: JoltField> {
     progress: RoundProgress,
     eq: GruenSplitEqPolynomial<F>,

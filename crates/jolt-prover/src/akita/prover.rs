@@ -171,6 +171,7 @@ where
             .committed_program
             .as_ref()
             .map(|data| &data.direct_program),
+        &stage4.clear_output,
         &stage6b.clear_output,
         &stage7.clear_output,
         &mut transcript,

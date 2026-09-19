@@ -77,7 +77,7 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
         _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
         if grid.total_vars < grid.log_t + grid.log_k_chunk {
@@ -113,8 +113,8 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
             .iter()
             .map(|&polynomial| {
                 if is_block_embedded(polynomial) {
-                    let table = match precommitted_tables.get(&polynomial) {
-                        Some(table) => table.clone(),
+                    let table = match precommitted_tables.remove(&polynomial) {
+                        Some(table) => table,
                         None => dense_view(witness, final_opening_id(polynomial))?,
                     };
                     let poly = BlockOpeningPoly::new(table, grid, polynomial)?;
@@ -683,7 +683,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            &precommitted_tables,
+            precommitted_tables.clone(),
             grid,
         )
         .unwrap();
@@ -692,7 +692,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            &precommitted_tables,
+            precommitted_tables,
             grid,
         )
         .unwrap();

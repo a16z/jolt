@@ -372,6 +372,7 @@ mod tests {
 
     #[test]
     fn optimization_objective_hashmap_key() {
+        use code_quality::PROOF_SYSTEM_CRATE_DIRS;
         use std::collections::HashMap;
         let lloc = LLOC;
         let bind = BIND_LOW_TO_HIGH;
@@ -382,7 +383,7 @@ mod tests {
         // Same variant with identical inner data looks up successfully.
         let lloc_same = OptimizationObjective::StaticAnalysis(StaticAnalysisObjective::Lloc(
             code_quality::lloc::LlocObjective {
-                crate_dirs: code_quality::PROOF_SYSTEM_CRATE_DIRS,
+                crate_dirs: PROOF_SYSTEM_CRATE_DIRS,
             },
         ));
         assert_eq!(m[&lloc_same], 100.0);

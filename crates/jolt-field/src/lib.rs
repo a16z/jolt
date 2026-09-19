@@ -6,9 +6,8 @@
 //! and [`WithAccumulator`] (deferred-reduction fused multiply-add).
 //! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
 //! protocol stack requires of a scalar field: `Field + CanonicalEncoding +
-//! WithAccumulator`. Because the impl is a blanket, no field type can forget
-//! to opt in. (The serde bounds are deliberately absent while the temporary
-//! `akita` bootstrap edge exists; see [`JoltField`].)
+//! WithAccumulator + Serialize + DeserializeOwned`. Because the impl is a
+//! blanket, no field type can forget to opt in.
 //!
 //! # Architecture: contracts and backends
 //!
@@ -53,7 +52,8 @@
 //!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
 //! - `parallel` — activates rayon behind the `cfg_*!` helper macros.
 //! - `allocative` — `Allocative` derives on the concrete field types for
-//!   memory profiling.
+//!   memory profiling, and [`JoltField`] gains it as a supertrait so
+//!   field-generic containers render through the native impls.
 //!
 //! # Byte compatibility (hard invariants)
 //!
@@ -89,14 +89,12 @@
 )]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-#[cfg(feature = "akita")]
-mod akita;
-#[cfg(feature = "akita")]
-mod akita_accumulators;
 mod algebra;
 #[cfg(feature = "bn254")]
 mod bn254;
 mod extension;
+#[cfg(feature = "solinas")]
+mod fp128_accumulators;
 mod limbs;
 mod ops;
 mod packed;
@@ -106,15 +104,15 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
-#[cfg(feature = "akita")]
-pub use akita_accumulators::{AkitaAccumulator, AkitaSignedAccumulator};
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
-    NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
+    MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
+#[cfg(feature = "solinas")]
+pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};

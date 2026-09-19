@@ -417,7 +417,8 @@ pub enum Node {
 /// An AST intended for representing an MLE computation (although it will actually work for any
 /// multivariate polynomial). The nodes are stored in a global arena, which allows each AST handle
 /// to remain [`Copy`] and [`Sized`] while supporting unbounded growth of the underlying graph.
-#[derive(Debug, PartialOrd, Ord, Clone, Copy)]
+/// Serialized handles retain arena indices; use [`AstBundle`] to transport the graph.
+#[derive(Debug, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
 pub struct MleAst {
     /// Index of the root node in the arena.
     /// nodes: [ ]

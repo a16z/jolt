@@ -4,7 +4,8 @@ use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, Ring};
 use jolt_program::execution::{
-    JoltProgram, OwnedTrace, RegisterRead, RegisterState, RegisterWrite, TraceOutput, TraceRow,
+    JoltProgram, OwnedTrace, RamAccess, RegisterRead, RegisterState, RegisterWrite, TraceOutput,
+    TraceRow,
 };
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -93,11 +94,8 @@ impl TraceFixture {
             is_first_in_sequence: false,
             is_compressed: false,
         };
-        self.rows.push(TraceRow {
-            instruction,
-            registers,
-            ..TraceRow::default()
-        });
+        self.rows
+            .push(TraceRow::new(instruction, registers, RamAccess::NoOp).unwrap());
     }
 
     /// Run `f` against a trace backend padded to `2^log_t` cycles.
@@ -110,7 +108,7 @@ impl TraceFixture {
         let bytecode = self
             .rows
             .iter()
-            .map(|row| row.instruction)
+            .map(|row| row.instruction())
             .filter(|instruction| instruction.instruction_kind != JoltInstructionKind::NoOp)
             .collect();
         use std::sync::Arc;

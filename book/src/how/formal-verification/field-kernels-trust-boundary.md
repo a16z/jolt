@@ -171,9 +171,10 @@ the following evidence.
 7. Evidence that the claimed execution path reaches that code.
 8. Every operation and representation that remains outside the claim.
 
-The current `akita` feature still reaches the external Akita field
-implementation. The Jolt Fp128 theorems do not cover that runtime path. The
-field cutover and downstream binary inspection must happen before a claim about
+The current `akita` path uses the shared `jolt_field::Fp128` type but enables
+only `jolt-field/solinas`, not `asm`, so it runs the portable Rust bodies. The
+Jolt Fp128 theorems do not cover that runtime path. Enabling `asm` on the
+product and inspecting the downstream binary must happen before a claim about
 the complete Akita path is valid.
 
 ## Claim language

@@ -65,22 +65,16 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for ReferenceBack
     }
 }
 
-#[cfg_attr(
-    feature = "allocative",
-    derive(allocative::Allocative),
-    allocative(bound = "F: JoltField")
-)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct BooleanityAddressKernel<F: JoltField> {
     rounds: usize,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
     /// canonical order.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalars))]
     gamma_weights: Vec<F>,
     /// The linear-term tables (plain multilinear binding).
     linear: Vec<Polynomial<F>>,
     /// The squared-term tables (squared-weight binding); raw vectors because
     /// the bind rule is not a multilinear bind.
-    #[cfg_attr(feature = "allocative", allocative(visit = jolt_poly::visit_scalar_rows))]
     squared: Vec<Vec<F>>,
     eq_address: Polynomial<F>,
     rounds_bound: usize,

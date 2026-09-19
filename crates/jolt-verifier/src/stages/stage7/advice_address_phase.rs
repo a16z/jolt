@@ -12,6 +12,7 @@
 //! function of the reduction's final opening point, which `derive_output_term`
 //! recovers from the output claims.
 
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::cycle_phase_advice_opening;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
@@ -26,12 +27,14 @@ use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 
 use crate::stages::relations::ConcreteSumcheck;
+#[cfg(not(feature = "akita"))]
 use crate::stages::stage6b::outputs::Stage6bOutputClaims;
 use crate::VerifierError;
 
 /// The consumed cycle-phase trusted-advice opening *value*, read off the stage-6b
 /// cycle-phase output. Errors if the cycle phase produced no trusted-advice opening
 /// (the address phase runs only when it did).
+#[cfg(not(feature = "akita"))]
 pub fn trusted_advice_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> Result<TrustedAdviceAddressPhaseInputClaims<F>, VerifierError> {
@@ -44,6 +47,7 @@ pub fn trusted_advice_input_values_from_upstream<F: JoltField>(
 }
 
 /// The consumed cycle-phase untrusted-advice opening *value*.
+#[cfg(not(feature = "akita"))]
 pub fn untrusted_advice_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> Result<UntrustedAdviceAddressPhaseInputClaims<F>, VerifierError> {

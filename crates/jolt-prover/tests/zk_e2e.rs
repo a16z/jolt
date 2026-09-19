@@ -10,6 +10,7 @@ mod zk {
     extern crate jolt_inlines_keccak256;
 
     use std::sync::Arc;
+    use std::thread::Builder;
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_crypto::{Bn254G1, Pedersen};
@@ -25,6 +26,7 @@ mod zk {
     use jolt_riscv::JoltInstructionKind;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
+    use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -194,7 +196,7 @@ mod zk {
         )
     }
 
-    fn verify(proved: &ProvedGuest) -> Result<(), jolt_verifier::VerifierError> {
+    fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
         jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &proved.preprocessing.verifier,
             &proved.public_io,
@@ -204,7 +206,7 @@ mod zk {
     }
 
     fn with_zk_stack(body: impl FnOnce() + Send + 'static) {
-        std::thread::Builder::new()
+        Builder::new()
             .stack_size(128 * 1024 * 1024)
             .spawn(body)
             .expect("spawn ZK test thread")
@@ -245,8 +247,7 @@ mod zk {
                     assert_eq!(
                         rows.iter()
                             .filter(|row| {
-                                row.instruction.instruction_kind
-                                    == JoltInstructionKind::VirtualROTRI
+                                row.instruction_kind() == JoltInstructionKind::VirtualROTRI
                             })
                             .count(),
                         KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,

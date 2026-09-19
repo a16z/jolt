@@ -350,13 +350,15 @@ mod tests {
     use jolt_riscv::RV64IMAC_JOLT;
     use jolt_verifier::CommittedProgramPreprocessing;
 
-    use super::{committed_program_digest, from_shared, preprocess_committed};
+    use super::{
+        committed_program_digest, from_shared, preprocess_committed, DoryProverPreprocessing,
+    };
     use crate::JoltSharedPreprocessing;
 
-    fn assert_prover_preprocessing_round_trips(preprocessing: &super::DoryProverPreprocessing) {
+    fn assert_prover_preprocessing_round_trips(preprocessing: &DoryProverPreprocessing) {
         let encoded =
             bincode::serde::encode_to_vec(preprocessing, bincode::config::standard()).unwrap();
-        let (decoded, consumed): (super::DoryProverPreprocessing, usize) =
+        let (decoded, consumed): (DoryProverPreprocessing, usize) =
             bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
 
         assert_eq!(consumed, encoded.len());
