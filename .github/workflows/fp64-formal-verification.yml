@@ -1,0 +1,265 @@
+name: Fp64 formal verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fp64-formal-verification.yml"
+      - "crates/jolt-field/**"
+      - "proofs/hol-light/fp64-certified-builds.json"
+      - "proofs/hol-light/fp64_*"
+      - "proofs/hol-light/check-fp64.sh"
+      - "proofs/hol-light/dev-fp64.sh"
+      - "scripts/fp64_certified_matrix.py"
+      - "scripts/check_fp64_proof_artifacts.py"
+      - "scripts/tests/test_fp64_certified_matrix.py"
+      - "scripts/tests/test_check_fp64_proof_artifacts.py"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+  pull_request:
+    branches: ["**", main]
+    paths:
+      - ".github/workflows/fp64-formal-verification.yml"
+      - "crates/jolt-field/**"
+      - "proofs/hol-light/fp64-certified-builds.json"
+      - "proofs/hol-light/fp64_*"
+      - "proofs/hol-light/check-fp64.sh"
+      - "proofs/hol-light/dev-fp64.sh"
+      - "scripts/fp64_certified_matrix.py"
+      - "scripts/check_fp64_proof_artifacts.py"
+      - "scripts/tests/test_fp64_certified_matrix.py"
+      - "scripts/tests/test_check_fp64_proof_artifacts.py"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fp64-fuzz-aarch64:
+    name: Differential fuzz Linux AArch64 arithmetic
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Compare field operations with the integer oracle
+        working-directory: crates/jolt-field
+        run: cargo +nightly fuzz run --target aarch64-unknown-linux-gnu fp64_scalar_differential -- -max_total_time=120
+
+  fp64-fuzz-x86-64-bmi2:
+    name: Differential fuzz x86-64 BMI2 arithmetic
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Require BMI2
+        run: grep -Eq '(^|[[:space:]])bmi2([[:space:]]|$)' /proc/cpuinfo
+      - name: Compare field operations with the integer oracle
+        working-directory: crates/jolt-field
+        env:
+          RUSTFLAGS: -C target-feature=+bmi2
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu fp64_scalar_differential -- -max_total_time=120
+
+  certified-matrix:
+    name: Validate the registered build matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Validate the matrix and artifact checker
+        run: |
+          python3 scripts/fp64_certified_matrix.py validate
+          python3 -m unittest \
+            scripts.tests.test_fp64_certified_matrix \
+            scripts.tests.test_check_fp64_proof_artifacts
+
+      - name: Confirm that unregistered inputs fail closed
+        run: |
+          if python3 scripts/fp64_certified_matrix.py resolve \
+            --target-triple x86_64-pc-windows-msvc; then
+            echo "unregistered Windows target was accepted" >&2
+            exit 1
+          fi
+          if RUSTFLAGS="-C target-cpu=native" \
+            python3 scripts/fp64_certified_matrix.py check-environment \
+              --target-id x86_64-unknown-linux-gnu; then
+            echo "ambient Rust flags were accepted" >&2
+            exit 1
+          fi
+
+      - name: Confirm that proof linkage rejects profile drift
+        run: |
+          if cargo --config 'profile.release.lto="off"' check --locked \
+            -p jolt-field --release --target x86_64-unknown-linux-gnu \
+            --no-default-features --features solinas,fp64-proof-linkage \
+            --example fp64_production_witness; then
+            echo "release profile override was accepted" >&2
+            exit 1
+          fi
+
+  fp64-aarch64:
+    name: Prove Linux AArch64 add, sub, and mul
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install proof dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgmp-dev libpcre2-dev libstring-shellquote-perl llvm ocaml opam xdot
+          opam init --disable-sandboxing --yes
+
+      - name: Check out pinned proof libraries
+        run: |
+          git clone https://github.com/jrh13/hol-light.git "$RUNNER_TEMP/hol-light"
+          git -C "$RUNNER_TEMP/hol-light" checkout 433477862bb90b328a593e012e09390e99b2439b
+          git clone https://github.com/awslabs/s2n-bignum.git "$RUNNER_TEMP/s2n-bignum"
+          git -C "$RUNNER_TEMP/s2n-bignum" checkout ac31a43db30953037abd1b64b540e65cf31f4c67
+
+      - name: Build HOL Light as an OCaml module
+        working-directory: ${{ runner.temp }}/hol-light
+        run: |
+          make switch-5
+          eval "$(opam env --switch . --set-switch)"
+          HOLLIGHT_USE_MODULE=1 make -j2
+
+      - name: Check bytes and run HOL Light proofs
+        env:
+          HOL_LIGHT_DIR: ${{ runner.temp }}/hol-light
+          S2N_BIGNUM_DIR: ${{ runner.temp }}/s2n-bignum
+        run: |
+          env -u CARGO_INCREMENTAL -u RUSTFLAGS \
+            ./proofs/hol-light/check-fp64.sh all aarch64 \
+            --matrix-entry aarch64-unknown-linux-gnu \
+            --evidence-out "$RUNNER_TEMP/fp64-aarch64-linux-gnu.json" \
+            --clean
+
+      - name: Upload proof evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fp64-aarch64-linux-gnu-evidence
+          path: ${{ runner.temp }}/fp64-aarch64-linux-gnu.json
+          if-no-files-found: error
+
+  fp64-apple-silicon:
+    name: Prove Apple Silicon add, sub, and mul
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Confirm the native target
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(rustc -Vv | sed -n 's/^host: //p')" = aarch64-apple-darwin
+
+      - name: Install proof dependencies
+        run: |
+          brew install gmp llvm opam pcre2
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          opam init --disable-sandboxing --yes
+
+      - name: Check out pinned proof libraries
+        run: |
+          git clone https://github.com/jrh13/hol-light.git "$RUNNER_TEMP/hol-light"
+          git -C "$RUNNER_TEMP/hol-light" checkout 433477862bb90b328a593e012e09390e99b2439b
+          git clone https://github.com/awslabs/s2n-bignum.git "$RUNNER_TEMP/s2n-bignum"
+          git -C "$RUNNER_TEMP/s2n-bignum" checkout ac31a43db30953037abd1b64b540e65cf31f4c67
+
+      - name: Build HOL Light as an OCaml module
+        working-directory: ${{ runner.temp }}/hol-light
+        run: |
+          make switch-5
+          eval "$(opam env --switch . --set-switch)"
+          HOLLIGHT_USE_MODULE=1 make -j2
+
+      - name: Check bytes and run HOL Light proofs
+        env:
+          HOL_LIGHT_DIR: ${{ runner.temp }}/hol-light
+          S2N_BIGNUM_DIR: ${{ runner.temp }}/s2n-bignum
+        run: |
+          env -u CARGO_INCREMENTAL -u RUSTFLAGS \
+            ./proofs/hol-light/check-fp64.sh all aarch64 \
+            --matrix-entry aarch64-apple-darwin \
+            --evidence-out "$RUNNER_TEMP/fp64-aarch64-apple-darwin.json" \
+            --clean
+
+      - name: Upload proof evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fp64-aarch64-apple-darwin-evidence
+          path: ${{ runner.temp }}/fp64-aarch64-apple-darwin.json
+          if-no-files-found: error
+
+  fp64-x86-64:
+    name: Prove x86-64 baseline and BMI2 arithmetic
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install proof dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgmp-dev libpcre2-dev libstring-shellquote-perl llvm ocaml opam xdot
+          opam init --disable-sandboxing --yes
+
+      - name: Check out pinned proof libraries
+        run: |
+          git clone https://github.com/jrh13/hol-light.git "$RUNNER_TEMP/hol-light"
+          git -C "$RUNNER_TEMP/hol-light" checkout 433477862bb90b328a593e012e09390e99b2439b
+          git clone https://github.com/awslabs/s2n-bignum.git "$RUNNER_TEMP/s2n-bignum"
+          git -C "$RUNNER_TEMP/s2n-bignum" checkout ac31a43db30953037abd1b64b540e65cf31f4c67
+
+      - name: Build HOL Light as an OCaml module
+        working-directory: ${{ runner.temp }}/hol-light
+        run: |
+          make switch-5
+          eval "$(opam env --switch . --set-switch)"
+          HOLLIGHT_USE_MODULE=1 make -j2
+
+      - name: Check bytes and run HOL Light proofs
+        env:
+          HOL_LIGHT_DIR: ${{ runner.temp }}/hol-light
+          S2N_BIGNUM_DIR: ${{ runner.temp }}/s2n-bignum
+        run: |
+          env -u CARGO_INCREMENTAL -u RUSTFLAGS \
+            ./proofs/hol-light/check-fp64.sh all x86_64 \
+            --matrix-entry x86_64-unknown-linux-gnu \
+            --evidence-out "$RUNNER_TEMP/fp64-x86-64-linux-gnu.json" \
+            --clean
+
+      - name: Upload proof evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fp64-x86-64-linux-gnu-evidence
+          path: ${{ runner.temp }}/fp64-x86-64-linux-gnu.json
+          if-no-files-found: error

@@ -5,7 +5,7 @@ do not need prior HOL Light knowledge.
 
 ## The shape of the claim
 
-The x86-64 addition theorem has this simplified shape.
+The Fp128 x86-64 addition theorem has this simplified shape.
 
 ```ocaml
 !c a0 a1 b0 b1 pc.
@@ -25,6 +25,10 @@ The x86-64 addition theorem has this simplified shape.
 
 The actual theorem uses library names for each concept. The structure above is
 the same.
+
+The Fp64 theorem has the same structure with one word for each input and one
+word for the result. Its canonical precondition is `val a < 2^64 - 59` and
+`val b < 2^64 - 59`.
 
 ## Universal inputs
 
