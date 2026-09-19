@@ -1,6 +1,6 @@
 //! CSRRW (CSR Read-Write) — Write rs1 to CSR, read old value to rd.
 //!
-//! Encoding: csr[31:20] | rs1[19:15] | funct3=001[14:12] | rd[11:7] | opcode=1110011[6:0]
+//! Encoding: `csr[31:20] | rs1[19:15] | funct3=001[14:12] | rd[11:7] | opcode=1110011[6:0]`
 //!
 //! For ZeroOS: Single-core, no-interrupts, M-mode-only. Supports the following CSRs
 //! mapped to virtual registers for proof verification:

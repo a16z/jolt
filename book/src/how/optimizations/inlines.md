@@ -8,7 +8,7 @@ Jolt inlines are a unique optimization technique that replaces high-level operat
 
 **Native RISC-V Integration**: Inlines expand into sequences of RISC-V instructions that execute within the same trace as regular program code. This seamless integration eliminates the complexity of bridging between different proof systems.
 
-**Custom Instructions**: Jolt enables the creation of custom instructions that can accelerate common operations. These custom instructions must have structured multilinear extension (MLE) polynomials, meaning that they can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html) for details on structured MLEs). By ensuring all custom instructions maintain this property, Jolt achieves the performance benefits of specialized operations without sacrificing the simplicity of its proof system. This is the core innovation that distinguishes Jolt inlines from traditional precompiles or simple assembly optimizations - we compress complex operations into lookup-friendly instructions that remain fully verifiable within the main zkVM, eliminating the need for complex glue logic or separate constraint systems.
+**Custom Instructions**: Jolt enables the creation of custom instructions that can accelerate common operations. These custom instructions must have structured multilinear extension (MLE) polynomials, meaning that they can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../architecture/instruction_execution.md) for details on structured MLEs). By ensuring all custom instructions maintain this property, Jolt achieves the performance benefits of specialized operations without sacrificing the simplicity of its proof system. This is the core innovation that distinguishes Jolt inlines from traditional precompiles or simple assembly optimizations - we compress complex operations into lookup-friendly instructions that remain fully verifiable within the main zkVM, eliminating the need for complex glue logic or separate constraint systems.
 
 **Extended Register Set**: Inline sequences have access to additional virtual registers beyond the standard RISC-V register set (specifically registers 48--127, allocated via `allocate_for_inline()`). This expanded register space allows complex operations to maintain state in registers rather than memory, dramatically reducing load/store operations. See [virtual register layout](../architecture/registers.md#virtual-register-layout) for details.
 
@@ -171,7 +171,7 @@ This allows complex operations to maintain their working state in registers, eli
 
 ### 2. Custom Instructions
 
-Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key innovation here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../instruction-execution.html)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles.
+Jolt allows creation of custom instructions that can replace common multi-instruction patterns with a single operation. The key innovation here is that these instructions must have structured multilinear extensions (MLEs) that can be evaluated efficiently in small space (see [prefix-suffix sumcheck](../architecture/instruction_execution.md)). This is where the real performance gain comes from: by compressing operations into forms that work naturally with Jolt's lookup-based architecture, we achieve dramatic speedups without the complexity of traditional precompiles.
 
 This is fundamentally different from traditional assembly optimization - we're not just rearranging instructions, we're creating new ones that are specifically designed to be "lookupable" within Jolt's proof system. For example, the ROTRI (rotate right immediate) instruction replaces the three-instruction sequence `(x >> imm) | (x << (32-imm))` with a single cycle, while remaining fully verifiable through lookups because it maintains the structured MLE property.
 
@@ -206,7 +206,7 @@ When creating user-defined inlines, you must adhere to these critical requiremen
    - Use `funct3` for sub-instruction variants within your operation
 
 5. **MLE Structure**:
-   - All custom instructions must have structured multilinear extensions (see [prefix-suffix sumcheck](../instruction-execution.html))
+   - All custom instructions must have structured multilinear extensions (see [prefix-suffix sumcheck](../architecture/instruction_execution.md))
    - Complex operations may need to be broken down into simpler instructions that maintain this property
 
 ### Implementation Structure

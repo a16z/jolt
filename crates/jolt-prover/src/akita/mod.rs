@@ -15,6 +15,7 @@ use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
+pub mod preprocessing;
 mod prover;
 mod setup;
 pub use setup::one_hot_trace_setup_shape;

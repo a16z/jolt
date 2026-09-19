@@ -1,8 +1,7 @@
 use clap::{Parser, Subcommand};
-use jolt_sdk::guest::program::Program;
+use jolt_sdk::host::Program;
 use jolt_sdk::{
-    JoltDevice, JoltProverPreprocessing, JoltSharedPreprocessing, JoltVerifierPreprocessing,
-    MemoryConfig, MemoryLayout, ProgramPreprocessing, RV64IMACProof,
+    JoltDevice, JoltProverPreprocessing, JoltVerifierPreprocessing, MemoryConfig, RV64IMACProof,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
@@ -299,26 +298,17 @@ fn check_data_integrity(all_groups_data: &[u8]) -> (u32, u32) {
 
 fn preprocess_guest_prover(
     guest_prog: &mut Program,
+    memory_config: MemoryConfig,
     max_trace_length: usize,
     bytecode_chunk_count: Option<usize>,
-) -> JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS> {
-    if let Some(chunk_count) = bytecode_chunk_count {
-        let (bytecode, memory_init, program_size, e_entry) = guest_prog.decode();
-        let mut memory_config = guest_prog.memory_config;
-        memory_config.program_size = Some(program_size);
-        let memory_layout = MemoryLayout::new(&memory_config);
-        let program = ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry).unwrap();
-        let (shared, committed_program_prover_data, generators) =
-            JoltSharedPreprocessing::new_committed(
-                program,
-                memory_layout,
-                max_trace_length,
-                chunk_count,
-            );
-        JoltProverPreprocessing::new_committed(shared, committed_program_prover_data, generators)
-    } else {
-        jolt_sdk::guest::prover::preprocess(guest_prog, max_trace_length).unwrap()
-    }
+) -> JoltProverPreprocessing {
+    jolt_sdk::preprocess_program(
+        guest_prog,
+        memory_config,
+        max_trace_length,
+        bytecode_chunk_count,
+    )
+    .unwrap()
 }
 
 fn collect_guest_proofs(
@@ -344,21 +334,16 @@ fn collect_guest_proofs(
     info!("Building program...");
     program.build(target_dir);
     info!("Getting ELF contents...");
-    let elf_contents = program.get_elf_contents().unwrap();
-    info!("Creating guest program...");
-    let mut guest_prog = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
-    guest_prog.elf = program.elf;
-
     info!("Preprocessing guest prover...");
-    let guest_prover_preprocessing =
-        preprocess_guest_prover(&mut guest_prog, max_trace_length, bytecode_chunk_count);
+    let guest_prover_preprocessing = preprocess_guest_prover(
+        &mut program,
+        memory_config,
+        max_trace_length,
+        bytecode_chunk_count,
+    );
     info!("Preprocessing guest verifier...");
     let guest_verifier_preprocessing =
-        jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
-            jolt_sdk::F,
-            jolt_sdk::Curve,
-            jolt_sdk::PCS,
-        >(&guest_prover_preprocessing);
+        jolt_sdk::verifier_preprocessing_from_prover(&guest_prover_preprocessing);
 
     let inputs = guest.inputs();
     info!("Got inputs: {inputs:?}");
@@ -378,34 +363,21 @@ fn collect_guest_proofs(
 
         let now = Instant::now();
 
-        let mut output_bytes = vec![0; 4096];
-
         // Running tracing allows things like JOLT_BACKTRACE=1 to work properly
         info!("  Tracing...");
-        guest_prog.memory_config.program_size = Some(
-            guest_verifier_preprocessing
-                .program
-                .memory_layout()
-                .program_size,
-        );
-        let (_, _, _, device_io) = guest_prog.trace(&input_bytes, &[], &[]);
+        let (_, _, _, device_io) = program.trace(&input_bytes, &[], &[]);
         assert!(!device_io.panic, "Guest program panicked during tracing");
 
         info!("  Proving...");
-        let (proof, io_device, _debug): (RV64IMACProof, _, _) = jolt_sdk::guest::prover::prove::<
-            jolt_sdk::F,
-            jolt_sdk::Curve,
-            jolt_sdk::PCS,
-            jolt_sdk::ProofTranscript,
-        >(
-            &guest_prog,
+        let (proof, io_device): (RV64IMACProof, _) = jolt_sdk::prove_program(
+            &program,
+            &guest_prover_preprocessing,
             &input_bytes,
             &[],
             &[],
             None,
             None,
-            &mut output_bytes,
-            &guest_prover_preprocessing,
+            None,
         )
         .expect("prover should produce verifier-native proof");
         let prove_time = now.elapsed().as_secs_f64();
@@ -541,57 +513,28 @@ fn run_recursion_proof(
     program.set_std(true);
     program.set_memory_config(memory_config);
     program.build(target_dir);
-    let elf_contents = program.get_elf_contents().unwrap();
-    let mut recursion = jolt_sdk::guest::program::Program::new(&elf_contents, &memory_config);
-    recursion.elf = program.elf;
-
     if run_config == RunConfig::Trace || run_config == RunConfig::TraceToFile {
         // shorten the max_trace_length for tracing only. Speeds up setup time for tracing purposes.
         max_trace_length = 0;
     }
     let recursion_prover_preprocessing =
-        jolt_sdk::guest::prover::preprocess(&recursion, max_trace_length).unwrap();
+        preprocess_guest_prover(&mut program, memory_config, max_trace_length, None);
     let recursion_verifier_preprocessing =
-        jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover::<
-            jolt_sdk::F,
-            jolt_sdk::Curve,
-            jolt_sdk::PCS,
-        >(&recursion_prover_preprocessing);
+        jolt_sdk::verifier_preprocessing_from_prover(&recursion_prover_preprocessing);
 
-    // update program_size in memory_config now that we know it
-    recursion.memory_config.program_size = Some(
-        recursion_verifier_preprocessing
-            .program
-            .memory_layout()
-            .program_size,
-    );
-
-    let mut output_bytes = vec![
-        0;
-        recursion_verifier_preprocessing
-            .program
-            .memory_layout()
-            .max_output_size as usize
-    ];
     match run_config {
         RunConfig::Prove => {
-            let (proof, io_device, _debug): (RV64IMACProof, _, _) =
-                jolt_sdk::guest::prover::prove::<
-                    jolt_sdk::F,
-                    jolt_sdk::Curve,
-                    jolt_sdk::PCS,
-                    jolt_sdk::ProofTranscript,
-                >(
-                    &recursion,
-                    &input_bytes,
-                    &[],
-                    &[],
-                    None,
-                    None,
-                    &mut output_bytes,
-                    &recursion_prover_preprocessing,
-                )
-                .expect("prover should produce verifier-native proof");
+            let (proof, io_device): (RV64IMACProof, _) = jolt_sdk::prove_program(
+                &program,
+                &recursion_prover_preprocessing,
+                &input_bytes,
+                &[],
+                &[],
+                None,
+                None,
+                None,
+            )
+            .expect("prover should produce verifier-native proof");
             let is_valid =
                 jolt_sdk::jolt_verifier::verify::<
                     jolt_sdk::VerifierField,
@@ -600,19 +543,19 @@ fn run_recursion_proof(
                     jolt_sdk::VerifierTranscript,
                 >(&recursion_verifier_preprocessing, &io_device, &proof, None)
                 .is_ok();
-            let rv = postcard::from_bytes::<u32>(&output_bytes).unwrap();
+            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap();
             info!("  Recursion verification result: {rv}");
             info!("  Recursion verification result: {is_valid}");
         }
         RunConfig::Trace => {
             info!("  Trace-only mode: Skipping proof generation and verification.");
-            let (_, _, _, io_device) = recursion.trace(&input_bytes, &[], &[]);
+            let (_, _, _, io_device) = program.trace(&input_bytes, &[], &[]);
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
             info!("  Recursion output (trace-only): {rv}");
         }
         RunConfig::TraceToFile => {
             info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
-            let (_, io_device) = recursion.trace_to_file(
+            let (_, io_device) = program.trace_to_file(
                 &input_bytes,
                 &[],
                 &[],

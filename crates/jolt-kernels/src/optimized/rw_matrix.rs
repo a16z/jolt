@@ -1,6 +1,5 @@
 //! Sparse `(K × T)` read-write matrix for the RAM read-write-checking
-//! kernel, ported from `jolt-prover-legacy`'s `read_write_matrix` module
-//! (RAM entries; RAM has no one-hot coefficient lookup tables).
+//! kernel. RAM entries have no one-hot coefficient lookup tables.
 //!
 //! `ra(k, j)` and `val(k, j)` are conceptually `K × T` matrices, far too
 //! large to materialize. One entry exists per RAM access; everything else is
