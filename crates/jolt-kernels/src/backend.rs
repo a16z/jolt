@@ -24,6 +24,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
@@ -135,7 +136,8 @@ where
     pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
-    pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
+    pub spartan_product_uniskip:
+        Box<dyn UniskipKernel<F, ProductRemainder<F>, ProductUniskipInputClaims<F>>>,
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
