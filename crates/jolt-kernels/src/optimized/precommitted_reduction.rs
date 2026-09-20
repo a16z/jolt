@@ -65,7 +65,7 @@ use super::support::eq_table;
 use crate::committed_program::{
     build_committed_bytecode_chunk_coeffs, chunk_index_to_lane_cycle, program_image_words_padded,
 };
-use crate::opening::AdviceOpeningEvaluation;
+use crate::opening::{evaluate_program_image, RamInitialOpening, RamInitialOpeningEvaluation};
 use crate::precommitted_reduction::{
     lsb_permutation, permute_challenges, permute_coefficients, permute_tables,
     AddressReductionKernel, CycleReductionKernel, PrecommittedReductionCarry,
@@ -77,9 +77,9 @@ use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKern
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1 << 10;
 
-/// The precommitted cycle phases and the advice opening evaluation:
+/// The precommitted cycle phases and initial-RAM opening evaluations:
 /// `PrepareKernel` front of the four stage-6b cycle-phase slots plus the
-/// stage-4 `AdviceOpeningEvaluation` slot.
+/// stage-4 `RamInitialOpeningEvaluation` slot.
 pub struct OptimizedPrecommittedCycle;
 
 /// The stage-7 slot server for a precommitted address-phase relation `R`:
@@ -128,30 +128,39 @@ where
 
 // ---------------------------------------------------------------- advice
 
-impl<F: JoltField> AdviceOpeningEvaluation<F> for OptimizedPrecommittedCycle {
-    #[tracing::instrument(skip_all, name = "OptimizedAdviceOpeningEvaluation::evaluate", fields(kind = ?kind))]
+impl<F: JoltField> RamInitialOpeningEvaluation<F> for OptimizedPrecommittedCycle {
+    #[tracing::instrument(skip_all, name = "OptimizedRamInitialOpeningEvaluation::evaluate")]
     fn evaluate(
         &self,
         _session: &mut ProofSession,
-        kind: JoltAdviceKind,
-        point: &[F],
-        witness: &dyn JoltWitnessOracle<F>,
-    ) -> Result<F, KernelError<F>> {
-        let table = advice_table(witness, kind, point.len())?;
-        let eq = eq_table(point);
-        #[cfg(feature = "parallel")]
-        if table.len() >= PAR_THRESHOLD {
-            return Ok(table
-                .par_iter()
-                .zip(eq)
-                .map(|(value, weight)| *value * weight)
-                .sum());
-        }
-        Ok(table
+        openings: &[RamInitialOpening<'_, F>],
+        witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<Vec<F>, KernelError<F>> {
+        openings
             .iter()
-            .zip(&eq)
-            .map(|(value, weight)| *value * *weight)
-            .sum())
+            .map(|opening| match opening {
+                RamInitialOpening::ProgramImage { layout, point } => {
+                    Ok(evaluate_program_image(layout, point, witness))
+                }
+                RamInitialOpening::Advice { kind, point } => {
+                    let table = advice_table(witness, *kind, point.len())?;
+                    let eq = eq_table(point);
+                    #[cfg(feature = "parallel")]
+                    if table.len() >= PAR_THRESHOLD {
+                        return Ok(table
+                            .par_iter()
+                            .zip(eq)
+                            .map(|(value, weight)| *value * weight)
+                            .sum());
+                    }
+                    Ok(table
+                        .iter()
+                        .zip(&eq)
+                        .map(|(value, weight)| *value * *weight)
+                        .sum())
+                }
+            })
+            .collect()
     }
 }
 
@@ -1032,41 +1041,105 @@ mod tests {
         }
     }
 
-    /// The advice opening evaluation (stage 4) against the reference slot.
     #[test]
-    fn advice_opening_evaluation_matches_reference() {
+    fn initial_ram_openings_preserve_request_order_for_all_presence_combinations() {
         with_fixture(TracePolynomialOrder::CycleMajor, |backend, schedule| {
-            for kind in [JoltAdviceKind::Trusted, JoltAdviceKind::Untrusted] {
-                let vars = schedule
-                    .advice(kind)
-                    .unwrap()
-                    .precommitted()
-                    .poly_opening_round_permutation_be()
-                    .len();
-                let point = synthetic_point(vars, 71);
-                let reference_value = <ReferenceBackend as AdviceOpeningEvaluation<Fr>>::evaluate(
-                    &ReferenceBackend,
-                    &mut ProofSession::default(),
-                    kind,
-                    &point,
-                    backend,
+            // Address 5 is the fixture's third word (13), after its offset of 3.
+            let image_point = [fr(0), fr(0), fr(1), fr(0), fr(1)];
+            let trusted_point = synthetic_point(4, 71);
+            let untrusted_point = synthetic_point(3, 83);
+            let trusted_table: Vec<Fr> = backend
+                .oracle_table(ram_val_check_advice_opening(JoltAdviceKind::Trusted).polynomial_id())
+                .unwrap();
+            let untrusted_table: Vec<Fr> = backend
+                .oracle_table(
+                    ram_val_check_advice_opening(JoltAdviceKind::Untrusted).polynomial_id(),
                 )
                 .unwrap();
-                let optimized_value =
-                    <OptimizedPrecommittedCycle as AdviceOpeningEvaluation<Fr>>::evaluate(
+            let trusted = trusted_table
+                .iter()
+                .zip(eq_table(&trusted_point))
+                .map(|(value, weight)| *value * weight)
+                .sum();
+            let untrusted = untrusted_table
+                .iter()
+                .zip(eq_table(&untrusted_point))
+                .map(|(value, weight)| *value * weight)
+                .sum();
+            for mask in 0..8 {
+                let mut openings = Vec::new();
+                let mut expected = Vec::new();
+                if mask & 1 != 0 {
+                    openings.push(RamInitialOpening::ProgramImage {
+                        layout: schedule.program_image.as_ref().unwrap(),
+                        point: &image_point,
+                    });
+                    expected.push(fr(13));
+                }
+                if mask & 2 != 0 {
+                    openings.push(RamInitialOpening::Advice {
+                        kind: JoltAdviceKind::Untrusted,
+                        point: &untrusted_point,
+                    });
+                    expected.push(untrusted);
+                }
+                if mask & 4 != 0 {
+                    openings.push(RamInitialOpening::Advice {
+                        kind: JoltAdviceKind::Trusted,
+                        point: &trusted_point,
+                    });
+                    expected.push(trusted);
+                }
+                for _ in 0..2 {
+                    for evaluator in [
+                        &ReferenceBackend as &dyn RamInitialOpeningEvaluation<Fr>,
                         &OptimizedPrecommittedCycle,
-                        &mut ProofSession::default(),
-                        kind,
-                        &point,
-                        backend,
-                    )
-                    .unwrap();
-                assert_eq!(reference_value, optimized_value);
-                assert_ne!(
-                    reference_value,
-                    Fr::from_u64(0),
-                    "degenerate advice fixture"
-                );
+                    ] {
+                        assert_eq!(
+                            evaluator
+                                .evaluate(&mut ProofSession::default(), &openings, backend)
+                                .unwrap(),
+                            expected,
+                            "presence mask {mask}"
+                        );
+                    }
+                    openings.reverse();
+                    expected.reverse();
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn initial_program_image_uses_ram_offset_and_zero_padding() {
+        with_fixture(TracePolynomialOrder::CycleMajor, |backend, schedule| {
+            let layout = schedule.program_image.as_ref().unwrap();
+            let words = &backend.program_preprocessing().ram.bytecode_words;
+            for address in 0usize..(1 << IMAGE_RAM_VARS) {
+                let point: Vec<_> = (0..IMAGE_RAM_VARS)
+                    .rev()
+                    .map(|bit| fr(((address >> bit) & 1) as u64))
+                    .collect();
+                let openings = [RamInitialOpening::ProgramImage {
+                    layout,
+                    point: &point,
+                }];
+                let expected = address
+                    .checked_sub(IMAGE_START_INDEX)
+                    .and_then(|offset| words.get(offset))
+                    .copied()
+                    .unwrap_or(0);
+                for evaluator in [
+                    &ReferenceBackend as &dyn RamInitialOpeningEvaluation<Fr>,
+                    &OptimizedPrecommittedCycle,
+                ] {
+                    assert_eq!(
+                        evaluator
+                            .evaluate(&mut ProofSession::default(), &openings, backend)
+                            .unwrap(),
+                        vec![fr(expected)]
+                    );
+                }
             }
         });
     }

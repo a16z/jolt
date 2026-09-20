@@ -60,7 +60,7 @@ use jolt_sumcheck::RoundScheduler;
 
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
-use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+use crate::opening::{JointOpeningPolynomials, RamInitialOpeningEvaluation};
 use crate::uniskip::UniskipKernel;
 use crate::KernelError;
 
@@ -146,7 +146,7 @@ where
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
-    pub advice_opening: Box<dyn AdviceOpeningEvaluation<F>>,
+    pub ram_initial_openings: Box<dyn RamInitialOpeningEvaluation<F>>,
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
