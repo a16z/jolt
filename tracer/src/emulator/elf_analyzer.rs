@@ -53,7 +53,7 @@ pub struct SectionHeader {
     pub sh_addr: u64,
     pub sh_offset: u64,
     pub sh_size: u64,
-    _sh_link: u32,
+    pub sh_link: u32,
     _sh_info: u32,
     _sh_addralign: u64,
     _sh_entsize: u64,
@@ -491,7 +491,7 @@ impl ElfAnalyzer {
                 sh_addr,
                 sh_offset,
                 sh_size,
-                _sh_link: sh_link,
+                sh_link,
                 _sh_info: sh_info,
                 _sh_addralign: sh_addralign,
                 _sh_entsize: sh_entsize,
@@ -596,6 +596,28 @@ impl ElfAnalyzer {
             }
         }
         entries
+    }
+
+    /// Builds the symbol name -> address map of every symbol table section.
+    ///
+    /// Each symbol table resolves its names through the string table named by
+    /// its own `sh_link`, as the ELF spec requires; picking the first
+    /// `SHT_STRTAB` section instead can select `.shstrtab` (LLD emits it
+    /// before `.strtab`).
+    pub fn read_symbol_map(
+        &self,
+        header: &Header,
+        section_headers: &[SectionHeader],
+    ) -> FnvHashMap<String, u64> {
+        let mut map = FnvHashMap::default();
+        for symbol_table in section_headers.iter().filter(|s| s.sh_type == 2) {
+            let Some(string_table) = section_headers.get(symbol_table.sh_link as usize) else {
+                continue;
+            };
+            let entries = self.read_symbol_entries(header, &Vec::from([symbol_table]));
+            map.extend(self.create_symbol_map(&entries, string_table));
+        }
+        map
     }
 
     /// Reads strings from a string table section
