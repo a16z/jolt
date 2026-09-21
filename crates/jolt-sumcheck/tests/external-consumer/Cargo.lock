@@ -68,6 +68,8 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "num-traits",
+ "rand_core",
 ]
 
 [[package]]
