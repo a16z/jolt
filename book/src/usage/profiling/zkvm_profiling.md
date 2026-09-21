@@ -26,6 +26,9 @@ non-zero-knowledge proofs only; `akita` and `zk` cannot be enabled together.
 The Akita harness loads its schedule catalogs from
 `crates/jolt-akita/schedules/` by default. Set `JOLT_AKITA_SCHEDULE_DIR` to
 use another directory containing those `.aks` files.
+The CPU commitment backend reserves 8 MiB of scratch memory per worker; set
+`JOLT_AKITA_COMMIT_SCRATCH_BYTES_PER_WORKER` (a positive integer in bytes) to
+change that budget without changing protocol parameters.
 
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
