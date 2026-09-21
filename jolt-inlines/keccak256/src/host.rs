@@ -7,11 +7,12 @@ jolt_inlines_sdk::register_inlines! {
     trace_file: "keccak256_trace.joltinline",
     extension: jolt_inlines_sdk::host::InlineExtension::Keccak256,
     ops: [
-        Keccak256Permutation,
         Keccak256AbsorbPermutation,
         Keccak256InitAbsorbPermutation,
         Keccak256AbsorbPermutationUnaligned,
         Keccak256InitAbsorbPermutationUnaligned,
+        // Deprecated, legacy decode only: see `KECCAK256_FUNCT3`.
+        Keccak256Permutation,
     ],
 }
 

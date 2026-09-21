@@ -377,6 +377,10 @@ const fn pi_source((x, y): (usize, usize)) -> (usize, usize) {
 }
 
 /// Keccak-f[1600] over the 25 lanes at `rs1`, in place.
+///
+/// Deprecated: no in-repo caller emits this op (the SDK only ships the absorb
+/// variants); it stays registered so legacy guest sequences still decode. Do
+/// not emit it from new code.
 pub struct Keccak256Permutation;
 
 impl InlineOp for Keccak256Permutation {

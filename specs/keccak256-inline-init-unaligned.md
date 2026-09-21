@@ -19,7 +19,7 @@ Make `Keccak256::digest` the cheapest way to hash on the guest for every input a
 
 ### Invariants
 
-- Existing ops 0x00 and 0x01 keep their sequences byte-for-byte (the golden trace for them must not change).
+- Existing ops 0x00 and 0x01 keep their sequences byte-for-byte (the golden trace for them must not change). No funct3 is renumbered; 0x00 stays registered and decodable (deprecated, see Change 4).
 - `Keccak256::digest`, `update`, `finalize` return the same bytes as before for every input length and alignment.
 - No `u8` store on any `digest` path; the only sub-word memory traffic is the platform `memcpy` of the tail bytes.
 - Every sequence stays straight-line and inside the 80-register budget.
@@ -122,10 +122,19 @@ block[16]      |= 1u64 << 63;
 
 `Keccak256::finalize` (streaming path) pads the same way instead of `bytes[buffer_len] = 0x01; bytes[buffer_len + 1..].fill(0); bytes[135] |= 0x80`: clear the dead bytes of the partial word with `block[k] &= (1u64 << (8 * (len % 8))) - 1` where `k = len / 8` (a zero shift gives mask 0, i.e. the whole word), zero words `k + 1..17`, then the two ORs above. The streaming `update` may keep using the absorb variants; INIT on its first block is optional and out of scope.
 
+## Change 4: deprecate the 0x00 permutation, reorder the op list
+
+`Keccak256Permutation` (funct3 0x00, pure permutation, no block operand) has no in-repo caller: the SDK has only shipped `keccak256_absorb_permute` since #1749 fused the absorb, and the entry points above are all absorb variants. Guests built against older SDKs still emit it, so it is deprecated, not deleted.
+
+- Keep the op fully registered and decodable: `Keccak256Permutation` and its `InlineOp` impl, `KECCAK256_FUNCT3 = 0x00`, `KECCAK256_NAME`, its `InlineSpec` impl and direct-execution tests, its row-ratchet entry and the trace-file test all stay.
+- Deprecation by doc comment only: a `Deprecated:` note on the `Keccak256Permutation` struct (`sequence_builder.rs`) and on `KECCAK256_FUNCT3` / `KECCAK256_NAME` (`lib.rs`): no in-repo callers, kept so legacy guest sequences still decode, do not emit from new code. The repo has no `#[deprecated]` precedent and the `register_inlines!` `ops:` list cannot carry `#[expect(deprecated)]`, so the attribute would only turn the crate's own registration and tests red.
+- Order so the live ops read funct3-ascending and the deprecated op is last: `register_inlines! { ops: [AbsorbPermutation, InitAbsorbPermutation, AbsorbPermutationUnaligned, InitAbsorbPermutationUnaligned, Permutation] }` in `host.rs`, the `FUNCT3`/`NAME` constant pairs in `lib.rs`, and the KECCAK256 rows of the book table, with the 0x00 row marked deprecated.
+- Trace file: `store_inlines()` writes one section per op in `ops:` order, so the generated `keccak256_trace.joltinline` changes by section order only; every per-sequence byte slice is unchanged (checked by diffing the sections of a before/after dump). No `.joltinline` fixture is checked in and `test_keccak256_trace_file_matches_generated` writes and re-reads the 0x00 trace on the fly, so nothing is regenerated.
+
 ## Host side
 
 - `exec.rs`: reference models for the three new ops. INIT: `state = [0; 25]` then XOR the block and `execute_keccak_f`. Unaligned: read 18 aligned words from `block & !7` and apply the funnel shift above before XOR (or, equivalently for the model, read 136 bytes unaligned and convert little-endian); the direct-execution tests compare the emulated sequence with this model, so the model must define the exact memory the sequence touches.
-- `host.rs`: add the three ops to `register_inlines! { ops: [...] }`; regenerate the inline trace fixture the macro's `trace_file` refers to, the way sha2 did when `Sha256CompressionInitial` was added.
+- `host.rs`: add the three ops to `register_inlines! { ops: [...] }` in the order of Change 4. The macro's `trace_file` is generated on demand by `store_inlines()`, not checked in, so there is no fixture to regenerate.
 - `sequence_builder.rs`: three new `InlineOp` impls with `type Advice = NoAdvice`.
 
 ## Tests
@@ -147,7 +156,7 @@ cargo nextest run -p jolt-inlines-sdk --features host --cargo-quiet
 
 Report the trace-length delta of the `sha3-chain` profile before and after (`cargo run --release -p jolt-prover --features profiling -- profile --name sha3-chain --format none`; its guest calls `Keccak256::digest` on a 32-byte aligned input, i.e. the padded-INIT path, so the expected delta is about -36 rows per iteration), plus the ratchet numbers. Long and misaligned inputs are covered by the SDK test, not by a profile.
 
-PR against `main`, one PR, Conventional Commits title (CI enforces it), for example `feat(inlines): keccak256 INIT and unaligned-block variants, word-wise SDK padding`. No changes outside `jolt-inlines/keccak256`, `jolt-inlines/sdk` (only if a test helper needs a misaligned-`rs2` variant) and the book's inline table (`book/src/how/optimizations/inlines.md`: three new rows under KECCAK256).
+PR against `main`, one PR, Conventional Commits title (CI enforces it), for example `feat(inlines): keccak256 INIT and unaligned-block variants, word-wise SDK padding`. No changes outside `jolt-inlines/keccak256`, `jolt-inlines/sdk` (only if a test helper needs a misaligned-`rs2` variant) and the book's inline table (`book/src/how/optimizations/inlines.md`: three new rows under KECCAK256, ordered per Change 4).
 
 ## Downstream, not part of this PR
 

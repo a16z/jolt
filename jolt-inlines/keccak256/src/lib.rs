@@ -3,20 +3,24 @@
 #![cfg_attr(not(feature = "host"), no_std)]
 
 pub const INLINE_OPCODE: u32 = 0x0B;
-
-pub const KECCAK256_FUNCT3: u32 = 0x00;
-pub const KECCAK256_ABSORB_PERMUTE_FUNCT3: u32 = 0x01;
-pub const KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3: u32 = 0x02;
-pub const KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3: u32 = 0x03;
-pub const KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3: u32 = 0x04;
 pub const KECCAK256_FUNCT7: u32 = 0x01;
-pub const KECCAK256_NAME: &str = "KECCAK256_INLINE";
+
+pub const KECCAK256_ABSORB_PERMUTE_FUNCT3: u32 = 0x01;
 pub const KECCAK256_ABSORB_PERMUTE_NAME: &str = "KECCAK256_ABSORB_PERMUTE_INLINE";
+pub const KECCAK256_INIT_ABSORB_PERMUTE_FUNCT3: u32 = 0x02;
 pub const KECCAK256_INIT_ABSORB_PERMUTE_NAME: &str = "KECCAK256_INIT_ABSORB_PERMUTE_INLINE";
+pub const KECCAK256_ABSORB_PERMUTE_UNALIGNED_FUNCT3: u32 = 0x03;
 pub const KECCAK256_ABSORB_PERMUTE_UNALIGNED_NAME: &str =
     "KECCAK256_ABSORB_PERMUTE_UNALIGNED_INLINE";
+pub const KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_FUNCT3: u32 = 0x04;
 pub const KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_NAME: &str =
     "KECCAK256_INIT_ABSORB_PERMUTE_UNALIGNED_INLINE";
+/// Deprecated: the block-less permutation (`Keccak256Permutation`) has no
+/// in-repo callers; kept so legacy guest sequences still decode. Do not emit
+/// it from new code, use the absorb variants above.
+pub const KECCAK256_FUNCT3: u32 = 0x00;
+/// Deprecated, see [`KECCAK256_FUNCT3`].
+pub const KECCAK256_NAME: &str = "KECCAK256_INLINE";
 
 pub const NUM_LANES: usize = 25;
 pub const RATE_IN_BYTES: usize = 136;
