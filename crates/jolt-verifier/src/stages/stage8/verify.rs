@@ -81,7 +81,7 @@ where
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
-    PCS::Output: Clone + HomomorphicCommitment<F>,
+    PCS::Output: Clone + HomomorphicCommitment<F> + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -207,10 +207,18 @@ where
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
     transcript.append(&LabelWithCount(
+        b"rlc_point",
+        crate::num::u64_from_usize(pcs_opening_point.len()),
+    ));
+    for coordinate in pcs_opening_point.as_slice() {
+        coordinate.append_to_transcript(transcript);
+    }
+    transcript.append(&LabelWithCount(
         b"rlc_claims",
         crate::num::u64_from_usize(opening_claims.len()),
     ));
     for claim in &opening_claims {
+        claim.commitment.append_to_transcript(transcript);
         claim.evaluation.value.append_to_transcript(transcript);
     }
     let gamma_powers = transcript.challenge_scalar_powers(opening_claims.len());

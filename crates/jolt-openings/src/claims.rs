@@ -49,10 +49,17 @@ pub(crate) struct VerifierRlcClaims<'a, F: JoltField, C>(pub &'a [VerifierOpenin
 impl<F, C> AppendToTranscript for VerifierRlcClaims<'_, F, C>
 where
     F: JoltField,
+    C: AppendToTranscript,
 {
+    /// Binds every claim the batching challenge is drawn over.
+    ///
+    /// The commitment goes in alongside the value: the challenge weights the
+    /// commitments as well as the values, so a challenge drawn from the values
+    /// alone would let a prover pick a commitment after seeing it.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         transcript.append(&LabelWithCount(b"rlc_claims", self.0.len() as u64));
         for claim in self.0 {
+            claim.commitment.append_to_transcript(transcript);
             claim.evaluation.value.append_to_transcript(transcript);
         }
     }

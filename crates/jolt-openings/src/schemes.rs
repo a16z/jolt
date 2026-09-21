@@ -11,7 +11,7 @@ use std::{fmt::Debug, marker::PhantomData};
 use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::{JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::claims::{VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
@@ -478,7 +478,7 @@ type HomomorphicRlcSource<'a, F> = RlcSource<F, &'a (dyn MultilinearPoly<F> + 'a
 impl<PCS> BatchOpeningScheme for HomomorphicBatch<PCS>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Output: HomomorphicCommitment<PCS::Field>,
+    PCS::Output: HomomorphicCommitment<PCS::Field> + AppendToTranscript,
 {
     type Field = PCS::Field;
     type ProverSetup = PCS::ProverSetup;
@@ -566,7 +566,7 @@ where
 impl<PCS> HomomorphicBatch<PCS>
 where
     PCS: AdditivelyHomomorphic,
-    PCS::Output: HomomorphicCommitment<PCS::Field>,
+    PCS::Output: HomomorphicCommitment<PCS::Field> + AppendToTranscript,
 {
     fn combine_polynomials<'a>(
         polynomials: Vec<&'a (dyn MultilinearPoly<PCS::Field> + 'a)>,
@@ -631,8 +631,15 @@ where
 impl<F, C> AppendToTranscript for HomomorphicBatchStatement<'_, F, C>
 where
     F: JoltField,
+    C: AppendToTranscript,
 {
+    /// Binds the whole public statement before the batching challenge is drawn:
+    /// the shared opening point once, then each claim's commitment and value.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append(&LabelWithCount(b"rlc_point", self.point.len() as u64));
+        for coordinate in self.point.as_slice() {
+            coordinate.append_to_transcript(transcript);
+        }
         VerifierRlcClaims(self.claims).append_to_transcript(transcript);
     }
 }
@@ -640,7 +647,7 @@ where
 impl<PCS> ZkBatchOpeningScheme for HomomorphicBatch<PCS>
 where
     PCS: AdditivelyHomomorphic + ZkOpeningScheme,
-    PCS::Output: HomomorphicCommitment<PCS::Field>,
+    PCS::Output: HomomorphicCommitment<PCS::Field> + AppendToTranscript,
 {
     type Commitment = PCS::Output;
     type HidingCommitment = PCS::HidingCommitment;

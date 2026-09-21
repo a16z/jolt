@@ -6,15 +6,15 @@
 //! own stage-0 commitments where the verifier passes the proof's), the
 //! unified opening point and per-entry embedding scales are the verifier's
 //! own `final_opening_point` / `commitment_embedding_scale` math, and the
-//! whole transcript sequence — scaled-claim absorbs, one gamma-powers
-//! squeeze, the PCS opening, the final evaluation-claim absorb — is
-//! `HomomorphicBatch::prove_batch`, byte-identical to the verifier's inlined
-//! sequence. The prover-only work is the grid-embedded witness materialization
-//! (the backend's joint-opening slot; advice polynomials block-embed rather
-//! than prefix-embed) and the hint reordering + combination (stage 0 retains
-//! hints in proof-commitment order, advice hints included; the batch runs in
-//! final-opening order, and the ragged advice hints pad with identity rows in
-//! `combine_hints`).
+//! whole transcript sequence — the opening-point, commitment and
+//! scaled-claim absorbs, one gamma-powers squeeze, the PCS opening, the final
+//! evaluation-claim absorb — is `HomomorphicBatch::prove_batch`,
+//! byte-identical to the verifier's inlined sequence. The prover-only work
+//! is the grid-embedded witness materialization (the backend's joint-opening
+//! slot; advice polynomials block-embed rather than prefix-embed) and the
+//! hint reordering + combination (stage 0 retains hints in proof-commitment
+//! order, advice hints included; the batch runs in final-opening order, and
+//! the ragged advice hints pad with identity rows in `combine_hints`).
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
@@ -40,7 +40,7 @@ use jolt_openings::{
     VerifierOpeningClaim, ZkOpeningScheme,
 };
 use jolt_poly::Point;
-use jolt_transcript::Transcript;
+use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::proof::JoltCommitments;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
@@ -83,7 +83,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic + ZkOpeningScheme<Blind = F>,
-    PCS::Output: HomomorphicCommitment<F>,
+    PCS::Output: HomomorphicCommitment<F> + AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
 {
@@ -244,10 +244,11 @@ where
     drop(hint_by_id);
 
     // The transcript tails are twins of the verifier's two stage-8 arms:
-    // clear absorbs the scaled claims and opens transparently
-    // (`prove_batch`); ZK squeezes the gamma powers without any claim
-    // absorption and opens in hiding mode (`prove_batch_zk`), retaining the
-    // joint evaluation and blind for BlindFold.
+    // clear absorbs the opening point and each commitment with its scaled
+    // claim, then opens transparently (`prove_batch`); ZK squeezes the gamma
+    // powers without any claim absorption and opens in hiding mode
+    // (`prove_batch_zk`), retaining the joint evaluation and blind for
+    // BlindFold.
     #[cfg(not(feature = "zk"))]
     {
         let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
