@@ -69,7 +69,7 @@ Before making any changes, present a summary to the user:
    - **New page(s) warranted** — describe what the new page would cover and where it fits in SUMMARY.md
 3. **Proposed changes**: For each doc file you plan to modify or create, describe specifically what you'll change
 
-Wait for user confirmation before proceeding to Step 5.
+If the user requested documentation edits, proceed to Step 5. If they requested only analysis or required approval before edits, stop after the findings and await authorization.
 
 ## Step 5: Make the changes
 

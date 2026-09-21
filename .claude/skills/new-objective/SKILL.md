@@ -12,7 +12,7 @@ This skill handles all the boilerplate: creating the objective struct, implement
 
 <Execution_Policy>
 - The user must provide an objective name (lowercase with underscores, e.g. `cyclomatic_complexity`).
-- Ask the user what is being measured and whether it's a static analysis or performance objective.
+- Use the request, spec, and repository context to identify the measurement and objective kind; ask only for missing requirements.
 - Follow existing patterns exactly — study lloc.rs (static analysis) and binding.rs (performance) as models.
 - Always run clippy and tests before reporting success.
 </Execution_Policy>
@@ -22,7 +22,7 @@ This skill handles all the boilerplate: creating the objective struct, implement
 ## Phase 1: Gather Requirements
 
 1. Validate the argument `{{ARGUMENTS}}`: must be a valid Rust identifier (lowercase alphanumeric + underscores). Reject otherwise.
-2. Ask the user:
+2. Gather these requirements from existing context; ask the user only for missing information:
    - What is being measured? (becomes the `description()`)
    - Is this a **static analysis** objective or a **performance** objective?
      - Static analysis: computes a metric by analyzing source code (e.g. lines of code, complexity). Overrides `collect_measurement()`, uses `Setup = ()`.
