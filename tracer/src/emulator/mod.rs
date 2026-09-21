@@ -227,8 +227,6 @@ impl Emulator {
         let section_headers = analyzer.read_section_headers(&header);
 
         let mut program_data_section_headers = vec![];
-        let mut symbol_table_section_headers = vec![];
-        let mut string_table_section_headers = vec![];
 
         for header in &section_headers {
             match header.sh_type {
@@ -237,26 +235,13 @@ impl Emulator {
                 // SHT_FINI_ARRAY (15): .fini_array - destructor function pointers
                 // SHT_PREINIT_ARRAY (16): .preinit_array - early constructor pointers
                 1 | 14 | 15 | 16 => program_data_section_headers.push(header),
-                2 => symbol_table_section_headers.push(header),
-                3 => string_table_section_headers.push(header),
                 _ => {}
             };
         }
 
-        // AZ: It seems that string and symbol tables are not being used. I expected them to be loaded
-        // in the CPU memory just like the program data sections.
-
         // Creates symbol - virtual address mapping
-        if !string_table_section_headers.is_empty() {
-            let entries = analyzer.read_symbol_entries(&header, &symbol_table_section_headers);
-            // Assuming symbols are in the first string table section.
-            // @TODO: What if symbol can be in the second or later string table sections?
-            let map = analyzer.create_symbol_map(&entries, string_table_section_headers[0]);
-            for key in map.keys() {
-                self.symbol_map
-                    .insert(key.to_string(), *map.get(key).unwrap());
-            }
-        }
+        self.symbol_map
+            .extend(analyzer.read_symbol_map(&header, &section_headers));
 
         // Find tohost, begin_signature, and end_signature addresses from symbol map since they are all global labels
         self.tohost_addr = self.symbol_map.get("tohost").copied().unwrap_or(0);
@@ -400,5 +385,89 @@ impl Emulator {
             begin_signature_addr: self.begin_signature_addr,
             end_signature_addr: self.end_signature_addr,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::emulator::terminal::DummyTerminal;
+
+    const TOHOST: u64 = RAM_START_ADDRESS + 0x1000;
+
+    /// Minimal RV64 ELF whose `.shstrtab` precedes `.strtab`, the section
+    /// order LLD emits (GNU ld emits `.strtab` first). The symbol table's
+    /// `sh_link` names `.strtab`, which is where `tohost` lives.
+    fn elf_with_shstrtab_before_strtab() -> Vec<u8> {
+        const EHDR: usize = 64;
+        const SHDR: usize = 64;
+        let shstrtab: &[u8] = b"\0.tohost\0.symtab\0.shstrtab\0.strtab\0";
+        let strtab: &[u8] = b"\0tohost\0";
+        let mut symtab = vec![0u8; 24]; // null symbol
+        let mut sym = [0u8; 24];
+        sym[0..4].copy_from_slice(&1u32.to_le_bytes()); // st_name: "tohost"
+        sym[4] = 0x10; // STB_GLOBAL | STT_NOTYPE, like an assembler label
+        sym[6..8].copy_from_slice(&1u16.to_le_bytes()); // st_shndx: .tohost
+        sym[8..16].copy_from_slice(&TOHOST.to_le_bytes()); // st_value
+        symtab.extend_from_slice(&sym);
+        let tohost_data = [0u8; 8];
+
+        let mut data = Vec::new();
+        let mut place = |bytes: &[u8]| {
+            let offset = EHDR + data.len();
+            data.extend_from_slice(bytes);
+            offset as u64
+        };
+        let tohost_off = place(&tohost_data);
+        let symtab_off = place(&symtab);
+        let shstrtab_off = place(shstrtab);
+        let strtab_off = place(strtab);
+        let shoff = EHDR + data.len();
+
+        let mut elf = vec![0u8; EHDR];
+        elf[0..4].copy_from_slice(b"\x7fELF");
+        elf[4] = 2; // ELFCLASS64
+        elf[5] = 1; // little endian
+        elf[6] = 1; // EV_CURRENT
+        elf[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+        elf[18..20].copy_from_slice(&243u16.to_le_bytes()); // EM_RISCV
+        elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+        elf[24..32].copy_from_slice(&RAM_START_ADDRESS.to_le_bytes()); // e_entry
+        elf[40..48].copy_from_slice(&(shoff as u64).to_le_bytes()); // e_shoff
+        elf[52..54].copy_from_slice(&(EHDR as u16).to_le_bytes()); // e_ehsize
+        elf[58..60].copy_from_slice(&(SHDR as u16).to_le_bytes()); // e_shentsize
+        elf[60..62].copy_from_slice(&5u16.to_le_bytes()); // e_shnum
+        elf[62..64].copy_from_slice(&3u16.to_le_bytes()); // e_shstrndx
+        elf.extend_from_slice(&data);
+
+        let mut section = |name: u32, ty: u32, addr: u64, offset: u64, size: usize, link: u32| {
+            let mut shdr = [0u8; SHDR];
+            shdr[0..4].copy_from_slice(&name.to_le_bytes());
+            shdr[4..8].copy_from_slice(&ty.to_le_bytes());
+            shdr[16..24].copy_from_slice(&addr.to_le_bytes());
+            shdr[24..32].copy_from_slice(&offset.to_le_bytes());
+            shdr[32..40].copy_from_slice(&(size as u64).to_le_bytes());
+            shdr[40..44].copy_from_slice(&link.to_le_bytes());
+            elf.extend_from_slice(&shdr);
+        };
+        section(0, 0, 0, 0, 0, 0); // SHN_UNDEF
+        section(1, 1, TOHOST, tohost_off, tohost_data.len(), 0); // [1] .tohost
+        section(9, 2, 0, symtab_off, symtab.len(), 4); // [2] .symtab, sh_link -> [4]
+        section(17, 3, 0, shstrtab_off, shstrtab.len(), 0); // [3] .shstrtab
+        section(27, 3, 0, strtab_off, strtab.len(), 0); // [4] .strtab
+        elf
+    }
+
+    /// Symbol names must be resolved through the symbol table's own string
+    /// table (`sh_link`), not whichever `SHT_STRTAB` section comes first.
+    #[test]
+    fn resolves_symbols_through_symtab_sh_link() {
+        let mut emulator = Emulator::new(Box::new(DummyTerminal::default()));
+        emulator.setup_program(&elf_with_shstrtab_before_strtab());
+        assert_eq!(
+            emulator.get_address_of_symbol(&"tohost".to_string()),
+            Some(TOHOST)
+        );
+        assert_eq!(emulator.tohost_addr, TOHOST);
     }
 }
