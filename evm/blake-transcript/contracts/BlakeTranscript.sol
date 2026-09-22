@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+/// @dev Reverses eight bytes for the hash counter and transcript length encodings.
+function reverse64(uint64 value) pure returns (uint64) {
+    value = ((value & 0x00ff00ff00ff00ff) << 8) | ((value >> 8) & 0x00ff00ff00ff00ff);
+    value = ((value & 0x0000ffff0000ffff) << 16) | ((value >> 16) & 0x0000ffff0000ffff);
+    return (value << 32) | (value >> 32);
+}
+
 /// @notice Unkeyed BLAKE2b-512 using the EIP-152 compression precompile.
 library Blake2b512 {
     error CompressionFailed();
@@ -35,8 +42,14 @@ library Blake2b512 {
                 mcopy(add(args, 100), add(add(input, 32), offset), size)
             }
             offset += size;
-            for (uint256 i; i < 8; ++i) args[196 + i] = bytes1(uint8(offset >> (8 * i)));
-            args[212] = last ? bytes1(0x01) : bytes1(0x00);
+            uint64 counter = reverse64(uint64(offset));
+            // Payload 192..223 fits the padded allocation. Preserve message bytes
+            // 192..195; write the low counter, zero high counter, then final flag.
+            assembly ("memory-safe") {
+                let tail := add(args, 224)
+                let message := and(mload(tail), shl(224, 0xffffffff))
+                mstore(tail, or(message, or(shl(160, and(counter, 0xffffffffffffffff)), shl(88, iszero(iszero(last))))))
+            }
             bool success;
             uint256 returned;
             assembly ("memory-safe") {
@@ -139,8 +152,7 @@ library Bn254WideBlake {
     uint256 internal constant MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     function little64(uint64 value) private pure returns (bytes memory out) {
-        out = new bytes(8);
-        for (uint256 i; i < 8; ++i) out[i] = bytes1(uint8(value >> (8 * i)));
+        out = abi.encodePacked(bytes8(reverse64(value)));
     }
 
     function append(BlakeHashSponge.State memory s, bytes memory data) internal view {

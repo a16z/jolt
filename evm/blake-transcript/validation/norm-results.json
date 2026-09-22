@@ -22,7 +22,7 @@
   },
   "node": "v26.5.0",
   "sourceHashes": {
-    "BlakeTranscript.sol": "2c72b59d9b640b2947db7f6952b61b917489d435411ed36f49df9abc0b6c3d6e",
+    "BlakeTranscript.sol": "03cfeeb37a18191a05433a04f2b4e0fae89633a3d4be0eb0d057ef880298d596",
     "SpartanAlgebra.sol": "18180836b99fa7caee0fd36ac6878399f37b26e122a13308b1d5f59f0fed5b2e",
     "SpartanDecodeModule.sol": "eecaeeedbf31bfafe19adca0042592d37cd8b119e5d171e593e48da606887f91",
     "SpartanInputs.sol": "1ae924baae7e0f0fcc6a84880be82987d0bca6e2fe57bceca420319bdf3bd53f",
@@ -30,84 +30,84 @@
     "SpartanPrefixModule.sol": "e811c8b02121b84e147b5f2b52abad368c4b2f8fe4218ca83d582308f1e6879e",
     "SpartanPublicOpening.sol": "a67abc7fa05dc8247ce09a78908536c2d47323d246dbe03612d2e7d913c92ebe",
     "SpartanSparseModule.sol": "324cd19f8829f35cd84f5e7520a356180953398473ce9237dc4f09ddc079dded",
-    "SpartanModulePolicy.sol": "13fb573bd2e481caff77621242253a049185f2710851541a86f55d390d1e28e0",
+    "SpartanModulePolicy.sol": "85b887dd4346a6cfb416f0963d9f601a1a14f1acad73d2daf5839820a0293fa9",
     "SpartanSparseCoordinator.sol": "fb6273264bbb0b1ebfb8077fa22e6b102d5005ba7778bcc336788bbe93f57940",
     "SpartanLeafCoordinator.sol": "8a08361cc275a72ffcf2877bc8380ba82c7263d93680827766f83bdb2047579c",
     "SpartanVerifier.sol": "8d004a943e0cc62cf9c401a05b9324aeb9722b4013b45e040a013bce711d5e2b"
   },
   "codeHashes": [
-    "3a78cfce520ea0d26df63b5bd54c40e0e1c838e92745457acc2adeab255aec40",
-    "acfbd7b1b5d57d9959a5fcdc4746d39064c7ff05220ce52fcfafda40c80a57cd",
-    "145ca2c5e6393da3fd20f260be5954b337430fa8e12142920d6196fa9667554a",
-    "5378fd2a74499f9fc910872ccbc4d071e022bfe3d9c825c40d455d901a4e63d5"
+    "c595d60f68f322a4bab542c96a5982df80a464a029516e53fb33e4df180ee294",
+    "6122b6029906dfbb0f4d023561cdcce899549321e6320eb2dbd1aeaa20f716d6",
+    "5009f5f9acd52faa5f3bd950e9639404190787ba18de339fe82ff4f71ec8d7d3",
+    "5c15c80de25ff4806ab2027fefdc1dd525e001ce9d85255d2a3a874012368684"
   ],
   "runtimeBytes": {
-    "SpartanDecodeModule": 13692,
-    "SpartanPrefixModule": 13131,
-    "SpartanSparseModule": 12917,
-    "SpartanLeafModule": 15302,
+    "SpartanDecodeModule": 13651,
+    "SpartanPrefixModule": 13103,
+    "SpartanSparseModule": 12889,
+    "SpartanLeafModule": 16926,
     "SpartanVerifier": 5616
   },
   "deployments": [
     {
       "name": "SpartanDecodeModule",
-      "executionGas": "2741389",
+      "executionGas": "2733181",
       "transaction": {
-        "bytes": 13718,
-        "zeroBytes": 276,
-        "nonzeroBytes": 13442,
-        "intrinsicGas": 270034,
-        "floorGas": 561440,
-        "estimatedTransactionGas": "3011423"
+        "bytes": 13677,
+        "zeroBytes": 292,
+        "nonzeroBytes": 13385,
+        "intrinsicGas": 269184,
+        "floorGas": 559320,
+        "estimatedTransactionGas": "3002365"
       },
       "exception": null,
       "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
-      "actualRuntimeKeccak": "3a78cfce520ea0d26df63b5bd54c40e0e1c838e92745457acc2adeab255aec40"
+      "actualRuntimeKeccak": "c595d60f68f322a4bab542c96a5982df80a464a029516e53fb33e4df180ee294"
     },
     {
       "name": "SpartanPrefixModule",
-      "executionGas": "2629059",
+      "executionGas": "2623451",
       "transaction": {
-        "bytes": 13157,
-        "zeroBytes": 74,
-        "nonzeroBytes": 13083,
-        "intrinsicGas": 263448,
-        "floorGas": 545060,
-        "estimatedTransactionGas": "2892507"
+        "bytes": 13129,
+        "zeroBytes": 92,
+        "nonzeroBytes": 13037,
+        "intrinsicGas": 262782,
+        "floorGas": 543400,
+        "estimatedTransactionGas": "2886233"
       },
       "exception": null,
       "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
-      "actualRuntimeKeccak": "acfbd7b1b5d57d9959a5fcdc4746d39064c7ff05220ce52fcfafda40c80a57cd"
+      "actualRuntimeKeccak": "6122b6029906dfbb0f4d023561cdcce899549321e6320eb2dbd1aeaa20f716d6"
     },
     {
       "name": "SpartanSparseModule",
-      "executionGas": "2586206",
+      "executionGas": "2580598",
       "transaction": {
-        "bytes": 12943,
-        "zeroBytes": 74,
-        "nonzeroBytes": 12869,
-        "intrinsicGas": 260010,
-        "floorGas": 536500,
-        "estimatedTransactionGas": "2846216"
+        "bytes": 12915,
+        "zeroBytes": 93,
+        "nonzeroBytes": 12822,
+        "intrinsicGas": 259332,
+        "floorGas": 534810,
+        "estimatedTransactionGas": "2839930"
       },
       "exception": null,
       "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
-      "actualRuntimeKeccak": "145ca2c5e6393da3fd20f260be5954b337430fa8e12142920d6196fa9667554a"
+      "actualRuntimeKeccak": "5009f5f9acd52faa5f3bd950e9639404190787ba18de339fe82ff4f71ec8d7d3"
     },
     {
       "name": "SpartanLeafModule",
-      "executionGas": "3063786",
+      "executionGas": "3388985",
       "transaction": {
-        "bytes": 15328,
-        "zeroBytes": 64,
-        "nonzeroBytes": 15264,
-        "intrinsicGas": 298438,
-        "floorGas": 632200,
-        "estimatedTransactionGas": "3362224"
+        "bytes": 16952,
+        "zeroBytes": 79,
+        "nonzeroBytes": 16873,
+        "intrinsicGas": 324344,
+        "floorGas": 696710,
+        "estimatedTransactionGas": "3713329"
       },
       "exception": null,
       "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
-      "actualRuntimeKeccak": "5378fd2a74499f9fc910872ccbc4d071e022bfe3d9c825c40d455d901a4e63d5"
+      "actualRuntimeKeccak": "5c15c80de25ff4806ab2027fefdc1dd525e001ce9d85255d2a3a874012368684"
     },
     {
       "name": "SpartanVerifier",
@@ -122,7 +122,7 @@
       },
       "exception": null,
       "address": "0x47c5e40890bce4a473a49d7501808b9633f29782",
-      "actualRuntimeKeccak": "d94067a5fbdfd032a40274fe23fd6ea133f542e47cd70b7831d17b76b42ca5e4"
+      "actualRuntimeKeccak": "17eae8b59077681133b409841ae26b78e5e6767dcc1c5a93a58dcc125a606e30"
     }
   ],
   "records": [
@@ -133,29 +133,36 @@
           "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
           "inputBytes": 55620,
           "gasForwarded": "29503031",
-          "executionGas": "2627620",
+          "executionGas": "2544719",
           "outputBytes": 68416
         },
         {
           "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
           "inputBytes": 124132,
-          "gasForwarded": "26434950",
-          "executionGas": "2869763",
+          "gasForwarded": "26516556",
+          "executionGas": "1997061",
           "outputBytes": 1792
         },
         {
           "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
           "inputBytes": 124836,
-          "gasForwarded": "23425779",
-          "executionGas": "23425779",
+          "gasForwarded": "24366450",
+          "executionGas": "22743489",
+          "outputBytes": 2752
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 128676,
+          "gasForwarded": "1778067",
+          "executionGas": "1778067",
           "outputBytes": 0
         }
       ],
       "messageFailures": [
         {
-          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
-          "inputBytes": 124836,
-          "gasForwarded": "23425779",
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 128676,
+          "gasForwarded": "1778067",
           "error": "out of gas"
         },
         {
@@ -165,9 +172,9 @@
           "error": "revert"
         }
       ],
-      "coordinatorExecutionGas": "705045",
+      "coordinatorExecutionGas": "908482",
       "accepted": false,
-      "executionGas": "29628207",
+      "executionGas": "29971818",
       "exception": "revert",
       "returnHex": "",
       "calldataBytes": 55812,
@@ -177,7 +184,7 @@
         "nonzeroBytes": 54866,
         "intrinsicGas": 902640,
         "floorGas": 2225100,
-        "estimatedTransactionGas": "30530847"
+        "estimatedTransactionGas": "30874458"
       }
     },
     {
@@ -187,35 +194,35 @@
           "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
           "inputBytes": 55620,
           "gasForwarded": "196846781",
-          "executionGas": "2627620",
+          "executionGas": "2544719",
           "outputBytes": 68416
         },
         {
           "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
           "inputBytes": 124132,
-          "gasForwarded": "193778700",
-          "executionGas": "2869763",
+          "gasForwarded": "193860306",
+          "executionGas": "1997061",
           "outputBytes": 1792
         },
         {
           "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
           "inputBytes": 124836,
-          "gasForwarded": "190769529",
-          "executionGas": "29889231",
+          "gasForwarded": "191710200",
+          "executionGas": "22743489",
           "outputBytes": 2752
         },
         {
           "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
           "inputBytes": 128676,
-          "gasForwarded": "161147056",
-          "executionGas": "5504093",
+          "gasForwarded": "169121817",
+          "executionGas": "4442011",
           "outputBytes": 32
         }
       ],
       "messageFailures": [],
       "coordinatorExecutionGas": "908706",
       "accepted": true,
-      "executionGas": "41799413",
+      "executionGas": "32635986",
       "exception": null,
       "returnHex": "00000000000000000000000000000000000000000000000000000000000000019102daab5a069af8b626bd80cfb79d3043c9c04b42ad11d8046a2fd060258b8a",
       "calldataBytes": 55812,
@@ -225,7 +232,7 @@
         "nonzeroBytes": 54866,
         "intrinsicGas": 902640,
         "floorGas": 2225100,
-        "estimatedTransactionGas": "42702053"
+        "estimatedTransactionGas": "33538626"
       }
     },
     {
@@ -235,14 +242,14 @@
           "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
           "inputBytes": 55620,
           "gasForwarded": "196846781",
-          "executionGas": "2627620",
+          "executionGas": "2544719",
           "outputBytes": 68416
         },
         {
           "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
           "inputBytes": 124132,
-          "gasForwarded": "193778700",
-          "executionGas": "850320",
+          "gasForwarded": "193860306",
+          "executionGas": "561146",
           "outputBytes": 4
         }
       ],
@@ -250,7 +257,7 @@
         {
           "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
           "inputBytes": 124132,
-          "gasForwarded": "193778700",
+          "gasForwarded": "193860306",
           "error": "revert"
         },
         {
@@ -262,7 +269,7 @@
       ],
       "coordinatorExecutionGas": "517875",
       "accepted": false,
-      "executionGas": "3995815",
+      "executionGas": "3623740",
       "exception": "revert",
       "returnHex": "1b1335ec",
       "calldataBytes": 55812,
@@ -272,7 +279,7 @@
         "nonzeroBytes": 54865,
         "intrinsicGas": 902628,
         "floorGas": 2225070,
-        "estimatedTransactionGas": "4898443"
+        "estimatedTransactionGas": "4526368"
       }
     },
     {
@@ -282,14 +289,14 @@
           "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
           "inputBytes": 55620,
           "gasForwarded": "196846781",
-          "executionGas": "2627620",
+          "executionGas": "2544719",
           "outputBytes": 68416
         },
         {
           "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
           "inputBytes": 124132,
-          "gasForwarded": "193778700",
-          "executionGas": "850320",
+          "gasForwarded": "193860306",
+          "executionGas": "561146",
           "outputBytes": 4
         }
       ],
@@ -297,7 +304,7 @@
         {
           "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
           "inputBytes": 124132,
-          "gasForwarded": "193778700",
+          "gasForwarded": "193860306",
           "error": "revert"
         },
         {
@@ -309,7 +316,7 @@
       ],
       "coordinatorExecutionGas": "517875",
       "accepted": false,
-      "executionGas": "3995815",
+      "executionGas": "3623740",
       "exception": "revert",
       "returnHex": "1b1335ec",
       "calldataBytes": 55812,
@@ -319,7 +326,7 @@
         "nonzeroBytes": 54867,
         "intrinsicGas": 902652,
         "floorGas": 2225130,
-        "estimatedTransactionGas": "4898467"
+        "estimatedTransactionGas": "4526392"
       }
     }
   ],
@@ -329,7 +336,7 @@
     "nonzeroBytes": 54866,
     "intrinsicGas": 902640,
     "floorGas": 2225100,
-    "estimatedTransactionGas": "42702053"
+    "estimatedTransactionGas": "33538626"
   },
   "warmness": "Prague, precompiles05/06/07/08/09 warm; module accounts cold then warmed by EXTCODEHASH; execution measured by runCall excludes tx processing",
   "provenance": {
