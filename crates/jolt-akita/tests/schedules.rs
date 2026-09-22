@@ -5,14 +5,17 @@
 
 //! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
 
-use akita_config::{SetupRequirements, TrustedScheduleCatalog};
+use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    FoldSchedule, PolynomialGroupLayout,
+    ChunkedWitnessCfg, FoldSchedule, PolynomialGroupLayout,
 };
-use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use jolt_akita::configs::{
+    JoltDenseBounded, JoltOneHotK16, JoltOneHotK16MultiChunk, JoltOneHotK256,
+    JoltOneHotK256MultiChunk,
+};
 use jolt_akita::schedule_registry::{
     dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
 };
@@ -37,6 +40,12 @@ fn one_hot_catalog(one_hot_k: usize) -> ValidatedScheduleCatalog {
         .expect("one-hot catalog")
 }
 
+fn one_hot_multi_chunk_catalog(one_hot_k: usize) -> ValidatedScheduleCatalog {
+    artifacts()
+        .one_hot_multi_chunk_catalog(one_hot_k)
+        .expect("multi-chunk one-hot catalog")
+}
+
 #[test]
 fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (catalog, num_vars) in [
@@ -50,6 +59,55 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
                 .resolve_key(&AkitaScheduleLookupKey::single(*key))
                 .expect("reachable scalar shape must resolve");
             assert!(resolved.profiles().precommitteds.is_empty());
+            assert_eq!(
+                resolved.schedule().root.params.witness_chunk,
+                ChunkedWitnessCfg::default_non_chunked()
+            );
+            assert!(resolved.schedule().recursive_folds.iter().all(|level| {
+                level.params.witness_chunk == ChunkedWitnessCfg::default_non_chunked()
+            }));
+        }
+        assert_eq!(catalog.len(), grid.len());
+    }
+}
+
+#[test]
+fn multi_chunk_catalogs_cover_the_w8r2_grid() {
+    for (catalog, num_vars, family_name) in [
+        (
+            one_hot_multi_chunk_catalog(AKITA_ONE_HOT_K16),
+            (16, K16_NUM_VARS.1),
+            JoltOneHotK16MultiChunk::schedule_family_name(),
+        ),
+        (
+            one_hot_multi_chunk_catalog(AKITA_ONE_HOT_K256),
+            (16, K256_NUM_VARS.1),
+            JoltOneHotK256MultiChunk::schedule_family_name(),
+        ),
+    ] {
+        assert_eq!(catalog.family_name(), family_name);
+        let grid = keys(ONE_HOT_TRACE_NUM_POLYS, num_vars);
+        for key in &grid {
+            let schedule = catalog
+                .resolve_key(&AkitaScheduleLookupKey::single(*key))
+                .expect("reachable multi-chunk shape must resolve")
+                .schedule();
+            assert_eq!(
+                schedule.root.params.witness_chunk,
+                ChunkedWitnessCfg::d64_production()
+            );
+            assert_eq!(
+                schedule
+                    .recursive_folds
+                    .first()
+                    .expect("multi-chunk schedule must recursively fold")
+                    .params
+                    .witness_chunk,
+                ChunkedWitnessCfg::d64_production()
+            );
+            assert!(schedule.recursive_folds.iter().skip(1).all(|fold| {
+                fold.params.witness_chunk == ChunkedWitnessCfg::default_non_chunked()
+            }));
         }
         assert_eq!(catalog.len(), grid.len());
     }

@@ -31,7 +31,10 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
-use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::configs::{
+    JoltDenseBounded, JoltOneHotK16, JoltOneHotK16MultiChunk, JoltOneHotK256,
+    JoltOneHotK256MultiChunk,
+};
 use crate::schedule_registry::PrecommittedScheduleParams;
 use crate::trace_onehot::TracePackedOneHot;
 
@@ -51,7 +54,7 @@ const _: () = assert!(
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
 
-/// Runtime bytes for Jolt's three base schedule families.
+/// Runtime bytes for Jolt's base schedule families.
 ///
 /// These bytes are ordinary input data. They are intentionally neither
 /// generated Rust nor embedded with `include_bytes!`.
@@ -61,6 +64,10 @@ pub struct AkitaScheduleArtifacts {
     dense: Vec<u8>,
     one_hot_k16: Vec<u8>,
     one_hot_k256: Vec<u8>,
+    #[serde(default)]
+    one_hot_k16_multi_chunk: Vec<u8>,
+    #[serde(default)]
+    one_hot_k256_multi_chunk: Vec<u8>,
 }
 
 impl AkitaScheduleArtifacts {
@@ -71,6 +78,8 @@ impl AkitaScheduleArtifacts {
             dense,
             one_hot_k16,
             one_hot_k256,
+            one_hot_k16_multi_chunk: Vec::new(),
+            one_hot_k256_multi_chunk: Vec::new(),
         }
     }
 
@@ -86,11 +95,13 @@ impl AkitaScheduleArtifacts {
                 ))
             })
         };
-        Ok(Self::new(
-            read(JoltDenseBounded::schedule_family_name())?,
-            read(JoltOneHotK16::schedule_family_name())?,
-            read(JoltOneHotK256::schedule_family_name())?,
-        ))
+        Ok(Self {
+            dense: read(JoltDenseBounded::schedule_family_name())?,
+            one_hot_k16: read(JoltOneHotK16::schedule_family_name())?,
+            one_hot_k256: read(JoltOneHotK256::schedule_family_name())?,
+            one_hot_k16_multi_chunk: read(JoltOneHotK16MultiChunk::schedule_family_name())?,
+            one_hot_k256_multi_chunk: read(JoltOneHotK256MultiChunk::schedule_family_name())?,
+        })
     }
 
     /// The `schedules/` directory packaged with this crate: the fallback the
@@ -117,7 +128,7 @@ impl AkitaScheduleArtifacts {
     /// [`Self::packaged_directory`].
     ///
     /// The handle is what is shared, not the bytes: every call re-reads the
-    /// three `.aks` files, so hosts still load once at preprocessing and pass
+    /// five `.aks` files, so hosts still load once at preprocessing and pass
     /// the bundle to each setup. Callers that must compare setup provenance
     /// keep their own handle rather than calling this twice — the packed
     /// prover's advice guards test bundle identity with `Arc::ptr_eq`.
@@ -156,6 +167,29 @@ impl AkitaScheduleArtifacts {
             AKITA_ONE_HOT_K256 => {
                 TrustedScheduleCatalog::<JoltOneHotK256>::from_artifact_bytes(&self.one_hot_k256)
                     .map(|catalog| catalog.catalog().clone())
+            }
+            other => Err(AkitaError::InvalidSetup(format!(
+                "unsupported Akita one-hot K={other}"
+            ))),
+        }
+    }
+
+    pub fn one_hot_multi_chunk_catalog(
+        &self,
+        one_hot_k: usize,
+    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
+        match one_hot_k {
+            AKITA_ONE_HOT_K16 => {
+                TrustedScheduleCatalog::<JoltOneHotK16MultiChunk>::from_artifact_bytes(
+                    &self.one_hot_k16_multi_chunk,
+                )
+                .map(|catalog| catalog.catalog().clone())
+            }
+            AKITA_ONE_HOT_K256 => {
+                TrustedScheduleCatalog::<JoltOneHotK256MultiChunk>::from_artifact_bytes(
+                    &self.one_hot_k256_multi_chunk,
+                )
+                .map(|catalog| catalog.catalog().clone())
             }
             other => Err(AkitaError::InvalidSetup(format!(
                 "unsupported Akita one-hot K={other}"

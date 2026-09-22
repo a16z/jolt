@@ -4,7 +4,7 @@ This directory contains Jolt's base Akita schedule catalogs as canonical
 `.aks` files. They are runtime data, not generated Rust modules and not
 embedded into the executable.
 
-Application preprocessing loads the three files once, wraps the resulting
+Application preprocessing loads the five files once, wraps the resulting
 `AkitaScheduleArtifacts` in `Arc`, and passes that immutable bundle explicitly
 to every `AkitaSetupParams` constructor. Production deployments should call
 `AkitaScheduleArtifacts::from_directory` with a versioned, deployment-owned
@@ -24,6 +24,13 @@ The one-hot artifacts are hybrid catalogs. A logical trace shorter than
 setup-offloaded schedule, including every production K=256 trace (K=256 starts
 at `2^25`). This is an offline catalog policy: proving and verification simply
 resolve the exact admitted row and never choose a mode dynamically.
+
+Each K=16 and K=256 family has a W8R2 multi-chunk companion catalog. In those
+companions, the root and first recursive fold are split into eight chunks,
+while later folds remain single-chunk; their smallest admitted physical arity
+is 16 variables. The existing one-hot catalogs and the dense advice and
+committed-program catalog remain single-chunk, so grouped precommit setups keep
+their existing schedule policy.
 
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:
@@ -48,4 +55,6 @@ Regenerate all base catalogs from the planner with:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Pass `k16`, `k256`, or `dense` as a final argument to regenerate one family.
+Pass `k16`, `k256`, `multi-chunk`, or `dense` as a final argument to narrow
+regeneration to matching families. `k16-single` and `k256-single` select only
+the corresponding standard single-chunk catalog.

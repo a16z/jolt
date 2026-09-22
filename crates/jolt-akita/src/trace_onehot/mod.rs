@@ -34,7 +34,7 @@ pub use source::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
 
 #[cfg(test)]
 use decomposition::{
-    decompose_fold_packed_with_mode, prepare_rotations, DecomposeRotationMode, PreparedRotations,
+    decompose_fold_packed, prepare_rotations, DecomposeRotationMode, PreparedRotations,
 };
 #[cfg(test)]
 use traversal::{

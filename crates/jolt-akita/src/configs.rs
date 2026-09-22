@@ -8,6 +8,7 @@ use akita_config::proof_optimized::fp128::{DenseBounded, OneHot};
 use akita_config::recursive_commitment::RecursiveScheduleConfig;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::sis::CommittedSourceClass;
+use akita_types::ChunkedWitnessCfg;
 
 use crate::AKITA_ONE_HOT_K16;
 
@@ -19,6 +20,7 @@ macro_rules! delegate_preset {
         $name:ident,
         $base:ty,
         $committed_source_class:expr,
+        $chunked_witness_cfg:expr,
         $family_name:literal
     ) => {
         $(#[$doc])*
@@ -67,7 +69,7 @@ macro_rules! delegate_preset {
             }
 
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
-                <$base>::chunked_witness_cfg()
+                $chunked_witness_cfg
             }
 
             fn recursive_setup_planning() -> bool {
@@ -84,6 +86,7 @@ delegate_preset!(
     CommittedSourceClass::UnitOneHot {
         source_chunk_size: AKITA_ONE_HOT_K16,
     },
+    ChunkedWitnessCfg::default_non_chunked(),
     "jolt-fp128-onehot-k16-direct-planner"
 );
 
@@ -92,6 +95,7 @@ delegate_preset!(
     JoltOneHotK256Direct,
     OneHot,
     <OneHot as CommitmentConfig>::committed_source_class(),
+    ChunkedWitnessCfg::default_non_chunked(),
     "jolt-fp128-onehot-k256-direct-planner"
 );
 
@@ -112,10 +116,42 @@ pub type JoltOneHotK16 = RecursiveCommitmentConfig<JoltOneHotK16Direct>;
 pub type JoltOneHotK256 = RecursiveCommitmentConfig<JoltOneHotK256Direct>;
 
 delegate_preset!(
+    /// Multi-chunk companion for K=16 trace openings.
+    JoltOneHotK16MultiChunkDirect,
+    OneHot,
+    CommittedSourceClass::UnitOneHot {
+        source_chunk_size: AKITA_ONE_HOT_K16,
+    },
+    ChunkedWitnessCfg::d64_production(),
+    "jolt-fp128-onehot-k16-multi-chunk-direct-planner"
+);
+
+delegate_preset!(
+    /// Multi-chunk companion for K=256 trace openings.
+    JoltOneHotK256MultiChunkDirect,
+    OneHot,
+    <OneHot as CommitmentConfig>::committed_source_class(),
+    ChunkedWitnessCfg::d64_production(),
+    "jolt-fp128-onehot-k256-multi-chunk-direct-planner"
+);
+
+impl RecursiveScheduleConfig for JoltOneHotK16MultiChunkDirect {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k16-multi-chunk";
+}
+
+impl RecursiveScheduleConfig for JoltOneHotK256MultiChunkDirect {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "jolt-fp128-onehot-k256-multi-chunk";
+}
+
+pub type JoltOneHotK16MultiChunk = RecursiveCommitmentConfig<JoltOneHotK16MultiChunkDirect>;
+pub type JoltOneHotK256MultiChunk = RecursiveCommitmentConfig<JoltOneHotK256MultiChunkDirect>;
+
+delegate_preset!(
     /// Dense config for `u64`-bounded advice and committed-program objects.
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),
+    ChunkedWitnessCfg::default_non_chunked(),
     "jolt-fp128-dense-bounded"
 );
 
@@ -145,5 +181,25 @@ mod tests {
         ));
         assert!(JoltOneHotK16::recursive_setup_planning());
         assert!(JoltOneHotK256::recursive_setup_planning());
+        assert_eq!(
+            JoltOneHotK16MultiChunk::chunked_witness_cfg(),
+            ChunkedWitnessCfg::d64_production()
+        );
+        assert_eq!(
+            JoltOneHotK256MultiChunk::chunked_witness_cfg(),
+            ChunkedWitnessCfg::d64_production()
+        );
+        assert_eq!(
+            JoltOneHotK16::chunked_witness_cfg(),
+            ChunkedWitnessCfg::default_non_chunked()
+        );
+        assert_eq!(
+            JoltOneHotK256::chunked_witness_cfg(),
+            ChunkedWitnessCfg::default_non_chunked()
+        );
+        assert_eq!(
+            JoltDenseBounded::chunked_witness_cfg(),
+            ChunkedWitnessCfg::default_non_chunked()
+        );
     }
 }
