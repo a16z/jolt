@@ -1,0 +1,13 @@
+{
+  "name": "jolt-blake-transcript-parity",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/parity.mjs"
+  },
+  "devDependencies": {
+    "@ethereumjs/evm": "10.1.0",
+    "@ethereumjs/common": "10.1.0",
+    "solc": "0.8.30"
+  }
+}
