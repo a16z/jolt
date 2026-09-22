@@ -4,7 +4,7 @@ use jolt_field::{CanonicalBytes, Fr, Ring};
 use num_bigint::BigUint;
 use thiserror::Error;
 
-use crate::bn254_bits::ByteVar;
+use crate::bn254_bits::{BitVar, ByteVar};
 use crate::fp128_bn254::{Fp128Error, Fp128Var, MODULUS};
 use crate::{LinearCombination, R1csBuilder, Variable};
 
@@ -88,6 +88,23 @@ impl SignedVar {
                 - sign_lc.scale(Fr::from_u128(MODULUS)),
         );
         Ok(value)
+    }
+
+    /// Constrain the absolute value in [0,bound], including its sign linkage.
+    /// Since 2*bound<2^128<r, the signed equation cannot admit a wraparound alias.
+    pub fn absolute_value(
+        &self,
+        builder: &mut R1csBuilder<Fr>,
+    ) -> Result<LinearCombination<Fr>, IntegerError> {
+        self.validate(builder)?;
+        let magnitude = Self::unsigned(builder, self.bound, self.witness.map(i128::unsigned_abs))?;
+        let sign = BitVar::allocate(builder, self.witness.map(|x| x < 0));
+        builder.assert_product(
+            magnitude.clone(),
+            LinearCombination::one() - sign.expression().scale(Fr::from_u64(2)),
+            self.variable,
+        );
+        Ok(magnitude)
     }
 
     /// The constrained signed field representative.
@@ -415,5 +432,23 @@ mod tests {
             SignedVar::enforce_squared_l2(&mut R1csBuilder::new(), &[x], 100),
             Err(IntegerError::UnknownVariable { .. })
         ));
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests tamper the absolute-value sign")]
+mod absolute_tests {
+    use super::*;
+    #[test]
+    fn absolute_value_sign_is_constrained() {
+        let mut builder = R1csBuilder::new();
+        let value = SignedVar::allocate(&mut builder, 9, Some(-7)).unwrap();
+        let absolute = value.absolute_value(&mut builder).unwrap();
+        builder.assert_equal(absolute, LinearCombination::constant(Fr::from_u64(7)));
+        let mut witness = builder.witness().unwrap();
+        let matrices = builder.into_matrices();
+        assert!(matrices.check_witness(&witness).is_ok());
+        *witness.last_mut().unwrap() = Fr::from_u64(0);
+        assert!(matrices.check_witness(&witness).is_err());
     }
 }

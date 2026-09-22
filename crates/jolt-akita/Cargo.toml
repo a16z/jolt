@@ -77,3 +77,7 @@ required-features = ["r1cs"]
 [[example]]
 name = "sparse_stream_r1cs_cost"
 required-features = ["r1cs"]
+
+[[example]]
+name = "operator_norm_r1cs_cost"
+required-features = ["r1cs"]

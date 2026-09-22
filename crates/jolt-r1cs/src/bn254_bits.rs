@@ -17,14 +17,21 @@ pub enum BitsError {
     UnknownVariable { variable: Variable },
 }
 
+/// A Boolean expression established by allocation or constrained bit operations.
 #[derive(Clone, Debug)]
-struct Bit {
+pub struct BitVar {
     expression: LinearCombination<Fr>,
     witness: Option<bool>,
 }
 
-impl Bit {
-    fn allocate(builder: &mut R1csBuilder<Fr>, witness: Option<bool>) -> Self {
+impl BitVar {
+    /// The constrained Boolean expression, for composition in its allocating builder.
+    pub fn expression(&self) -> LinearCombination<Fr> {
+        self.expression.clone()
+    }
+
+    /// Allocate a Boolean bit with witness-independent layout.
+    pub fn allocate(builder: &mut R1csBuilder<Fr>, witness: Option<bool>) -> Self {
         let variable = builder.alloc_witness(witness.map(|b| Fr::from_u64(u64::from(b))));
         let expression = LinearCombination::variable(variable);
         builder.assert_product(
@@ -73,7 +80,7 @@ impl Bit {
 /// A byte whose little-endian bits are Boolean by construction or constraints.
 #[derive(Clone, Debug)]
 pub struct ByteVar {
-    bits: [Bit; 8],
+    bits: [BitVar; 8],
 }
 
 impl ByteVar {
@@ -81,7 +88,7 @@ impl ByteVar {
     pub fn allocate(builder: &mut R1csBuilder<Fr>, witness: Option<u8>) -> Self {
         Self {
             bits: std::array::from_fn(|i| {
-                Bit::allocate(builder, witness.map(|x| (x >> i) & 1 != 0))
+                BitVar::allocate(builder, witness.map(|x| (x >> i) & 1 != 0))
             }),
         }
     }
@@ -89,7 +96,7 @@ impl ByteVar {
     /// A fixed byte, requiring no witness coordinates.
     pub fn constant(value: u8) -> Self {
         Self {
-            bits: std::array::from_fn(|i| Bit::constant((value >> i) & 1 != 0)),
+            bits: std::array::from_fn(|i| BitVar::constant((value >> i) & 1 != 0)),
         }
     }
 
@@ -115,14 +122,14 @@ impl ByteVar {
 /// A 64-bit word with constrained modular addition, XOR and bit permutations.
 #[derive(Clone, Debug)]
 pub struct Word64Var {
-    bits: [Bit; 64],
+    bits: [BitVar; 64],
 }
 
 impl Word64Var {
     /// A fixed word, requiring no witness coordinates.
     pub fn constant(value: u64) -> Self {
         Self {
-            bits: std::array::from_fn(|i| Bit::constant((value >> i) & 1 != 0)),
+            bits: std::array::from_fn(|i| BitVar::constant((value >> i) & 1 != 0)),
         }
     }
 
@@ -200,11 +207,13 @@ impl Word64Var {
             .iter()
             .try_fold(0u128, |sum, word| word.value().map(|x| sum + u128::from(x)));
         let output = Self {
-            bits: std::array::from_fn(|i| Bit::allocate(builder, sum.map(|x| (x >> i) & 1 != 0))),
+            bits: std::array::from_fn(|i| {
+                BitVar::allocate(builder, sum.map(|x| (x >> i) & 1 != 0))
+            }),
         };
         let mut carry = LinearCombination::zero();
         for i in 0..carry_bits {
-            let bit = Bit::allocate(builder, sum.map(|x| (x >> (64 + i)) & 1 != 0));
+            let bit = BitVar::allocate(builder, sum.map(|x| (x >> (64 + i)) & 1 != 0));
             carry = carry + bit.expression.scale(Fr::from_u128(1u128 << (64 + i)));
         }
         let input = words.iter().fold(LinearCombination::zero(), |sum, word| {
