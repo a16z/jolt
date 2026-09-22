@@ -1,0 +1,22 @@
+[package]
+name = "jolt-hyperkzg"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Clear binary HyperKZG openings over BN254"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-crypto.workspace = true
+jolt-field.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-transcript.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
+bincode.workspace = true

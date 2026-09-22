@@ -3386,6 +3386,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-hyperkzg"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
