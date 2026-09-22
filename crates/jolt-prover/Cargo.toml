@@ -119,6 +119,8 @@ clap.workspace = true
 jolt-dory.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+sha2.workspace = true
+sha3.workspace = true
 # Subscriber stack for tests; the profiling smoke test's summary usage
 # arrives via the `profiling` feature's `jolt-profiling/summary`.
 jolt-profiling = { workspace = true, default-features = false }

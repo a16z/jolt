@@ -1,4 +1,10 @@
-//! ZK end-to-end coverage for the modular prover and verifier.
+//! ZK end-to-end coverage for the modular prover and verifier: the
+//! mode-specific checks (BlindFold tampering, the reference backend, the
+//! unaligned SHA3 inline expansion, committed programs). Plain acceptance
+//! across guests is `e2e_matrix.rs`.
+
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+mod support;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[expect(
@@ -9,28 +15,21 @@
 mod zk {
     extern crate jolt_inlines_keccak256;
 
-    use std::sync::Arc;
-    use std::thread::Builder;
-
-    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+    use common::jolt_device::JoltDevice;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, Ring};
-    use jolt_host::{JoltProgramSource, Program};
-    use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
-    };
-    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_program::execution::OwnedTrace;
     use jolt_prover::dory::DoryProverPreprocessing;
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
-    use jolt_riscv::JoltInstructionKind;
+    use jolt_riscv::{JoltInstructionKind, JoltTraceRow};
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-    use tracer::execution_backend::TracerBackend;
 
-    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+    use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
+
     // 24 rounds x 24 ROTRI per Keccak-f permutation (theta-D XORs use VirtualXORROTL1).
     const KECCAK_ROTRI_ROWS: usize = 576;
     // The `&[u8]` guest input sits behind postcard's 2-byte length prefix, so
@@ -41,12 +40,6 @@ mod zk {
 
     type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 
-    struct GuestRun {
-        program: Arc<JoltProgram>,
-        preprocessing: JoltProgramPreprocessing,
-        trace: TraceOutput<OwnedTrace>,
-    }
-
     struct ProvedGuest {
         preprocessing: DoryProverPreprocessing,
         public_io: JoltDevice,
@@ -54,94 +47,32 @@ mod zk {
         trusted_advice_commitment: Option<DoryCommitment>,
     }
 
-    fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
-        MemoryConfig {
-            max_untrusted_advice_size: layout.max_untrusted_advice_size,
-            max_trusted_advice_size: layout.max_trusted_advice_size,
-            max_input_size: layout.max_input_size,
-            max_output_size: layout.max_output_size,
-            stack_size: layout.stack_size,
-            heap_size: layout.heap_size,
-            program_size: Some(layout.program_size),
+    fn muldiv_case() -> GuestCase {
+        GuestCase {
+            inputs: postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
+            ..GuestCase::new("muldiv-guest")
         }
     }
 
-    fn guest_run(
-        mut source: Program,
-        inputs: &[u8],
-        untrusted_advice: &[u8],
-        trusted_advice: &[u8],
-    ) -> GuestRun {
-        let (_, sizing_trace, _, device) = source.trace(inputs, untrusted_advice, trusted_advice);
-        assert!(
-            sizing_trace.len().next_power_of_two() <= MAX_PADDED_TRACE_LENGTH,
-            "trace exceeds the fixture limit",
-        );
-        let layout = device.memory_layout;
-        let program = Arc::new(source.build_jolt_program().expect("build Jolt program"));
-        let preprocessing = JoltProgramPreprocessing::new(
-            program.expanded_bytecode.clone(),
-            program.memory_init.clone(),
-            layout.clone(),
-            program.entry_address,
-            MAX_PADDED_TRACE_LENGTH,
-            source.instruction_profile(),
-        )
-        .expect("program preprocessing");
-        let trace = TracerBackend::new()
-            .trace(
-                &program,
-                TraceInputs::new(
-                    inputs.to_vec(),
-                    untrusted_advice.to_vec(),
-                    trusted_advice.to_vec(),
-                    memory_config(&layout),
-                ),
-            )
-            .expect("modular trace");
-        GuestRun {
-            program,
-            preprocessing,
-            trace,
-        }
-    }
-
-    fn derive_config(
-        trace: &TraceOutput<OwnedTrace>,
-        program: &JoltProgramPreprocessing,
-    ) -> ProverConfig {
-        ProverConfig::derive::<Fr>(
-            trace.trace.rows(),
-            &program.memory_layout,
-            program.ram.min_bytecode_address,
-            program.ram.bytecode_words.len(),
-            MAX_PADDED_TRACE_LENGTH,
+    fn derive_config(run: &PreparedGuest) -> ProverConfig {
+        ProverConfig::derive_compact::<Fr>(
+            run.trace.trace.as_slice(),
+            &run.preprocessing.memory_layout,
+            run.preprocessing.ram.min_bytecode_address,
+            run.preprocessing.ram.bytecode_words.len(),
+            run.preprocessing.max_padded_trace_length,
         )
         .expect("derive config")
     }
 
-    fn pad_trace(trace: TraceOutput<OwnedTrace>, trace_length: usize) -> TraceOutput<OwnedTrace> {
-        let mut rows = trace.trace.rows().to_vec();
-        rows.resize(trace_length, TraceRow::default());
-        TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace.device,
-            trace.final_memory,
-            trace.advice_tape,
-        )
-    }
-
     fn prove_guest(
-        source: Program,
-        inputs: Vec<u8>,
-        untrusted_advice: Vec<u8>,
-        trusted_advice: Vec<u8>,
+        case: GuestCase,
         backend: JoltBackend<Fr, DoryScheme>,
-        inspect_trace: impl FnOnce(&[TraceRow]),
+        inspect_trace: impl FnOnce(&[JoltTraceRow]),
     ) -> ProvedGuest {
-        let run = guest_run(source, &inputs, &untrusted_advice, &trusted_advice);
-        inspect_trace(run.trace.trace.rows());
-        let config = derive_config(&run.trace, &run.preprocessing);
+        let run = support::prepare(&case);
+        inspect_trace(run.trace.trace.as_slice());
+        let config = derive_config(&run);
         let shared = JoltSharedPreprocessing::new(run.preprocessing).expect("shared preprocessing");
         let preprocessing = jolt_prover::dory::from_shared(shared);
         assert!(preprocessing.verifier.vc_setup.is_some());
@@ -149,22 +80,18 @@ mod zk {
             .program_arc()
             .expect("full program preprocessing");
         let public_io = run.trace.device.clone();
-        let witness = TraceBackend::new(
+        let witness = TraceBackend::<OwnedTrace>::from_compact(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
                 config.ram_K,
                 config.one_hot_config,
             )
-            .include_trusted_advice(!trusted_advice.is_empty())
-            .include_untrusted_advice(!untrusted_advice.is_empty()),
-            JoltVmWitnessInputs::new(
-                &run.program,
-                &program_preprocessing,
-                pad_trace(run.trace, config.trace_length),
-            ),
+            .include_trusted_advice(!case.trusted_advice.is_empty())
+            .include_untrusted_advice(!case.untrusted_advice.is_empty()),
+            JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let trusted = (!trusted_advice.is_empty()).then(|| {
-            jolt_prover::dory::commit_trusted_advice(&preprocessing, &trusted_advice)
+        let trusted = (!case.trusted_advice.is_empty()).then(|| {
+            jolt_prover::dory::commit_trusted_advice(&preprocessing, &case.trusted_advice)
                 .expect("trusted advice commitment")
         });
         let proof =
@@ -186,14 +113,7 @@ mod zk {
     }
 
     fn prove_muldiv(backend: JoltBackend<Fr, DoryScheme>) -> ProvedGuest {
-        prove_guest(
-            Program::new("muldiv-guest"),
-            postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs"),
-            Vec::new(),
-            Vec::new(),
-            backend,
-            |_| {},
-        )
+        prove_guest(muldiv_case(), backend, |_| {})
     }
 
     fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
@@ -205,17 +125,10 @@ mod zk {
         )
     }
 
-    fn with_zk_stack(body: impl FnOnce() + Send + 'static) {
-        Builder::new()
-            .stack_size(128 * 1024 * 1024)
-            .spawn(body)
-            .expect("spawn ZK test thread")
-            .join()
-            .expect("ZK test thread panicked");
-    }
-
+    /// The reference kernel tier under the ZK envelope; the optimized tier is
+    /// covered by the guest matrix.
     #[test]
-    fn zk_muldiv_modular_proof_is_accepted() {
+    fn zk_muldiv_reference_backend_proof_is_accepted() {
         with_zk_stack(|| {
             let proved = prove_muldiv(JoltBackend::reference());
             assert!(matches!(proved.proof.claims, JoltProofClaims::Zk { .. }));
@@ -224,30 +137,21 @@ mod zk {
     }
 
     #[test]
-    fn zk_muldiv_optimized_backend_proof_is_accepted() {
-        with_zk_stack(|| {
-            let proved = prove_muldiv(JoltBackend::optimized());
-            verify(&proved).expect("optimized ZK proof must verify");
-        });
-    }
-
-    #[test]
     fn zk_sha3_inline_modular_proof_is_accepted() {
         with_zk_stack(|| {
             let message: Vec<u8> = (0..SHA3_INPUT_LEN).map(|i| i as u8).collect();
-            let mut program = Program::new("sha3-guest");
-            program.set_func("sha3");
             let proved = prove_guest(
-                program,
-                postcard::to_stdvec(&message).expect("serialize input"),
-                Vec::new(),
-                Vec::new(),
+                GuestCase {
+                    func: Some("sha3"),
+                    inputs: postcard::to_stdvec(&message).expect("serialize input"),
+                    ..GuestCase::new("sha3-guest")
+                },
                 JoltBackend::optimized(),
                 |rows| {
                     assert_eq!(
                         rows.iter()
                             .filter(|row| {
-                                row.instruction_kind() == JoltInstructionKind::VirtualROTRI
+                                row.instruction_kind() == Some(JoltInstructionKind::VirtualROTRI)
                             })
                             .count(),
                         KECCAK_ROTRI_ROWS * SHA3_PERMUTATIONS,
@@ -275,10 +179,13 @@ mod zk {
     fn zk_advice_consumer_modular_proof_is_accepted() {
         with_zk_stack(|| {
             let proved = prove_guest(
-                Program::new("advice-consumer-guest"),
-                postcard::to_stdvec(&12u64).expect("serialize input"),
-                postcard::to_stdvec(&5u64).expect("serialize untrusted advice"),
-                postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
+                GuestCase {
+                    inputs: postcard::to_stdvec(&12u64).expect("serialize input"),
+                    untrusted_advice: postcard::to_stdvec(&5u64)
+                        .expect("serialize untrusted advice"),
+                    trusted_advice: postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
+                    ..GuestCase::new("advice-consumer-guest")
+                },
                 JoltBackend::reference(),
                 |_| {},
             );
@@ -290,24 +197,19 @@ mod zk {
     #[test]
     fn zk_committed_muldiv_modular_proof_is_accepted() {
         with_zk_stack(|| {
-            let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-            let run = guest_run(Program::new("muldiv-guest"), &inputs, &[], &[]);
-            let config = derive_config(&run.trace, &run.preprocessing);
+            let run = support::prepare(&muldiv_case());
+            let config = derive_config(&run);
             let preprocessing = jolt_prover::dory::preprocess_committed(run.preprocessing, 2)
                 .expect("committed preprocessing");
             let program_preprocessing = preprocessing.program_arc().expect("retained full program");
             let public_io = run.trace.device.clone();
-            let witness = TraceBackend::new(
+            let witness = TraceBackend::<OwnedTrace>::from_compact(
                 JoltVmWitnessConfig::new(
                     config.trace_length.ilog2() as usize,
                     config.ram_K,
                     config.one_hot_config,
                 ),
-                JoltVmWitnessInputs::new(
-                    &run.program,
-                    &program_preprocessing,
-                    pad_trace(run.trace, config.trace_length),
-                ),
+                JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
             );
             let proof = jolt_prover::dory::prove::<
                 Fr,
@@ -334,8 +236,3 @@ mod zk {
         });
     }
 }
-
-#[cfg(not(all(feature = "prover-fixtures", feature = "zk")))]
-#[test]
-#[ignore = "enable --features prover-fixtures,zk to run the modular ZK e2e"]
-fn zk_muldiv_modular_proof_is_accepted() {}
