@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 jolt-field = { path = "../jolt-field", default-features = false }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true
 
 [features]
