@@ -1,3 +1,8 @@
+Current epoch-6 framing uses native `28fc72021`; protocol and session domains
+are imported from that owner. See [the stream packet](blake-stream-constraints.md).
+The original epoch-5 implementation record follows; its generic duplex relation
+is unchanged.
+
 # Akita BLAKE2b duplex constraint contract
 
 This packet constrains the byte transcript used by Akita

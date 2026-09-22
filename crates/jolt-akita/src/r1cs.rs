@@ -1,8 +1,8 @@
-//! Akita 252abb8 transcript bytes and bounded terminal integer relations.
+//! Akita epoch-6 transcript bytes and bounded terminal integer relations.
 //! Contracts: `specs/akita-wrapper/duplex-constraints.md` and
 //! `specs/akita-wrapper/terminal-constraints.md`.
 
-use akita_transcript::PROTOCOL_TAG;
+use akita_transcript::{PROTOCOL_TAG, SESSION_DOMAIN_TAG};
 use jolt_field::Fr;
 use jolt_r1cs::{bn254_bits::ByteVar, R1csBuilder};
 use jolt_transcript::r1cs::{Blake2bDuplexVar, Blake2bR1csError};
@@ -31,10 +31,7 @@ impl AkitaTranscriptVar {
         let mut transcript = Self {
             sponge: Blake2bDuplexVar::default(),
         };
-        for tag in [
-            PROTOCOL_TAG.as_slice(),
-            b"akita-pcs/session-label/v1".as_slice(),
-        ] {
+        for tag in [PROTOCOL_TAG.as_slice(), SESSION_DOMAIN_TAG.as_slice()] {
             let mut padded: Vec<_> = tag.iter().copied().map(ByteVar::constant).collect();
             padded.resize_with(64, || ByteVar::constant(0));
             transcript.sponge.absorb(builder, &padded)?;
@@ -81,3 +78,6 @@ pub mod terminal;
 
 /// Fixed-profile point preparation and scalar-opening constraints.
 pub mod scalar;
+
+mod sparse_stream;
+pub use sparse_stream::AkitaSparseStreamVar;
