@@ -24,6 +24,7 @@ bn254 = [
 transcript-blake2b = ["spongefish", "digest", "spongefish/blake2", "dep:blake2"]
 transcript-keccak = ["spongefish", "spongefish/keccak"]
 transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
+blake2-inline = ["dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
 
 [dependencies]
 ark-bn254 = { workspace = true, optional = true }
@@ -34,6 +35,7 @@ blake2 = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
 rand = { workspace = true, features = ["std_rng"], optional = true }
+jolt-inlines-blake2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 num-traits = { workspace = true }

@@ -23,12 +23,16 @@
 // this crate those paths only resolve via this self-alias.
 extern crate self as jolt_claims;
 
+mod blake2b256;
 mod claim_data;
 mod claims;
+mod formula_error;
+pub mod lattice;
 mod ops;
 pub mod protocols;
 mod sumcheck;
 mod symbolic;
+pub mod twist;
 
 pub use claim_data::{
     ChallengeDrawError, InputClaims, MissingOpeningValue, NoChallenges, NoInputs, NoOutputs,

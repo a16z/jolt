@@ -19,6 +19,8 @@ mod stage1 {
 }
 
 mod stage2 {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
     use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
     use jolt_verifier::stages::stage2::outputs::{
         Stage2BatchChallenges, Stage2BatchInputClaims, Stage2BatchInputPoints,
@@ -47,6 +49,8 @@ mod stage3 {
 }
 
 mod stage4 {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
     use jolt_verifier::stages::stage4::outputs::{
         Stage4Challenges, Stage4InputClaims, Stage4InputPoints, Stage4OutputClaims,
         Stage4OutputPoints, Stage4Sumchecks,
@@ -56,10 +60,16 @@ mod stage4 {
 
     use crate::driver::impl_stage_prover;
 
+    // Stage 4's `no_opening_values` replacement keeps the generated
+    // signature (the claims aggregate's hand-ordered `opening_values`, which
+    // splices the FR openings under `field-inline`), so the driver's default
+    // curation serves both feature arms unchanged.
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }
 
 mod stage5 {
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
     use jolt_verifier::stages::stage5::outputs::{
         Stage5Challenges, Stage5InputClaims, Stage5InputPoints, Stage5OutputClaims,
         Stage5OutputPoints, Stage5Sumchecks,
@@ -97,6 +107,8 @@ mod stage6b {
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
         TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
     // The packed batch has no inc member — the fused-inc read-raf stages
     // discharge the reduced inc claims instead.
     #[cfg(not(feature = "akita"))]
@@ -461,6 +473,9 @@ mod twin_tests {
         jolt_verifier::stages::relations::SumcheckInputClaims<Fr, R>: jolt_claims::InputClaims<Fr>,
         jolt_verifier::stages::relations::ConcreteSumcheckChallenges<Fr, R>:
             jolt_claims::SumcheckChallenges<Fr, jolt_claims::protocols::jolt::JoltChallengeId>,
+        // `log_residue` records a typed `JoltRelationId`, so the toy kernel is
+        // pinned to jolt-family relations.
+        R::Symbolic: SymbolicSumcheck<RelationId = JoltRelationId>,
     {
         type Relation = R;
 

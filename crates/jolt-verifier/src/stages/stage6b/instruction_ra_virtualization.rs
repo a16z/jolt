@@ -133,7 +133,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionRaVirtualization<F> {
         let JoltDerivedId::InstructionRaVirtualization(InstructionRaVirtualizationPublic::EqCycle) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let log_t = self.dimensions.log_t();
         let point = output_points

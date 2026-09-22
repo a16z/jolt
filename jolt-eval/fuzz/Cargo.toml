@@ -13,6 +13,12 @@ ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
+# Keep Akita on the same field and inline package identities as the parent workspace.
+[patch."https://github.com/a16z/jolt"]
+jolt-field = { path = "../../crates/jolt-field" }
+jolt-inlines-blake2 = { path = "../../jolt-inlines/blake2" }
+jolt-inlines-ntt = { path = "../../jolt-inlines/ntt" }
+
 [package.metadata]
 cargo-fuzz = true
 

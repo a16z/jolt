@@ -16,8 +16,29 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+# std guests: route Rust allocations to jolt-platform's O(1) size-class
+# arena instead of musl's malloc over ZeroOS's first-fit heap.
+guest-size-class-alloc = []
+guest-fast-mem = ["jolt-platform/fast-mem"]
+blake2-inline = [
+  "jolt-transcript?/blake2-inline",
+  "jolt-verifier?/blake2-inline",
+]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover-legacy?/zk", "jolt-verifier?/zk"]
+# The packed (Akita) protocol: the guest verifier over fp128 and the host
+# tracer's fp128 field-inline field. Mutually exclusive with `zk`.
+akita = [
+  "jolt-prover-legacy?/akita",
+  "jolt-verifier?/akita",
+  "jolt-program?/fp128-field-inline",
+  "tracer?/fp128-field-inline",
+]
+# Guest-side field-inline instruction macros plus FR-profile decoding,
+# tracing, and preprocessing. Proving an FR guest needs the modular
+# `jolt-prover` (see examples/eqpoly-field): the generated `prove_*` routes
+# to the legacy prover, which refuses FR-active traces with a typed
+# `ProtocolAxisUnimplemented` error.
 field-inline = [
   "jolt-prover-legacy?/field-inline",
   "jolt-program?/field-inline",
@@ -104,7 +125,7 @@ jolt-sdk-macros.workspace = true
 bincode = { workspace = true, optional = true }
 common = { workspace = true, optional = true }
 jolt-prover-legacy = { workspace = true, default-features = false, optional = true }
-jolt-crypto = { workspace = true, optional = true }
+jolt-crypto = { workspace = true, optional = true, features = ["bn254"] }
 jolt-dory = { workspace = true, optional = true }
 jolt-field = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }

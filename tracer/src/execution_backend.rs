@@ -20,6 +20,7 @@ use crate::emulator::decode_cache::DecodeCache;
 use crate::instruction::{Cycle, RAMAccess};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 use crate::trace_row::{cycle_to_trace_row, CycleConversionError};
+use crate::LazyTracer;
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
@@ -35,6 +36,65 @@ impl TracerBackend {
         Self {
             elf_path: Some(elf_path),
         }
+    }
+
+    /// Converts the lazy emulator's per-tick cycles directly into modular rows.
+    ///
+    /// Reserves `max_rows` slots before execution and fails before appending a row
+    /// beyond that limit. No complete `Vec<Cycle>` is materialized. Emulator state,
+    /// per-tick cycle scratch, FR payloads, and final memory are additional storage;
+    /// this bounds the row vector, not total process memory. Execution is serial.
+    pub fn trace_streaming(
+        &mut self,
+        program: &JoltProgram,
+        inputs: TraceInputs,
+        max_rows: usize,
+    ) -> Result<TraceOutput<OwnedTrace>, TraceError> {
+        if program.elf_bytes().is_empty() {
+            return Err(TraceError::MissingElfBytes);
+        }
+        if max_rows == 0 {
+            return Err(TraceError::Backend(
+                "streaming trace row limit must be nonzero",
+            ));
+        }
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(max_rows)
+            .map_err(|_| TraceError::Backend("cannot reserve streaming trace row storage"))?;
+        let mut lazy = crate::trace_lazy(
+            program.elf_bytes(),
+            self.elf_path.as_ref(),
+            &inputs.inputs,
+            &inputs.untrusted_advice,
+            &inputs.trusted_advice,
+            &inputs.memory_config,
+            inputs.advice_tape.map(AdviceTape::from_bytes),
+        );
+        for cycle in &mut lazy {
+            if rows.len() == max_rows {
+                return Err(TraceError::Backend(
+                    "streaming trace exceeded its row limit",
+                ));
+            }
+            rows.push(trace_row_from_cycle(cycle)?);
+        }
+        let final_memory =
+            lazy.lazy_tracer
+                .final_memory_state
+                .take()
+                .ok_or(TraceError::Backend(
+                    "streaming trace did not capture final memory",
+                ))?;
+        let advice_tape = lazy.lazy_tracer.take_advice_tape().into_bytes();
+        let device = lazy.lazy_tracer.get_jolt_device();
+        Ok(TraceOutput::new(
+            OwnedTrace::new(rows),
+            device,
+            Some(MemoryImage {
+                bytes: final_memory.materialized_nonzero_bytes(),
+            }),
+            Some(advice_tape),
+        ))
     }
 
     /// Executes the program and builds proof rows directly, without first
@@ -577,11 +637,16 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
-        u32::from(FIELD_INLINE_OPCODE)
-            | (u32::from(rd) << 7)
-            | (u32::from(op.funct3()) << 12)
-            | (u32::from(rs1) << 15)
-            | (u32::from(rs2_or_imm) << 20)
+        let base =
+            u32::from(FIELD_INLINE_OPCODE) | (u32::from(rd) << 7) | (u32::from(op.funct3()) << 12);
+        match op.funct7() {
+            Some(funct7) => {
+                base | (u32::from(rs1) << 15)
+                    | (u32::from(rs2_or_imm & 0x1f) << 20)
+                    | (u32::from(funct7) << 25)
+            }
+            None => base | (u32::from(rs2_or_imm & 0x0fff) << 20),
+        }
     }
 
     #[cfg(feature = "field-inline")]

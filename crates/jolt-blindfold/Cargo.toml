@@ -10,10 +10,10 @@ workspace = true
 
 [dependencies]
 jolt-claims.workspace = true
-jolt-crypto.workspace = true
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field.workspace = true
 jolt-poly.workspace = true
-jolt-r1cs.workspace = true
+jolt-r1cs = { workspace = true, features = ["claim-lowering"] }
 jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
 jolt-transcript.workspace = true
 jolt-utils.workspace = true

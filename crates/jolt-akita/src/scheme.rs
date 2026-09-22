@@ -21,7 +21,7 @@ use crate::adapters::{
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
     AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor,
     AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
+    PreparedBytes, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -555,14 +555,14 @@ impl CommitmentScheme for AkitaScheme {
         };
         let schedule_artifacts = match params.flavor {
             AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
-                dense: dense_schedule_artifact()?,
-                one_hot: one_hot_schedule_artifact()?,
+                dense: PreparedBytes::owned(dense_schedule_artifact()?),
+                one_hot: PreparedBytes::owned(one_hot_schedule_artifact()?),
             },
             AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
-                one_hot: one_hot_schedule_artifact()?,
+                one_hot: PreparedBytes::owned(one_hot_schedule_artifact()?),
             },
             AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
-                dense: dense_schedule_artifact()?,
+                dense: PreparedBytes::owned(dense_schedule_artifact()?),
             },
         };
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
@@ -574,6 +574,7 @@ impl CommitmentScheme for AkitaScheme {
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
             schedule_artifacts,
+            prepared_backend_verifiers: Default::default(),
             backend_cache: BackendVerifierCache::default(),
         };
         let (backend_prover_setup, prepared_backend_setup, backend_verifier_setup) =
@@ -921,17 +922,22 @@ mod tests {
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
-                dense: artifacts
-                    .dense_catalog()
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
-                one_hot: artifacts
-                    .one_hot_catalog(AKITA_ONE_HOT_K256)
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
+                dense: PreparedBytes::owned(
+                    artifacts
+                        .dense_catalog()
+                        .unwrap()
+                        .to_artifact_bytes()
+                        .unwrap(),
+                ),
+                one_hot: PreparedBytes::owned(
+                    artifacts
+                        .one_hot_catalog(AKITA_ONE_HOT_K256)
+                        .unwrap()
+                        .to_artifact_bytes()
+                        .unwrap(),
+                ),
             },
+            prepared_backend_verifiers: Default::default(),
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -1262,6 +1268,51 @@ mod tests {
             &mut original_transcript,
         )
         .unwrap();
+
+        let mut view_setup = verifier_setup.clone();
+        let selection_bytes = *selected.row_digest.as_bytes();
+        assert!(view_setup
+            .embed_prepared_schedule_catalog_views(&[selection_bytes])
+            .is_err());
+        let _ = view_setup.embed_prepared_backend_verifiers().unwrap();
+        let before = serde_json::to_string(&view_setup).unwrap();
+        assert!(view_setup
+            .embed_prepared_schedule_catalog_views(&[selection_bytes, [0; 32]])
+            .is_err());
+        assert_eq!(serde_json::to_string(&view_setup).unwrap(), before);
+        let _ = view_setup
+            .embed_prepared_schedule_catalog_views(&[selection_bytes])
+            .unwrap();
+        // The live cache and the transported setup must both enforce coverage.
+        for setup in [
+            view_setup.clone(),
+            serde_json::from_str(&serde_json::to_string(&view_setup).unwrap()).unwrap(),
+        ] {
+            let catalog = setup.dense_scheme().unwrap().schedules();
+            assert_eq!(catalog.catalog_digest(), full_catalog.catalog_digest());
+            assert!(catalog.resolve_selection(omitted).is_err());
+            let mut transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+            <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+                &setup,
+                &statement,
+                &proof,
+                &mut transcript,
+            )
+            .unwrap();
+        }
+        let mut alternate_view = alternate_verifier_setup;
+        let _ = alternate_view.embed_prepared_backend_verifiers().unwrap();
+        let _ = alternate_view
+            .embed_prepared_schedule_catalog_views(&[selection_bytes])
+            .unwrap();
+        let mut transcript = Blake2bTranscript::<AkitaField>::new(b"catalog-replay");
+        let _ = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &alternate_view,
+            &statement,
+            &proof,
+            &mut transcript,
+        )
+        .expect_err("selected-row views must preserve cross-catalog replay rejection");
     }
 
     #[test]

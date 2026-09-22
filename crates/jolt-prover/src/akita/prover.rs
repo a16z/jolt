@@ -159,7 +159,7 @@ where
         witness,
         &mut transcript,
     )?;
-    let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
+    let stage8 = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
         preprocessing,
@@ -167,6 +167,8 @@ where
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
+        #[cfg(feature = "field-inline")]
+        &stage0.field_inc_limbs,
         preprocessing
             .committed_program
             .as_ref()
@@ -176,6 +178,7 @@ where
         &stage7.clear_output,
         &mut transcript,
     )?;
+    let joint_opening_proof = stage8.joint_opening_proof;
 
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
@@ -196,6 +199,8 @@ where
         untrusted_advice_commitment: stage0
             .untrusted_advice
             .map(|object| object.commitment.clone()),
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs_commitment: Some(stage0.field_inc_limbs.commitment),
         claims: JoltProofClaims::Clear(ClearProofClaims {
             stage1: stage1.claims,
             stage2: stage2.claims,
@@ -205,6 +210,8 @@ where
             stage6a: stage6a.claims,
             stage6b: stage6b.claims,
             stage7: stage7.claims,
+            #[cfg(feature = "field-inline")]
+            field_inc_limbs: Some(stage8.field_inc_limbs),
         }),
         trace_length: config.trace_length,
         ram_K: config.ram_K,

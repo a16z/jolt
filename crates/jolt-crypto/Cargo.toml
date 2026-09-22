@@ -29,6 +29,8 @@ bn254 = [
   "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
+  # The BN254 batch-addition and GLV kernels are written over rayon.
+  "parallel",
   "jolt-field/bn254",
 ]
 parallel = ["dep:rayon", "jolt-poly/parallel"]

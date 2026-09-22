@@ -1,6 +1,9 @@
 use jolt_field::{JoltField, Ring};
 
-use crate::opening;
+use crate::protocols::jolt::{
+    HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
+};
+use crate::{challenge, derived, opening};
 
 use super::super::super::{JoltExpr, JoltOpeningId, JoltRelationId};
 use super::super::dimensions::JoltFormulaPointError;
@@ -55,6 +58,38 @@ impl HammingWeightClaimReductionOutputOpenings {
             .copied()
             .collect()
     }
+}
+
+/// The batching coefficient `gamma^exponent` as an expression leaf: the
+/// constant one, the challenge itself, or the `GammaPow` derived value.
+pub fn gamma_power_expr<F: Ring>(exponent: usize) -> JoltExpr<F> {
+    match exponent {
+        0 => JoltExpr::one(),
+        1 => challenge(HammingWeightClaimReductionChallenge::Gamma),
+        _ => derived(HammingWeightClaimReductionPublic::GammaPow(exponent)),
+    }
+}
+
+/// `gamma^exponent`, the value behind [`HammingWeightClaimReductionPublic::GammaPow`].
+pub fn gamma_pow<F: Ring>(gamma: F, mut exponent: usize) -> F {
+    let mut result = F::one();
+    let mut base = gamma;
+    while exponent > 0 {
+        if exponent & 1 == 1 {
+            result *= base;
+        }
+        exponent >>= 1;
+        if exponent > 0 {
+            base *= base;
+        }
+    }
+    result
+}
+
+/// One past the largest gamma exponent the base (non-lattice) claim reduction
+/// uses: three legs per layout polynomial.
+pub fn gamma_power_bound(dimensions: HammingWeightClaimReductionDimensions) -> usize {
+    3 * dimensions.layout.polynomials().count()
 }
 
 pub fn claim_reduction_output_openings(

@@ -46,12 +46,19 @@ where
             })
         });
 
+    let gamma = input.stage7.challenges.hamming_weight_claim_reduction.gamma;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(
             HammingWeightClaimReductionChallenge::Gamma,
         )),
-        input.stage7.challenges.hamming_weight_claim_reduction.gamma,
+        gamma,
     )?;
+    for exponent in 2..hamming_weight::gamma_power_bound(hamming_dimensions) {
+        values.public(
+            JoltDerivedId::from(HammingWeightClaimReductionPublic::GammaPow(exponent)),
+            hamming_weight::gamma_pow(gamma, exponent),
+        )?;
+    }
     let hamming_point = input
         .stage7
         .batch_consistency
@@ -122,15 +129,15 @@ where
     }
 
     let output_openings = hamming_weight::claim_reduction_output_openings(hamming_dimensions);
-    let mut output_ids = output_openings.all();
+    let mut output_ids = composite_ids(output_openings.all());
     let mut claims = vec![relation_claim(&hamming_claims)];
     if let Some(claim) = trusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted));
+        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Trusted).into());
     }
     if let Some(claim) = untrusted_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted));
+        output_ids.push(advice::final_advice_opening(JoltAdviceKind::Untrusted).into());
     }
     if let (Some(layout), Some(claim)) = (
         bytecode_reduction_layout.as_ref(),
@@ -138,12 +145,14 @@ where
     ) {
         claims.push(relation_claim(&claim));
         output_ids.extend(
-            (0..layout.chunk_count()).map(bytecode_reduction::final_bytecode_chunk_opening),
+            (0..layout.chunk_count())
+                .map(bytecode_reduction::final_bytecode_chunk_opening)
+                .map(VerifierOpeningId::from),
         );
     }
     if let Some(claim) = program_image_reduction_claims {
         claims.push(relation_claim(&claim));
-        output_ids.push(program_image::final_program_image_opening());
+        output_ids.push(program_image::final_program_image_opening().into());
     }
     add_batched_stage(
         builder,

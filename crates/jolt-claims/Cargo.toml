@@ -11,14 +11,17 @@ workspace = true
 [features]
 default = []
 akita = []
+# Layout digests over the jolt-inlines Blake2b (guest verifiers).
+blake2-inline = ["dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
 # Heap flamegraph visitation of the relation claim structs (profile harness).
 allocative = ["dep:allocative"]
-field-inline = []
+field-inline = ["jolt-lookup-tables/field-inline"]
 test-utils = []
 
 [dependencies]
 allocative = { workspace = true, optional = true }
 blake2.workspace = true
+jolt-inlines-blake2 = { workspace = true, optional = true }
 derive_more.workspace = true
 jolt-claims-derive.workspace = true
 jolt-field.workspace = true

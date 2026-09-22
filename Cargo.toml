@@ -66,10 +66,13 @@ members = [
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
   "jolt-inlines/p256",
+  "jolt-inlines/ntt",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
   "examples/collatz/guest",
+  "examples/ntt",
+  "examples/ntt/guest",
   "examples/fibonacci",
   "examples/fibonacci/guest",
   "examples/secp256k1-ecdsa-verify",
@@ -94,6 +97,8 @@ members = [
   "examples/stdlib/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
+  "examples/eqpoly-field",
+  "examples/eqpoly-field/guest",
   "examples/overflow",
   "examples/overflow/guest",
   "examples/memory-ops",
@@ -195,11 +200,13 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
-# The refreshed Akita cutover consumes jolt-field from this exact Git source.
-# Redirect that package to the workspace member so Cargo resolves one shared
-# field identity rather than separate path and Git copies.
+# The companion pins immutable Jolt source anchor c2372a0a. Share the exact
+# measured field/inline source from this workspace instead of duplicate Git
+# package identities; these paths stay inside this checkout.
 [patch."https://github.com/a16z/jolt"]
 jolt-field = { path = "crates/jolt-field" }
+jolt-inlines-blake2 = { path = "jolt-inlines/blake2" }
+jolt-inlines-ntt = { path = "jolt-inlines/ntt" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -294,17 +301,19 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+# Exact fork companion retaining the measured inline/trusted-setup paths on public Blake.
+akita-algebra = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-config = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-error = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-pcs = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-prover = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-planner = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-schedules = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-challenges = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-transcript = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-types = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-serialization = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
+akita-verifier = { git = "https://github.com/markosg04/akita.git", rev = "d0ee56a0b12db66b4c46a87c527169737694c4c7", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -313,6 +322,7 @@ anyhow = "1.0.97"
 thiserror = "2.0.18"
 derive_more = { version = "2.0.1", features = [
   "from",
+  "try_into",
 ], default-features = false }
 strum = { version = "0.28.0", default-features = false }
 strum_macros = "0.28.0"
@@ -425,11 +435,13 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
 jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
-jolt-akita = { path = "./crates/jolt-akita" }
+# `parallel` (and jolt-crypto's `bn254`) are opt-in: the guest-verifier closure
+# builds without rayon, prover crates enable them through their own features.
+jolt-akita = { path = "./crates/jolt-akita", default-features = false }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
-jolt-crypto = { path = "./crates/jolt-crypto" }
+jolt-crypto = { path = "./crates/jolt-crypto", default-features = false }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-openings = { path = "./crates/jolt-openings" }
@@ -441,8 +453,8 @@ jolt-profiling = { path = "./crates/jolt-profiling" }
 jolt-prover = { path = "./crates/jolt-prover" }
 jolt-witness = { path = "./crates/jolt-witness" }
 jolt-witness-derive = { path = "./crates/jolt-witness-derive" }
-jolt-poly = { path = "./crates/jolt-poly" }
-jolt-r1cs = { path = "./crates/jolt-r1cs" }
+jolt-poly = { path = "./crates/jolt-poly", default-features = false }
+jolt-r1cs = { path = "./crates/jolt-r1cs", default-features = false }
 jolt-transcript = { path = "./crates/jolt-transcript", default-features = false }
 jolt-utils = { path = "./crates/jolt-utils" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
@@ -455,6 +467,7 @@ jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }
 jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
 jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
+jolt-inlines-ntt = { path = "./jolt-inlines/ntt", default-features = false }
 jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }

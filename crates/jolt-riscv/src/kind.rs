@@ -517,6 +517,15 @@ macro_rules! source_extension_for_marker {
     (FieldLoadImm) => {
         Some(SourceExtension::FieldInline)
     };
+    (FieldLoadWord) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldLoadWordHi) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldAdviceLimb) => {
+        Some(SourceExtension::FieldInline)
+    };
 }
 
 macro_rules! source_side_effects_for_marker {
@@ -1000,6 +1009,15 @@ macro_rules! source_side_effects_for_marker {
     (FieldLoadImm) => {
         true
     };
+    (FieldLoadWord) => {
+        true
+    };
+    (FieldLoadWordHi) => {
+        true
+    };
+    (FieldAdviceLimb) => {
+        true
+    };
 }
 
 macro_rules! jolt_target_extension_for_marker {
@@ -1294,6 +1312,15 @@ macro_rules! jolt_target_extension_for_marker {
     (FieldLoadImm) => {
         Some(JoltTargetExtension::FieldInline)
     };
+    (FieldLoadWord) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldLoadWordHi) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldAdviceLimb) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
 }
 
 macro_rules! jolt_side_effects_for_marker {
@@ -1358,6 +1385,15 @@ macro_rules! jolt_side_effects_for_marker {
         true
     };
     (FieldLoadImm) => {
+        true
+    };
+    (FieldLoadWord) => {
+        true
+    };
+    (FieldLoadWordHi) => {
+        true
+    };
+    (FieldAdviceLimb) => {
         true
     };
     (Add) => {

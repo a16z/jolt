@@ -1,30 +1,32 @@
 //! The stage 1 `SpartanOuter` remainder sumcheck instance.
 //!
-//! A self-contained relation object driven by the verifier after checking the
-//! Spartan outer remainder sumcheck. It owns the remainder opening-point derivation
-//! and resolves the expanded quadratic R1CS form's `SpartanOuterPublic` coefficients
-//! from [`JoltSpartanOuterRemainder::public_coefficients`] — the same source the
-//! BlindFold constraint uses — so the output-claim algebra lives here once and stays
-//! in lockstep with that constraint, which evaluates the same expanded
-//! `spartan::outer_remainder` formula.
-//!
-//! The expanded `output_expression` (`Σ q[l,r]·o[l]·o[r] + Σ ℓ[i]·o[i] + c`) is the
-//! distributed form of the factored quadratic
-//! `tau_kernel · (Σ az[i]·o[i] + az_c) · (Σ bz[i]·o[i] + bz_c)` that
-//! [`JoltSpartanOuterRemainder::expected_output_claim`] computes; the two are
-//! value-equivalent (see `output_matches_factored_form`).
-//!
-//! The companion Spartan outer *uni-skip* first round is a univariate skip rather
-//! than a batched-Boolean [`ConcreteSumcheck`] verification, so it stays hand-coded
-//! in the stage-1 verifier; this relation consumes that uni-skip's reduced opening
-//! as its input claim.
+//! The clear output check uses the factored R1CS evaluator. The symbolic
+//! quadratic expression remains available to BlindFold; both obtain their
+//! public coefficients from `JoltSpartanOuterRemainder`.
+
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::ComposedClaims;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
+
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::{
+    OuterInputs as SelectedInputs, OuterOutputs as SelectedOutputs,
+    OuterRemainder as SelectedSymbolic,
+};
+#[cfg(not(feature = "field-inline"))]
+use jolt_claims::protocols::jolt::relations::spartan::{
+    OuterRemainder as SelectedSymbolic, OuterRemainderInputClaims as SelectedInputs,
+    OuterRemainderOutputClaims as SelectedOutputs,
+};
+use std::sync::OnceLock;
 
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderInputClaims, OuterRemainderOutputClaims,
 };
-use jolt_claims::protocols::jolt::{relations, JoltDerivedId, JoltRelationId, SpartanOuterPublic};
-use jolt_claims::{NoChallenges, SymbolicSumcheck};
+use jolt_claims::protocols::jolt::{JoltDerivedId, JoltRelationId, SpartanOuterPublic};
+use jolt_claims::{NoChallenges, OutputClaims, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
@@ -36,12 +38,20 @@ use crate::VerifierError;
 /// Wire the consumed opening *value* from the Spartan outer uni-skip's reduced output
 /// claim: only the value feeds the input claim (the output point comes from this
 /// relation's own sumcheck point).
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects a composed claim or opening id"
+    )
+)]
 pub fn outer_remainder_input_values_from_uniskip_output<F: JoltField>(
     uniskip_output_claim: F,
-) -> OuterRemainderInputClaims<F> {
+) -> SelectedInputs<F> {
     OuterRemainderInputClaims {
         outer_uniskip: uniskip_output_claim,
     }
+    .into()
 }
 
 /// The factored-form constituents, indexed for O(1) resolution. Built once
@@ -112,7 +122,7 @@ impl<F: JoltField> OuterRemainderCoefficients<F> {
 
 #[derive(Clone)]
 pub struct OuterRemainder<F: JoltField> {
-    symbolic: relations::spartan::OuterRemainder,
+    symbolic: SelectedSymbolic,
     variable_count: usize,
     /// The stage-1 `tau` draw and the uni-skip reduction challenge — two of the
     /// three inputs to the `SpartanOuterPublic` coefficient table. Both exist
@@ -122,28 +132,48 @@ pub struct OuterRemainder<F: JoltField> {
     /// The relation's own bound point (the remainder challenges), captured by
     /// [`derive_opening_points`](ConcreteSumcheck::derive_opening_points) — the
     /// third coefficient-table input, which exists only after the batch reduces.
-    bound_point: std::sync::OnceLock<Vec<F>>,
+    bound_point: OnceLock<Vec<F>>,
     /// The expanded coefficient table, built lazily on the first
     /// `derive_output_term` call so the ZK path (which never evaluates the output
     /// expression) skips the `JoltSpartanOuterRemainder` matrix work entirely.
-    coefficients: std::sync::OnceLock<OuterRemainderCoefficients<F>>,
+    coefficients: OnceLock<OuterRemainderCoefficients<F>>,
 }
 
 impl<F: JoltField> OuterRemainder<F> {
     pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
-        let variable_count = dimensions.variables().len();
+        // Sized from the selected R1CS composition (jolt-r1cs), not from the
+        // rv64-only symbolic dimensions: under `field-inline` the composed
+        // coefficient table carries the appended FR columns, and the weight
+        // vectors must match it. FR-off the two sources agree (35 columns).
+        let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        debug_assert!(variable_count >= dimensions.variables().len());
         Self {
-            symbolic: relations::spartan::OuterRemainder::new(dimensions),
+            symbolic: SelectedSymbolic::new(dimensions),
             variable_count,
             tau,
             uniskip_challenge,
-            bound_point: std::sync::OnceLock::new(),
-            coefficients: std::sync::OnceLock::new(),
+            bound_point: OnceLock::new(),
+            coefficients: OnceLock::new(),
         }
     }
 
     pub fn uniskip_challenge(&self) -> F {
         self.uniskip_challenge
+    }
+
+    fn formula(&self) -> Result<JoltSpartanOuterRemainder<F>, VerifierError> {
+        let bound_point = self.bound_point.get().ok_or_else(|| {
+            public_input_failed(
+                "Spartan outer remainder point not bound (derive_opening_points must run \
+                 before the output expression is evaluated)",
+            )
+        })?;
+        JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
+            tau: &self.tau,
+            uniskip: self.uniskip_challenge,
+            remainder: bound_point,
+        })
+        .map_err(public_input_failed)
     }
 
     /// The expanded `SpartanOuterPublic` coefficient table, built on first use from
@@ -153,18 +183,7 @@ impl<F: JoltField> OuterRemainder<F> {
     /// drift from that constraint.
     fn coefficients(&self) -> Result<&OuterRemainderCoefficients<F>, VerifierError> {
         if self.coefficients.get().is_none() {
-            let bound_point = self.bound_point.get().ok_or_else(|| {
-                public_input_failed(
-                    "Spartan outer remainder point not bound (derive_opening_points must run \
-                     before the output expression is evaluated)",
-                )
-            })?;
-            let formula = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-                tau: &self.tau,
-                uniskip: self.uniskip_challenge,
-                remainder: bound_point,
-            })
-            .map_err(public_input_failed)?;
+            let formula = self.formula()?;
             let coefficients = OuterRemainderCoefficients::from_public_coefficients(
                 self.variable_count,
                 formula.public_coefficients(),
@@ -187,7 +206,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
 }
 
 impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
-    type Symbolic = relations::spartan::OuterRemainder;
+    type Symbolic = SelectedSymbolic;
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
@@ -196,8 +215,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],
-        _input_points: &OuterRemainderInputClaims<Vec<F>>,
-    ) -> Result<OuterRemainderOutputClaims<Vec<F>>, VerifierError> {
+        _input_points: &SelectedInputs<Vec<F>>,
+    ) -> Result<SelectedOutputs<Vec<F>>, VerifierError> {
         // Capture the bound point for the lazy coefficient-table build; reject a
         // rebind at a different point (one bind per verification).
         let bound_point = self
@@ -210,7 +229,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             ));
         }
         let opening_point = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
-        Ok(OuterRemainderOutputClaims {
+        let output = OuterRemainderOutputClaims {
             left_instruction_input: opening_point.clone(),
             right_instruction_input: opening_point.clone(),
             product: opening_point.clone(),
@@ -245,35 +264,73 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             advice: opening_point.clone(),
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
-            is_last_in_sequence: opening_point,
-        })
+            is_last_in_sequence: opening_point.clone(),
+        };
+        #[cfg(feature = "field-inline")]
+        let output = ComposedClaims {
+            base: output,
+            field_inline: FieldRegistersSpartanOuterOutputClaims {
+                rs1_value: opening_point.clone(),
+                rs2_value: opening_point.clone(),
+                rd_value: opening_point.clone(),
+                product: opening_point.clone(),
+                inv_product: opening_point.clone(),
+                add: opening_point.clone(),
+                sub: opening_point.clone(),
+                mul: opening_point.clone(),
+                inv: opening_point.clone(),
+                assert_eq: opening_point.clone(),
+                load_from_x: opening_point.clone(),
+                store_to_x: opening_point.clone(),
+                load_imm: opening_point.clone(),
+                load_word: opening_point.clone(),
+                load_word_hi: opening_point.clone(),
+                advice_limb: opening_point.clone(),
+            },
+        };
+        Ok(output)
+    }
+
+    fn expected_output(
+        &self,
+        _input_points: &SelectedInputs<Vec<F>>,
+        output_values: &SelectedOutputs<F>,
+        _output_points: &SelectedOutputs<Vec<F>>,
+        _challenges: &NoChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        self.formula()?
+            .expected_output_claim(&output_values.opening_values())
+            .map_err(public_input_failed)
     }
 
     fn derive_output_term(
         &self,
         id: &JoltDerivedId,
-        _input_points: &OuterRemainderInputClaims<Vec<F>>,
-        _output_points: &OuterRemainderOutputClaims<Vec<F>>,
+        _input_points: &SelectedInputs<Vec<F>>,
+        _output_points: &SelectedOutputs<Vec<F>>,
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::SpartanOuter(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         self.coefficients()?
             .resolve(*public_id)
-            .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+            .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, reason = "test fixtures")]
+#[cfg_attr(
+    feature = "field-inline",
+    expect(clippy::indexing_slicing, reason = "test fixtures")
+)]
 #[expect(
     clippy::as_conversions,
     reason = "tests use plain arithmetic on fixture data"
 )]
 mod tests {
     use super::*;
-    use crate::stages::relations::OutputClaims;
     use jolt_claims::protocols::jolt::geometry::spartan::SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::jolt::JoltOpeningId;
     use jolt_field::{Fr, Ring};
@@ -345,6 +402,7 @@ mod tests {
     }
 
     /// All 35 produced opening *points* sharing a single opening point.
+    #[cfg(not(feature = "field-inline"))]
     fn output_points_at(point: &[Fr]) -> OuterRemainderOutputClaims<Vec<Fr>> {
         let next = || point.to_vec();
         OuterRemainderOutputClaims {
@@ -386,13 +444,86 @@ mod tests {
         }
     }
 
-    /// The relation's expanded `expected_output` evaluates bit-identically to the
-    /// factored `JoltSpartanOuterRemainder::expected_output_claim` on the production
-    /// 35-variable rv64 shape. This is the equivalence the clear stage-1 path now
-    /// relies on (it switched from the factored matrix form to the expanded relation
-    /// form); muldiv non-ZK is the end-to-end gate, this pins it at unit level.
+    /// Pin the composed opening order and factored check against the symbolic
+    /// expression used by BlindFold, including the appended field-register columns.
+    #[cfg(feature = "field-inline")]
     #[test]
-    fn expected_output_matches_factored_form_on_rv64_shape() {
+    fn composed_factored_output_matches_symbolic_relation() {
+        let log_t = 3usize;
+        let tau_len = log_t + 2;
+        let remainder_len = 1 + log_t;
+        let dimensions = SpartanOuterDimensions::rv64(log_t);
+        let tau = (0..tau_len)
+            .map(|i| Fr::from_u64(2 + i as u64))
+            .collect::<Vec<_>>();
+        let remainder_challenges = (0..remainder_len)
+            .map(|i| Fr::from_u64(100 + i as u64))
+            .collect::<Vec<_>>();
+        let uniskip_challenge = Fr::from_u64(17);
+
+        let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
+        let openings = (0..variable_count)
+            .map(|i| Fr::from_u64(1_000 + i as u64))
+            .collect::<Vec<_>>();
+
+        let relation = OuterRemainder::<Fr>::new(dimensions, tau, uniskip_challenge);
+        assert_eq!(relation.variable_count, variable_count);
+
+        let rv64_count = SPARTAN_OUTER_R1CS_INPUTS.len();
+        let (rv64_openings, field_inline_openings) = openings.split_at(rv64_count);
+
+        let input_points = SelectedInputs::<Vec<Fr>>::default();
+        let _ = relation
+            .derive_opening_points(&remainder_challenges, &input_points)
+            .unwrap();
+        let ids = jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings();
+        let output_values = ComposedClaims {
+            base: output_values_from(rv64_openings),
+            field_inline: FieldRegistersSpartanOuterOutputClaims::from_opening_values(|id| {
+                ids.iter()
+                    .position(|candidate| candidate == id)
+                    .map(|i| field_inline_openings[i])
+            })
+            .unwrap(),
+        };
+        let output_points = relation
+            .derive_opening_points(&remainder_challenges, &input_points)
+            .unwrap();
+        let composed_output = relation
+            .expected_output(
+                &input_points,
+                &output_values,
+                &output_points,
+                &NoChallenges::default(),
+            )
+            .unwrap();
+        let symbolic_output = relation
+            .symbolic()
+            .output_expression::<Fr>()
+            .try_evaluate(
+                |id| {
+                    output_values
+                        .resolve_output(id)
+                        .ok_or(VerifierError::MissingOpeningClaim { id: *id })
+                },
+                |id| Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
+                |id| {
+                    relation.derive_output_term(
+                        id,
+                        &input_points,
+                        &output_points,
+                        &NoChallenges::default(),
+                    )
+                },
+            )
+            .unwrap();
+        assert_eq!(composed_output, symbolic_output);
+    }
+
+    /// The RV64 factored check must agree with the live symbolic relation.
+    #[cfg(not(feature = "field-inline"))]
+    #[test]
+    fn factored_output_matches_symbolic_relation_on_rv64_shape() {
         let log_t = 3usize;
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let variable_count = dimensions.variables().len();
@@ -410,19 +541,12 @@ mod tests {
             .collect::<Vec<_>>();
         let uniskip_challenge = Fr::from_u64(17);
 
-        let factored = JoltSpartanOuterRemainder::new(JoltSpartanOuterRemainderChallenges {
-            tau: &tau,
-            uniskip: uniskip_challenge,
-            remainder: &remainder_challenges,
-        })
-        .unwrap();
         let openings = (0..variable_count)
             .map(|i| Fr::from_u64(1_000 + i as u64))
             .collect::<Vec<_>>();
-        let factored_output = factored.expected_output_claim(&openings).unwrap();
 
         let relation = OuterRemainder::new(dimensions, tau, uniskip_challenge);
-        let input_points = OuterRemainderInputClaims::<Vec<Fr>>::default();
+        let input_points = SelectedInputs::<Vec<Fr>>::default();
         // Capture the bound point (the third coefficient-table input); the table
         // itself is built lazily by the first `derive_output_term` call.
         let _ = relation
@@ -431,7 +555,7 @@ mod tests {
         let point = vec![Fr::from_u64(7); 1 + log_t];
         let output_values = output_values_from(&openings);
         let output_points = output_points_at(&point);
-        let expanded_output = relation
+        let actual_output = relation
             .expected_output(
                 &input_points,
                 &output_values,
@@ -439,7 +563,26 @@ mod tests {
                 &NoChallenges::default(),
             )
             .unwrap();
-
-        assert_eq!(expanded_output, factored_output);
+        let symbolic_output = relation
+            .symbolic()
+            .output_expression::<Fr>()
+            .try_evaluate(
+                |id| {
+                    output_values
+                        .resolve_output(id)
+                        .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() })
+                },
+                |id| Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
+                |id| {
+                    relation.derive_output_term(
+                        id,
+                        &input_points,
+                        &output_points,
+                        &NoChallenges::default(),
+                    )
+                },
+            )
+            .unwrap();
+        assert_eq!(actual_output, symbolic_output);
     }
 }

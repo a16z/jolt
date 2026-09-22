@@ -246,6 +246,11 @@ mod tests {
             },
             |id| match *id {
                 JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) => eq_address_cycle,
+                JoltDerivedId::Booleanity(BooleanityPublic::GammaPow { exponent }) => {
+                    crate::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow(
+                        gamma, exponent,
+                    )
+                }
                 _ => zero,
             },
         );

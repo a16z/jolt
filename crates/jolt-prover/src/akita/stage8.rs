@@ -1,6 +1,7 @@
-//! Akita's final opening: one heterogeneous advice/main-trace opening over the
-//! canonical group order `[UntrustedAdvice?, TrustedAdvice?,
-//! BytecodeChunk(0..C), ProgramImageInit, OneHotTrace]`.
+//! Akita's final opening: one heterogeneous precommitted/main-trace opening
+//! over the canonical group order `[UntrustedAdvice?, TrustedAdvice?,
+//! FieldIncLimbs (field-inline builds), BytecodeChunk(0..C),
+//! ProgramImageInit, OneHotTrace]`.
 
 use std::collections::BTreeMap;
 
@@ -14,11 +15,15 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
 use jolt_verifier::stages::stage8::packed::{
     leaf_claims, object_leaf_claims, one_hot_trace_packed_claims,
 };
 use jolt_verifier::{CheckedInputs, VerifierError};
 
+#[cfg(feature = "field-inline")]
+use super::field_inline::FieldIncLimbsObject;
 use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -44,6 +49,17 @@ where
         .map_err(batch_failed::<F>)
 }
 
+/// The stage-8 wire artifacts: the joint opening proof and (FR builds) the
+/// limb-group claims the proof carries beside it.
+pub struct Stage8Artifacts<PCS>
+where
+    PCS: CommitmentScheme,
+{
+    pub joint_opening_proof: PCS::Proof,
+    #[cfg(feature = "field-inline")]
+    pub field_inc_limbs: FieldIncLimbClaims<PCS::Field>,
+}
+
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
 pub fn prove_stage8<F, PCS, VC, T>(
@@ -54,12 +70,13 @@ pub fn prove_stage8<F, PCS, VC, T>(
     one_hot_trace_hint: PCS::OpeningHint,
     untrusted_advice: Option<&AdviceObject<PCS>>,
     trusted_advice: Option<&AdviceObject<PCS>>,
+    #[cfg(feature = "field-inline")] field_inc_limbs: &FieldIncLimbsObject<PCS>,
     program: Option<&DirectProgramObjects<PCS>>,
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     transcript: &mut T,
-) -> Result<PCS::Proof, ProverError<F>>
+) -> Result<Stage8Artifacts<PCS>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -99,7 +116,11 @@ where
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
         .transpose()?;
 
-    let mut precommitted = Vec::with_capacity(2 + program.map_or(0, |p| p.objects.len()));
+    // Canonical public batch order: advice, (field-inline) the FR limb group,
+    // then the direct committed-program objects, then OneHotTrace.
+    let mut precommitted = Vec::with_capacity(
+        2 + usize::from(cfg!(feature = "field-inline")) + program.map_or(0, |p| p.objects.len()),
+    );
     for (object, claim) in [
         (untrusted_advice, untrusted_physical.as_ref()),
         (trusted_advice, trusted_physical.as_ref()),
@@ -118,6 +139,13 @@ where
             ));
         }
     }
+    #[cfg(feature = "field-inline")]
+    let field_inc_limb_claims = {
+        let (claim, claims) =
+            super::field_inline::stage8_batch_entry(field_inc_limbs, stage6b, transcript)?;
+        precommitted.push((claim, field_inc_limbs.hint.clone()));
+        claims
+    };
 
     if let Some(program) = program {
         for object in &program.objects {
@@ -141,7 +169,7 @@ where
         packed_claim.point.as_slice().to_vec(),
         vec![packed_claim.value],
     );
-    tracing::info_span!("akita_main_batched_prove").in_scope(|| {
+    let joint_opening_proof = tracing::info_span!("akita_main_batched_prove").in_scope(|| {
         PCS::prove_batch(
             &preprocessing.pcs_setup,
             precommitted,
@@ -150,5 +178,10 @@ where
             transcript,
         )
         .map_err(batch_failed::<F>)
+    })?;
+    Ok(Stage8Artifacts {
+        joint_opening_proof,
+        #[cfg(feature = "field-inline")]
+        field_inc_limbs: field_inc_limb_claims,
     })
 }

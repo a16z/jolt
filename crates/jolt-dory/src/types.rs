@@ -9,7 +9,7 @@ use dory::backends::arkworks::{
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
 use jolt_field::Fr;
 use jolt_transcript::{AppendToTranscript, Transcript};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error as SerdeError, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Caps the upstream `Vec::with_capacity(num_rounds)` allocation against
 /// attacker-supplied round counts during proof deserialization. Real Dory
@@ -85,20 +85,18 @@ impl<'de> Deserialize<'de> for DoryProof {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
         if buf.len() > MAX_SERIALIZED_PROOF_BYTES {
-            return Err(serde::de::Error::custom(format!(
+            return Err(SerdeError::custom(format!(
                 "Dory proof ({} bytes) exceeds maximum ({MAX_SERIALIZED_PROOF_BYTES})",
                 buf.len()
             )));
         }
-        validate_proof_round_count(&buf).map_err(serde::de::Error::custom)?;
+        validate_proof_round_count(&buf).map_err(SerdeError::custom)?;
         let mut cursor = Cursor::new(&buf[..]);
         let proof =
-            ArkDoryProof::deserialize_compressed(&mut cursor).map_err(serde::de::Error::custom)?;
+            ArkDoryProof::deserialize_compressed(&mut cursor).map_err(SerdeError::custom)?;
         // Canonical encoding: a valid parse must consume the entire buffer.
         if cursor.position() != buf.len() as u64 {
-            return Err(serde::de::Error::custom(
-                "Dory proof encoding has trailing bytes",
-            ));
+            return Err(SerdeError::custom("Dory proof encoding has trailing bytes"));
         }
         Ok(Self(proof))
     }
@@ -119,10 +117,15 @@ impl Serialize for DoryVerifierSetup {
 impl<'de> Deserialize<'de> for DoryVerifierSetup {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        validate_verifier_setup_structure(&buf).map_err(serde::de::Error::custom)?;
-        ArkworksVerifierSetup::deserialize_compressed(&buf[..])
-            .map_err(serde::de::Error::custom)
-            .map(Self)
+        validate_verifier_setup_structure(&buf).map_err(SerdeError::custom)?;
+        #[cfg(feature = "unchecked-verifier-setup")]
+        let setup = {
+            use ark_serialize::{Compress, Validate};
+            ArkworksVerifierSetup::deserialize_with_mode(&buf[..], Compress::Yes, Validate::No)
+        };
+        #[cfg(not(feature = "unchecked-verifier-setup"))]
+        let setup = ArkworksVerifierSetup::deserialize_compressed(&buf[..]);
+        setup.map_err(SerdeError::custom).map(Self)
     }
 }
 
