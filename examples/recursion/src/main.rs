@@ -1,3 +1,6 @@
+#[cfg(all(feature = "akita", feature = "field-inline"))]
+mod outer;
+
 use clap::{Parser, Subcommand};
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
@@ -121,6 +124,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Preflight or prove an existing FR ELF with the modular q128 Akita prover.
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    Outer(outer::Args),
     /// Generate proofs for guest programs
     Generate {
         /// Example to run (fibonacci or muldiv)
@@ -1079,6 +1085,13 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        Some(Commands::Outer(args)) => {
+            if let Err(error) = args.run() {
+                error!("Outer prover: {error}");
+                std::process::exit(1);
+            }
+        }
         Some(Commands::Generate {
             example,
             workdir,
