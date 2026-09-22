@@ -9,11 +9,18 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
-r1cs = ["dep:akita-transcript", "dep:jolt-r1cs", "jolt-r1cs/bn254", "jolt-transcript/r1cs"]
+r1cs = [
+  "dep:akita-transcript",
+  "dep:jolt-r1cs",
+  "jolt-r1cs/bn254",
+  "jolt-transcript/r1cs",
+]
 profiling = []
 
 [dependencies]
-akita-transcript = { workspace = true, optional = true, features = ["transcript-blake2b"] }
+akita-transcript = { workspace = true, optional = true, features = [
+  "transcript-blake2b",
+] }
 jolt-r1cs = { workspace = true, optional = true }
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
