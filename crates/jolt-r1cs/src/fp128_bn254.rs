@@ -55,11 +55,45 @@ impl Fp128Var {
         let variable = builder.alloc_witness(witness.map(Fr::from_u128));
         let bits = Self::allocate_bits(builder, witness, 128);
         builder.assert_equal(variable, Self::bits_lc(&bits));
-        let complement = Self::allocate_bits(builder, witness.map(|x| MODULUS - 1 - x), 128);
-        // Both summands are 128-bit integers, so this equality cannot wrap in Fr.
-        builder.assert_equal(
-            LinearCombination::variable(variable) + Self::bits_lc(&complement),
-            LinearCombination::constant(Fr::from_u128(MODULUS - 1)),
+        let high_zero_count = witness.map(|x| 96 - (x >> 32).count_ones());
+        let high_zeros = bits.iter().skip(32).fold(
+            LinearCombination::constant(Fr::from_u64(96)),
+            |sum, &bit| sum - LinearCombination::variable(bit),
+        );
+        let high_is_max =
+            builder.alloc_witness(high_zero_count.map(|count| Fr::from_u64(u64::from(count == 0))));
+        let inverse = builder.alloc_witness(high_zero_count.map(|count| {
+            Fr::from_u64(u64::from(count))
+                .inverse()
+                .unwrap_or(Fr::from_u64(0))
+        }));
+        // S is in [0,96], so these rows force h=1 exactly when S=0.
+        builder.assert_product(high_zeros.clone(), high_is_max, LinearCombination::zero());
+        builder.assert_product(
+            high_zeros,
+            inverse,
+            LinearCombination::one() - LinearCombination::variable(high_is_max),
+        );
+        let low_mask = (1u128 << 32) - 1;
+        let max_low = (MODULUS & low_mask) - 1;
+        let slack = Self::allocate_bits(
+            builder,
+            witness.zip(high_zero_count).map(|(x, count)| {
+                if count == 0 {
+                    max_low - (x & low_mask)
+                } else {
+                    0
+                }
+            }),
+            15,
+        );
+        // q's high 96 bits are all one. Only that prefix needs L+d=22536;
+        // L+d < 2^32+2^15 < r, and 15 bits cover every honest slack.
+        builder.assert_product(
+            high_is_max,
+            Self::bits_lc(bits.iter().take(32)) + Self::bits_lc(&slack)
+                - LinearCombination::constant(Fr::from_u128(max_low)),
+            LinearCombination::zero(),
         );
         Ok(Self {
             variable,
@@ -239,6 +273,8 @@ mod tests {
             8,
             (1u128 << 64) - 1,
             1u128 << 127,
+            MODULUS - 22_538,
+            MODULUS - 22_537,
             MODULUS - 2,
             MODULUS - 1,
         ];
@@ -295,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn completed_witness_rejects_value_bit_and_complement_tampering() {
+    fn completed_witness_rejects_value_bit_and_slack_tampering() {
         let mut builder = R1csBuilder::new();
         let value = Fp128Var::allocate(&mut builder, Some(MODULUS - 1)).unwrap();
         let witness = builder.witness().unwrap();
@@ -319,11 +355,75 @@ mod tests {
         nonboolean[bit.index()] = Fr::from_u64(2);
         assert!(matrices.check_witness(&nonboolean).is_err());
 
-        // Last allocation is the top complement bit; both ranges are enforced.
-        let mut bad_complement = witness;
-        let last = bad_complement.len() - 1;
-        bad_complement[last] = Fr::from_u64(2);
-        assert!(matrices.check_witness(&bad_complement).is_err());
+        // Last allocation is the top slack bit; its range is enforced.
+        let mut bad_slack = witness;
+        let last = bad_slack.len() - 1;
+        bad_slack[last] = Fr::from_u64(2);
+        assert!(matrices.check_witness(&bad_slack).is_err());
+    }
+
+    #[test]
+    fn each_missing_high_bit_accepts_the_largest_low_word() {
+        for missing in 32..128 {
+            let x = u128::MAX ^ (1u128 << missing);
+            assert!(BigUint::from(x) < q());
+            let mut builder = R1csBuilder::new();
+            let _ = Fp128Var::allocate(&mut builder, Some(x)).unwrap();
+            let witness = builder.witness().unwrap();
+            assert!(builder.into_matrices().check_witness(&witness).is_ok());
+        }
+    }
+
+    #[test]
+    fn forged_prefix_selector_and_inverse_are_rejected() {
+        for x in [0, MODULUS - 1] {
+            let mut builder = R1csBuilder::new();
+            let value = Fp128Var::allocate(&mut builder, Some(x)).unwrap();
+            let h = value.bits.last().unwrap().index() + 1;
+            let inverse = h + 1;
+            let mut witness = builder.witness().unwrap();
+            let matrices = builder.into_matrices();
+            if x == 0 {
+                // S!=0: h=1 and inv=0 satisfy S*inv=1-h, but not S*h=0.
+                witness[h] = Fr::from_u64(1);
+                witness[inverse] = Fr::from_u64(0);
+                for (i, bit) in witness.iter_mut().skip(inverse + 1).enumerate() {
+                    *bit = Fr::from_u128((22_536u128 >> i) & 1);
+                }
+                assert!(matrices.check_witness(&witness).is_err());
+                // Correct h=0 still requires the nonzero inverse.
+                witness[h] = Fr::from_u64(0);
+                assert!(matrices.check_witness(&witness).is_err());
+            } else {
+                // S=0: h=0 would disable the low bound, but violates the second row.
+                witness[value.variable.index()] = Fr::from_u128(MODULUS);
+                for (i, bit) in value.bits.iter().enumerate() {
+                    witness[bit.index()] = Fr::from_u128((MODULUS >> i) & 1);
+                }
+                witness[h] = Fr::from_u64(0);
+                assert!(matrices.check_witness(&witness).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn negative_slack_cannot_admit_noncanonical_values() {
+        let mut builder = R1csBuilder::new();
+        let value = Fp128Var::allocate(&mut builder, Some(MODULUS - 1)).unwrap();
+        let first_slack = value.bits.last().unwrap().index() + 3;
+        let witness = builder.witness().unwrap();
+        let matrices = builder.into_matrices();
+        for x in [MODULUS, MODULUS + 1, u128::MAX] {
+            let mut forged = witness.clone();
+            forged[value.variable.index()] = Fr::from_u128(x);
+            for (i, bit) in value.bits.iter().enumerate() {
+                forged[bit.index()] = Fr::from_u128((x >> i) & 1);
+            }
+            // This makes the gated integer sum correct in Fr. Only slack
+            // bitness prevents representing the necessary negative integer.
+            forged[first_slack] = -Fr::from_u128(x - (MODULUS - 1));
+            assert!(matrices.check_witness(&forged).is_err());
+        }
     }
 
     #[test]
@@ -341,7 +441,7 @@ mod tests {
             tampered[index] += Fr::from_u64(1);
             assert!(matrices.check_witness(&tampered).is_err());
         }
-        // Replace all range and complement bits consistently, so rejection
+        // Replace the entire canonical allocation consistently, so rejection
         // must come from arithmetic rather than a stale decomposition.
         for (value, replacement) in [(&c, 2), (&k, MODULUS - 3)] {
             let mut scratch = R1csBuilder::new();
