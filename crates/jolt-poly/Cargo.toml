@@ -15,6 +15,7 @@ workspace = true
 allocative = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
 jolt-utils = { workspace = true }
+jolt-r1cs = { workspace = true, optional = true }
 jolt-transcript = { path = "../jolt-transcript", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
@@ -24,6 +25,7 @@ num-traits = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+num-bigint.workspace = true
 jolt-field = { workspace = true, features = ["bn254"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
@@ -39,9 +41,14 @@ ignored = ["rand"]
 
 [features]
 default = ["parallel"]
+r1cs = ["dep:jolt-r1cs", "jolt-r1cs/fp128-bn254"]
 parallel = ["rayon"]
 # Heap visitation of this crate's tables for the profile harness.
 # Forwards to jolt-field so `F: JoltField` implies `F: Allocative`; without
 # it this crate's field-generic derives cannot discharge their scalar bound.
 allocative = ["dep:allocative", "jolt-field/allocative"]
 transcript = ["dep:jolt-transcript"]
+
+[[example]]
+name = "fp128_r1cs_cost"
+required-features = ["r1cs"]

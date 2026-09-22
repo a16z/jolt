@@ -18,6 +18,8 @@
 
 pub mod builder;
 pub mod constraint;
+#[cfg(feature = "fp128-bn254")]
+pub mod fp128_bn254;
 
 pub use builder::{LinearCombination, R1csBuilder, R1csBuilderError, Variable};
 pub use constraint::{

@@ -3629,8 +3629,10 @@ dependencies = [
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
+ "jolt-r1cs",
  "jolt-transcript",
  "jolt-utils",
+ "num-bigint",
  "num-traits",
  "rand 0.8.7",
  "rand_chacha 0.3.1",
@@ -3784,6 +3786,7 @@ name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "num-bigint",
  "serde",
  "thiserror 2.0.20",
 ]

@@ -13,5 +13,9 @@ jolt-field = { path = "../jolt-field", default-features = false }
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
+[features]
+fp128-bn254 = ["jolt-field/bn254", "jolt-field/solinas"]
+
 [dev-dependencies]
+num-bigint.workspace = true
 jolt-field = { path = "../jolt-field", features = ["bn254"] }
