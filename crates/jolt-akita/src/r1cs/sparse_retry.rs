@@ -6,6 +6,8 @@ use jolt_r1cs::{
 use jolt_transcript::r1cs::Blake2bR1csError;
 use thiserror::Error;
 
+use super::sparse_routing::ReadTape;
+
 use super::{
     operator_norm::{D64ShellVar, OperatorNormR1csError},
     AkitaSparseStreamVar, CandidateError, D64CandidateProfile,
@@ -78,72 +80,64 @@ impl D64RetryProfile {
         if tape.len() != self.tape_len {
             return Err(SparseRetryError::Shape);
         }
-        let mut cursor: Vec<_> = (0..=tape.len())
-            .map(|i| Expression::constant(Fr::from_u64(u64::from(i == 0))))
-            .collect();
-        let mut activity = Expression::one();
-        let mut output: [Expression; 64] = std::array::from_fn(|_| Expression::zero());
-        let mut selected = Vec::with_capacity(self.rounds);
-        for _ in 0..self.rounds {
-            let candidate = self
-                .candidate
-                .sample_at(builder, tape, cursor, activity.clone())?;
-            let coefficients = candidate.dense().each_ref().map(SignedVar::variable);
-            let values: Option<Vec<_>> = coefficients
-                .iter()
-                .map(|&v| {
-                    builder
-                        .evaluate(&Expression::variable(v))
-                        .ok()
-                        .and_then(|value| {
-                            (-2i8..=2).find(|&n| {
-                                let magnitude = Fr::from_u64(n.unsigned_abs().into());
-                                value == if n < 0 { -magnitude } else { magnitude }
+        ReadTape::constrain(builder, tape, self.tape_len, |builder, reads| {
+            let mut activity = Expression::one();
+            let mut output: [Expression; 64] = std::array::from_fn(|_| Expression::zero());
+            let mut selected = Vec::with_capacity(self.rounds);
+            for _ in 0..self.rounds {
+                let candidate = self.candidate.sample_at(builder, reads, activity.clone())?;
+                let coefficients = candidate.dense().each_ref().map(SignedVar::variable);
+                let values: Option<Vec<_>> = coefficients
+                    .iter()
+                    .map(|&v| {
+                        builder
+                            .evaluate(&Expression::variable(v))
+                            .ok()
+                            .and_then(|value| {
+                                (-2i8..=2).find(|&n| {
+                                    let magnitude = Fr::from_u64(n.unsigned_abs().into());
+                                    value == if n < 0 { -magnitude } else { magnitude }
+                                })
                             })
-                        })
-                })
-                .collect();
-            let values = values
-                .map(|v| v.try_into().map_err(|_| SparseRetryError::Shape))
-                .transpose()?;
-            let shell = D64ShellVar::bind(builder, coefficients, values)?;
-            let accepted = shell.acceptance(builder)?;
-            let take = builder.multiply(activity.clone(), accepted);
-            let next_activity = activity - take.clone();
-            let witness = builder.evaluate(&next_activity).ok();
-            let next = builder.alloc_witness(witness);
-            builder.assert_equal(next, next_activity);
-            activity = Expression::variable(next);
-            for (output, coefficient) in output.iter_mut().zip(coefficients) {
-                *output = output.clone() + builder.multiply(take.clone(), coefficient);
+                    })
+                    .collect();
+                let values = values
+                    .map(|v| v.try_into().map_err(|_| SparseRetryError::Shape))
+                    .transpose()?;
+                let shell = D64ShellVar::bind(builder, coefficients, values)?;
+                let accepted = shell.acceptance(builder)?;
+                let take = builder.multiply(activity.clone(), accepted);
+                let next_activity = activity - take.clone();
+                let witness = builder.evaluate(&next_activity).ok();
+                let next = builder.alloc_witness(witness);
+                builder.assert_equal(next, next_activity);
+                activity = Expression::variable(next);
+                for (output, coefficient) in output.iter_mut().zip(coefficients) {
+                    *output = output.clone() + builder.multiply(take.clone(), coefficient);
+                }
+                selected.push(take);
             }
-            selected.push(take);
-            cursor = candidate.end_cursor().to_vec();
-        }
-        builder.assert_zero(activity.clone());
-        if builder
-            .evaluate(&activity)
-            .is_ok_and(|v| v != Fr::from_u64(0))
-        {
-            return Err(SparseRetryError::CapacityExceeded);
-        }
-        let coefficients = output.map(|value| {
-            let assignment = builder.evaluate(&value).ok();
-            let variable = builder.alloc_witness(assignment);
-            builder.assert_equal(variable, value);
-            variable
-        });
-        let consumed = cursor
-            .iter()
-            .enumerate()
-            .fold(Expression::zero(), |sum, (i, selector)| {
-                sum + selector.clone().scale(Fr::from_u128(i as u128))
+            builder.assert_zero(activity.clone());
+            if builder
+                .evaluate(&activity)
+                .is_ok_and(|v| v != Fr::from_u64(0))
+            {
+                return Err(SparseRetryError::CapacityExceeded);
+            }
+            let coefficients = output.map(|value| {
+                let assignment = builder.evaluate(&value).ok();
+                let variable = builder.alloc_witness(assignment);
+                builder.assert_equal(variable, value);
+                variable
             });
-        Ok(D64AcceptedVar {
-            coefficients,
-            selected,
-            cursor,
-            consumed,
+            let consumed = reads.consumed();
+            let cursor = reads.one_hot_cursor(builder);
+            Ok(D64AcceptedVar {
+                coefficients,
+                selected,
+                cursor,
+                consumed,
+            })
         })
     }
 }

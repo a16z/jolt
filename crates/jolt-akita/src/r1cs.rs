@@ -99,3 +99,5 @@ pub mod terminal_relation;
 
 /// Conditional complete terminal suffix over an inherited constrained transcript.
 pub mod terminal_context;
+
+mod sparse_routing;

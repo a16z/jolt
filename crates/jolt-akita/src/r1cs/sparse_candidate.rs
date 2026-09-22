@@ -6,6 +6,8 @@ use jolt_r1cs::integer_bn254::{IntegerError, SignedVar};
 use jolt_r1cs::{LinearCombination, R1csBuilder};
 use thiserror::Error;
 
+use super::sparse_routing::ReadTape;
+
 type Expression = LinearCombination<Fr>;
 
 /// Invalid public shape, byte handles or an insufficient assignment capacity.
@@ -82,32 +84,20 @@ impl D64CandidateProfile {
         if tape.len() != self.tape_len {
             return Err(CandidateError::Shape);
         }
-        let cursor = (0..=tape.len())
-            .map(|i| Expression::constant(Fr::from_u64(u64::from(i == 0))))
-            .collect();
-        self.sample_at(builder, tape, cursor, Expression::one())
+        ReadTape::constrain(builder, tape, self.tape_len, |builder, reads| {
+            self.sample_at(builder, reads, Expression::one())
+        })
     }
 
-    // Internal composition: caller establishes one-hot cursor and Boolean activity.
-    // Returned cursor retains that invariant, and inactive candidates consume nothing.
+    // Only callers inside ReadTape::constrain may use this intermediate result.
+    // Its outputs cannot escape the mandatory route-finalization boundary.
     pub(super) fn sample_at(
         &self,
         builder: &mut R1csBuilder<Fr>,
-        tape: &[ByteVar],
-        cursor: Vec<Expression>,
+        reads: &mut ReadTape<'_>,
         activity: Expression,
     ) -> Result<D64CandidateVar, CandidateError> {
-        if tape.len() < self.tape_len || cursor.len().checked_sub(1) != Some(tape.len()) {
-            return Err(CandidateError::Shape);
-        }
-        for byte in tape {
-            byte.validate_indices(builder)?;
-        }
-        let mut machine = CandidateMachine {
-            builder,
-            tape: tape.iter().map(ByteVar::bit_expressions).collect(),
-            cursor,
-        };
+        let mut machine = CandidateMachine { builder, reads };
         let mut permutation: Vec<_> = (0..64)
             .map(|i| Expression::constant(Fr::from_u64(i)))
             .collect();
@@ -119,7 +109,7 @@ impl D64CandidateProfile {
             if n > 1 {
                 let mut active = activity.clone();
                 for _ in 0..self.trials {
-                    let byte = machine.read(active.clone());
+                    let byte = machine.read(active.clone())?;
                     let trial_bits: Vec<_> = byte.into_iter().take(bits).collect();
                     let valid = machine.less_than(&trial_bits, n);
                     let accept = machine.builder.multiply(active.clone(), valid);
@@ -176,7 +166,7 @@ impl D64CandidateProfile {
         for (i, position) in positions.iter().enumerate() {
             let magnitude = if i < self.count_pm1 { 1 } else { 2 };
             let sign = machine
-                .read(activity.clone())
+                .read(activity.clone())?
                 .into_iter()
                 .next()
                 .ok_or(CandidateError::Shape)?;
@@ -196,19 +186,14 @@ impl D64CandidateProfile {
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .map_err(|_| CandidateError::Shape)?;
-        let consumed = machine
-            .cursor
-            .iter()
-            .enumerate()
-            .fold(Expression::zero(), |sum, (i, selector)| {
-                sum + selector.clone().scale(Fr::from_u128(i as u128))
-            });
+        let consumed = machine.reads.consumed();
+        let end_cursor = machine.reads.one_hot_cursor(machine.builder);
         Ok(D64CandidateVar {
             positions,
             coefficients,
             dense,
             consumed,
-            end_cursor: machine.cursor,
+            end_cursor,
         })
     }
 }
@@ -235,22 +220,21 @@ impl D64CandidateVar {
     pub fn dense(&self) -> &[SignedVar; 64] {
         &self.dense
     }
-    /// Private byte count in [0,tape_len], constrained by one-hot cursor transitions.
+    /// Private byte count in [0,tape_len], constrained by the chronological active-read prefix.
     pub fn consumed_bytes(&self) -> Expression {
         self.consumed.clone()
     }
-    /// Private one-hot ending offset; not yet linked to another candidate's input.
+    /// Private one-hot ending offset, bound to the shared chronological cursor.
     pub fn end_cursor(&self) -> &[Expression] {
         &self.end_cursor
     }
 }
 
-struct CandidateMachine<'a> {
+struct CandidateMachine<'a, 'b> {
     builder: &'a mut R1csBuilder<Fr>,
-    tape: Vec<[Expression; 8]>,
-    cursor: Vec<Expression>,
+    reads: &'a mut ReadTape<'b>,
 }
-impl CandidateMachine<'_> {
+impl CandidateMachine<'_, '_> {
     fn materialize(&mut self, expression: Expression) -> Expression {
         let witness = self.builder.evaluate(&expression).ok();
         let variable = self.builder.alloc_witness(witness);
@@ -258,30 +242,8 @@ impl CandidateMachine<'_> {
         Expression::variable(variable)
     }
 
-    fn read(&mut self, active: Expression) -> [Expression; 8] {
-        if let Some(end) = self.cursor.last() {
-            self.builder
-                .assert_product(active.clone(), end.clone(), Expression::zero());
-        }
-        let byte = std::array::from_fn(|bit| {
-            let mut sum = Expression::zero();
-            for (selector, byte) in self.cursor.iter().zip(&self.tape) {
-                if let Some(input) = byte.get(bit) {
-                    sum = sum + self.builder.multiply(selector.clone(), input.clone());
-                }
-            }
-            self.materialize(sum)
-        });
-        let old = std::mem::take(&mut self.cursor);
-        let previous = std::iter::once(Expression::zero()).chain(old.iter().cloned());
-        for (current, previous) in old.iter().zip(previous) {
-            let stay = self
-                .builder
-                .multiply(Expression::one() - active.clone(), current.clone());
-            let shift = self.builder.multiply(active.clone(), previous);
-            self.cursor.push(stay + shift);
-        }
-        byte
+    fn read(&mut self, active: Expression) -> Result<[Expression; 8], CandidateError> {
+        self.reads.read(self.builder, active)
     }
 
     fn equal_bits(&mut self, bits: &[Expression], value: usize) -> Expression {
