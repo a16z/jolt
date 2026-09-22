@@ -66,7 +66,7 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
         // The public-IO tables, exactly as the reference builds them.
         let public_memory = relation.public_memory();
         let addresses = 1usize << ram_log_k;
-        let mut val_io = vec![F::zero(); addresses];
+        let mut val_io = Polynomial::zeros(ram_log_k).into_evals();
         for segment in &public_memory.segments {
             for (offset, &word) in segment.words.iter().enumerate() {
                 let index = segment.start_index as usize + offset;

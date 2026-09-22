@@ -605,7 +605,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             }
         }
 
-        let mut combined = vec![F::zero(); cycles];
+        let mut combined = Polynomial::<F>::zeros(dimensions.log_t()).into_evals();
         for (point, weight) in stage_cycle_points[..base_stages].iter().zip(stage_weights) {
             let scaled = scaled_eq_table(point, weight);
             #[cfg(feature = "parallel")]
@@ -625,7 +625,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         #[cfg(feature = "akita")]
         let fused_combined = {
             let store = stage_values[base_stages];
-            let mut combined = vec![F::zero(); cycles];
+            let mut combined = Polynomial::<F>::zeros(dimensions.log_t()).into_evals();
             for stage in base_stages..num_stages {
                 let value = if stage < base_stages + 2 {
                     store
