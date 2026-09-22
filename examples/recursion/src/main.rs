@@ -863,6 +863,11 @@ fn load_proof_data(guest: GuestProgram, workdir: &Path) -> Vec<u8> {
     proof_data
 }
 
+fn guest_target_dir(workdir: &Path) -> PathBuf {
+    std::fs::create_dir_all(workdir).unwrap();
+    workdir.canonicalize().unwrap().join("guest-targets")
+}
+
 fn generate_proofs(
     guest: GuestProgram,
     workdir: &Path,
@@ -874,11 +879,16 @@ fn generate_proofs(
         guest.name()
     );
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = guest_target_dir(workdir);
 
     // Collect guest proofs
-    let all_groups_data =
-        collect_guest_proofs(guest, target_dir, false, bytecode_chunk_count, proofs);
+    let all_groups_data = collect_guest_proofs(
+        guest,
+        target_dir.to_str().unwrap(),
+        false,
+        bytecode_chunk_count,
+        proofs,
+    );
 
     // Save proof data
     save_proof_data(guest, &all_groups_data, workdir);
@@ -888,12 +898,13 @@ fn generate_proofs(
 
 fn run_recursion_proof(
     guest: GuestProgram,
+    workdir: &Path,
     run_config: RunConfig,
     input_bytes: Vec<u8>,
     memory_config: MemoryConfig,
     mut max_trace_length: usize,
 ) {
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = guest_target_dir(workdir);
 
     let mut program = HostProgram::new("recursion-guest");
     program.set_func("verify");
@@ -913,7 +924,7 @@ fn run_recursion_proof(
     #[cfg(not(feature = "akita"))]
     program.add_guest_feature("trusted-preprocessing");
     program.set_memory_config(memory_config);
-    program.build(target_dir);
+    program.build(target_dir.to_str().unwrap());
     let elf_contents = program.get_elf_contents().unwrap();
     if run_config == RunConfig::Trace {
         // Trace through the host program: it decodes under the FR profile the
@@ -921,7 +932,7 @@ fn run_recursion_proof(
         info!("  Trace-only mode: Skipping proof generation and verification.");
         // Streamed to disk: a multi-gigacycle verifier trace does not fit in
         // memory as rows.
-        let trace_path = PathBuf::from(format!("/tmp/{}-recursion.trace", guest.name()));
+        let trace_path = workdir.join(format!("{}-recursion.trace", guest.name()));
         let (_, io_device) = program.trace_to_file(&input_bytes, &[], &[], &trace_path);
         let _ = std::fs::remove_file(&trace_path);
         let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
@@ -1002,13 +1013,9 @@ fn run_recursion_proof(
                 info!("  Recursion output (trace-only): {rv}");
             }
             RunConfig::TraceToFile => {
-                info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: /tmp/{}.trace", guest.name());
-                let (_, io_device) = recursion.trace_to_file(
-                    &input_bytes,
-                    &[],
-                    &[],
-                    &format!("/tmp/{}.trace", guest.name()).into(),
-                );
+                let trace_path = workdir.join(format!("{}.trace", guest.name()));
+                info!("  Trace-only mode: Skipping proof generation and verification. Tracing to file: {}", trace_path.display());
+                let (_, io_device) = recursion.trace_to_file(&input_bytes, &[], &[], &trace_path);
                 let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
                 info!("  Recursion output (trace-only): {rv}");
             }
@@ -1058,6 +1065,7 @@ fn verify_proofs(
 
     run_recursion_proof(
         guest,
+        workdir,
         run_config,
         input_bytes,
         memory_config,

@@ -10,6 +10,9 @@ cargo run --release -p recursion --features akita,field-inline -- \
   trace --example fibonacci --workdir /tmp/jolt-recursion
 ```
 
+Guest build outputs are isolated under `<workdir>/guest-targets`; temporary trace
+files also use the work directory. Use a distinct work directory for each run.
+
 `trace` executes the verifier and reports its output; it does not prove that
 execution. Successful verification returns `Recursion output (trace-only): 1`.
 The `"verification"` cycle count excludes preprocessing and proof decoding;
@@ -32,7 +35,7 @@ JOLT_BACKTRACE=1 JOLT_PC_PROFILE=/tmp/recursion-pc.txt \
   cargo run --release -p recursion --features akita,field-inline -- \
   trace --example fibonacci --workdir /tmp/jolt-recursion
 python3 scripts/guest_pc_profile.py report /tmp/recursion-pc.txt \
-  /tmp/jolt-guest-targets/recursion-guest-verify/riscv64imac-zero-linux-musl/release/recursion-guest \
+  /tmp/jolt-recursion/guest-targets/recursion-guest-verify/riscv64imac-zero-linux-musl/release/recursion-guest \
   --top 25
 ```
 
