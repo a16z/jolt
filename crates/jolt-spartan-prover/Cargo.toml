@@ -8,7 +8,18 @@ description = "PCS-generic clear Spartan proving for sparse R1CS"
 [lints]
 workspace = true
 
+[features]
+preprocessed = [
+  "dep:jolt-hyperkzg",
+  "dep:jolt-crypto",
+  "jolt-spartan-verifier/preprocessed",
+  "jolt-transcript/bn254",
+  "jolt-transcript/transcript-blake2b",
+]
+
 [dependencies]
+jolt-crypto = { workspace = true, optional = true }
+jolt-hyperkzg = { workspace = true, optional = true }
 jolt-field.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true

@@ -3873,7 +3873,10 @@ dependencies = [
 name = "jolt-spartan-verifier"
 version = "0.1.0"
 dependencies = [
+ "blake2 0.11.0",
+ "jolt-crypto",
  "jolt-field",
+ "jolt-hyperkzg",
  "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",

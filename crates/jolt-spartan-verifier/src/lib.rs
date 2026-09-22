@@ -141,3 +141,7 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
         Ok(())
     }
 }
+
+/// Conditional clear v2 SPARK prototype; security and deployment gates remain.
+#[cfg(feature = "preprocessed")]
+pub mod preprocessed;

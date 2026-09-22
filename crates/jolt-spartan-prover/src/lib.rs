@@ -125,3 +125,7 @@ fn prove_rounds<F: JoltField + AppendToTranscript>(
     };
     Ok((proof, result.challenges, result.final_claim))
 }
+
+/// Conditional clear v2 SPARK prototype; security and deployment gates remain.
+#[cfg(feature = "preprocessed")]
+pub mod preprocessed;

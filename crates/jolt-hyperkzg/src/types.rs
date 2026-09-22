@@ -40,7 +40,35 @@ pub struct HyperKZGVerifierSetup {
     pub(crate) beta_g2: Bn254G2,
 }
 
+/// Validated public setup material used by the preprocessed Spartan key.
+/// Application authentication remains the caller's responsibility.
+#[derive(Clone, Debug)]
+pub struct HyperKZGSetupBinding {
+    pub num_powers: u64,
+    pub max_public_degree: u64,
+    pub setup_id: [u8; 32],
+    pub canonical_bytes: Vec<u8>,
+}
+
 impl HyperKZGVerifierSetup {
+    /// Validates this imported setup and returns the v2 setup-digest preimage.
+    pub fn binding(&self) -> Result<HyperKZGSetupBinding, HyperKZGError> {
+        let _ = self.validate()?;
+        let mut bytes = b"JOLT-HKZG-SETUP\0".to_vec();
+        bytes.extend(self.setup_id);
+        bytes.extend(self.num_powers.to_le_bytes());
+        bytes.extend(self.max_public_degree.to_le_bytes());
+        bytes.extend(self.g1.compressed_bytes());
+        bytes.extend(self.g2.compressed_bytes());
+        bytes.extend(self.beta_g2.compressed_bytes());
+        Ok(HyperKZGSetupBinding {
+            num_powers: self.num_powers,
+            max_public_degree: self.max_public_degree,
+            setup_id: self.setup_id,
+            canonical_bytes: bytes,
+        })
+    }
+
     pub(crate) fn validate(&self) -> Result<usize, HyperKZGError> {
         let capacity = usize::try_from(self.num_powers).map_err(|_| HyperKZGError::InvalidSetup)?;
         if capacity < 2
