@@ -26,6 +26,19 @@ No alternate hash is substituted. Solidity selector/runtime mechanics may use Et
 
 Validated: 48 executed cases: 10 native hash vectors, 20 native transcript scenarios, one EIP-152 abc vector, six independent 384-bit reductions, and 11 explicit malformed-input reverts. Native transcript scenarios include canonical Fr absorption through the production append implementation, the actual preprocessed-Spartan application label, and distinct trailing-zero labels. The oracle is the executed Rust implementation, not a second JavaScript sponge. Fixture output and tool versions are frozen in the adjacent files.
 
-Not verified: a complete Spartan proof transcript, commitment encoding/point validation, full verifier gas, deployment/transaction costs, or proof security. Counter overflow beyond 64-bit consumed bytes fails closed in Solidity; no such impossible-in-practice EVM allocation is exercised. This compatibility primitive retains pending absorbed bytes and performs bytewise copies; it is not a streaming-memory or gas-optimized implementation. Only public verifier data is in scope; no secret-dependent constant-time or zeroization claim applies.
+Not verified: a complete Spartan proof transcript, commitment encoding/point validation, full verifier gas, deployment/transaction costs, or proof security. Counter overflow beyond 64-bit consumed bytes fails closed in Solidity; no such impossible-in-practice EVM allocation is exercised. This compatibility primitive retains pending absorbed bytes and performs bytewise copies; it is not a streaming-memory implementation. The compression-input copies use exact-length MCOPY; counter encoding and other loops are unchanged. Only public verifier data is in scope; no secret-dependent constant-time or zeroization claim applies.
 
 Fork sources: https://eips.ethereum.org/EIPS/eip-2929 ; https://docs.soliditylang.org/en/v0.8.30/using-the-compiler.html ; https://github.com/ethereumjs/ethereumjs-monorepo/tree/master/packages/evm . Installed package/lockfile pins, rather than the moving master documentation, select the executed implementation.
+
+Candidate memory-safety boundary: h is allocated with64 bytes; STATICCALL writes at most64 bytes there, and the
+existing checks reject failure or any return length other than64 before h is reused.
+args is a fresh213-byte zero-initialized allocation. The first copy writes bytes
+[4,68); the second writes [68,68+size), with size<=128. Thus neither crosses args,
+and untouched message padding remains zero. The source reads h[0,64) and
+input[offset,offset+size); size=min(input.length-offset,128) and offset increases
+by size, so reads stay within their allocations, including size0. MCOPY copies
+exact byte counts, not rounded words. Input lengths are bounded to uint64 before
+the loop. The existing EIP-152 status/64-byte return check remains unchanged.
+Four injected failure classes on both frozen baseline and candidate confirm exact
+CompressionFailed reverts. Those supplemental tests do not alter the frozen48-case
+oracle or gas boundary. Independent candidate review remains required.

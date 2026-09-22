@@ -48,6 +48,17 @@ concatenate in order, with challenges encoded as 32 big-endian bytes. Unknown
 modes/opcodes, truncated framing, labels over 32 bytes, and wrong reduction
 widths explicitly revert.
 
-The implementation favors an auditable compatibility baseline: absorbed bytes
-are retained and copies are bytewise. The executed 1,024-byte hash case costs
-506,802 gas under this harness. It is not a gas-optimized final verifier.
+This candidate replaces the two compression-input byte-copy loops with exact-length
+Prague MCOPY operations; counter encoding and all protocol transitions remain
+unchanged. On the unchanged corpus, the 1,024-byte hash costs 27,650 gas versus
+the frozen baseline's 506,802. Pending absorbed bytes are still retained; this is
+not a constant-space sponge or a complete optimized verifier.
+
+The gas experiment keeps the native fixture and parity runner byte-identical.
+For opcode/source-map attribution, run `node bench/profile.mjs` in this directory.
+The output accounts every gas unit and distinguishes STATICCALL (including the
+precompile) from the 12-gas internal compression charge. Compiler source mappings
+for shared generated helpers are approximate; opcode totals are exact.
+`node bench/precompile-failure.mjs /path/to/baseline-runtime.bin` checks unchanged
+failure behavior for failing, empty, short, and overlong precompile responses;
+these injected callees are not cryptographic or gas oracles.

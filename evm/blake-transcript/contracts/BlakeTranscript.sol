@@ -16,8 +16,12 @@ library Blake2b512 {
             bool last = remaining <= 128;
             bytes memory args = new bytes(213);
             args[3] = 0x0c; // 12 rounds, big endian.
-            for (uint256 i; i < 64; ++i) args[4 + i] = h[i];
-            for (uint256 i; i < size; ++i) args[68 + i] = input[offset + i];
+            // h has 64 bytes; size <= 128 and offset + size <= input.length.
+            // Exact-length copies preserve the zero padding in the 213-byte args.
+            assembly ("memory-safe") {
+                mcopy(add(args, 36), add(h, 32), 64)
+                mcopy(add(args, 100), add(add(input, 32), offset), size)
+            }
             offset += size;
             for (uint256 i; i < 8; ++i) args[196 + i] = bytes1(uint8(offset >> (8 * i)));
             args[212] = last ? bytes1(0x01) : bytes1(0x00);
