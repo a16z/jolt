@@ -1,0 +1,35 @@
+{
+  "scope": "MODEXP fault injection, not cryptographic or gas oracle",
+  "records": [
+    {
+      "name": "empty",
+      "calls": 1,
+      "exception": "revert",
+      "returnHex": "282dff90"
+    },
+    {
+      "name": "short",
+      "calls": 1,
+      "exception": "revert",
+      "returnHex": "282dff90"
+    },
+    {
+      "name": "long",
+      "calls": 1,
+      "exception": "revert",
+      "returnHex": "282dff90"
+    },
+    {
+      "name": "failure",
+      "calls": 1,
+      "exception": "revert",
+      "returnHex": "282dff90"
+    },
+    {
+      "name": "wrong-root",
+      "calls": 1,
+      "exception": "revert",
+      "returnHex": "d36be5fd"
+    }
+  ]
+}

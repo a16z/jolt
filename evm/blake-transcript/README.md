@@ -1,4 +1,9 @@
-# Blake transcript EVM compatibility primitive
+# Blake transcript and clear Spartan EVM verifier
+
+The complete `SpartanVerifier.verify` call checks the native clear preprocessed
+Spartan relation through four fixed-code modules. See
+[SPARTAN_VERIFIER.md](SPARTAN_VERIFIER.md) for its authenticated setup/key boundary,
+conditional security scope, deployment policy and reproducible gas measurements.
 
 This directory implements the exact 64-bit Spongefish Blake2b-512 profile used by
 `Bn254WideBlake2bTranscript` at Jolt `c281860b26b4550f79343548d673080cb8a080a4`.
@@ -6,8 +11,10 @@ It includes unkeyed BLAKE2b-512 through EIP-152, the raw sponge transitions,
 Jolt byte framing, application-domain binding, and the BN254 384-bit challenge
 reduction. See [SPEC_MAP.md](SPEC_MAP.md) for the native boundary and quirks.
 
-The harness is a primitive caller, not a Spartan verifier. It does not parse a
-proof or validate elliptic-curve points. All protocol hashing uses Blake2F.
+The original harness is a primitive caller. The added `SpartanInputBoundary`
+parses authenticated proof inputs and validates G1 encodings; neither entry point
+verifies Spartan algebra. See [SPARTAN_INPUTS.md](SPARTAN_INPUTS.md). All protocol
+hashing uses Blake2F.
 
 Run the frozen native compatibility fixtures with Node 26.5.0:
 
@@ -48,9 +55,9 @@ concatenate in order, with challenges encoded as 32 big-endian bytes. Unknown
 modes/opcodes, truncated framing, labels over 32 bytes, and wrong reduction
 widths explicitly revert.
 
-This candidate replaces the two compression-input byte-copy loops with exact-length
+The reviewed historical primitive at commit `231d516f` replaced the two compression-input byte-copy loops with exact-length
 Prague MCOPY operations; counter encoding and all protocol transitions remain
-unchanged. On the unchanged corpus, the 1,024-byte hash costs 27,650 gas versus
+unchanged. At that frozen revision, the 1,024-byte hash cost 27,650 gas versus
 the frozen baseline's 506,802. Pending absorbed bytes are still retained; this is
 not a constant-space sponge or a complete optimized verifier.
 
@@ -63,10 +70,11 @@ for shared generated helpers are approximate; opcode totals are exact.
 failure behavior for failing, empty, short, and overlong precompile responses;
 these injected callees are not cryptographic or gas oracles.
 
-## Continuous integration
+The diagnostic outer/public/inner algebra slice and its pending PCS obligations
+are documented in [SPARTAN_ALGEBRA.md](SPARTAN_ALGEBRA.md). Run it with
+`npm run test:spartan-algebra`; successful partial checks are not proof acceptance.
 
-The EVM Blake parity workflow regenerates the frozen oracle through the native
-Rust example, requires exact fixture equality, and executes the 48 EVM cases
-with the pinned npm lockfile. The fixture's `native_base` records its original
-reference revision; it is not the SHA of every later CI checkout. This job
-tests the primitive boundary, not a complete Spartan verifier.
+The public-pairing continuation is [SPARTAN_PUBLIC_OPENING.md](SPARTAN_PUBLIC_OPENING.md),
+run with `npm run test:spartan-public-opening`. This diagnostic omits sparse/GKR
+and final witness checks; the complete `SpartanVerifier.verify` coordinator
+performs those checks.

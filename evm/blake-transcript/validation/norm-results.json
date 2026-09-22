@@ -1,0 +1,562 @@
+{
+  "scope": "actual full D64 operator-norm relation, historical native verify_bytes accepted; beta7 fixture setup not production ceremony",
+  "settings": {
+    "viaIR": true,
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "evmVersion": "prague",
+    "outputSelection": {
+      "*": {
+        "*": [
+          "evm.deployedBytecode",
+          "evm.bytecode",
+          "evm.methodIdentifiers"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    }
+  },
+  "node": "v26.5.0",
+  "sourceHashes": {
+    "BlakeTranscript.sol": "2c72b59d9b640b2947db7f6952b61b917489d435411ed36f49df9abc0b6c3d6e",
+    "SpartanAlgebra.sol": "18180836b99fa7caee0fd36ac6878399f37b26e122a13308b1d5f59f0fed5b2e",
+    "SpartanDecodeModule.sol": "eecaeeedbf31bfafe19adca0042592d37cd8b119e5d171e593e48da606887f91",
+    "SpartanInputs.sol": "1ae924baae7e0f0fcc6a84880be82987d0bca6e2fe57bceca420319bdf3bd53f",
+    "SpartanLeafModule.sol": "6f7ccf924ac825b6ed6c087efe04474c4ccecfe98658e4d1bab1247aa01c71f5",
+    "SpartanPrefixModule.sol": "e811c8b02121b84e147b5f2b52abad368c4b2f8fe4218ca83d582308f1e6879e",
+    "SpartanPublicOpening.sol": "a67abc7fa05dc8247ce09a78908536c2d47323d246dbe03612d2e7d913c92ebe",
+    "SpartanSparseModule.sol": "324cd19f8829f35cd84f5e7520a356180953398473ce9237dc4f09ddc079dded",
+    "SpartanModulePolicy.sol": "13fb573bd2e481caff77621242253a049185f2710851541a86f55d390d1e28e0",
+    "SpartanSparseCoordinator.sol": "fb6273264bbb0b1ebfb8077fa22e6b102d5005ba7778bcc336788bbe93f57940",
+    "SpartanLeafCoordinator.sol": "8a08361cc275a72ffcf2877bc8380ba82c7263d93680827766f83bdb2047579c",
+    "SpartanVerifier.sol": "8d004a943e0cc62cf9c401a05b9324aeb9722b4013b45e040a013bce711d5e2b"
+  },
+  "codeHashes": [
+    "3a78cfce520ea0d26df63b5bd54c40e0e1c838e92745457acc2adeab255aec40",
+    "acfbd7b1b5d57d9959a5fcdc4746d39064c7ff05220ce52fcfafda40c80a57cd",
+    "145ca2c5e6393da3fd20f260be5954b337430fa8e12142920d6196fa9667554a",
+    "5378fd2a74499f9fc910872ccbc4d071e022bfe3d9c825c40d455d901a4e63d5"
+  ],
+  "runtimeBytes": {
+    "SpartanDecodeModule": 13692,
+    "SpartanPrefixModule": 13131,
+    "SpartanSparseModule": 12917,
+    "SpartanLeafModule": 15302,
+    "SpartanVerifier": 5616
+  },
+  "deployments": [
+    {
+      "name": "SpartanDecodeModule",
+      "executionGas": "2741389",
+      "transaction": {
+        "bytes": 13718,
+        "zeroBytes": 276,
+        "nonzeroBytes": 13442,
+        "intrinsicGas": 270034,
+        "floorGas": 561440,
+        "estimatedTransactionGas": "3011423"
+      },
+      "exception": null,
+      "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+      "actualRuntimeKeccak": "3a78cfce520ea0d26df63b5bd54c40e0e1c838e92745457acc2adeab255aec40"
+    },
+    {
+      "name": "SpartanPrefixModule",
+      "executionGas": "2629059",
+      "transaction": {
+        "bytes": 13157,
+        "zeroBytes": 74,
+        "nonzeroBytes": 13083,
+        "intrinsicGas": 263448,
+        "floorGas": 545060,
+        "estimatedTransactionGas": "2892507"
+      },
+      "exception": null,
+      "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+      "actualRuntimeKeccak": "acfbd7b1b5d57d9959a5fcdc4746d39064c7ff05220ce52fcfafda40c80a57cd"
+    },
+    {
+      "name": "SpartanSparseModule",
+      "executionGas": "2586206",
+      "transaction": {
+        "bytes": 12943,
+        "zeroBytes": 74,
+        "nonzeroBytes": 12869,
+        "intrinsicGas": 260010,
+        "floorGas": 536500,
+        "estimatedTransactionGas": "2846216"
+      },
+      "exception": null,
+      "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+      "actualRuntimeKeccak": "145ca2c5e6393da3fd20f260be5954b337430fa8e12142920d6196fa9667554a"
+    },
+    {
+      "name": "SpartanLeafModule",
+      "executionGas": "3063786",
+      "transaction": {
+        "bytes": 15328,
+        "zeroBytes": 64,
+        "nonzeroBytes": 15264,
+        "intrinsicGas": 298438,
+        "floorGas": 632200,
+        "estimatedTransactionGas": "3362224"
+      },
+      "exception": null,
+      "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+      "actualRuntimeKeccak": "5378fd2a74499f9fc910872ccbc4d071e022bfe3d9c825c40d455d901a4e63d5"
+    },
+    {
+      "name": "SpartanVerifier",
+      "executionGas": "1125643",
+      "transaction": {
+        "bytes": 6280,
+        "zeroBytes": 536,
+        "nonzeroBytes": 5744,
+        "intrinsicGas": 147442,
+        "floorGas": 256120,
+        "estimatedTransactionGas": "1273085"
+      },
+      "exception": null,
+      "address": "0x47c5e40890bce4a473a49d7501808b9633f29782",
+      "actualRuntimeKeccak": "d94067a5fbdfd032a40274fe23fd6ea133f542e47cd70b7831d17b76b42ca5e4"
+    }
+  ],
+  "records": [
+    {
+      "name": "norm-30m",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 55620,
+          "gasForwarded": "29503031",
+          "executionGas": "2627620",
+          "outputBytes": 68416
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 124132,
+          "gasForwarded": "26434950",
+          "executionGas": "2869763",
+          "outputBytes": 1792
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 124836,
+          "gasForwarded": "23425779",
+          "executionGas": "23425779",
+          "outputBytes": 0
+        }
+      ],
+      "messageFailures": [
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 124836,
+          "gasForwarded": "23425779",
+          "error": "out of gas"
+        },
+        {
+          "address": "0x47c5e40890bce4a473a49d7501808b9633f29782",
+          "inputBytes": 55812,
+          "gasForwarded": "30000000",
+          "error": "revert"
+        }
+      ],
+      "coordinatorExecutionGas": "705045",
+      "accepted": false,
+      "executionGas": "29628207",
+      "exception": "revert",
+      "returnHex": "",
+      "calldataBytes": 55812,
+      "transaction": {
+        "bytes": 55812,
+        "zeroBytes": 946,
+        "nonzeroBytes": 54866,
+        "intrinsicGas": 902640,
+        "floorGas": 2225100,
+        "estimatedTransactionGas": "30530847"
+      }
+    },
+    {
+      "name": "norm-200m-diagnostic",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 55620,
+          "gasForwarded": "196846781",
+          "executionGas": "2627620",
+          "outputBytes": 68416
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 124132,
+          "gasForwarded": "193778700",
+          "executionGas": "2869763",
+          "outputBytes": 1792
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 124836,
+          "gasForwarded": "190769529",
+          "executionGas": "29889231",
+          "outputBytes": 2752
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 128676,
+          "gasForwarded": "161147056",
+          "executionGas": "5504093",
+          "outputBytes": 32
+        }
+      ],
+      "messageFailures": [],
+      "coordinatorExecutionGas": "908706",
+      "accepted": true,
+      "executionGas": "41799413",
+      "exception": null,
+      "returnHex": "00000000000000000000000000000000000000000000000000000000000000019102daab5a069af8b626bd80cfb79d3043c9c04b42ad11d8046a2fd060258b8a",
+      "calldataBytes": 55812,
+      "transaction": {
+        "bytes": 55812,
+        "zeroBytes": 946,
+        "nonzeroBytes": 54866,
+        "intrinsicGas": 902640,
+        "floorGas": 2225100,
+        "estimatedTransactionGas": "42702053"
+      }
+    },
+    {
+      "name": "norm-changed-public-input",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 55620,
+          "gasForwarded": "196846781",
+          "executionGas": "2627620",
+          "outputBytes": 68416
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 124132,
+          "gasForwarded": "193778700",
+          "executionGas": "850320",
+          "outputBytes": 4
+        }
+      ],
+      "messageFailures": [
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 124132,
+          "gasForwarded": "193778700",
+          "error": "revert"
+        },
+        {
+          "address": "0x47c5e40890bce4a473a49d7501808b9633f29782",
+          "inputBytes": 55812,
+          "gasForwarded": "200000000",
+          "error": "revert"
+        }
+      ],
+      "coordinatorExecutionGas": "517875",
+      "accepted": false,
+      "executionGas": "3995815",
+      "exception": "revert",
+      "returnHex": "1b1335ec",
+      "calldataBytes": 55812,
+      "transaction": {
+        "bytes": 55812,
+        "zeroBytes": 947,
+        "nonzeroBytes": 54865,
+        "intrinsicGas": 902628,
+        "floorGas": 2225070,
+        "estimatedTransactionGas": "4898443"
+      }
+    },
+    {
+      "name": "norm-changed-outer-proof",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 55620,
+          "gasForwarded": "196846781",
+          "executionGas": "2627620",
+          "outputBytes": 68416
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 124132,
+          "gasForwarded": "193778700",
+          "executionGas": "850320",
+          "outputBytes": 4
+        }
+      ],
+      "messageFailures": [
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 124132,
+          "gasForwarded": "193778700",
+          "error": "revert"
+        },
+        {
+          "address": "0x47c5e40890bce4a473a49d7501808b9633f29782",
+          "inputBytes": 55812,
+          "gasForwarded": "200000000",
+          "error": "revert"
+        }
+      ],
+      "coordinatorExecutionGas": "517875",
+      "accepted": false,
+      "executionGas": "3995815",
+      "exception": "revert",
+      "returnHex": "1b1335ec",
+      "calldataBytes": 55812,
+      "transaction": {
+        "bytes": 55812,
+        "zeroBytes": 945,
+        "nonzeroBytes": 54867,
+        "intrinsicGas": 902652,
+        "floorGas": 2225130,
+        "estimatedTransactionGas": "4898467"
+      }
+    }
+  ],
+  "transaction": {
+    "bytes": 55812,
+    "zeroBytes": 946,
+    "nonzeroBytes": 54866,
+    "intrinsicGas": 902640,
+    "floorGas": 2225100,
+    "estimatedTransactionGas": "42702053"
+  },
+  "warmness": "Prague, precompiles05/06/07/08/09 warm; module accounts cold then warmed by EXTCODEHASH; execution measured by runCall excludes tx processing",
+  "provenance": {
+    "scope": "actual full D64 operator-norm relation, historical native verify_bytes accepted; beta7 fixture setup not production ceremony",
+    "native_wire_evidence": "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/wire-run/norm-independent-check.json",
+    "matrix_measurement": {
+      "L": 32768,
+      "N": 65536,
+      "R": 32768,
+      "T": 8,
+      "W": 32768,
+      "assignment_blake2b256": [
+        17,
+        230,
+        10,
+        226,
+        154,
+        99,
+        26,
+        91,
+        23,
+        199,
+        195,
+        18,
+        25,
+        35,
+        160,
+        168,
+        133,
+        228,
+        30,
+        174,
+        80,
+        5,
+        48,
+        249,
+        58,
+        17,
+        34,
+        231,
+        3,
+        100,
+        227,
+        16
+      ],
+      "backend": "preprocessed",
+      "candidate": [
+        1,
+        1,
+        2,
+        -2,
+        0,
+        -2,
+        2,
+        1,
+        -1,
+        -1,
+        1,
+        0,
+        -2,
+        0,
+        -1,
+        -1,
+        -1,
+        0,
+        0,
+        1,
+        0,
+        1,
+        1,
+        -1,
+        1,
+        0,
+        -1,
+        0,
+        0,
+        2,
+        -1,
+        1,
+        -1,
+        0,
+        0,
+        1,
+        -2,
+        -1,
+        1,
+        -1,
+        0,
+        1,
+        0,
+        1,
+        1,
+        0,
+        2,
+        -2,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        2,
+        0,
+        2,
+        0,
+        1,
+        -1,
+        -1,
+        1,
+        0,
+        1
+      ],
+      "changed_proof_claim_rejected": true,
+      "changed_public_input_rejected": true,
+      "key_artifact_bytes": 476,
+      "max_public_degree": 1048575,
+      "native_nonce": 0,
+      "nonzeros": [
+        62562,
+        44258,
+        192
+      ],
+      "positive_verify": true,
+      "private_nonzeros": [
+        62240,
+        22016,
+        191
+      ],
+      "proof_blake2b256": [
+        165,
+        83,
+        8,
+        64,
+        45,
+        25,
+        33,
+        36,
+        105,
+        155,
+        162,
+        239,
+        26,
+        103,
+        16,
+        150,
+        101,
+        233,
+        0,
+        108,
+        18,
+        93,
+        180,
+        136,
+        67,
+        121,
+        252,
+        151,
+        219,
+        82,
+        227,
+        58
+      ],
+      "proof_bytes": 54716,
+      "proof_field_elements": 1595,
+      "proof_g1_elements": 100,
+      "proof_raw_compressed_payload_bytes": 54240,
+      "public_columns": 2,
+      "relation_artifact_bytes": 3757711,
+      "relation_blake2b256": [
+        205,
+        89,
+        136,
+        196,
+        209,
+        127,
+        4,
+        217,
+        57,
+        64,
+        8,
+        230,
+        134,
+        173,
+        121,
+        247,
+        202,
+        162,
+        6,
+        215,
+        234,
+        206,
+        169,
+        237,
+        178,
+        19,
+        200,
+        68,
+        138,
+        1,
+        151,
+        216
+      ],
+      "rows": 22370,
+      "scope": "actual D64 norm component; clear conditional prototype; known beta7 test SRS",
+      "srs_capacity": 1048576,
+      "srs_g1_compressed_payload_bytes": 33554432,
+      "srs_g1_in_memory_payload_bytes": 100663296,
+      "timings_seconds": {
+        "circuit_and_assignment_s": 0.00932675,
+        "direct_key_construction_s": 0.000215042,
+        "native_candidate_s": 0.000053459,
+        "negative_controls_s": 0.000151792,
+        "preprocessed_key_construction_s": 3.940193791,
+        "proof_encode_s": 0.000341416,
+        "prove_s": 47.449949291,
+        "srs_generation_s": 2.104247917,
+        "srs_import_s": 0.001196791,
+        "verify_s": 0.007398666
+      },
+      "variables": 21985
+    },
+    "sha256": {
+      "inputs.bin": "01d0fabd251fcbbe2b93b4b927b26ad2a1a99077152e45ded1e678afa45dbec5",
+      "g2-affine.bin": "260c18507615729227d9c2edb53f242eefa8c4cf8dad77e1b4c3822d9852ba8b",
+      "key.bin": "88bd9f34f8c79c6ddcb89f66a4cb5d8b50638f4160337823bbcbbe45e7024227",
+      "proof.bin": "0a5c4932d266868cfd8f2664d28ab1e99c2ebe294d4c361b23c712fc1130c6af",
+      "setup.bin": "d7ecec99bc02773474bcbf84e0e3310cfbd6a7b7fce12fce5a3fba026ebe2112"
+    }
+  }
+}

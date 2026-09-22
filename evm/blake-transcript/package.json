@@ -3,11 +3,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/parity.mjs"
+    "test": "node test/parity.mjs",
+    "test:spartan": "node test/spartan.mjs",
+    "test:spartan-failures": "node test/spartan-failures.mjs",
+    "test:spartan-algebra": "node test/spartan-algebra.mjs",
+    "test:spartan-public-opening": "node test/spartan-public-opening.mjs",
+    "test:spartan-sparse": "node test/spartan-sparse.mjs",
+    "compile:spartan-modules": "node test/compile-modules.mjs",
+    "test:spartan-leaves": "node test/spartan-leaves.mjs",
+    "test:spartan-complete": "node test/spartan-complete.mjs",
+    "measure:spartan-norm": "node test/spartan-norm.mjs",
+    "measure:spartan-deployment": "node test/spartan-deployment.mjs"
   },
   "devDependencies": {
     "@ethereumjs/evm": "10.1.0",
     "@ethereumjs/common": "10.1.0",
-    "solc": "0.8.30"
+    "solc": "0.8.30",
+    "@noble/hashes": "2.4.0"
   }
 }

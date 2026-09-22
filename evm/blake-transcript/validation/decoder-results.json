@@ -1,0 +1,695 @@
+{
+  "scope": "authenticated canonical input decoding and native-v2 initial transcript only; NO proof verification",
+  "node": "v26.5.0",
+  "solc": "0.8.30+commit.73712a01.Emscripten.clang",
+  "settings": {
+    "viaIR": true,
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "evmVersion": "prague",
+    "outputSelection": {
+      "*": {
+        "*": [
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    }
+  },
+  "hardfork": "Prague",
+  "ethereumjs": "10.1.0",
+  "gasLimit": "30000000",
+  "prewarmedAddresses": [
+    "0x05 MODEXP",
+    "0x09 Blake2F"
+  ],
+  "context": "fresh EVM per case; immutable policy slots patched to constructor-equivalent values; no deployment",
+  "gasScope": "bytecode execution, memory, and precompiles only; excludes intrinsic/calldata transaction gas, deployment and unimplemented algebra/PCS",
+  "sourceHashes": {
+    "BlakeTranscript.sol": "2c72b59d9b640b2947db7f6952b61b917489d435411ed36f49df9abc0b6c3d6e",
+    "SpartanInputs.sol": "1ae924baae7e0f0fcc6a84880be82987d0bca6e2fe57bceca420319bdf3bd53f",
+    "Hash256Harness.sol": "90881d380fe19b1236c3a074a515a2840ece96e6e9a33a7d189a3ea786742000",
+    "DecodeValuesHarness.sol": "d66dfb8e3f6ba3c02a3fe9f3e3cbb0d62b858c3b2948685f5ab512544cfe82d3"
+  },
+  "unconfiguredRuntimeBytes": 14013,
+  "unconfiguredRuntimeSha256": "12b5de021540b9283cb254c8a668fe0aa020946982090d4933577364afbf7d52",
+  "fixtureHashes": {
+    "toy": {
+      "key": "5d59e22a0359ee9109a6f0231bd4df3b1e4f9267318ad013ce1699c1eccdb38a",
+      "setup": "66616603d29ac279ab554ed97ea4f9f83c06efaa1700ae15ce3c03b604c4d4eb",
+      "inputs": "c8b9e6acb00f5b32f776f5466510630a94829c965d35074e9d1620162e8b51df",
+      "proof": "4479eddec1b1291240169650799eff76f0190d592afd1b8944603cdbb9dfd151"
+    },
+    "empty": {
+      "key": "848bd2ec7ca4a756c9d2ea7c2733b82068fc670f8e0f1face832e95ec6e08397",
+      "setup": "66616603d29ac279ab554ed97ea4f9f83c06efaa1700ae15ce3c03b604c4d4eb",
+      "inputs": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b",
+      "proof": "04efe7b233fc95f817ccbeaae49bbcce4c8ddaaa017e912b331a48105621621f"
+    },
+    "norm": {
+      "key": "88bd9f34f8c79c6ddcb89f66a4cb5d8b50638f4160337823bbcbbe45e7024227",
+      "setup": "d7ecec99bc02773474bcbf84e0e3310cfbd6a7b7fce12fce5a3fba026ebe2112",
+      "inputs": "01d0fabd251fcbbe2b93b4b927b26ad2a1a99077152e45ded1e678afa45dbec5",
+      "proof": "0a5c4932d266868cfd8f2664d28ab1e99c2ebe294d4c361b23c712fc1130c6af"
+    }
+  },
+  "records": [
+    {
+      "name": "blake256-0",
+      "accepted": true,
+      "executionGas": "3041",
+      "calldataBytes": 0,
+      "returnHex": "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8",
+      "exception": null
+    },
+    {
+      "name": "blake256-3",
+      "accepted": true,
+      "executionGas": "3050",
+      "calldataBytes": 3,
+      "returnHex": "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319",
+      "exception": null
+    },
+    {
+      "name": "blake256-127",
+      "accepted": true,
+      "executionGas": "3077",
+      "calldataBytes": 127,
+      "returnHex": "f2fe67ff342e21b8f45e8f2e0bcd1d9243245d50ee6c78042e9c491388791c72",
+      "exception": null
+    },
+    {
+      "name": "blake256-128",
+      "accepted": true,
+      "executionGas": "3077",
+      "calldataBytes": 128,
+      "returnHex": "c3582f71ebb2be66fa5dd750f80baae97554f3b015663c8be377cfcb2488c1d1",
+      "exception": null
+    },
+    {
+      "name": "blake256-129",
+      "accepted": true,
+      "executionGas": "5503",
+      "calldataBytes": 129,
+      "returnHex": "f7f3c46ba2564ff4c4c162da1f5b605f9f1c4aa6a20652a9f9a337c1a2f5b9c9",
+      "exception": null
+    },
+    {
+      "name": "blake256-476",
+      "accepted": true,
+      "executionGas": "10430",
+      "calldataBytes": 476,
+      "returnHex": "cf9d95be70916868686079e66a97f30a9d8851482ee9b116cfb4df610b6ac2ce",
+      "exception": null
+    },
+    {
+      "name": "toy",
+      "accepted": true,
+      "executionGas": "602220",
+      "calldataBytes": 10180,
+      "returnHex": "e3e14d747eda7239d0b00aebd7c1b41f00626a1430724bbd571be33752ce7ff300000000000000000000000000000000000000000000000000000000000000f80000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e68c7bceed48f4780b90c429740a71d70cd97c1d628b57cb3b8a6e44360b43ca00000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000002033b5fb626b88c9df731580dd8943725a944b6cd5e2d9003013cb89b7b66629c17cac32e752b752d3454e61ff20dda90de2e4c125e71f9d42d19ac5c5b5c7bf2",
+      "exception": null
+    },
+    {
+      "name": "empty",
+      "accepted": true,
+      "executionGas": "527190",
+      "calldataBytes": 9060,
+      "returnHex": "350b25772c1766f1b155b15caaca8dc18628c39d057495917b6d9ec69f694d3900000000000000000000000000000000000000000000000000000000000000d7000000000000000000000000000000000000000000000000000000000000002200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000005000000000000000000000000000000000000000000000000000000000000000efd8b1f76ac371e53b28538fb274cc9adc66b74cdcf9427d30ac374af6a27e9af000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000022c3880851e4113f935b2423d282862960169cacea9197148d53e4fe2dd1fcea6165f6d1240e5e42bfb0da7af0a00f5d7b034e7104b96cc9af4de2e4a34ab4495",
+      "exception": null
+    },
+    {
+      "name": "norm",
+      "accepted": true,
+      "executionGas": "2449676",
+      "calldataBytes": 55556,
+      "returnHex": "64d36a74f1daae0d3d8cff574c1ba4b0b2904f2ac8299a6f2e6c53eb284e0b38000000000000000000000000000000000000000000000000000000000000063b000000000000000000000000000000000000000000000000000000000000006400000000000000000000000000000000000000000000000000000000000000ff000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008414309a7a7ba05ae7ab9aa1455469731040f3798b9289710c1b0098f17b37170000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000f05df76037c820ea4cd9a1524b9a9bf3aa72096031f4ae417f254c031010d36582c2c15210c0d270bbf1d9c0451c035050a145cd8f2097fd730232fd445997e211b3f19f68ca79058f29691d363b85a47c909931f1e1bd59e88f5903283ffc61721a26e1581c24d9c1395d39a05bc7586acab378c412366ed056e4b5f8d0ea9a803c9e00727a19810a4b2a6565e70e24949f47dc49a9cb9fe2ac3a1b513ec76be2cc58cca95b8c2626704bba6f62026af6b45b6a37ecbb2b4f6a9ce89d3ecc67816b554d3120b48416f974f779e03585b437f938b40d5c9c9f2915e5bb89480331278aa3dfd6e4f22d4ad2357bb5608f19790d02cb14ce5d933cd0fd36d0e33f21a41e0f8869d1de8ec216475bfe9edf172b3dcec406c88dd512b24357ffb48f3174bec0591fe7de5990f048f34261eede0eeed4d8aaef89bbd2479cfcce5c31717382b813b2820da9a8590133914e86d5ef64f586a136433a88df50332db77461b8637faa5b1a871b4b5f4b32913fbbff5a6c290c4bbb275ba4b384172412ce601203a08e9eb7bb58a4a29d1b8f86fb9e5abae00677bafd1162b60532b15b7db172ae5412568a1ccbb7e8f4ebb285997e8367028021a0615a1a818c6e69378141aa7c1375e54cc080ba766afc94350cffff66c201ddb031efc52f1207c6676a6",
+      "exception": null
+    },
+    {
+      "name": "key-truncate",
+      "accepted": false,
+      "executionGas": "3853",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "key-trail",
+      "accepted": false,
+      "executionGas": "3853",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "setup-truncate",
+      "accepted": false,
+      "executionGas": "3879",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "setup-trail",
+      "accepted": false,
+      "executionGas": "3879",
+      "calldataBytes": 10212,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "inputs-truncate",
+      "accepted": false,
+      "executionGas": "74278",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "inputs-trail",
+      "accepted": false,
+      "executionGas": "74278",
+      "calldataBytes": 10212,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "proof-truncate",
+      "accepted": false,
+      "executionGas": "74164",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "proof-trail",
+      "accepted": false,
+      "executionGas": "74164",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "bad-magic",
+      "accepted": false,
+      "executionGas": "74375",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "bad-version",
+      "accepted": false,
+      "executionGas": "75504",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "bad-key-id",
+      "accepted": false,
+      "executionGas": "75631",
+      "calldataBytes": 10180,
+      "returnHex": "124eaee6",
+      "exception": "revert"
+    },
+    {
+      "name": "width-zero",
+      "accepted": false,
+      "executionGas": "91992",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "width-large",
+      "accepted": false,
+      "executionGas": "92015",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "decoded-scalar-0",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-1",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000125451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-2",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f000000030644e72e131a029b85045b68181585d2833e84879b9709143e1f593f000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-3",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f200102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-4",
+      "accepted": false,
+      "executionGas": "94371",
+      "calldataBytes": 10180,
+      "returnHex": "94e40b4b",
+      "exception": "revert"
+    },
+    {
+      "name": "decoded-scalar-5",
+      "accepted": false,
+      "executionGas": "94371",
+      "calldataBytes": 10180,
+      "returnHex": "94e40b4b",
+      "exception": "revert"
+    },
+    {
+      "name": "decoded-scalar-6",
+      "accepted": false,
+      "executionGas": "94371",
+      "calldataBytes": 10180,
+      "returnHex": "94e40b4b",
+      "exception": "revert"
+    },
+    {
+      "name": "decoded-scalar-7",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000125451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-8",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-9",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-10",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-11",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-12",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-13",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-14",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-15",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-16",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-17",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-18",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-19",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-20",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-21",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-22",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-23",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-24",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-25",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-26",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-27",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-28",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-29",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-30",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-31",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-32",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-33",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-34",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-35",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000000100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-36",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0000010000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-37",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0001000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-scalar-38",
+      "accepted": true,
+      "executionGas": "593528",
+      "calldataBytes": 10180,
+      "returnHex": "0100000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000025451b4f7d2fa6cc78aa4ee12a3fccbd95b49864bef10352a6171d9b8c7460e40d162e1e01ff01570780ee93e6caeb511793602cfc0f22d25fd3a1b62ce01fea1b182b82ee805d1b10ece124f6181178e604a45a2858aaa324221524b8a4f7d31a1b8604bf30f566993c695ddd04b56fc89359c7d2fef05c4bb7aa7af404f5bf",
+      "exception": null
+    },
+    {
+      "name": "decoded-point-generator-small",
+      "accepted": true,
+      "executionGas": "593508",
+      "calldataBytes": 10180,
+      "returnHex": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002",
+      "exception": null
+    },
+    {
+      "name": "decoded-point-generator-large",
+      "accepted": true,
+      "executionGas": "593548",
+      "calldataBytes": 10180,
+      "returnHex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005000000000000000000000000000000000000000000000000000000000000000130644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd45000000000000000000000000000000000000000000000000000000000000000130644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd45",
+      "exception": null
+    },
+    {
+      "name": "decoded-point-infinity",
+      "accepted": true,
+      "executionGas": "588428",
+      "calldataBytes": 10180,
+      "returnHex": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "exception": null
+    },
+    {
+      "name": "decoded-point-infinity-nonzero",
+      "accepted": false,
+      "executionGas": "106488",
+      "calldataBytes": 10180,
+      "returnHex": "d36be5fd",
+      "exception": "revert"
+    },
+    {
+      "name": "decoded-point-invalid-flags",
+      "accepted": false,
+      "executionGas": "106441",
+      "calldataBytes": 10180,
+      "returnHex": "d36be5fd",
+      "exception": "revert"
+    },
+    {
+      "name": "decoded-point-x-modulus",
+      "accepted": false,
+      "executionGas": "106418",
+      "calldataBytes": 10180,
+      "returnHex": "d36be5fd",
+      "exception": "revert"
+    },
+    {
+      "name": "decoded-point-noncurve",
+      "accepted": false,
+      "executionGas": "108703",
+      "calldataBytes": 10180,
+      "returnHex": "d36be5fd",
+      "exception": "revert"
+    },
+    {
+      "name": "proof-field-modulus",
+      "accepted": false,
+      "executionGas": "92995",
+      "calldataBytes": 10180,
+      "returnHex": "94e40b4b",
+      "exception": "revert"
+    },
+    {
+      "name": "inputs-field-modulus",
+      "accepted": false,
+      "executionGas": "76863",
+      "calldataBytes": 10180,
+      "returnHex": "94e40b4b",
+      "exception": "revert"
+    },
+    {
+      "name": "noncurve",
+      "accepted": false,
+      "executionGas": "91059",
+      "calldataBytes": 10180,
+      "returnHex": "d36be5fd",
+      "exception": "revert"
+    },
+    {
+      "name": "noncanonical-infinity",
+      "accepted": false,
+      "executionGas": "88868",
+      "calldataBytes": 10180,
+      "returnHex": "d36be5fd",
+      "exception": "revert"
+    },
+    {
+      "name": "invalid-flags",
+      "accepted": false,
+      "executionGas": "88821",
+      "calldataBytes": 10180,
+      "returnHex": "d36be5fd",
+      "exception": "revert"
+    },
+    {
+      "name": "nonzero-round-padding",
+      "accepted": false,
+      "executionGas": "95510",
+      "calldataBytes": 10180,
+      "returnHex": "350e52ce",
+      "exception": "revert"
+    },
+    {
+      "name": "unauthenticated-key",
+      "accepted": false,
+      "executionGas": "15326",
+      "calldataBytes": 10180,
+      "returnHex": "124eaee6",
+      "exception": "revert"
+    },
+    {
+      "name": "unauthenticated-setup",
+      "accepted": false,
+      "executionGas": "21352",
+      "calldataBytes": 10180,
+      "returnHex": "124eaee6",
+      "exception": "revert"
+    },
+    {
+      "name": "authenticated-overdepth-policy",
+      "accepted": false,
+      "executionGas": "41352",
+      "calldataBytes": 10180,
+      "returnHex": "96639c81",
+      "exception": "revert"
+    },
+    {
+      "name": "authenticated-overpublic-policy",
+      "accepted": false,
+      "executionGas": "36760",
+      "calldataBytes": 10180,
+      "returnHex": "96639c81",
+      "exception": "revert"
+    },
+    {
+      "name": "canonical-algebra-tamper-not-verified",
+      "accepted": true,
+      "executionGas": "602220",
+      "calldataBytes": 10180,
+      "returnHex": "e3e14d747eda7239d0b00aebd7c1b41f00626a1430724bbd571be33752ce7ff300000000000000000000000000000000000000000000000000000000000000f80000000000000000000000000000000000000000000000000000000000000024000000000000000000000000000000000000000000000000000000000000000900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e68c7bceed48f4780b90c429740a71d70cd97c1d628b57cb3b8a6e44360b43ca00000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000002033b5fb626b88c9df731580dd8943725a944b6cd5e2d9003013cb89b7b66629c17cac32e752b752d3454e61ff20dda90de2e4c125e71f9d42d19ac5c5b5c7bf2",
+      "exception": null
+    }
+  ]
+}
