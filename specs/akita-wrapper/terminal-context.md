@@ -1,7 +1,7 @@
 # Conditional terminal context composition
 
 Status: conditional source fragment; full construction deliberately unvalidated.
-Base Jolt003cb2ba3,
+Base Jolt `003cb2ba3c55f200dc0fbb45158ad1cd2a7af9b4`,
 native f5f75335eae18241681fd24ca0a60fca8f0512af. Uses the reviewed public-e24
 census of the earlier28fc proof; no new proof generation. Typed-proof-normalization
 review permits typed z and omission of the dead final z absorb, but no other
