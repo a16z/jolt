@@ -9,10 +9,12 @@ path = "src/main.rs"
 
 [features]
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
-# Non-default, like eqpoly-field: default workspace builds must not unify
-# field-inline into the verifier stack. The recursion flow needs it.
-field-inline = ["jolt-sdk/field-inline", "dep:jolt-field", "jolt-field/field-inline-guest", "jolt-prover?/field-inline", "jolt-witness?/field-inline", "tracer?/field-inline"]
-akita = ["jolt-sdk/akita", "dep:jolt-prover", "jolt-prover/akita", "dep:jolt-program", "dep:jolt-witness", "dep:tracer", "tracer/fp128-field-inline", "dep:jolt-akita"]
+# Guest arithmetic and FR decoding do not select the inner proof
+# verifier's FR protocol. That axis belongs to outer-prover.
+field-inline = ["jolt-sdk/field-inline", "dep:jolt-field", "jolt-field/field-inline-guest"]
+akita = ["jolt-sdk/akita"]
+# The outer proof verifies FR instructions; the inner proof need not use FR.
+outer-prover = ["akita", "field-inline", "dep:jolt-prover", "jolt-prover/akita", "jolt-prover/field-inline", "dep:jolt-program", "dep:jolt-witness", "jolt-witness/field-inline", "dep:tracer", "tracer/field-inline", "tracer/fp128-field-inline", "dep:jolt-akita"]
 
 [dependencies]
 common.workspace = true

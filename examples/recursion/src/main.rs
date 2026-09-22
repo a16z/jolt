@@ -1,4 +1,4 @@
-#[cfg(all(feature = "akita", feature = "field-inline"))]
+#[cfg(feature = "outer-prover")]
 mod outer;
 
 use clap::{Parser, Subcommand};
@@ -122,10 +122,23 @@ struct Cli {
     command: Option<Commands>,
 }
 
+impl Cli {
+    fn validate_profile(&self) -> Result<(), &'static str> {
+        #[cfg(feature = "outer-prover")]
+        if matches!(
+            &self.command,
+            Some(Commands::Generate { .. } | Commands::Verify { .. } | Commands::Trace { .. })
+        ) {
+            return Err("inner proof commands require a build without outer-prover; its FR verifier uses a different proof schema");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Preflight or prove an existing FR ELF with the modular q128 Akita prover.
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    #[cfg(feature = "outer-prover")]
     Outer(outer::Args),
     /// Generate proofs for guest programs
     Generate {
@@ -1069,6 +1082,10 @@ fn verify_proofs(
         "Input size is too large"
     );
 
+    let input_path = workdir.join(format!("{}-recursion-input.bin", guest.name()));
+    std::fs::write(&input_path, &input_bytes).expect("save framed recursion guest input");
+    info!("Saved framed guest input to {}", input_path.display());
+
     run_recursion_proof(
         guest,
         workdir,
@@ -1083,9 +1100,13 @@ fn main() {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
+    if let Err(error) = cli.validate_profile() {
+        error!("{error}");
+        std::process::exit(2);
+    }
 
     match &cli.command {
-        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        #[cfg(feature = "outer-prover")]
         Some(Commands::Outer(args)) => {
             if let Err(error) = args.run() {
                 error!("Outer prover: {error}");
@@ -1171,5 +1192,59 @@ fn main() {
             info!("  cargo run --release -- trace --example fibonacci --embed");
             info!("  cargo run --release -- trace --example fibonacci --embed --disk");
         }
+    }
+}
+
+#[cfg(all(test, feature = "akita"))]
+mod profile_tests {
+    use super::*;
+    use jolt_sdk::jolt_verifier::config::JOLT_VERIFIER_CONFIG;
+
+    #[test]
+    fn verifier_profile_matches_inner_command_contract() {
+        assert_eq!(
+            JOLT_VERIFIER_CONFIG.field_inline.enabled,
+            cfg!(feature = "outer-prover")
+        );
+        let cli = Cli::try_parse_from([
+            "recursion",
+            "generate",
+            "--example",
+            "fibonacci",
+            "--workdir",
+            "unused",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.validate_profile().is_ok(),
+            !cfg!(feature = "outer-prover")
+        );
+    }
+
+    #[test]
+    fn outer_command_requires_its_profile_and_raw_input() {
+        let args = [
+            "recursion",
+            "outer",
+            "--elf",
+            "guest.elf",
+            "--input",
+            "guest-input.bin",
+            "--max-trace-length",
+            "4096",
+            "--max-untrusted-advice-size",
+            "0",
+            "--max-trusted-advice-size",
+            "0",
+            "--workdir",
+            "unused",
+        ];
+        assert_eq!(
+            Cli::try_parse_from(args).is_ok(),
+            cfg!(feature = "outer-prover")
+        );
+        let mut retired = args;
+        retired[4] = "--embedded-stream";
+        assert!(Cli::try_parse_from(retired).is_err());
     }
 }

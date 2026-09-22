@@ -45,7 +45,17 @@ Use the ELF produced by that trace build when interpreting its PC profile.
 
 ### Modular q128 outer proof and preflight
 
-With `akita,field-inline,ntt-inline`, `outer` consumes an existing FR guest ELF;
+Build `generate` and `trace` with `akita,field-inline,ntt-inline`. Here
+`field-inline` enables arithmetic instructions inside the verifier guest; the
+inner Fibonacci proof still uses the ordinary RV64IMAC protocol.
+
+Build the separate `outer` executable with `outer-prover,ntt-inline`. Its verifier
+accepts the FR protocol used by the outer execution. It rejects inner-proof
+commands before reading their differently serialized proof/setup data. Keep the
+two executables separately if both are needed; Cargo writes each build to the
+same `target/release/recursion` path.
+
+With `outer-prover,ntt-inline`, `outer` consumes an existing FR guest ELF;
 no guest build or generated-source mutation occurs in this command. The older
 `generate`, `verify`, and `trace` commands still generate guest sources in this
 checkout: their work directories do not make concurrent runners safe. Use an
@@ -53,23 +63,28 @@ exclusive checkout for those commands.
 
 ```sh
 RUST_MIN_STACK=268435456 RAYON_NUM_THREADS=1 cargo run --release -p recursion \
-  --features akita,field-inline,ntt-inline -- outer \
+  --features outer-prover,ntt-inline -- outer \
   --elf /path/to/recursion-guest \
-  --embedded-stream /path/to/fibonacci-guest_proofs.bin \
+  --input /path/to/fibonacci-guest-recursion-input.bin \
   --max-trace-length 67108864 \
   --max-untrusted-advice-size 0 --max-trusted-advice-size 0 \
   --workdir /path/to/preflight --preflight
 ```
 
-The ELF must embed the setup from that stream. Memory options must match the
+`trace` saves the exact bytes it supplies to the guest as
+`<workdir>/<example>-guest-recursion-input.bin`. This is the guest entry point
+input, including postcard framing and the alignment record; it is not the inner
+proof/setup stream. Freeze that file together with the ELF from the same run.
+The outer executable reads these bytes without decoding the inner proof schema.
+Memory options must match the
 ELF's guest configuration; defaults match the embedded Fibonacci recursion
 profile (16,000,000 input bytes, 4096 output bytes, 128 MiB heap, 32 MiB stack).
 Reserved advice capacities must be supplied explicitly, even with no actual
 advice; they change the compiled I/O addresses. The ELF loader does not recover
 these capacities. Validate the arguments against the guest macro or its generated
 `memory_config_*` host function; preflight records the complete configuration.
-For another guest, `--input` accepts its already-serialized entry-point input
-instead of `--embedded-stream`. Neither option regenerates an inner proof.
+For another guest, supply its already-serialized entry-point input. `outer`
+does not regenerate an inner proof or reframe the input.
 
 The output work directory must not already exist, including for preflight. Use
 a different new directory for each attempt.

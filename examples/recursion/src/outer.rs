@@ -38,16 +38,9 @@ use tracing::info;
 pub(super) struct Args {
     #[arg(long)]
     elf: PathBuf,
-    /// Raw guest input, already framed for its entry point.
-    #[arg(
-        long,
-        conflicts_with = "embedded_stream",
-        required_unless_present = "embedded_stream"
-    )]
-    input: Option<PathBuf>,
-    /// Existing recursion proof/setup stream; frame its proof section for an embedded-setup ELF.
+    /// Exact guest entry-point bytes, already framed by the guest's caller.
     #[arg(long)]
-    embedded_stream: Option<PathBuf>,
+    input: PathBuf,
     /// New output directory; an existing directory is rejected.
     #[arg(long)]
     workdir: PathBuf,
@@ -99,15 +92,7 @@ impl Args {
             max_untrusted_advice_size: self.max_untrusted_advice_size,
             max_trusted_advice_size: self.max_trusted_advice_size,
         };
-        let input = match (&self.input, &self.embedded_stream) {
-            (Some(path), None) => std::fs::read(path)?,
-            (None, Some(path)) => {
-                let stream = std::fs::read(path)?;
-                let layout = super::check_data_integrity(&stream);
-                super::frame_guest_input(&stream[layout.setup_len..], &memory_config)
-            }
-            _ => return Err("provide exactly one input source".into()),
-        };
+        let input = std::fs::read(&self.input)?;
         if input.len() > self.max_input_size as usize {
             return Err("guest input exceeds configured maximum".into());
         }
