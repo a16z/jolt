@@ -116,3 +116,10 @@ files are not a result. This provides atomic pair visibility on the same filesys
 not crash-durable publication. The row vector transfers ownership into the witness
 without cloning it. Large proving runs require a separately reviewed
 resource budget; the trace-only commands remain available.
+
+
+### Replay a saved outer proof
+
+The `outer-prover,ntt-inline` executable accepts `outer --replay <accepted-proof-directory>` with the same frozen `--elf`, `--input`, memory capacities and `--max-trace-length` as the original outer run, and a new `--workdir`. It reads `outer-proof.bin` and `outer-device.bin`, bounds each artifact and bincode decode to 32 MiB, and rejects trailing bytes. Replay conflicts with `--preflight`.
+
+Replay retraces the pinned execution to derive the canonical geometry and confirm the saved public device, releases the trace rows, and regenerates the same canonical PCS/verifier setup. It calls the production verifier without constructing a witness or running the prover. On acceptance it atomically publishes `accepted-replay/replay.json` and `accepted-replay/verifier-preprocessing.bin` (standard bincode serialization). This export is an artifact of the accepted replay, not a separate trusted-input shortcut; replay always regenerates preprocessing from the pinned program/configuration.

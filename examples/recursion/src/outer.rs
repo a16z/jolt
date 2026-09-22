@@ -1,4 +1,11 @@
-use std::{mem::size_of, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    fs::File,
+    io::{BufWriter, Read, Write},
+    mem::size_of,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_akita::schedule_registry::provision_precommitted_for_k;
@@ -18,7 +25,7 @@ use jolt_sdk::{
         zkvm::{
             packed::{
                 akita_verifier_preprocessing, field_inc_limb_schedule_params,
-                field_inline_one_hot_trace_setup_params, AkitaField, AkitaNoCurve,
+                field_inline_one_hot_trace_setup_params, AkitaField, AkitaJoltProof, AkitaNoCurve,
                 AkitaPackedScheme, AkitaScheduleArtifacts, AkitaScheme, AkitaTranscript, AkitaVc,
             },
             preprocessing::JoltSharedPreprocessing,
@@ -26,9 +33,10 @@ use jolt_sdk::{
             prover::JoltProverPreprocessing as LegacyPreprocessing,
         },
     },
-    jolt_verifier, MemoryConfig,
+    jolt_verifier, JoltDevice, MemoryConfig,
 };
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+use serde::de::DeserializeOwned;
 use serde_json::json;
 use tracer::{execution_backend::TracerBackend, TracerInlineExpansionProvider};
 use tracing::info;
@@ -47,6 +55,9 @@ pub(super) struct Args {
     /// Derive geometry and provision schedule rows, then stop before PCS setup.
     #[arg(long)]
     preflight: bool,
+    /// Decode and verify a saved outer-proof.bin / outer-device.bin pair without proving.
+    #[arg(long, conflicts_with = "preflight")]
+    replay: Option<PathBuf>,
     /// Row storage reserved up front and the maximum padded proof geometry.
     #[arg(long)]
     max_trace_length: usize,
@@ -77,6 +88,11 @@ impl Args {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::create_dir(&self.workdir)?;
+        let saved = self
+            .replay
+            .as_deref()
+            .map(SavedOuterProof::read)
+            .transpose()?;
         let started = Instant::now();
         let mut program = build_jolt_program_with_inline_provider(
             &std::fs::read(&self.elf)?,
@@ -191,10 +207,52 @@ impl Args {
         if self.preflight {
             return Ok(());
         }
+        if let Some(saved) = &saved {
+            if saved.device != trace_output.device {
+                return Err("saved public device differs from frozen ELF/input execution".into());
+            }
+            // Replay needs public geometry, not retained witness rows during setup.
+            drop(std::mem::take(&mut rows));
+        }
         info!("Entering PCS setup");
         let (pcs_setup, verifier_setup) = AkitaScheme::setup(params)?;
         let verifier = akita_verifier_preprocessing(&legacy, verifier_setup, None);
         drop(legacy);
+        if let Some(saved) = saved {
+            drop(pcs_setup);
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                &verifier,
+                &saved.device,
+                &saved.proof,
+                None,
+            )?;
+            let staging = self.workdir.join(".replay-incomplete");
+            std::fs::create_dir(&staging)?;
+            let mut file =
+                BufWriter::new(File::create(staging.join("verifier-preprocessing.bin"))?);
+            bincode::serde::encode_into_std_write(
+                &verifier,
+                &mut file,
+                bincode::config::standard(),
+            )?;
+            file.flush()?;
+            drop(file);
+            std::fs::write(
+                staging.join("replay.json"),
+                serde_json::to_vec_pretty(&json!({
+                    "accepted": true,
+                    "saved_artifacts": self.replay,
+                    "guest_output_bytes": saved.device.outputs,
+                    "proof_trace_length": saved.proof.trace_length,
+                    "proof_ram_k": saved.proof.ram_K,
+                    "elapsed_s": started.elapsed().as_secs_f64(),
+                    "proving_performed": false,
+                }))?,
+            )?;
+            std::fs::rename(staging, self.workdir.join("accepted-replay"))?;
+            info!("Saved outer proof verification accepted; no proving performed");
+            return Ok(());
+        }
         let program_preprocessing = verifier
             .program
             .as_full_arc()
@@ -253,5 +311,60 @@ impl Args {
             started.elapsed().as_secs_f64()
         );
         Ok(())
+    }
+}
+
+// Bounds cover the saved runner artifacts; this is not a general proof transport.
+const MAX_REPLAY_BYTES: usize = 32 * 1024 * 1024;
+
+struct SavedOuterProof {
+    proof: AkitaJoltProof,
+    device: JoltDevice,
+}
+
+impl SavedOuterProof {
+    fn read(directory: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            proof: Self::read_exact(&directory.join("outer-proof.bin"))?,
+            device: Self::read_exact(&directory.join("outer-device.bin"))?,
+        })
+    }
+
+    fn read_exact<T: DeserializeOwned>(path: &Path) -> Result<T, Box<dyn std::error::Error>> {
+        let mut bytes = Vec::new();
+        File::open(path)?
+            .take((MAX_REPLAY_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > MAX_REPLAY_BYTES {
+            return Err("saved artifact exceeds 32 MiB replay limit".into());
+        }
+        Self::decode_exact(&bytes)
+    }
+
+    fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Box<dyn std::error::Error>> {
+        let (value, consumed) = bincode::serde::decode_from_slice(
+            bytes,
+            bincode::config::standard().with_limit::<MAX_REPLAY_BYTES>(),
+        )?;
+        if consumed != bytes.len() {
+            return Err("trailing bytes in saved artifact".into());
+        }
+        Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SavedOuterProof;
+
+    #[test]
+    fn replay_decode_rejects_trailing_bytes_and_oversized_collections() {
+        assert_eq!(SavedOuterProof::decode_exact::<u32>(&[42]).unwrap(), 42);
+        assert!(SavedOuterProof::decode_exact::<u32>(&[42, 0]).is_err());
+        // Bincode's u64 length marker followed by u64::MAX, without an allocation.
+        assert!(SavedOuterProof::decode_exact::<Vec<u8>>(&[
+            253, 255, 255, 255, 255, 255, 255, 255, 255
+        ])
+        .is_err());
     }
 }
