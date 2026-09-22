@@ -97,6 +97,11 @@ impl MacroBuilder {
         let require_zk = self.make_require_zk_check();
 
         quote! {
+            // Track the selector in the guest crate's Cargo fingerprint as well
+            // as reading it during macro expansion.
+            #[cfg(feature = "guest")]
+            const _: ::core::option::Option<&str> = ::core::option_env!("JOLT_FUNC_NAME");
+
             #require_zk
             #memory_config_fn
             #build_prover_fn
