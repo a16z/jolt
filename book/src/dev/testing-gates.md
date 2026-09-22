@@ -3,8 +3,8 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one table of example guests
-(muldiv, fibonacci, memory-ops, collatz, sha2, sha3, sha2-chain, sha3-chain,
-btreemap, stdlib, advice-consumer, merkle-tree), checks each guest's output
+(muldiv, fibonacci, memory-ops, stdlib, sha2, sha3 through both its unaligned
+and aligned entry points, advice-consumer, btreemap), checks each guest's output
 against a natively computed value, and proves it with the optimized backend
 under whichever protocol the crate was compiled for: Dory clear by default,
 Dory ZK with `zk`, Akita with `akita`. The mode is part of every test name

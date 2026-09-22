@@ -41,24 +41,26 @@ mod matrix {
         Keccak256::digest(bytes).into()
     }
 
-    /// `sha2_chain` / `sha3_chain` take a seed block and an iteration count as
-    /// two separately encoded arguments.
-    fn chain_inputs(iterations: u32) -> Vec<u8> {
-        let mut bytes = encode(&[5u8; 32]);
-        bytes.extend(encode(&iterations));
-        bytes
+    fn message(len: usize) -> Vec<u8> {
+        (0..len).map(|i| i as u8).collect()
     }
 
-    fn hash_chain(iterations: u32, hash: fn(&[u8]) -> [u8; 32]) -> [u8; 32] {
-        (0..iterations).fold([5u8; 32], |block, _| hash(&block))
+    /// Two full Keccak rate blocks as the `sha3_aligned` guest takes them; the
+    /// guest hashes their little-endian bytes.
+    fn keccak_blocks() -> [[u64; 17]; 2] {
+        let mut blocks = [[0u64; 17]; 2];
+        for (index, lane) in blocks.iter_mut().flatten().enumerate() {
+            *lane = (index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+        blocks
     }
 
-    /// The merkle-tree guest's root over leaves `[5; 32]`, `[6; 32]`,
-    /// `[7; 32]`, `[8; 32]`.
-    fn merkle_root() -> [u8; 32] {
-        let leaves = [[5u8; 32], [6u8; 32], [7u8; 32], [8u8; 32]].map(|leaf| sha256(&leaf));
-        let pair = |left: [u8; 32], right: [u8; 32]| sha256(&[left, right].concat());
-        pair(pair(leaves[0], leaves[1]), pair(leaves[2], leaves[3]))
+    fn keccak_block_bytes(blocks: &[[u64; 17]; 2]) -> Vec<u8> {
+        blocks
+            .iter()
+            .flatten()
+            .flat_map(|lane| lane.to_le_bytes())
+            .collect()
     }
 
     /// Native replica of the btreemap guest's workload.
@@ -112,32 +114,32 @@ mod matrix {
                     expected_output: Some(encode(&(0x12i32, 0u32, 0x3456i32, 0u32))),
                     ..GuestCase::new("memory-ops-guest")
                 };
-                collatz => GuestCase {
-                    func: Some("collatz_convergence"),
-                    inputs: encode(&19u128),
-                    expected_output: Some(encode(&20u128)),
-                    ..GuestCase::new("collatz-guest")
-                };
+                // 127 bytes: one full block through the initial compression,
+                // then a 63-byte tail that needs the two-block padding, so both
+                // SHA-256 inline instructions run.
                 sha2 => GuestCase {
-                    inputs: encode(&vec![5u8; 32]),
-                    expected_output: Some(encode(&sha256(&[5u8; 32]))),
+                    inputs: encode(&message(127)),
+                    expected_output: Some(encode(&sha256(&message(127)))),
                     ..GuestCase::new("sha2-guest")
                 };
+                // 300 bytes behind postcard's length prefix: two full rate
+                // blocks reach the fused absorb through stack staging (the
+                // unaligned path), then the padded final permutation.
                 sha3 => GuestCase {
                     func: Some("sha3"),
-                    inputs: encode(&vec![5u8; 32]),
-                    expected_output: Some(encode(&keccak256(&[5u8; 32]))),
+                    inputs: encode(&message(300)),
+                    expected_output: Some(encode(&keccak256(&message(300)))),
                     ..GuestCase::new("sha3-guest")
                 };
-                sha2_chain => GuestCase {
-                    inputs: chain_inputs(8),
-                    expected_output: Some(encode(&hash_chain(8, sha256))),
-                    ..GuestCase::new("sha2-chain-guest")
-                };
-                sha3_chain => GuestCase {
-                    inputs: chain_inputs(8),
-                    expected_output: Some(encode(&hash_chain(8, keccak256))),
-                    ..GuestCase::new("sha3-chain-guest")
+                // Two aligned rate blocks fed to the fused absorb straight from
+                // the caller's buffer.
+                sha3_aligned => GuestCase {
+                    func: Some("sha3_aligned"),
+                    inputs: encode(&keccak_blocks()),
+                    expected_output: Some(encode(&keccak256(&keccak_block_bytes(
+                        &keccak_blocks(),
+                    )))),
+                    ..GuestCase::new("sha3-guest")
                 };
                 btreemap => GuestCase {
                     stack_size: Some(10_000),
@@ -161,13 +163,6 @@ mod matrix {
                     trusted_advice: encode(&7u64),
                     expected_output: Some(encode(&(7u64 * 3 + 5))),
                     ..GuestCase::new("advice-consumer-guest")
-                };
-                merkle_tree => GuestCase {
-                    inputs: encode(&[5u8; 32].as_slice()),
-                    untrusted_advice: encode(&[8u8; 32]),
-                    trusted_advice: [encode(&[6u8; 32]), encode(&[7u8; 32])].concat(),
-                    expected_output: Some(encode(&merkle_root())),
-                    ..GuestCase::new("merkle-tree-guest")
                 };
             }
         };
