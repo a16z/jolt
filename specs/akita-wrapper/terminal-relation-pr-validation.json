@@ -1,0 +1,24 @@
+{
+  "source": "c5d00ec30",
+  "base": "f8173c60a426ff2ca65260bda55d2c87c8f12d8c",
+  "reviewed_source": "003cb2ba3c55f200dc0fbb45158ad1cd2a7af9b4",
+  "nextest": {
+    "exit": 0,
+    "passed": 78,
+    "skipped": 0,
+    "run_id": "c928ffeb-b745-4418-8e7b-42912cad1c0f"
+  },
+  "clippy_exit": 0,
+  "fmt_all_exit": 0,
+  "yaml_parse_exit": 0,
+  "logs": {
+    "nextest": {
+      "path": "/private/tmp/terminal-relation-pr-nextest.log",
+      "sha256": "38910c5172346d6f3781ff07892accb4401d60bf639a75fab9e8301d2196afaf"
+    },
+    "clippy": {
+      "path": "/private/tmp/terminal-relation-pr-clippy.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}
