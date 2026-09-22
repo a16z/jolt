@@ -34,8 +34,12 @@ profiling = ["parallel"]
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-pcs = { workspace = true, default-features = false, features = ["transcript-blake2b"] }
-akita-prover = { workspace = true, default-features = false, features = ["transcript-blake2b"] }
+akita-pcs = { workspace = true, default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-prover = { workspace = true, default-features = false, features = [
+  "transcript-blake2b",
+] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
@@ -70,3 +74,7 @@ jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }
 serde_json = { workspace = true, features = ["std"] }
+
+[package.metadata.cargo-machete]
+# Selects the Akita transcript implementation through blake2-inline.
+ignored = ["akita-transcript"]

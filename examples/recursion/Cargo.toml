@@ -11,10 +11,27 @@ path = "src/main.rs"
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Guest arithmetic and FR decoding do not select the inner proof
 # verifier's FR protocol. That axis belongs to outer-prover.
-field-inline = ["jolt-sdk/field-inline", "dep:jolt-field", "jolt-field/field-inline-guest"]
+field-inline = [
+  "jolt-sdk/field-inline",
+  "dep:jolt-field",
+  "jolt-field/field-inline-guest",
+]
 akita = ["jolt-sdk/akita"]
 # The outer proof verifies FR instructions; the inner proof need not use FR.
-outer-prover = ["akita", "field-inline", "dep:jolt-prover", "jolt-prover/akita", "jolt-prover/field-inline", "dep:jolt-program", "dep:jolt-witness", "jolt-witness/field-inline", "dep:tracer", "tracer/field-inline", "tracer/fp128-field-inline", "dep:jolt-akita"]
+outer-prover = [
+  "akita",
+  "field-inline",
+  "dep:jolt-prover",
+  "jolt-prover/akita",
+  "jolt-prover/field-inline",
+  "dep:jolt-program",
+  "dep:jolt-witness",
+  "jolt-witness/field-inline",
+  "dep:tracer",
+  "tracer/field-inline",
+  "tracer/fp128-field-inline",
+  "dep:jolt-akita",
+]
 
 [dependencies]
 common.workspace = true
@@ -37,3 +54,7 @@ jolt-witness = { workspace = true, optional = true }
 tracer = { workspace = true, optional = true }
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
 serde_json.workspace = true
+
+[package.metadata.cargo-machete]
+# Enables field-inline-guest on the shared field dependency.
+ignored = ["jolt-field"]

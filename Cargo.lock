@@ -4384,7 +4384,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-inlines-ntt",
  "jolt-sdk",
- "serde",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     fs::File,
     io::{BufWriter, Read, Write},
     mem::size_of,
@@ -78,7 +79,7 @@ pub(super) struct Args {
 }
 
 impl Args {
-    pub(super) fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(super) fn run(&self) -> Result<(), Box<dyn Error>> {
         for capacity in [self.max_untrusted_advice_size, self.max_trusted_advice_size] {
             if capacity != 0 && !capacity.is_power_of_two() {
                 return Err("reserved advice capacities must be zero or powers of two".into());
@@ -323,14 +324,14 @@ struct SavedOuterProof {
 }
 
 impl SavedOuterProof {
-    fn read(directory: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    fn read(directory: &Path) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             proof: Self::read_exact(&directory.join("outer-proof.bin"))?,
             device: Self::read_exact(&directory.join("outer-device.bin"))?,
         })
     }
 
-    fn read_exact<T: DeserializeOwned>(path: &Path) -> Result<T, Box<dyn std::error::Error>> {
+    fn read_exact<T: DeserializeOwned>(path: &Path) -> Result<T, Box<dyn Error>> {
         let mut bytes = Vec::new();
         File::open(path)?
             .take((MAX_REPLAY_BYTES + 1) as u64)
@@ -341,7 +342,7 @@ impl SavedOuterProof {
         Self::decode_exact(&bytes)
     }
 
-    fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Box<dyn std::error::Error>> {
+    fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, Box<dyn Error>> {
         let (value, consumed) = bincode::serde::decode_from_slice(
             bytes,
             bincode::config::standard().with_limit::<MAX_REPLAY_BYTES>(),

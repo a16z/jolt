@@ -10,7 +10,6 @@ field-inline = ["jolt/field-inline"]
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
 jolt-inlines-ntt.workspace = true
-serde = { workspace = true, features = ["alloc"] }
 
 [lib]
 test = false

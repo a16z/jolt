@@ -34,7 +34,7 @@ here retains additional public APIs, so historical timings are not measurements
 of this delivery pair. All frozen binaries and artifacts remain intact.
 
 The companion's excluded legacy profile uses Git-only patches to immutable native
-source ancestor2bceddba86e07971bbd0538e46060df3caf3031b, whose library trees match
+source ancestor `2bceddba86e07971bbd0538e46060df3caf3031b`, whose library trees match
 the final companion. This prevents the historical SDK anchor from reintroducing
 pre-Blake LayerZero dependencies. Its distinct local/Git Akita identities remain
 a compiler compatibility gate; they are not collapsed merely because their

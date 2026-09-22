@@ -44,7 +44,7 @@ the final implementation heads are Jolt `f37f72f81`, companion `37d8f3548`.
 | field readout registers | `423550ae8` | 68,669,341 | 412,162 |
 | dot-loop unrolling | `05fb41c01` | 68,528,069 | 141,272 |
 | aligned Rice reads | `a0ca3eac6` | 68,120,986 | 407,083 |
-| stack transcript frames | `ba4825774` | 67,919,526 | 201,460 |
+| stack transcript frames | `ba4825774c1845411bf8ed4701ec8f81c14c79b3` | 67,919,526 | 201,460 |
 | direct SHAKE lanes | `69181ccd4` | 67,752,822 | 166,704 |
 | prepared residual tensors | `37d8f3548` | 66,855,759 | 897,063 |
 | direct ordinary-setup decode | `f37f72f81` | 66,843,409 | 12,350 |
@@ -119,7 +119,7 @@ proof remains unrun. See the scratch manifest and logs for the validation record
   in use. Jolt's three catalogs were regenerated with the current planner.
 - Jolt catch-up checkpoint: `17ff06f9e`; readout/compact-row repair: `19c63772c`;
   booleanity gamma powers: `84e49f893`; opening-ID collection: `47d3babd4`.
-  Final source and CI cleanup checkpoint: `80aa2ba47`.
+  Final source and CI cleanup checkpoint: `80aa2ba47c28281ad6158bfb10592b3ac249846a`.
 
 The companion is consumed through the Jolt workspace path patches. Its standalone
 workspace still cannot resolve its published `jolt-inlines-blake2` pin with the
