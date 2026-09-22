@@ -379,13 +379,18 @@ impl ZkOpeningScheme for DoryScheme {
     fn open_zk<P: MultilinearPoly<Fr> + ?Sized>(
         poly: &P,
         point: &[Fr],
-        _eval: Fr,
+        eval: Fr,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
         let num_vars = point.len();
-        let adapter = DorySourceAdapter::new(poly);
+        // Sumcheck already supplies this evaluation. Dory still proves its
+        // equality to the committed polynomial through the matrix product.
+        let adapter = DorySourceAdapter {
+            source: poly,
+            claimed_evaluation: Some((point, eval)),
+        };
         let sigma = num_vars.div_ceil(2);
         let nu = num_vars - sigma;
         let (row_commitments, commit_blind) = hint.into_ark_parts();
@@ -564,11 +569,15 @@ impl DoryHint {
 /// without materializing the full evaluation table.
 struct DorySourceAdapter<'a, S: MultilinearPoly<Fr> + ?Sized> {
     source: &'a S,
+    claimed_evaluation: Option<(&'a [Fr], Fr)>,
 }
 
 impl<'a, S: MultilinearPoly<Fr> + ?Sized> DorySourceAdapter<'a, S> {
     fn new(source: &'a S) -> Self {
-        Self { source }
+        Self {
+            source,
+            claimed_evaluation: None,
+        }
     }
 }
 
@@ -587,6 +596,11 @@ impl<S: MultilinearPoly<Fr> + ?Sized> DoryPolynomial<ArkFr> for DorySourceAdapte
         // instead of the opening claim, and the BlindFold eval-commitment check
         // (`y_com == claim·g + blind·h`) fails.
         let native_point: Vec<Fr> = point.iter().rev().map(ark_to_jolt_fr).collect();
+        if let Some((claimed_point, eval)) = self.claimed_evaluation {
+            if claimed_point == native_point {
+                return jolt_fr_to_ark(&eval);
+            }
+        }
         jolt_fr_to_ark(&self.source.evaluate(&native_point))
     }
 
@@ -625,6 +639,7 @@ mod tests {
     use jolt_crypto::{Pedersen, VectorCommitment};
     use jolt_field::{Field, Ring};
     use jolt_poly::Polynomial;
+    use jolt_transcript::Blake2bTranscript;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -644,7 +659,7 @@ mod tests {
 
         let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
+        let mut prove_transcript = Blake2bTranscript::new(b"test");
         let proof = DoryScheme::open(
             &poly,
             &point,
@@ -655,7 +670,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"test");
+        let mut verify_transcript = Blake2bTranscript::new(b"test");
         let result = DoryScheme::verify(
             &commitment,
             &point,
@@ -729,18 +744,18 @@ mod tests {
         let (commitment, hint) =
             <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
+        let mut prove_transcript = Blake2bTranscript::new(b"zk-test");
         let (proof, _eval_com, _blinding) = DoryScheme::open_zk(
             &poly,
             &point,
             eval,
             &prover_setup,
-            hint,
+            hint.clone(),
             &mut prove_transcript,
         )
         .unwrap();
 
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"zk-test");
+        let mut verify_transcript = Blake2bTranscript::new(b"zk-test");
         let result = DoryScheme::verify_zk(
             &commitment,
             &point,
@@ -749,6 +764,26 @@ mod tests {
             &mut verify_transcript,
         );
         assert!(result.is_ok(), "ZK verification failed: {result:?}");
+
+        let mut bad_prove_transcript = Blake2bTranscript::new(b"zk-test");
+        let (bad_proof, _, _) = DoryScheme::open_zk(
+            &poly,
+            &point,
+            eval + <Fr as Ring>::from_u64(1),
+            &prover_setup,
+            hint,
+            &mut bad_prove_transcript,
+        )
+        .unwrap();
+        let mut bad_verify_transcript = Blake2bTranscript::new(b"zk-test");
+        assert!(DoryScheme::verify_zk(
+            &commitment,
+            &point,
+            &bad_proof,
+            &verifier_setup,
+            &mut bad_verify_transcript,
+        )
+        .is_err());
     }
 
     #[test]
