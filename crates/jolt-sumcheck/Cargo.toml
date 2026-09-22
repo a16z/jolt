@@ -11,7 +11,6 @@ parallel = [
   "jolt-field/parallel",
   "jolt-poly/parallel",
   "jolt-crypto?/parallel",
-  "jolt-r1cs?/parallel",
 ]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]

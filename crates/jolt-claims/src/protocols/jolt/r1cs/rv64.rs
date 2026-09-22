@@ -83,8 +83,8 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
 /// Two's complement bias for subtraction: 2^64.
 const TWOS_COMPLEMENT_BIAS: i128 = 0x1_0000_0000_0000_0000;
 
-use crate::constraint::SparseRow;
 use jolt_field::Field;
+use jolt_r1cs::{ConstraintMatrices, SparseRow};
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
 
@@ -396,9 +396,9 @@ fn append_product_constraints<F: Field>(
 /// standard 38-variable per-cycle witness layout. Product constraints are
 /// intentionally excluded for consumers that handle multiplication checks in
 /// a separate protocol step.
-pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn rv64_spartan_outer_constraints<F: Field>() -> ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = rv64_eq_constraint_rows();
-    crate::ConstraintMatrices::new(
+    ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
         NUM_VARS_PER_CYCLE,
         a_rows,
@@ -415,14 +415,14 @@ pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F
 ///
 /// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
 /// product factors at 36–37).
-pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn rv64_trace_constraints<F: Field>() -> ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     c_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
 
-    crate::ConstraintMatrices::new(
+    ConstraintMatrices::new(
         NUM_CONSTRAINTS_PER_CYCLE,
         NUM_VARS_PER_CYCLE,
         a_rows,

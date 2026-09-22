@@ -1,5 +1,18 @@
 //! Compile-time Jolt R1CS composition.
 
+#![deny(
+    clippy::indexing_slicing,
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+
 use jolt_field::JoltField;
 use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel, CenteredIntegerDomainError},
@@ -8,13 +21,12 @@ use jolt_poly::{
 use thiserror::Error as ThisError;
 
 #[cfg(feature = "field-inline")]
-use crate::SparseRow;
-use crate::{ConstraintMatrices, ConstraintMatrixEvalError};
+use jolt_r1cs::SparseRow;
+use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError};
 
-use super::rv64;
+pub mod rv64;
 
-#[cfg(feature = "field-inline")]
-use super::field_constraints;
+pub mod field_constraints;
 
 #[cfg(feature = "field-inline")]
 pub const FIELD_INLINE_COLUMN_BASE: usize = rv64::NUM_VARS_PER_CYCLE;

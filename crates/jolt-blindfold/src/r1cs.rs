@@ -1,7 +1,6 @@
+use jolt_claims::r1cs::{assert_claim_expr_eq, ClaimSourceTable, ClaimSources};
 use jolt_field::JoltField;
-use jolt_r1cs::{
-    assert_claim_expr_eq, ClaimSourceTable, ClaimSources, LinearCombination, R1csBuilder, Variable,
-};
+use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 use jolt_sumcheck::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRoundLayout,
@@ -411,9 +410,10 @@ fn validate_final_opening_count<F, O, P, Ch, C>(
 mod tests {
     use super::*;
     use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
+    use jolt_claims::r1cs::{ClaimLoweringError, ClaimSourceTable};
     use jolt_claims::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, Ring};
-    use jolt_r1cs::{ClaimLoweringError, ClaimSourceTable, R1csBuilderError};
+    use jolt_r1cs::R1csBuilderError;
     use jolt_sumcheck::{
         CommittedOutputClaims, CommittedSumcheckConsistency, SumcheckDomainSpec, SumcheckR1csError,
         SumcheckR1csRoundLayout, SumcheckStatement, VerifiedCommittedRound,

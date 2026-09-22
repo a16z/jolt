@@ -20,15 +20,15 @@
 //! as its input claim.
 
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
+use jolt_claims::protocols::jolt::r1cs::{
+    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
+};
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     OuterRemainderInputClaims, OuterRemainderOutputClaims,
 };
 use jolt_claims::protocols::jolt::{relations, JoltDerivedId, JoltRelationId, SpartanOuterPublic};
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
-use jolt_r1cs::constraints::jolt::{
-    JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
-};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;

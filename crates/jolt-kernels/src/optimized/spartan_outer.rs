@@ -46,6 +46,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZ
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
 };
+use jolt_claims::protocols::jolt::r1cs::{spartan_outer_constraints, spartan_outer_row_weights};
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltPolynomialId, SpartanOuterPublic,
 };
@@ -56,7 +57,6 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
-use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
 use jolt_riscv::{CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
