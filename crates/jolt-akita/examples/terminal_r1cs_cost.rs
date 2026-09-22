@@ -62,11 +62,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             .nth(1)
             .ok_or("pass a trusted frozen census directory")?,
     );
-    let terminal: Terminal =
-        serde_json::from_reader(File::open(path.join("terminal.json"))?)?;
-    let quotients: Quotients = serde_json::from_reader(File::open(
-        path.join("terminal-row-transport.json"),
-    )?)?;
+    let terminal: Terminal = serde_json::from_reader(File::open(path.join("terminal.json"))?)?;
+    let quotients: Quotients =
+        serde_json::from_reader(File::open(path.join("terminal-row-transport.json"))?)?;
     let mut builder = R1csBuilder::new();
     let z = TerminalZ::allocate(
         &mut builder,
