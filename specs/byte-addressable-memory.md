@@ -83,7 +83,7 @@ trace-recording bugs stand in the way (see Implementation notes).
 
 Key protocol anchors:
 
-- **R1CS (uniform, 22 constraints / 38 wires per cycle)**, `crates/jolt-r1cs/src/constraints/rv64.rs`:
+- **R1CS (uniform, 22 constraints / 38 wires per cycle)**, `crates/jolt-claims/src/protocols/jolt/r1cs/rv64.rs`:
   - `RamAddress = Rs1Value + Imm` when Load/Store (constraint 0) — the wire is the raw **byte**
     effective address; `RamAddress = 0` on idle cycles (constraint 1).
   - Loads: `rv = wv` and `rv = RdWriteValue` (constraints 2–3). Stores: `wv = Rs2Value`
@@ -158,7 +158,7 @@ length for aligned code, without modifying the Twist memory argument.
   (constraint-enforced, not tracer-enforced).
 - Any change to a sumcheck's `input_claim` (RAF evaluation gains the `−Offset` term) carries the
   matching `input_claim_constraint` update (BlindFold), the akita/lattice mirror, and the
-  jolt-r1cs/legacy-r1cs pair — the standard two-R1CS sync obligation.
+  jolt-claims/legacy-r1cs pair — the standard two-R1CS sync obligation.
 - Guest-visible semantics match the RISC-V spec (byte-exact against the reference emulator),
   including sign extension and the store-merge value on both crossing halves.
 - `jolt-eval`'s `source_to_jolt_expansion_equivalence` invariant extends to the new expansions
@@ -417,7 +417,7 @@ Verified shape of the blast radius:
   (`zkvm/r1cs/{inputs,constraints}.rs` plus the *positionally index-addressed* evaluators in
   `r1cs/evaluation.rs` with hand-picked accumulator widths), `crates/jolt-claims`
   (`geometry/spartan.rs` — `SPARTAN_OUTER_RV64_ROW_COUNT`, `FIRST_GROUP_ROWS`, and the bare
-  `OUTER_UNISKIP_DOMAIN_SIZE = 10` literal), and `crates/jolt-r1cs` (`constraints/rv64.rs`
+  `OUTER_UNISKIP_DOMAIN_SIZE = 10` literal), and `crates/jolt-claims` (`protocols/jolt/r1cs/rv64.rs`
   `V_*` column indices + all rows re-implemented by integer index). Only tests, not types,
   enforce agreement.
 - **BlindFold is mostly generic** (the outer output-claim constraint scans constraint groups at

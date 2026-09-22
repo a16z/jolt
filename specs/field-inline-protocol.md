@@ -388,7 +388,7 @@ also be linked to `BytecodeRa(i)`.
 ### Stage 2 Composition
 
 The selected product uniskip geometry lives with the selected R1CS constants in
-`jolt-r1cs::constraints::jolt`:
+`jolt-claims::protocols::jolt::r1cs`:
 
 ```text
 FR off:
@@ -704,7 +704,7 @@ openings and field-inline openings in one RLC.
 Target module:
 
 ```text
-crates/jolt-r1cs/src/constraints/
+crates/jolt-claims/src/protocols/jolt/r1cs/
   mod.rs
   rv64.rs
   field_constraints.rs
@@ -812,7 +812,7 @@ jolt-claims::protocols::jolt:
 jolt-claims::protocols::field_inline:
   field-inline-local Spartan outer opening semantics
 
-jolt-r1cs::constraints::jolt:
+jolt-claims::protocols::jolt::r1cs:
   selected R1CS column layout and field-inline column remapping
 
 jolt-verifier::stages::stage1:
@@ -855,7 +855,7 @@ IsFieldLoadImm
 ```
 
 `jolt-verifier` should compute the selected Spartan outer expected claim using
-a helper in `jolt-r1cs::constraints::jolt`, analogous to the RV64-only helper
+a helper in `jolt-claims::protocols::jolt::r1cs`, analogous to the RV64-only helper
 but parameterized by the selected equality constraints, selected row weights,
 and selected opening columns. FR-off must reduce exactly to the ordinary RV64
 helper.
@@ -1131,9 +1131,10 @@ protocols::field_inline::formulas::claim_reductions::increments::claim_reduction
 protocols::field_inline::formulas::claim_reductions::increments::claim_reduction_output_openings()
 ```
 
-`jolt-claims` should stay focused on these claim formulas and opening helpers.
-`field_constraints` and bridge constraints live in
-`jolt-r1cs::constraints::field_constraints`. The `jolt-claims` surface should
+`jolt-claims` owns these claim formulas and opening helpers, with protocol-owned
+field and bridge constraints in
+`jolt-claims::protocols::jolt::r1cs::field_constraints`. Generic R1CS builders and
+sparse matrices remain in `jolt-r1cs`. The field-inline formula surface should
 stay as close as possible to the ordinary-register formula pattern.
 
 ## Transcript And Optionality
@@ -1200,7 +1201,7 @@ Each step should be reviewed before continuing to the next.
      evaluation.
 
 4. Add `field_constraints`.
-   - Implement `jolt-r1cs::constraints::field_constraints`.
+   - Implement `jolt-claims::protocols::jolt::r1cs::field_constraints`.
    - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, and bridge rows.
    - Review gate: constraint tests prove native-field arithmetic and reject bad
      FieldProduct witnesses.
@@ -1218,7 +1219,7 @@ Each step should be reviewed before continuing to the next.
      compile-time verifier config before any stage logic runs.
    - Commitment absorption: absorb the nested FieldRegisters commitment,
      currently `FieldRdInc`, only when field inline is enabled.
-   - Selected R1CS composition: add `jolt-r1cs::constraints::jolt` so the
+   - Selected R1CS composition: add `jolt-claims::protocols::jolt::r1cs` so the
      compile-time selected R1CS is RV64 alone when FR is off and RV64 plus
      field-inline rows when FR is on. The composition keeps protocol semantics
      separate and performs the mixing only in the selected R1CS layout: it

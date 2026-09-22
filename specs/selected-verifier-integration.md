@@ -395,7 +395,7 @@ When enabled:
 ```text
 validate_proof_config requires proof.protocol.field_inline to match verifier config
 commitment absorption includes the FieldRdInc field-register commitment
-jolt-r1cs selected constraints compose RV64 rows with field-inline rows
+jolt-claims selected constraints compose RV64 rows with field-inline rows
 stage 1 composes selected Spartan outer openings and public coefficients
 stage 2 extends product virtualization with field product lanes
 stage 2 batches field-register claim reduction at the product point
@@ -439,7 +439,7 @@ Each slice has a small review gate and must preserve the FR-off path.
      config-dependent challenge.
 
 2. Compose selected R1CS constraints.
-   - Add `jolt-r1cs::constraints::jolt` as the compile-time selected R1CS
+   - Add `jolt-claims::protocols::jolt::r1cs` as the compile-time selected R1CS
      composition point.
    - FR-off selected constraints are exactly the RV64 constraints.
    - FR-on selected constraints append `field_constraints` rows while keeping
@@ -458,12 +458,12 @@ Each slice has a small review gate and must preserve the FR-off path.
      the last point: ordinary RV64 Spartan openings first, then FR-local
      Spartan openings only when field inline is enabled.
    - Do not duplicate bridge openings for RV64 columns reused by
-     `jolt-r1cs::constraints::jolt`: `Rs1Value`, `RdWriteValue`, and `Imm`
+     `jolt-claims::protocols::jolt::r1cs`: `Rs1Value`, `RdWriteValue`, and `Imm`
      remain ordinary Jolt openings.
    - FR-local Spartan openings follow the selected appended-column order:
      field register operand values, field product witnesses, and field-inline
      selector flags.
-   - Add a selected Spartan outer remainder helper in `jolt-r1cs` that mirrors
+   - Add a selected Spartan outer remainder helper in `jolt-claims::protocols::jolt::r1cs` that mirrors
      the existing RV64 helper but uses the selected equality constraints,
      selected row weights, and selected opening columns.
    - Transparent path: `jolt-verifier::stages::stage1::verify` uses the
