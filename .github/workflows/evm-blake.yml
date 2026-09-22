@@ -1,0 +1,48 @@
+name: EVM Blake parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/evm-blake.yml'
+      - 'evm/blake-transcript/**'
+      - 'crates/jolt-transcript/**'
+      - 'crates/jolt-field/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: evm/blake-transcript/package-lock.json
+      - name: Regenerate the native oracle
+        run: |
+          cargo run --locked --quiet -p jolt-transcript --no-default-features --features bn254,transcript-blake2b --example evm_blake_vectors > "$RUNNER_TEMP/evm-blake-vectors.json"
+          diff -u evm/blake-transcript/test/native-vectors.json "$RUNNER_TEMP/evm-blake-vectors.json"
+      - name: Install pinned EVM tools
+        working-directory: evm/blake-transcript
+        run: npm ci --ignore-scripts
+      - name: Check native parity and explicit reverts
+        working-directory: evm/blake-transcript
+        run: npm test

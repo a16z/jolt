@@ -59,3 +59,7 @@ required-features = ["bn254", "transcript-keccak"]
 [[test]]
 name = "poseidon_tests"
 required-features = ["transcript-poseidon"]
+
+[[example]]
+name = "evm_blake_vectors"
+required-features = ["bn254", "transcript-blake2b"]
