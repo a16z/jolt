@@ -73,7 +73,3 @@ required-features = ["r1cs"]
 [[test]]
 name = "native_traits_tests"
 required-features = ["bn254"]
-
-[[example]]
-name = "evm_blake_vectors"
-required-features = ["bn254", "transcript-blake2b"]
