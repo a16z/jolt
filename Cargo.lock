@@ -3646,9 +3646,7 @@ name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "ark-serialize 0.5.0",
  "bincode 2.0.1",
- "blake2 0.11.0",
  "chrono",
  "clap",
  "common",
@@ -3813,6 +3811,7 @@ dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
  "bincode 2.0.1",
+ "blake2 0.11.0",
  "common",
  "jolt-akita",
  "jolt-blindfold",

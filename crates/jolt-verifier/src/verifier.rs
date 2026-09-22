@@ -1,5 +1,6 @@
 //! Top-level verifier entry point.
 
+use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -500,7 +501,7 @@ where
         .vc_setup
         .as_ref()
         .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
-    let required = common::constants::MAX_BLINDFOLD_GENERATORS;
+    let required = MAX_BLINDFOLD_GENERATORS;
     let got = VC::capacity(setup);
     if got < required {
         return Err(VerifierError::InvalidVectorCommitmentCapacity { required, got });
@@ -1160,9 +1161,8 @@ mod tests {
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::MultilinearPoly;
-    use jolt_program::preprocess::{
-        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
-    };
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_riscv::RV64IMAC_JOLT;
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
@@ -1779,26 +1779,56 @@ mod tests {
         test_preprocessing_with_layout(test_memory_layout())
     }
 
+    #[expect(clippy::expect_used, reason = "test fixture")]
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
+        let program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            memory_layout,
+            0,
+            16,
+            RV64IMAC_JOLT,
+        )
+        .expect("test program");
         #[cfg(feature = "zk")]
         let vc_setup = Some(PedersenSetup::new(
-            vec![Bn254G1::default(); common::constants::MAX_BLINDFOLD_GENERATORS],
+            vec![Bn254G1::default(); MAX_BLINDFOLD_GENERATORS],
             Bn254G1::default(),
         ));
         #[cfg(not(feature = "zk"))]
         let vc_setup = None;
-        JoltVerifierPreprocessing::new(
-            ProgramPreprocessing::Full(Arc::new(JoltProgramPreprocessing {
-                bytecode: BytecodePreprocessing::default(),
-                ram: RAMPreprocessing::default(),
-                memory_layout,
-                max_padded_trace_length: 16,
-            })),
-            [7; 32],
-            (),
-            vc_setup,
-        )
+        JoltVerifierPreprocessing::new(ProgramPreprocessing::Full(Arc::new(program)), (), vc_setup)
+            .expect("test program digest")
+    }
+
+    #[test]
+    #[expect(clippy::unwrap_used, reason = "test fixture")]
+    fn verifier_preprocessing_recomputes_its_digest_on_load() {
+        let preprocessing = test_preprocessing();
+        let encoded =
+            bincode::serde::encode_to_vec(&preprocessing, bincode::config::standard()).unwrap();
+
+        // The digest is not on the wire: a stale in-memory copy encodes
+        // identically and decoding rebuilds the digest from the program.
+        let mut stale = preprocessing.clone();
+        stale.preprocessing_digest = [0xa5; 32];
+        assert_eq!(
+            bincode::serde::encode_to_vec(&stale, bincode::config::standard()).unwrap(),
+            encoded
+        );
+        let (decoded, consumed): (JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>>, usize) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(decoded.program, preprocessing.program);
+        assert_eq!(
+            decoded.preprocessing_digest,
+            preprocessing.preprocessing_digest
+        );
+        assert_eq!(
+            decoded.preprocessing_digest,
+            preprocessing.program.digest().unwrap()
+        );
     }
 }

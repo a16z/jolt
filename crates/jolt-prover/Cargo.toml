@@ -74,7 +74,6 @@ allocative = [
 ]
 
 [dependencies]
-ark-serialize.workspace = true
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
@@ -100,7 +99,6 @@ tracing.workspace = true
 # Optional: the `profiling` harness (bins cannot use dev-dependencies).
 allocative = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
-blake2.workspace = true
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }

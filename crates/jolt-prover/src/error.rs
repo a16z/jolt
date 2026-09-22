@@ -26,8 +26,10 @@ pub enum PreprocessingError {
     #[error("invalid advice: {reason}")]
     InvalidAdvice { reason: String },
 
-    #[error("failed to encode preprocessing: {reason}")]
-    Encoding { reason: String },
+    /// The verifier-side preprocessing rejected the program view, e.g. its
+    /// digest could not be computed.
+    #[error(transparent)]
+    Verifier(#[from] VerifierError),
 }
 
 /// Errors surfaced while proving. The engine-level failures come through

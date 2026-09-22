@@ -741,7 +741,8 @@ fn prove_workload(
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "dory");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
-    let prover_preprocessing = crate::dory::from_shared(shared_preprocessing);
+    let prover_preprocessing =
+        crate::dory::from_shared(shared_preprocessing).expect("Dory preprocessing");
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
     let program_preprocessing = prover_preprocessing
@@ -868,10 +869,10 @@ fn prove_workload(
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
         verifier: JoltVerifierPreprocessing::new(
             ProgramPreprocessing::Full(shared.program),
-            shared.preprocessing_digest,
             verifier_setup,
             None,
-        ),
+        )
+        .expect("Akita verifier preprocessing"),
         pcs_setup,
         committed_program: None,
     };
