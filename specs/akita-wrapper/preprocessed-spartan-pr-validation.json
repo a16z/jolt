@@ -1,0 +1,23 @@
+{
+  "source": "2431c1ca8",
+  "base": "12c66934dc72cd1aaddcae2d4c0b6373936c9115",
+  "scope": "Public/private preprocessed Spartan on generic Spartan PR1880, four changed crate trees equal reviewed f505",
+  "nextest": {
+    "exit": 0,
+    "passed": 19,
+    "skipped": 0,
+    "run_id": "9b6f5002-d535-4464-9203-97da1e5f11b8"
+  },
+  "clippy_exit": 0,
+  "fmt_all_check_exit": 0,
+  "logs": {
+    "nextest": {
+      "path": "/private/tmp/preprocessed-spartan-pr-nextest.log",
+      "sha256": "d343ec1eb1809575d168a2e22937c9a151576b2983698c8b885141837d38b78f"
+    },
+    "clippy": {
+      "path": "/private/tmp/preprocessed-spartan-pr-clippy.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}
