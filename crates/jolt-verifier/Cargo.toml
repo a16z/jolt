@@ -12,7 +12,14 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-r1cs = ["dep:jolt-r1cs", "jolt-r1cs/fp128-bn254", "jolt-sumcheck/r1cs-fp128", "jolt-transcript/r1cs-fp128", "jolt-akita?/r1cs", "jolt-claims/r1cs-fp128"]
+r1cs = [
+  "dep:jolt-r1cs",
+  "jolt-r1cs/fp128-bn254",
+  "jolt-sumcheck/r1cs-fp128",
+  "jolt-transcript/r1cs-fp128",
+  "jolt-akita?/r1cs",
+  "jolt-claims/r1cs-fp128",
+]
 default = ["transcript-blake2b"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).

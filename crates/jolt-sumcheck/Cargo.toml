@@ -6,7 +6,12 @@ license = "MIT"
 description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
-r1cs-fp128 = ["r1cs", "jolt-r1cs/fp128-bn254", "jolt-transcript/r1cs-fp128", "jolt-poly/r1cs"]
+r1cs-fp128 = [
+  "r1cs",
+  "jolt-r1cs/fp128-bn254",
+  "jolt-transcript/r1cs-fp128",
+  "jolt-poly/r1cs",
+]
 default = []
 parallel = [
   "jolt-field/parallel",
