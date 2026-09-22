@@ -93,6 +93,8 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host
       - name: cargo clippy --features allocative,host,zk
         run: cargo clippy --all --all-targets --features allocative,host,zk
+      - name: cargo clippy with Akita R1CS constraints
+        run: cargo clippy --locked -p jolt-r1cs -p jolt-akita --features jolt-akita/r1cs --all-targets -- -D warnings
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
       # jolt-verifier's prover-fixtures feature gates live prover artifact
@@ -605,6 +607,9 @@ jobs:
             fi
             i=$((i + 1))
           done
+      - name: Test Akita R1CS constraints
+        if: matrix.shard == 0
+        run: cargo nextest run --locked -p jolt-r1cs -p jolt-akita --features jolt-akita/r1cs --lib --test-threads 1 --cargo-quiet
       - name: Test lookup table prover ABI
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet

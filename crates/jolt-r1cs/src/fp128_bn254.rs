@@ -10,9 +10,10 @@
 //! enforced independently by constraints. Build a fresh circuit with `None`
 //! for layout or `Some` for assignment; both walks emit identical matrices.
 
-use jolt_field::{CanonicalBytes, Field, Fr, Prime128OffsetA7F7, Ring};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Field, Fr, Prime128OffsetA7F7, Ring};
 use thiserror::Error;
 
+use crate::bn254_bits::{BitsError, ByteVar};
 use crate::{LinearCombination, R1csBuilder, Variable};
 
 /// The source modulus, derived from the native field's canonical definition.
@@ -20,6 +21,8 @@ pub const MODULUS: u128 = u128::MAX - (Prime128OffsetA7F7::C - 1);
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum Fp128Error {
+    #[error(transparent)]
+    Bits(#[from] BitsError),
     #[error("source field value {value} is not canonical")]
     NonCanonical { value: u128 },
     #[error("variable {variable:?} is outside the supplied constraint builder")]
@@ -100,6 +103,30 @@ impl Fp128Var {
             bits,
             witness,
         })
+    }
+
+    /// Bind sixteen existing little-endian Boolean bytes to a canonical q value.
+    /// The caller authenticates the byte source; ONE and builder provenance remain external.
+    pub fn from_le_bytes(
+        builder: &mut R1csBuilder<Fr>,
+        bytes: &[ByteVar; 16],
+    ) -> Result<Self, Fp128Error> {
+        let mut encoded = LinearCombination::zero();
+        let mut witness = Some(0u128);
+        for (index, byte) in bytes.iter().enumerate() {
+            byte.validate_indices(builder)?;
+            let value = builder
+                .evaluate(&byte.expression())
+                .ok()
+                .and_then(|x| x.to_u128_checked());
+            witness = witness
+                .zip(value)
+                .map(|(sum, value)| sum | (value << (8 * index)));
+            encoded = encoded + byte.expression().scale(Fr::from_u128(1u128 << (8 * index)));
+        }
+        let value = Self::allocate(builder, witness)?;
+        builder.assert_equal(value.variable, encoded);
+        Ok(value)
     }
 
     /// The BN254 variable holding the canonical integer representative.
@@ -542,5 +569,43 @@ mod subtraction_tests {
             *borrow = Fr::from_u64(1) - *borrow;
             assert!(matrices.check_witness(&witness).is_err());
         }
+    }
+}
+
+#[cfg(all(test, feature = "integer-bn254"))]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "fixed byte binding witness tests"
+)]
+mod byte_binding_tests {
+    use super::*;
+    use crate::integer_bn254::SignedVar;
+
+    #[test]
+    fn canonical_bytes_centering_and_unknown_shape_share_one_value() {
+        let make = |known: bool| {
+            let mut builder = R1csBuilder::new();
+            let bytes = (MODULUS - 1)
+                .to_le_bytes()
+                .map(|byte| ByteVar::allocate(&mut builder, known.then_some(byte)));
+            let value = Fp128Var::from_le_bytes(&mut builder, &bytes).unwrap();
+            let centered = SignedVar::centered_from_handle(&mut builder, &value).unwrap();
+            (builder, centered.variable())
+        };
+        let (known, centered) = make(true);
+        let (unknown, _) = make(false);
+        let witness = known.witness().unwrap();
+        assert_eq!(witness[centered.index()], -Fr::from_u64(1));
+        let matrix = known.into_matrices();
+        let layout = unknown.into_matrices();
+        assert_eq!(matrix.a, layout.a);
+        assert_eq!(matrix.b, layout.b);
+        assert_eq!(matrix.c, layout.c);
+        assert_eq!(matrix.num_vars, layout.num_vars);
+        assert!(matrix.check_witness(&witness).is_ok());
+        let mut wrong = witness;
+        wrong[1] = Fr::from_u64(1) - wrong[1];
+        assert!(matrix.check_witness(&wrong).is_err());
     }
 }
