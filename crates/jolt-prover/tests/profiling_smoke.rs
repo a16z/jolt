@@ -12,8 +12,8 @@
 //! NOT wired into CI yet: the reference backend's naive RAM kernels retain
 //! ~18 GiB regardless of trace length (`ram_K` is priced off the guest's
 //! default 32 MB heap, not the trace), which exceeds hosted-runner memory.
-//! Hook up a dedicated `rust.yml` job (guest toolchain + jolt CLI, like the
-//! legacy test jobs) once an optimized backend fits runner memory.
+//! Hook up a dedicated `rust.yml` job with the guest toolchain and jolt CLI
+//! once an optimized backend fits runner memory.
 //!
 //! Run explicitly (needs the guest toolchain, like the byte-diff harness):
 //! `cargo nextest run -p jolt-prover --features profiling -E 'binary(profiling_smoke)'`

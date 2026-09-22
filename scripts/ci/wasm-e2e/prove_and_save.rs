@@ -1,4 +1,3 @@
-use jolt_sdk::jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 use jolt_sdk::serialize_verifier_object;
 use tracing::info;
 
@@ -10,7 +9,8 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_fib(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing);
-    let verifier_preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
+    let verifier_preprocessing =
+        guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
 
     let pp_bytes = serialize_verifier_object(&verifier_preprocessing).expect("serialize pp");
     std::fs::write("pp.bin", &pp_bytes).expect("write pp");

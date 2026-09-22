@@ -146,9 +146,10 @@ macro_rules! field_assert_eq {
 pub mod host_utils;
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
-pub use jolt_prover_legacy;
-#[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use jolt_verifier;
+
+#[cfg(feature = "host")]
+pub use jolt_prover;
 
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 pub use host_utils::*;
@@ -551,7 +552,7 @@ pub trait AdviceTapeIO: Sized {
 }
 
 /// Empty marker trait for types that are Pod (Plain Old Data)
-/// This trait excludes Vec<_> explicitly to avoid conflicts with the Vec<T> implementation below
+/// This trait excludes `Vec<_>` explicitly to avoid conflicts with the `Vec<T>` implementation below
 pub trait JoltPod: Pod {}
 
 macro_rules! impl_joltpod {
@@ -636,7 +637,7 @@ impl<T: Pod, const N: usize> AdviceTapeIO for [T; N] {
     }
 }
 
-/// implement AdviceTapeIO for Vec<T> where T: Pod
+/// implement AdviceTapeIO for `Vec<T>` where `T: Pod`
 #[cfg(any(feature = "host", feature = "guest-std"))]
 impl<T: Pod> AdviceTapeIO for Vec<T> {
     fn write_to_advice_tape(&self) {

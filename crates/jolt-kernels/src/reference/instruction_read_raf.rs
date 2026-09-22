@@ -11,7 +11,7 @@
 //! Appendix A).
 //!
 //! **Address rounds** (first 128, MSB-first) run in phases of
-//! [`CHUNK_LEN`]` = 8` variables. Per phase, every table prefix is
+//! `CHUNK_LEN = 8` variables. Per phase, every table prefix is
 //! materialized as a dense 256-entry chunk polynomial from its checkpoints
 //! (`jolt-lookup-tables`' binary-point `evaluate` API is built for exactly
 //! this), each present table's suffixes are accumulated into 256-entry `Q`

@@ -274,8 +274,8 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         "preprocessing.program.bytecode.entry_address",
         VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::Deferred,
-        "entry address is transcript-bound but needs a real bytecode fixture mutation",
+        TamperCoverage::Active,
+        "entry address is transcript-bound; preamble.rs offsets the full program's entry address",
     ),
 ];
 

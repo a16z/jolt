@@ -26,11 +26,7 @@ pub fn btreemap() {
     });
 
     let verifier_preprocessing = step!("Preprocessing verifier", {
-        guest::preprocess_verifier_btreemap(
-            shared_preprocessing,
-            prover_preprocessing.generators.to_verifier_setup(),
-            None,
-        )
+        guest::verifier_preprocessing_from_prover_btreemap(&prover_preprocessing)
     });
 
     let prove = step!("Building prover", {
