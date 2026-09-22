@@ -143,6 +143,27 @@ impl Fp128Var {
         Ok(output)
     }
 
+    /// Allocate and constrain the canonical difference modulo q.
+    pub fn subtract(&self, builder: &mut R1csBuilder<Fr>, rhs: &Self) -> Result<Self, Fp128Error> {
+        self.validate_indices(builder)?;
+        rhs.validate_indices(builder)?;
+        let pair = self.witness.zip(rhs.witness);
+        let value = pair.map(|(a, b)| {
+            (Prime128OffsetA7F7::from_u128(a) - Prime128OffsetA7F7::from_u128(b))
+                .to_canonical_u128()
+        });
+        let output = Self::allocate(builder, value)?;
+        let borrow = Self::allocate_bits(builder, pair.map(|(a, b)| u128::from(a < b)), 1);
+        // Canonical operands/output and Boolean borrow bound the residual by 2q<r.
+        builder.assert_equal(
+            LinearCombination::variable(self.variable)
+                + Self::bits_lc(&borrow).scale(Fr::from_u128(MODULUS)),
+            LinearCombination::variable(rhs.variable)
+                + LinearCombination::variable(output.variable),
+        );
+        Ok(output)
+    }
+
     fn enforce_product(
         &self,
         builder: &mut R1csBuilder<Fr>,
@@ -489,5 +510,37 @@ mod tests {
             unknown.multiply(&mut other, &unknown),
             Err(Fp128Error::UnknownVariable { .. })
         ));
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "tests inspect and corrupt complete field assignments"
+)]
+mod subtraction_tests {
+    use super::*;
+    use num_bigint::BigUint;
+
+    #[test]
+    fn subtraction_has_integer_ground_truth_and_constrained_borrow() {
+        for (a, b) in [(0, MODULUS - 1), (MODULUS - 1, 0), (5, 7), (9, 9)] {
+            let mut builder = R1csBuilder::new();
+            let x = Fp128Var::allocate(&mut builder, Some(a)).unwrap();
+            let y = Fp128Var::allocate(&mut builder, Some(b)).unwrap();
+            let result = x.subtract(&mut builder, &y).unwrap();
+            let expected: u128 = ((BigUint::from(a) + BigUint::from(MODULUS) - BigUint::from(b))
+                % BigUint::from(MODULUS))
+            .try_into()
+            .unwrap();
+            let mut witness = builder.witness().unwrap();
+            assert_eq!(witness[result.variable().index()], Fr::from_u128(expected));
+            let matrices = builder.into_matrices();
+            assert!(matrices.check_witness(&witness).is_ok());
+            let borrow = witness.last_mut().unwrap();
+            *borrow = Fr::from_u64(1) - *borrow;
+            assert!(matrices.check_witness(&witness).is_err());
+        }
     }
 }

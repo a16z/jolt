@@ -30,6 +30,50 @@ pub fn evaluate_fp128_bn254(
     Ok(result)
 }
 
+/// Invalid field handle or an unrepresentable Boolean table allocation.
+#[derive(Debug, thiserror::Error)]
+pub enum LagrangeR1csError {
+    #[error(transparent)]
+    Field(#[from] Fp128Error),
+    #[error("Boolean Lagrange table exceeds the addressable allocation")]
+    DomainTooLarge,
+}
+
+/// Boolean Lagrange weights in low-bit-first index order over the source field.
+///
+/// Entry i is product_j (bit_j(i) ? point[j] : 1-point[j]). Points are
+/// constrained canonical handles in this builder; point length fixes the shape.
+/// Prefix sharing needs one product and subtraction per existing entry per round.
+pub fn lagrange_weights_fp128_bn254(
+    builder: &mut R1csBuilder<Fr>,
+    point: &[Fp128Var],
+) -> Result<Vec<Fp128Var>, LagrangeR1csError> {
+    for coordinate in point {
+        coordinate.validate_indices(builder)?;
+    }
+    let shift = u32::try_from(point.len()).map_err(|_| LagrangeR1csError::DomainTooLarge)?;
+    let size = 1usize
+        .checked_shl(shift)
+        .ok_or(LagrangeR1csError::DomainTooLarge)?;
+    let mut weights = Vec::new();
+    weights
+        .try_reserve_exact(size)
+        .map_err(|_| LagrangeR1csError::DomainTooLarge)?;
+    let one = Fp128Var::allocate(builder, Some(1))?;
+    builder.assert_equal(one.variable(), LinearCombination::one());
+    weights.push(one);
+    for coordinate in point {
+        let mut right = Vec::with_capacity(weights.len());
+        for weight in &mut weights {
+            let product = weight.multiply(builder, coordinate)?;
+            *weight = weight.subtract(builder, &product)?;
+            right.push(product);
+        }
+        weights.extend(right);
+    }
+    Ok(weights)
+}
+
 #[cfg(test)]
 #[expect(
     clippy::unwrap_used,
@@ -97,5 +141,44 @@ mod tests {
             matches!(result, Err(Fp128Error::UnknownVariable { variable: rejected }) if rejected == variable)
         );
         assert_eq!(destination.num_vars(), 1);
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "independent small Lagrange vector and matrix tests"
+)]
+mod lagrange_tests {
+    use super::*;
+    use jolt_r1cs::fp128_bn254::MODULUS;
+
+    #[test]
+    fn lagrange_table_uses_low_bit_first_order_and_fixed_shape() {
+        let mut known = R1csBuilder::new();
+        let point: Vec<_> = [2, 3]
+            .into_iter()
+            .map(|x| Fp128Var::allocate(&mut known, Some(x)).unwrap())
+            .collect();
+        let table = lagrange_weights_fp128_bn254(&mut known, &point).unwrap();
+        let witness = known.witness().unwrap();
+        for (value, expected) in table.iter().zip([2, MODULUS - 4, MODULUS - 3, 6]) {
+            assert_eq!(witness[value.variable().index()], Fr::from_u128(expected));
+        }
+        let mut unknown = R1csBuilder::new();
+        let point: Vec<_> = (0..2)
+            .map(|_| Fp128Var::allocate(&mut unknown, None).unwrap())
+            .collect();
+        let _table = lagrange_weights_fp128_bn254(&mut unknown, &point).unwrap();
+        let known = known.into_matrices();
+        let unknown = unknown.into_matrices();
+        assert_eq!(known.a, unknown.a);
+        assert_eq!(known.b, unknown.b);
+        assert_eq!(known.c, unknown.c);
+        assert!(known.check_witness(&witness).is_ok());
+        let mut swapped = witness;
+        swapped.swap(table[1].variable().index(), table[2].variable().index());
+        assert!(known.check_witness(&swapped).is_err());
     }
 }

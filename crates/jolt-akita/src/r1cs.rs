@@ -78,3 +78,6 @@ impl AkitaTranscriptVar {
 
 /// Bounded terminal integer relations; excludes dynamic routing and full acceptance.
 pub mod terminal;
+
+/// Fixed-profile point preparation and scalar-opening constraints.
+pub mod scalar;

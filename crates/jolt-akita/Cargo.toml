@@ -12,8 +12,10 @@ workspace = true
 r1cs = [
   "dep:akita-transcript",
   "dep:jolt-r1cs",
+  "dep:thiserror",
   "jolt-r1cs/integer-bn254",
   "jolt-transcript/r1cs",
+  "jolt-poly/r1cs",
 ]
 profiling = []
 
@@ -47,6 +49,7 @@ jolt-transcript = { path = "../jolt-transcript", default-features = false }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
 bincode.workspace = true
@@ -61,4 +64,8 @@ required-features = ["r1cs"]
 
 [[example]]
 name = "terminal_r1cs_cost"
+required-features = ["r1cs"]
+
+[[example]]
+name = "scalar_r1cs_cost"
 required-features = ["r1cs"]
