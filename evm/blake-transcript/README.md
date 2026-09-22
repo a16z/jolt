@@ -62,3 +62,11 @@ for shared generated helpers are approximate; opcode totals are exact.
 `node bench/precompile-failure.mjs /path/to/baseline-runtime.bin` checks unchanged
 failure behavior for failing, empty, short, and overlong precompile responses;
 these injected callees are not cryptographic or gas oracles.
+
+## Continuous integration
+
+The EVM Blake parity workflow regenerates the frozen oracle through the native
+Rust example, requires exact fixture equality, and executes the 48 EVM cases
+with the pinned npm lockfile. The fixture's `native_base` records its original
+reference revision; it is not the SHA of every later CI checkout. This job
+tests the primitive boundary, not a complete Spartan verifier.
