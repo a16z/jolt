@@ -61,6 +61,12 @@ pub(super) struct Args {
     max_input_size: u64,
     #[arg(long, default_value_t = 4096)]
     max_output_size: u64,
+    /// Reserved guest I/O capacity, even when no advice is supplied. Must match the ELF.
+    #[arg(long)]
+    max_untrusted_advice_size: u64,
+    /// Reserved guest I/O capacity, even when no advice is supplied. Must match the ELF.
+    #[arg(long)]
+    max_trusted_advice_size: u64,
     #[arg(long, default_value_t = 134_217_728)]
     heap_size: u64,
     #[arg(long, default_value_t = 33_554_432)]
@@ -69,6 +75,11 @@ pub(super) struct Args {
 
 impl Args {
     pub(super) fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+        for capacity in [self.max_untrusted_advice_size, self.max_trusted_advice_size] {
+            if capacity != 0 && !capacity.is_power_of_two() {
+                return Err("reserved advice capacities must be zero or powers of two".into());
+            }
+        }
         std::fs::create_dir_all(&self.workdir)?;
         let started = Instant::now();
         let mut program = build_jolt_program_with_inline_provider(
@@ -82,8 +93,8 @@ impl Args {
             heap_size: self.heap_size,
             stack_size: self.stack_size,
             program_size: Some(program.program_end - RAM_START_ADDRESS),
-            max_untrusted_advice_size: 0,
-            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: self.max_untrusted_advice_size,
+            max_trusted_advice_size: self.max_trusted_advice_size,
         };
         let input = match (&self.input, &self.embedded_stream) {
             (Some(path), None) => std::fs::read(path)?,
@@ -151,6 +162,9 @@ impl Args {
         );
         let report = json!({
             "elf": self.elf, "preflight_only": self.preflight,
+            "memory_config": format!("{memory_config:?}"),
+            "max_untrusted_advice_size": self.max_untrusted_advice_size,
+            "max_trusted_advice_size": self.max_trusted_advice_size,
             "trace_rows": rows.len(), "padded_rows": config.trace_length,
             "ram_k": config.ram_K, "config": format!("{config:?}"),
             "fr_rows": fr_rows, "row_size_bytes": size_of::<TraceRow>(),

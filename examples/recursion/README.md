@@ -56,12 +56,17 @@ RUST_MIN_STACK=268435456 RAYON_NUM_THREADS=1 cargo run --release -p recursion \
   --features akita,field-inline,ntt-inline -- outer \
   --elf /path/to/recursion-guest \
   --embedded-stream /path/to/fibonacci-guest_proofs.bin \
+  --max-untrusted-advice-size 0 --max-trusted-advice-size 0 \
   --workdir /path/to/preflight --preflight
 ```
 
 The ELF must embed the setup from that stream. Memory options must match the
 ELF's guest configuration; defaults match the embedded Fibonacci recursion
 profile (16,000,000 input bytes, 4096 output bytes, 128 MiB heap, 32 MiB stack).
+Reserved advice capacities must be supplied explicitly, even with no actual
+advice; they change the compiled I/O addresses. The ELF loader does not recover
+these capacities. Validate the arguments against the guest macro or its generated
+`memory_config_*` host function; preflight records the complete configuration.
 For another guest, `--input` accepts its already-serialized entry-point input
 instead of `--embedded-stream`. Neither option regenerates an inner proof.
 
