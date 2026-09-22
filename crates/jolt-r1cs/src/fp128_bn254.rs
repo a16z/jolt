@@ -75,8 +75,8 @@ impl Fp128Var {
 
     /// Allocate and constrain the canonical product modulo q.
     pub fn multiply(&self, builder: &mut R1csBuilder<Fr>, rhs: &Self) -> Result<Self, Fp128Error> {
-        self.validate_builder(builder)?;
-        rhs.validate_builder(builder)?;
+        self.validate_indices(builder)?;
+        rhs.validate_indices(builder)?;
         let witnesses = self
             .witness
             .zip(rhs.witness)
@@ -90,8 +90,8 @@ impl Fp128Var {
 
     /// Allocate and constrain the canonical sum modulo q.
     pub fn add(&self, builder: &mut R1csBuilder<Fr>, rhs: &Self) -> Result<Self, Fp128Error> {
-        self.validate_builder(builder)?;
-        rhs.validate_builder(builder)?;
+        self.validate_indices(builder)?;
+        rhs.validate_indices(builder)?;
         let pair = self.witness.zip(rhs.witness);
         let value = pair.map(|(a, b)| {
             (Prime128OffsetA7F7::from_u128(a) + Prime128OffsetA7F7::from_u128(b))
@@ -170,7 +170,11 @@ impl Fp128Var {
         Ok((c, quotient))
     }
 
-    fn validate_builder(&self, builder: &R1csBuilder<Fr>) -> Result<(), Fp128Error> {
+    /// Reject value or decomposition indices outside `builder`.
+    ///
+    /// This does not establish builder identity: callers must still use each
+    /// value in the builder that allocated it, even when indices coincide.
+    pub fn validate_indices(&self, builder: &R1csBuilder<Fr>) -> Result<(), Fp128Error> {
         for &variable in std::iter::once(&self.variable).chain(&self.bits) {
             if variable.index() >= builder.num_vars() {
                 return Err(Fp128Error::UnknownVariable { variable });

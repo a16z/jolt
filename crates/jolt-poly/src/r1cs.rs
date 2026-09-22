@@ -22,6 +22,7 @@ pub fn evaluate_fp128_bn254(
         );
         return Ok(zero);
     };
+    leading.validate_indices(builder)?;
     let mut result = leading.clone();
     for coefficient in remaining.iter().rev() {
         result = result.multiply(builder, point)?.add(builder, coefficient)?;
@@ -82,5 +83,19 @@ mod tests {
         assert_eq!(witness[zero.variable().index()], Fr::from_u64(0));
         assert_eq!(witness[result.variable().index()], Fr::from_u64(7));
         assert!(builder.into_matrices().check_witness(&witness).is_ok());
+    }
+
+    #[test]
+    fn constant_polynomial_rejects_out_of_range_coefficient() {
+        let mut source = R1csBuilder::new();
+        let coefficient = Fp128Var::allocate(&mut source, Some(7)).unwrap();
+        let point = Fp128Var::allocate(&mut source, Some(9)).unwrap();
+        let variable = coefficient.variable();
+        let mut destination = R1csBuilder::new();
+        let result = evaluate_fp128_bn254(&mut destination, &[coefficient], &point);
+        assert!(
+            matches!(result, Err(Fp128Error::UnknownVariable { variable: rejected }) if rejected == variable)
+        );
+        assert_eq!(destination.num_vars(), 1);
     }
 }
