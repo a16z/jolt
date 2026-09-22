@@ -1,0 +1,19 @@
+[package]
+name = "jolt-spartan-verifier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "PCS-generic clear Spartan verification for sparse R1CS"
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-field.workspace = true
+jolt-openings.workspace = true
+jolt-poly.workspace = true
+jolt-r1cs = { path = "../jolt-r1cs", default-features = false }
+jolt-sumcheck.workspace = true
+jolt-transcript.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
