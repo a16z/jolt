@@ -1,0 +1,70 @@
+# Complete fixed-profile terminal relation assembler
+
+Status: implementation contract; not a complete Akita verifier or an authenticated
+transcript prefix. Frozen input is the reviewed epoch-six census at
+`/private/tmp/akita-epoch6-census-20260922/observed-replay`, source
+`1e20d62234de5780463dbaee9758264abc6271c3`, public native e24. The assembler
+extends the existing terminal/scalar owners; it must not bake private positions,
+coefficients, point coordinates, z/e/t or quotient assignments into the key.
+
+## API and invariant
+
+A checked public profile consumes native `TerminalFoldParams` and canonical
+setup A coefficients. It admits only D64, rank3, width256, seven live blocks,
+one inner digit, seventeen point coordinates and the exact supported full-L2
+cap546507225. The caller must authenticate the setup/profile and A constants.
+The owner checks native dimension accessors and response layout, not a new
+schedule formula. The public A matrix alone is specialized into coefficients.
+
+`TerminalZ` owns the single16384-coordinate signed vector, exact ranges and
+complete physical squared-L2 cap. Canonical e[448] and t[1344] handles are
+supplied once; their unique centered representatives are constrained once and
+shared across every A/consistency row. Scalar verification uses those same
+canonical e handles. A field-owner byte constructor binds sixteen existing
+Boolean bytes to the canonical q element; it does not prove their source is the
+accepted proof segment. Golomb decoding and predecessor t equality remain
+upstream obligations.
+
+Seven dense64 challenge arrays remain private handles. The existing D64ShellVar
+owner constrains each exact31+11 shell; the assembler binds signed range-two
+handles to those same coefficients. No position-dependent host routing occurs.
+Every row expands all64 positions, with public negacyclic wrap signs, including
+zero coefficients. A later caller passes the actual accepted retry outputs into
+these handles. Shell membership does not establish norm acceptance, sampling,
+byte consumption, first acceptance or transcript authentication.
+
+The point owner derives all Lagrange position/block/inner weights from seventeen
+canonical input handles. Position weights are centered once, then shared by
+all64 consistency rows. Scalar reduction uses the existing bounded modular q
+arithmetic; no invalid whole-row scalar lift is substituted. Quotients are
+private auxiliary assignments, constrained by the existing exact public bounds.
+All handles belong to one builder and ONE is externally fixed. Unknown witnesses
+must produce the identical matrices. Construction errors can leave partial rows.
+
+## Source map and integer bounds
+
+Native `terminal_direct::verify_terminal_ring_relations` maps to all192 A
+coefficients and64 consistency coefficients. `verify_terminal_trace` maps to
+the existing complete scalar opening relation. `prepare_opening_point` maps to
+`TerminalPointVar::prepare`. Canonical bytes use the native field modulus owner.
+The integer-row owner checks its no-wrap certificate from every declared term.
+Existing quotient bounds use the enforced shell mass7*(31+2*11)=371 and full
+z cap. The dense product representation uses the looser per-term absolute mass
+7*64*2=896 for the release no-wrap check; the actual shell still justifies the
+existing quotient ranges. No formula is evaluated using private host routing.
+
+## Preregistered resource and validation plan
+
+Static A expansion: 192*16384=3145728 terms, not that many constraints.
+Dense challenge products: (192+64)*7*64=114688; consistency weight*z products:
+64*256=16384. Reuse all field/centering allocations and point weights.
+Estimated complete construction:1.8–2.2million rows,12–15million nonzeros,
+less than2GiB for a single builder/matrix, conservative sampled process cap6GiB.
+These are estimates, not measurements. One actual construction is authorized
+only after coordinator release, with900s deadline and12GiB disk floor.
+
+Required evidence: actual accepted all-row/scalar assignment satisfies; coherent
+private e/t/target mutations preserve the matrices and fail their equations;
+byte/centering/range mutations reject; malformed public geometry rejects before
+large construction; witness-independent layout. Reuse the reviewed census and
+native codecs; do not generate a new proof. No full-wrapper acceptance claim.

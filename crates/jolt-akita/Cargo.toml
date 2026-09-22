@@ -52,6 +52,7 @@ tracing.workspace = true
 thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
+sha2.workspace = true
 bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
@@ -92,4 +93,8 @@ required-features = ["r1cs"]
 
 [[example]]
 name = "sparse_retry_r1cs_cost"
+required-features = ["r1cs"]
+
+[[example]]
+name = "terminal_relation_cost"
 required-features = ["r1cs"]

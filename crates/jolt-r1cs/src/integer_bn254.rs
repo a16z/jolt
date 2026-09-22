@@ -1,6 +1,6 @@
 //! Exact bounded integer relations over BN254. ONE must be fixed externally.
 //! Handles retain the same-builder precondition; index checks do not prove provenance.
-use jolt_field::{CanonicalBytes, Fr, Ring};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr, Ring};
 use num_bigint::BigUint;
 use thiserror::Error;
 
@@ -88,6 +88,30 @@ impl SignedVar {
                 - sign_lc.scale(Fr::from_u128(MODULUS)),
         );
         Ok(value)
+    }
+
+    /// Center an existing canonical handle, deriving only the auxiliary assignment.
+    /// The same range and linkage constraints as `centered` enforce the result.
+    pub fn centered_from_handle(
+        builder: &mut R1csBuilder<Fr>,
+        canonical: &Fp128Var,
+    ) -> Result<Self, IntegerError> {
+        let witness = builder
+            .evaluate(&canonical.variable().into())
+            .ok()
+            .and_then(|x| x.to_u128_checked())
+            .map(|x| {
+                if x >= MODULUS {
+                    return Err(Fp128Error::NonCanonical { value: x });
+                }
+                Ok(if x > (MODULUS - 1) / 2 {
+                    -((MODULUS - x) as i128)
+                } else {
+                    x as i128
+                })
+            })
+            .transpose()?;
+        Self::centered(builder, canonical, witness)
     }
 
     /// Constrain the absolute value in [0,bound], including its sign linkage.

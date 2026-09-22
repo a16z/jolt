@@ -9,12 +9,15 @@ use jolt_r1cs::fp128_bn254::MODULUS;
 use jolt_r1cs::integer_bn254::{IntegerError, IntegerTerm, SignedVar};
 use jolt_r1cs::R1csBuilder;
 
-const WIDTH: usize = 256;
-const DEGREE: usize = 64;
-const LENGTH: usize = WIDTH * DEGREE;
-const CAP: u128 = 546_507_225;
+pub(super) const WIDTH: usize = 256;
+pub(super) const DEGREE: usize = 64;
+pub(super) const LENGTH: usize = WIDTH * DEGREE;
+pub(super) const CAP: u128 = 546_507_225;
 const B: u128 = 23_377;
-const Q: u128 = (MODULUS - 1) / 2;
+pub(super) const Q: u128 = (MODULUS - 1) / 2;
+
+pub(super) const A_QUOTIENT_BOUND: u128 = 191_504_570;
+pub(super) const CONSISTENCY_QUOTIENT_BOUND: u128 = 2_992_442;
 
 /// The complete terminal z vector, range-checked and subject to its full L2 cap.
 pub struct TerminalZ {
@@ -22,6 +25,10 @@ pub struct TerminalZ {
 }
 
 impl TerminalZ {
+    pub(super) fn coordinates(&self) -> &[SignedVar] {
+        &self.coordinates
+    }
+
     /// Allocate exactly 16,384 coordinates and enforce the complete scheduled norm.
     /// None entries generate the identical layout without assignments.
     pub fn allocate(
@@ -58,7 +65,7 @@ impl TerminalZ {
                 .zip(&self.coordinates)
                 .map(|(&coefficient, value)| IntegerTerm::Linear { coefficient, value }),
         );
-        let quotient = SignedVar::allocate(builder, 191_504_570, quotient)?;
+        let quotient = SignedVar::allocate(builder, A_QUOTIENT_BOUND, quotient)?;
         IntegerTerm::enforce_row(builder, &terms, MODULUS, &quotient)
     }
 
@@ -88,7 +95,7 @@ impl TerminalZ {
                 rhs: z,
             });
         }
-        let quotient = SignedVar::allocate(builder, 2_992_442, quotient)?;
+        let quotient = SignedVar::allocate(builder, CONSISTENCY_QUOTIENT_BOUND, quotient)?;
         IntegerTerm::enforce_row(builder, &terms, MODULUS, &quotient)
     }
 

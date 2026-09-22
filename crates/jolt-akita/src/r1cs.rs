@@ -93,3 +93,6 @@ pub use sparse_retry::{D64AcceptedVar, D64RetryProfile, SparseRetryError};
 
 mod fold_draw;
 pub use fold_draw::{D64FoldDrawShape, D64FoldDrawVar, FoldDrawError, FoldResponseNonceVar};
+
+/// Complete shared-handle fixed-profile terminal relations; authentication is external.
+pub mod terminal_relation;

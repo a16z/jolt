@@ -61,6 +61,16 @@ impl TerminalPointVar {
         })
     }
 
+    pub(super) fn centered_positions(
+        &self,
+        builder: &mut R1csBuilder<Fr>,
+    ) -> Result<Vec<SignedVar>, IntegerError> {
+        self.positions
+            .iter()
+            .map(|value| SignedVar::centered_from_handle(builder, value))
+            .collect()
+    }
+
     /// Bind point-derived position weights into one existing consistency row.
     /// Centered assignments are constrained, not trusted coefficient inputs.
     /// Sparse RHS routing and quotient assignments retain the terminal-row contract.
