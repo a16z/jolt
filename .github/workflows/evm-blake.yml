@@ -9,6 +9,14 @@ on:
       - 'evm/blake-transcript/**'
       - 'crates/jolt-transcript/**'
       - 'crates/jolt-field/**'
+      - 'crates/jolt-spartan-prover/**'
+      - 'crates/jolt-spartan-verifier/**'
+      - 'crates/jolt-hyperkzg/**'
+      - 'crates/jolt-crypto/**'
+      - 'crates/jolt-openings/**'
+      - 'crates/jolt-poly/**'
+      - 'crates/jolt-r1cs/**'
+      - 'crates/jolt-sumcheck/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
@@ -46,3 +54,32 @@ jobs:
       - name: Check native parity and explicit reverts
         working-directory: evm/blake-transcript
         run: npm test
+      - name: Regenerate native Spartan fixtures
+        run: |
+          cargo run --locked --quiet -p jolt-spartan-prover --features preprocessed --example evm_spartan_vectors -- "$RUNNER_TEMP/evm-spartan-vectors"
+          for fixture in toy empty empty-public zero-products; do
+            diff -ru "evm/blake-transcript/test/spartan/$fixture" "$RUNNER_TEMP/evm-spartan-vectors/$fixture"
+          done
+      - name: Check independent Blake256 references
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib
+          import json
+          from pathlib import Path
+          vectors = json.loads(Path("evm/blake-transcript/test/spartan/blake256.json").read_text())
+          for vector in vectors:
+              actual = hashlib.blake2b(bytes.fromhex(vector["input"]), digest_size=32).hexdigest()
+              assert actual == vector["digest"], vector["input"]
+          PYTHON
+      - name: Check canonical decoding and precompile failures
+        working-directory: evm/blake-transcript
+        run: |
+          npm run test:spartan
+          npm run test:spartan-failures
+          npm run test:spartan-public-opening
+      - name: Check fixed module policy and complete verification
+        working-directory: evm/blake-transcript
+        run: |
+          npm run compile:spartan-modules
+          npm run test:spartan-complete
+          npm run measure:spartan-norm

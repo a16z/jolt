@@ -3856,6 +3856,8 @@ dependencies = [
 name = "jolt-spartan-prover"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
+ "ark-serialize 0.5.0",
  "bincode 2.0.1",
  "jolt-crypto",
  "jolt-dory",

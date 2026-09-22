@@ -1,0 +1,1315 @@
+{
+  "scope": "complete clear Spartan algebraic verification under fixed authenticated key/setup, conditional native security assumptions unchanged",
+  "settings": {
+    "viaIR": true,
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "evmVersion": "prague",
+    "outputSelection": {
+      "*": {
+        "*": [
+          "evm.deployedBytecode",
+          "evm.bytecode",
+          "evm.methodIdentifiers"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    }
+  },
+  "node": "v26.5.0",
+  "codeHashes": [
+    "c595d60f68f322a4bab542c96a5982df80a464a029516e53fb33e4df180ee294",
+    "6122b6029906dfbb0f4d023561cdcce899549321e6320eb2dbd1aeaa20f716d6",
+    "5009f5f9acd52faa5f3bd950e9639404190787ba18de339fe82ff4f71ec8d7d3",
+    "5c15c80de25ff4806ab2027fefdc1dd525e001ce9d85255d2a3a874012368684"
+  ],
+  "sourceHashes": {
+    "BlakeTranscript.sol": "03cfeeb37a18191a05433a04f2b4e0fae89633a3d4be0eb0d057ef880298d596",
+    "SpartanAlgebra.sol": "18180836b99fa7caee0fd36ac6878399f37b26e122a13308b1d5f59f0fed5b2e",
+    "SpartanDecodeModule.sol": "eecaeeedbf31bfafe19adca0042592d37cd8b119e5d171e593e48da606887f91",
+    "SpartanInputs.sol": "1ae924baae7e0f0fcc6a84880be82987d0bca6e2fe57bceca420319bdf3bd53f",
+    "SpartanLeafModule.sol": "6f7ccf924ac825b6ed6c087efe04474c4ccecfe98658e4d1bab1247aa01c71f5",
+    "SpartanPrefixModule.sol": "e811c8b02121b84e147b5f2b52abad368c4b2f8fe4218ca83d582308f1e6879e",
+    "SpartanPublicOpening.sol": "a67abc7fa05dc8247ce09a78908536c2d47323d246dbe03612d2e7d913c92ebe",
+    "SpartanSparseModule.sol": "324cd19f8829f35cd84f5e7520a356180953398473ce9237dc4f09ddc079dded",
+    "SpartanModulePolicy.sol": "85b887dd4346a6cfb416f0963d9f601a1a14f1acad73d2daf5839820a0293fa9",
+    "SpartanSparseCoordinator.sol": "fb6273264bbb0b1ebfb8077fa22e6b102d5005ba7778bcc336788bbe93f57940",
+    "SpartanLeafCoordinator.sol": "8a08361cc275a72ffcf2877bc8380ba82c7263d93680827766f83bdb2047579c",
+    "SpartanVerifier.sol": "8d004a943e0cc62cf9c401a05b9324aeb9722b4013b45e040a013bce711d5e2b"
+  },
+  "runtimeBytes": {
+    "SpartanDecodeModule": 13651,
+    "SpartanPrefixModule": 13103,
+    "SpartanSparseModule": 12889,
+    "SpartanLeafModule": 16926,
+    "SpartanVerifier": 5616
+  },
+  "deployments": [
+    {
+      "name": "SpartanDecodeModule",
+      "reject": false,
+      "executionGas": "2733181",
+      "transaction": {
+        "bytes": 13677,
+        "zeroBytes": 292,
+        "nonzeroBytes": 13385,
+        "intrinsicGas": 269184,
+        "floorGas": 559320,
+        "estimatedTransactionGas": "3002365"
+      },
+      "exception": null,
+      "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+      "actualRuntimeKeccak": "c595d60f68f322a4bab542c96a5982df80a464a029516e53fb33e4df180ee294"
+    },
+    {
+      "name": "SpartanPrefixModule",
+      "reject": false,
+      "executionGas": "2623451",
+      "transaction": {
+        "bytes": 13129,
+        "zeroBytes": 92,
+        "nonzeroBytes": 13037,
+        "intrinsicGas": 262782,
+        "floorGas": 543400,
+        "estimatedTransactionGas": "2886233"
+      },
+      "exception": null,
+      "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+      "actualRuntimeKeccak": "6122b6029906dfbb0f4d023561cdcce899549321e6320eb2dbd1aeaa20f716d6"
+    },
+    {
+      "name": "SpartanSparseModule",
+      "reject": false,
+      "executionGas": "2580598",
+      "transaction": {
+        "bytes": 12915,
+        "zeroBytes": 93,
+        "nonzeroBytes": 12822,
+        "intrinsicGas": 259332,
+        "floorGas": 534810,
+        "estimatedTransactionGas": "2839930"
+      },
+      "exception": null,
+      "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+      "actualRuntimeKeccak": "5009f5f9acd52faa5f3bd950e9639404190787ba18de339fe82ff4f71ec8d7d3"
+    },
+    {
+      "name": "SpartanLeafModule",
+      "reject": false,
+      "executionGas": "3388985",
+      "transaction": {
+        "bytes": 16952,
+        "zeroBytes": 79,
+        "nonzeroBytes": 16873,
+        "intrinsicGas": 324344,
+        "floorGas": 696710,
+        "estimatedTransactionGas": "3713329"
+      },
+      "exception": null,
+      "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+      "actualRuntimeKeccak": "5c15c80de25ff4806ab2027fefdc1dd525e001ce9d85255d2a3a874012368684"
+    },
+    {
+      "name": "SpartanVerifier",
+      "reject": false,
+      "executionGas": "1125643",
+      "transaction": {
+        "bytes": 6280,
+        "zeroBytes": 536,
+        "nonzeroBytes": 5744,
+        "intrinsicGas": 147442,
+        "floorGas": 256120,
+        "estimatedTransactionGas": "1273085"
+      },
+      "exception": null,
+      "address": "0x47c5e40890bce4a473a49d7501808b9633f29782",
+      "actualRuntimeKeccak": "2578cd0654de9de81d4d8489e8b21be5db677604bc6af2e411805ff4b37420ea"
+    },
+    {
+      "name": "SpartanVerifier",
+      "reject": false,
+      "executionGas": "1125643",
+      "transaction": {
+        "bytes": 6280,
+        "zeroBytes": 535,
+        "nonzeroBytes": 5745,
+        "intrinsicGas": 147454,
+        "floorGas": 256150,
+        "estimatedTransactionGas": "1273097"
+      },
+      "exception": null,
+      "address": "0x3c368b86af00565df7a3897cfa9195b9434a59f9",
+      "actualRuntimeKeccak": "1922b6056c92263ecdb318b560daf4855057ee1e1f212ca43c5fcf49b421b2f9"
+    },
+    {
+      "name": "SpartanVerifier",
+      "reject": true,
+      "executionGas": "3211",
+      "transaction": {
+        "bytes": 6280,
+        "zeroBytes": 536,
+        "nonzeroBytes": 5744,
+        "intrinsicGas": 147442,
+        "floorGas": 256120,
+        "estimatedTransactionGas": "256120"
+      },
+      "exception": "revert",
+      "address": "0x53c672fe5efdec13dbf6a7a7533ce7d1e4f260ed"
+    }
+  ],
+  "records": [
+    {
+      "name": "toy",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "1891339",
+          "outputBytes": 32
+        }
+      ],
+      "coordinatorExecutionGas": "172255",
+      "accepted": true,
+      "executionGas": "4338100",
+      "exception": null,
+      "returnHex": "000000000000000000000000000000000000000000000000000000000000000127e411988a6e871c399b6f3396714e8ee10b4001df89ff27413d9575ea35f0f9",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "4512504"
+      }
+    },
+    {
+      "name": "empty",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 9124,
+          "gasForwarded": "29517292",
+          "executionGas": "477582",
+          "outputBytes": 11744
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 20932,
+          "gasForwarded": "28980678",
+          "executionGas": "682377",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 20836,
+          "gasForwarded": "28276071",
+          "executionGas": "779633",
+          "outputBytes": 1888
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 23812,
+          "gasForwarded": "27466412",
+          "executionGas": "1828618",
+          "outputBytes": 32
+        }
+      ],
+      "coordinatorExecutionGas": "158287",
+      "accepted": true,
+      "executionGas": "3926497",
+      "exception": null,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000000000001204e3b725abf43f4e05dc59575d08534dd92437878864ba4568d6edbc6a8b046",
+      "calldataBytes": 9316,
+      "transaction": {
+        "bytes": 9316,
+        "zeroBytes": 3410,
+        "nonzeroBytes": 5906,
+        "intrinsicGas": 129136,
+        "floorGas": 291340,
+        "estimatedTransactionGas": "4055633"
+      }
+    },
+    {
+      "name": "empty-public",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 9124,
+          "gasForwarded": "29517292",
+          "executionGas": "477562",
+          "outputBytes": 11744
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 20932,
+          "gasForwarded": "28980697",
+          "executionGas": "682377",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 20836,
+          "gasForwarded": "28276091",
+          "executionGas": "779633",
+          "outputBytes": 1888
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 23812,
+          "gasForwarded": "27466431",
+          "executionGas": "1828618",
+          "outputBytes": 32
+        }
+      ],
+      "coordinatorExecutionGas": "158287",
+      "accepted": true,
+      "executionGas": "3926477",
+      "exception": null,
+      "returnHex": "0000000000000000000000000000000000000000000000000000000000000001154de51439688ea15cc5a4c0a19eee2150fe9fac224758de7a3bfe60d8d9bff0",
+      "calldataBytes": 9316,
+      "transaction": {
+        "bytes": 9316,
+        "zeroBytes": 3406,
+        "nonzeroBytes": 5910,
+        "intrinsicGas": 129184,
+        "floorGas": 291460,
+        "estimatedTransactionGas": "4055661"
+      }
+    },
+    {
+      "name": "zero-products-now-rejected",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 9124,
+          "gasForwarded": "29517292",
+          "executionGas": "479106",
+          "outputBytes": 11744
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 20932,
+          "gasForwarded": "28979178",
+          "executionGas": "682377",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 20836,
+          "gasForwarded": "28274571",
+          "executionGas": "764367",
+          "outputBytes": 1888
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 23812,
+          "gasForwarded": "27479939",
+          "executionGas": "153158",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "158066",
+      "accepted": false,
+      "executionGas": "2237074",
+      "exception": "revert",
+      "returnHex": "0a592deb",
+      "calldataBytes": 9316,
+      "transaction": {
+        "bytes": 9316,
+        "zeroBytes": 6123,
+        "nonzeroBytes": 3193,
+        "intrinsicGas": 96580,
+        "floorGas": 209950,
+        "estimatedTransactionGas": "2333654"
+      }
+    },
+    {
+      "name": "slab-pairing-0",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "499522",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "2946062",
+      "exception": "revert",
+      "returnHex": "393a3650",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1162,
+        "nonzeroBytes": 9274,
+        "intrinsicGas": 174032,
+        "floorGas": 403580,
+        "estimatedTransactionGas": "3120094"
+      }
+    },
+    {
+      "name": "slab-pairing-1",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558675",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893539",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161606",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27123001",
+          "executionGas": "1044667",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "3491187",
+      "exception": "revert",
+      "returnHex": "393a3650",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1162,
+        "nonzeroBytes": 9274,
+        "intrinsicGas": 174032,
+        "floorGas": 403580,
+        "estimatedTransactionGas": "3665219"
+      }
+    },
+    {
+      "name": "slab-pairing-2",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558675",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893539",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161606",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27123001",
+          "executionGas": "1469931",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "3916451",
+      "exception": "revert",
+      "returnHex": "393a3650",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1162,
+        "nonzeroBytes": 9274,
+        "intrinsicGas": 174032,
+        "floorGas": 403580,
+        "estimatedTransactionGas": "4090483"
+      }
+    },
+    {
+      "name": "slab-evaluation-0",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "161777",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "2608317",
+      "exception": "revert",
+      "returnHex": "0a592deb",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "2782721"
+      }
+    },
+    {
+      "name": "slab-evaluation-1",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "678865",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "3125405",
+      "exception": "revert",
+      "returnHex": "0a592deb",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "3299809"
+      }
+    },
+    {
+      "name": "slab-evaluation-2",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "1138167",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "3584707",
+      "exception": "revert",
+      "returnHex": "0a592deb",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "3759111"
+      }
+    },
+    {
+      "name": "nonzero-padding-slab",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "505860",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "2952400",
+      "exception": "revert",
+      "returnHex": "2e0a7b78",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1130,
+        "nonzeroBytes": 9306,
+        "intrinsicGas": 174416,
+        "floorGas": 404540,
+        "estimatedTransactionGas": "3126816"
+      }
+    },
+    {
+      "name": "witness-product-now-checked",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "1500234",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "3946774",
+      "exception": "revert",
+      "returnHex": "fb68214d",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "4121178"
+      }
+    },
+    {
+      "name": "witness-pairing-now-checked",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558675",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893539",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161606",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27123001",
+          "executionGas": "1884508",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "172034",
+      "accepted": false,
+      "executionGas": "4331028",
+      "exception": "revert",
+      "returnHex": "393a3650",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1162,
+        "nonzeroBytes": 9274,
+        "intrinsicGas": 174032,
+        "floorGas": 403580,
+        "estimatedTransactionGas": "4505060"
+      }
+    },
+    {
+      "name": "proof-truncated",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517044",
+          "executionGas": "66813",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "14479",
+      "accepted": false,
+      "executionGas": "81292",
+      "exception": "revert",
+      "returnHex": "350e52ce",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1132,
+        "nonzeroBytes": 9304,
+        "intrinsicGas": 174392,
+        "floorGas": 404480,
+        "estimatedTransactionGas": "404480"
+      }
+    },
+    {
+      "name": "proof-trailing",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "66813",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "14483",
+      "accepted": false,
+      "executionGas": "81296",
+      "exception": "revert",
+      "returnHex": "350e52ce",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "noncanonical-witness-field",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "441508",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "14483",
+      "accepted": false,
+      "executionGas": "455991",
+      "exception": "revert",
+      "returnHex": "94e40b4b",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1133,
+        "nonzeroBytes": 9303,
+        "intrinsicGas": 174380,
+        "floorGas": 404450,
+        "estimatedTransactionGas": "630371"
+      }
+    },
+    {
+      "name": "malformed-witness-point",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "81549",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "14483",
+      "accepted": false,
+      "executionGas": "96032",
+      "exception": "revert",
+      "returnHex": "d36be5fd",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "public-input-changed",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "83381",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "89206",
+      "accepted": false,
+      "executionGas": "731282",
+      "exception": "revert",
+      "returnHex": "1b1335ec",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "905686"
+      }
+    },
+    {
+      "name": "key-binding-changed",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "68283",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "14483",
+      "accepted": false,
+      "executionGas": "82766",
+      "exception": "revert",
+      "returnHex": "124eaee6",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "zero-round-tag",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "84745",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "14483",
+      "accepted": false,
+      "executionGas": "99228",
+      "exception": "revert",
+      "returnHex": "350e52ce",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1132,
+        "nonzeroBytes": 9304,
+        "intrinsicGas": 174392,
+        "floorGas": 404480,
+        "estimatedTransactionGas": "404480"
+      }
+    },
+    {
+      "name": "oversized-round-tag",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "84768",
+          "outputBytes": 4
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "30000000",
+          "executionGas": "1470227",
+          "outputBytes": 4
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "30000000",
+          "executionGas": "1471882",
+          "outputBytes": 4
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "30000000",
+          "executionGas": "1472164",
+          "outputBytes": 4
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "30000000",
+          "executionGas": "1486591",
+          "outputBytes": 4
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "30000000",
+          "executionGas": "1486934",
+          "outputBytes": 4
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "30000000",
+          "executionGas": "1486591",
+          "outputBytes": 4
+        }
+      ],
+      "coordinatorExecutionGas": "14483",
+      "accepted": false,
+      "executionGas": "99251",
+      "exception": "revert",
+      "returnHex": "350e52ce",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "dot-leaf",
+      "scope": "standalone diagnostic, not authenticated input",
+      "accepted": false,
+      "executionGas": "1470227",
+      "returnHex": "5026f79a"
+    },
+    {
+      "name": "read-hash-leaf",
+      "scope": "standalone diagnostic, not authenticated input",
+      "accepted": false,
+      "executionGas": "1471882",
+      "returnHex": "8fd2df01"
+    },
+    {
+      "name": "write-increment-must-alpha-squared",
+      "scope": "standalone diagnostic, not authenticated input",
+      "accepted": false,
+      "executionGas": "1472164",
+      "returnHex": "8fd2df01"
+    },
+    {
+      "name": "memory-init-leaf",
+      "scope": "standalone diagnostic, not authenticated input",
+      "accepted": false,
+      "executionGas": "1486591",
+      "returnHex": "42b85c81"
+    },
+    {
+      "name": "memory-audit-leaf",
+      "scope": "standalone diagnostic, not authenticated input",
+      "accepted": false,
+      "executionGas": "1486934",
+      "returnHex": "42b85c81"
+    },
+    {
+      "name": "query-order-bound",
+      "scope": "standalone diagnostic, not authenticated input",
+      "accepted": false,
+      "executionGas": "1486591",
+      "returnHex": "42b85c81"
+    },
+    {
+      "name": "changed-module-0",
+      "moduleCalls": [],
+      "coordinatorExecutionGas": "3688",
+      "accepted": false,
+      "executionGas": "3688",
+      "exception": "revert",
+      "returnHex": "283ed504",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "changed-module-1",
+      "moduleCalls": [],
+      "coordinatorExecutionGas": "6316",
+      "accepted": false,
+      "executionGas": "6316",
+      "exception": "revert",
+      "returnHex": "283ed504",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "changed-module-2",
+      "moduleCalls": [],
+      "coordinatorExecutionGas": "8944",
+      "accepted": false,
+      "executionGas": "8944",
+      "exception": "revert",
+      "returnHex": "283ed504",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "changed-module-3",
+      "moduleCalls": [],
+      "coordinatorExecutionGas": "11572",
+      "accepted": false,
+      "executionGas": "11572",
+      "exception": "revert",
+      "returnHex": "283ed504",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "malformed-module-return-0",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "0",
+          "outputBytes": 1
+        }
+      ],
+      "coordinatorExecutionGas": "14667",
+      "accepted": false,
+      "executionGas": "14667",
+      "exception": "revert",
+      "returnHex": "",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "404510"
+      }
+    },
+    {
+      "name": "malformed-module-return-1",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "0",
+          "outputBytes": 1
+        }
+      ],
+      "coordinatorExecutionGas": "89384",
+      "accepted": false,
+      "executionGas": "648079",
+      "exception": "revert",
+      "returnHex": "",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "822483"
+      }
+    },
+    {
+      "name": "malformed-module-return-2",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "0",
+          "outputBytes": 1
+        }
+      ],
+      "coordinatorExecutionGas": "125924",
+      "accepted": false,
+      "executionGas": "1391622",
+      "exception": "revert",
+      "returnHex": "",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "1566026"
+      }
+    },
+    {
+      "name": "malformed-module-return-3",
+      "moduleCalls": [
+        {
+          "address": "0xbd770416a3345f91e4b34576cb804a576fa48eb1",
+          "inputBytes": 10244,
+          "gasForwarded": "29517040",
+          "executionGas": "558695",
+          "outputBytes": 12960
+        },
+        {
+          "address": "0x5a443704dd4b594b382c22a083e2bd3090a6fef3",
+          "inputBytes": 23268,
+          "gasForwarded": "28893519",
+          "executionGas": "707003",
+          "outputBytes": 992
+        },
+        {
+          "address": "0x47e9fbef8c83a1714f1951f142132e6e90f5fa5d",
+          "inputBytes": 23172,
+          "gasForwarded": "28161586",
+          "executionGas": "1008808",
+          "outputBytes": 1920
+        },
+        {
+          "address": "0x8be503bcded90ed42eff31f56199399b2b0154ca",
+          "inputBytes": 26180,
+          "gasForwarded": "27122981",
+          "executionGas": "0",
+          "outputBytes": 1
+        }
+      ],
+      "coordinatorExecutionGas": "172223",
+      "accepted": false,
+      "executionGas": "2446729",
+      "exception": "revert",
+      "returnHex": "",
+      "calldataBytes": 10436,
+      "transaction": {
+        "bytes": 10436,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9305,
+        "intrinsicGas": 174404,
+        "floorGas": 404510,
+        "estimatedTransactionGas": "2621133"
+      }
+    },
+    {
+      "name": "external-checkpoint-selector-absent",
+      "moduleCalls": [],
+      "coordinatorExecutionGas": "218",
+      "accepted": false,
+      "executionGas": "218",
+      "exception": "revert",
+      "returnHex": "",
+      "calldataBytes": 10440,
+      "transaction": {
+        "bytes": 10440,
+        "zeroBytes": 1131,
+        "nonzeroBytes": 9309,
+        "intrinsicGas": 174468,
+        "floorGas": 404670,
+        "estimatedTransactionGas": "404670"
+      }
+    }
+  ],
+  "gasLimit": "30000000",
+  "warmness": "Each call resets journal; precompiles05/06/07/08/09 explicitly warm; module accounts initially cold, EXTCODEHASH warms them before STATICCALL",
+  "gasScope": "actual EVM CREATE/code-deposit and call execution; excludes transaction intrinsic/calldata gas, no chain deployment"
+}

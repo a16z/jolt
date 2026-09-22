@@ -29,6 +29,8 @@ jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 
 [dev-dependencies]
+ark-bn254.workspace = true
+ark-serialize.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
 jolt-hyperkzg.workspace = true
@@ -40,4 +42,8 @@ bincode.workspace = true
 
 [[example]]
 name = "wire_norm_fixture"
+required-features = ["preprocessed"]
+
+[[example]]
+name = "evm_spartan_vectors"
 required-features = ["preprocessed"]

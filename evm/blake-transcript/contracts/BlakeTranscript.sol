@@ -1,13 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+/// @dev Reverses eight bytes for the hash counter and transcript length encodings.
+function reverse64(uint64 value) pure returns (uint64) {
+    value = ((value & 0x00ff00ff00ff00ff) << 8) | ((value >> 8) & 0x00ff00ff00ff00ff);
+    value = ((value & 0x0000ffff0000ffff) << 16) | ((value >> 16) & 0x0000ffff0000ffff);
+    return (value << 32) | (value >> 32);
+}
+
 /// @notice Unkeyed BLAKE2b-512 using the EIP-152 compression precompile.
 library Blake2b512 {
     error CompressionFailed();
 
-    function hash(bytes memory input) internal view returns (bytes memory h) {
+    function hash(bytes memory input) internal view returns (bytes memory) {
+        return hashWithSize(input, 64);
+    }
+
+    /// @notice Parameterized unkeyed BLAKE2b-256, not truncated BLAKE2b-512.
+    function hash256(bytes memory input) internal view returns (bytes32 out) {
+        bytes memory h = hashWithSize(input, 32);
+        assembly ("memory-safe") { out := mload(add(h, 32)) }
+    }
+
+    function hashWithSize(bytes memory input, uint8 sizeBytes) private view returns (bytes memory h) {
         require(input.length <= type(uint64).max, "Blake input too long");
         h = hex"48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b";
+        // RFC7693: h[0] = IV[0] XOR 0x01010000 XOR digest length.
+        if (sizeBytes == 32) h[0] = 0x28;
         uint256 offset;
         // The last full block, and the empty message block, carry the final flag.
         while (true) {
@@ -23,8 +42,14 @@ library Blake2b512 {
                 mcopy(add(args, 100), add(add(input, 32), offset), size)
             }
             offset += size;
-            for (uint256 i; i < 8; ++i) args[196 + i] = bytes1(uint8(offset >> (8 * i)));
-            args[212] = last ? bytes1(0x01) : bytes1(0x00);
+            uint64 counter = reverse64(uint64(offset));
+            // Payload 192..223 fits the padded allocation. Preserve message bytes
+            // 192..195; write the low counter, zero high counter, then final flag.
+            assembly ("memory-safe") {
+                let tail := add(args, 224)
+                let message := and(mload(tail), shl(224, 0xffffffff))
+                mstore(tail, or(message, or(shl(160, and(counter, 0xffffffffffffffff)), shl(88, iszero(iszero(last))))))
+            }
             bool success;
             uint256 returned;
             assembly ("memory-safe") {
@@ -96,13 +121,23 @@ library BlakeHashSponge {
         if (s.mode == Mode.Absorb) ratchet(s);
         if (s.mode == Mode.Start) s.mode = Mode.Squeeze;
         out = new bytes(length);
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i; i < length;) {
             if (s.position == s.blockBytes.length) {
                 s.blockBytes = Blake2b512.hash(bytes.concat(mask(1), s.cv, bytes8(s.blocks)));
                 ++s.blocks;
                 s.position = 0;
             }
-            out[i] = s.blockBytes[s.position++];
+            uint256 available = s.blockBytes.length - s.position;
+            uint256 take = length - i;
+            if (take > available) take = available;
+            bytes memory blockBytes = s.blockBytes;
+            uint256 position = s.position;
+            // Both ranges are bounded by their allocated bytes; never copy across a block.
+            assembly ("memory-safe") {
+                mcopy(add(add(out, 32), i), add(add(blockBytes, 32), position), take)
+            }
+            s.position += take;
+            i += take;
         }
     }
 
@@ -117,8 +152,7 @@ library Bn254WideBlake {
     uint256 internal constant MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     function little64(uint64 value) private pure returns (bytes memory out) {
-        out = new bytes(8);
-        for (uint256 i; i < 8; ++i) out[i] = bytes1(uint8(value >> (8 * i)));
+        out = abi.encodePacked(bytes8(reverse64(value)));
     }
 
     function append(BlakeHashSponge.State memory s, bytes memory data) internal view {
@@ -149,7 +183,15 @@ library Bn254WideBlake {
 
     function reduce(bytes memory raw) internal pure returns (uint256 value) {
         require(raw.length == 48, "384 bits required");
-        for (uint256 i; i < 48; ++i) value = addmod(mulmod(value, 256, MODULUS), uint8(raw[i]), MODULUS);
+        uint256 hi;
+        uint256 lo;
+        // Big-endian N = hi * 2^128 + lo. The second load stays within the
+        // padded allocation; shifting discards its 16 non-payload trailing bytes.
+        assembly ("memory-safe") {
+            hi := mload(add(raw, 32))
+            lo := shr(128, mload(add(raw, 64)))
+        }
+        value = addmod(mulmod(hi, 1 << 128, MODULUS), lo, MODULUS);
     }
 }
 
