@@ -112,3 +112,58 @@ pub enum HyperKZGError {
     #[error("KZG pairing equation failed")]
     Pairing,
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test fixture serialization fails loudly"
+)]
+mod tests {
+    use jolt_crypto::Bn254;
+    use jolt_field::{One, Ring, Zero};
+    use jolt_transcript::Blake2bTranscript;
+
+    use super::*;
+    use crate::HyperKZGScheme;
+
+    #[test]
+    fn decoded_verifier_metadata_is_rechecked() {
+        let valid = HyperKZGVerifierSetup {
+            num_powers: 4,
+            max_public_degree: 3,
+            setup_id: [1; 32],
+            g1: Bn254::g1_generator(),
+            g2: Bn254::g2_generator(),
+            beta_g2: Bn254::g2_generator().scalar_mul(&Fr::from_u64(7)),
+        };
+        let proof = HyperKZGProof {
+            com: vec![],
+            v: std::array::from_fn(|_| vec![Fr::zero()]),
+            w: [Bn254G1::identity(); 3],
+        };
+        let verify = |key: &HyperKZGVerifierSetup| {
+            HyperKZGScheme::verify_opening(
+                &Bn254G1::identity(),
+                &[Fr::one()],
+                Fr::zero(),
+                &proof,
+                key,
+                &mut Blake2bTranscript::new(b"decoded-key"),
+            )
+        };
+        verify(&valid).unwrap();
+        let mut invalid = std::array::from_fn::<_, 5, _>(|_| valid.clone());
+        let [capacity, degree, g1, g2, beta_g2] = &mut invalid;
+        capacity.num_powers = 0;
+        degree.max_public_degree = 2;
+        g1.g1 = Bn254G1::identity();
+        g2.g2 = Bn254G2::identity();
+        beta_g2.beta_g2 = Bn254G2::identity();
+        for key in invalid {
+            let bytes = bincode::serde::encode_to_vec(&key, bincode::config::standard()).unwrap();
+            let (decoded, _): (HyperKZGVerifierSetup, _) =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+            assert_eq!(verify(&decoded), Err(HyperKZGError::InvalidSetup));
+        }
+    }
+}
