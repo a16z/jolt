@@ -51,6 +51,9 @@ pub enum Blake2bR1csError {
     /// The next transition would overflow the public u32 schedule.
     #[error("legacy transcript round counter exhausted")]
     RoundOverflow,
+    /// The requested read exceeds the complete u64 block-counter domain.
+    #[error("Blake2b counter stream exhausted")]
+    StreamExhausted,
 }
 
 /// Full unkeyed BLAKE2b-256, with message bytes constrained by their handles.
@@ -396,3 +399,6 @@ mod tests {
 
 mod duplex;
 pub use duplex::Blake2bDuplexVar;
+
+mod stream;
+pub use stream::{Blake2bStreamVar, BLAKE2B_STREAM_BYTES};
