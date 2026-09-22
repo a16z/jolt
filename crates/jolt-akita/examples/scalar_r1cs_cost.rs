@@ -1,5 +1,6 @@
 //! Historical algebra-only census diagnostic; not a Blake-only proof fixture.
 use std::error::Error;
+use std::fs::File;
 use std::path::PathBuf;
 
 use jolt_akita::r1cs::scalar::TerminalPointVar;
@@ -74,8 +75,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .ok_or("pass a trusted historical scalar census directory")?,
     );
     let terminal: Terminal =
-        serde_json::from_reader(std::fs::File::open(path.join("terminal.json"))?)?;
-    let quotients: Quotients = serde_json::from_reader(std::fs::File::open(
+        serde_json::from_reader(File::open(path.join("terminal.json"))?)?;
+    let quotients: Quotients = serde_json::from_reader(File::open(
         path.join("terminal-row-transport.json"),
     )?)?;
     let mut builder = R1csBuilder::new();
