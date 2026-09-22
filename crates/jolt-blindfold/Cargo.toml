@@ -9,7 +9,7 @@ description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 workspace = true
 
 [dependencies]
-jolt-claims.workspace = true
+jolt-claims = { workspace = true, features = ["r1cs"] }
 jolt-crypto.workspace = true
 jolt-field.workspace = true
 jolt-poly.workspace = true

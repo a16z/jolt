@@ -1,8 +1,21 @@
-use jolt_claims::{Expr, Source};
+#![deny(
+    clippy::indexing_slicing,
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+
+use crate::{Expr, Source};
 use jolt_field::JoltField;
 use thiserror::Error;
 
-use crate::{LinearCombination, R1csBuilder, Variable};
+use jolt_r1cs::{LinearCombination, R1csBuilder, Variable};
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum ClaimLoweringError {

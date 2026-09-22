@@ -13,6 +13,7 @@
 //! *input* derived (resolved before binding), so this relation overrides
 //! `derive_input_term` rather than `derive_output_term`.
 
+use jolt_claims::protocols::jolt::r1cs::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductUniskipInputClaims, ProductUniskipOutputClaims,
@@ -24,7 +25,6 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::lagrange::centered_lagrange_evals;
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;

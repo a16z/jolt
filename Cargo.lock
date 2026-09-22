@@ -3243,8 +3243,10 @@ dependencies = [
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-riscv",
  "jolt-utils",
+ "num-traits",
  "serde",
  "thiserror 2.0.20",
 ]
@@ -3781,16 +3783,9 @@ dependencies = [
 name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
- "jolt-claims",
  "jolt-field",
- "jolt-poly",
- "num-traits",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
  "serde",
  "thiserror 2.0.20",
- "tracing",
 ]
 
 [[package]]
@@ -3917,7 +3912,6 @@ dependencies = [
  "jolt-poly",
  "jolt-program",
  "jolt-prover-legacy",
- "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",

@@ -8,6 +8,7 @@
 //! [`ConcreteSumcheck`], so it stays hand-coded in the stage-2 verifier; this
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
+use jolt_claims::protocols::jolt::r1cs::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::spartan::{
     ProductRemainderInputClaims, ProductRemainderOutputClaims,
@@ -22,7 +23,6 @@ use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     try_eq_mle,
 };
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;

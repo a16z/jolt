@@ -4,13 +4,13 @@
     reason = "attack constructors require a fixture with the exact audited proof shape"
 )]
 
+use jolt_claims::protocols::jolt::r1cs::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, Ring};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_r1cs::constraints::jolt::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_sumcheck::{CenteredIntegerDomain, ClearProof, SumcheckProof};
 use jolt_verifier::{fs_audit::FsScope, JoltProof, JoltProofClaims};
 use num_traits::One;

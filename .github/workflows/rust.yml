@@ -147,7 +147,7 @@ jobs:
           -p jolt-riscv
           -p jolt-lookup-tables
           --all-targets
-          --features field-inline
+          --features field-inline,jolt-claims/r1cs
           --
           -D warnings
       - name: cargo clippy -p jolt-prover-legacy -p jolt-sdk --features host,field-inline
@@ -618,6 +618,9 @@ jobs:
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
+      - name: Test constrained claim primitives
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-claims --features r1cs --cargo-quiet
       - name: Test isolated external sumcheck consumer
         if: matrix.shard == 0
         run: cargo nextest run --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml --locked --cargo-quiet
@@ -634,7 +637,7 @@ jobs:
           set -euo pipefail
           cargo nextest run -p jolt-claims -p jolt-r1cs \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
-            --features field-inline --no-tests=pass --cargo-quiet
+            --features field-inline,jolt-claims/r1cs --no-tests=pass --cargo-quiet
 
   # Join gate so the check name "Test modular crates" is stable regardless of
   # shard count.

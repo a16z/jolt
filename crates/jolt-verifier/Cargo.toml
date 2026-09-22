@@ -18,7 +18,7 @@ default = ["transcript-blake2b"]
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = ["jolt-prover-legacy/host"]
 fs-audit = []
-field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
+field-inline = ["jolt-claims/field-inline"]
 zk = ["jolt-prover-legacy/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
 # commitment object, co-batched reduction opening. Mutually exclusive with
@@ -39,7 +39,7 @@ allocative = { workspace = true, optional = true }
 ark-serialize.workspace = true
 common.workspace = true
 jolt-blindfold.workspace = true
-jolt-claims.workspace = true
+jolt-claims = { workspace = true, features = ["r1cs"] }
 jolt-claims-derive.workspace = true
 jolt-crypto.workspace = true
 jolt-field.workspace = true
@@ -47,7 +47,6 @@ jolt-lookup-tables.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
 jolt-program = { workspace = true, features = ["serialization"] }
-jolt-r1cs.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true

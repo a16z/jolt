@@ -13,8 +13,8 @@
 //! (e.g. `RdWriteValue`), so the composed matrices are unsound as a verifier
 //! statement and must not back a proof path.
 
-use crate::constraint::SparseRow;
 use jolt_field::JoltField;
+use jolt_r1cs::{ConstraintMatrices, SparseRow};
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
 
@@ -148,9 +148,9 @@ fn append_product_constraints<F: JoltField>(
 ///
 /// Product constraints are intentionally excluded for consumers that handle the
 /// field multiplication checks in a separate protocol step.
-pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = field_eq_constraint_rows();
-    crate::ConstraintMatrices::new(
+    ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
         NUM_VARS_PER_CYCLE,
         a_rows,
@@ -164,14 +164,14 @@ pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::Constrai
 /// Returns 10 constraints over 17 variables per cycle:
 /// - 8 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
-pub fn field_inline_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_trace_constraints<F: JoltField>() -> ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = field_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     c_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     append_product_constraints(&mut a_rows, &mut b_rows, &mut c_rows);
 
-    crate::ConstraintMatrices::new(
+    ConstraintMatrices::new(
         NUM_CONSTRAINTS_PER_CYCLE,
         NUM_VARS_PER_CYCLE,
         a_rows,

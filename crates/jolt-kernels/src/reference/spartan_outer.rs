@@ -22,12 +22,12 @@ use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
+use jolt_claims::protocols::jolt::r1cs::{spartan_outer_constraints, spartan_outer_row_weights};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
 use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
-use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessOracle;
 
