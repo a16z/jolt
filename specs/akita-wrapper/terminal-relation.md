@@ -1,6 +1,6 @@
 # Complete fixed-profile terminal relation assembler
 
-Status: implementation contract; not a complete Akita verifier or an authenticated
+Status: implemented and locally validated; not a complete Akita verifier or an authenticated
 transcript prefix. Frozen input is the reviewed epoch-six census at
 `/private/tmp/akita-epoch6-census-20260922/observed-replay`, source
 `1e20d62234de5780463dbaee9758264abc6271c3`, public native e24. The assembler
@@ -68,3 +68,58 @@ private e/t/target mutations preserve the matrices and fail their equations;
 byte/centering/range mutations reject; malformed public geometry rejects before
 large construction; witness-independent layout. Reuse the reviewed census and
 native codecs; do not generate a new proof. No full-wrapper acceptance claim.
+
+
+## Frozen validation packet (2026-09-22)
+
+Tested implementation: `9e4f9c85a14daaa944ceaa81a8e65d4dd125ebf6`.
+Evidence and exact command JSONs: `/private/tmp/terminal-relation-20260922/manifest.json`.
+The final report commit changes only this document. The consumer resolves all
+native crates to public `f5f75335eae18241681fd24ca0a60fca8f0512af`, with one
+workspace field owner and no local native patches. Preserve the distinction from
+the input's local28fc producer and accepted public-e24 replay; this packet does
+not regenerate a native proof or relabel its provenance.
+
+Actual geometry is 2,126,926 constraints, 2,096,074 variables and 13,060,079
+matrix nonzeros. The 3,145,728 static A terms are counted separately. Positive,
+coherent-e, coherent-t, claim and unknown modes have identical matrix SHA256
+`c68f857f65935222606d236b7db19883e9913f315e525a664c05c3134e83663b`.
+The positive assignment satisfies every row. Coherent e and t controls update
+the field value and matching canonical sixteen bytes together, retain the
+original quotient inputs and construct auxiliary witnesses successfully; actual
+R1CS evaluation rejects at rows 1,859,668 and 1,760,548 respectively. The claim
+control rejects at row 2,126,925. These are constraint failures, not host witness
+construction errors. Unknown mode proves only matrix equality: its `None`
+result is not a satisfying assignment, regardless of the common diagnostic
+construction-success label.
+
+The positive construction, check and matrix fingerprint took 4.25 seconds with
+1,630,666,752 bytes sampled process-group peak RSS. This is not a proof timing.
+All five runs stayed within the reviewed governor's 6GiB sampled RSS, 900-second
+and 12GiB free-disk limits; sampling is not a hard memory cap. Exact per-run
+results, source/lock/executable/input hashes and the preserved executable are in
+the packet. Initial example compile failures and their corrected passing run
+remain archived alongside successful fmt and clippy logs.
+
+Validation used `CARGO_INCREMENTAL=0`, the shared wrapper target and:
+
+```sh
+cargo clippy --offline --locked --profile test -p jolt-akita --features r1cs --all-targets -- -D warnings
+cargo build --offline --locked --profile test -p jolt-akita --features r1cs --example terminal_relation_cost
+cargo nextest run --offline --locked --cargo-profile test -p jolt-r1cs -p jolt-akita --features jolt-akita/r1cs --lib --test-threads 1 --cargo-quiet
+```
+
+The complete owner suites passed 78/78 with none skipped, including the existing
+integer row, centering, exact range, physical norm and terminal regressions.
+The two new focused byte-linkage/shared-shell tests also passed independently.
+No separate minimal-feature validation or outer proof was run in this packet.
+
+The next integration boundary is a caller supplying authenticated terminal proof
+byte handles and decoded z, actual accepted retry coefficient handles, shared
+constrained point/claim handles and authenticated setup A/profile. Local shell,
+canonical byte, point-weight, z range and complete physical norm constraints are
+already present. Proof-source positions, Golomb decoding, predecessor t linkage,
+challenge norm/first acceptance/root consumption, setup authentication and the
+preceding transcript/folds remain outside this relation. ONE and same-builder
+obligations remain explicit. This packet establishes no full-wrapper, EVM or
+security claim.
