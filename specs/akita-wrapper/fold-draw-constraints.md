@@ -1,7 +1,8 @@
 # D64 FoldDraw root binding
 
-Native baseline is e24, with byte-identical FoldChallengeFrame extraction based
-on 7649443f44fa8c3b6d6ad3edd374bf14ea149df3. The native frame is the sole owner
+Native codec revision is f5f75335eae18241681fd24ca0a60fca8f0512af,
+with byte-preserving FoldChallengeFrame extraction based on
+7649443f44fa8c3b6d6ad3edd374bf14ea149df3. The native frame is the sole owner
 of validation and prefix/nonce/suffix layout. Production FoldDraw now calls it.
 Jolt uses its prefix/suffix directly, inserting four constrained LE nonce bytes.
 
@@ -74,16 +75,27 @@ profiles and both all-target clippy profiles. Tests cover native indexed output
 and transcript continuation, domain separation, coherent nonce/proof tampering,
 canonical nonce high bits, invalid shapes and witness-independent matrices.
 
-Evidence and exact commands are in
-`/private/tmp/fold-draw-r1cs-20260922/manifest.json`. Consumer validation patches
-all 14 native crates to the codec clone through `.git/validation.toml`; its
-resolved lock is preserved as `validation-Cargo.lock` in that evidence directory.
-The tracked public lock and native pins are intentionally unchanged pending
-independent review and publication of the codec. This consumer is therefore a
-locally validated packet, not yet publicly reproducible from its tracked pins.
-Reproduction requires copying the preserved validation lock to `Cargo.lock` and
-using the preserved config with the recorded local native clone at the exact
-codec commit; restore the tracked lock afterward.
+Original local-overlay evidence and exact commands are preserved in
+`/private/tmp/fold-draw-r1cs-20260922/manifest.json`; those checks patched all
+14 native crates to the codec source and retain their resolved lock/config.
+The codec is now published in https://github.com/markosg04/akita/pull/3, and
+all tracked Akita dependencies pin its exact public revision. Locked offline
+metadata resolves 14 public Akita packages and one workspace jolt-field without
+local overlays. Only native revision substitutions changed in Cargo.lock.
+
+Final public-pin nextest passed all three focused tests, run
+`39611a5f-1e51-4f3a-ae2d-c743054d1206`, log
+`/private/tmp/fold-draw-public-tests.log`. The command is:
+
+```
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=../wrapper/target cargo nextest run \
+  --offline --locked -p jolt-akita --no-default-features --features r1cs \
+  --lib -E 'test(r1cs::fold_draw)' --test-threads 1 --cargo-quiet
+```
+
+Final public-pin all-target clippy (`--features r1cs -D warnings`), formatting
+and diff checks passed. Clippy log: `/private/tmp/fold-draw-public-clippy.log`.
+These checks do not establish complete wrapper acceptance.
 
 ## Next verifier boundary
 
@@ -103,13 +115,3 @@ transition inside that replay; it does not authenticate the inherited state,
 check the complete nonce stream or establish whole-proof acceptance. No new
 constraint-cost or full-proof performance measurement is claimed here.
 
-
-Public dependency handoff: native codec revision
-`f5f75335eae18241681fd24ca0a60fca8f0512af` is published in
-https://github.com/markosg04/akita/pull/3. The consumer now pins that exact
-revision for every Akita workspace dependency. Locked offline metadata resolves
-14 public Akita packages and one workspace jolt-field without the local
-validation overlay. Only native revision substitutions changed in Cargo.lock;
-unrelated resolver churn was discarded. Final public-pin compilation/tests are
-pending resource release from the full recursive-proof trial; the earlier
-local-overlay results are not relabeled as public-pin validation.
