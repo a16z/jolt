@@ -156,21 +156,21 @@ impl<F: Clone, O: PartialEq, P: PartialEq, C: PartialEq> ClaimSources<F>
     fn opening(&mut self, id: &Self::Opening) -> Result<SourceValue<F>, ClaimLoweringError> {
         self.openings
             .iter()
-            .find_map(|(candidate, source)| (candidate == id).then_some(source.clone()))
+            .find_map(|(candidate, source)| (candidate == id).then(|| source.clone()))
             .ok_or(ClaimLoweringError::MissingOpening)
     }
 
     fn challenge(&mut self, id: &Self::Challenge) -> Result<SourceValue<F>, ClaimLoweringError> {
         self.challenges
             .iter()
-            .find_map(|(candidate, source)| (candidate == id).then_some(source.clone()))
+            .find_map(|(candidate, source)| (candidate == id).then(|| source.clone()))
             .ok_or(ClaimLoweringError::MissingChallenge)
     }
 
     fn public(&mut self, id: &Self::Public) -> Result<SourceValue<F>, ClaimLoweringError> {
         self.publics
             .iter()
-            .find_map(|(candidate, source)| (candidate == id).then_some(source.clone()))
+            .find_map(|(candidate, source)| (candidate == id).then(|| source.clone()))
             .ok_or(ClaimLoweringError::MissingPublic)
     }
 }
@@ -269,6 +269,53 @@ mod tests {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Challenge {
         Gamma,
+    }
+
+    #[test]
+    fn source_lookup_clones_only_the_match() {
+        use std::cell::Cell;
+
+        #[derive(Debug)]
+        struct Counted<'a> {
+            value: usize,
+            clones: &'a Cell<usize>,
+        }
+
+        impl Clone for Counted<'_> {
+            fn clone(&self) -> Self {
+                self.clones.set(self.clones.get() + 1);
+                Self {
+                    value: self.value,
+                    clones: self.clones,
+                }
+            }
+        }
+
+        let clones = Cell::new(0);
+        let mut table = ClaimSourceTable::<Counted<'_>, usize, usize, usize>::new();
+        for id in 0..128 {
+            let source = || {
+                SourceValue::Constant(Counted {
+                    value: id,
+                    clones: &clones,
+                })
+            };
+            table.insert_opening_source(id, source());
+            table.insert_challenge_source(id, source());
+            table.insert_public_source(id, source());
+        }
+        for lookup in [
+            ClaimSourceTable::opening,
+            ClaimSourceTable::challenge,
+            ClaimSourceTable::public,
+        ] {
+            clones.set(0);
+            let found = lookup(&mut table, &127).expect("source exists");
+            assert!(matches!(found, SourceValue::Constant(value) if value.value == 127));
+            assert_eq!(clones.get(), 1);
+            assert!(lookup(&mut table, &128).is_err());
+            assert_eq!(clones.get(), 1, "a missing source must not be cloned");
+        }
     }
 
     #[test]
