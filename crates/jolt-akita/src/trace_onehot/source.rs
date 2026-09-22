@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fmt::{Debug, Formatter, Result as FmtResult},
     sync::Arc,
 };
@@ -267,7 +268,7 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
 }
 
 impl SourceCoefficients<AkitaField> for TracePackedOneHot {
-    fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [AkitaField]>, AkitaError> {
+    fn source_coefficients(&self) -> Result<Cow<'_, [AkitaField]>, AkitaError> {
         Err(AkitaError::InvalidInput(
             "trace-packed one-hot requires its streaming opening kernels".into(),
         ))

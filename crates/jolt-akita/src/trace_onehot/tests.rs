@@ -25,21 +25,19 @@ use jolt_openings::CommitmentScheme;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::source::{TracePackedOneHotBatchView, TracePackedOneHotView};
-use crate::AkitaField;
+use crate::{
+    AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AKITA_ONE_HOT_K16,
+};
 
 fn kernel_backend() -> &'static CpuBackend {
-    static SETUP: OnceLock<crate::AkitaProverSetup> = OnceLock::new();
+    static SETUP: OnceLock<AkitaProverSetup> = OnceLock::new();
     SETUP
         .get_or_init(|| {
-            let artifacts = crate::AkitaScheduleArtifacts::shared_from_default_directory();
-            let params = crate::AkitaSetupParams::one_hot_only(
-                14,
-                1,
-                [0; 32],
-                crate::AKITA_ONE_HOT_K16,
-                artifacts,
-            );
-            crate::AkitaScheme::setup(params).unwrap().0
+            let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+            let params =
+                AkitaSetupParams::one_hot_only(14, 1, [0; 32], AKITA_ONE_HOT_K16, artifacts);
+            AkitaScheme::setup(params).unwrap().0
         })
         .one_hot_backend
         .as_deref()

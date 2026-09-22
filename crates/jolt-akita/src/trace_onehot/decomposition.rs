@@ -1,4 +1,4 @@
-use std::env::VarError;
+use std::{env::VarError, ops::Range};
 
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
@@ -465,7 +465,7 @@ fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[
 pub(super) fn decompose_fold_packed<const D: usize>(
     source: &TracePackedOneHot,
     challenges: &[SparseChallenge],
-    chunk_ranges: &[std::ops::Range<usize>],
+    chunk_ranges: &[Range<usize>],
     num_positions: usize,
     num_digits: usize,
     rotation_mode: DecomposeRotationMode,

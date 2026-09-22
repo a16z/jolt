@@ -17,8 +17,8 @@ use crate::adapters::{
     invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
     transparent_zk_error, validate_one_hot_k, with_backend_pool, with_one_hot_scheme,
     AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
-    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField,
-    AkitaHidingCommitment, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
+    AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaConfig,
+    AkitaField, AkitaHidingCommitment, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
     AkitaScheduleArtifacts, AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts,
     AkitaVerifierSetup, BackendVerifierCache, AKITA_SOURCE_RING_DIMENSION,
 };
@@ -381,9 +381,9 @@ impl AkitaScheme {
         let poly_count = dense.len();
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
             backend
-                .import_source::<crate::adapters::AkitaConfig, _>(dense)
+                .import_source::<AkitaConfig, _>(dense)
                 .and_then(|source| {
-                    backend.commit::<crate::adapters::AkitaConfig>(
+                    backend.commit::<AkitaConfig>(
                         &source,
                         GroupContext::scheduler_without_precommitted_groups(),
                     )
@@ -514,7 +514,7 @@ impl CommitmentScheme for AkitaScheme {
                 })
                 .map_err(invalid_setup)?;
                 let backend = with_backend_pool(|| {
-                    CpuBackend::new::<crate::adapters::AkitaConfig>(
+                    CpuBackend::new::<AkitaConfig>(
                         backend_prover_setup.expanded.clone(),
                         scheme.schedules(),
                     )

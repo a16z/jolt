@@ -13,7 +13,7 @@ use akita_pcs::{
     },
     CpuBackend,
 };
-use akita_types::{dispatch_for_field, FpExtEncoding};
+use akita_types::{dispatch_for_field, FpExtEncoding, RingVec};
 #[expect(
     unused_imports,
     reason = "dispatch_for_field matches these nominal slot tokens without resolving them"
@@ -54,7 +54,7 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TracePackedOneHotCommitOpe
         plan: &CommitInnerPlan,
         sources: &[ExternalInnerCommitmentInput<'_>],
         context: &dyn Any,
-    ) -> Result<Vec<akita_types::RingVec<AkitaField>>, AkitaError> {
+    ) -> Result<Vec<RingVec<AkitaField>>, AkitaError> {
         let prepared = cpu_external_inner_prepared_setup::<AkitaField>(context)?;
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
