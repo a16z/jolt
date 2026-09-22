@@ -4,7 +4,7 @@ use jolt_field::{CanonicalBytes, Fr, One, Ring};
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGSetupParams};
 use jolt_openings::CommitmentScheme;
 use jolt_spartan_verifier::preprocessed::{wire::verify_bytes, ComputationKey, PreprocessedProof};
-use std::{error::Error, io::Write, path::PathBuf};
+use std::{error::Error, fs::OpenOptions, io::Write, path::PathBuf};
 
 #[expect(
     clippy::print_stdout,
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &Fr::one().to_bytes_le_vec(),
         &encoded,
     )?;
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(output)?;
