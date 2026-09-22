@@ -47,7 +47,9 @@ Use the ELF produced by that trace build when interpreting its PC profile.
 
 Build `generate` and `trace` with `akita,field-inline,ntt-inline`. Here
 `field-inline` enables arithmetic instructions inside the verifier guest; the
-inner Fibonacci proof still uses the ordinary RV64IMAC protocol.
+inner Fibonacci proof still uses the ordinary RV64IMAC protocol. Generate and
+trace with the same inner feature profile: enabling `field-inline` also changes
+serialized Akita setup fields, so a stream generated without it must be regenerated.
 
 Build the separate `outer` executable with `outer-prover,ntt-inline`. Its verifier
 accepts the FR protocol used by the outer execution. It rejects inner-proof
