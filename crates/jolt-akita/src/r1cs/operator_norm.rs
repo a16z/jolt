@@ -92,6 +92,71 @@ impl D64ShellVar {
         &self,
         builder: &mut R1csBuilder<Fr>,
     ) -> Result<(), OperatorNormR1csError> {
+        self.visit_frequencies(builder, Self::enforce_frequency)
+    }
+
+    /// Return the exact Boolean native norm predicate, including rejected shells.
+    /// Every frequency is constrained; this does not enforce acceptance.
+    pub fn acceptance(
+        &self,
+        builder: &mut R1csBuilder<Fr>,
+    ) -> Result<LinearCombination<Fr>, OperatorNormR1csError> {
+        let mut accepted = LinearCombination::one();
+        self.visit_frequencies(
+            builder,
+            |builder, real, imaginary, witness, radius, threshold, _| {
+                let bit =
+                    Self::classify_frequency(builder, real, imaginary, witness, radius, threshold)?;
+                accepted = builder.multiply(accepted.clone(), bit.expression());
+                Ok(())
+            },
+        )?;
+        Ok(accepted)
+    }
+
+    fn classify_frequency(
+        builder: &mut R1csBuilder<Fr>,
+        real: &SignedVar,
+        imaginary: &SignedVar,
+        witness: Option<(i128, i128)>,
+        radius: u128,
+        threshold: u128,
+    ) -> Result<BitVar, OperatorNormR1csError> {
+        let (upper, value) = Self::frequency_upper(builder, real, imaginary, witness, radius)?;
+        let bit = BitVar::allocate(builder, value.map(|u| u <= threshold));
+        let bound = 2 * (real.bound() + radius).pow(2) + threshold + 1;
+        let magnitude = value.map(|u| {
+            if u <= threshold {
+                threshold - u
+            } else {
+                u - threshold - 1
+            }
+        });
+        let magnitude = SignedVar::allocate(builder, bound, magnitude.map(|m| m as i128))?;
+        let magnitude = magnitude.absolute_value(builder)?;
+        builder.assert_product(
+            LinearCombination::one() - bit.expression().scale(Fr::from_u64(2)),
+            magnitude,
+            upper
+                - LinearCombination::constant(Fr::from_u128(threshold))
+                - (LinearCombination::one() - bit.expression()),
+        );
+        Ok(bit)
+    }
+
+    fn visit_frequencies(
+        &self,
+        builder: &mut R1csBuilder<Fr>,
+        mut visit: impl FnMut(
+            &mut R1csBuilder<Fr>,
+            &SignedVar,
+            &SignedVar,
+            Option<(i128, i128)>,
+            u128,
+            u128,
+            usize,
+        ) -> Result<(), OperatorNormR1csError>,
+    ) -> Result<(), OperatorNormR1csError> {
         for &variable in &self.coefficients {
             if variable.index() >= builder.num_vars() {
                 return Err(IntegerError::UnknownVariable { variable }.into());
@@ -152,7 +217,7 @@ impl D64ShellVar {
                 accumulators
                     .try_into()
                     .map_err(|_| OperatorNormR1csError::UnsupportedParameters)?;
-            Self::enforce_frequency(
+            visit(
                 builder,
                 &real,
                 &imaginary,
@@ -173,23 +238,34 @@ impl D64ShellVar {
         threshold: u128,
         frequency: usize,
     ) -> Result<(), OperatorNormR1csError> {
-        let upper_witness = witness.map(|(r, i)| {
+        let (upper, upper_witness) =
+            Self::frequency_upper(builder, real, imaginary, witness, radius)?;
+        if upper_witness.is_some_and(|upper| upper > threshold) {
+            return Err(OperatorNormR1csError::Rejected { frequency });
+        }
+        // A signed interval suffices because U is nonnegative and U+threshold<r.
+        let comparison = SignedVar::allocate(builder, threshold, upper_witness.map(|x| x as i128))?;
+        builder.assert_equal(upper, comparison.variable());
+        Ok(())
+    }
+    fn frequency_upper(
+        builder: &mut R1csBuilder<Fr>,
+        real: &SignedVar,
+        imaginary: &SignedVar,
+        witness: Option<(i128, i128)>,
+        radius: u128,
+    ) -> Result<(LinearCombination<Fr>, Option<u128>), OperatorNormR1csError> {
+        let value = witness.map(|(r, i)| {
             let r = r.unsigned_abs();
             let i = i.unsigned_abs();
             r * r + i * i + 2 * radius * (r + i) + 2 * radius * radius
         });
-        if upper_witness.is_some_and(|upper| upper > threshold) {
-            return Err(OperatorNormR1csError::Rejected { frequency });
-        }
         let abs_sum = real.absolute_value(builder)? + imaginary.absolute_value(builder)?;
         let upper = builder.multiply(real.variable(), real.variable())
             + builder.multiply(imaginary.variable(), imaginary.variable())
             + abs_sum.scale(Fr::from_u128(2 * radius))
             + LinearCombination::constant(Fr::from_u128(2 * radius * radius));
-        // A signed interval suffices because U is nonnegative and U+threshold<r.
-        let comparison = SignedVar::allocate(builder, threshold, upper_witness.map(|x| x as i128))?;
-        builder.assert_equal(upper, comparison.variable());
-        Ok(())
+        Ok((upper, value))
     }
 }
 
@@ -272,6 +348,57 @@ mod tests {
             let error = shell.enforce_accepted(&mut builder).unwrap_err();
             assert!(
                 matches!(error, OperatorNormR1csError::Rejected { frequency } if !alternating || frequency>0)
+            );
+        }
+    }
+
+    #[test]
+    fn classification_boundary_and_coherent_wrong_comparison() {
+        // At radius0, imaginary0: U=real^2. Check equality and the first rejected integer.
+        for (real_value, expected) in [(0, true), (1, false)] {
+            let mut builder = R1csBuilder::new();
+            let real = SignedVar::allocate(&mut builder, 1, Some(real_value)).unwrap();
+            let imaginary = SignedVar::allocate(&mut builder, 1, Some(0)).unwrap();
+            let bit = D64ShellVar::classify_frequency(
+                &mut builder,
+                &real,
+                &imaginary,
+                Some((real_value, 0)),
+                0,
+                0,
+            )
+            .unwrap();
+            assert_eq!(
+                builder.evaluate(&bit.expression()).unwrap(),
+                Fr::from_u64(u64::from(expected))
+            );
+            let witness = builder.witness().unwrap();
+            assert!(builder.into_matrices().check_witness(&witness).is_ok());
+        }
+        // Forge the comparison decision AND its range auxiliaries coherently
+        // in both directions: falsely accepting and skipping an accepted candidate.
+        for (actual, forged) in [(1, 0), (0, 1)] {
+            let mut builder = R1csBuilder::new();
+            let real = SignedVar::allocate(&mut builder, 1, Some(actual)).unwrap();
+            let imaginary = SignedVar::allocate(&mut builder, 1, Some(0)).unwrap();
+            let bit = D64ShellVar::classify_frequency(
+                &mut builder,
+                &real,
+                &imaginary,
+                Some((forged, 0)),
+                0,
+                0,
+            )
+            .unwrap();
+            assert_eq!(
+                builder.evaluate(&bit.expression()).unwrap(),
+                Fr::from_u64(u64::from(forged == 0))
+            );
+            let witness = builder.witness().unwrap();
+            let matrices = builder.into_matrices();
+            assert_eq!(
+                matrices.check_witness(&witness),
+                Err(matrices.num_constraints - 1)
             );
         }
     }

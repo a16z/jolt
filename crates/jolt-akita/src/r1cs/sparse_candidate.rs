@@ -82,15 +82,31 @@ impl D64CandidateProfile {
         if tape.len() != self.tape_len {
             return Err(CandidateError::Shape);
         }
+        let cursor = (0..=tape.len())
+            .map(|i| Expression::constant(Fr::from_u64(u64::from(i == 0))))
+            .collect();
+        self.sample_at(builder, tape, cursor, Expression::one())
+    }
+
+    // Internal composition: caller establishes one-hot cursor and Boolean activity.
+    // Returned cursor retains that invariant, and inactive candidates consume nothing.
+    pub(super) fn sample_at(
+        &self,
+        builder: &mut R1csBuilder<Fr>,
+        tape: &[ByteVar],
+        cursor: Vec<Expression>,
+        activity: Expression,
+    ) -> Result<D64CandidateVar, CandidateError> {
+        if tape.len() < self.tape_len || cursor.len().checked_sub(1) != Some(tape.len()) {
+            return Err(CandidateError::Shape);
+        }
         for byte in tape {
             byte.validate_indices(builder)?;
         }
         let mut machine = CandidateMachine {
             builder,
             tape: tape.iter().map(ByteVar::bit_expressions).collect(),
-            cursor: (0..=tape.len())
-                .map(|i| Expression::constant(Fr::from_u64(u64::from(i == 0))))
-                .collect(),
+            cursor,
         };
         let mut permutation: Vec<_> = (0..64)
             .map(|i| Expression::constant(Fr::from_u64(i)))
@@ -101,7 +117,7 @@ impl D64CandidateProfile {
             let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
             let mut selected_bits = vec![Expression::zero(); bits];
             if n > 1 {
-                let mut active = Expression::one();
+                let mut active = activity.clone();
                 for _ in 0..self.trials {
                     let byte = machine.read(active.clone());
                     let trial_bits: Vec<_> = byte.into_iter().take(bits).collect();
@@ -160,7 +176,7 @@ impl D64CandidateProfile {
         for (i, position) in positions.iter().enumerate() {
             let magnitude = if i < self.count_pm1 { 1 } else { 2 };
             let sign = machine
-                .read(Expression::one())
+                .read(activity.clone())
                 .into_iter()
                 .next()
                 .ok_or(CandidateError::Shape)?;
