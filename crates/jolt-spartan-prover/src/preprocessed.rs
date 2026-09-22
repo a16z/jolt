@@ -1,0 +1,410 @@
+//! Trusted v2 preprocessing and the real public-column PCS stage.
+//! Private SPARK memory/product proofs are intentionally not implemented here.
+use jolt_field::{CanonicalBytes, Fr, Ring, Zero};
+use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme};
+use jolt_openings::CommitmentScheme;
+use jolt_poly::{EqPolynomial, Polynomial};
+use jolt_r1cs::{LinearCombination, Variable};
+use jolt_spartan_verifier::preprocessed::{
+    ComputationKey, MatrixApplicationIds, MatrixError, MatrixShape, PublicColumnProof,
+};
+use jolt_spartan_verifier::SpartanKey;
+use jolt_transcript::Bn254WideBlake2bTranscript;
+
+/// Committed tables from authenticated preprocessing, retained for future sparse
+/// evaluation. Immutable getters support independent encoding checks.
+pub struct PreprocessedMatrices {
+    key: ComputationKey,
+    public: Vec<Fr>,
+    operations: Vec<Fr>,
+    memory: Vec<Fr>,
+}
+impl PreprocessedMatrices {
+    pub fn new(
+        key: &SpartanKey<Fr>,
+        application: MatrixApplicationIds,
+        setup: &HyperKZGProverSetup,
+    ) -> Result<Self, MatrixError> {
+        let matrices = key.matrices();
+        let normalized: Vec<_> = [&matrices.a, &matrices.b, &matrices.c]
+            .into_iter()
+            .map(|matrix| {
+                matrix
+                    .iter()
+                    .map(|row| {
+                        LinearCombination {
+                            terms: row.iter().map(|(c, v)| (Variable::new(*c), *v)).collect(),
+                        }
+                        .into_sparse_row()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let max_private = normalized
+            .iter()
+            .map(|matrix| {
+                matrix
+                    .iter()
+                    .flatten()
+                    .filter(|(column, _)| *column >= key.public_columns())
+                    .count()
+            })
+            .max()
+            .ok_or(MatrixError::Shape)?;
+        let shape = MatrixShape::new(
+            matrices.num_constraints,
+            matrices.num_vars,
+            key.public_columns(),
+            max_private,
+        )?;
+        let public_len = shape
+            .public_slabs
+            .checked_mul(shape.padded_rows)
+            .ok_or(MatrixError::Shape)?;
+        let ops_len = shape.operations.checked_mul(16).ok_or(MatrixError::Shape)?;
+        let memory_len = shape.memory.checked_mul(2).ok_or(MatrixError::Shape)?;
+        let vk = HyperKZGScheme::verifier_setup(setup);
+        let capacity = vk.binding()?.num_powers;
+        if [public_len, ops_len, memory_len]
+            .into_iter()
+            .any(|n| n as u64 > capacity)
+        {
+            return Err(MatrixError::Shape);
+        }
+        let mut public = vec![Fr::zero(); public_len];
+        let mut operations = vec![Fr::zero(); ops_len];
+        let mut row_audit = vec![0u64; shape.memory];
+        let mut col_audit = vec![0u64; shape.memory];
+        let mut encoding = b"JOLT-SPARK-MAT\0\0".to_vec();
+        encoding.extend((shape.rows as u64).to_le_bytes());
+        encoding.extend((shape.columns as u64).to_le_bytes());
+        for (matrix_index, matrix) in normalized.iter().enumerate() {
+            let mut entries = Vec::new();
+            for (row_index, row) in matrix.iter().enumerate() {
+                encoding.extend((row.len() as u64).to_le_bytes());
+                for &(column, value) in row {
+                    encoding.extend((column as u64).to_le_bytes());
+                    encoding.extend(value.to_bytes_le_vec());
+                    if column < shape.public_columns {
+                        let index = (matrix_index * shape.public_columns + column)
+                            * shape.padded_rows
+                            + row_index;
+                        *public.get_mut(index).ok_or(MatrixError::Shape)? = value;
+                    } else {
+                        entries.push((row_index, column - shape.public_columns, value));
+                    }
+                }
+            }
+            entries.resize(shape.operations, (0, 0, Fr::zero()));
+            for (operation, (row, column, value)) in entries.into_iter().enumerate() {
+                let rt = row_audit.get_mut(row).ok_or(MatrixError::Shape)?;
+                let ct = col_audit.get_mut(column).ok_or(MatrixError::Shape)?;
+                for (slab, v) in [
+                    (matrix_index, Fr::from_u64(row as u64)),
+                    (3 + matrix_index, Fr::from_u64(*rt)),
+                    (6 + matrix_index, Fr::from_u64(column as u64)),
+                    (9 + matrix_index, Fr::from_u64(*ct)),
+                    (12 + matrix_index, value),
+                ] {
+                    *operations
+                        .get_mut(slab * shape.operations + operation)
+                        .ok_or(MatrixError::Shape)? = v;
+                }
+                *rt = rt.checked_add(1).ok_or(MatrixError::Shape)?;
+                *ct = ct.checked_add(1).ok_or(MatrixError::Shape)?;
+            }
+        }
+        let memory = row_audit
+            .into_iter()
+            .chain(col_audit)
+            .map(Fr::from_u64)
+            .collect::<Vec<_>>();
+        let mut commitments = Vec::with_capacity(3);
+        for table in [&public, &operations, &memory] {
+            commitments.push(HyperKZGScheme::commit(&Polynomial::new(table.clone()), setup)?.0);
+        }
+        let commitments = commitments.try_into().map_err(|_| MatrixError::Shape)?;
+        let key = ComputationKey::new(
+            shape,
+            application,
+            ComputationKey::digest(&encoding),
+            commitments,
+            &vk,
+        )?;
+        Ok(Self {
+            key,
+            public,
+            operations,
+            memory,
+        })
+    }
+    pub fn key(&self) -> &ComputationKey {
+        &self.key
+    }
+    pub fn public_table(&self) -> &[Fr] {
+        &self.public
+    }
+    pub fn operations_table(&self) -> &[Fr] {
+        &self.operations
+    }
+    pub fn memory_table(&self) -> &[Fr] {
+        &self.memory
+    }
+
+    /// Opens every public column at rx under one actual merged PCS commitment.
+    pub fn prove_public(
+        &self,
+        rx: &[Fr],
+        setup: &HyperKZGProverSetup,
+        transcript: &mut Bn254WideBlake2bTranscript,
+    ) -> Result<PublicColumnProof, MatrixError> {
+        let shape = self.key.shape();
+        if rx.len() != shape.padded_rows.trailing_zeros() as usize {
+            return Err(MatrixError::Query);
+        }
+        let weights = EqPolynomial::new(rx.to_vec()).evaluations();
+        let evaluations = self
+            .public
+            .chunks_exact(shape.padded_rows)
+            .take(shape.public_columns * 3)
+            .map(|column| column.iter().zip(&weights).map(|(a, b)| *a * b).sum())
+            .collect::<Vec<_>>();
+        let (point, value) = self
+            .key
+            .public_opening_query(rx, &evaluations, transcript)?;
+        let opening = HyperKZGScheme::open(
+            &Polynomial::new(self.public.clone()),
+            &point,
+            value,
+            setup,
+            None,
+            transcript,
+        )?;
+        Ok(PublicColumnProof {
+            evaluations,
+            opening,
+        })
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "fixed independent fixture assertions"
+)]
+mod tests {
+    use super::*;
+    use crate::{prove, prove_rounds, rounds::OuterRounds};
+    use jolt_crypto::{Bn254, JoltGroup};
+    use jolt_field::One;
+    use jolt_hyperkzg::{HyperKZGSetupParams, HyperKZGVerifierSetup};
+    use jolt_r1cs::ConstraintMatrices;
+    use jolt_spartan_verifier::{preprocessed::PublicColumnQuery, OUTER_DEGREE};
+    use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
+    use jolt_transcript::Transcript;
+
+    fn setup() -> (HyperKZGProverSetup, HyperKZGVerifierSetup) {
+        let beta = Fr::from_u64(7);
+        HyperKZGScheme::setup(HyperKZGSetupParams {
+            g1_powers: std::iter::successors(Some(Fr::one()), |x| Some(*x * beta))
+                .take(64)
+                .map(|x| Bn254::g1_generator().scalar_mul(&x))
+                .collect(),
+            g2: Bn254::g2_generator(),
+            beta_g2: Bn254::g2_generator().scalar_mul(&beta),
+            setup_id: [9; 32],
+            max_public_degree: 63,
+        })
+        .unwrap()
+    }
+    fn relation() -> SpartanKey<Fr> {
+        let o = Fr::one();
+        SpartanKey::new(
+            ConstraintMatrices::new(
+                4,
+                8,
+                vec![
+                    vec![(3, o), (0, o), (3, o + o), (3, -(o + o)), (2, Fr::zero())],
+                    vec![(5, o)],
+                    vec![(2, o + o)],
+                    vec![(7, o)],
+                ],
+                vec![vec![(4, o)], vec![(0, o)], vec![(6, o)], vec![(1, o)]],
+                vec![vec![], vec![], vec![], vec![]],
+            ),
+            2,
+            [19; 32],
+        )
+        .unwrap()
+    }
+    fn ids() -> MatrixApplicationIds {
+        MatrixApplicationIds {
+            circuit: [1; 32],
+            profile: [2; 32],
+            public_schema: [3; 32],
+            table: [4; 32],
+        }
+    }
+    fn transcript() -> Bn254WideBlake2bTranscript {
+        Bn254WideBlake2bTranscript::new(b"spartan-preprocessed-clear-v2")
+    }
+
+    #[test]
+    fn preprocessing_normalizes_and_carries_audits_across_dummy_operations() {
+        let (pk, _) = setup();
+        let tables = PreprocessedMatrices::new(&relation(), ids(), &pk).unwrap();
+        assert_eq!(tables.key().shape().operations, 4);
+        assert_eq!(tables.public_table().len(), 64);
+        assert_eq!(tables.operations_table()[20], Fr::from_u64(5));
+        assert_eq!(tables.operations_table()[44], Fr::from_u64(4));
+        assert_eq!(tables.memory_table()[0], Fr::from_u64(9));
+        assert_eq!(tables.memory_table()[8], Fr::from_u64(8));
+        assert!(tables.operations_table()[60..].iter().all(Zero::is_zero));
+        assert_eq!(tables.public_table()[0], Fr::one());
+    }
+
+    #[test]
+    fn real_outer_sumcheck_and_public_pcs_v2_prefix() {
+        let (pk, vk) = setup();
+        let direct = relation();
+        let tables = PreprocessedMatrices::new(&direct, ids(), &pk).unwrap();
+        let key = tables.key();
+        let id = key.id();
+        let inputs = [5, 0].map(Fr::from_u64);
+        let witness = [3, 0, 0, 11, 0].map(Fr::from_u64);
+        let proof =
+            prove::<HyperKZGScheme>(&direct, &inputs, &witness, &pk, &mut transcript()).unwrap();
+        direct
+            .verify::<HyperKZGScheme>(&inputs, &proof, &vk, &mut transcript())
+            .unwrap();
+        let mut pt = transcript();
+        let mut vt = transcript();
+        let tau = key
+            .begin(&id, &vk, &inputs, &proof.witness_commitment, &mut pt)
+            .unwrap();
+        assert_eq!(
+            tau,
+            key.begin(&id, &vk, &inputs, &proof.witness_commitment, &mut vt)
+                .unwrap()
+        );
+        let assignment = std::iter::once(Fr::one())
+            .chain(inputs)
+            .chain(witness)
+            .collect::<Vec<_>>();
+        let mut rounds = OuterRounds::new(&direct, &assignment, &tau).unwrap();
+        let (outer, rx, claim) =
+            prove_rounds(&mut rounds, OUTER_DEGREE, Fr::zero(), &mut pt).unwrap();
+        let evals = rounds.evaluations().unwrap();
+        let checked = outer
+            .verify(
+                &SumcheckClaim {
+                    num_vars: 2,
+                    degree: OUTER_DEGREE,
+                    claimed_sum: Fr::zero(),
+                },
+                BooleanHypercube,
+                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+                &mut vt,
+            )
+            .unwrap();
+        direct
+            .check_outer(&tau, checked.point.as_slice(), checked.value, evals)
+            .unwrap();
+        assert_eq!(rx, checked.point.as_slice());
+        assert_eq!(claim, checked.value);
+        pt.append_values(b"outer-evaluations", &evals);
+        vt.append_values(b"outer-evaluations", &evals);
+        let rho = [pt.challenge(), pt.challenge(), pt.challenge()];
+        assert_eq!(rho, [vt.challenge(), vt.challenge(), vt.challenge()]);
+        let opening = tables.prove_public(&rx, &pk, &mut pt).unwrap();
+        let contribution = key
+            .verify_public(
+                &id,
+                &vk,
+                PublicColumnQuery {
+                    inputs: &inputs,
+                    point: &rx,
+                    matrix_weights: rho,
+                },
+                &opening,
+                &mut vt,
+            )
+            .unwrap();
+        let row_weights = EqPolynomial::new(rx).evaluations();
+        let public = [Fr::one(), inputs[0], inputs[1]];
+        assert_eq!(
+            contribution,
+            direct
+                .matrices()
+                .linear_form_bilinear_eval(&row_weights, &public, 0, 3, rho)
+                .unwrap()
+        );
+        let inner = evals.iter().zip(rho).map(|(a, b)| *a * b).sum::<Fr>() - contribution;
+        pt.append_labeled(b"spartan-inner", &inner);
+        vt.append_labeled(b"spartan-inner", &inner);
+        assert_eq!(pt.state(), vt.state());
+        assert_eq!(
+            pt.state(),
+            [
+                141, 43, 136, 230, 234, 237, 101, 126, 216, 184, 247, 28, 160, 166, 131, 129, 13,
+                76, 194, 133, 60, 152, 43, 147, 8, 86, 96, 226, 104, 217, 120, 26
+            ]
+        );
+        assert_eq!(
+            pt.challenge().to_bytes_le_vec(),
+            [
+                88, 254, 116, 183, 154, 16, 100, 186, 123, 20, 5, 61, 135, 185, 11, 184, 172, 74,
+                253, 156, 158, 251, 116, 156, 129, 49, 130, 210, 67, 188, 4, 1
+            ]
+        );
+    }
+
+    #[test]
+    fn public_pcs_rejects_tampered_values_points_key_and_shapes() {
+        let (pk, vk) = setup();
+        let tables = PreprocessedMatrices::new(&relation(), ids(), &pk).unwrap();
+        let key = tables.key();
+        let id = key.id();
+        let rx = [2, 3].map(Fr::from_u64);
+        let proof = tables.prove_public(&rx, &pk, &mut transcript()).unwrap();
+        let inputs = [5, 0].map(Fr::from_u64);
+        let verify = |proof: &PublicColumnProof, point: &[Fr], id: &[u8; 32]| {
+            key.verify_public(
+                id,
+                &vk,
+                PublicColumnQuery {
+                    inputs: &inputs,
+                    point,
+                    matrix_weights: [Fr::one(); 3],
+                },
+                proof,
+                &mut transcript(),
+            )
+        };
+        assert!(verify(&proof, &rx, &id).is_ok());
+        let mut altered = proof.clone();
+        altered.evaluations[0] += Fr::one();
+        assert!(verify(&altered, &rx, &id).is_err());
+        altered = proof.clone();
+        let _ = altered.evaluations.pop();
+        assert!(matches!(
+            verify(&altered, &rx, &id),
+            Err(MatrixError::Query)
+        ));
+        assert!(verify(&proof, &[Fr::one(), Fr::one()], &id).is_err());
+        assert!(matches!(
+            verify(&proof, &rx, &[0; 32]),
+            Err(MatrixError::Identity)
+        ));
+        assert!(matches!(
+            verify(&proof, &rx[..1], &id),
+            Err(MatrixError::Query)
+        ));
+        altered = proof.clone();
+        altered.opening.w[0] = Bn254::g1_generator();
+        assert!(verify(&altered, &rx, &id).is_err());
+        assert!(MatrixShape::new(0, 8, 3, 4).is_err());
+        assert!(MatrixShape::new(4, 8, 8, 4).is_err());
+    }
+}

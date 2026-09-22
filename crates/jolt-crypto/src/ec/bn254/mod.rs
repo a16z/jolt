@@ -170,14 +170,21 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
+        impl $wrapper {
+            /// Canonical compressed encoding, shared by key and transcript binding.
+            pub fn compressed_bytes(&self) -> Vec<u8> {
+                use ::ark_serialize::CanonicalSerialize;
+                let mut bytes = Vec::with_capacity(self.0.compressed_size());
+                self.0
+                    .serialize_compressed(&mut bytes)
+                    .expect("Vec serialization cannot fail");
+                bytes
+            }
+        }
+
         impl ::jolt_transcript::AppendToTranscript for $wrapper {
             fn append_to_transcript<T: ::jolt_transcript::Transcript>(&self, transcript: &mut T) {
-                use ::ark_serialize::CanonicalSerialize;
-                let mut buf = Vec::with_capacity(self.0.compressed_size());
-                self.0
-                    .serialize_compressed(&mut buf)
-                    .expect(concat!(stringify!($wrapper), " serialization cannot fail"));
-                transcript.append_bytes(&buf);
+                transcript.append_bytes(&self.compressed_bytes());
             }
         }
 

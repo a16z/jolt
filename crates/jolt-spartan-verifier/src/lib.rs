@@ -141,3 +141,7 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
         Ok(())
     }
 }
+
+/// Conditional v2 public-column preprocessing stage; private SPARK remains separate.
+#[cfg(feature = "preprocessed")]
+pub mod preprocessed;
