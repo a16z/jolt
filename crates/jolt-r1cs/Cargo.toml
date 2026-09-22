@@ -12,8 +12,10 @@ workspace = true
 jolt-field = { path = "../jolt-field", default-features = false }
 serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true
+num-bigint = { workspace = true, optional = true }
 
 [features]
+integer-bn254 = ["fp128-bn254", "dep:num-bigint"]
 bn254 = ["jolt-field/bn254"]
 fp128-bn254 = ["bn254", "jolt-field/solinas"]
 

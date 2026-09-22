@@ -12,7 +12,7 @@ workspace = true
 r1cs = [
   "dep:akita-transcript",
   "dep:jolt-r1cs",
-  "jolt-r1cs/bn254",
+  "jolt-r1cs/integer-bn254",
   "jolt-transcript/r1cs",
 ]
 profiling = []
@@ -57,4 +57,8 @@ serde_json = { workspace = true, features = ["std"] }
 
 [[test]]
 name = "r1cs_transcript"
+required-features = ["r1cs"]
+
+[[example]]
+name = "terminal_r1cs_cost"
 required-features = ["r1cs"]

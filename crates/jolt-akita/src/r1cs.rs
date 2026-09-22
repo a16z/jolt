@@ -1,5 +1,6 @@
-//! Akita 252abb8 transcript byte framing over the constrained 64-bit BLAKE2b
-//! duplex. Source map and integration contract: `specs/akita-wrapper/duplex-constraints.md`.
+//! Akita 252abb8 transcript bytes and bounded terminal integer relations.
+//! Contracts: `specs/akita-wrapper/duplex-constraints.md` and
+//! `specs/akita-wrapper/terminal-constraints.md`.
 
 use akita_transcript::PROTOCOL_TAG;
 use jolt_field::Fr;
@@ -74,3 +75,6 @@ impl AkitaTranscriptVar {
         Ok(bytes)
     }
 }
+
+/// Bounded terminal integer relations; excludes dynamic routing and full acceptance.
+pub mod terminal;

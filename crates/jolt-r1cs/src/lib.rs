@@ -29,3 +29,6 @@ pub use constraint::{
 
 #[cfg(feature = "bn254")]
 pub mod bn254_bits;
+
+#[cfg(feature = "integer-bn254")]
+pub mod integer_bn254;
