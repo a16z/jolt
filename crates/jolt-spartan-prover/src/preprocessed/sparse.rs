@@ -1,4 +1,5 @@
 //! Reference-oriented honest prover for the pinned private SPARK reductions.
+use jolt_crypto::Bn254G1;
 use jolt_field::{Fr, Ring, Zero};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme};
 use jolt_openings::CommitmentScheme;
@@ -181,6 +182,15 @@ impl ProductNetwork {
     }
 }
 
+struct SparseWitness {
+    dereference_commitment: Bn254G1,
+    roots: [Fr; 16],
+    halves: [Fr; 6],
+    operations: ProductNetwork,
+    memory: ProductNetwork,
+    dereferences: Vec<Fr>,
+}
+
 impl PreprocessedMatrices {
     fn open_slab(
         table: &[Fr],
@@ -194,7 +204,7 @@ impl PreprocessedMatrices {
         if length < 2
             || !length.is_power_of_two()
             || point.len() != length.trailing_zeros() as usize
-            || table.len() % length != 0
+            || !table.len().is_multiple_of(length)
             || table.len() / length < count
         {
             return Err(MatrixError::Shape);
@@ -223,12 +233,12 @@ impl PreprocessedMatrices {
         clippy::indexing_slicing,
         reason = "private tables and address lists originate from checked preprocessing; fixed-array and slab offsets follow key dimensions"
     )]
-    pub fn prove_sparse(
+    fn prepare_sparse(
         &self,
         query: SparseQuery<'_>,
         setup: &HyperKZGProverSetup,
         transcript: &mut Bn254WideBlake2bTranscript,
-    ) -> Result<SparseMatrixProof, MatrixError> {
+    ) -> Result<SparseWitness, MatrixError> {
         let shape = self.key.shape();
         let n = shape.operations;
         let l = shape.memory;
@@ -313,9 +323,54 @@ impl PreprocessedMatrices {
             roots[axis * 8 + 7] = mem_roots[axis * 2 + 1];
             roots[axis * 8 + 1..axis * 8 + 7].copy_from_slice(&ops_roots[axis * 6..axis * 6 + 6]);
         }
+        Ok(SparseWitness {
+            dereference_commitment,
+            roots,
+            halves,
+            operations,
+            memory,
+            dereferences,
+        })
+    }
+
+    pub fn prove_sparse(
+        &self,
+        query: SparseQuery<'_>,
+        setup: &HyperKZGProverSetup,
+        transcript: &mut Bn254WideBlake2bTranscript,
+    ) -> Result<SparseMatrixProof, MatrixError> {
+        let witness = self.prepare_sparse(
+            SparseQuery {
+                rows: query.rows,
+                columns: query.columns,
+                values: query.values,
+            },
+            setup,
+            transcript,
+        )?;
         let _ = self
             .key
-            .bind_roots(query.values, &roots, &halves, transcript)?;
+            .bind_roots(query.values, &witness.roots, &witness.halves, transcript)?;
+        self.finish_sparse(witness, setup, transcript)
+    }
+
+    fn finish_sparse(
+        &self,
+        witness: SparseWitness,
+        setup: &HyperKZGProverSetup,
+        transcript: &mut Bn254WideBlake2bTranscript,
+    ) -> Result<SparseMatrixProof, MatrixError> {
+        let SparseWitness {
+            dereference_commitment,
+            roots,
+            halves,
+            operations,
+            memory,
+            dereferences,
+        } = witness;
+        let n = self.key.shape().operations;
+        let l = self.key.shape().memory;
+
         let (operations, ops) = operations.prove(Network::Operations, Some(halves), transcript)?;
         let (memory, mem) = memory.prove(Network::Memory, None, transcript)?;
         let dereferences = Self::open_slab(
@@ -355,5 +410,125 @@ impl PreprocessedMatrices {
             operation_values,
             audit_values,
         })
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "bounded adversarial fixtures fail loudly"
+)]
+mod tests {
+    use super::super::tests::{ids, relation, setup};
+    use super::*;
+    use jolt_field::One;
+    use jolt_transcript::Transcript;
+
+    #[test]
+    fn product_network_accepts_zero_factors_without_division() {
+        let leaves = vec![
+            vec![0, 2, 3, 4],
+            vec![5, 0, 7, 8],
+            vec![9, 10, 0, 12],
+            vec![13, 14, 15, 0],
+        ]
+        .into_iter()
+        .map(|v| v.into_iter().map(Fr::from_u64).collect())
+        .collect::<Vec<Vec<_>>>();
+        let network = ProductNetwork::new(leaves.clone(), None).unwrap();
+        assert_eq!(network.roots().unwrap(), vec![Fr::zero(); 4]);
+        let mut pt = Bn254WideBlake2bTranscript::new(b"zero-product-control");
+        let (proof, result) = network.prove(Network::Memory, None, &mut pt).unwrap();
+        let mut vt = Bn254WideBlake2bTranscript::new(b"zero-product-control");
+        let checked = ProductReduction::new(Network::Memory, 2, vec![Fr::zero(); 4], None, &mut vt)
+            .unwrap()
+            .verify(&proof, &mut vt)
+            .unwrap();
+        assert_eq!(pt.state(), vt.state());
+        assert_eq!(result.point, checked.point);
+        let eq = EqPolynomial::new(checked.point).evaluations();
+        let expected = leaves
+            .iter()
+            .map(|v| v.iter().zip(&eq).map(|(a, b)| *a * b).sum::<Fr>())
+            .collect::<Vec<_>>();
+        assert_eq!(checked.tree_evaluations, expected);
+    }
+
+    #[test]
+    fn coherently_recommitted_reset_timestamps_and_unshifted_addresses_fail_algebra() {
+        let (pk, vk) = setup();
+        let x = [2, 3].map(Fr::from_u64);
+        let y = [4, 5, 6].map(Fr::from_u64);
+        let direct = relation();
+        let rw = EqPolynomial::new(x.to_vec()).evaluations();
+        let cw = EqPolynomial::new(y.to_vec()).evaluations();
+        let mut values = [Fr::zero(); 3];
+        for (i, v) in values.iter_mut().enumerate() {
+            let mut w = [Fr::zero(); 3];
+            w[i] = Fr::one();
+            *v = direct
+                .matrices()
+                .linear_form_bilinear_eval(&rw, &cw[..5], 3, 5, w)
+                .unwrap();
+        }
+        for reset in [true, false] {
+            let mut tables = PreprocessedMatrices::new(&direct, ids(), &pk).unwrap();
+            let original_id = tables.key.id();
+            let shape = tables.key.shape();
+            let n = shape.operations;
+            let l = shape.memory;
+            let mut counters = [vec![0u64; l], vec![0u64; l]];
+            for matrix in 0..3 {
+                if reset {
+                    for axis in &mut counters {
+                        axis.fill(0);
+                    }
+                }
+                for k in 0..n {
+                    if !reset {
+                        tables.addresses[matrix][k].1 += shape.public_columns;
+                    }
+                    let (row, col) = tables.addresses[matrix][k];
+                    for (axis, address) in [row, col].into_iter().enumerate() {
+                        tables.operations[(axis * 6 + matrix) * n + k] =
+                            Fr::from_u64(address as u64);
+                        tables.operations[(axis * 6 + 3 + matrix) * n + k] =
+                            Fr::from_u64(counters[axis][address]);
+                        counters[axis][address] += 1;
+                    }
+                }
+            }
+            tables.memory = counters.into_iter().flatten().map(Fr::from_u64).collect();
+            let commitments = [&tables.public, &tables.operations, &tables.memory].map(|table| {
+                HyperKZGScheme::commit(&Polynomial::new(table.clone()), &pk)
+                    .unwrap()
+                    .0
+            });
+            // This is deliberately invalid trusted preprocessing under a NEW key,
+            // not a claim of replacing an authenticated key in an application.
+            tables.key = ComputationKey::new(shape, ids(), [66; 32], commitments, &vk).unwrap();
+            assert_ne!(tables.key.id(), original_id);
+            let mut pt = Bn254WideBlake2bTranscript::new(b"coherent-memory-control");
+            let query = || SparseQuery {
+                rows: &x,
+                columns: &y,
+                values,
+            };
+            let witness = tables.prepare_sparse(query(), &pk, &mut pt).unwrap();
+            // Malicious prover skips its local assertion but uses the unchanged
+            // wire order and real downstream product proofs and PCS openings.
+            pt.append_values(b"memory-roots", &witness.roots);
+            pt.append_values(b"dot-halves", &witness.halves);
+            let proof = tables.finish_sparse(witness, &pk, &mut pt).unwrap();
+            let mut vt = Bn254WideBlake2bTranscript::new(b"coherent-memory-control");
+            let error = tables
+                .key
+                .verify_sparse(query(), &proof, &vk, &mut vt)
+                .unwrap_err();
+            assert!(
+                matches!(error,MatrixError::Relation(message) if message==if reset {"memory roots"} else {"matrix half sums"})
+            );
+        }
     }
 }

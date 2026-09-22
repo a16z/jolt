@@ -208,7 +208,8 @@ impl ProductReduction {
             dot_evaluations: self.dot_evaluations,
         })
     }
-    fn verify(
+    /// Verifies all key-fixed layers, including zero-round terminal checks.
+    pub fn verify(
         mut self,
         proof: &ProductNetworkProof,
         transcript: &mut Bn254WideBlake2bTranscript,
@@ -439,7 +440,7 @@ impl ComputationKey {
         }
         let id = IdentityPolynomial::new(mem.point.len()).evaluate(&mem.point);
         for (axis, point) in [&x, &y].into_iter().enumerate() {
-            let init = id + alpha * EqPolynomial::new(point.to_vec()).evaluate(&mem.point) - beta;
+            let init = id + alpha * EqPolynomial::new(point.clone()).evaluate(&mem.point) - beta;
             if mem.tree_evaluations[axis * 2] != init
                 || mem.tree_evaluations[axis * 2 + 1]
                     != init + alpha2 * proof.audit_values.evaluations[axis]

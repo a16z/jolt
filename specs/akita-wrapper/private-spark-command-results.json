@@ -1,0 +1,85 @@
+{
+  "exit_provenance": "Exit codes observed directly in tool completion results; this manifest was assembled afterward, not inferred from quiet log contents.",
+  "cwd": "preprocessed-matrix-r1cs",
+  "environment": {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_TARGET_DIR": "../crypto-r1cs/target"
+  },
+  "commands": [
+    {
+      "command": "cargo nextest run -p jolt-spartan-prover -p jolt-spartan-verifier --features preprocessed --lib --cargo-quiet",
+      "exit_code": 101,
+      "log": "/private/tmp/private-spark-initial-nextest.log",
+      "log_sha256": "029ad72546c5e45b98d921c6d420c1650cc59186e133c506b46f7134598a6b18",
+      "note": "Initial source: incorrect associated-type owner; no tests executed."
+    },
+    {
+      "command": "cargo nextest run -p jolt-spartan-prover -p jolt-spartan-verifier --features preprocessed --lib --cargo-quiet",
+      "exit_code": 0,
+      "log": "/private/tmp/private-spark-nextest-2.log",
+      "log_sha256": "0f540911b1ee008f336bb4baa6ac53ce035a15a74d2ebd0291e3eff7dd8e22c2",
+      "note": "Initial successful private implementation: 10/10 tests, run83d372bf-fc2b-47dd-8401-1a376423dd25."
+    },
+    {
+      "command": "cargo nextest run -p jolt-spartan-prover --features preprocessed --lib full_v2_transcript --success-output immediate --cargo-quiet",
+      "exit_code": 0,
+      "log": "/private/tmp/private-spark-vector.log",
+      "log_sha256": "de6761fda3e542f66167715496eaea874c85d2fbf8183f51c0203134fb206ecc",
+      "note": "Capture only: subsequently replaced stdout with exact assertions; runf307ed52-e300-425f-8353-c467a767b037."
+    },
+    {
+      "command": "cargo clippy -p jolt-spartan-prover -p jolt-spartan-verifier --features preprocessed --all-targets -q -- -D warnings",
+      "exit_code": 101,
+      "log": "/private/tmp/private-spark-clippy-initial.log",
+      "log_sha256": "bdb3e4b1b2af625fde0733ebec911bfb1a982a1d7c9f809a9bd91a14f6c36002",
+      "note": "Implicit Vec clone lint."
+    },
+    {
+      "command": "cargo clippy -p jolt-spartan-prover -p jolt-spartan-verifier --features preprocessed --all-targets -q -- -D warnings",
+      "exit_code": 101,
+      "log": "/private/tmp/private-spark-clippy-2.log",
+      "log_sha256": "2b6c04a9e5d3c604915f9778c3ef4d3d9620abb57d5ac434e2753b2326737b9d",
+      "note": "is_multiple_of, needless for_each and temporary capture println lint."
+    },
+    {
+      "command": "cargo clippy -p jolt-spartan-prover -p jolt-spartan-verifier --features preprocessed --all-targets -q -- -D warnings",
+      "exit_code": 0,
+      "log": "/private/tmp/private-spark-final-clippy.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "note": "Final source lint check; only rustfmt/Taplo and documentation afterward."
+    },
+    {
+      "command": "cargo nextest run -p jolt-spartan-prover -p jolt-spartan-verifier --features preprocessed --lib --cargo-quiet",
+      "exit_code": 0,
+      "log": "/private/tmp/private-spark-final-nextest.log",
+      "log_sha256": "121f10d8088476a229ffdaf1ab066cfe31ae398277e7571ab42a76b901fae1d5",
+      "note": "Final10/10 tests run3324bbfe-7a1c-4c7e-b692-c4c63f47b06e."
+    },
+    {
+      "command": "cargo nextest run -p jolt-spartan-prover --features preprocessed --test spartan --cargo-quiet",
+      "exit_code": 0,
+      "log": "/private/tmp/private-spark-direct-regression.log",
+      "log_sha256": "847eaaba2cce6ef4ed7c87cff803ccbf18c7f6f671653ca599fd62d14a55d690",
+      "note": "Unchanged direct regression9/9, runcf25dac8-c28c-4d9f-94d7-04c351741bd9."
+    }
+  ],
+  "other_checks": [
+    {
+      "command": "cargo fmt -q",
+      "exit_code": 0
+    },
+    {
+      "command": "taplo fmt crates/jolt-spartan-prover/Cargo.toml",
+      "exit_code": 0,
+      "note": "Unsandboxed local formatting for known macOS sandbox configuration issue."
+    },
+    {
+      "command": "python3 crates/jolt-spartan-prover/tests/fixtures/make_setup_vector.py",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ]
+}

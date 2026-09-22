@@ -21,6 +21,15 @@ impl PreprocessedMatrices {
         witness: &[Fr],
         setup: &HyperKZGProverSetup,
     ) -> Result<PreprocessedProof, MatrixError> {
+        self.prove_session(public_inputs, witness, setup)
+            .map(|(proof, _)| proof)
+    }
+    pub(super) fn prove_session(
+        &self,
+        public_inputs: &[Fr],
+        witness: &[Fr],
+        setup: &HyperKZGProverSetup,
+    ) -> Result<(PreprocessedProof, Bn254WideBlake2bTranscript), MatrixError> {
         let direct = &self.direct;
         direct.validate_public_inputs(public_inputs)?;
         if witness.len() != direct.witness_len() {
@@ -119,16 +128,19 @@ impl PreprocessedMatrices {
             Some(hint),
             &mut transcript,
         )?;
-        Ok(PreprocessedProof {
-            witness_commitment,
-            outer,
-            outer_evaluations,
-            public,
-            inner,
-            private_values,
-            sparse,
-            witness_evaluation,
-            witness_opening,
-        })
+        Ok((
+            PreprocessedProof {
+                witness_commitment,
+                outer,
+                outer_evaluations,
+                public,
+                inner,
+                private_values,
+                sparse,
+                witness_evaluation,
+                witness_opening,
+            },
+            transcript,
+        ))
     }
 }

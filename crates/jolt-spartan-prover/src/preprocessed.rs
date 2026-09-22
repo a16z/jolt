@@ -220,7 +220,7 @@ mod tests {
     use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
     use jolt_transcript::Transcript;
 
-    fn setup() -> (HyperKZGProverSetup, HyperKZGVerifierSetup) {
+    pub(super) fn setup() -> (HyperKZGProverSetup, HyperKZGVerifierSetup) {
         let beta = Fr::from_u64(7);
         HyperKZGScheme::setup(HyperKZGSetupParams {
             g1_powers: std::iter::successors(Some(Fr::one()), |x| Some(*x * beta))
@@ -234,7 +234,7 @@ mod tests {
         })
         .unwrap()
     }
-    fn relation() -> SpartanKey<Fr> {
+    pub(super) fn relation() -> SpartanKey<Fr> {
         let o = Fr::one();
         SpartanKey::new(
             ConstraintMatrices::new(
@@ -254,7 +254,7 @@ mod tests {
         )
         .unwrap()
     }
-    fn ids() -> MatrixApplicationIds {
+    pub(super) fn ids() -> MatrixApplicationIds {
         MatrixApplicationIds {
             circuit: [1; 32],
             profile: [2; 32],
@@ -639,5 +639,71 @@ mod tests {
                 Err(MatrixError::Identity)
             ));
         }
+    }
+    #[test]
+    fn full_v2_transcript_and_actual_payload_regression() {
+        let (pk, vk) = setup();
+        let tables = PreprocessedMatrices::new(&relation(), ids(), &pk).unwrap();
+        let inputs = [5, 0].map(Fr::from_u64);
+        let (proof, mut transcript) = tables
+            .prove_session(&inputs, &[3, 0, 0, 11, 0].map(Fr::from_u64), &pk)
+            .unwrap();
+        tables
+            .key()
+            .verify(&tables.key().id(), &inputs, &proof, &vk)
+            .unwrap();
+        let pcs = [
+            &proof.public.opening,
+            &proof.sparse.dereferences.opening,
+            &proof.sparse.operation_values.opening,
+            &proof.sparse.audit_values.opening,
+            &proof.witness_opening,
+        ];
+        let groups = 2 + pcs.iter().map(|p| p.com.len() + p.w.len()).sum::<usize>();
+        let mut scalars = 3 + proof.public.evaluations.len() + 3 + 16 + 6 + 6 + 16 + 2 + 1;
+        scalars += pcs
+            .iter()
+            .flat_map(|p| p.v.iter())
+            .map(Vec::len)
+            .sum::<usize>();
+        for sc in [&proof.outer, &proof.inner] {
+            scalars += sc
+                .round_polynomials
+                .iter()
+                .map(|p| p.coeffs_except_linear_term().len())
+                .sum::<usize>();
+        }
+        for layer in proof
+            .sparse
+            .operations
+            .layers
+            .iter()
+            .chain(&proof.sparse.memory.layers)
+        {
+            scalars += layer
+                .sumcheck
+                .round_polynomials
+                .iter()
+                .map(|p| p.coeffs_except_linear_term().len())
+                .sum::<usize>()
+                + 2 * layer.ends.len()
+                + 3 * layer.dot_ends.len();
+        }
+        let bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard()).unwrap();
+        assert_eq!(
+            transcript.state(),
+            [
+                39, 228, 17, 152, 138, 110, 135, 28, 57, 155, 111, 51, 150, 113, 78, 142, 225, 11,
+                64, 1, 223, 137, 255, 39, 65, 61, 149, 117, 234, 53, 240, 249
+            ]
+        );
+        assert_eq!(
+            transcript.challenge().to_bytes_le_vec(),
+            [
+                196, 45, 185, 169, 164, 73, 125, 50, 196, 184, 92, 121, 114, 144, 122, 255, 127,
+                184, 39, 111, 80, 229, 98, 165, 220, 159, 75, 101, 34, 200, 201, 9
+            ]
+        );
+        assert_eq!((scalars, groups, bytes.len()), (248, 36, 9176));
     }
 }
