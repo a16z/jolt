@@ -1,0 +1,138 @@
+{
+  "code_commit": "c692c8273fd9616f0505f2542d08fc5e75a3f9bb",
+  "exits": {
+    "nextest-final": 0,
+    "nextest-width-repair": 0,
+    "clippy-initial": 0,
+    "norm-build": 0,
+    "nextest-initial": 100
+  },
+  "fixture_checks": {
+    "toy": {
+      "bytes": 9149,
+      "Fr": 248,
+      "G1": 36,
+      "key_id": "e3e14d747eda7239d0b00aebd7c1b41f00626a1430724bbd571be33752ce7ff3",
+      "sha256": "4479eddec1b1291240169650799eff76f0190d592afd1b8944603cdbb9dfd151",
+      "blake2b256": "f82c302ee19e304a173d64af5874bf8a63071e6158c93b1d603865581d9748f2",
+      "canonical_primitive_checks": true
+    },
+    "norm": {
+      "bytes": 54547,
+      "Fr": 1595,
+      "G1": 100,
+      "key_id": "64d36a74f1daae0d3d8cff574c1ba4b0b2904f2ac8299a6f2e6c53eb284e0b38",
+      "sha256": "0a5c4932d266868cfd8f2664d28ab1e99c2ebe294d4c361b23c712fc1130c6af",
+      "blake2b256": "35e94e08ea4fa1419556e83cb57850a29e5d3fba614f524b0862d462138be5c6",
+      "canonical_primitive_checks": true
+    }
+  },
+  "norm_execution": {
+    "label": "wire-norm-c692c8273",
+    "cwd": "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/preprocessed-wire",
+    "argv": [
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/crypto-r1cs/target/debug/examples/wire_norm_fixture",
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/norm-comparison-run/preprocessed-first",
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/wire-run/norm-wire-v1.bin"
+    ],
+    "environment": {
+      "RAYON_NUM_THREADS": "1"
+    },
+    "heads": {
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/preprocessed-wire": "c692c8273fd9616f0505f2542d08fc5e75a3f9bb"
+    },
+    "sha256": {
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/preprocessed-wire/Cargo.lock": "258cb2f0c7d6cb7c99a912d57c4f7c212fbf91526b439dc859917a01f1662ef3",
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/crypto-r1cs/target/debug/examples/wire_norm_fixture": "bf16f23ba6c161ee238975995bd65a83e48fb85d16f4a6d8aacd9e3b3b7694af",
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/recursion-blake-run/govern.py": "0d7c7919b0eaded61397028c3c7abeaeebcfa8f77516917f2b37772989fd1ef7",
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/norm-comparison-run/preprocessed-first/proof.bin": "6088a5f8e4e71c26920a4fcedd4eaf9e002b80f840ef63bd638dbe9df91bc7bb",
+      "/private/var/folders/g4/6bp_sb413fjg5gtf5gc6p85c0000gp/T/jolt-wrapper-goal-2zc2x9g1/norm-comparison-run/preprocessed-first/computation-key.bin": "88bd9f34f8c79c6ddcb89f66a4cb5d8b50638f4160337823bbcbbe45e7024227"
+    },
+    "limits": {
+      "rss_bytes": 34359738368,
+      "wall_seconds": 900,
+      "disk_free_bytes": 12884901888
+    },
+    "exit_code": 0,
+    "stop_reason": null,
+    "elapsed_seconds": 42.68898525,
+    "sampled_process_group_peak_rss_bytes": 105578496,
+    "minimum_disk_free_bytes": 16460173312,
+    "samples": 41,
+    "child_rusage_maxrss_bytes_macos": 108445696,
+    "rss_scope": "sum of process-group RSS, one-second samples; shared pages may be counted more than once",
+    "rusage_scope": "maximum individual terminated child RSS, including ps subprocesses",
+    "process_group_members_after_cleanup": [],
+    "cleanup_errors": []
+  },
+  "files": {
+    "wire-run/artifacts/wire_norm_fixture": {
+      "bytes": 10240080,
+      "sha256": "bf16f23ba6c161ee238975995bd65a83e48fb85d16f4a6d8aacd9e3b3b7694af"
+    },
+    "wire-run/check-toy-wire.py": {
+      "bytes": 2094,
+      "sha256": "09c41fe8cb5a28c6d67f5f2341f01001d82bfdf351aa661baf37f99757dbce8a"
+    },
+    "wire-run/clippy-initial.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "wire-run/clippy-initial.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wire-run/initial-source.json": {
+      "bytes": 916,
+      "sha256": "a0612d7f84bff9d65dff0583b61808c028dd6661b161327bb5b389163a9cfb97"
+    },
+    "wire-run/nextest-final.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "wire-run/nextest-final.log": {
+      "bytes": 2131,
+      "sha256": "1e13a7c1b149eb7355542a90e7e1cc1bf72072937fdca71ddd8d37e16e354ced"
+    },
+    "wire-run/nextest-initial.exit": {
+      "bytes": 4,
+      "sha256": "eea8254c7500ba3de996aa8ad6af399183f04e17d4a8102fde539dbc93a90012"
+    },
+    "wire-run/nextest-initial.log": {
+      "bytes": 1683,
+      "sha256": "0d7fa5220a6f300149908a91159fc635bca5b974cb6822288737bb28b3beaa54"
+    },
+    "wire-run/nextest-width-repair.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "wire-run/nextest-width-repair.log": {
+      "bytes": 781,
+      "sha256": "6b75d5985f30801373fbed2ec362e2bd7fc68ab3d8a09d680f685993338a8b81"
+    },
+    "wire-run/norm-build.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "wire-run/norm-build.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wire-run/norm-independent-check.json": {
+      "bytes": 330,
+      "sha256": "94574902218731fdedc35920a074f8c5d6d672445bf6ac80b790bcd9b1eed799"
+    },
+    "wire-run/norm-wire-v1.bin": {
+      "bytes": 54547,
+      "sha256": "0a5c4932d266868cfd8f2664d28ab1e99c2ebe294d4c361b23c712fc1130c6af"
+    },
+    "wire-run/norm.command.json": {
+      "bytes": 1921,
+      "sha256": "a80362ef4b11406dba05bf9783f85620567f718f532ae7db12260e9429f1879d"
+    },
+    "wire-run/toy-independent-check.json": {
+      "bytes": 327,
+      "sha256": "973a7be21101a8e7f47d6c3f0ad222baa0c8dfe68d39eab361da2fe427f063cb"
+    }
+  }
+}

@@ -4,6 +4,20 @@
 //! `JoltGroup` and `PairingGroup` traits. Arkworks types never appear in
 //! the public API — all conversions happen internally.
 
+impl Bn254G1 {
+    /// Reads exactly one canonical compressed subgroup point (identity included).
+    /// Rejects noncanonical encodings even if the underlying decoder accepts them.
+    pub fn from_compressed_bytes(bytes: &[u8]) -> Option<Self> {
+        use ark_bn254::G1Projective;
+        use ark_serialize::CanonicalDeserialize;
+        if bytes.len() != 32 {
+            return None;
+        }
+        let point = Self(G1Projective::deserialize_compressed(bytes).ok()?);
+        (point.compressed_bytes() == bytes).then_some(point)
+    }
+}
+
 /// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
 /// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
 /// size assertions, and a safe `into_inner` accessor.
@@ -66,7 +80,7 @@ macro_rules! impl_jolt_group_wrapper {
         // caller must supply a valid prime-order-subgroup point (relevant for
         // G2, whose cofactor is non-trivial). This is a plumbing conversion
         // for internally-constructed arkworks values; untrusted bytes must
-        // enter through serde `Deserialize` below, which validates via
+        // enter through checked compressed decoding or serde `Deserialize` below, which validates via
         // arkworks (`Validate::Yes`: on-curve + subgroup check).
         impl From<$projective> for $wrapper {
             #[inline(always)]
@@ -410,5 +424,35 @@ mod tests {
         let json = serde_json::to_string(&point).expect("encode point");
         let recovered: Bn254G1 = serde_json::from_str(&json).expect("decode point");
         assert_eq!(recovered, point);
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "fixed canonical encoding fixtures")]
+mod compressed_wire_tests {
+    use super::Bn254G1;
+    use crate::{Bn254, JoltGroup};
+    use jolt_field::{Fr, Zero};
+
+    #[test]
+    fn checked_compressed_point_has_one_identity_encoding() {
+        let identity = Bn254::g1_generator().scalar_mul(&Fr::zero());
+        let bytes = identity.compressed_bytes();
+        assert_eq!(Bn254G1::from_compressed_bytes(&bytes), Some(identity));
+        let mut noncanonical = bytes.clone();
+        *noncanonical.first_mut().unwrap() = 1;
+        assert!(Bn254G1::from_compressed_bytes(&noncanonical).is_none());
+        assert!(Bn254G1::from_compressed_bytes(&[255; 32]).is_none());
+        // x=0 gives y²=3, a nonresidue in BN254 Fq.
+        assert!(Bn254G1::from_compressed_bytes(&[0; 32]).is_none());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(Bn254G1::from_compressed_bytes(&trailing).is_none());
+        assert!(Bn254G1::from_compressed_bytes(&[]).is_none());
+        let generator = Bn254::g1_generator();
+        assert_eq!(
+            Bn254G1::from_compressed_bytes(&generator.compressed_bytes()),
+            Some(generator)
+        );
     }
 }

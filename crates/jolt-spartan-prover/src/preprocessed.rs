@@ -212,6 +212,7 @@ mod tests {
     use jolt_crypto::{Bn254, JoltGroup};
     use jolt_field::One;
     use jolt_hyperkzg::{HyperKZGSetupParams, HyperKZGVerifierSetup};
+    use jolt_poly::CompressedPoly;
     use jolt_r1cs::ConstraintMatrices;
     use jolt_spartan_verifier::{
         preprocessed::{PreprocessedProof, PublicColumnQuery},
@@ -640,6 +641,220 @@ mod tests {
             ));
         }
     }
+    #[test]
+    fn wire_v1_accepts_honest_proof_and_rejects_untrusted_bytes() {
+        use jolt_field::CanonicalBytes;
+        use jolt_spartan_verifier::preprocessed::wire::{verify_bytes, WireError};
+        let (pk, vk) = setup();
+        let tables = PreprocessedMatrices::new(&relation(), ids(), &pk).unwrap();
+        let key = tables.key();
+        let inputs = [5, 0].map(Fr::from_u64);
+        let proof = tables
+            .prove(&inputs, &[3, 0, 0, 11, 0].map(Fr::from_u64), &pk)
+            .unwrap();
+        let input_bytes = inputs
+            .iter()
+            .flat_map(CanonicalBytes::to_bytes_le_vec)
+            .collect::<Vec<_>>();
+        let key_bytes = key.canonical_bytes();
+        let encoded = key.encode_proof(&proof).unwrap();
+        assert_eq!(
+            encoded,
+            include_bytes!("../tests/fixtures/preprocessed-wire-v1-toy.bin").as_slice()
+        );
+        assert_eq!(encoded.len(), 9149);
+        verify_bytes(&key.id(), &vk, &key_bytes, &input_bytes, &encoded).unwrap();
+        let decoded = key.decode_proof(&encoded).unwrap();
+        assert_eq!(key.encode_proof(&decoded).unwrap(), encoded);
+        // Fixed geometry has no attacker-selected count or recursive container depth.
+        for len in [0, 1, 51, 52, encoded.len() - 1] {
+            assert!(matches!(
+                verify_bytes(&key.id(), &vk, &key_bytes, &input_bytes, &encoded[..len]),
+                Err(WireError::Length)
+            ));
+        }
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert!(matches!(
+            key.decode_proof(&trailing),
+            Err(WireError::Length)
+        ));
+        for offset in [0, 16] {
+            let mut bad = encoded.clone();
+            bad[offset] ^= 1;
+            assert!(matches!(key.decode_proof(&bad), Err(WireError::Version)));
+        }
+        let mut bad = encoded.clone();
+        bad[20] ^= 1;
+        assert!(matches!(
+            key.decode_proof(&bad),
+            Err(WireError::Protocol(MatrixError::Identity))
+        ));
+        let mut bad = encoded.clone();
+        bad[52..84].fill(255);
+        assert!(matches!(key.decode_proof(&bad), Err(WireError::Group)));
+        let mut bad = encoded.clone();
+        bad[85..117].fill(255);
+        assert!(matches!(key.decode_proof(&bad), Err(WireError::Field)));
+        let mut modulus_alias = encoded.clone();
+        modulus_alias[85..117].copy_from_slice(&key_bytes[44..76]);
+        assert!(matches!(
+            key.decode_proof(&modulus_alias),
+            Err(WireError::Field)
+        ));
+        let mut bad_inputs = input_bytes.clone();
+        bad_inputs[..32].fill(255);
+        assert!(matches!(
+            verify_bytes(&key.id(), &vk, &key_bytes, &bad_inputs, &encoded),
+            Err(WireError::Field)
+        ));
+        assert!(matches!(
+            verify_bytes(&key.id(), &vk, &key_bytes, &input_bytes[..63], &encoded),
+            Err(WireError::Length)
+        ));
+        let mut bad_inputs = input_bytes.clone();
+        bad_inputs[0] += 1;
+        assert!(verify_bytes(&key.id(), &vk, &key_bytes, &bad_inputs, &encoded).is_err());
+        let mut bad = encoded.clone();
+        bad[85] ^= 1;
+        assert!(verify_bytes(&key.id(), &vk, &key_bytes, &input_bytes, &bad).is_err());
+        for width in [0, 4, 255] {
+            let mut invalid_width = encoded.clone();
+            invalid_width[84] = width;
+            assert!(matches!(
+                key.decode_proof(&invalid_width),
+                Err(WireError::RoundEncoding)
+            ));
+        }
+        let mut padded = encoded.clone();
+        padded[84] = 1;
+        padded[117..181].fill(0);
+        padded[117] = 1;
+        assert!(matches!(key.decode_proof(&padded), Err(WireError::Padding)));
+        let mut shortened = proof.clone();
+        shortened.outer.round_polynomials[0] = CompressedPoly::new(vec![]);
+        assert!(matches!(
+            key.encode_proof(&shortened),
+            Err(WireError::RoundEncoding)
+        ));
+        let mut bad_zero_round = proof;
+        bad_zero_round.sparse.operations.layers[0]
+            .sumcheck
+            .round_polynomials
+            .push(CompressedPoly::new(vec![Fr::zero(); 3]));
+        assert!(matches!(
+            key.encode_proof(&bad_zero_round),
+            Err(WireError::Shape)
+        ));
+    }
+
+    #[test]
+    fn wire_v1_key_identity_geometry_and_setup_gates() {
+        use jolt_spartan_verifier::preprocessed::wire::WireError;
+        let (pk, vk) = setup();
+        let tables = PreprocessedMatrices::new(&relation(), ids(), &pk).unwrap();
+        let key = tables.key();
+        let bytes = key.canonical_bytes();
+        assert!(matches!(
+            ComputationKey::decode_wire(&bytes, &[0; 32], &vk),
+            Err(WireError::Protocol(MatrixError::Identity))
+        ));
+        for len in [0, 475] {
+            assert!(matches!(
+                ComputationKey::decode_wire(&bytes[..len], &key.id(), &vk),
+                Err(WireError::Length)
+            ));
+        }
+        let mut bad = bytes.clone();
+        bad.push(0);
+        assert!(matches!(
+            ComputationKey::decode_wire(&bad, &key.id(), &vk),
+            Err(WireError::Length)
+        ));
+        let mut bad = bytes.clone();
+        bad[0] ^= 1;
+        assert!(matches!(
+            ComputationKey::decode_wire(&bad, &ComputationKey::digest(&bad), &vk),
+            Err(WireError::Version)
+        ));
+        let mut bad = bytes.clone();
+        bad[76..84].fill(255);
+        assert!(ComputationKey::decode_wire(&bad, &ComputationKey::digest(&bad), &vk).is_err());
+        let mut too_deep = bytes.clone();
+        for offset in [76, 100, 124] {
+            too_deep[offset..offset + 8].copy_from_slice(&(1u64 << 33).to_le_bytes());
+        }
+        assert!(matches!(
+            ComputationKey::decode_wire(&too_deep, &ComputationKey::digest(&too_deep), &vk),
+            Err(WireError::Limit)
+        ));
+        let mut too_public = bytes.clone();
+        for (offset, value) in [(84, 1030u64), (92, 1025), (108, 8), (124, 8), (132, 4096)] {
+            too_public[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        assert!(matches!(
+            ComputationKey::decode_wire(&too_public, &ComputationKey::digest(&too_public), &vk),
+            Err(WireError::Limit)
+        ));
+        let mut bad = bytes.clone();
+        bad[380..412].fill(255);
+        assert!(matches!(
+            ComputationKey::decode_wire(&bad, &ComputationKey::digest(&bad), &vk),
+            Err(WireError::Group)
+        ));
+        let (_, changed_setup) = HyperKZGScheme::setup(HyperKZGSetupParams {
+            g1_powers: vec![Bn254::g1_generator(); 64],
+            g2: Bn254::g2_generator(),
+            beta_g2: Bn254::g2_generator(),
+            setup_id: [10; 32],
+            max_public_degree: 63,
+        })
+        .unwrap();
+        assert!(matches!(
+            ComputationKey::decode_wire(&bytes, &key.id(), &changed_setup),
+            Err(WireError::Protocol(MatrixError::Identity))
+        ));
+    }
+
+    #[test]
+    fn wire_v1_empty_matrix_and_zero_product_networks_are_complete() {
+        use jolt_field::CanonicalBytes;
+        use jolt_spartan_verifier::preprocessed::wire::verify_bytes;
+        let (pk, vk) = setup();
+        let empty = SpartanKey::new(
+            ConstraintMatrices::new(4, 8, vec![vec![]; 4], vec![vec![]; 4], vec![vec![]; 4]),
+            2,
+            [19; 32],
+        )
+        .unwrap();
+        let tables = PreprocessedMatrices::new(&empty, ids(), &pk).unwrap();
+        let inputs = [Fr::zero(); 2];
+        let proof = tables.prove(&inputs, &[Fr::zero(); 5], &pk).unwrap();
+        let key = tables.key();
+        assert_eq!(key.shape().operations, 2);
+        assert!(proof.sparse.operations.layers[0]
+            .sumcheck
+            .round_polynomials
+            .is_empty());
+        let bytes = key.encode_proof(&proof).unwrap();
+        verify_bytes(
+            &key.id(),
+            &vk,
+            &key.canonical_bytes(),
+            &inputs
+                .iter()
+                .flat_map(CanonicalBytes::to_bytes_le_vec)
+                .collect::<Vec<_>>(),
+            &bytes,
+        )
+        .unwrap();
+        assert_eq!(
+            key.encode_proof(&key.decode_proof(&bytes).unwrap())
+                .unwrap(),
+            bytes
+        );
+    }
+
     #[test]
     fn full_v2_transcript_and_actual_payload_regression() {
         let (pk, vk) = setup();

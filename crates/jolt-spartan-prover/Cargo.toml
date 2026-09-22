@@ -37,3 +37,7 @@ jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
 ] }
 bincode.workspace = true
+
+[[example]]
+name = "wire_norm_fixture"
+required-features = ["preprocessed"]
