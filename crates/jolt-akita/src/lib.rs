@@ -20,6 +20,10 @@
     clippy::wildcard_enum_match_arm
 )]
 
+/// BN254 constraints for Akita transcript framing.
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
+
 mod adapters;
 pub mod configs;
 mod native_batching;

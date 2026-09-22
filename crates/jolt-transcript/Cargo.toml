@@ -12,6 +12,7 @@ categories = ["cryptography", "no-std"]
 workspace = true
 
 [features]
+r1cs = ["dep:jolt-r1cs", "jolt-r1cs/bn254", "dep:thiserror"]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 spongefish = ["dep:rand", "dep:spongefish", "spongefish/sha3"]
 digest = ["dep:digest"]
@@ -26,6 +27,8 @@ transcript-keccak = ["spongefish", "spongefish/keccak"]
 transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
 
 [dependencies]
+jolt-r1cs = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
@@ -36,6 +39,8 @@ jolt-field = { path = "../jolt-field", default-features = false }
 rand = { workspace = true, features = ["std_rng"], optional = true }
 
 [dev-dependencies]
+spongefish = { workspace = true, features = ["blake2", "sha3"] }
+blake2.workspace = true
 num-traits = { workspace = true }
 criterion = { workspace = true }
 
@@ -59,3 +64,11 @@ required-features = ["bn254", "transcript-keccak"]
 [[test]]
 name = "poseidon_tests"
 required-features = ["transcript-poseidon"]
+
+[[example]]
+name = "blake2b_r1cs_cost"
+required-features = ["r1cs"]
+
+[[test]]
+name = "native_traits_tests"
+required-features = ["bn254"]

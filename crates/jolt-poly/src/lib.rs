@@ -91,3 +91,6 @@ pub use one_hot::{OneHotIndexOrder, OneHotPolynomial};
 pub use point::{Endianness, Point, HIGH_TO_LOW, LOW_TO_HIGH};
 pub use split_eq::{GruenSplitEqPolynomial, TensorEqTable};
 pub use univariate::{UnivariatePoly, UnivariatePolynomial};
+
+#[cfg(feature = "r1cs")]
+pub mod r1cs;

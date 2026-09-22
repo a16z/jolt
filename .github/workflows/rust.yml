@@ -132,6 +132,10 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features akita,profiling
       - name: cargo clippy -p jolt-prover --features akita,profiling,allocative
         run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,allocative
+      - name: cargo clippy constrained Blake2b
+        run: cargo clippy -p jolt-r1cs -p jolt-transcript -p jolt-akita --all-targets --features jolt-transcript/r1cs,jolt-akita/r1cs -q -- -D warnings
+      - name: cargo clippy constrained foreign arithmetic
+        run: cargo clippy -p jolt-r1cs -p jolt-poly --all-targets --features jolt-poly/r1cs -q -- -D warnings
       # The field-inline feature is not enabled by host/zk/default, so the
       # workspace-wide invocations above never build it. Lint the crates that
       # define it explicitly so the feature keeps compiling.
@@ -618,6 +622,15 @@ jobs:
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
+      - name: Test constrained Blake2b
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-r1cs -p jolt-transcript --features jolt-transcript/r1cs --cargo-quiet
+      - name: Test constrained Akita transcript
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-akita --features r1cs --test r1cs_transcript --cargo-quiet
+      - name: Test constrained foreign arithmetic
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-r1cs -p jolt-poly --features jolt-poly/r1cs --cargo-quiet
       - name: Test constrained claim primitives
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-claims --features r1cs --cargo-quiet

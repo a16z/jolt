@@ -3199,12 +3199,14 @@ dependencies = [
  "akita-planner",
  "akita-prover",
  "akita-schedules",
+ "akita-transcript",
  "akita-types",
  "bincode 2.0.1",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
+ "jolt-r1cs",
  "jolt-transcript",
  "rayon",
  "serde",
@@ -3629,8 +3631,10 @@ dependencies = [
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
+ "jolt-r1cs",
  "jolt-transcript",
  "jolt-utils",
+ "num-bigint",
  "num-traits",
  "rand 0.8.7",
  "rand_chacha 0.3.1",
@@ -3784,6 +3788,7 @@ name = "jolt-r1cs"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "num-bigint",
  "serde",
  "thiserror 2.0.20",
 ]
@@ -3878,10 +3883,12 @@ dependencies = [
  "criterion",
  "digest 0.11.3",
  "jolt-field",
+ "jolt-r1cs",
  "light-poseidon",
  "num-traits",
  "rand 0.8.7",
  "spongefish",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
