@@ -1,4 +1,4 @@
-//! Constrained unkeyed BLAKE2b and the legacy Jolt digest-transcript transition.
+//! Constrained unkeyed BLAKE2b, legacy Jolt framing, and spongefish duplex state.
 //!
 //! Implements RFC 7693 sections 2.5–3.3. Digest size is part of initialization:
 //! BLAKE2b-256 is not truncated BLAKE2b-512. Message length and round counter
@@ -393,3 +393,6 @@ mod tests {
         assert_eq!(other.num_vars(), 1);
     }
 }
+
+mod duplex;
+pub use duplex::Blake2bDuplexVar;

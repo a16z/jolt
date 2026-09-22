@@ -39,6 +39,7 @@ jolt-field = { path = "../jolt-field", default-features = false }
 rand = { workspace = true, features = ["std_rng"], optional = true }
 
 [dev-dependencies]
+spongefish = { workspace = true, features = ["blake2", "sha3"] }
 blake2.workspace = true
 num-traits = { workspace = true }
 criterion = { workspace = true }
@@ -67,3 +68,7 @@ required-features = ["transcript-poseidon"]
 [[example]]
 name = "blake2b_r1cs_cost"
 required-features = ["r1cs"]
+
+[[test]]
+name = "native_traits_tests"
+required-features = ["bn254"]

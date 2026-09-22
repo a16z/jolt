@@ -3,7 +3,7 @@ use std::error::Error;
 
 use jolt_r1cs::bn254_bits::ByteVar;
 use jolt_r1cs::R1csBuilder;
-use jolt_transcript::r1cs::{blake2b256, blake2b512};
+use jolt_transcript::r1cs::{blake2b256, blake2b512, Blake2bDuplexVar};
 
 #[expect(
     clippy::print_stdout,
@@ -40,6 +40,30 @@ fn main() -> Result<(), Box<dyn Error>> {
                 matrices.num_vars
             );
         }
+    }
+    for length in [0, 1, 129] {
+        let mut builder = R1csBuilder::new();
+        let message: Vec<_> = (0..length)
+            .map(|_| ByteVar::allocate(&mut builder, None))
+            .collect();
+        let mut duplex = Blake2bDuplexVar::default();
+        duplex.absorb(&mut builder, &message)?;
+        for byte in duplex.squeeze(&mut builder, 32)? {
+            let claimed = ByteVar::allocate(&mut builder, None);
+            builder.assert_equal(byte.expression(), claimed.expression());
+        }
+        let matrices = builder.into_matrices();
+        let nonzeros: usize = matrices
+            .a
+            .iter()
+            .chain(&matrices.b)
+            .chain(&matrices.c)
+            .map(Vec::len)
+            .sum();
+        println!(
+            "duplex64 absorb={length} squeeze=32: rows={}, variables={}, nonzeros={nonzeros}",
+            matrices.num_constraints, matrices.num_vars
+        );
     }
     Ok(())
 }
