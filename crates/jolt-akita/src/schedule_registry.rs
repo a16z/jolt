@@ -20,7 +20,11 @@ use akita_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::configs::{
+    AkitaOneHotChunkProfile, JoltDenseBounded, JoltOneHotK16, JoltOneHotK16MultiChunk,
+    JoltOneHotK16W2R2, JoltOneHotK16W4R2, JoltOneHotK256, JoltOneHotK256MultiChunk,
+    JoltOneHotK256W2R2, JoltOneHotK256W4R2,
+};
 use crate::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
 use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
@@ -69,21 +73,49 @@ impl PrecommittedScheduleParams {
         dense_catalog: &ValidatedScheduleCatalog,
         one_hot_catalog: &ValidatedScheduleCatalog,
         one_hot_k: usize,
+        profile: AkitaOneHotChunkProfile,
     ) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        let rows = provision_precommitted_for_k(
-            dense_catalog,
-            one_hot_catalog,
-            self.untrusted_physical_arity,
-            self.trusted_physical_arity,
-            &self.direct_program_physical_arities,
-            one_hot_k,
-            self.final_arity,
-        )?;
-        match one_hot_k {
-            AKITA_ONE_HOT_K16 => extend_catalog::<JoltOneHotK16>(one_hot_catalog, &rows),
-            AKITA_ONE_HOT_K256 => extend_catalog::<JoltOneHotK256>(one_hot_catalog, &rows),
+        macro_rules! extend_for {
+            ($cfg:ty) => {{
+                let rows = provision_precommitted_for_config::<$cfg>(
+                    dense_catalog,
+                    one_hot_catalog,
+                    self.untrusted_physical_arity,
+                    self.trusted_physical_arity,
+                    &self.direct_program_physical_arities,
+                    one_hot_k,
+                    self.final_arity,
+                )?;
+                extend_catalog::<$cfg>(one_hot_catalog, &rows)
+            }};
+        }
+        match (one_hot_k, profile) {
+            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single) => {
+                extend_for!(JoltOneHotK16)
+            }
+            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Two) => {
+                extend_for!(JoltOneHotK16W2R2)
+            }
+            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Four) => {
+                extend_for!(JoltOneHotK16W4R2)
+            }
+            (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Eight) => {
+                extend_for!(JoltOneHotK16MultiChunk)
+            }
+            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single) => {
+                extend_for!(JoltOneHotK256)
+            }
+            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Two) => {
+                extend_for!(JoltOneHotK256W2R2)
+            }
+            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Four) => {
+                extend_for!(JoltOneHotK256W4R2)
+            }
+            (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Eight) => {
+                extend_for!(JoltOneHotK256MultiChunk)
+            }
             other => Err(AkitaError::InvalidSetup(format!(
-                "unsupported one-hot K {other} for grouped schedule catalog"
+                "unsupported one-hot schedule profile {other:?} for grouped schedule catalog"
             ))),
         }
     }
@@ -276,7 +308,53 @@ pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupL
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
 /// Adapt grouped rows for optional advice followed by committed-program objects.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "setup provisioning receives the complete typed shape recipe plus its catalog inputs"
+)]
 pub fn provision_precommitted_for_k(
+    dense_catalog: &ValidatedScheduleCatalog,
+    one_hot_catalog: &ValidatedScheduleCatalog,
+    untrusted_physical_vars: Option<usize>,
+    trusted_physical_vars: Option<usize>,
+    direct_program_physical_vars: &[usize],
+    one_hot_k: usize,
+    profile: AkitaOneHotChunkProfile,
+    final_num_vars: usize,
+) -> Result<RegisteredRows, AkitaError> {
+    macro_rules! provision_for {
+        ($cfg:ty) => {
+            provision_precommitted_for_config::<$cfg>(
+                dense_catalog,
+                one_hot_catalog,
+                untrusted_physical_vars,
+                trusted_physical_vars,
+                direct_program_physical_vars,
+                one_hot_k,
+                final_num_vars,
+            )
+        };
+    }
+    match (one_hot_k, profile) {
+        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single) => provision_for!(JoltOneHotK16),
+        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Two) => provision_for!(JoltOneHotK16W2R2),
+        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Four) => provision_for!(JoltOneHotK16W4R2),
+        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Eight) => {
+            provision_for!(JoltOneHotK16MultiChunk)
+        }
+        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single) => provision_for!(JoltOneHotK256),
+        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Two) => provision_for!(JoltOneHotK256W2R2),
+        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Four) => provision_for!(JoltOneHotK256W4R2),
+        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Eight) => {
+            provision_for!(JoltOneHotK256MultiChunk)
+        }
+        other => Err(AkitaError::InvalidSetup(format!(
+            "unsupported one-hot schedule profile {other:?} for grouped schedule provisioning"
+        ))),
+    }
+}
+
+fn provision_precommitted_for_config<Cfg: CommitmentConfig>(
     dense_catalog: &ValidatedScheduleCatalog,
     one_hot_catalog: &ValidatedScheduleCatalog,
     untrusted_physical_vars: Option<usize>,
@@ -326,17 +404,5 @@ pub fn provision_precommitted_for_k(
             "one-hot K={one_hot_k} final arity {final_num_vars} is outside the supported range {min}..={max}"
         )));
     }
-    match one_hot_k {
-        AKITA_ONE_HOT_K256 => provision::<JoltOneHotK256, JoltDenseBounded>(
-            one_hot_catalog,
-            &combinations,
-            [final_num_vars],
-        ),
-        AKITA_ONE_HOT_K16 => provision::<JoltOneHotK16, JoltDenseBounded>(
-            one_hot_catalog,
-            &combinations,
-            [final_num_vars],
-        ),
-        _ => unreachable!("one-hot K was validated above"),
-    }
+    provision::<Cfg, JoltDenseBounded>(one_hot_catalog, &combinations, [final_num_vars])
 }

@@ -329,6 +329,105 @@ fn add_rotated_dense_rows<const D: usize>(
 }
 
 #[inline(always)]
+fn add_rotated_dense_contributions<const D: usize>(
+    dst: &mut [i32; D],
+    rotated: &[[i16; D]],
+    contributions: &[(usize, usize)],
+    table_index: impl Fn(usize, usize) -> usize + Copy,
+) {
+    let table =
+        |&(column, coefficient): &(usize, usize)| &rotated[table_index(column, coefficient)];
+    let mut remaining = contributions;
+    while remaining.len() >= 8 {
+        add_rotated_dense_tables(
+            dst,
+            [
+                table(&remaining[0]),
+                table(&remaining[1]),
+                table(&remaining[2]),
+                table(&remaining[3]),
+                table(&remaining[4]),
+                table(&remaining[5]),
+                table(&remaining[6]),
+                table(&remaining[7]),
+            ],
+        );
+        remaining = &remaining[8..];
+    }
+    match remaining {
+        [] => {}
+        [entry0] => add_rotated_dense(dst, table(entry0)),
+        [entry0, entry1] => {
+            add_rotated_dense_tables(dst, [table(entry0), table(entry1)]);
+        }
+        [entry0, entry1, entry2] => {
+            add_rotated_dense_tables(dst, [table(entry0), table(entry1), table(entry2)]);
+        }
+        [entry0, entry1, entry2, entry3] => add_rotated_dense_tables(
+            dst,
+            [table(entry0), table(entry1), table(entry2), table(entry3)],
+        ),
+        [entry0, entry1, entry2, entry3, entry4] => add_rotated_dense_tables(
+            dst,
+            [
+                table(entry0),
+                table(entry1),
+                table(entry2),
+                table(entry3),
+                table(entry4),
+            ],
+        ),
+        [entry0, entry1, entry2, entry3, entry4, entry5] => add_rotated_dense_tables(
+            dst,
+            [
+                table(entry0),
+                table(entry1),
+                table(entry2),
+                table(entry3),
+                table(entry4),
+                table(entry5),
+            ],
+        ),
+        [entry0, entry1, entry2, entry3, entry4, entry5, entry6] => {
+            add_rotated_dense_tables(
+                dst,
+                [
+                    table(entry0),
+                    table(entry1),
+                    table(entry2),
+                    table(entry3),
+                    table(entry4),
+                    table(entry5),
+                    table(entry6),
+                ],
+            );
+        }
+        _ => unreachable!("eight-entry batches leave at most seven contributions"),
+    }
+}
+
+#[inline(always)]
+fn add_rotated_dense_chunked_contributions<const D: usize>(
+    dst: &mut [[i32; D]],
+    rotated: &[[i16; D]],
+    contributions: &[(usize, usize)],
+    chunk: impl Fn(usize) -> usize + Copy,
+    table_index: impl Fn(usize, usize) -> usize + Copy,
+) {
+    let mut remaining = contributions;
+    while let Some(&(column, _)) = remaining.first() {
+        let chunk_index = chunk(column);
+        let run_len = remaining
+            .iter()
+            .take_while(|&&(column, _)| chunk(column) == chunk_index)
+            .count();
+        let (run, tail) = remaining.split_at(run_len);
+        add_rotated_dense_contributions(&mut dst[chunk_index], rotated, run, table_index);
+        remaining = tail;
+    }
+}
+
+#[inline(always)]
 fn add_rotated_rows<const D: usize>(
     dst: &mut [i32; D],
     rotations: &PreparedRotations<D>,
@@ -585,15 +684,14 @@ pub(super) fn decompose_fold_packed<const D: usize>(
                             ring_end,
                             |ring, contributions| {
                                 let position = ring - trace_block * num_positions;
-                                for &(column, coefficient) in contributions {
-                                    let block = column * blocks_per_column + trace_block;
-                                    let chunk = block_chunks[block];
-                                    add_rotated_dense(
-                                        &mut compressed
-                                            [(position - position_start) * num_chunks + chunk],
-                                        &local_rotations[column * D + coefficient],
-                                    );
-                                }
+                                let dst_start = (position - position_start) * num_chunks;
+                                add_rotated_dense_chunked_contributions(
+                                    &mut compressed[dst_start..][..num_chunks],
+                                    local_rotations,
+                                    contributions,
+                                    |column| block_chunks[column * blocks_per_column + trace_block],
+                                    |column, coefficient| column * D + coefficient,
+                                );
                             },
                         )?;
                     } else {
@@ -603,16 +701,31 @@ pub(super) fn decompose_fold_packed<const D: usize>(
                             ring_end,
                             |ring, contributions| {
                                 let position = ring - trace_block * num_positions;
-                                for &(column, coefficient) in contributions {
-                                    let block = column * blocks_per_column + trace_block;
-                                    let chunk = block_chunks[block];
-                                    add_rotated(
-                                        &mut compressed
-                                            [(position - position_start) * num_chunks + chunk],
-                                        &rotations,
-                                        trace_block * source.rows.num_columns() + column,
-                                        coefficient,
+                                let dst_start = (position - position_start) * num_chunks;
+                                if let PreparedRotations::Dense(rotated) = &rotations {
+                                    add_rotated_dense_chunked_contributions(
+                                        &mut compressed[dst_start..][..num_chunks],
+                                        rotated,
+                                        contributions,
+                                        |column| {
+                                            block_chunks[column * blocks_per_column + trace_block]
+                                        },
+                                        |column, coefficient| {
+                                            ((trace_block * source.rows.num_columns() + column) * D)
+                                                + coefficient
+                                        },
                                     );
+                                } else {
+                                    for &(column, coefficient) in contributions {
+                                        let block = column * blocks_per_column + trace_block;
+                                        let chunk = block_chunks[block];
+                                        add_rotated(
+                                            &mut compressed[dst_start + chunk],
+                                            &rotations,
+                                            trace_block * source.rows.num_columns() + column,
+                                            coefficient,
+                                        );
+                                    }
                                 }
                             },
                         )?;
