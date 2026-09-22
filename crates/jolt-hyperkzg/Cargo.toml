@@ -18,5 +18,8 @@ serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 bincode.workspace = true

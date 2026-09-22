@@ -20,6 +20,10 @@ jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::challenge#2
 jolt-transcript::legacy.rs::Transcript::challenge_scalar::challenge#0
 jolt-transcript::legacy.rs::Transcript::challenge_scalar_powers::challenge_scalar#0
 jolt-transcript::legacy.rs::Transcript::challenge_vector::challenge#0
+jolt-transcript::wide.rs::Bn254WideBlake2bTranscript::challenge::challenge_scalar#0
+jolt-transcript::wide.rs::Bn254WideBlake2bTranscript::challenge::challenge_scalar#1
+jolt-transcript::wide.rs::Bn254WideBlake2bTranscript::challenge::challenge_scalar#2
+jolt-transcript::wide.rs::Bn254WideBlake2bTranscript::challenge_scalar::challenge#0
 jolt-verifier::stages/relations.rs::ConcreteSumcheck::draw_challenges::challenge_scalar#0
 jolt-verifier::stages/stage1/outputs.rs::Stage1BatchSumchecks::<generated>::batching_coefficient[*]
 jolt-verifier::stages/stage2/outputs.rs::Stage2BatchSumchecks::<generated>::batching_coefficient[*]

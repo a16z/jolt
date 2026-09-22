@@ -21,5 +21,8 @@ jolt-transcript.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
 jolt-hyperkzg.workspace = true
-jolt-transcript = { workspace = true, features = ["bn254", "transcript-blake2b"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 bincode.workspace = true
