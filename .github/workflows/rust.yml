@@ -623,6 +623,7 @@ jobs:
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
       - name: Test constrained Blake2b
+        if: matrix.shard == 0
         run: cargo nextest run -p jolt-r1cs -p jolt-transcript --features jolt-transcript/r1cs --cargo-quiet
       - name: Test constrained foreign arithmetic
         if: matrix.shard == 0
