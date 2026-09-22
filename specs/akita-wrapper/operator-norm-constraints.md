@@ -97,54 +97,56 @@ The intentional `operator_norm_r1cs_cost` example counts the entire component wi
 64 input handles, shell constraints and all frequencies. This is a matrix census,
 not a timing or complete-wrapper performance measurement.
 
-Validation uses an unpublished native API overlay: `.git/validation.toml` patches
-all 14 packages under `https://github.com/markosg04/akita.git` to the same
-`akita-norm-api` checkout. Cargo metadata verifies one workspace `jolt-field`.
-The public checked-in lock remains pinned to native 28fc; the consumer needs the
-reviewed native API published and the dependency advanced before public CI can
-build it. The patched lock, overlay, raw command logs and exact results are
-archived separately under `/private/tmp/norm-r1cs-*`.
+The native API is published at `e24f3b6f54bfcfb378a9ad65a0609e1bdd1ccdc1`
+in `https://github.com/markosg04/akita.git` (draft PR #2). All direct Akita
+workspace dependencies and the checked-in lock use that revision. The three API
+source files are byte-identical to reviewed candidate `6b17d7158`; the public
+revision additionally includes the fork CI fixes. Integration validation below
+uses the public Git graph without the original local API overlays.
 
 The measured complete component has **22,370 rows, 21,985 variables (including
 ONE), and 107,012 matrix nonzeros**. Inputs and every shell, range, absolute-value,
 frequency binding and comparison row are included. No retry multiplier is applied.
 
-Validation (all commands set `CARGO_TARGET_DIR=../crypto-r1cs/target`):
+The original component validation passed 69/69 Jolt library tests in both default
+and minimal configurations, plus 38/38 native challenge tests, scoped clippy,
+formatting and Taplo. Its local-overlay evidence remains archived under
+`/private/tmp/norm-r1cs-*` and `/private/tmp/norm-native-*`.
+
+## Published dependency integration
+
+The focused integration is based on `153a0351a` (reviewed sparse Blake stream),
+with only the reviewed norm component cherry-picked. Additive module/manifest
+conflicts retain both independent components. No reviewed constraint semantics
+change. The public native API revision supersedes the original publication
+limitation; complete sampler/stream-to-coefficient binding remains absent.
+
+Public graph validation commands use `CARGO_INCREMENTAL=0` and
+`CARGO_TARGET_DIR=../crypto-r1cs/target`, with no `.git/validation.toml` or other
+native path overlay:
 
 ```sh
-cargo nextest run --config .git/validation.toml -p jolt-r1cs -p jolt-akita --lib --features jolt-akita/r1cs -j 1 --cargo-quiet --status-level fail --final-status-level fail
-cargo nextest run --config .git/validation.toml -p jolt-r1cs -p jolt-akita --lib --no-default-features --features jolt-akita/r1cs -j 1 --cargo-quiet --status-level fail --final-status-level fail
-cargo clippy --config .git/validation.toml -p jolt-r1cs -p jolt-akita --lib --tests --features jolt-akita/r1cs -q -- -D warnings
-cargo clippy --config .git/validation.toml -p jolt-r1cs -p jolt-akita --lib --tests --example operator_norm_r1cs_cost --no-default-features --features jolt-akita/r1cs -q -- -D warnings
-cargo run --config .git/validation.toml -p jolt-akita --example operator_norm_r1cs_cost --features r1cs -q
+cargo metadata --format-version 1
+cargo nextest run --locked -p jolt-r1cs -p jolt-akita --lib --features jolt-akita/r1cs -j 1 --cargo-quiet --status-level fail --final-status-level fail
+cargo nextest run --locked -p jolt-r1cs -p jolt-akita --lib --no-default-features --features jolt-akita/r1cs -j 1 --cargo-quiet --status-level fail --final-status-level fail
+cargo clippy --locked -p jolt-r1cs -p jolt-akita --lib --tests --features jolt-akita/r1cs -q -- -D warnings
+cargo clippy --locked -p jolt-r1cs -p jolt-akita --lib --tests --example operator_norm_r1cs_cost --no-default-features --features jolt-akita/r1cs -q -- -D warnings
 cargo fmt --check -q
-taplo format --check crates/jolt-akita/Cargo.toml
+taplo format --check Cargo.toml crates/jolt-akita/Cargo.toml
 ```
 
-Both Jolt suites passed 69/69 tests, default run
-`5a5d663d-6eb7-431e-be01-1ea851ea11cd`, minimal run
-`7720cde4-50fb-4320-b73e-edc36690bcc9`. Neither enables field-inline. Both clippy
-configurations passed. Native API validation, from `akita-norm-api` with its own
-`.git/validation.toml` supplying the matching Jolt field and Arkworks patches:
+Public graph evidence and raw logs are `/private/tmp/norm-public-*`. These scoped
+checks do not replace full workspace or end-to-end proving validation.
 
-```sh
-cargo nextest run --config .git/validation.toml -p akita-challenges --lib --cargo-quiet --status-level fail --final-status-level fail
-cargo clippy --config .git/validation.toml -p akita-challenges --lib --tests -q -- -D warnings
-cargo fmt --check -q
-```
-
-The native library suite passed 38/38, run
-`0a045da0-2072-4b86-8958-1d5b6c5a3720`. Raw logs are
-`/private/tmp/norm-r1cs-{nextest,minimal-nextest,clippy,minimal-clippy,cost}.log`
-and `/private/tmp/norm-native-{nextest,clippy}.log`. Initial tooling failures were
-corrected: external Cargo commands need `--config` after their subcommand to
-forward the overlay; Cargo cannot test a dependency's library from another
-workspace, so native tests ran in their owner. Taplo required an unsandboxed run
-because macOS system-configuration initialization panics in the sandbox. No broad
-workspace or end-to-end proving suites were run for this isolated component.
-
-Native API candidate: `6b17d7158fab3be99ca79592f95696624c21c62d` on
-`wrap/norm-table-api`. Jolt implementation base: `07f64a382` (reviewed scalar
-`a48ccaef6` plus the three native Blake public integration commits). The native
-clippy and both formatting checks passed. The saved public lock is unchanged in
-each commit; dependency publication/integration remains the conductor's task.
+Public integration results: default and minimal suites each passed **69/69**,
+respectively runs `fa193c4f-9ec7-4311-b848-1a398493a88b` and
+`ba554dc0-e921-48a1-927c-c33f64f4a04c`. Both clippy commands exited zero, as did
+formatting and Taplo. Test/clippy `.log` and `.exit` records are retained under
+`/private/tmp/norm-public-*`. `/private/tmp/norm-public-graph.txt` records all
+14 native Git identities and the three reviewed API byte comparisons; full
+metadata is `/private/tmp/norm-public-metadata.json`. Native public fetch needed
+network-enabled execution; tests and clippy ran without an API overlay.
+The four norm implementation/example files are byte-identical to reviewed
+`ec410d81111eb74550a17e656afc3179742f7fac`; the earlier component count therefore
+still describes these unchanged matrices. No new timing or whole-sampler claim
+is made by the dependency integration.
