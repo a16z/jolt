@@ -129,6 +129,23 @@ impl Fp128Var {
         Ok(value)
     }
 
+    /// Canonical little-endian bytes constrained to this same field handle.
+    /// The bytes reuse this value's decomposition through equality constraints.
+    pub fn to_le_bytes(&self, builder: &mut R1csBuilder<Fr>) -> Result<[ByteVar; 16], Fp128Error> {
+        self.validate_indices(builder)?;
+        Ok(std::array::from_fn(|index| {
+            let expression = Self::bits_lc(self.bits.iter().skip(index * 8).take(8));
+            let witness = builder
+                .evaluate(&expression)
+                .ok()
+                .and_then(|value| value.to_u64_checked())
+                .and_then(|value| u8::try_from(value).ok());
+            let byte = ByteVar::allocate(builder, witness);
+            builder.assert_equal(byte.expression(), expression);
+            byte
+        }))
+    }
+
     /// The BN254 variable holding the canonical integer representative.
     pub fn variable(&self) -> Variable {
         self.variable
@@ -590,6 +607,10 @@ mod byte_binding_tests {
                 .to_le_bytes()
                 .map(|byte| ByteVar::allocate(&mut builder, known.then_some(byte)));
             let value = Fp128Var::from_le_bytes(&mut builder, &bytes).unwrap();
+            let encoded = value.to_le_bytes(&mut builder).unwrap();
+            for (input, output) in bytes.iter().zip(&encoded) {
+                builder.assert_equal(input.expression(), output.expression());
+            }
             let centered = SignedVar::centered_from_handle(&mut builder, &value).unwrap();
             (builder, centered.variable())
         };
