@@ -188,7 +188,9 @@ mod tests {
     }
     fn packed(builder: &mut R1csBuilder<Fr>, nonce: Option<u32>) -> Vec<ByteVar> {
         (0..3)
-            .map(|i| ByteVar::allocate(builder, nonce.map(|n| (((n << 5) | 0x15) >> (8 * i)) as u8)))
+            .map(|i| {
+                ByteVar::allocate(builder, nonce.map(|n| (((n << 5) | 0x15) >> (8 * i)) as u8))
+            })
             .collect()
     }
     fn bit_variable(byte: &ByteVar, bit: usize) -> Variable {
