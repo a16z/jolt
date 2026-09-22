@@ -60,7 +60,17 @@ jobs:
           for fixture in toy empty empty-public zero-products; do
             diff -ru "evm/blake-transcript/test/spartan/$fixture" "$RUNNER_TEMP/evm-spartan-vectors/$fixture"
           done
-          diff -u evm/blake-transcript/test/spartan/blake256.json "$RUNNER_TEMP/evm-spartan-vectors/blake256.json"
+      - name: Check independent Blake256 references
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib
+          import json
+          from pathlib import Path
+          vectors = json.loads(Path("evm/blake-transcript/test/spartan/blake256.json").read_text())
+          for vector in vectors:
+              actual = hashlib.blake2b(bytes.fromhex(vector["input"]), digest_size=32).hexdigest()
+              assert actual == vector["digest"], vector["input"]
+          PYTHON
       - name: Check canonical decoding and precompile failures
         working-directory: evm/blake-transcript
         run: |
