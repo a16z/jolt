@@ -14,7 +14,9 @@ use jolt_r1cs::ConstraintMatrices;
 use jolt_spartan_prover::prove;
 use jolt_spartan_verifier::{SpartanError, SpartanKey};
 use jolt_sumcheck::SumcheckError;
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_transcript::{
+    AppendToTranscript, Blake2bTranscript, Bn254WideBlake2bTranscript, Transcript,
+};
 
 fn matrices() -> ConstraintMatrices<Fr> {
     let one = Fr::one();
@@ -40,8 +42,8 @@ fn public() -> [Fr; 1] {
 fn witness() -> [Fr; 3] {
     [3, 9, 27].map(Fr::from_u64)
 }
-fn transcript() -> Blake2bTranscript {
-    Blake2bTranscript::new(b"spartan-test")
+fn transcript() -> Bn254WideBlake2bTranscript {
+    Bn254WideBlake2bTranscript::new(b"spartan-test")
 }
 
 fn hyperkzg_setup() -> (
@@ -248,4 +250,53 @@ fn exact_round_counts_and_degrees_are_enforced() {
             ))
         ));
     }
+}
+
+#[test]
+fn unequal_row_and_witness_padding_accepts() {
+    // Three rows, one private value: x*x=9, x*1=3, 1*1=1.
+    let one = Fr::one();
+    let m = ConstraintMatrices::new(
+        3,
+        2,
+        vec![vec![(1, one)], vec![(1, one)], vec![(0, one)]],
+        vec![vec![(1, one)], vec![(0, one)], vec![(0, one)]],
+        vec![
+            vec![(0, Fr::from_u64(9))],
+            vec![(0, Fr::from_u64(3))],
+            vec![(0, one)],
+        ],
+    );
+    let key = SpartanKey::new(m, 0, [19; 32]).unwrap();
+    let (pk, vk) = hyperkzg_setup();
+    let proof =
+        prove::<HyperKZGScheme>(&key, &[], &[Fr::from_u64(3)], &pk, &mut transcript()).unwrap();
+    assert_eq!(proof.outer.round_polynomials.len(), 2);
+    assert_eq!(proof.inner.round_polynomials.len(), 1);
+    key.verify::<HyperKZGScheme>(&[], &proof, &vk, &mut transcript())
+        .unwrap();
+}
+
+#[test]
+fn wide_policy_rejects_legacy_sampler_and_other_session_replay() {
+    let (pk, vk) = hyperkzg_setup();
+    let key = key();
+    let proof =
+        prove::<HyperKZGScheme>(&key, &public(), &witness(), &pk, &mut transcript()).unwrap();
+    assert!(key
+        .verify::<HyperKZGScheme>(
+            &public(),
+            &proof,
+            &vk,
+            &mut Blake2bTranscript::<Fr>::new(b"spartan-test")
+        )
+        .is_err());
+    assert!(key
+        .verify::<HyperKZGScheme>(
+            &public(),
+            &proof,
+            &vk,
+            &mut Bn254WideBlake2bTranscript::new(b"other-session")
+        )
+        .is_err());
 }

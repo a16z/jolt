@@ -93,3 +93,25 @@ cargo nextest run -p jolt-spartan-prover -p jolt-spartan-verifier -p jolt-r1cs -
 cargo clippy -p jolt-spartan-prover -p jolt-spartan-verifier -p jolt-hyperkzg --all-targets -- -D warnings
 cargo fmt -p jolt-spartan-prover -p jolt-spartan-verifier -p jolt-r1cs -p jolt-hyperkzg --check
 ```
+
+## Opt-in BN254 transcript policy
+
+The standalone caller policy is
+`jolt_transcript::Bn254WideBlake2bTranscript::new(application_label)`.
+Pass that same transcript through the complete proof, including the PCS opening;
+Spartan's PCS-generic API remains unchanged. Both parties must select this policy
+and authenticate the same relation/setup policy identifier. The fixed session
+`bn254-blake2b-wide384-v1` binds the sampler and Blake2b-512 spongefish backend
+before any Spartan tau or PCS challenge; the application label is a big-endian u64 byte length followed by a padded
+32-byte word (maximum label length 32). Old sampler proofs are incompatible.
+
+`challenge`, `challenge_scalar`, and inherited vector draws all reduce three
+128-bit scalar draws as `(a * 2^128 + b) * 2^128 + c` modulo BN254 Fr.
+Conditional on independent uniform underlying byte blocks, maximum output mass
+is at most `1/p + 2^-384`. Poseidon and arbitrary user transcript implementations
+are outside this policy. This opt-in changes no shared Jolt transcript default.
+The standalone acceptance, malformed-proof, and replay tests use this policy
+with HyperKZG; Spartan also exercises Dory. Independent integer reduction vectors
+and scalar-byte decoding tests live in `jolt-transcript/src/wide.rs`.
+Online extraction, complete-SRS assumptions, and a backend-specific Fiat–Shamir
+composition theorem remain separate unproved deployment obligations.

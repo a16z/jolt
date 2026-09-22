@@ -12,7 +12,7 @@ use jolt_hyperkzg::{
 };
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Blake2bTranscript, Bn254WideBlake2bTranscript, Transcript};
 
 fn setup_params(beta: u64, capacity: usize) -> HyperKZGSetupParams {
     let beta = Fr::from_u64(beta);
@@ -32,8 +32,8 @@ fn setup(beta: u64, capacity: usize) -> (HyperKZGProverSetup, HyperKZGVerifierSe
     HyperKZGScheme::setup(setup_params(beta, capacity)).unwrap()
 }
 
-fn transcript() -> Blake2bTranscript {
-    Blake2bTranscript::new(b"hyperkzg-test")
+fn transcript() -> Bn254WideBlake2bTranscript {
+    Bn254WideBlake2bTranscript::new(b"hyperkzg-test")
 }
 
 fn multilinear_oracle(table: &[Fr], point: &[Fr]) -> Fr {
@@ -315,6 +315,29 @@ fn zero_fold_challenge_rejects_on_both_paths() {
         &pk,
         None,
         &mut ZeroTranscript,
+    )
+    .is_err());
+}
+
+#[test]
+fn wide_policy_rejects_legacy_sampler_and_other_session_replay() {
+    let f = Fixture::new();
+    assert!(HyperKZGScheme::verify_opening(
+        &f.commitment,
+        &f.point,
+        f.evaluation,
+        &f.proof,
+        &f.vk,
+        &mut Blake2bTranscript::<Fr>::new(b"hyperkzg-test")
+    )
+    .is_err());
+    assert!(HyperKZGScheme::verify_opening(
+        &f.commitment,
+        &f.point,
+        f.evaluation,
+        &f.proof,
+        &f.vk,
+        &mut Bn254WideBlake2bTranscript::new(b"other-session")
     )
     .is_err());
 }
