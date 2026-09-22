@@ -110,6 +110,11 @@ impl ByteVar {
             })
     }
 
+    /// Boolean-constrained little-endian bit expressions for byte consumers.
+    pub fn bit_expressions(&self) -> [LinearCombination<Fr>; 8] {
+        self.bits.each_ref().map(|bit| bit.expression.clone())
+    }
+
     /// Check index bounds, not builder provenance.
     pub fn validate_indices(&self, builder: &R1csBuilder<Fr>) -> Result<(), BitsError> {
         for bit in &self.bits {
