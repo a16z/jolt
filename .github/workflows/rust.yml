@@ -308,6 +308,13 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,zk
+      # The jolt-verifier ZK fixture suites (completeness, tampering, FS
+      # attacks, statistical independence, proof shape): real BlindFold proofs
+      # from the modular prover, verified through the public API. Until this
+      # step existed they were clippy-only, so the golden BlindFold shape pins
+      # in completeness/zk.rs could go stale without any lane noticing.
+      - name: Run jolt-verifier fixtures with zk feature
+        run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --test-threads 1 --cargo-quiet
       # The jolt-kernels unit suite in its zk flavor.
       - name: Run jolt-kernels tests with zk feature
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features zk
