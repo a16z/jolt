@@ -117,3 +117,6 @@ pub type KeccakTranscript<F> = SpongeTranscript<Keccak, F>;
 /// Fiat-Shamir transcript backed by Circom-compatible BN254 Poseidon.
 #[cfg(feature = "transcript-poseidon")]
 pub type PoseidonTranscript<F = Fr> = SpongeTranscript<PoseidonSponge, F>;
+
+#[cfg(feature = "r1cs")]
+pub mod r1cs;

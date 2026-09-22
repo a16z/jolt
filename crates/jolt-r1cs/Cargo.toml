@@ -14,7 +14,8 @@ serde = { workspace = true, features = ["alloc", "derive"] }
 thiserror.workspace = true
 
 [features]
-fp128-bn254 = ["jolt-field/bn254", "jolt-field/solinas"]
+bn254 = ["jolt-field/bn254"]
+fp128-bn254 = ["bn254", "jolt-field/solinas"]
 
 [dev-dependencies]
 num-bigint.workspace = true

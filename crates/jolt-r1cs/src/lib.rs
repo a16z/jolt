@@ -26,3 +26,6 @@ pub use constraint::{
     ConstraintMatrices, ConstraintMatrixEvalError, MatrixColumnContributions, SparseRow,
     WeightedMatrixColumns,
 };
+
+#[cfg(feature = "bn254")]
+pub mod bn254_bits;
