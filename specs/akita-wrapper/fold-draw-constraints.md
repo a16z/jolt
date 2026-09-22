@@ -102,3 +102,14 @@ outputs to all response equations. This packet supplies only the FoldDraw
 transition inside that replay; it does not authenticate the inherited state,
 check the complete nonce stream or establish whole-proof acceptance. No new
 constraint-cost or full-proof performance measurement is claimed here.
+
+
+Public dependency handoff: native codec revision
+`f5f75335eae18241681fd24ca0a60fca8f0512af` is published in
+https://github.com/markosg04/akita/pull/3. The consumer now pins that exact
+revision for every Akita workspace dependency. Locked offline metadata resolves
+14 public Akita packages and one workspace jolt-field without the local
+validation overlay. Only native revision substitutions changed in Cargo.lock;
+unrelated resolver churn was discarded. Final public-pin compilation/tests are
+pending resource release from the full recursive-proof trial; the earlier
+local-overlay results are not relabeled as public-pin validation.
