@@ -180,8 +180,13 @@ jobs:
           shared-key: wasm
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
+      # jolt-platform owns the wasm RNG backend (getrandom 0.2 `js`, 0.3
+      # `wasm_js`); the SDK and `jolt build-wasm` reach it through
+      # `jolt-platform/random`. Build it alongside the prover so feature
+      # unification supplies the backend here too, instead of anchoring it in
+      # a library crate.
       - name: Build Wasm
-        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p jolt-prover --release --target wasm32-unknown-unknown
+        run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p jolt-prover -p jolt-platform --features jolt-platform/random --release --target wasm32-unknown-unknown
 
   test-prover:
     runs-on: ubuntu-latest
