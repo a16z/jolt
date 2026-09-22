@@ -92,3 +92,56 @@ at1.0–1.2M rows and6–8M nonzeros; this estimate is not a result. Initial com
 failures (array inference, checked-result/index lints, diagnostic u32 conversion)
 are retained with repaired-source commands. Tests and measured results follow
 in the final evidence packet rather than being inferred from successful builds.
+
+## Producer validation and measured geometry
+
+Frozen implementation commit: `80697e094` (full hash in the evidence manifest).
+The subsequent documentation commit does not change code. Public native source
+is f5f75335eae18241681fd24ca0a60fca8f0512af, inherited unchanged from the frozen
+terminal-context checkpoint. Evidence: `/private/tmp/sparse-routing-20260922`.
+
+- Scoped all-target Clippy passed. Both crates involved have no default feature
+  set that adds another routing implementation; `jolt-akita/r1cs` is explicit.
+- Final nextest selected15 tests across the library and candidate integration
+  binary: all passed,32 filtered. This includes four routing tests, all existing
+  retry tests, all candidate integration tests, and all FoldDraw tests. The added
+  unknown empty-tape adversarial assignment satisfies every preceding row and
+  fails exactly the final capacity row.
+- Known/unknown matrix equality is tested for the routing network, candidate
+  sampler, R2/K4 retry composition and FoldDraw. No second full R3/K7 unknown
+  allocation was performed or inferred from the known run.
+- Formatting and whitespace checks passed. No full terminal matrix or proof ran.
+
+Final selected commands (under the pinned governor, with
+`CARGO_INCREMENTAL=0`, `CARGO_BUILD_JOBS=1`, and the existing wrapper target):
+
+```text
+cargo clippy --offline --locked --profile test -p jolt-akita --features r1cs --all-targets -- -D warnings
+cargo nextest run --offline --locked --cargo-profile test -p jolt-akita --features r1cs --lib --test r1cs_sparse_candidate -E 'test(sparse_routing) | test(sparse_retry) | test(fold_draw) | binary(r1cs_sparse_candidate)' --test-threads 1 --cargo-quiet
+cargo build --offline --locked --profile test -p jolt-akita --features r1cs --example sparse_retry_r1cs_cost
+<target>/debug/examples/sparse_retry_r1cs_cost 3 7 f27f73fef09b695e8a5355ea576583a146c5edd9764a4ad5464b6279d03eae2b 4
+```
+
+The single known-coordinate run produced1,125,080 rows,1,111,159 variables
+including ONE, and5,997,218 nonzeros. Matrix SHA256:
+`ecd8208b81feae0b7ed2816bbdafbdc006ea1fdb4418c48219241bd3adadfea1`.
+All native dense coefficients matched and the full witness satisfied the R1CS.
+Consumption was293 bytes; selectors were[0,0,1]. These match the preregistered
+native expectations without being baked into constraints.
+
+The governor recorded2.163310667 seconds for the complete diagnostic, including
+native sampling, witness construction/checking, matrix counting and fingerprinting.
+Sampled process-group peak RSS was844,333,056 bytes (two one-second samples);
+child maximum RSS was844,398,592 bytes. Minimum free disk was14,284,865,536 bytes.
+These are measured diagnostic costs, not standalone synthesis timings or proof
+costs. Regression compilation plus execution took305.805s, with3,872,931,840
+sampled peak bytes; the actual15-test run took3.083s. All final commands exited0
+with no remaining process-group members.
+
+Next boundary: independent review of this implementation, then the frozen
+conditional terminal-context native-root/output and coherent mutation controls.
+Using this measured coordinate size, all seven coordinates contribute about7.88M
+rows; with canonical transcript hashing and the terminal assembler the full
+fragment is still roughly21–23M rows. That is an estimate, not a completed matrix
+measurement or authorization to allocate it. Prefix authentication, whole-proof
+semantic verification and finite-capacity completeness remain unresolved.
