@@ -126,6 +126,6 @@ fn prove_rounds<F: JoltField + AppendToTranscript>(
     Ok((proof, result.challenges, result.final_claim))
 }
 
-/// Conditional v2 public-column preprocessing stage; private SPARK remains separate.
+/// Conditional clear v2 SPARK prototype; security and deployment gates remain.
 #[cfg(feature = "preprocessed")]
 pub mod preprocessed;

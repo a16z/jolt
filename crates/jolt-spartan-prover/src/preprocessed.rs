@@ -1,5 +1,8 @@
-//! Trusted v2 preprocessing and the real public-column PCS stage.
-//! Private SPARK memory/product proofs are intentionally not implemented here.
+//! Trusted v2 preprocessing and conditional clear SPARK proving.
+//! This prototype does not establish joint extraction, ROM composition or ZK.
+mod protocol;
+pub mod sparse;
+
 use jolt_field::{CanonicalBytes, Fr, Ring, Zero};
 use jolt_hyperkzg::{HyperKZGProverSetup, HyperKZGScheme};
 use jolt_openings::CommitmentScheme;
@@ -15,9 +18,11 @@ use jolt_transcript::Bn254WideBlake2bTranscript;
 /// evaluation. Immutable getters support independent encoding checks.
 pub struct PreprocessedMatrices {
     key: ComputationKey,
+    direct: SpartanKey<Fr>,
     public: Vec<Fr>,
     operations: Vec<Fr>,
     memory: Vec<Fr>,
+    addresses: [Vec<(usize, usize)>; 3],
 }
 impl PreprocessedMatrices {
     pub fn new(
@@ -25,6 +30,7 @@ impl PreprocessedMatrices {
         application: MatrixApplicationIds,
         setup: &HyperKZGProverSetup,
     ) -> Result<Self, MatrixError> {
+        let direct = key.clone();
         let matrices = key.matrices();
         let normalized: Vec<_> = [&matrices.a, &matrices.b, &matrices.c]
             .into_iter()
@@ -71,6 +77,7 @@ impl PreprocessedMatrices {
         {
             return Err(MatrixError::Shape);
         }
+        let mut addresses: [Vec<(usize, usize)>; 3] = std::array::from_fn(|_| Vec::new());
         let mut public = vec![Fr::zero(); public_len];
         let mut operations = vec![Fr::zero(); ops_len];
         let mut row_audit = vec![0u64; shape.memory];
@@ -97,6 +104,10 @@ impl PreprocessedMatrices {
             }
             entries.resize(shape.operations, (0, 0, Fr::zero()));
             for (operation, (row, column, value)) in entries.into_iter().enumerate() {
+                addresses
+                    .get_mut(matrix_index)
+                    .ok_or(MatrixError::Shape)?
+                    .push((row, column));
                 let rt = row_audit.get_mut(row).ok_or(MatrixError::Shape)?;
                 let ct = col_audit.get_mut(column).ok_or(MatrixError::Shape)?;
                 for (slab, v) in [
@@ -133,9 +144,11 @@ impl PreprocessedMatrices {
         )?;
         Ok(Self {
             key,
+            direct,
             public,
             operations,
             memory,
+            addresses,
         })
     }
     pub fn key(&self) -> &ComputationKey {
@@ -200,7 +213,10 @@ mod tests {
     use jolt_field::One;
     use jolt_hyperkzg::{HyperKZGSetupParams, HyperKZGVerifierSetup};
     use jolt_r1cs::ConstraintMatrices;
-    use jolt_spartan_verifier::{preprocessed::PublicColumnQuery, OUTER_DEGREE};
+    use jolt_spartan_verifier::{
+        preprocessed::{PreprocessedProof, PublicColumnQuery},
+        OUTER_DEGREE,
+    };
     use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
     use jolt_transcript::Transcript;
 
@@ -406,5 +422,222 @@ mod tests {
         assert!(verify(&altered, &rx, &id).is_err());
         assert!(MatrixShape::new(0, 8, 3, 4).is_err());
         assert!(MatrixShape::new(4, 8, 8, 4).is_err());
+    }
+    #[test]
+    fn complete_v2_relation_and_each_authenticated_component_reject_tampering() {
+        let (pk, vk) = setup();
+        let tables = PreprocessedMatrices::new(&relation(), ids(), &pk).unwrap();
+        let key = tables.key();
+        let id = key.id();
+        let inputs = [5, 0].map(Fr::from_u64);
+        let proof = tables
+            .prove(&inputs, &[3, 0, 0, 11, 0].map(Fr::from_u64), &pk)
+            .unwrap();
+        key.verify(&id, &inputs, &proof, &vk).unwrap();
+        let reject =
+            |proof: &PreprocessedProof| assert!(key.verify(&id, &inputs, proof, &vk).is_err());
+        for i in 0..16 {
+            let mut bad = proof.clone();
+            bad.sparse.roots[i] += Fr::one();
+            reject(&bad);
+        }
+        for i in 0..6 {
+            let mut bad = proof.clone();
+            bad.sparse.dot_halves[i] += Fr::one();
+            reject(&bad);
+        }
+        for i in 0..6 {
+            let mut bad = proof.clone();
+            bad.sparse.dereferences.evaluations[i] += Fr::one();
+            reject(&bad);
+        }
+        for i in 0..16 {
+            let mut bad = proof.clone();
+            bad.sparse.operation_values.evaluations[i] += Fr::one();
+            reject(&bad);
+        }
+        for i in 0..2 {
+            let mut bad = proof.clone();
+            bad.sparse.audit_values.evaluations[i] += Fr::one();
+            reject(&bad);
+        }
+        for i in 0..3 {
+            let mut bad = proof.clone();
+            bad.private_values[i] += Fr::one();
+            reject(&bad);
+        }
+        let mut bad = proof.clone();
+        bad.sparse.dereference_commitment = Bn254::g1_generator();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.dereferences.opening.w[0] = Bn254::g1_generator();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.operation_values.opening.w[0] = Bn254::g1_generator();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.audit_values.opening.w[0] = Bn254::g1_generator();
+        reject(&bad);
+        bad = proof.clone();
+        bad.witness_opening.w[0] = Bn254::g1_generator();
+        reject(&bad);
+        bad = proof.clone();
+        bad.witness_evaluation += Fr::one();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.operations.layers[0].ends[0][0] += Fr::one();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.memory.layers[0].ends[0][1] += Fr::one();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.operations.layers[1].dot_ends[0][2] += Fr::one();
+        reject(&bad);
+        bad = proof.clone();
+        let _ = bad.sparse.operations.layers.pop();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.memory.layers[0].ends.clear();
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.operations.layers[0]
+            .dot_ends
+            .push([Fr::zero(); 3]);
+        reject(&bad);
+        bad = proof.clone();
+        bad.sparse.audit_values.evaluations.push(Fr::zero());
+        reject(&bad);
+        assert!(key
+            .verify(&id, &[6, 0].map(Fr::from_u64), &proof, &vk)
+            .is_err());
+        assert!(key.verify(&id, &inputs[..1], &proof, &vk).is_err());
+        assert!(key.verify(&[0; 32], &inputs, &proof, &vk).is_err());
+    }
+
+    #[test]
+    fn sparse_non_boolean_queries_and_empty_n2_relation() {
+        use jolt_spartan_verifier::preprocessed::sparse::SparseQuery;
+        let (pk, vk) = setup();
+        let direct = relation();
+        let tables = PreprocessedMatrices::new(&direct, ids(), &pk).unwrap();
+        for (x, y) in [([2, 3], [4, 5, 6]), ([7, 11], [13, 17, 19])] {
+            let x = x.map(Fr::from_u64);
+            let y = y.map(Fr::from_u64);
+            let rw = EqPolynomial::new(x.to_vec()).evaluations();
+            let cw = EqPolynomial::new(y.to_vec()).evaluations();
+            let mut values = [Fr::zero(); 3];
+            for (i, value) in values.iter_mut().enumerate() {
+                let mut rho = [Fr::zero(); 3];
+                rho[i] = Fr::one();
+                *value = direct
+                    .matrices()
+                    .linear_form_bilinear_eval(&rw, &cw[..5], 3, 5, rho)
+                    .unwrap();
+            }
+            let query = || SparseQuery {
+                rows: &x,
+                columns: &y,
+                values,
+            };
+            let proof = tables
+                .prove_sparse(query(), &pk, &mut transcript())
+                .unwrap();
+            tables
+                .key()
+                .verify_sparse(query(), &proof, &vk, &mut transcript())
+                .unwrap();
+            let changed = [Fr::one(), Fr::one()];
+            assert!(tables
+                .key()
+                .verify_sparse(
+                    SparseQuery {
+                        rows: &changed,
+                        columns: &y,
+                        values
+                    },
+                    &proof,
+                    &vk,
+                    &mut transcript()
+                )
+                .is_err());
+            assert!(tables
+                .key()
+                .verify_sparse(
+                    SparseQuery {
+                        rows: &x[..1],
+                        columns: &y,
+                        values
+                    },
+                    &proof,
+                    &vk,
+                    &mut transcript()
+                )
+                .is_err());
+        }
+        let empty = SpartanKey::new(
+            ConstraintMatrices::new(4, 8, vec![vec![]; 4], vec![vec![]; 4], vec![vec![]; 4]),
+            2,
+            [19; 32],
+        )
+        .unwrap();
+        let tables = PreprocessedMatrices::new(&empty, ids(), &pk).unwrap();
+        assert_eq!(tables.key().shape().operations, 2);
+        let inputs = [5, 0].map(Fr::from_u64);
+        let proof = tables
+            .prove(&inputs, &[3, 4, 5, 6, 7].map(Fr::from_u64), &pk)
+            .unwrap();
+        assert!(proof.sparse.operations.layers[0]
+            .sumcheck
+            .round_polynomials
+            .is_empty());
+        assert_eq!(proof.sparse.operations.layers[0].dot_ends.len(), 6);
+        tables
+            .key()
+            .verify(&tables.key().id(), &inputs, &proof, &vk)
+            .unwrap();
+    }
+
+    #[test]
+    fn actual_setup_vector_and_changed_setup_are_bound_at_full_verifier_entry() {
+        let setup_with = |beta: Fr, id: [u8; 32], degree: u64| {
+            HyperKZGScheme::setup(HyperKZGSetupParams {
+                g1_powers: std::iter::successors(Some(Fr::one()), |x| Some(*x * beta))
+                    .take(64)
+                    .map(|x| Bn254::g1_generator().scalar_mul(&x))
+                    .collect(),
+                g2: Bn254::g2_generator(),
+                beta_g2: Bn254::g2_generator().scalar_mul(&beta),
+                setup_id: id,
+                max_public_degree: degree,
+            })
+            .unwrap()
+        };
+        let (_, one_vk) = setup_with(Fr::one(), [9; 32], 63);
+        assert_eq!(
+            one_vk.binding().unwrap().canonical_bytes,
+            include_bytes!("../tests/fixtures/beta-one-setup.bin").as_slice()
+        );
+        let (pk, vk) = setup();
+        let tables = PreprocessedMatrices::new(&relation(), ids(), &pk).unwrap();
+        let inputs = [5, 0].map(Fr::from_u64);
+        let proof = tables
+            .prove(&inputs, &[3, 0, 0, 11, 0].map(Fr::from_u64), &pk)
+            .unwrap();
+        tables
+            .key()
+            .verify(&tables.key().id(), &inputs, &proof, &vk)
+            .unwrap();
+        for (_, changed) in [
+            setup_with(Fr::from_u64(7), [10; 32], 63),
+            setup_with(Fr::from_u64(7), [9; 32], 64),
+            setup_with(Fr::from_u64(11), [9; 32], 63),
+        ] {
+            assert!(matches!(
+                tables
+                    .key()
+                    .verify(&tables.key().id(), &inputs, &proof, &changed),
+                Err(MatrixError::Identity)
+            ));
+        }
     }
 }

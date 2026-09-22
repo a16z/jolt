@@ -114,14 +114,7 @@ impl<F: JoltField> SpartanKey<F> {
         claim: F,
         evaluations: [F; 3],
     ) -> Result<(), SpartanError<F>> {
-        if tau.len() != self.row_vars() || rx.len() != self.row_vars() {
-            return Err(SpartanError::InternalShape);
-        }
-        let [a, b, c] = evaluations;
-        if claim != EqPolynomial::new(tau.to_vec()).evaluate(rx) * (a * b - c) {
-            return Err(SpartanError::OuterClaim);
-        }
-        Ok(())
+        check_outer_relation(self.row_vars(), tau, rx, claim, evaluations)
     }
 }
 
@@ -199,4 +192,22 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
     ) {
         transcript.append_labeled(b"witness-evaluation", &evaluation);
     }
+}
+
+/// The outer terminal identity is shared by v1 and preprocessed v2.
+pub(crate) fn check_outer_relation<F: JoltField>(
+    row_vars: usize,
+    tau: &[F],
+    rx: &[F],
+    claim: F,
+    evaluations: [F; 3],
+) -> Result<(), SpartanError<F>> {
+    if tau.len() != row_vars || rx.len() != row_vars {
+        return Err(SpartanError::InternalShape);
+    }
+    let [a, b, c] = evaluations;
+    if claim != EqPolynomial::new(tau.to_vec()).evaluate(rx) * (a * b - c) {
+        return Err(SpartanError::OuterClaim);
+    }
+    Ok(())
 }

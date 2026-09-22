@@ -1,16 +1,29 @@
-//! Conditional v2 key and public-column stage. This is not a SPARK verifier.
+//! Conditional clear v2 preprocessing and SPARK verification.
+//! Joint online extraction, ROM composition, bounded decoding and ZK remain gates.
+use crate::SpartanError;
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_crypto::Bn254G1;
 use jolt_field::{CanonicalBytes, Fr, One, Zero};
 use jolt_hyperkzg::{HyperKZGError, HyperKZGProof, HyperKZGScheme, HyperKZGVerifierSetup};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::EqPolynomial;
+use jolt_sumcheck::SumcheckError;
 use jolt_transcript::{Bn254WideBlake2bTranscript, Label, Transcript};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod protocol;
+pub mod sparse;
+pub use protocol::PreprocessedProof;
+
 #[derive(Debug, Error)]
 pub enum MatrixError {
+    #[error("preprocessed relation check failed: {0}")]
+    Relation(&'static str),
+    #[error(transparent)]
+    Sumcheck(#[from] SumcheckError<Fr>),
+    #[error(transparent)]
+    Spartan(#[from] SpartanError<Fr>),
     #[error("invalid preprocessed matrix dimensions")]
     Shape,
     #[error("application key identity or imported setup mismatch")]

@@ -142,6 +142,6 @@ impl<F: JoltField + AppendToTranscript> SpartanKey<F> {
     }
 }
 
-/// Conditional v2 public-column preprocessing stage; private SPARK remains separate.
+/// Conditional clear v2 SPARK prototype; security and deployment gates remain.
 #[cfg(feature = "preprocessed")]
 pub mod preprocessed;
