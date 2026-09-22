@@ -562,6 +562,55 @@ jobs:
         working-directory: ./sample_project
         run: node verify.mjs
 
+  test-akita-stage1:
+    name: Test constrained Akita stage1
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: 1
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RAYON_NUM_THREADS: 1
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          components: clippy
+          cache: false
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Check stage1 feature closure and application
+        run: >-
+          cargo clippy --locked -p jolt-verifier -p jolt-claims -p jolt-poly
+          -p jolt-sumcheck -p jolt-spartan-prover
+          --features jolt-verifier/r1cs,jolt-verifier/akita,jolt-verifier/prover-fixtures,jolt-spartan-prover/akita-boundary
+          --all-targets -- -D warnings
+      - name: Test private field primitives
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo nextest run --locked -p jolt-poly --features r1cs -E 'test(centered_)' --test-threads 1 --cargo-quiet
+          cargo nextest run --locked -p jolt-claims --features r1cs-fp128 -E 'test(private_outer_formula)' --test-threads 1 --cargo-quiet
+          cargo nextest run --locked -p jolt-sumcheck --features r1cs-fp128 -E 'test(private_compressed_round) | test(private_challenge_with_valid_local_evaluation)' --test-threads 1 --cargo-quiet
+      # The composed matrix controls sampled up to 8.8 GB RSS locally. Run
+      # serially in a separate job, without another compiler alongside them.
+      - name: Test complete first-stage partial relation
+        run: >-
+          cargo nextest run --locked -p jolt-verifier
+          --features r1cs,akita,prover-fixtures
+          -E 'test(r1cs::remainder::) | test(r1cs::boundary::)'
+          --test-threads 1 --cargo-quiet
+      - name: Check transcript inventory without updating it
+        run: cargo nextest run --locked -p jolt-verifier --features fs-audit --test fs_obligations -E 'test(verifier_fs_inventory_is_complete)' --cargo-quiet
+      - name: Check application public partition and matrix geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -p jolt-spartan-prover --features akita-boundary --example akita_boundary_relation -- crates/jolt-verifier/tests/fixtures/akita-boundary | tee stage1-matrix.txt
+          grep -Fx 'matrix nonzeros=65964357' stage1-matrix.txt
+          grep -F 'complete stage1, later stages absent: rows=12054769 variables=11961755 public_columns=2 ' stage1-matrix.txt
+
   # Sharded 3-way: the sequential per-crate loop was the CI critical path
   # (~18 min). Crates are assigned to shards by discovery index; each crate
   # keeps its own nextest invocation so per-crate feature resolution is

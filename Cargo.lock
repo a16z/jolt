@@ -3808,16 +3808,21 @@ name = "jolt-spartan-prover"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
+ "blake2 0.11.0",
+ "common",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
  "jolt-hyperkzg",
  "jolt-openings",
  "jolt-poly",
+ "jolt-prover-legacy",
  "jolt-r1cs",
  "jolt-spartan-verifier",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-verifier",
+ "serde",
 ]
 
 [[package]]
@@ -3906,7 +3911,9 @@ dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
  "bincode 2.0.1",
+ "blake2 0.11.0",
  "common",
+ "jolt-akita",
  "jolt-blindfold",
  "jolt-claims",
  "jolt-claims-derive",
@@ -3918,6 +3925,7 @@ dependencies = [
  "jolt-poly",
  "jolt-program",
  "jolt-prover-legacy",
+ "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",

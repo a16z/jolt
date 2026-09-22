@@ -105,12 +105,50 @@ impl Fp128Var {
         })
     }
 
+    /// Allocate a canonical public constant and pin its field handle.
+    pub fn constant(builder: &mut R1csBuilder<Fr>, value: u128) -> Result<Self, Fp128Error> {
+        let result = Self::allocate(builder, Some(value))?;
+        builder.assert_equal(
+            result.variable,
+            LinearCombination::constant(Fr::from_u128(value)),
+        );
+        Ok(result)
+    }
+
     /// Bind sixteen existing little-endian Boolean bytes to a canonical q value.
     /// The caller authenticates the byte source; ONE and builder provenance remain external.
     pub fn from_le_bytes(
         builder: &mut R1csBuilder<Fr>,
         bytes: &[ByteVar; 16],
     ) -> Result<Self, Fp128Error> {
+        let (encoded, witness) = Self::decode_le_bytes(builder, bytes)?;
+        let value = Self::allocate(builder, witness)?;
+        builder.assert_equal(value.variable, encoded);
+        Ok(value)
+    }
+
+    /// Reduce sixteen Boolean bytes modulo q, including noncanonical encodings.
+    /// Since h < 2^128 < 2q < r, h = x + bq with canonical x and Boolean b
+    /// is an integer equality with a unique quotient, not merely a congruence.
+    pub fn reduce_le_bytes(
+        builder: &mut R1csBuilder<Fr>,
+        bytes: &[ByteVar; 16],
+    ) -> Result<Self, Fp128Error> {
+        let (encoded, witness) = Self::decode_le_bytes(builder, bytes)?;
+        let value = Self::allocate(builder, witness.map(|h| h % MODULUS))?;
+        let quotient = Self::allocate_bits(builder, witness.map(|h| u128::from(h >= MODULUS)), 1);
+        builder.assert_equal(
+            encoded,
+            LinearCombination::variable(value.variable)
+                + Self::bits_lc(&quotient).scale(Fr::from_u128(MODULUS)),
+        );
+        Ok(value)
+    }
+
+    fn decode_le_bytes(
+        builder: &R1csBuilder<Fr>,
+        bytes: &[ByteVar; 16],
+    ) -> Result<(LinearCombination<Fr>, Option<u128>), Fp128Error> {
         let mut encoded = LinearCombination::zero();
         let mut witness = Some(0u128);
         for (index, byte) in bytes.iter().enumerate() {
@@ -124,9 +162,7 @@ impl Fp128Var {
                 .map(|(sum, value)| sum | (value << (8 * index)));
             encoded = encoded + byte.expression().scale(Fr::from_u128(1u128 << (8 * index)));
         }
-        let value = Self::allocate(builder, witness)?;
-        builder.assert_equal(value.variable, encoded);
-        Ok(value)
+        Ok((encoded, witness))
     }
 
     /// Canonical little-endian bytes constrained to this same field handle.
@@ -327,6 +363,49 @@ mod tests {
 
     fn q() -> BigUint {
         (BigUint::from(1u8) << 128) - (BigUint::from(1u8) << 32) + BigUint::from(22537u32)
+    }
+
+    #[test]
+    fn byte_reduction_tail_and_linkage() {
+        for h in [0, MODULUS - 1, MODULUS, MODULUS + 1, u128::MAX] {
+            let mut builder = R1csBuilder::new();
+            let bytes = h
+                .to_le_bytes()
+                .map(|byte| ByteVar::allocate(&mut builder, Some(byte)));
+            let value = Fp128Var::reduce_le_bytes(&mut builder, &bytes).unwrap();
+            let mut witness = builder.witness().unwrap();
+            assert_eq!(
+                witness[value.variable().index()],
+                Fr::from_u128(h % MODULUS)
+            );
+            let matrices = builder.into_matrices();
+            assert!(matrices.check_witness(&witness).is_ok());
+            // The quotient bit is the final allocation. Even with every canonical
+            // value auxiliary unchanged, an incorrect quotient must be rejected.
+            let quotient = witness.len() - 1;
+            witness[quotient] = Fr::from_u64(1) - witness[quotient];
+            assert!(matrices.check_witness(&witness).is_err());
+            let mut canonical = R1csBuilder::new();
+            let bytes = h.to_le_bytes().map(ByteVar::constant);
+            assert_eq!(
+                Fp128Var::from_le_bytes(&mut canonical, &bytes).is_ok(),
+                h < MODULUS
+            );
+        }
+        let build = |known: bool| {
+            let mut builder = R1csBuilder::new();
+            let bytes = u128::MAX
+                .to_le_bytes()
+                .map(|byte| ByteVar::allocate(&mut builder, known.then_some(byte)));
+            let _ = Fp128Var::reduce_le_bytes(&mut builder, &bytes).unwrap();
+            builder.into_matrices()
+        };
+        let known = build(true);
+        let unknown = build(false);
+        assert_eq!(known.num_vars, unknown.num_vars);
+        assert_eq!(known.a, unknown.a);
+        assert_eq!(known.b, unknown.b);
+        assert_eq!(known.c, unknown.c);
     }
 
     #[test]

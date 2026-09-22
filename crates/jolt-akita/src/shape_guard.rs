@@ -145,7 +145,7 @@ where
     Ok(resolved)
 }
 
-fn validate_commitment_profile_len(
+pub(crate) fn validate_commitment_profile_len(
     commitment: &AkitaCommitment,
     profile: &GroupCommitPhaseParams,
 ) -> Result<(), OpeningsError> {

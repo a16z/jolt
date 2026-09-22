@@ -593,67 +593,14 @@ pub(crate) fn absorb_preamble<PCS, VC, ZkProof, T>(
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let public_io = &checked.public_io;
-    absorb_labeled_bytes(
+    absorb_transcript_preamble(
+        checked,
+        ProofTranscriptConfig {
+            rw_config: proof.rw_config,
+            one_hot_config: proof.one_hot_config,
+            trace_polynomial_order: proof.trace_polynomial_order,
+        },
         transcript,
-        b"preprocessing_digest",
-        &checked.preprocessing_digest,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_input_size",
-        public_io.memory_layout.max_input_size,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_output_size",
-        public_io.memory_layout.max_output_size,
-    );
-    absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
-    absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
-    absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", u64::from(public_io.panic));
-    absorb_labeled_u64(transcript, b"ram_K", num::u64_from_usize(checked.ram_K));
-    absorb_labeled_u64(
-        transcript,
-        b"trace_length",
-        num::u64_from_usize(checked.trace_length),
-    );
-    absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase1_num_rounds",
-        u64::from(proof.rw_config.ram_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase2_num_rounds",
-        u64::from(proof.rw_config.ram_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase1_num_rounds",
-        u64::from(proof.rw_config.registers_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase2_num_rounds",
-        u64::from(proof.rw_config.registers_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"log_k_chunk",
-        u64::from(proof.one_hot_config.log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lookups_ra_virtual_log_k_chunk",
-        u64::from(proof.one_hot_config.lookups_ra_virtual_log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"dory_layout",
-        proof.trace_polynomial_order.transcript_scalar(),
     );
 }
 
@@ -853,68 +800,94 @@ pub fn absorb_transcript_preamble<T>(
 ) where
     T: Transcript,
 {
-    let public_io = &checked.public_io;
-    absorb_labeled_bytes(
-        transcript,
-        b"preprocessing_digest",
-        &checked.preprocessing_digest,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_input_size",
-        public_io.memory_layout.max_input_size,
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"max_output_size",
-        public_io.memory_layout.max_output_size,
-    );
-    absorb_labeled_u64(transcript, b"heap_size", public_io.memory_layout.heap_size);
-    absorb_labeled_bytes(transcript, b"inputs", &public_io.inputs);
-    absorb_labeled_bytes(transcript, b"outputs", &public_io.outputs);
-    absorb_labeled_u64(transcript, b"panic", u64::from(public_io.panic));
-    absorb_labeled_u64(transcript, b"ram_K", num::u64_from_usize(checked.ram_K));
-    absorb_labeled_u64(
-        transcript,
-        b"trace_length",
-        num::u64_from_usize(checked.trace_length),
-    );
-    absorb_labeled_u64(transcript, b"entry_address", checked.entry_address);
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase1_num_rounds",
-        u64::from(config.rw_config.ram_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"ram_rw_phase2_num_rounds",
-        u64::from(config.rw_config.ram_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase1_num_rounds",
-        u64::from(config.rw_config.registers_rw_phase1_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"registers_rw_phase2_num_rounds",
-        u64::from(config.rw_config.registers_rw_phase2_num_rounds),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"log_k_chunk",
-        u64::from(config.one_hot_config.log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"lookups_ra_virtual_log_k_chunk",
-        u64::from(config.one_hot_config.lookups_ra_virtual_log_k_chunk),
-    );
-    absorb_labeled_u64(
-        transcript,
-        b"dory_layout",
-        config.trace_polynomial_order.transcript_scalar(),
-    );
+    for (label, value) in checked.preamble_values(config) {
+        match value {
+            PreambleValue::Bytes(bytes)
+            | PreambleValue::Inputs(bytes)
+            | PreambleValue::Outputs(bytes) => {
+                absorb_labeled_bytes(transcript, label, bytes);
+            }
+            PreambleValue::Word(value) => absorb_labeled_u64(transcript, label, value),
+            PreambleValue::Panic(value) => absorb_labeled_u64(transcript, label, u64::from(value)),
+        }
+    }
+}
+
+pub(crate) enum PreambleValue<'a> {
+    Bytes(&'a [u8]),
+    Word(u64),
+    Inputs(&'a [u8]),
+    Outputs(&'a [u8]),
+    Panic(bool),
+}
+
+impl CheckedInputs {
+    pub(crate) fn preamble_values(
+        &self,
+        config: ProofTranscriptConfig,
+    ) -> [(&'static [u8], PreambleValue<'_>); 17] {
+        let io = &self.public_io;
+        [
+            (
+                b"preprocessing_digest",
+                PreambleValue::Bytes(&self.preprocessing_digest),
+            ),
+            (
+                b"max_input_size",
+                PreambleValue::Word(io.memory_layout.max_input_size),
+            ),
+            (
+                b"max_output_size",
+                PreambleValue::Word(io.memory_layout.max_output_size),
+            ),
+            (
+                b"heap_size",
+                PreambleValue::Word(io.memory_layout.heap_size),
+            ),
+            (b"inputs", PreambleValue::Inputs(&io.inputs)),
+            (b"outputs", PreambleValue::Outputs(&io.outputs)),
+            (b"panic", PreambleValue::Panic(io.panic)),
+            (
+                b"ram_K",
+                PreambleValue::Word(num::u64_from_usize(self.ram_K)),
+            ),
+            (
+                b"trace_length",
+                PreambleValue::Word(num::u64_from_usize(self.trace_length)),
+            ),
+            (b"entry_address", PreambleValue::Word(self.entry_address)),
+            (
+                b"ram_rw_phase1_num_rounds",
+                PreambleValue::Word(u64::from(config.rw_config.ram_rw_phase1_num_rounds)),
+            ),
+            (
+                b"ram_rw_phase2_num_rounds",
+                PreambleValue::Word(u64::from(config.rw_config.ram_rw_phase2_num_rounds)),
+            ),
+            (
+                b"registers_rw_phase1_num_rounds",
+                PreambleValue::Word(u64::from(config.rw_config.registers_rw_phase1_num_rounds)),
+            ),
+            (
+                b"registers_rw_phase2_num_rounds",
+                PreambleValue::Word(u64::from(config.rw_config.registers_rw_phase2_num_rounds)),
+            ),
+            (
+                b"log_k_chunk",
+                PreambleValue::Word(u64::from(config.one_hot_config.log_k_chunk)),
+            ),
+            (
+                b"lookups_ra_virtual_log_k_chunk",
+                PreambleValue::Word(u64::from(
+                    config.one_hot_config.lookups_ra_virtual_log_k_chunk,
+                )),
+            ),
+            (
+                b"dory_layout",
+                PreambleValue::Word(config.trace_polynomial_order.transcript_scalar()),
+            ),
+        ]
+    }
 }
 
 /// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is

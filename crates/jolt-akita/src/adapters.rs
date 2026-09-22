@@ -533,7 +533,7 @@ impl AkitaVerifierScheduleArtifacts {
         }
     }
 
-    fn one_hot(&self) -> Option<&[u8]> {
+    pub(crate) fn one_hot(&self) -> Option<&[u8]> {
         match self {
             Self::OneHot { one_hot } | Self::Both { one_hot, .. } => Some(one_hot),
             Self::Dense { .. } => None,
@@ -865,20 +865,47 @@ impl AkitaCommitment {
     }
 }
 
+pub(crate) enum CommitmentFrame<'a> {
+    Label(&'static [u8]),
+    Bytes(&'a [u8]),
+    Word(u64),
+    CountedLabel(&'static [u8], u64),
+    Payload(&'a [u8]),
+}
+
+impl AkitaCommitment {
+    pub(crate) fn frames(&self) -> [CommitmentFrame<'_>; 9] {
+        [
+            CommitmentFrame::Label(b"akita_commitment"),
+            CommitmentFrame::Bytes(self.backend_flavor.transcript_label()),
+            CommitmentFrame::Bytes(&self.layout_digest),
+            CommitmentFrame::Word(self.num_vars as u64),
+            CommitmentFrame::Word(self.poly_count as u64),
+            CommitmentFrame::Word(self.one_hot_k as u64),
+            CommitmentFrame::Word(self.backend_coeff_len as u64),
+            CommitmentFrame::CountedLabel(
+                b"akita_commitment_bytes",
+                self.serialized_backend_bytes.len() as u64,
+            ),
+            CommitmentFrame::Payload(&self.serialized_backend_bytes),
+        ]
+    }
+}
+
 impl AppendToTranscript for AkitaCommitment {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_commitment"));
-        transcript.append_bytes(self.backend_flavor.transcript_label());
-        transcript.append_bytes(&self.layout_digest);
-        transcript.append(&U64Word(self.num_vars as u64));
-        transcript.append(&U64Word(self.poly_count as u64));
-        transcript.append(&U64Word(self.one_hot_k as u64));
-        transcript.append(&U64Word(self.backend_coeff_len as u64));
-        transcript.append(&LabelWithCount(
-            b"akita_commitment_bytes",
-            self.serialized_backend_bytes.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_backend_bytes);
+        for frame in self.frames() {
+            match frame {
+                CommitmentFrame::Label(label) => transcript.append(&Label(label)),
+                CommitmentFrame::Bytes(bytes) | CommitmentFrame::Payload(bytes) => {
+                    transcript.append_bytes(bytes);
+                }
+                CommitmentFrame::Word(value) => transcript.append(&U64Word(value)),
+                CommitmentFrame::CountedLabel(label, count) => {
+                    transcript.append(&LabelWithCount(label, count));
+                }
+            }
+        }
     }
 }
 

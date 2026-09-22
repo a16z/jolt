@@ -24,6 +24,8 @@ use thiserror::Error as ThisError;
 use jolt_r1cs::SparseRow;
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError};
 
+#[cfg(feature = "r1cs-fp128")]
+pub mod fp128;
 pub mod rv64;
 
 pub mod field_constraints;

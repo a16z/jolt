@@ -1,6 +1,7 @@
 //! Constrained polynomial evaluation using the source field's arithmetic.
 
-use jolt_field::{Fr, Ring};
+use crate::lagrange::{centered_domain_start, CenteredIntegerDomainError};
+use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
 use jolt_r1cs::fp128_bn254::{Fp128Error, Fp128Var};
 use jolt_r1cs::{LinearCombination, R1csBuilder};
 
@@ -37,6 +38,12 @@ pub enum LagrangeR1csError {
     Field(#[from] Fp128Error),
     #[error("Boolean Lagrange table exceeds the addressable allocation")]
     DomainTooLarge,
+    #[error(transparent)]
+    Domain(#[from] CenteredIntegerDomainError),
+    #[error("paired Eq points have different lengths")]
+    PointLengthMismatch,
+    #[error("Lagrange denominator vanishes in q")]
+    ZeroDenominator,
 }
 
 /// Boolean Lagrange weights in low-bit-first index order over the source field.
@@ -180,5 +187,166 @@ mod lagrange_tests {
         let mut swapped = witness;
         swapped.swap(table[1].variable().index(), table[2].variable().index());
         assert!(known.check_witness(&swapped).is_err());
+    }
+}
+
+/// Public centered integer nodes and inverse denominators; private nodes never branch.
+pub struct Fp128CenteredLagrangeShape {
+    nodes: Vec<u128>,
+    denominators: Vec<u128>,
+}
+impl Fp128CenteredLagrangeShape {
+    pub fn new(size: usize) -> Result<Self, LagrangeR1csError> {
+        let start = centered_domain_start(size)?;
+        let nodes = (0..size)
+            .map(|i| {
+                let i = i64::try_from(i).map_err(|_| LagrangeR1csError::DomainTooLarge)?;
+                let node = start
+                    .checked_add(i)
+                    .ok_or(LagrangeR1csError::DomainTooLarge)?;
+                Ok(Prime128OffsetA7F7::from_i64(node))
+            })
+            .collect::<Result<Vec<_>, LagrangeR1csError>>()?;
+        let denominators = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, x)| {
+                nodes
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .fold(Prime128OffsetA7F7::from_u64(1), |a, (_, y)| a * (*x - *y))
+                    .inverse()
+                    .map(|x| x.to_canonical_u128())
+                    .ok_or(LagrangeR1csError::ZeroDenominator)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            nodes: nodes.iter().map(|x| x.to_canonical_u128()).collect(),
+            denominators,
+        })
+    }
+    /// Product form works at grid nodes and emits the same rows for unknown points.
+    pub fn evaluate(
+        &self,
+        builder: &mut R1csBuilder<Fr>,
+        point: &Fp128Var,
+    ) -> Result<Vec<Fp128Var>, LagrangeR1csError> {
+        point.validate_indices(builder)?;
+        let differences = self
+            .nodes
+            .iter()
+            .map(|&node| {
+                let node = Fp128Var::constant(builder, node)?;
+                point.subtract(builder, &node)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.denominators
+            .iter()
+            .enumerate()
+            .map(|(i, &denominator)| {
+                let mut product = Fp128Var::constant(builder, denominator)?;
+                for (j, difference) in differences.iter().enumerate() {
+                    if i != j {
+                        product = product.multiply(builder, difference)?;
+                    }
+                }
+                Ok(product)
+            })
+            .collect()
+    }
+}
+
+/// Paired-point Eq polynomial without materializing an exponential Boolean table.
+pub fn eq_fp128_bn254(
+    builder: &mut R1csBuilder<Fr>,
+    left: &[Fp128Var],
+    right: &[Fp128Var],
+) -> Result<Fp128Var, LagrangeR1csError> {
+    if left.len() != right.len() {
+        return Err(LagrangeR1csError::PointLengthMismatch);
+    }
+    for value in left.iter().chain(right) {
+        value.validate_indices(builder)?;
+    }
+    let one = Fp128Var::constant(builder, 1)?;
+    let mut product = one.clone();
+    for (x, y) in left.iter().zip(right) {
+        let xy = x.multiply(builder, y)?;
+        let nx = one.subtract(builder, x)?;
+        let ny = one.subtract(builder, y)?;
+        let complement = nx.multiply(builder, &ny)?;
+        let factor = xy.add(builder, &complement)?;
+        product = product.multiply(builder, &factor)?;
+    }
+    Ok(product)
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "small native parity and private-handle mutation tests"
+)]
+mod centered_tests {
+    use super::*;
+    use crate::lagrange::centered_lagrange_evals;
+    use crate::EqPolynomial;
+    #[test]
+    fn centered_private_nodes_and_eq_match_native() {
+        let shape = Fp128CenteredLagrangeShape::new(10).unwrap();
+        for value in (-4..=5)
+            .map(Prime128OffsetA7F7::from_i64)
+            .chain([Prime128OffsetA7F7::from_u64(19)])
+        {
+            let mut builder = R1csBuilder::new();
+            let point = Fp128Var::allocate(&mut builder, Some(value.to_canonical_u128())).unwrap();
+            let output = shape.evaluate(&mut builder, &point).unwrap();
+            let native = centered_lagrange_evals(10, value).unwrap();
+            let mut witness = builder.witness().unwrap();
+            for (actual, expected) in output.iter().zip(native) {
+                assert_eq!(
+                    witness[actual.variable().index()],
+                    Fr::from_u128(expected.to_canonical_u128())
+                );
+            }
+            let matrices = builder.into_matrices();
+            matrices.check_witness(&witness).unwrap();
+            witness[output[0].variable().index()] += Fr::from_u64(1);
+            assert!(matrices.check_witness(&witness).is_err());
+        }
+        let mut builder = R1csBuilder::new();
+        let left = [2, 5, 9].map(|v| Fp128Var::allocate(&mut builder, Some(v)).unwrap());
+        let right = [3, 7, 11].map(|v| Fp128Var::allocate(&mut builder, Some(v)).unwrap());
+        let result = eq_fp128_bn254(&mut builder, &left, &right).unwrap();
+        let native = EqPolynomial::<Prime128OffsetA7F7>::mle(
+            &[2, 5, 9].map(Prime128OffsetA7F7::from_u64),
+            &[3, 7, 11].map(Prime128OffsetA7F7::from_u64),
+        );
+        let witness = builder.witness().unwrap();
+        assert_eq!(
+            witness[result.variable().index()],
+            Fr::from_u128(native.to_canonical_u128())
+        );
+        builder.into_matrices().check_witness(&witness).unwrap();
+    }
+    #[test]
+    fn centered_shape_is_witness_independent_and_rejects_foreign_indices() {
+        let shape = Fp128CenteredLagrangeShape::new(2).unwrap();
+        let mut known = R1csBuilder::new();
+        let x = Fp128Var::allocate(&mut known, Some(0)).unwrap();
+        let _ = shape.evaluate(&mut known, &x).unwrap();
+        let mut unknown = R1csBuilder::new();
+        let y = Fp128Var::allocate(&mut unknown, None).unwrap();
+        let _ = shape.evaluate(&mut unknown, &y).unwrap();
+        let a = known.into_matrices();
+        let b = unknown.into_matrices();
+        assert_eq!(a.a, b.a);
+        assert_eq!(a.b, b.b);
+        assert_eq!(a.c, b.c);
+        let mut empty = R1csBuilder::new();
+        assert!(shape.evaluate(&mut empty, &x).is_err());
+        assert_eq!(empty.num_vars(), 1);
+        assert!(Fp128CenteredLagrangeShape::new(0).is_err());
     }
 }

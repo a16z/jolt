@@ -12,6 +12,7 @@ categories = ["cryptography", "no-std"]
 workspace = true
 
 [features]
+r1cs-fp128 = ["r1cs", "jolt-r1cs/fp128-bn254"]
 r1cs = ["dep:jolt-r1cs", "jolt-r1cs/bn254", "dep:thiserror"]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 spongefish = ["dep:rand", "dep:spongefish", "spongefish/sha3"]

@@ -156,8 +156,8 @@ where
 /// 32-byte zero-padded label word (matches jolt-prover-legacy's `raw_append_label`).
 pub struct Label(pub &'static [u8]);
 
-impl AppendToTranscript for Label {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+impl Label {
+    pub(crate) fn to_bytes(&self) -> [u8; 32] {
         assert!(
             self.0.len() <= 32,
             "label {:?} exceeds 32 bytes",
@@ -166,7 +166,13 @@ impl AppendToTranscript for Label {
         let mut padded = [0u8; 32];
         let (head, _) = padded.split_at_mut(self.0.len());
         head.copy_from_slice(self.0);
-        transcript.append_bytes(&padded);
+        padded
+    }
+}
+
+impl AppendToTranscript for Label {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append_bytes(&self.to_bytes());
     }
 }
 
@@ -174,8 +180,8 @@ impl AppendToTranscript for Label {
 /// (matches jolt-prover-legacy's `raw_append_label_with_len`).
 pub struct LabelWithCount(pub &'static [u8], pub u64);
 
-impl AppendToTranscript for LabelWithCount {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+impl LabelWithCount {
+    pub(crate) fn to_bytes(&self) -> [u8; 32] {
         assert!(
             self.0.len() <= 24,
             "label {:?} exceeds 24 bytes",
@@ -185,7 +191,13 @@ impl AppendToTranscript for LabelWithCount {
         let (head, _) = packed.split_at_mut(self.0.len());
         head.copy_from_slice(self.0);
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
-        transcript.append_bytes(&packed);
+        packed
+    }
+}
+
+impl AppendToTranscript for LabelWithCount {
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append_bytes(&self.to_bytes());
     }
 }
 

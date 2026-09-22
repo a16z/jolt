@@ -476,9 +476,38 @@ fn expand_output(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     }
 
+    let map_fields = plans.iter().map(|plan| {
+        let ident = &plan.ident;
+        let id = id_expr(
+            &plan.kind,
+            &plan.relation,
+            plan.is_many.then(|| quote!(index)),
+        );
+        if plan.is_many {
+            quote!(#ident: self.#ident.iter().enumerate()
+                .map(|(index, value)| map(&#id, value))
+                .collect::<::core::result::Result<_, __Error>>()?,)
+        } else if plan.is_option {
+            quote!(#ident: self.#ident.as_ref().map(|value| map(&#id, value)).transpose()?,)
+        } else {
+            quote!(#ident: map(&#id, &self.#ident)?,)
+        }
+    });
+
     let point_accessors = plans.iter().map(point_accessor);
 
     Ok(quote! {
+        impl<__Cell> #name<__Cell> {
+            /// Map cells in canonical declaration order, preserving opening identities.
+            pub fn try_map_cells<__Output, __Error>(
+                &self,
+                mut map: impl ::core::ops::FnMut(&#id_ty, &__Cell)
+                    -> ::core::result::Result<__Output, __Error>,
+            ) -> ::core::result::Result<#name<__Output>, __Error> {
+                ::core::result::Result::Ok(#name { #(#map_fields)* })
+            }
+        }
+
         // The value resolver lives on the value cell (`C = F`): each field is read
         // as `F` (or `Vec<F>` / `Option<F>`) directly.
         impl<F: ::jolt_field::JoltField> ::jolt_claims::OutputClaims<F> for #name<F> {
