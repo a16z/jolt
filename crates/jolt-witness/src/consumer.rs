@@ -179,6 +179,11 @@ impl RandomAccessRows {
         self.cycles
     }
 
+    /// Number of retained rows before the implicit padding tail.
+    pub fn physical_cycles(&self) -> usize {
+        self.rows.len()
+    }
+
     /// Extracts one bundle with padding and one-row lookahead semantics.
     #[inline]
     pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {

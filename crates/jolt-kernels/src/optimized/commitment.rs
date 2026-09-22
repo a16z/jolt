@@ -1,5 +1,5 @@
-//! The optimized witness-commitment kernel: the reference consumer's exact
-//! per-column call sequences, parallelized.
+//! The optimized witness-commitment kernel: the reference consumer's
+//! commitments and hints, computed in parallel.
 //!
 //! The reference kernel streams `row_width`-cycle chunks and advances every
 //! column's commitment state serially per chunk — each tier-1 group operation
@@ -14,8 +14,9 @@
 //! - Tier-2 finishes (one multi-pairing per column) run in parallel across
 //!   columns.
 //!
-//! Per column the fed windows, their order, and the finish calls are exactly
-//! the reference kernel's, so commitments and hints are byte-identical.
+//! Implicit padding windows reuse one independently computed chunk
+//! commitment. All row positions remain in the hints and hiding is applied
+//! at finish, preserving the reference kernel's commitments and hints.
 //! The materializing modes (address-major order, widened grids) and advice
 //! commits delegate to the reference kernel unchanged.
 
@@ -158,9 +159,9 @@ where
 /// The pipelined commit pass over a slice-backed source: while the column
 /// grid advances over superchunk `k`, workers extract superchunk `k + 1`
 /// into the spare buffer (two reused buffers, swapped per delivery). Per
-/// column the fed windows, their order, and the finish calls are exactly
-/// the chunk walk's — the pipeline only overlaps extraction with group
-/// arithmetic, so commitments and hints are byte-identical.
+/// column the physical windows retain the chunk walk's order. The implicit
+/// padding tail repeats its chunk commitment without repeating extraction
+/// and group arithmetic; commitments and hints remain byte-identical.
 #[cfg(feature = "parallel")]
 fn collect_range_into(
     access: &RandomAccessRows,
@@ -204,27 +205,39 @@ where
     let kinds = column_kinds(ids, grid)?;
     let mut state = BatchedColumns::<F, PCS>::begin(&kinds, row_width, grid, setup);
 
-    let mut front: Vec<CommittedColumnsWitness> = Vec::new();
-    let mut back: Vec<CommittedColumnsWitness> = Vec::new();
-    let mut end = superchunk.min(cycles);
-    collect_range_into(access, 0..end, &mut front)?;
-    loop {
-        let next_end = (end + superchunk).min(cycles);
-        let (fill, ()) = rayon::join(
-            || {
-                if end < next_end {
-                    collect_range_into(access, end..next_end, &mut back).map(|()| true)
-                } else {
-                    Ok(false)
-                }
-            },
-            || state.consume(&front),
-        );
-        if !fill? {
-            break;
+    let materialized_cycles = access
+        .physical_cycles()
+        .min(cycles)
+        .next_multiple_of(row_width);
+    if materialized_cycles > 0 {
+        let mut front: Vec<CommittedColumnsWitness> = Vec::new();
+        let mut back: Vec<CommittedColumnsWitness> = Vec::new();
+        let mut end = superchunk.min(materialized_cycles);
+        collect_range_into(access, 0..end, &mut front)?;
+        loop {
+            let next_end = (end + superchunk).min(materialized_cycles);
+            let (fill, ()) = rayon::join(
+                || {
+                    if end < next_end {
+                        collect_range_into(access, end..next_end, &mut back).map(|()| true)
+                    } else {
+                        Ok(false)
+                    }
+                },
+                || state.consume(&front),
+            );
+            if !fill? {
+                break;
+            }
+            core::mem::swap(&mut front, &mut back);
+            end = next_end;
         }
-        core::mem::swap(&mut front, &mut back);
-        end = next_end;
+    }
+    if materialized_cycles < cycles {
+        // These extractors depend only on the current row, so every implicit
+        // padding row has the same bundle, including the final cycle.
+        let padding = access.window(materialized_cycles)?;
+        state.consume_padding(&padding, (cycles - materialized_cycles) / row_width);
     }
     Ok(package::<F, PCS>(state.finish(setup), ids))
 }
@@ -306,6 +319,40 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
             row_width,
             setup,
         }
+    }
+
+    #[cfg(feature = "parallel")]
+    fn consume_padding(&mut self, padding: &CommittedColumnsWitness, windows: usize) {
+        let row_width = self.row_width;
+        let one_hot_k = self.one_hot_k;
+        let setup = self.setup;
+        self.columns.par_iter_mut().for_each(|column| match column {
+            ColumnCommitState::Increment { kind, partial } => {
+                let value = kind.increment(padding);
+                if value == 0 {
+                    PCS::feed_zeros(partial, row_width, windows, setup);
+                } else {
+                    PCS::feed_i128_rows_with(
+                        partial,
+                        |_| value,
+                        windows * row_width,
+                        row_width,
+                        setup,
+                    );
+                }
+            }
+            ColumnCommitState::OneHot {
+                kind,
+                context,
+                chunk_commitments,
+            } => {
+                // Chunk commitments are independent of their row position.
+                // Preserve the full hint length and apply hiding at finish.
+                let chunk = vec![kind.hot_address(padding); row_width];
+                let commitment = PCS::process_one_hot_chunk(context, setup, one_hot_k, &chunk);
+                chunk_commitments.extend(std::iter::repeat_n(commitment, windows));
+            }
+        });
     }
 
     fn finish(self, setup: &PCS::ProverSetup) -> Vec<(PCS::Output, PCS::OpeningHint)> {
@@ -416,7 +463,7 @@ mod tests {
     #[test]
     fn optimized_commit_matches_reference() {
         let shape = FixtureShape {
-            log_t: 6,
+            log_t: 8,
             ram_k: 16,
         };
         let ops = vec![
@@ -490,6 +537,8 @@ mod tests {
             #[cfg(feature = "parallel")]
             {
                 let access = source.random_access().unwrap();
+                assert!(access.physical_cycles() < grid.num_columns());
+                assert!((1usize << shape.log_t) / grid.num_columns() > 2);
                 let pipelined = super::commit_pipelined::<Fr, DoryScheme>(
                     &access,
                     &ids,
