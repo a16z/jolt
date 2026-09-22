@@ -45,6 +45,9 @@ pub(crate) mod num {
     }
 }
 
+#[cfg(feature = "r1cs")]
+pub mod r1cs;
+
 pub mod config;
 pub mod error;
 #[cfg(feature = "fs-audit")]

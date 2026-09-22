@@ -14,12 +14,15 @@ r1cs = [
   "dep:jolt-r1cs",
   "dep:thiserror",
   "jolt-r1cs/integer-bn254",
-  "jolt-transcript/r1cs",
+  "jolt-transcript/r1cs-fp128",
+  "jolt-r1cs/fp128-bn254",
+  "dep:bincode",
   "jolt-poly/r1cs",
 ]
 profiling = []
 
 [dependencies]
+bincode = { workspace = true, optional = true }
 akita-transcript = { workspace = true, optional = true, features = [
   "transcript-blake2b",
 ] }

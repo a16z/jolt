@@ -101,3 +101,6 @@ pub mod terminal_relation;
 pub mod terminal_context;
 
 mod sparse_routing;
+
+mod commitment;
+pub use commitment::{AkitaCommitmentShape, AkitaCommitmentVars, CommitmentR1csError};

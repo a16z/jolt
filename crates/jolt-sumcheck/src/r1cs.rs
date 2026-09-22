@@ -560,3 +560,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "r1cs-fp128")]
+pub mod fp128;

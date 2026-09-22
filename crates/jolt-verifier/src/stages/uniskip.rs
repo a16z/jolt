@@ -95,11 +95,15 @@ where
     F: JoltField,
     T: Transcript<Challenge = F>,
 {
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
-    )]
-    transcript.challenge_vector(log_t + 2)
+    transcript.challenge_vector(spartan_outer_tau_count(log_t))
+}
+
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "callers validate log_t as an ilog2 result below 64"
+)]
+pub(crate) fn spartan_outer_tau_count(log_t: usize) -> usize {
+    log_t + 2
 }
 
 /// The stage-2 product tau_high, drawn before the product uni-skip round.

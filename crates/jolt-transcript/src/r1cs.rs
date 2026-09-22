@@ -235,6 +235,14 @@ impl LegacyBlake2bVar {
         Ok(())
     }
 
+    /// Check a fixed nonoverflowing schedule before allocating its constraints.
+    pub fn check_schedule(&self, transitions: u32) -> Result<(), Blake2bR1csError> {
+        self.round
+            .checked_add(transitions)
+            .map(|_| ())
+            .ok_or(Blake2bR1csError::RoundOverflow)
+    }
+
     /// Return constrained state bytes for subsequent transitions or statement binding.
     pub fn state(&self) -> &[ByteVar; 32] {
         &self.state
@@ -402,3 +410,8 @@ pub use duplex::Blake2bDuplexVar;
 
 mod stream;
 pub use stream::{Blake2bStreamVar, BLAKE2B_STREAM_BYTES};
+
+#[cfg(feature = "r1cs-fp128")]
+mod fp128;
+#[cfg(feature = "r1cs-fp128")]
+pub use fp128::Fp128TranscriptError;

@@ -15,6 +15,7 @@ akita = []
 allocative = ["dep:allocative"]
 field-inline = []
 r1cs = ["dep:jolt-r1cs"]
+r1cs-fp128 = ["r1cs", "jolt-r1cs/fp128-bn254", "jolt-poly/r1cs"]
 test-utils = []
 
 [dependencies]

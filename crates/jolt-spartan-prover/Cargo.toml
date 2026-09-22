@@ -9,6 +9,7 @@ description = "PCS-generic clear Spartan proving for sparse R1CS"
 workspace = true
 
 [features]
+akita-boundary = ["preprocessed", "dep:jolt-verifier", "dep:jolt-prover-legacy", "jolt-prover-legacy/prover", "jolt-prover-legacy/akita"]
 preprocessed = [
   "dep:jolt-hyperkzg",
   "dep:jolt-crypto",
@@ -18,6 +19,8 @@ preprocessed = [
 ]
 
 [dependencies]
+jolt-verifier = { workspace = true, optional = true, features = ["r1cs", "akita"] }
+jolt-prover-legacy = { workspace = true, optional = true, default-features = false }
 jolt-crypto = { workspace = true, optional = true }
 jolt-hyperkzg = { workspace = true, optional = true }
 jolt-field.workspace = true
@@ -29,6 +32,9 @@ jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 
 [dev-dependencies]
+blake2.workspace = true
+serde.workspace = true
+common.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
 jolt-hyperkzg.workspace = true
@@ -37,3 +43,7 @@ jolt-transcript = { workspace = true, features = [
   "transcript-blake2b",
 ] }
 bincode.workspace = true
+
+[[example]]
+name = "akita_boundary_relation"
+required-features = ["akita-boundary"]
