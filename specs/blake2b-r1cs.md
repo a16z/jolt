@@ -30,9 +30,10 @@ spongefish transcript and is intentionally not claimed to match this legacy fram
 
 ## Constraint argument and boundary contracts
 
-Allocated bits satisfy `b(b-1)=0`. XOR emits `p=xy` and represents its output as
-`x+y-2p`; Boolean input semantics imply Boolean output, so another Boolean row is
-unnecessary. Rotations and byte/word conversion only permute certified bits.
+Allocated bits satisfy `b(b-1)=0`. XOR allocates `z` and emits `(2x)y=x+y-z`. For Boolean inputs the
+four cases force the unique field value `z` to be respectively 0, 1, 1, 0;
+Boolean output therefore follows without another Boolean row. Materializing `z`
+keeps every bit expression sparse across additions and compression blocks. Rotations and byte/word conversion only permute certified bits.
 
 Two-word addition allocates 64 Boolean output bits and one Boolean carry bit;
 three-word addition allocates 64 output bits and two Boolean carry bits. One row
@@ -81,7 +82,7 @@ bn254 feature above. This slice does not repair unrelated test feature wiring.
 Constraint counts are structural diagnostics, not proving-time or gas evidence.
 No complete-wrapper or workspace-wide host/ZK suite was run for this optional slice.
 
-Measured diagnostic (variables include ONE; nonzeros sum A/B/C after row
+Historical baseline `51f6c8adf` diagnostic (variables include ONE; nonzeros sum A/B/C after row
 canonicalization; no witness-dependent constant folding):
 
 | Hash | Input bytes | Rows | Variables | Nonzeros |
@@ -93,10 +94,11 @@ canonicalization; no witness-dependent constant folding):
 | 256 | 129 | 103,976 | 103,177 | 10,247,687 |
 | 512 | 129 | 104,264 | 103,433 | 10,398,343 |
 
-XOR currently retains expanded linear combinations, so nonzero growth across
-blocks is substantial. Materializing derived Boolean expressions is a separate
-optimization requiring its own measured row/nonzero tradeoff and review. This
-baseline is not a claim of practical full-transcript proving cost.
+That baseline retained expanded XOR linear combinations, producing substantial
+nonzero growth. The follow-up replaces each XOR product variable by its output
+variable and rewrites its single row as above. It changes neither row nor variable
+counts and performs no constant folding. Neither version provides evidence of
+practical full-transcript proving time.
 
 Validation on this branch: default targeted nextest 89/89 passed (run
 `c53b468e-390d-469d-97e2-9a9275866a4a`); reduced features with explicit BN254
@@ -107,3 +109,23 @@ clippy, fmt check, diff check and cost diagnostic exited zero. Raw local evidenc
 `/private/tmp/blake2-r1cs-clippy.log`, `/private/tmp/blake2-r1cs-cost.log`.
 The failed feature invocation is preserved in
 `/private/tmp/blake2-r1cs-minimal-nextest.log` (exit 101).
+
+Materialized-XOR diagnostic, with identical complete row/variable counts:
+
+| Hash | Input bytes | Nonzeros |
+|---|---:|---:|
+| 256 | 0 | 278,400 |
+| 512 | 0 | 279,712 |
+| 256 | 128 | 293,761 |
+| 512 | 128 | 295,073 |
+| 256 | 129 | 572,105 |
+| 512 | 129 | 573,417 |
+
+The same independent-vector, native-transcript and completed-witness tamper tests
+pass after materialization: 89/89 default and 57/57 reduced-feature tests. Targeted
+all-target clippy and the cost diagnostic exit zero. Follow-up raw logs are
+`/private/tmp/blake2-r1cs-materialized-nextest.log`,
+`/private/tmp/blake2-r1cs-materialized-minimal-nextest.log`,
+`/private/tmp/blake2-r1cs-materialized-clippy.log`, and
+`/private/tmp/blake2-r1cs-materialized-cost.log`. These sparse-matrix counts support
+only the structural cost comparison; they are not timings or a full-wrapper estimate.

@@ -46,11 +46,17 @@ impl Bit {
     }
 
     fn xor(&self, builder: &mut R1csBuilder<Fr>, rhs: &Self) -> Self {
-        let product = builder.multiply(self.expression.clone(), rhs.expression.clone());
+        let witness = self.witness.zip(rhs.witness).map(|(a, b)| a ^ b);
+        let variable = builder.alloc_witness(witness.map(|b| Fr::from_u64(u64::from(b))));
+        let expression = LinearCombination::variable(variable);
+        builder.assert_product(
+            self.expression.clone().scale(Fr::from_u64(2)),
+            rhs.expression.clone(),
+            self.expression.clone() + rhs.expression.clone() - expression.clone(),
+        );
         Self {
-            expression: self.expression.clone() + rhs.expression.clone()
-                - product.scale(Fr::from_u64(2)),
-            witness: self.witness.zip(rhs.witness).map(|(a, b)| a ^ b),
+            expression,
+            witness,
         }
     }
 
