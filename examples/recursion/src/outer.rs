@@ -185,6 +185,7 @@ impl Args {
             .as_full_arc()
             .ok_or("full program required")?;
         let public_io = trace_output.device.clone();
+        rows.reserve_exact(config.trace_length - rows.len());
         rows.resize(config.trace_length, TraceRow::default());
         let padded = TraceOutput::new(
             OwnedTrace::new(rows),
