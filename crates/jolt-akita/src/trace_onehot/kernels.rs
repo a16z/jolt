@@ -1,16 +1,17 @@
 use std::any::Any;
 
 use akita_error::AkitaError;
-use akita_prover::compute::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
-};
-use akita_prover::{
-    cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup,
-    CommitInnerWitness, CpuBackend, CpuPreparedSetup, DecomposeFoldWitness,
-    ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
-    ExternalInnerCommitmentOperation, ExternalOperationIdentity, RootPolyShape,
+use akita_pcs::{
+    custom_source::{
+        cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup,
+        CommitInnerPlan, CpuFoldResponses, CpuPreparedSetup, DecomposeFoldBatchPlan,
+        DecomposeFoldPlan, DecomposeFoldWitness, ExternalInnerCommitmentCapability,
+        ExternalInnerCommitmentInput, ExternalInnerCommitmentOperation, ExternalOperationIdentity,
+        OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootPolyShape,
+        SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+        SubringCoefficientPackingPlan,
+    },
+    CpuBackend,
 };
 use akita_types::{dispatch_for_field, FpExtEncoding};
 #[expect(
@@ -53,7 +54,7 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TracePackedOneHotCommitOpe
         plan: &CommitInnerPlan,
         sources: &[ExternalInnerCommitmentInput<'_>],
         context: &dyn Any,
-    ) -> Result<Vec<CommitInnerWitness<AkitaField>>, AkitaError> {
+    ) -> Result<Vec<akita_types::RingVec<AkitaField>>, AkitaError> {
         let prepared = cpu_external_inner_prepared_setup::<AkitaField>(context)?;
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -63,7 +64,7 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TracePackedOneHotCommitOpe
                 .par_iter()
                 .map(|source| {
                     let source = source.payload::<TracePackedOneHot>()?;
-                    commit_packed::<D>(&CpuBackend::DEFAULT, prepared, source, *plan)
+                    commit_packed::<D>(prepared, source, *plan)
                 })
                 .collect()
         )
@@ -85,11 +86,14 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         _prepared: Option<&Self::PreparedSetup>,
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness, AkitaError> {
+        let num_blocks = RootPolyShape::<AkitaField, D>::num_ring_elems(source.source())
+            .div_ceil(plan.num_positions_per_block);
+        let block_range = 0..num_blocks;
         decompose_fold_packed::<D>(
             source.source(),
             plan.challenges,
-            1,
+            std::slice::from_ref(&block_range),
             plan.num_positions_per_block,
             plan.num_digits,
             DecomposeRotationMode::from_env()?,
@@ -108,27 +112,41 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
         _prepared: Option<&Self::PreparedSetup>,
         source: TracePackedOneHotBatchView<'_, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<Vec<DecomposeFoldWitness<AkitaField>>, AkitaError> {
+    ) -> Result<CpuFoldResponses, AkitaError> {
         let source = source.source();
-        let DecomposeFoldBatchPlan::Sparse {
-            challenges,
-            num_chunks,
-            num_positions_per_block,
-            num_digits,
-            ..
-        } = plan;
-        plan.validate_uniform_batch(std::iter::once(
-            RootPolyShape::<AkitaField, D>::num_ring_elems(source)
-                .div_ceil(num_positions_per_block),
-        ))?;
-        decompose_fold_packed::<D>(
-            source,
-            challenges,
-            num_chunks,
-            num_positions_per_block,
-            num_digits,
-            DecomposeRotationMode::from_env()?,
-        )
+        let (num_positions_per_block, num_digits, _) = plan.scalar_params();
+        let num_blocks = RootPolyShape::<AkitaField, D>::num_ring_elems(source)
+            .div_ceil(num_positions_per_block);
+        let _ = plan.validate_uniform_batch(std::iter::once(num_blocks))?;
+        match plan {
+            DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
+                let block_range = 0..num_blocks;
+                let mut responses = decompose_fold_packed::<D>(
+                    source,
+                    challenges,
+                    std::slice::from_ref(&block_range),
+                    num_positions_per_block,
+                    num_digits,
+                    DecomposeRotationMode::from_env()?,
+                )?;
+                let response = responses.pop().ok_or_else(|| {
+                    AkitaError::InvalidInput("decompose fold returned no witness".into())
+                })?;
+                Ok(CpuFoldResponses::sparse(response))
+            }
+            DecomposeFoldBatchPlan::SparseChunked {
+                challenges,
+                chunk_ranges,
+                ..
+            } => CpuFoldResponses::chunked::<D>(decompose_fold_packed::<D>(
+                source,
+                challenges.as_slice(),
+                chunk_ranges,
+                num_positions_per_block,
+                num_digits,
+                DecomposeRotationMode::from_env()?,
+            )?),
+        }
     }
 }
 

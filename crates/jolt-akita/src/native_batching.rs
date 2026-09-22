@@ -17,10 +17,7 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{AkitaError, AkitaTranscript};
-use akita_prover::{
-    CpuBackend, ErasedPreparedProverGroup, PreparedGroupProveOps, PreparedProverGroup,
-    ReleaseRootNttAfterFold, SelectedProverOpeningData,
-};
+use akita_prover::SelectedProverOpeningData;
 use akita_types::{
     BasisMode, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
 };
@@ -33,16 +30,13 @@ use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64
 use tracing::info_span;
 
 use crate::adapters::{
-    akita_error, append_batch_statement, append_verifier_setup, backend_stack,
-    bridged_akita_transcript, invalid_batch, prove_failed, reverse_point, serialize_akita,
-    with_backend_pool, with_one_hot_scheme, AkitaBackendCommitment, AkitaBackendDensePoly,
-    AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
-    AkitaBackendProof, AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField,
-    AkitaHintPolynomials, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
-    AKITA_ONE_HOT_K256,
+    akita_error, append_batch_statement, append_verifier_setup, bridged_akita_transcript,
+    invalid_batch, prove_failed, reverse_point, serialize_akita, with_backend_pool,
+    with_one_hot_scheme, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
+    AkitaBackendHint, AkitaBackendProof, AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField,
+    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::scheme::validate_precommitted_order;
-use crate::trace_onehot::TracePackedOneHot;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
 /// opening protocol.
@@ -219,120 +213,50 @@ impl AkitaNativeBatching {
         }
         validate_grouped_hint("main-trace", &main, &main_hint)?;
 
-        let mut precommitted_sources = Vec::with_capacity(precommitted.len());
-        let mut precommitted_backend = Vec::with_capacity(precommitted.len());
+        let (_, one_hot_backend) = setup.one_hot_backend()?;
+        let mut group_claims = Vec::with_capacity(precommitted.len() + 1);
+        let mut backend_hints = Vec::with_capacity(precommitted.len() + 1);
         for (entry, hint) in precommitted {
-            let polys = match hint.polynomials {
-                AkitaHintPolynomials::Dense(polys) if polys.len() == 1 => polys,
-                AkitaHintPolynomials::Dense(_)
-                | AkitaHintPolynomials::OneHot(_)
-                | AkitaHintPolynomials::TraceOneHot(_) => {
-                    return Err(invalid_batch(format!(
-                        "Akita {} hint must retain one dense source",
-                        entry.role.diagnostic_name()
-                    )))
-                }
-            };
-            let backend = hint.backend.ok_or_else(|| {
+            let (backend_commitment, backend_hint) = hint.backend.ok_or_else(|| {
                 invalid_batch(format!(
                     "Akita {} hint has no backend payload",
                     entry.role.diagnostic_name()
                 ))
             })?;
-            precommitted_sources.push(polys);
-            precommitted_backend.push(backend);
+            group_claims.push(
+                PolynomialGroupClaims::new(
+                    entry.claim.point,
+                    entry.claim.evaluations,
+                    backend_commitment,
+                )
+                .map_err(akita_error)?,
+            );
+            backend_hints.push(
+                with_backend_pool(|| one_hot_backend.import_commitment(&backend_hint))
+                    .map_err(akita_error)?,
+            );
         }
         let (main_backend_commitment, main_backend_hint) = main_hint
             .backend
             .ok_or_else(|| invalid_batch("Akita main-trace hint has no backend payload"))?;
+        group_claims.push(
+            PolynomialGroupClaims::new(
+                reverse_point(&main.point),
+                main.evaluations.clone(),
+                main_backend_commitment,
+            )
+            .map_err(akita_error)?,
+        );
+        backend_hints.push(main_backend_hint);
+        let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
 
         let (selection, backend_proof) = with_backend_pool(move || {
-            // Group order is canonical: every precommitted group, then the final
-            // trace group. Claims, backend hints, and sources stay index-aligned.
-            let precommitted_refs = precommitted_sources
-                .iter()
-                .map(|polys| {
-                    let poly = polys.first().ok_or_else(|| {
-                        invalid_batch("Akita precommitted hint retained an empty dense source")
-                    })?;
-                    Ok([poly])
-                })
-                .collect::<Result<Vec<[&AkitaBackendDensePoly; 1]>, OpeningsError>>()?;
-
-            let trace_refs;
-            let one_hot_refs;
-            let mut groups = precommitted_refs
-                .iter()
-                .map(|refs| {
-                    ErasedPreparedProverGroup::<
-                        AkitaField,
-                        AkitaBackendExtField,
-                        CpuBackend,
-                    >::from_refs::<AkitaBackendDensePoly>(refs)
-                    .map_err(akita_error)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let main_group = match &main_hint.polynomials {
-                AkitaHintPolynomials::TraceOneHot(poly) => {
-                    trace_refs = [poly];
-                    ErasedPreparedProverGroup::<
-                        AkitaField,
-                        AkitaBackendExtField,
-                        CpuBackend,
-                    >::from_refs::<TracePackedOneHot>(&trace_refs)
-                }
-                AkitaHintPolynomials::OneHot(polys) if polys.len() == 1 => {
-                    let poly = polys.first().ok_or_else(|| {
-                        invalid_batch("Akita main-trace hint retained an empty one-hot source")
-                    })?;
-                    one_hot_refs = [poly];
-                    ErasedPreparedProverGroup::<
-                        AkitaField,
-                        AkitaBackendExtField,
-                        CpuBackend,
-                    >::from_refs::<AkitaBackendOneHotPoly>(&one_hot_refs)
-                }
-                AkitaHintPolynomials::Dense(_) | AkitaHintPolynomials::OneHot(_) => {
-                    return Err(invalid_batch(
-                        "Akita main-trace hint must retain one one-hot source",
-                    ));
-                }
-            }
-            .map_err(akita_error)?;
-            groups.push(main_group);
-
-            let backend_main_point = reverse_point(&main.point);
-            let mut group_claims = Vec::with_capacity(groups.len());
-            let mut backend_hints = Vec::with_capacity(groups.len());
-            for (entry, (backend_commitment, backend_hint)) in
-                precommitted_claims.iter().zip(precommitted_backend)
-            {
-                group_claims.push(
-                    PolynomialGroupClaims::new(
-                        entry.claim.point.clone(),
-                        entry.claim.evaluations.clone(),
-                        backend_commitment,
-                    )
-                    .map_err(akita_error)?,
-                );
-                backend_hints.push(backend_hint);
-            }
-            group_claims.push(
-                PolynomialGroupClaims::new(
-                    backend_main_point,
-                    main.evaluations.clone(),
-                    main_backend_commitment,
-                )
-                .map_err(akita_error)?,
-            );
-            backend_hints.push(main_backend_hint);
-            let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
             let scheme = setup.verifier.one_hot_scheme()?;
+            let (backend_prover_setup, backend) = setup.one_hot_backend()?;
             with_one_hot_scheme!(scheme, |scheme, Cfg| {
-                let opening = SelectedProverOpeningData::from_prepared_groups::<Cfg>(
+                let opening = SelectedProverOpeningData::from_committed_claims::<Cfg>(
                     claims,
                     backend_hints,
-                    groups,
                     scheme.schedules(),
                 )
                 .map_err(akita_error)?;
@@ -344,14 +268,11 @@ impl AkitaNativeBatching {
                     &precommitted_claims,
                     &main,
                 )?;
-                let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
-                let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-                let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
                 let backend_proof = scheme
                     .batched_prove(
                         backend_prover_setup,
                         opening,
-                        &releasing_stack,
+                        backend,
                         &mut akita_transcript,
                         BasisMode::Lagrange,
                     )
@@ -500,10 +421,7 @@ fn validate_statement(
     Ok(ValidatedStatement { commitment, point })
 }
 
-/// Checks that the prover hint and witness polynomials match the statement's
-/// commitment group. The hint's backend polynomials need no shape checks:
-/// hints are only constructible by this crate's commit paths, which derive the
-/// commitment's shape from those same polynomials.
+/// Checks that the prover hint and witness polynomials match the statement.
 fn validate_witness(
     hint: &AkitaProverHint,
     commitment: &AkitaCommitment,
@@ -530,15 +448,12 @@ fn validate_witness(
             )));
         }
     }
-    if matches!(
-        hint.polynomials,
-        AkitaHintPolynomials::OneHot(_) | AkitaHintPolynomials::TraceOneHot(_)
-    ) && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
+    if commitment.backend_flavor == AkitaBackendFlavor::OneHot
+        && !polynomials.iter().all(|polynomial| polynomial.is_one_hot())
     {
-        return Err(invalid_batch(format!(
-            "Akita {} prover hint requires one-hot witness polynomials",
-            hint.polynomials.kind()
-        )));
+        return Err(invalid_batch(
+            "Akita one-hot prover hint requires one-hot witness polynomials",
+        ));
     }
     Ok(())
 }
@@ -568,81 +483,60 @@ where
 /// Assembles the single-group opening data handed to Akita's native batched
 /// prover: the shared point, per-polynomial claimed values, the group
 /// commitment, and the commit-time hint.
-fn single_group_batch<'a, Cfg, P>(
+fn single_group_batch<'a, Cfg>(
     schedules: &TrustedScheduleCatalog<Cfg>,
     point: &[AkitaField],
     evaluations: &[AkitaField],
-    polynomials: &'a [&'a P],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
 ) -> Result<
-    SelectedProverOpeningData<
-        'a,
-        AkitaField,
-        PreparedProverGroup<'a, P>,
-        AkitaField,
-        AkitaBackendHint,
-    >,
+    SelectedProverOpeningData<'a, AkitaBackendExtField, AkitaBackendHint, AkitaField>,
     AkitaError,
 >
 where
-    Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
-    P: akita_prover::RootPolyMeta<AkitaField>,
+    Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaBackendExtField>,
 {
     let group =
         PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), backend_commitment)?;
     let claims = OpeningClaims::from_groups(vec![group])?;
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        claims,
-        vec![backend_hint],
-        vec![polynomials],
-        schedules,
-    )
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, vec![backend_hint], schedules)
 }
 
 /// The one-hot backend consumes the point in reversed variable order and uses
 /// the dedicated one-hot setup pair.
-fn prove_one_hot<'a, P>(
+fn prove_one_hot(
     setup: &AkitaProverSetup,
     point: &[AkitaField],
     evaluations: &[AkitaField],
-    polynomials: &'a [&'a P],
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
     akita_transcript: &mut AkitaTranscript<AkitaField>,
-) -> Result<(OpeningScheduleSelection, AkitaBackendProof), OpeningsError>
-where
-    P: akita_prover::RootPolyMeta<AkitaField>,
-    PreparedProverGroup<'a, P>: PreparedGroupProveOps<AkitaField, AkitaBackendExtField, CpuBackend>,
-{
-    let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
+) -> Result<(OpeningScheduleSelection, AkitaBackendProof), OpeningsError> {
+    let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let backend_point = reverse_point(point);
     let scheme = setup.verifier.one_hot_scheme()?;
     with_one_hot_scheme!(scheme, |scheme, Cfg| {
-        let opening = single_group_batch::<Cfg, _>(
+        let opening = single_group_batch::<Cfg>(
             scheme.schedules(),
             &backend_point,
             evaluations,
-            polynomials,
             backend_commitment,
             backend_hint,
         )
         .map_err(akita_error)?;
         let selection = opening.selection();
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
         let proof = with_backend_pool(|| {
             scheme.batched_prove(
                 backend_prover_setup,
                 opening,
-                &releasing_stack,
+                backend,
                 akita_transcript,
                 BasisMode::Lagrange,
             )
         })
         .map_err(prove_failed)?;
-        Ok::<_, OpeningsError>((selection, proof))
+        Ok((selection, proof))
     })
 }
 
@@ -677,7 +571,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         )?;
         let _span = info_span!(
             "AkitaNativeBatching::prove_batch",
-            source_kind = hint.polynomials.kind(),
+            source_kind = ?commitment.backend_flavor,
             num_vars = point.len(),
             num_claims = statement.len(),
             poly_count = commitment.poly_count,
@@ -695,22 +589,18 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             .iter()
             .map(|claim| claim.evaluation.value)
             .collect();
-        let (selection, backend_proof) = match &hint.polynomials {
-            AkitaHintPolynomials::Dense(dense) => {
-                let refs = dense.iter().collect::<Vec<_>>();
-                let opening = single_group_batch::<AkitaConfig, _>(
+        let (selection, backend_proof) = match commitment.backend_flavor {
+            AkitaBackendFlavor::Dense => {
+                let opening = single_group_batch::<AkitaConfig>(
                     setup.verifier.dense_scheme()?.schedules(),
                     point,
                     &evaluations,
-                    &refs,
                     backend_commitment,
                     backend_hint,
                 )
                 .map_err(akita_error)?;
                 let selection = opening.selection();
-                let (backend_prover_setup, prepared_backend_setup) = setup.dense_backend()?;
-                let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-                let releasing_stack = ReleaseRootNttAfterFold::new(&stack);
+                let (backend_prover_setup, backend) = setup.dense_backend()?;
                 let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
                 let proof = with_backend_pool(|| {
                     setup
@@ -720,7 +610,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         .batched_prove(
                             backend_prover_setup,
                             opening,
-                            &releasing_stack,
+                            backend,
                             &mut akita_transcript,
                             BasisMode::Lagrange,
                         )
@@ -728,30 +618,14 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 .map_err(prove_failed)?;
                 (selection, proof)
             }
-            AkitaHintPolynomials::OneHot(one_hot) => {
-                let refs = one_hot.iter().collect::<Vec<_>>();
-                prove_one_hot::<AkitaBackendOneHotPoly>(
-                    setup,
-                    point,
-                    &evaluations,
-                    &refs,
-                    backend_commitment,
-                    backend_hint,
-                    &mut akita_transcript,
-                )?
-            }
-            AkitaHintPolynomials::TraceOneHot(one_hot) => {
-                let refs = [one_hot];
-                prove_one_hot::<TracePackedOneHot>(
-                    setup,
-                    point,
-                    &evaluations,
-                    &refs,
-                    backend_commitment,
-                    backend_hint,
-                    &mut akita_transcript,
-                )?
-            }
+            AkitaBackendFlavor::OneHot => prove_one_hot(
+                setup,
+                point,
+                &evaluations,
+                backend_commitment,
+                backend_hint,
+                &mut akita_transcript,
+            )?,
         };
 
         let proof = {

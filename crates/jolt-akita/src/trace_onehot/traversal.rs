@@ -1,7 +1,6 @@
 use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
-use akita_prover::compute::SubringCoefficientPackingPlan;
-use akita_prover::RootPolyShape;
+use akita_pcs::custom_source::{RootPolyShape, SubringCoefficientPackingPlan};
 use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalEncoding, ExtField, PseudoMersenne, Unreduced, Zero};
 

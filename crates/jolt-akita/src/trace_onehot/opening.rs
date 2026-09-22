@@ -1,6 +1,6 @@
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_prover::compute::{OpeningFoldOutput, OpeningFoldPlan};
+use akita_pcs::custom_source::{OpeningFoldOutput, OpeningFoldPlan};
 use rayon::prelude::*;
 
 use super::source::TracePackedOneHot;

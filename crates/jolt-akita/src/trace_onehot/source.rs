@@ -4,12 +4,11 @@ use std::{
 };
 
 use akita_error::AkitaError;
-use akita_prover::compute::CommitInnerPlan;
-use akita_prover::{
-    AvailablePolynomialTypes, BackendKindId, CommitSourceClass, CommitSourceDescriptor,
-    CommitmentSource, ExternalInnerCommitmentCapability, PolynomialRepresentation,
-    PolynomialTypeSelection, PreparedExternalInnerCommitment, RootOpeningSource, RootPolyMeta,
-    RootPolyShape,
+use akita_pcs::custom_source::{
+    AvailablePolynomialTypes, BackendKindId, CommitInnerPlan, CommitSourceClass,
+    CommitSourceDescriptor, CommitmentSource, ExternalInnerCommitmentCapability,
+    PolynomialRepresentation, PolynomialTypeSelection, PreparedExternalInnerCommitment,
+    RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients,
 };
 
 use super::kernels::{trace_commitment_capability, TracePackedOneHotCommitOperation};
@@ -226,7 +225,7 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
         &self,
         _plan: &CommitInnerPlan,
     ) -> Result<AvailablePolynomialTypes, AkitaError> {
-        AvailablePolynomialTypes::new(Vec::new())
+        Ok(AvailablePolynomialTypes::external_only())
     }
 
     fn represent_as(
@@ -264,6 +263,14 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
             &TracePackedOneHotCommitOperation,
             None,
         )
+    }
+}
+
+impl SourceCoefficients<AkitaField> for TracePackedOneHot {
+    fn source_coefficients(&self) -> Result<std::borrow::Cow<'_, [AkitaField]>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "trace-packed one-hot requires its streaming opening kernels".into(),
+        ))
     }
 }
 

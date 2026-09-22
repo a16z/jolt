@@ -2,9 +2,7 @@ use std::env::VarError;
 
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_prover::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use akita_prover::DecomposeFoldWitness;
-use jolt_field::One;
+use akita_pcs::custom_source::{fill_rotated_challenge, DecomposeFoldWitness};
 use rayon::prelude::*;
 use tracing::field::Empty;
 
@@ -16,8 +14,6 @@ use super::traversal::{
 use super::{
     DECOMPOSE_POSITION_WORKING_SET_TARGET, ROTATED_CHALLENGE_TABLE_BUDGET, TASKS_PER_RAYON_WORKER,
 };
-use crate::AkitaField;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DecomposeRotationMode {
     Auto,
@@ -469,11 +465,12 @@ fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[
 pub(super) fn decompose_fold_packed<const D: usize>(
     source: &TracePackedOneHot,
     challenges: &[SparseChallenge],
-    num_chunks: usize,
+    chunk_ranges: &[std::ops::Range<usize>],
     num_positions: usize,
     num_digits: usize,
     rotation_mode: DecomposeRotationMode,
-) -> Result<Vec<DecomposeFoldWitness<AkitaField>>, AkitaError> {
+) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
+    let num_chunks = chunk_ranges.len();
     let _span = tracing::info_span!(
         "TracePackedOneHot::decompose_fold_batch",
         ring_dimension = D,
@@ -502,10 +499,18 @@ pub(super) fn decompose_fold_packed<const D: usize>(
     for challenge in challenges {
         challenge.validate::<D>()?;
     }
-    let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, num_chunks)?;
+    if chunk_ranges.is_empty()
+        || chunk_ranges.iter().try_fold(0usize, |next, range| {
+            (range.start == next && range.start < range.end).then_some(range.end)
+        }) != Some(num_blocks)
+    {
+        return Err(AkitaError::InvalidInput(
+            "trace one-hot chunk ranges must exactly partition the live blocks".into(),
+        ));
+    }
     let mut block_chunks = vec![0usize; num_blocks];
-    for (chunk, range) in chunk_ranges.into_iter().enumerate() {
-        for block_chunk in &mut block_chunks[range] {
+    for (chunk, range) in chunk_ranges.iter().enumerate() {
+        for block_chunk in &mut block_chunks[range.clone()] {
             *block_chunk = chunk;
         }
     }
@@ -778,7 +783,6 @@ pub(super) fn decompose_fold_packed<const D: usize>(
         }
     }
     drop(_expand_span);
-    let modulus = (-AkitaField::one()).to_canonical_u128() + 1;
     let _witness_span = tracing::info_span!(
         "trace_onehot_decompose_build_witness",
         num_positions,
@@ -787,6 +791,6 @@ pub(super) fn decompose_fold_packed<const D: usize>(
     .entered();
     Ok(expanded
         .into_iter()
-        .map(|expanded| build_decompose_fold_witness::<AkitaField, D>(expanded, modulus))
+        .map(DecomposeFoldWitness::from_centered_rows)
         .collect())
 }
