@@ -55,6 +55,206 @@ dependencies = [
 ]
 
 [[package]]
+name = "akita-algebra"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-error",
+ "akita-serialization",
+ "jolt-field",
+ "rand_core 0.6.4",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "akita-challenges"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-error",
+ "akita-transcript",
+ "jolt-field",
+ "serde",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "akita-config"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-challenges",
+ "akita-error",
+ "akita-schedules",
+ "akita-serialization",
+ "akita-transcript",
+ "akita-types",
+ "jolt-field",
+]
+
+[[package]]
+name = "akita-error"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "akita-pcs"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-error",
+ "akita-prover",
+ "akita-serialization",
+ "akita-setup",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "akita-verifier",
+ "jolt-field",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "akita-planner"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-challenges",
+ "akita-error",
+ "akita-schedules",
+ "akita-types",
+ "libm",
+]
+
+[[package]]
+name = "akita-prover"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-error",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "jolt-field",
+ "rand_core 0.6.4",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "akita-schedules"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-challenges",
+ "akita-error",
+ "akita-types",
+ "bincode 2.0.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "akita-serialization"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "jolt-field",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "akita-setup"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-config",
+ "akita-error",
+ "akita-prover",
+ "akita-serialization",
+ "akita-types",
+ "jolt-field",
+ "tracing",
+]
+
+[[package]]
+name = "akita-sumcheck"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-algebra",
+ "akita-error",
+ "akita-serialization",
+ "akita-transcript",
+ "jolt-field",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "akita-transcript"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-error",
+ "akita-serialization",
+ "blake2 0.11.0",
+ "jolt-field",
+ "spongefish",
+]
+
+[[package]]
+name = "akita-types"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-error",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "blake2 0.11.0",
+ "jolt-field",
+ "num-traits",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "akita-verifier"
+version = "0.1.0"
+source = "git+https://github.com/markosg04/akita.git?rev=d0ee56a0b12db66b4c46a87c527169737694c4c7#d0ee56a0b12db66b4c46a87c527169737694c4c7"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-error",
+ "akita-serialization",
+ "akita-sumcheck",
+ "akita-transcript",
+ "akita-types",
+ "jolt-field",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
 name = "allocative"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -418,9 +618,9 @@ dependencies = [
 
 [[package]]
 name = "blake2"
-version = "0.11.0-rc.6"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "061f1a09225e328e1ffbb378d2d49923c0ca5fee19fb5ac1cc9c1e9d52b93690"
+checksum = "5b5d4d889834ee8ecfc0f8426ad30faf7cdcb10f741a8e6d7224d95325479f6f"
 dependencies = [
  "digest 0.11.2",
 ]
@@ -1253,6 +1453,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-akita"
+version = "0.1.0"
+dependencies = [
+ "akita-algebra",
+ "akita-challenges",
+ "akita-config",
+ "akita-error",
+ "akita-pcs",
+ "akita-planner",
+ "akita-prover",
+ "akita-schedules",
+ "akita-serialization",
+ "akita-transcript",
+ "akita-types",
+ "akita-verifier",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "rayon",
+ "serde",
+ "serde_bytes",
+ "tracing",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
@@ -1274,7 +1501,7 @@ dependencies = [
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "derive_more",
  "jolt-claims-derive",
  "jolt-field",
@@ -1547,7 +1774,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "ark-std 0.5.0",
  "bincode 2.0.1",
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "chrono",
  "clap",
  "common",
@@ -1556,6 +1783,7 @@ dependencies = [
  "eyre",
  "fixedbitset 0.5.7",
  "itertools 0.15.0",
+ "jolt-akita",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
@@ -1651,7 +1879,7 @@ version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "digest 0.11.2",
  "jolt-field",
  "light-poseidon",
@@ -1757,6 +1985,12 @@ dependencies = [
  "arbitrary",
  "cc",
 ]
+
+[[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "light-poseidon"
@@ -2504,6 +2738,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2602,9 +2846,9 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "spin"
@@ -2628,7 +2872,7 @@ source = "git+https://github.com/arkworks-rs/spongefish?rev=d2d190b1329d35ac9577
 dependencies = [
  "ark-ff 0.6.0",
  "ark-serialize 0.6.0",
- "blake2 0.11.0-rc.6",
+ "blake2 0.11.0",
  "digest 0.11.2",
  "keccak 0.1.6",
  "p3-koala-bear",
@@ -3469,3 +3713,11 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 name = "allocative"
 version = "0.3.4"
 source = "git+https://github.com/facebookexperimental/allocative?rev=85b773d85d526d068ce94724ff7a7b81203fc95e#85b773d85d526d068ce94724ff7a7b81203fc95e"
+
+[[patch.unused]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
