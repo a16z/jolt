@@ -32,6 +32,26 @@ pub enum FoldDrawError {
 /// Site/order, stream length/padding and slot offset must match the public plan.
 pub struct FoldResponseNonceVar([ByteVar; 4]);
 impl FoldResponseNonceVar {
+    /// Bind a logical LE-u32 nonce, enforcing the native FoldResponse width.
+    /// The caller's public plan identifies its site; canonical packed transport
+    /// can subsequently be constructed from the logical nonce values.
+    pub fn from_le_u32(
+        builder: &mut R1csBuilder<Fr>,
+        bytes: [ByteVar; 4],
+    ) -> Result<Self, FoldDrawError> {
+        for byte in &bytes {
+            byte.validate_indices(builder)?;
+        }
+        for (index, byte) in bytes.iter().enumerate() {
+            for (bit, expression) in byte.bit_expressions().into_iter().enumerate() {
+                if index * 8 + bit >= usize::from(FOLD_RESPONSE_NONCE_BITS) {
+                    builder.assert_zero(expression);
+                }
+            }
+        }
+        Ok(Self(bytes))
+    }
+
     /// Extract low-bit-first native FoldResponse bits at a fixed public bit offset.
     /// Every source handle must belong to this builder; ONE is fixed externally.
     pub fn from_packed(
@@ -133,6 +153,11 @@ pub struct D64FoldDrawVar {
     coordinates: usize,
 }
 impl D64FoldDrawVar {
+    /// Constrained native root bytes for downstream binding and parity checks.
+    pub fn root(&self) -> &[ByteVar; FOLD_CHALLENGE_SEED_LEN] {
+        &self.root
+    }
+
     /// Constrain one native flat callback index in this group's claim-major range.
     /// Other coordinates and their verifier uses remain separate obligations.
     pub fn sample_coordinate(
@@ -200,6 +225,33 @@ mod tests {
             .find(|(v, _)| *v != Variable::ONE)
             .unwrap()
             .0
+    }
+
+    #[test]
+    fn logical_nonce_width_and_unknown_shape() {
+        let emit = |value: Option<u32>| {
+            let mut builder = R1csBuilder::new();
+            let bytes = std::array::from_fn(|i| {
+                ByteVar::allocate(&mut builder, value.map(|v| v.to_le_bytes()[i]))
+            });
+            let _ = FoldResponseNonceVar::from_le_u32(&mut builder, bytes).unwrap();
+            builder
+        };
+        let known = emit(Some(4095));
+        let witness = known.witness().unwrap();
+        let matrices = known.into_matrices();
+        assert!(matrices.check_witness(&witness).is_ok());
+        for value in [Some(4096), None] {
+            let other = emit(value);
+            let witness = value.map(|_| other.witness().unwrap());
+            let layout = other.into_matrices();
+            assert_eq!(matrices.a, layout.a);
+            assert_eq!(matrices.b, layout.b);
+            assert_eq!(matrices.c, layout.c);
+            if let Some(witness) = witness {
+                assert!(layout.check_witness(&witness).is_err());
+            }
+        }
     }
 
     #[test]

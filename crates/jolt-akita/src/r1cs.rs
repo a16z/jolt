@@ -96,3 +96,8 @@ pub use fold_draw::{D64FoldDrawShape, D64FoldDrawVar, FoldDrawError, FoldRespons
 
 /// Complete shared-handle fixed-profile terminal relations; authentication is external.
 pub mod terminal_relation;
+
+/// Conditional complete terminal suffix over an inherited constrained transcript.
+pub mod terminal_context;
+
+mod sparse_routing;
