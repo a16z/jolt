@@ -93,6 +93,8 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host
       - name: cargo clippy --features allocative,host,zk
         run: cargo clippy --all --all-targets --features allocative,host,zk
+      - name: cargo clippy with preprocessed Spartan
+        run: cargo clippy --locked -p jolt-spartan-prover -p jolt-spartan-verifier --features jolt-spartan-prover/preprocessed --all-targets -- -D warnings
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
       # jolt-verifier's prover-fixtures feature gates live prover artifact
@@ -601,6 +603,9 @@ jobs:
             fi
             i=$((i + 1))
           done
+      - name: Test preprocessed Spartan
+        if: matrix.shard == 0
+        run: cargo nextest run --locked -p jolt-spartan-prover -p jolt-spartan-verifier --features jolt-spartan-prover/preprocessed --cargo-quiet
       - name: Test lookup table prover ABI
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-lookup-tables --features prover-abi-tests --test prover_lookup_table_abi --cargo-quiet
