@@ -1,5 +1,5 @@
 //! Conditional clear v2 preprocessing and SPARK verification.
-//! Joint online extraction, ROM composition, bounded decoding and ZK remain gates.
+//! Joint online extraction, ROM composition, ZK remain gates; the wire module supplies bounded decoding.
 use crate::SpartanError;
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_crypto::Bn254G1;
@@ -14,6 +14,7 @@ use thiserror::Error;
 
 mod protocol;
 pub mod sparse;
+pub mod wire;
 pub use protocol::PreprocessedProof;
 
 #[derive(Debug, Error)]
