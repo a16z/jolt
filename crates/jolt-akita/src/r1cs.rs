@@ -90,3 +90,6 @@ pub use sparse_candidate::{CandidateError, D64CandidateProfile, D64CandidateVar}
 
 mod sparse_retry;
 pub use sparse_retry::{D64AcceptedVar, D64RetryProfile, SparseRetryError};
+
+mod fold_draw;
+pub use fold_draw::{D64FoldDrawShape, D64FoldDrawVar, FoldDrawError, FoldResponseNonceVar};
