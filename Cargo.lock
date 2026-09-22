@@ -3341,6 +3341,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-hyperkzg"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-transcript",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "jolt-inlines-bigint"
 version = "0.1.0"
 dependencies = [
@@ -3787,6 +3801,40 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "jolt-spartan-prover"
+version = "0.1.0"
+dependencies = [
+ "bincode 2.0.1",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-hyperkzg",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-spartan-verifier",
+ "jolt-sumcheck",
+ "jolt-transcript",
+]
+
+[[package]]
+name = "jolt-spartan-verifier"
+version = "0.1.0"
+dependencies = [
+ "blake2 0.11.0",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-hyperkzg",
+ "jolt-openings",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
