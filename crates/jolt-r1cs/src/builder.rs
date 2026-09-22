@@ -216,6 +216,12 @@ impl<F: JoltField> R1csBuilder<F> {
         Ok(())
     }
 
+    /// Evaluate an expression from available assignments without changing shape.
+    /// This is a witness-generation convenience, not an additional constraint.
+    pub fn evaluate(&self, expression: &LinearCombination<F>) -> Result<F, R1csBuilderError> {
+        expression.evaluate(&self.witness)
+    }
+
     pub fn witness(&self) -> Result<Vec<F>, R1csBuilderError> {
         self.witness
             .iter()

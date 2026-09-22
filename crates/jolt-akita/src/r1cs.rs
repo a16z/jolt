@@ -84,3 +84,6 @@ pub use sparse_stream::AkitaSparseStreamVar;
 
 /// Exact D64 selective-L2 operator-norm acceptance constraints.
 pub mod operator_norm;
+
+mod sparse_candidate;
+pub use sparse_candidate::{CandidateError, D64CandidateProfile, D64CandidateVar};
