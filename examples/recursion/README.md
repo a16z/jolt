@@ -56,6 +56,7 @@ RUST_MIN_STACK=268435456 RAYON_NUM_THREADS=1 cargo run --release -p recursion \
   --features akita,field-inline,ntt-inline -- outer \
   --elf /path/to/recursion-guest \
   --embedded-stream /path/to/fibonacci-guest_proofs.bin \
+  --max-trace-length 67108864 \
   --max-untrusted-advice-size 0 --max-trusted-advice-size 0 \
   --workdir /path/to/preflight --preflight
 ```
@@ -70,17 +71,31 @@ these capacities. Validate the arguments against the guest macro or its generate
 For another guest, `--input` accepts its already-serialized entry-point input
 instead of `--embedded-stream`. Neither option regenerates an inner proof.
 
-Preflight owns one modular trace, derives its padded proof geometry, counts FR
+The output work directory must not already exist, including for preflight. Use
+a different new directory for each attempt.
+
+Preflight streams cycles from the lazy emulator directly into one pre-reserved
+modular row vector; it does not materialize a complete `Vec<Cycle>`. It derives
+padded proof geometry and counts FR
 rows, records row-vector capacity and an FR allocation estimate, and provisions
 the grouped schedule through the production catalog API. It writes
 `preflight.json` and drops the trace before returning. Catalog provisioning does
 not measure PCS setup, witness, or sumcheck memory; it is not a memory-fit claim.
-The maximum trace option is a proof-geometry admission limit, not an execution
-watchdog. Run resource limits outside the process.
+The required `--max-trace-length` option has no default reservation and bounds the number of rows collected as well as proof
+geometry. Storage for that many rows is reserved before execution, so the row
+vector does not grow by doubling. This is not a total process memory or wall-time
+limit: emulator/decode state, per-tick cycle scratch, FR allocations, final-memory
+extraction overlap and later prover buffers remain additional. The preflight
+figures describe surviving allocations, not peak RSS. Large runs still require
+an external process memory and time guard.
 
 Omitting `--preflight` continues through the canonical FR setup,
 `TraceBackend::with_field_inline`, the optimized modular q128 Akita prover, and
-the full verifier. Only after verification accepts are `outer-proof.bin` and
-`outer-device.bin` written. The trace vector transfers ownership into the witness
-without a full-vector clone. Large proving runs require a separately reviewed
+the full verifier. After verification accepts, the proof and public device are
+written under `.proof-incomplete`, then a single directory rename publishes them
+as `accepted-proof/outer-proof.bin` and `accepted-proof/outer-device.bin`. Consumers
+must use the `accepted-proof` directory and successful process exit; incomplete
+files are not a result. This provides atomic pair visibility on the same filesystem,
+not crash-durable publication. The row vector transfers ownership into the witness
+without cloning it. Large proving runs require a separately reviewed
 resource budget; the trace-only commands remain available.

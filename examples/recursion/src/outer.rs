@@ -5,9 +5,7 @@ use jolt_akita::schedule_registry::provision_precommitted_for_k;
 use jolt_openings::CommitmentScheme;
 use jolt_program::{
     build_jolt_program_with_inline_provider,
-    execution::{
-        ExecutionBackend, FieldInlineTraceData, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
-    },
+    execution::{FieldInlineTraceData, OwnedTrace, TraceInputs, TraceOutput, TraceRow},
 };
 use jolt_prover::{
     akita::{self, JoltAkitaBackend},
@@ -50,12 +48,14 @@ pub(super) struct Args {
     /// Existing recursion proof/setup stream; frame its proof section for an embedded-setup ELF.
     #[arg(long)]
     embedded_stream: Option<PathBuf>,
+    /// New output directory; an existing directory is rejected.
     #[arg(long)]
     workdir: PathBuf,
     /// Derive geometry and provision schedule rows, then stop before PCS setup.
     #[arg(long)]
     preflight: bool,
-    #[arg(long, default_value_t = 67_108_864)]
+    /// Row storage reserved up front and the maximum padded proof geometry.
+    #[arg(long)]
     max_trace_length: usize,
     #[arg(long, default_value_t = 16_000_000)]
     max_input_size: u64,
@@ -80,7 +80,10 @@ impl Args {
                 return Err("reserved advice capacities must be zero or powers of two".into());
             }
         }
-        std::fs::create_dir_all(&self.workdir)?;
+        if let Some(parent) = self.workdir.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::create_dir(&self.workdir)?;
         let started = Instant::now();
         let mut program = build_jolt_program_with_inline_provider(
             &std::fs::read(&self.elf)?,
@@ -108,10 +111,11 @@ impl Args {
         if input.len() > self.max_input_size as usize {
             return Err("guest input exceeds configured maximum".into());
         }
-        info!("Tracing pinned ELF into one owned modular trace");
-        let trace_output = TracerBackend::with_elf_path(self.elf.clone()).trace(
+        info!("Streaming pinned ELF into bounded modular row storage");
+        let trace_output = TracerBackend::with_elf_path(self.elf.clone()).trace_streaming(
             &program,
             TraceInputs::new(input, Vec::new(), Vec::new(), memory_config),
+            self.max_trace_length,
         )?;
         if trace_output.device.panic {
             return Err("guest panicked".into());
@@ -139,7 +143,15 @@ impl Args {
         )?;
         // Ownership is transferred, so OwnedTrace::into_rows does not clone the trace.
         let mut rows = trace_output.trace.into_rows();
-        let fr_rows = rows.iter().filter(|row| row.field_inline.is_some()).count();
+        let (fr_rows, virtual_sequence_rows) =
+            rows.iter()
+                .fold((0usize, 0usize), |(fr, virtual_rows), row| {
+                    (
+                        fr + usize::from(row.field_inline.is_some()),
+                        virtual_rows
+                            + usize::from(row.instruction().virtual_sequence_remaining.is_some()),
+                    )
+                });
         let (shape, digest, one_hot_k) =
             akita::one_hot_trace_setup_shape(&config, legacy.shared.bytecode_size())?;
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
@@ -167,13 +179,17 @@ impl Args {
             "max_trusted_advice_size": self.max_trusted_advice_size,
             "trace_rows": rows.len(), "padded_rows": config.trace_length,
             "ram_k": config.ram_K, "config": format!("{config:?}"),
-            "fr_rows": fr_rows, "row_size_bytes": size_of::<TraceRow>(),
+            "fr_rows": fr_rows, "virtual_sequence_rows": virtual_sequence_rows,
+            "row_size_bytes": size_of::<TraceRow>(),
+            "trace_collection": "serial lazy cycles converted directly into pre-reserved modular rows",
+            "row_limit": self.max_trace_length,
+            "full_cycle_vector_materialized": false,
             "row_capacity": rows.capacity(),
             "row_storage_bytes": rows.capacity() * size_of::<TraceRow>(),
             "padded_row_storage_bytes": config.trace_length * size_of::<TraceRow>(),
             "fr_payload_size_bytes": size_of::<FieldInlineTraceData>(),
             "fr_payload_storage_upper_estimate_bytes": fr_rows * (size_of::<FieldInlineTraceData>() + 2 * size_of::<usize>()),
-            "storage_estimate_excludes": "allocator rounding, final memory, preprocessing, PCS and witness/sumcheck buffers; FR estimate counts each occupied row as a separate Arc allocation",
+            "storage_estimate_excludes": "not a peak RSS estimate: excludes emulator/decode state, per-tick cycle scratch, final-memory extraction overlap, allocator overhead, preprocessing, PCS and witness/sumcheck buffers; FR estimate counts each occupied row as a separate Arc allocation",
             "one_hot_k": one_hot_k, "setup_num_vars": shape.num_vars,
             "setup_num_polys": shape.num_polys,
             "catalog_provisioning": match &admission { Ok(rows) => format!("accepted: {} grouped rows", rows.rows().len()), Err(error) => format!("rejected: {error}") },
@@ -236,14 +252,17 @@ impl Args {
             &proof,
             None,
         )?;
+        let staging = self.workdir.join(".proof-incomplete");
+        std::fs::create_dir(&staging)?;
         std::fs::write(
-            self.workdir.join("outer-proof.bin"),
+            staging.join("outer-proof.bin"),
             bincode::serde::encode_to_vec(&proof, bincode::config::standard())?,
         )?;
         std::fs::write(
-            self.workdir.join("outer-device.bin"),
+            staging.join("outer-device.bin"),
             bincode::serde::encode_to_vec(&public_io, bincode::config::standard())?,
         )?;
+        std::fs::rename(&staging, self.workdir.join("accepted-proof"))?;
         info!(
             "Full outer verification accepted; elapsed {} s",
             started.elapsed().as_secs_f64()
