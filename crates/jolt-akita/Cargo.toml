@@ -89,3 +89,7 @@ required-features = ["r1cs"]
 [[example]]
 name = "sparse_candidate_r1cs_cost"
 required-features = ["r1cs"]
+
+[[example]]
+name = "sparse_retry_r1cs_cost"
+required-features = ["r1cs"]

@@ -87,3 +87,6 @@ pub mod operator_norm;
 
 mod sparse_candidate;
 pub use sparse_candidate::{CandidateError, D64CandidateProfile, D64CandidateVar};
+
+mod sparse_retry;
+pub use sparse_retry::{D64AcceptedVar, D64RetryProfile, SparseRetryError};
