@@ -783,6 +783,15 @@ jobs:
       - name: Test jolt-utils with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
+      - name: Test jolt-sumcheck with committed proofs
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
+      - name: Test isolated external sumcheck consumer
+        if: matrix.shard == 0
+        run: cargo nextest run --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml --locked --cargo-quiet
+      - name: Check external sumcheck dependency boundary
+        if: matrix.shard == 0
+        run: scripts/check-external-sumcheck.sh
       - name: Test jolt-verifier with akita feature
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-verifier --features akita --no-tests=pass --cargo-quiet

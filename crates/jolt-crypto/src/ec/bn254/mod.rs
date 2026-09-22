@@ -151,8 +151,19 @@ macro_rules! impl_jolt_group_wrapper {
             fn deserialize<D: ::serde::Deserializer<'de>>(
                 deserializer: D,
             ) -> Result<Self, D::Error> {
-                use ::ark_serialize::CanonicalDeserialize;
+                use ::ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
                 let buf = <Vec<u8>>::deserialize(deserializer)?;
+                // Exact-size gate (as for `Bn254GT`): `deserialize_compressed`
+                // stops after one point and would silently accept trailing
+                // bytes, giving one group element many wire encodings.
+                let expected_len = <$projective>::default().compressed_size();
+                if buf.len() != expected_len {
+                    return Err(::serde::de::Error::custom(format!(
+                        "{} encoding must be exactly {expected_len} bytes, got {}",
+                        stringify!($wrapper),
+                        buf.len()
+                    )));
+                }
                 let inner = <$projective>::deserialize_compressed(&buf[..])
                     .map_err(::serde::de::Error::custom)?;
                 Ok(Self(inner))
@@ -325,7 +336,7 @@ mod tests {
     use jolt_field::Fr;
     use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
-    use super::Bn254;
+    use super::{Bn254, Bn254G1, Bn254G2};
 
     #[test]
     fn g1_transcript_encoding_uses_compressed_commitment_bytes() {
@@ -359,5 +370,38 @@ mod tests {
         expected.append_bytes(&bytes);
 
         assert_eq!(actual.state(), expected.state());
+    }
+
+    fn encode_with_trailing_byte<P: CanonicalSerialize>(point: &P) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        point
+            .serialize_compressed(&mut bytes)
+            .expect("serialize point");
+        bytes.push(0);
+        bytes
+    }
+
+    #[test]
+    fn g1_deserialize_rejects_wrong_length_encoding() {
+        let bytes = encode_with_trailing_byte(&Bn254::g1_generator().0);
+        let json = serde_json::to_string(&bytes).expect("encode bytes");
+        let err = serde_json::from_str::<Bn254G1>(&json).expect_err("trailing byte");
+        assert!(err.to_string().contains("exactly"), "{err}");
+    }
+
+    #[test]
+    fn g2_deserialize_rejects_wrong_length_encoding() {
+        let bytes = encode_with_trailing_byte(&Bn254::g2_generator().0);
+        let json = serde_json::to_string(&bytes).expect("encode bytes");
+        let err = serde_json::from_str::<Bn254G2>(&json).expect_err("trailing byte");
+        assert!(err.to_string().contains("exactly"), "{err}");
+    }
+
+    #[test]
+    fn g1_deserialize_round_trips_canonical_encoding() {
+        let point = Bn254::g1_generator();
+        let json = serde_json::to_string(&point).expect("encode point");
+        let recovered: Bn254G1 = serde_json::from_str(&json).expect("decode point");
+        assert_eq!(recovered, point);
     }
 }

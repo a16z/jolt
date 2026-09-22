@@ -13,7 +13,12 @@ ntt-inline = ["akita-algebra/ntt-inline"]
 default = ["parallel"]
 # Rayon-backed akita kernels and the host backend thread pool. A zkVM guest
 # builds without it: single-core, and the join/split machinery is pure cost.
-parallel = ["akita-pcs/parallel", "akita-prover/parallel"]
+parallel = [
+  "akita-pcs/parallel",
+  "akita-prover/parallel",
+  "jolt-crypto/parallel",
+  "jolt-openings/parallel",
+]
 # The akita transcript over the jolt-inlines Blake2b (guest verifiers).
 blake2-inline = ["akita-transcript/blake2-inline", "akita-types/blake2-inline"]
 # Field-inline (FR) protocol composition on the packed axis: extends the
@@ -39,11 +44,13 @@ akita-verifier.workspace = true
 serde_bytes = "0.11"
 akita-transcript.workspace = true
 akita-types.workspace = true
-jolt-crypto = { workspace = true, features = ["bn254"] }
-jolt-field = { workspace = true, features = ["solinas"] }
-jolt-openings.workspace = true
+jolt-crypto = { path = "../jolt-crypto", default-features = false }
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "solinas",
+] }
+jolt-openings = { path = "../jolt-openings", default-features = false }
 jolt-poly.workspace = true
-jolt-transcript.workspace = true
+jolt-transcript = { path = "../jolt-transcript", default-features = false }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
@@ -59,8 +66,7 @@ jolt-claims = { workspace = true }
 jolt-dory = { workspace = true }
 # Subscriber stack only (bench tracing setup); no summary pipeline.
 jolt-profiling = { path = "../jolt-profiling", default-features = false }
+jolt-transcript = { workspace = true, default-features = false, features = [
+  "transcript-blake2b",
+] }
 serde_json = { workspace = true, features = ["std"] }
-
-[[bench]]
-name = "akita_paths"
-harness = false

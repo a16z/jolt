@@ -24,7 +24,10 @@ libfuzzer-sys = "0.4"
 jolt-field = { path = "../../jolt-field" }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-sumcheck = { path = ".." }
-jolt-transcript = { path = "../../jolt-transcript" }
+jolt-transcript = { path = "../../jolt-transcript", features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 
 [[bin]]
 name = "sumcheck_verifier"

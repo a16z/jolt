@@ -14,8 +14,9 @@ use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::claims::{EvaluationClaim, VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
+use crate::claims::{VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
+use crate::EvaluationClaim;
 
 /// Self-describing metadata a group commitment carries: the backend flavor,
 /// the protocol-owned layout digest binding the ordered member identities,

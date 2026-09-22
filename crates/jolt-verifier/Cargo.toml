@@ -47,9 +47,15 @@ akita = [
   # (inert while field-inline is off).
   "jolt-program/fp128-field-inline",
 ]
-transcript-blake2b = []
-transcript-keccak = []
-transcript-poseidon = []
+transcript-blake2b = [
+  "jolt-transcript/bn254",
+  "jolt-transcript/transcript-blake2b",
+]
+transcript-keccak = [
+  "jolt-transcript/bn254",
+  "jolt-transcript/transcript-keccak",
+]
+transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }

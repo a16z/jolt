@@ -23,7 +23,9 @@
 
 pub mod ec;
 pub mod no_vector_commitment;
-pub use ec::{JoltGroup, PairingGroup, Pedersen, PedersenSetup};
+pub use ec::{JoltGroup, PairingGroup};
+#[cfg(feature = "bn254")]
+pub use ec::{Pedersen, PedersenSetup};
 pub use no_vector_commitment::{NoCommitment, NoVectorCommitment};
 
 mod commitment;

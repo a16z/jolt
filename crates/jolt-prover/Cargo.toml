@@ -19,6 +19,7 @@ parallel = [
   "jolt-r1cs/parallel",
   "jolt-crypto/parallel",
   "jolt-akita?/parallel",
+  "jolt-sumcheck/parallel",
   "dep:rayon",
 ]
 prover-fixtures = ["jolt-prover-legacy/host"]
@@ -71,6 +72,7 @@ zk = [
   "jolt-kernels/zk",
   "dep:jolt-blindfold",
   "dep:rand_core",
+  "jolt-sumcheck/committed",
   # Dev-dependency forward (the jolt-verifier `zk` feature does the same):
   # the ZK e2e builds its preprocessing through legacy host code, which
   # carries the BlindFold vector-commitment setup only in its own zk mode.

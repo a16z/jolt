@@ -129,7 +129,7 @@ The `ProverOpeningAccumulator` (resp. `VerifierOpeningAccumulator`) is responsib
 The opening accumulator contains a mapping from `OpeningId` to claimed polynomial evaluation.
 As sumchecks are proven, their output claims (for both virtual and committed polynomials) are inserted into the map. Later sumchecks can then consume the virtual polynomial openings as input claims.
 
-While virtual polynomial claims are used internally and passed between sumchecks, committed polynomial claims are tracked because they must ultimately be verified via a batched [Dory](../dory.md) opening proof at the end of the protocol.
+While virtual polynomial claims are used internally and passed between sumchecks, committed polynomial claims are tracked because they must ultimately be verified via the selected backend's [batched opening proof](./opening-proof.md). [Dory](../dory.md) uses a random linear combination of commitments; [Akita](../akita.md) uses a native grouped opening over packed trace and precommitted objects.
 
 The `input_claim` and `cache_openings` methods on the `SumcheckInstanceProver` and `SumcheckInstanceVerifier` traits provide hooks to the respective accumulator objects.
 `input_claim` effectively declares the in-edges for the sumcheck instance, while `cache_openings` effectively declares the out-edges.

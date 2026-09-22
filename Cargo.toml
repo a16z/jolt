@@ -293,9 +293,7 @@ blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false, features = [
-  "sha3",
-] }
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.4.2", features = [
   "backends",
@@ -304,18 +302,18 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "zk",
 ] }
 # Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-serialization = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
-akita-verifier = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "38dbf031013a2b8f7ff93252e190dac2b3353706", default-features = false }
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-serialization = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-verifier = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -457,7 +455,7 @@ jolt-witness = { path = "./crates/jolt-witness" }
 jolt-witness-derive = { path = "./crates/jolt-witness-derive" }
 jolt-poly = { path = "./crates/jolt-poly", default-features = false }
 jolt-r1cs = { path = "./crates/jolt-r1cs", default-features = false }
-jolt-transcript = { path = "./crates/jolt-transcript" }
+jolt-transcript = { path = "./crates/jolt-transcript", default-features = false }
 jolt-utils = { path = "./crates/jolt-utils" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
@@ -481,15 +479,15 @@ jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
 # Companion akita branch for the recursion cycle work (feat/fast-recursion-companion
 # in the user's fork); drop once the upstream rev carries these changes.
 [patch."https://github.com/LayerZero-Labs/akita.git"]
-akita-algebra = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-algebra" }
-akita-challenges = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-challenges" }
-akita-config = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-config" }
-akita-error = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-error" }
-akita-pcs = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-pcs" }
-akita-planner = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-planner" }
-akita-prover = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-prover" }
-akita-schedules = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-schedules" }
-akita-serialization = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-serialization" }
-akita-transcript = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-transcript" }
-akita-types = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-types" }
-akita-verifier = { path = "/Users/mgeorghiades/akita-fast-recursion/crates/akita-verifier" }
+akita-algebra = { path = "../akita-fast-recursion/crates/akita-algebra" }
+akita-challenges = { path = "../akita-fast-recursion/crates/akita-challenges" }
+akita-config = { path = "../akita-fast-recursion/crates/akita-config" }
+akita-error = { path = "../akita-fast-recursion/crates/akita-error" }
+akita-pcs = { path = "../akita-fast-recursion/crates/akita-pcs" }
+akita-planner = { path = "../akita-fast-recursion/crates/akita-planner" }
+akita-prover = { path = "../akita-fast-recursion/crates/akita-prover" }
+akita-schedules = { path = "../akita-fast-recursion/crates/akita-schedules" }
+akita-serialization = { path = "../akita-fast-recursion/crates/akita-serialization" }
+akita-transcript = { path = "../akita-fast-recursion/crates/akita-transcript" }
+akita-types = { path = "../akita-fast-recursion/crates/akita-types" }
+akita-verifier = { path = "../akita-fast-recursion/crates/akita-verifier" }

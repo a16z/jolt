@@ -32,21 +32,31 @@
     clippy::wildcard_enum_match_arm
 )]
 
+#[cfg(feature = "spongefish")]
 mod codec;
+#[cfg(feature = "digest")]
 mod digest;
 mod legacy;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
+#[cfg(feature = "spongefish")]
 mod prover;
+#[cfg(feature = "spongefish")]
 mod setup;
+#[cfg(feature = "spongefish")]
 mod verifier;
 
+#[cfg(feature = "spongefish")]
 pub use codec::BytesMsg;
+#[cfg(feature = "digest")]
 pub use digest::DigestTranscript;
+#[cfg(feature = "spongefish")]
+pub use legacy::SpongeTranscript;
 pub use legacy::{
-    append_length_prefixed, AppendToTranscript, Label, LabelWithCount, SpongeTranscript,
-    Transcript, U64Word, MAX_LABEL_LEN,
+    append_length_prefixed, AppendToTranscript, Label, LabelWithCount, Transcript, U64Word,
+    MAX_LABEL_LEN,
 };
+#[cfg(feature = "spongefish")]
 pub use setup::{prover_transcript, transcript_builder, verifier_transcript, PROTOCOL_ID};
 
 /// Source-compatible re-exports of legacy label / count / word helpers
@@ -58,43 +68,57 @@ pub mod domain {
 
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
-pub use prover::{OptimizedChallenge, ProverTranscript};
+#[cfg(all(feature = "bn254", feature = "spongefish"))]
+pub use prover::OptimizedChallenge;
+#[cfg(feature = "spongefish")]
+pub use prover::ProverTranscript;
+#[cfg(feature = "spongefish")]
 pub use verifier::VerifierTranscript;
 
 #[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
 use blake2::{digest::consts::U32, Blake2b};
-#[cfg(any(
-    feature = "transcript-blake2b",
-    feature = "transcript-keccak",
-    feature = "transcript-poseidon"
+#[cfg(all(
+    feature = "bn254",
+    any(
+        feature = "transcript-blake2b",
+        feature = "transcript-keccak",
+        feature = "transcript-poseidon"
+    )
 ))]
 use jolt_field::Fr;
 #[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
 use jolt_inlines_blake2::digest_adapter::{Blake2b, U32, U64};
 #[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
 use spongefish::instantiations::hash::Hash;
+#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
+type Blake2b512 = Hash<Blake2b<U64>>;
 #[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
 use spongefish::instantiations::Blake2b512;
 #[cfg(feature = "transcript-keccak")]
 use spongefish::instantiations::Keccak;
 
 /// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge).
-#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
+#[cfg(all(feature = "transcript-blake2b", feature = "bn254"))]
 pub type Blake2bTranscript<F = Fr> = SpongeTranscript<Blake2b512, F>;
-/// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge)
-/// over the inline hasher.
-#[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
-pub type Blake2bTranscript<F = Fr> = SpongeTranscript<Hash<Blake2b<U64>>, F>;
+/// Fiat-Shamir transcript backed by Blake2b-512 for an explicitly selected field.
+#[cfg(all(feature = "transcript-blake2b", not(feature = "bn254")))]
+pub type Blake2bTranscript<F> = SpongeTranscript<Blake2b512, F>;
 
 /// Blake2b-256 chained-digest transcript, byte-compatible with `jolt-prover-legacy`'s
 /// `Blake2bTranscript`. Required to verify proofs produced by `jolt-prover-legacy`
 /// provers; new modular protocols should use [`Blake2bTranscript`] instead.
-#[cfg(feature = "transcript-blake2b")]
+#[cfg(all(feature = "transcript-blake2b", feature = "bn254"))]
 pub type LegacyBlake2bTranscript<F = Fr> = DigestTranscript<Blake2b<U32>, F>;
+/// Legacy Blake2b-256 transcript for an explicitly selected field.
+#[cfg(all(feature = "transcript-blake2b", not(feature = "bn254")))]
+pub type LegacyBlake2bTranscript<F> = DigestTranscript<Blake2b<U32>, F>;
 
 /// Fiat-Shamir transcript backed by Keccak-f1600 (spongefish duplex sponge).
-#[cfg(feature = "transcript-keccak")]
+#[cfg(all(feature = "transcript-keccak", feature = "bn254"))]
 pub type KeccakTranscript<F = Fr> = SpongeTranscript<Keccak, F>;
+/// Fiat-Shamir transcript backed by Keccak-f1600 for an explicitly selected field.
+#[cfg(all(feature = "transcript-keccak", not(feature = "bn254")))]
+pub type KeccakTranscript<F> = SpongeTranscript<Keccak, F>;
 
 /// Fiat-Shamir transcript backed by Circom-compatible BN254 Poseidon.
 #[cfg(feature = "transcript-poseidon")]
