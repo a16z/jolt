@@ -271,27 +271,69 @@ pub(crate) struct CycleMajorMatrix<F> {
 impl<F: JoltField> CycleMajorMatrix<F> {
     /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
+        const CHUNK_ENTRIES: usize = 1 << 14;
+        let mut chunks = Vec::new();
+        let mut rest = self.entries.as_mut_slice();
+        let mut offset = 0;
+        while !rest.is_empty() {
+            let end = if rest.len() <= CHUNK_ENTRIES {
+                rest.len()
+            } else {
+                let pair = rest[CHUNK_ENTRIES - 1].row / 2;
+                CHUNK_ENTRIES + rest[CHUNK_ENTRIES..].partition_point(|entry| entry.row / 2 == pair)
+            };
+            let (chunk, tail) = rest.split_at_mut(end);
+            chunks.push((offset, chunk));
+            offset += end;
+            rest = tail;
+        }
         #[cfg(feature = "parallel")]
-        let bound: Vec<CycleMajorEntry<F>> = self
-            .entries
-            .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
-            .flat_map_iter(|group| {
-                let (even, odd) = split_row_pair(group);
-                let mut out = Vec::with_capacity(group.len());
-                merge_bind_rows(even, odd, r, &mut out);
-                out
+        let kept: Vec<_> = chunks
+            .into_par_iter()
+            .map_init(Vec::new, |scratch, (offset, chunk)| {
+                (offset, Self::bind_chunk(chunk, r, scratch))
             })
             .collect();
         #[cfg(not(feature = "parallel"))]
-        let bound: Vec<CycleMajorEntry<F>> = {
-            let mut out = Vec::with_capacity(self.entries.len());
-            for group in self.entries.chunk_by(|a, b| a.row / 2 == b.row / 2) {
-                let (even, odd) = split_row_pair(group);
-                merge_bind_rows(even, odd, r, &mut out);
-            }
-            out
+        let kept: Vec<_> = {
+            let mut scratch = Vec::new();
+            chunks
+                .into_iter()
+                .map(|(offset, chunk)| (offset, Self::bind_chunk(chunk, r, &mut scratch)))
+                .collect()
         };
-        self.entries = bound;
+        // A bind never adds entries, so moving chunk heads left cannot
+        // overwrite a later chunk's retained head.
+        let mut written = 0;
+        for (offset, len) in kept {
+            self.entries.copy_within(offset..offset + len, written);
+            written += len;
+        }
+        self.entries.truncate(written);
+        if self.entries.capacity() / 4 >= written.max(1) {
+            self.entries.shrink_to_fit();
+        }
+    }
+
+    fn bind_chunk(
+        chunk: &mut [CycleMajorEntry<F>],
+        r: F,
+        scratch: &mut Vec<CycleMajorEntry<F>>,
+    ) -> usize {
+        let mut read = 0;
+        let mut written = 0;
+        while read < chunk.len() {
+            let pair = chunk[read].row / 2;
+            let end = read + chunk[read..].partition_point(|entry| entry.row / 2 == pair);
+            let (even, odd) = split_row_pair(&chunk[read..end]);
+            scratch.clear();
+            merge_bind_rows(even, odd, r, scratch);
+            let next = written + scratch.len();
+            chunk[written..next].copy_from_slice(scratch);
+            written = next;
+            read = end;
+        }
+        written
     }
 
     /// The quadratic factor `[q(0), q_∞]` of the phase-1 round message:

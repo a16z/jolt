@@ -517,6 +517,27 @@ mod tests {
         run_parity(FixtureShape { log_t: 3, ram_k: 4 }, vec![RamOp::None; 3]);
     }
 
+    #[test]
+    fn matches_reference_across_cycle_compaction_chunks() {
+        let ops = (0..(1 << 17) - 1)
+            .map(|i| match i % 7 {
+                0 => RamOp::None,
+                1 | 2 => RamOp::Read { word: 2 + i % 2 },
+                _ => RamOp::Write {
+                    word: 2 + (i / 3) % 2,
+                    post: i,
+                },
+            })
+            .collect();
+        run_parity(
+            FixtureShape {
+                log_t: 17,
+                ram_k: 4,
+            },
+            ops,
+        );
+    }
+
     /// Nonzero `val_init` with reads BEFORE the first write: the optimized
     /// `val_init` reconstruction must recover a read-first word's initial
     /// value from its first access's pre-value, a never-accessed nonzero
