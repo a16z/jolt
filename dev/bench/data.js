@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790016939572,
+  "lastUpdate": 1790123831586,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -161458,6 +161458,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 867624,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d39bd518a65ea89401de63c3343e98fbad5f1b80",
+          "message": "refactor: remove jolt-prover-legacy (#1818)\n\n* refactor: remove the legacy prover\n\n* style: satisfy repository checks\n\n* fix: keep preprocessing digests wasm-compatible\n\n* fix: preserve field-inline trace data\n\n* fix: close legacy prover migration gaps\n\n* fix: harden modular prover migration\n\n* docs: repair stale repository references\n\n* style: import nominal paths and fold cfg_attr pairs\n\nSatisfies scripts/check_style_invariants.py on the lines this branch adds:\nshort names for JoltOpeningId, serde::de::Error, ROOT_SPAN,\nPROOF_SYSTEM_CRATE_DIRS, and proc_macro2::Literal, plus one cfg_attr per\npredicate on the two serializable preprocessing structs.\n\n* test: drop frozen legacy proof digests\n\nThe completeness suites pinned each fixture proof's wire bytes to digests\ncaptured from the legacy prover. With that prover gone the pins only\nassert that the modular prover never changes its output, so keep the\nverifier acceptance checks and remove the digests, the blake2 helper, and\nthe jolt-verifier blake2 dev-dependency. The address-major test verifies\nits cases one at a time instead of building an array of proofs on the\nstack (clippy::large_stack_arrays).\n\n* test: pin the fused-store lookup tables in the ordinal snapshot\n\nMain appended ShiftDataB, ShiftDataH, and ShiftDataW (#1768) after this\nsnapshot was written; the existing ordinals are unchanged and the three\nnew tables take 51-53.\n\n* chore: refresh jolt-eval fuzz lockfile\n\nPropagates this branch's manifest changes (jolt-dory getrandom, jolt-prover\nark-serialize, jolt-eval dropping ark-bn254 and jolt-witness) that the\nearlier lockfile update predated.\n\n* docs: repoint review-flagged references\n\nThe jolt-eval lloc row described the crate list the objective no longer\nwalks, testing-gates still told readers to run the deleted legacy\nbyte-parity gate, and the fat-LTO troubleshooting note went with the\nlegacy crate although the workaround applies to this workspace.\n\n* chore: make jolt-prover bincode optional and drop the unused inferno dependency\n\nbincode's only non-test use is the profiling harness, so it goes back\nbehind the profiling feature with the dev-dependency covering the tests.\ninferno was the legacy crate's flamegraph dependency and has no consumer.\n\n* refactor(prover): single owner for the committed chunk width\n\nThe committed preprocessing digest and the Dory setup sizing each\nrestated one_hot_config's threshold rule; a change to the rule would have\nleft the digest describing a chunking the prover no longer uses. Both\nnow read the width from committed_log_k_chunk.\n\n* ci: skip the guest toolchain in the jolt-prover unit test job\n\nNo test behind -p jolt-prover --features prover-fixtures builds a guest;\nthe Dory end-to-end proving runs in test-verifier-fixtures and the\nakita/zk e2es sit behind their own features.\n\n* test(verifier): reject a mismatched entry address\n\nThe legacy initial_pc_is_constrained_to_entry_point test was the only\nlive check that a preprocessing carrying a different entry address\nrejects the honest proof. The muldiv fixture now offsets the full\nprogram's entry address and the manifest entry moves to Active.\n\n* chore: refresh jolt-eval fuzz lockfile after #1817\n\nPropagates the jolt-utils dependency drop from main's manifest changes.\n\n* fix(ci): restore wasm and standalone extractor builds\n\nCap dense witness grids at the target allocation limit when 32 GiB does not fit usize, and exercise the boundary without assuming a 64-bit host. Enable rand_core/getrandom explicitly for the standalone ZkLean extractor.\n\nValidated the wasm32 release compiler check, standalone extractor nextest suite, release Lean package extraction, dense-grid boundary test, workspace Clippy in host and host,zk modes, formatting, and style invariants.\n\n* test(verifier): refresh the ZK shape pins and run the ZK fixture suite in CI\n\nThe muldiv BlindFold shape audit pinned output_claim_rows 15 and\nauxiliary_rows 36, the values at this branch's pre-merge upstream\n(72dc64516). Merging main moved the shape to 16 and 37 (the legacy prover\nat the merge base 8048e29 agrees), and nothing noticed because no CI lane\nruns `-p jolt-verifier --features prover-fixtures,zk`: the suite was\nclippy-only at every ref.\n\nRefresh the two literals, pin trace_length / ram_K next to them so a future\ndrift reads as a protocol change rather than a fixture change, and run the\nsuite in test-prover-zk, which already installs the guest toolchain the\nfixtures need.\n\nVerified at this commit with JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES=1:\ncargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,zk --test-threads 1\n-> 113 passed.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n* build(wasm): let jolt-platform supply the wasm RNG backend\n\nThe wasm CI job moved from the legacy crate to `-p jolt-prover`, whose\ngraph no longer contains jolt-platform, so #1818 anchored getrandom 0.2's\n`js` feature inside jolt-dory. That put a platform decision in a library\ncrate and covered only one of the three enablers on the wasm graph\n(dory-pcs, spongefish via jolt-transcript, rand_core/std); the anchor did\nnot reach a verifier-only build at all.\n\njolt-platform already owns this choice for every product wasm path\n(jolt-sdk defaults to `jolt-platform/random`; `jolt build-wasm` adds only\nwasm-bindgen). Build it alongside the prover so feature unification\nsupplies the backend, and drop the jolt-dory anchor and its machete\nignore. The same recipe also makes `-p jolt-verifier` buildable for wasm32\nfor the first time.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Fable 5.1 <noreply@anthropic.com>\nCo-authored-by: Michael Zhu <8365992+moodlezoup@users.noreply.github.com>",
+          "timestamp": "2026-09-22T16:46:42-07:00",
+          "tree_id": "9b3193855df27e39dbe9947ba7a5c798ac84e75d",
+          "url": "https://github.com/a16z/jolt/commit/d39bd518a65ea89401de63c3343e98fbad5f1b80"
+        },
+        "date": 1790123825237,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.1772,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861384,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 496904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8573,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 507076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6803,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 505968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0184,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 509068,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.1594,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 173072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.7207,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6968,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 498684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5132,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 499292,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.7164,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498056,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.3887,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 35.1241,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1881820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.5826,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 649076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 81.741,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1099660,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5133,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 511184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.7638,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499168,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 17.0758,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861612,
             "unit": "KB",
             "extra": ""
           }
