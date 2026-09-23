@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaField, AkitaScheme};
+#[cfg(feature = "akita")]
+use jolt_field::Ring;
 use jolt_inlines_blake2 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
@@ -15,8 +17,6 @@ use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProg
 use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-#[cfg(feature = "akita")]
-use jolt_sdk::JoltField;
 use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof};

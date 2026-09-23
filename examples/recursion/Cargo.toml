@@ -19,14 +19,11 @@ field-inline = [
 akita = [
   "jolt-sdk/akita",
   "dep:jolt-akita",
+  "dep:jolt-field",
   "dep:jolt-program",
   "dep:jolt-witness",
   "dep:tracer",
 ]
-
-[package.metadata.cargo-machete]
-# Enables field-inline arithmetic in the guest field implementation.
-ignored = ["jolt-field"]
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", default-features = false, optional = true }
