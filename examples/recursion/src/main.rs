@@ -1,29 +1,31 @@
-use clap::{Parser, Subcommand};
-use jolt_sdk::host::Program;
+use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
-use jolt_sdk::host::JoltProgramSource;
+use jolt_akita::{AkitaField, AkitaScheme};
+use jolt_inlines_blake2 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
-use jolt_inlines_blake2 as _;
 use jolt_riscv::JoltInstructionRow;
-use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
 #[cfg(feature = "akita")]
-use jolt_akita::AkitaScheme;
+use jolt_sdk::host::JoltProgramSource;
+use jolt_sdk::host::Program;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
+use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
+#[cfg(feature = "akita")]
+use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
+#[cfg(feature = "akita")]
+use jolt_sdk::JoltField;
 use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
 #[cfg(not(feature = "akita"))]
-use jolt_sdk::{
-    JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof,
-};
-use serde::{de::DeserializeOwned, Serialize};
+use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{error, info};
+use tracing::info;
 
 /// The proof and verifier preprocessing the guest consumes, per commitment
 /// build: Dory on the homomorphic build, Akita on `--features akita`.
@@ -119,6 +121,32 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Build and retain a non-embedded verifier ELF and its framed input.
+    PrepareGuest {
+        #[arg(long)]
+        example: String,
+        #[arg(long)]
+        workdir: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Execute retained bytes without rebuilding; panic never counts as rejection.
+    ExecutePrepared {
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long, value_enum)]
+        expect: ExpectedVerification,
+    },
+    /// Write a parseable Akita proof with one deliberately invalid opening.
+    #[cfg(feature = "akita")]
+    TamperOpening {
+        #[arg(long)]
+        example: String,
+        #[arg(long)]
+        workdir: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Generate proofs for guest programs
     Generate {
         /// Example to run (fibonacci or muldiv)
@@ -163,17 +191,18 @@ enum Commands {
     },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum GuestProgram {
     Fibonacci,
     Muldiv,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum RunConfig {
     Prove,
     Trace,
     TraceToFile,
+    Prepare(PathBuf),
 }
 
 impl GuestProgram {
@@ -351,10 +380,8 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
     );
     let payload_count: u32 = read_record(all_groups_data, &mut offset).unwrap();
     for i in 0..payload_count {
-        match read_raw(all_groups_data, &mut offset) {
-            Ok(payload) => info!("✓ Setup payload {i} read ({} bytes)", payload.len()),
-            Err(e) => error!("✗ Failed to read setup payload {i}: {e:?}"),
-        }
+        let payload = read_raw(all_groups_data, &mut offset).expect("decode setup payload");
+        info!("Setup payload {i}: {} bytes", payload.len());
     }
     let setup_len = offset;
 
@@ -362,14 +389,9 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
     info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        match read_record::<GuestProof>(all_groups_data, &mut offset) {
-            Ok(_) => info!("✓ Proof {i} deserialized"),
-            Err(e) => error!("✗ Failed to deserialize proof {i}: {e:?}"),
-        }
-        match read_record::<JoltDevice>(all_groups_data, &mut offset) {
-            Ok(_) => info!("✓ Device {i} deserialized"),
-            Err(e) => error!("✗ Failed to deserialize device {i}: {e:?}"),
-        }
+        let _: GuestProof = read_record(all_groups_data, &mut offset).expect("decode proof");
+        let _: JoltDevice = read_record(all_groups_data, &mut offset).expect("decode device");
+        info!("Decoded proof and device {i}");
     }
 
     let remaining = all_groups_data.len() - offset;
@@ -412,7 +434,7 @@ fn collect_guest_proofs(
     bytecode_chunk_count: Option<usize>,
     proofs: usize,
 ) -> Vec<u8> {
-    use jolt_akita::{AkitaField, AkitaScheduleArtifacts};
+    use jolt_akita::AkitaScheduleArtifacts;
     use jolt_program::execution::{ExecutionBackend, TraceInputs};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_sdk::jolt_prover::akita::preprocessing::{self, AkitaTranscript};
@@ -824,15 +846,7 @@ fn generate_proofs(
     info!("Proof generation completed for {}", guest.name());
 }
 
-fn run_recursion_proof(
-    guest: GuestProgram,
-    run_config: RunConfig,
-    input_bytes: Vec<u8>,
-    memory_config: MemoryConfig,
-    max_trace_length: usize,
-) {
-    let target_dir = "/tmp/jolt-guest-targets";
-
+fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     let mut program = Program::new("recursion-guest");
     program.set_func("verify");
     program.set_std(true);
@@ -851,8 +865,117 @@ fn run_recursion_proof(
     #[cfg(not(feature = "akita"))]
     program.add_guest_feature("trusted-preprocessing");
     program.set_memory_config(memory_config);
+    program
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ExpectedVerification {
+    Accept,
+    Reject,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PreparedGuest {
+    guest: GuestProgram,
+    akita: bool,
+    field_inline: bool,
+    ntt_inline: bool,
+    input: Vec<u8>,
+}
+
+impl PreparedGuest {
+    fn save(guest: GuestProgram, program: &Program, input: Vec<u8>, directory: &Path) {
+        std::fs::create_dir(directory).expect("fresh prepared guest directory");
+        let prepared = Self {
+            guest,
+            akita: cfg!(feature = "akita"),
+            field_inline: cfg!(feature = "field-inline"),
+            ntt_inline: cfg!(feature = "ntt-inline"),
+            input,
+        };
+        std::fs::write(
+            directory.join("guest.elf"),
+            program.get_elf_contents().expect("built verifier ELF"),
+        ).unwrap();
+        std::fs::write(
+            directory.join("execution.bin"),
+            bincode::serde::encode_to_vec(&prepared, bincode::config::standard()).unwrap(),
+        ).unwrap();
+    }
+
+    fn execute(directory: &Path, expected: ExpectedVerification) {
+        let bytes = std::fs::read(directory.join("execution.bin")).unwrap();
+        let (prepared, consumed): (Self, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(consumed, bytes.len(), "trailing prepared execution bytes");
+        assert_eq!(prepared.akita, cfg!(feature = "akita"), "Akita profile mismatch");
+        assert_eq!(prepared.field_inline, cfg!(feature = "field-inline"), "field profile mismatch");
+        assert_eq!(prepared.ntt_inline, cfg!(feature = "ntt-inline"), "NTT profile mismatch");
+        let memory = prepared.guest.get_memory_config(false);
+        assert!(prepared.input.len() < memory.max_input_size as usize);
+        let mut program = configured_recursion_program(memory);
+        program.elf = Some(directory.join("guest.elf"));
+        let elf = program.get_elf_contents().expect("retained verifier ELF");
+        let (rows, device) = program.execute_with_output(&prepared.input, &[], &[]);
+        assert!(!device.panic, "retained verifier guest panicked");
+        let output = postcard::from_bytes::<u32>(&device.outputs).expect("decode verifier output");
+        let expected = match expected {
+            ExpectedVerification::Accept => 1,
+            ExpectedVerification::Reject => 0,
+        };
+        assert_eq!(output, expected, "unexpected guest verification result");
+        assert_eq!(program.get_elf_contents().unwrap(), elf, "retained ELF changed");
+        assert_eq!(std::fs::read(directory.join("execution.bin")).unwrap(), bytes);
+        info!("Retained verifier output: {output}; trace length: {rows}");
+    }
+}
+
+#[cfg(feature = "akita")]
+fn tamper_opening(guest: GuestProgram, workdir: &Path, output: &Path) {
+    let bytes = load_proof_data(guest, workdir);
+    let mut offset = 0;
+    let _: GuestVerifierPreprocessing = read_record(&bytes, &mut offset).unwrap();
+    let payloads: u32 = read_record(&bytes, &mut offset).unwrap();
+    for _ in 0..payloads {
+        let _ = read_raw(&bytes, &mut offset).unwrap();
+    }
+    let count: u32 = read_record(&bytes, &mut offset).unwrap();
+    assert!(count > 0, "tamper fixture requires a proof");
+    let mut tampered = bytes[..offset].to_vec();
+    for index in 0..count {
+        let mut proof: GuestProof = read_record(&bytes, &mut offset).unwrap();
+        let device: JoltDevice = read_record(&bytes, &mut offset).unwrap();
+        if index == 0 {
+            let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+                panic!("Akita fixture requires clear claims");
+            };
+            claims.stage1.outer.outer_remainder.left_instruction_input += AkitaField::from_u64(1);
+        }
+        push_record(&mut tampered, &proof);
+        push_record(&mut tampered, &device);
+    }
+    assert_eq!(offset, bytes.len(), "trailing proof stream bytes");
+    // A successful typed decode is distinct from the guest's verification result.
+    assert_eq!(check_data_integrity(&tampered).proof_count, count);
+    std::fs::create_dir(output).expect("fresh tampered proof directory");
+    save_proof_data(guest, &tampered, output);
+}
+
+fn run_recursion_proof(
+    guest: GuestProgram,
+    run_config: RunConfig,
+    input_bytes: Vec<u8>,
+    memory_config: MemoryConfig,
+    max_trace_length: usize,
+) {
+    let target_dir = "/tmp/jolt-guest-targets";
+
+    let mut program = configured_recursion_program(memory_config);
     program.build(target_dir);
     match run_config {
+        RunConfig::Prepare(directory) => {
+            PreparedGuest::save(guest, &program, input_bytes, &directory);
+        }
         RunConfig::Trace | RunConfig::TraceToFile => {
             let io_device = if run_config == RunConfig::Trace {
                 let (rows, device) = program.execute_with_output(&input_bytes, &[], &[]);
@@ -949,6 +1072,18 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
+        Some(Commands::PrepareGuest { example, workdir, output }) => {
+            let guest = GuestProgram::from_str(example).expect("supported guest example");
+            verify_proofs(guest, false, workdir, &get_guest_src_dir(), RunConfig::Prepare(output.clone()));
+        }
+        Some(Commands::ExecutePrepared { directory, expect }) => {
+            PreparedGuest::execute(directory, *expect);
+        }
+        #[cfg(feature = "akita")]
+        Some(Commands::TamperOpening { example, workdir, output }) => {
+            let guest = GuestProgram::from_str(example).expect("supported guest example");
+            tamper_opening(guest, workdir, output);
+        }
         Some(Commands::Generate {
             example,
             workdir,

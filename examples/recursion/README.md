@@ -43,3 +43,27 @@ python3 scripts/guest_pc_profile.py report /tmp/recursion-pc.txt \
 ```
 
 Use the ELF produced by that trace build when interpreting its PC profile.
+
+### Retained guest acceptance check
+
+For an Akita build, the example can retain the actual verifier ELF and framed
+input before execution. Use a fresh output directory for each artifact; the
+prepared form currently supports full, non-embedded input only.
+
+```sh
+recursion generate --example fibonacci --proofs 1 --workdir proofs
+recursion prepare-guest --example fibonacci --workdir proofs --output accepted
+# Inspect and hash accepted/guest.elf and accepted/execution.bin here.
+recursion execute-prepared --directory accepted --expect accept
+recursion tamper-opening --example fibonacci --workdir proofs --output invalid-proofs
+recursion prepare-guest --example fibonacci --workdir invalid-proofs --output rejected
+cmp accepted/guest.elf rejected/guest.elf
+recursion execute-prepared --directory rejected --expect reject
+```
+
+`execute-prepared` uses the retained ELF without rebuilding and rejects a
+mismatched host feature profile. Acceptance requires output `1`; rejection
+requires output `0`. Both require successful output decoding and no guest panic.
+`tamper-opening` changes one typed Stage1 opening by one and reserializes the
+proof through the normal record owner; the resulting stream must still decode.
+These commands test guest verification, not an Akita outer recursive proof.
