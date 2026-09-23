@@ -846,6 +846,12 @@ fn generate_proofs(
     info!("Proof generation completed for {}", guest.name());
 }
 
+fn decode_verifier_output(bytes: &[u8]) -> u32 {
+    let (output, remaining) = postcard::take_from_bytes::<u32>(bytes).expect("decode verifier output");
+    assert!(remaining.is_empty(), "trailing verifier output bytes");
+    output
+}
+
 fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     let mut program = Program::new("recursion-guest");
     program.set_func("verify");
@@ -918,7 +924,7 @@ impl PreparedGuest {
         let elf = program.get_elf_contents().expect("retained verifier ELF");
         let (rows, device) = program.execute_with_output(&prepared.input, &[], &[]);
         assert!(!device.panic, "retained verifier guest panicked");
-        let output = postcard::from_bytes::<u32>(&device.outputs).expect("decode verifier output");
+        let output = decode_verifier_output(&device.outputs);
         let expected = match expected {
             ExpectedVerification::Accept => 1,
             ExpectedVerification::Reject => 0,
@@ -986,8 +992,7 @@ fn run_recursion_proof(
                 program.trace_to_file(&input_bytes, &[], &[], &trace_path).1
             };
             assert!(!io_device.panic, "Recursion verifier guest panicked");
-            let rv = postcard::from_bytes::<u32>(&io_device.outputs)
-                .expect("decode recursion verifier output");
+            let rv = decode_verifier_output(&io_device.outputs);
             assert_eq!(rv, 1, "Recursion verifier rejected the proof");
             info!("  Recursion output (trace-only): {rv}");
         }
@@ -1007,10 +1012,13 @@ fn run_recursion_proof(
                     &program, &preprocessing, &input_bytes, &[], &[], None, None, None,
                 ).expect("outer recursion proof");
                 jolt_sdk::jolt_verifier::verify::<
-                    jolt_sdk::VerifierField, jolt_sdk::VerifierPCS,
-                    jolt_sdk::VerifierVC, jolt_sdk::VerifierTranscript,
-                >(&verifier, &io_device, &proof, None).expect("verify outer recursion proof");
-                let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap();
+                    jolt_sdk::VerifierField,
+                    jolt_sdk::VerifierPCS,
+                    jolt_sdk::VerifierVC,
+                    jolt_sdk::VerifierTranscript,
+                >(&verifier, &io_device, &proof, None)
+                .expect("verify outer recursion proof");
+                let rv = decode_verifier_output(&io_device.outputs);
                 info!("  Recursion verification result: {rv}");
             }
         }
