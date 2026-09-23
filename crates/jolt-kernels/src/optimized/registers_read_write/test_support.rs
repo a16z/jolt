@@ -15,6 +15,7 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessPlane, TraceBackend};
 
+use crate::optimized::testing::trimmed;
 use crate::reference::ReferenceBackend;
 use crate::{PrepareKernel, ProofSession, ProverInputs};
 
@@ -257,7 +258,8 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
         let reference_poly = reference.prove_round(bind, round, claim).unwrap();
         let optimized_poly = optimized.prove_round(bind, round, claim).unwrap();
         assert_eq!(
-            reference_poly, optimized_poly,
+            trimmed(&reference_poly),
+            trimmed(&optimized_poly),
             "round {round} polynomial mismatch"
         );
         assert_eq!(

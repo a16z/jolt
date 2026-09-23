@@ -15,13 +15,21 @@ use super::test_support::{
 use super::OptimizedRegistersReadWrite;
 
 fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
+    run_parity_with_phases(
+        fixture,
+        log_t,
+        seed,
+        &[(log_t, 0), (0, REGISTER_ADDRESS_BITS)],
+    );
+}
+
+fn run_parity_with_phases(
+    fixture: TraceFixture,
+    log_t: usize,
+    seed: u64,
+    phase_splits: &[(usize, usize)],
+) {
     fixture.with_plane(log_t, |backend| {
-        let relation = RegistersReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(
-            log_t,
-            REGISTER_ADDRESS_BITS,
-            log_t,
-            0,
-        ));
         let r_cycle = challenge_sequence(log_t, seed ^ 0xA5A5);
         let evaluate = |polynomial: JoltVirtualPolynomial| {
             let table = JoltWitnessOracle::<Fr>::oracle_table(
@@ -42,20 +50,29 @@ fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
             rs1_value: r_cycle.clone(),
             rs2_value: r_cycle,
         };
+        let challenges = RegistersReadWriteChallenges { gamma };
         let input_claim =
             claims.rd_write_value + gamma * claims.rs1_value + gamma * gamma * claims.rs2_value;
         assert_nontrivial(input_claim);
         let round_challenges = challenge_sequence(log_t + REGISTER_ADDRESS_BITS, seed);
-        assert_kernel_parity(
-            &OptimizedRegistersReadWrite,
-            backend,
-            &relation,
-            &claims,
-            &points,
-            &RegistersReadWriteChallenges { gamma },
-            input_claim,
-            &round_challenges,
-        );
+        for &(phase1, phase2) in phase_splits {
+            let relation = RegistersReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(
+                log_t,
+                REGISTER_ADDRESS_BITS,
+                phase1,
+                phase2,
+            ));
+            assert_kernel_parity(
+                &OptimizedRegistersReadWrite,
+                backend,
+                &relation,
+                &claims,
+                &points,
+                &challenges,
+                input_claim,
+                &round_challenges,
+            );
+        }
     });
 }
 
@@ -66,7 +83,13 @@ fn parity_structured_odd_log_t() {
 
 #[test]
 fn parity_structured_even_log_t() {
-    run_parity(structured_fixture(16), 4, 23);
+    let log_t = 4;
+    run_parity_with_phases(
+        structured_fixture(16),
+        log_t,
+        23,
+        &[(log_t, 0), (0, REGISTER_ADDRESS_BITS), (log_t / 2, 0)],
+    );
 }
 
 #[test]

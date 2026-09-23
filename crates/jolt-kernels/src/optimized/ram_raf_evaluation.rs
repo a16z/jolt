@@ -6,9 +6,7 @@
 //! instead of materializing and folding the `(K × T)` grid:
 //! `ra_folded(k) = Σ_{j : addresses[j] = k} eq(τ_low, j)`.
 //!
-//! Only the default read-write config is supported (phase 1 = all cycle
-//! rounds), where the relation's rounds equal `log_K` — same bar as the
-//! reference kernel.
+//! Inactive cycle rounds use a scalar multiplicity, without replicating tables.
 
 use std::collections::BTreeMap;
 
@@ -20,6 +18,7 @@ use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
 use super::ram_trace::SharedRamAddresses;
+use super::read_write::RamAddressKernel;
 use super::OptimizedBackend;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
@@ -37,15 +36,14 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
         let ram_log_k = relation.ram_log_k();
         let lowest_address = relation.lowest_address();
         let tau_low = relation.tau_low();
-        if dimensions.raf_evaluation_rounds() != ram_log_k {
-            return Err(KernelError::Unsupported {
-                reason: "optimized RAM RAF evaluation supports only the default read-write config \
-                         (phase 1 = all cycle rounds)",
-            });
-        }
-        if tau_low.len() != dimensions.log_t() {
+        dimensions
+            .validate_phase_split()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "invalid RAM RAF phase split",
+            })?;
+        if tau_low.len() != dimensions.log_t() || ram_log_k != dimensions.log_k() {
             return Err(KernelError::InvariantViolation {
-                reason: "RAM RAF evaluation tau_low disagrees with the trace geometry",
+                reason: "RAM RAF evaluation inputs disagree with the trace/address geometry",
             });
         }
 
@@ -64,12 +62,14 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
             Polynomial::new(unmap),
         )]);
 
-        Ok(Box::new(NaiveSumcheckProver::new(
+        let kernel = Box::new(NaiveSumcheckProver::new_with_table_rounds(
             &inputs,
             opening_tables,
             derived_tables,
             BindingOrder::LowToHigh,
-        )?))
+            ram_log_k,
+        )?);
+        RamAddressKernel::wrap(kernel, dimensions)
     }
 }
 
@@ -102,77 +102,82 @@ mod tests {
         ];
         with_ram_fixture(shape, ops, |witness| {
             let tau_low = random_scalars(shape.log_t, 83);
-            let read_write_dimensions =
-                ReadWriteDimensions::new(shape.log_t, shape.log_k(), shape.log_t, shape.log_k());
-            let relation = RamRafEvaluation::<Fr>::new(
-                read_write_dimensions,
-                RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap(),
-                shape.log_k(),
-                super::super::testing::fixture_lowest_address(),
-                tau_low.clone(),
-            );
-            let claims = RamRafEvaluationInputClaims {
-                ram_address: Fr::from_u64(0),
-            };
-            let points = RamRafEvaluationInputClaims::<Vec<Fr>>::default();
-            let challenges = NoChallenges::default();
+            for (phase1, phase2) in [
+                (shape.log_t, shape.log_k()),
+                (0, shape.log_k()),
+                (shape.log_t - 1, 1),
+                (0, 0),
+            ] {
+                let read_write_dimensions =
+                    ReadWriteDimensions::new(shape.log_t, shape.log_k(), phase1, phase2);
+                let relation = RamRafEvaluation::<Fr>::new(
+                    read_write_dimensions,
+                    RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap(),
+                    shape.log_k(),
+                    super::super::testing::fixture_lowest_address(),
+                    tau_low.clone(),
+                );
+                let claims = RamRafEvaluationInputClaims {
+                    ram_address: Fr::from_u64(0),
+                };
+                let points = RamRafEvaluationInputClaims::<Vec<Fr>>::default();
+                let challenges = NoChallenges::default();
 
-            let mut reference_session = ProofSession::default();
-            let reference = PrepareKernel::<Fr, _>::prepare(
-                &ReferenceBackend,
-                &mut reference_session,
-                witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-            )
-            .unwrap();
-            let mut session = ProofSession::default();
-            let optimized = PrepareKernel::<Fr, _>::prepare(
-                &OptimizedBackend,
-                &mut session,
-                witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-            )
-            .unwrap();
+                let mut reference_session = ProofSession::default();
+                let reference = PrepareKernel::<Fr, _>::prepare(
+                    &ReferenceBackend,
+                    &mut reference_session,
+                    witness,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+                let mut session = ProofSession::default();
+                let optimized = PrepareKernel::<Fr, _>::prepare(
+                    &OptimizedBackend,
+                    &mut session,
+                    witness,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
 
-            // The independently folded true input claim:
-            // `Σ_k unmap(k) · ra_folded(k)`.
-            let ra_folded =
-                cycle_fold::<Fr>(witness, ram_ra_raf_evaluation(), shape.log_k(), &tau_low)
-                    .unwrap();
-            let lowest = super::super::testing::fixture_lowest_address();
-            let input_claim = (0..shape.ram_k as u64)
-                .map(|k| Fr::from_u64(8 * k + lowest) * ra_folded[k as usize])
-                .sum();
+                // The independently folded true input claim:
+                // `Σ_k unmap(k) · ra_folded(k)`.
+                let ra_folded =
+                    cycle_fold::<Fr>(witness, ram_ra_raf_evaluation(), shape.log_k(), &tau_low)
+                        .unwrap();
+                let lowest = super::super::testing::fixture_lowest_address();
+                let input_claim: Fr = (0..shape.ram_k as u64)
+                    .map(|k| Fr::from_u64(8 * k + lowest) * ra_folded[k as usize])
+                    .sum();
 
-            assert_parity(
-                reference,
-                optimized,
-                input_claim,
-                &ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-                89,
-            );
+                assert_parity(
+                    reference,
+                    optimized,
+                    input_claim * Fr::pow2(shape.log_t - phase1),
+                    &ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                    89,
+                );
+            }
         });
     }
 
-    /// A non-default phase split (RAF rounds exceeding `log_K`) is rejected
-    /// as `Unsupported` instead of misproving.
     #[test]
-    fn rejects_non_default_phase_split() {
+    fn rejects_invalid_phase_split() {
         let shape = FixtureShape { log_t: 4, ram_k: 8 };
         with_ram_fixture(shape, vec![RamOp::None; 3], |witness| {
             let read_write_dimensions = ReadWriteDimensions::new(
@@ -206,7 +211,7 @@ mod tests {
             );
             assert!(matches!(
                 result.map(|_| ()),
-                Err(KernelError::Unsupported { .. })
+                Err(KernelError::InvariantViolation { .. })
             ));
         });
     }

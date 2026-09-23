@@ -8,8 +8,9 @@
 //! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
 //! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
 //!
-//! Only the default read-write config is supported.
+//! Supports cycle-first and full address-first binding.
 
+use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
@@ -24,11 +25,13 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::read_write::ReadWriteOrder;
 use super::support::{bind_pairs, pin_derived_term, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+mod address_first;
 mod rows;
 mod sparse;
 #[cfg(test)]
@@ -40,6 +43,7 @@ mod tests;
 
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
+use address_first::AddressFirstKernel;
 use rows::CollectRegisterEntries;
 use sparse::{CoeffLut, CycleState};
 
@@ -54,17 +58,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RegistersReadWriteChecking<F>>>, KernelError<F>>
     {
         let dimensions = inputs.relation.register_dimensions();
-        // Same guard as the reference kernel: phase 1 must cover all cycle
-        // rounds. The phase-2/phase-3 split of the address rounds is a legacy
-        // data-structure choice with no effect on the round polynomials (the
-        // default config sets phase 2 = all `log_K` address rounds), so it is
-        // deliberately not constrained here.
-        if dimensions.phase1_num_rounds() != dimensions.log_t() {
-            return Err(KernelError::Unsupported {
-                reason: "optimized registers read-write checking supports only the default \
-                         read-write config (phase 1 = all cycle rounds)",
-            });
-        }
+        let order = ReadWriteOrder::new::<F>(dimensions)?;
         let log_t = dimensions.log_t();
         let log_k = dimensions.log_k();
         if log_t == 0 {
@@ -77,6 +71,21 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             return Err(KernelError::InvariantViolation {
                 reason: "registers read-write input point has the wrong variable count",
             });
+        }
+        if log_k != REGISTER_ADDRESS_BITS {
+            return Err(KernelError::InvariantViolation {
+                reason: "register read/write dimensions do not match the witness domain",
+            });
+        }
+        if log_t >= usize::BITS as usize {
+            return Err(KernelError::Unsupported {
+                reason: "register read/write trace exceeds the host index width",
+            });
+        }
+        if order == ReadWriteOrder::AddressFirst {
+            return Ok(Box::new(AddressFirstKernel::prepare(
+                session, witness, &inputs,
+            )?));
         }
         let cycles = 1usize << log_t;
 

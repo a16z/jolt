@@ -99,58 +99,50 @@ mod tests {
     use crate::KernelError;
 
     #[test]
-    fn joint_tables_follow_the_configured_variable_order() {
+    fn tables_follow_the_configured_variable_order() {
         // Entry k * 4 + t identifies its original address/cycle coordinates.
         // Expected tables are literal fixtures, independent of the geometry API.
-        let original: Vec<F> = (0..16).map(F::from_u64).collect();
-        for (dimensions, expected) in [
+        let joint_values: Vec<F> = (0..16).map(F::from_u64).collect();
+        let address_values: Vec<F> = (0..4).map(F::from_u64).collect();
+        for (dimensions, expected_joint, expected_address) in [
             (
                 ReadWriteDimensions::new(2, 2, 2, 2),
                 [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+                vec![0, 1, 2, 3],
             ),
             (
                 ReadWriteDimensions::new(2, 2, 0, 2),
                 [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15],
-            ),
-            (
-                ReadWriteDimensions::new(2, 2, 1, 1),
-                [0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15],
-            ),
-            (
-                ReadWriteDimensions::new(2, 2, 0, 0),
-                [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-            ),
-        ] {
-            let layout = ReadWriteTableLayout::joint::<F>(dimensions).unwrap();
-            let table = layout.table(original.clone()).unwrap();
-            assert_eq!(table.evals(), &expected.map(F::from_u64), "{dimensions:?}");
-        }
-    }
-
-    #[test]
-    fn address_tables_repeat_across_inactive_cycle_variables() {
-        let original: Vec<F> = (0..4).map(F::from_u64).collect();
-        for (dimensions, expected) in [
-            (ReadWriteDimensions::new(2, 2, 2, 2), vec![0, 1, 2, 3]),
-            (
-                ReadWriteDimensions::new(2, 2, 0, 2),
                 vec![0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3],
             ),
             (
                 ReadWriteDimensions::new(2, 2, 1, 1),
+                [0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15],
                 vec![0, 1, 0, 1, 2, 3, 2, 3],
             ),
             (
                 ReadWriteDimensions::new(2, 2, 0, 0),
+                [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
                 vec![0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
             ),
         ] {
-            let layout = ReadWriteTableLayout::address::<F>(dimensions).unwrap();
-            let table = layout.table(original.clone()).unwrap();
+            let layout = ReadWriteTableLayout::joint::<F>(dimensions).unwrap();
+            let table = layout.table(joint_values.clone()).unwrap();
             assert_eq!(
                 table.evals(),
-                &expected.into_iter().map(F::from_u64).collect::<Vec<_>>(),
-                "{dimensions:?}"
+                &expected_joint.map(F::from_u64),
+                "joint layout: {dimensions:?}"
+            );
+
+            let layout = ReadWriteTableLayout::address::<F>(dimensions).unwrap();
+            let table = layout.table(address_values.clone()).unwrap();
+            assert_eq!(
+                table.evals(),
+                &expected_address
+                    .into_iter()
+                    .map(F::from_u64)
+                    .collect::<Vec<_>>(),
+                "address layout: {dimensions:?}"
             );
         }
     }
