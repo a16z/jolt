@@ -14,6 +14,10 @@ ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 field-inline = ["jolt-sdk/field-inline", "dep:jolt-field", "jolt-field/field-inline-guest"]
 akita = ["jolt-sdk/akita", "dep:jolt-akita", "dep:jolt-program", "dep:jolt-witness", "dep:tracer"]
 
+[package.metadata.cargo-machete]
+# Enables field-inline arithmetic in the guest field implementation.
+ignored = ["jolt-field"]
+
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", default-features = false, optional = true }
 jolt-program = { path = "../../crates/jolt-program", optional = true }
@@ -21,7 +25,6 @@ jolt-witness = { path = "../../crates/jolt-witness", optional = true }
 tracer = { path = "../../tracer", optional = true }
 jolt-riscv = { path = "../../crates/jolt-riscv" }
 jolt-inlines-ntt = { workspace = true, features = ["host"], optional = true }
-jolt-openings = { path = "../../crates/jolt-openings" }
 # Registers the Blake2b inline with the tracer for the guest transcripts.
 jolt-inlines-blake2 = { workspace = true, features = ["host"] }
 jolt-sdk = { workspace = true, features = ["host"] }

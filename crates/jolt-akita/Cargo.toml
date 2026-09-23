@@ -23,6 +23,10 @@ blake2-inline = ["akita-transcript/blake2-inline", "akita-types/blake2-inline"]
 field-inline = []
 profiling = ["parallel"]
 
+[package.metadata.cargo-machete]
+# This direct edge selects the guest transcript implementation via blake2-inline.
+ignored = ["akita-transcript"]
+
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.

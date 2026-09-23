@@ -49,3 +49,8 @@ extend-exclude = [
 # Proof checkers contain this x86 immediate and the HOL Light theorem type.
 "ba" = "ba"
 "thm" = "thm"
+
+[default.extend-identifiers]
+# Immutable commit references in the historical recursion experiment record.
+"ba4825774" = "ba4825774"
+"80aa2ba47" = "80aa2ba47"

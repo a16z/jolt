@@ -4295,7 +4295,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-inlines-ntt",
  "jolt-sdk",
- "serde",
 ]
 
 [[package]]
@@ -5434,7 +5433,6 @@ dependencies = [
  "jolt-field",
  "jolt-inlines-blake2",
  "jolt-inlines-ntt",
- "jolt-openings",
  "jolt-program",
  "jolt-riscv",
  "jolt-sdk",

@@ -12,6 +12,11 @@ trusted-preprocessing = ["jolt-dory/unchecked-verifier-setup"]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc", "jolt_sdk/guest-fast-mem"]
 blake2-inline = ["jolt_sdk/blake2-inline", "jolt-transcript?/blake2-inline", "jolt-akita?/blake2-inline"]
 
+[package.metadata.cargo-machete]
+# Field/Dory edges select guest implementations; generated embedded_bytecode.rs
+# imports jolt-riscv types when the host prepares an embedded guest.
+ignored = ["jolt-field", "jolt-dory", "jolt-riscv"]
+
 [dependencies]
 jolt-riscv = { path = "../../../crates/jolt-riscv" }
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
