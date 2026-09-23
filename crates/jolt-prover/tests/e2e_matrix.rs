@@ -233,7 +233,8 @@ mod matrix {
             .expect("derive config");
             let preprocessing = dory::from_shared(
                 JoltSharedPreprocessing::new(prepared.preprocessing).expect("shared preprocessing"),
-            );
+            )
+            .expect("Dory preprocessing");
             let program_preprocessing = preprocessing
                 .program_arc()
                 .expect("full program preprocessing");
