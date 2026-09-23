@@ -35,23 +35,28 @@ use crate::commitment::{
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, OptimizedBackend, ProofSession, ReferenceBackend};
 
-/// Superchunk ceiling — the measured 64-thread optimum.
+/// Base cycle budget before accounting for the commitment row width.
 #[cfg(feature = "parallel")]
 const SUPERCHUNK_CYCLES_MAX: usize = 1 << 21;
 
-/// Cycles per superchunk, scaled to the pool. The extracted bundle is 80
-/// bytes per cycle and the pipeline retains two buffers, so applying the
-/// 64-thread optimum to every host needlessly reserves about 320 MiB.
-fn superchunk_cycles() -> usize {
+/// Cycles per superchunk, scaled to the pool and commitment rows. At large
+/// trace sizes a fixed cycle budget can leave only one or two row tasks per
+/// column. Preserve at least one window per four workers, matching the
+/// measured 64-worker batch at smaller scales. Staging holds two buffers
+/// of 80 bytes per cycle.
+fn superchunk_cycles(row_width: usize) -> usize {
     #[cfg(feature = "parallel")]
     {
-        (rayon::current_num_threads() << 15)
+        let workers = rayon::current_num_threads();
+        let windows = workers.div_ceil(4).next_power_of_two();
+        (workers << 15)
             .next_power_of_two()
             .clamp(1 << 17, SUPERCHUNK_CYCLES_MAX)
+            .max(row_width * windows)
     }
     #[cfg(not(feature = "parallel"))]
     {
-        1 << 17
+        (1 << 17).max(row_width)
     }
 }
 
@@ -83,7 +88,7 @@ where
             return ReferenceBackend.commit_witness(session, source, ids, grid, setup);
         }
 
-        commit_streaming(source, ids, grid, setup, superchunk_cycles())
+        commit_streaming(source, ids, grid, setup, superchunk_cycles(row_width))
     }
 
     fn commit_advice(
