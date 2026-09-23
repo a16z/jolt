@@ -13,9 +13,7 @@ use jolt_akita::AkitaScheme;
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-use jolt_sdk::{
-    JoltDevice, MemoryConfig,
-};
+use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::{
     JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof,
@@ -159,7 +157,7 @@ enum Commands {
         /// Embed proof data to specified directory
         #[arg(long, value_name = "DIRECTORY", num_args = 0..=1)]
         embed: Option<Option<PathBuf>>,
-        /// Trace to disk instead of memory (redues memory usage)
+        /// Store trace rows on disk instead of executing without row storage
         #[arg(short = 'd', long = "disk", default_value_t = false)]
         trace_to_file: bool,
     },
