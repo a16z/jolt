@@ -19,7 +19,7 @@ edition = "2021"
 std = ["random"]
 random = ["dep:getrandom_v02", "dep:getrandom_v03", "dep:rand"]
 malloc-shim = []
-# Word-wise memcpy/memset/memcmp for RISC-V guests, replacing libc's generic
+# Word-wise memset/memcmp for RISC-V guests, replacing libc's generic
 # byte-oriented routines (a zkVM pays one cycle per instruction).
 fast-mem = []
 
