@@ -325,6 +325,25 @@ fn validate_trace_order(config: &ProverConfig) -> Result<(), PreprocessingError>
     Ok(())
 }
 
+#[cfg(feature = "field-inline")]
+fn field_inc_limb_schedule(
+    one_hot_k: usize,
+) -> Result<FieldIncLimbScheduleParams, PreprocessingError> {
+    let log_k_chunk = one_hot_k.ilog2() as usize;
+    let capacity = one_hot_trace_column_capacity(log_k_chunk).map_err(|error| {
+        PreprocessingError::InvalidConfiguration {
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(FieldIncLimbScheduleParams::new(
+        log_k_chunk + capacity.ilog2() as usize,
+        MIN_DENSE_OBJECT_NUM_VARS,
+        field_inc_limb_count::<AkitaField>()
+            .next_power_of_two()
+            .ilog2() as usize,
+    ))
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
@@ -368,23 +387,4 @@ mod tests {
             ]
         );
     }
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inc_limb_schedule(
-    one_hot_k: usize,
-) -> Result<FieldIncLimbScheduleParams, PreprocessingError> {
-    let log_k_chunk = one_hot_k.ilog2() as usize;
-    let capacity = one_hot_trace_column_capacity(log_k_chunk).map_err(|error| {
-        PreprocessingError::InvalidConfiguration {
-            reason: error.to_string(),
-        }
-    })?;
-    Ok(FieldIncLimbScheduleParams::new(
-        log_k_chunk + capacity.ilog2() as usize,
-        MIN_DENSE_OBJECT_NUM_VARS,
-        field_inc_limb_count::<AkitaField>()
-            .next_power_of_two()
-            .ilog2() as usize,
-    ))
 }
