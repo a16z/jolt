@@ -34,13 +34,13 @@ mod support {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::{CanonicalBytes, Fr, Ring};
+    use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
-    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
-    use jolt_host::{JoltProgramSource, Program};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_prover::JoltSharedPreprocessing;
+    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
@@ -51,7 +51,6 @@ mod support {
 
     pub type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
     pub type VerifierPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
-
 
     pub const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
 
@@ -96,12 +95,20 @@ mod support {
         program.enable_field_inline();
 
         let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
-        let jolt_program = Arc::new(program.build_jolt_program().expect("build field-inline guest"));
+        let jolt_program = Arc::new(
+            program
+                .build_jolt_program()
+                .expect("build field-inline guest"),
+        );
         let program_preprocessing = JoltProgramPreprocessing::new(
-            jolt_program.expanded_bytecode.clone(), jolt_program.memory_init.clone(),
-            io_device.memory_layout.clone(), jolt_program.entry_address,
-            MAX_PADDED_TRACE_LENGTH, program.instruction_profile(),
-        ).expect("field-inline preprocessing");
+            jolt_program.expanded_bytecode.clone(),
+            jolt_program.memory_init.clone(),
+            io_device.memory_layout.clone(),
+            jolt_program.entry_address,
+            MAX_PADDED_TRACE_LENGTH,
+            program.instruction_profile(),
+        )
+        .expect("field-inline preprocessing");
         let preprocessing = jolt_prover::dory::from_shared(
             JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
         );

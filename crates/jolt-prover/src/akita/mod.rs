@@ -22,11 +22,11 @@ use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-pub mod preprocessing;
 /// The packed FR seam (limb-group commit and batch entry); the sibling of
 /// the verifier's `stage8::field_inline_packed`.
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
+pub mod preprocessing;
 mod prover;
 mod setup;
 pub use setup::one_hot_trace_setup_shape;

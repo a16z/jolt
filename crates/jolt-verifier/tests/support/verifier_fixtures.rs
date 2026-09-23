@@ -13,6 +13,7 @@ use std::{
 #[cfg(unix)]
 use std::{os::fd::AsRawFd, os::raw::c_int};
 
+use super::guest_fixtures::FixtureTrace;
 use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::{Bn254G1, Pedersen};
@@ -23,7 +24,6 @@ use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
 use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
-use super::guest_fixtures::FixtureTrace;
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
@@ -684,25 +684,25 @@ fn generate_verifier_fixture_with_order(
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
     #[cfg(not(feature = "field-inline"))]
     {
-    ProverConfig::derive_compact::<Fr>(
-        run.trace.trace.as_slice(),
-        &run.program_preprocessing.memory_layout,
-        run.program_preprocessing.ram.min_bytecode_address,
-        run.program_preprocessing.ram.bytecode_words.len(),
-        1 << 16,
-    )
-    .expect("derive config")
+        ProverConfig::derive_compact::<Fr>(
+            run.trace.trace.as_slice(),
+            &run.program_preprocessing.memory_layout,
+            run.program_preprocessing.ram.min_bytecode_address,
+            run.program_preprocessing.ram.bytecode_words.len(),
+            1 << 16,
+        )
+        .expect("derive config")
     }
     #[cfg(feature = "field-inline")]
     {
-    ProverConfig::derive::<Fr>(
-        run.trace.trace.rows(),
-        &run.program_preprocessing.memory_layout,
-        run.program_preprocessing.ram.min_bytecode_address,
-        run.program_preprocessing.ram.bytecode_words.len(),
-        1 << 16,
-    )
-    .expect("derive config")
+        ProverConfig::derive::<Fr>(
+            run.trace.trace.rows(),
+            &run.program_preprocessing.memory_layout,
+            run.program_preprocessing.ram.min_bytecode_address,
+            run.program_preprocessing.ram.bytecode_words.len(),
+            1 << 16,
+        )
+        .expect("derive config")
     }
 }
 
@@ -717,7 +717,13 @@ fn prove_prepared(
         .program_arc()
         .expect("full program retained by prover preprocessing");
     let public_io = trace.device.clone();
-    let witness = fixture_witness(&program, &program_preprocessing, trace, &config, !trusted_advice.is_empty());
+    let witness = fixture_witness(
+        &program,
+        &program_preprocessing,
+        trace,
+        &config,
+        !trusted_advice.is_empty(),
+    );
     let trusted = (!trusted_advice.is_empty()).then(|| {
         jolt_prover::dory::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
@@ -751,9 +757,7 @@ mod field_inline {
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
-    use jolt_prover::{
-        JoltBackend, ProverConfig,
-    };
+    use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
@@ -794,7 +798,11 @@ mod field_inline {
         program.enable_field_inline();
 
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
-        let jolt_program = Arc::new(program.build_jolt_program().expect("build field-inline program"));
+        let jolt_program = Arc::new(
+            program
+                .build_jolt_program()
+                .expect("build field-inline program"),
+        );
         let program_preprocessing = JoltProgramPreprocessing::new(
             jolt_program.expanded_bytecode.clone(),
             jolt_program.memory_init.clone(),
@@ -802,7 +810,8 @@ mod field_inline {
             jolt_program.entry_address,
             MAX_PADDED_TRACE_LENGTH,
             program.instruction_profile(),
-        ).expect("field-inline preprocessing");
+        )
+        .expect("field-inline preprocessing");
         let memory_layout = io_device.memory_layout.clone();
         let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
         let public_io = trace_output.device.clone();
@@ -826,7 +835,9 @@ mod field_inline {
         let prover_preprocessing = jolt_prover::dory::from_shared(
             JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
         );
-        let program_preprocessing = prover_preprocessing.program_arc().expect("full preprocessing");
+        let program_preprocessing = prover_preprocessing
+            .program_arc()
+            .expect("full preprocessing");
         let witness = TraceBackend::new(
             JoltVmWitnessConfig::new(
                 config.trace_length.ilog2() as usize,
@@ -890,7 +901,10 @@ mod field_inline {
 #[cfg(all(feature = "field-inline", not(feature = "zk")))]
 pub fn standard_field_inline_eqpoly_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();
-    case_from_accepted_fixture(VerifierFixtureKind::FieldInlineEqpoly, field_inline::generate_eqpoly)
+    case_from_accepted_fixture(
+        VerifierFixtureKind::FieldInlineEqpoly,
+        field_inline::generate_eqpoly,
+    )
 }
 
 #[cfg(not(feature = "zk"))]

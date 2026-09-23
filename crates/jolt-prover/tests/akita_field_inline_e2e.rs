@@ -24,20 +24,20 @@ mod support {
 
     use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
     use jolt_akita::AkitaCommitment;
+    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
     use jolt_field::{CanonicalBytes, Ring};
+    use jolt_host::{JoltProgramSource, Program};
     use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
     use jolt_prover::akita::JoltAkitaBackend;
     use jolt_prover::{akita, ProverConfig};
-    use jolt_host::{JoltProgramSource, Program};
-    use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_akita::{AkitaField, AkitaScheme, AkitaScheduleArtifacts};
-    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
     use jolt_verifier::proof::JoltProof;
     use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -78,8 +78,6 @@ mod support {
         inputs
     }
 
-
-
     pub struct FrGuest {
         program_preprocessing: JoltProgramPreprocessing,
         pub trace_output: TraceOutput<OwnedTrace>,
@@ -96,12 +94,20 @@ mod support {
         program.enable_field_inline();
 
         let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
-        let jolt_program = Arc::new(program.build_jolt_program().expect("build field-inline guest"));
+        let jolt_program = Arc::new(
+            program
+                .build_jolt_program()
+                .expect("build field-inline guest"),
+        );
         let program_preprocessing = JoltProgramPreprocessing::new(
-            jolt_program.expanded_bytecode.clone(), jolt_program.memory_init.clone(),
-            io_device.memory_layout.clone(), jolt_program.entry_address,
-            MAX_PADDED_TRACE_LENGTH, program.instruction_profile(),
-        ).expect("field-inline preprocessing");
+            jolt_program.expanded_bytecode.clone(),
+            jolt_program.memory_init.clone(),
+            io_device.memory_layout.clone(),
+            jolt_program.entry_address,
+            MAX_PADDED_TRACE_LENGTH,
+            program.instruction_profile(),
+        )
+        .expect("field-inline preprocessing");
         let trace_output = trace_modular(&jolt_program, &io_device.memory_layout, inputs);
         FrGuest {
             program_preprocessing,
@@ -179,8 +185,11 @@ mod support {
 
         let log_t = config.trace_length.ilog2() as usize;
         let prover_preprocessing = jolt_prover::akita::preprocessing::preprocess_full(
-            &AkitaScheduleArtifacts::shared_from_default_directory(), program_preprocessing, &config,
-        ).expect("field-inline packed preprocessing");
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            program_preprocessing,
+            &config,
+        )
+        .expect("field-inline packed preprocessing");
 
         let mut rows = trace_output.trace.rows().to_vec();
         rows.resize(config.trace_length, TraceRow::default());
@@ -297,11 +306,11 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod clear {
+    use jolt_akita::AkitaField;
     use jolt_akita::AkitaScheme;
     use jolt_field::Ring;
     use jolt_openings::GroupCommitmentMetadata;
     use jolt_prover::akita::JoltAkitaBackend;
-    use jolt_akita::AkitaField;
     use jolt_verifier::proof::JoltProofClaims;
     use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
     use jolt_verifier::VerifierError;

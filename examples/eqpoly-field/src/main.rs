@@ -9,17 +9,15 @@
 mod pipeline {
     use std::sync::Arc;
 
-    use jolt::{
-        JoltProverPreprocessing, JoltSharedPreprocessing, JoltProgramPreprocessing,
-        MemoryConfig, OwnedTrace, TraceInputs, TraceOutput, TracerBackend,
-        VerifierField, VerifierPCS, VerifierTranscript, VerifierVC,
-    };
     use jolt::host::JoltProgramSource;
+    use jolt::{
+        JoltProgramPreprocessing, JoltProverPreprocessing, JoltSharedPreprocessing, MemoryConfig,
+        OwnedTrace, TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS,
+        VerifierTranscript, VerifierVC,
+    };
     use jolt_field::{CanonicalBytes, Ring};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceRow};
-    use jolt_prover::{
-        JoltBackend, ProverConfig,
-    };
+    use jolt_prover::{JoltBackend, ProverConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
     pub type Fr = VerifierField;
@@ -77,12 +75,20 @@ mod pipeline {
         let mut program = guest::compile_eval_eq_mle(target_dir);
 
         let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
-        let jolt_program = Arc::new(program.build_jolt_program().expect("build field-inline program"));
+        let jolt_program = Arc::new(
+            program
+                .build_jolt_program()
+                .expect("build field-inline program"),
+        );
         let program_preprocessing = JoltProgramPreprocessing::new(
-            jolt_program.expanded_bytecode.clone(), jolt_program.memory_init.clone(),
-            io_device.memory_layout.clone(), jolt_program.entry_address,
-            MAX_PADDED_TRACE_LENGTH, program.instruction_profile(),
-        ).expect("field-inline preprocessing");
+            jolt_program.expanded_bytecode.clone(),
+            jolt_program.memory_init.clone(),
+            io_device.memory_layout.clone(),
+            jolt_program.entry_address,
+            MAX_PADDED_TRACE_LENGTH,
+            program.instruction_profile(),
+        )
+        .expect("field-inline preprocessing");
         let preprocessing = jolt_prover::dory::from_shared(
             JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
         );

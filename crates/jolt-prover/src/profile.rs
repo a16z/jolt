@@ -47,6 +47,10 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
+#[cfg(all(feature = "field-inline", feature = "akita"))]
+use jolt_akita::AkitaField;
+#[cfg(feature = "field-inline")]
+use jolt_field::{CanonicalBytes, Ring};
 use jolt_host::{JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
@@ -55,18 +59,14 @@ use jolt_profiling::{
     format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing_with_trace_path,
     TracingFormat, BYTES_PER_GIB,
 };
+#[cfg(feature = "field-inline")]
+use jolt_program::execution::{ExecutionBackend, TraceSource};
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing};
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::JoltTraceRow;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
-#[cfg(feature = "field-inline")]
-use jolt_program::execution::{ExecutionBackend, TraceSource};
-#[cfg(feature = "field-inline")]
-use jolt_field::{CanonicalBytes, Ring};
-#[cfg(all(feature = "field-inline", feature = "akita"))]
-use jolt_akita::AkitaField;
 #[cfg(not(feature = "field-inline"))]
 type ProfileTrace = Arc<Vec<JoltTraceRow>>;
 #[cfg(feature = "field-inline")]
@@ -674,7 +674,9 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
     // --- Guest compilation and trace sizing (unmeasured).
     let mut program = Program::new(&format!("{bench_name}-guest"));
     #[cfg(feature = "field-inline")]
-    if workload.uses_field_inline() { program.enable_field_inline(); }
+    if workload.uses_field_inline() {
+        program.enable_field_inline();
+    }
     #[cfg(feature = "field-inline")]
     program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
     let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
@@ -934,8 +936,14 @@ fn prove_workload(
     .expect("derive config");
     let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let params = crate::akita::preprocessing::grouped_setup_params(
-        &schedule_artifacts, &program_preprocessing, &config, false, false, &[],
-    ).expect("Akita setup parameters");
+        &schedule_artifacts,
+        &program_preprocessing,
+        &config,
+        false,
+        false,
+        &[],
+    )
+    .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
@@ -1041,18 +1049,32 @@ fn trace_modular(
     };
     let trace_inputs = TraceInputs::new(inputs.to_vec(), Vec::new(), Vec::new(), memory_config);
     #[cfg(not(feature = "field-inline"))]
-    { TracerBackend::new().trace_compact(program, trace_inputs, bytecode).expect("modular trace") }
+    {
+        TracerBackend::new()
+            .trace_compact(program, trace_inputs, bytecode)
+            .expect("modular trace")
+    }
     #[cfg(feature = "field-inline")]
     {
         let _ = bytecode;
-        TracerBackend::new().trace(program, trace_inputs).expect("modular field trace")
+        TracerBackend::new()
+            .trace(program, trace_inputs)
+            .expect("modular field trace")
     }
-
 }
 
-fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs<ProfileTrace>) -> TraceBackend<OwnedTrace> {
+fn profile_witness(
+    config: JoltVmWitnessConfig,
+    inputs: JoltVmWitnessInputs<ProfileTrace>,
+) -> TraceBackend<OwnedTrace> {
     #[cfg(not(feature = "field-inline"))]
-    { TraceBackend::<OwnedTrace>::from_compact(config, inputs) }
+    {
+        TraceBackend::<OwnedTrace>::from_compact(config, inputs)
+    }
     #[cfg(feature = "field-inline")]
-    { TraceBackend::new(config, inputs).with_field_inline().expect("field-inline witness") }
+    {
+        TraceBackend::new(config, inputs)
+            .with_field_inline()
+            .expect("field-inline witness")
+    }
 }
