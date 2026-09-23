@@ -39,7 +39,7 @@ fn sum(input: &[u8]) -> u32 {
 ```
 
 ## Guest Attempts to Compile Standard Library
-Sometimes after installing the toolchain the guest still tries to compile with the standard library which will fail with a large number of errors that certain items such as `Result` are referenced and not available. This generally happens when one tries to run jolt before installing the toolchain. To address, try rerunning `jolt install-toolchain`, restarting your terminal, and delete both your rust target directory and any files under `/tmp` that begin with jolt.
+Sometimes after installing the toolchain the guest still tries to compile with the standard library which will fail with a large number of errors that certain items such as `Result` are referenced and not available. This generally happens when one tries to run jolt before installing the toolchain. To address, try rerunning `jolt install-toolchain`, restarting your terminal, and delete both your rust target directory and any files under your temp directory (`$TMPDIR`, or `/tmp` when unset) that begin with jolt.
 
 ## Guest Fails to Compile on the Host
 By default, Jolt will attempt to compile the guest for the host architecture. This is useful if you want to run and test the guest's tagged functions directly. If you know your guest code cannot compile on the host (for example, if your guest uses inline RISCV assembly), you can specify to only build for the guest architecture.
