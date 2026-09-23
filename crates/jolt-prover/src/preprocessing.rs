@@ -178,13 +178,21 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            full_preprocessing_digest(&program).unwrap(),
+        #[cfg(not(feature = "field-inline"))]
+        let expected = [
+            145, 121, 88, 160, 204, 106, 98, 59, 169, 97, 216, 209, 50, 77, 116, 101, 132, 24, 249,
+            19, 196, 162, 146, 128, 195, 60, 253, 174, 10, 250, 92, 68,
+        ];
+        // The feature adds the canonical None tag to base-profile bytecode metadata.
+        #[cfg(feature = "field-inline")]
+        let expected = {
+            assert!(program.bytecode.field_inline.is_none());
             [
-                145, 121, 88, 160, 204, 106, 98, 59, 169, 97, 216, 209, 50, 77, 116, 101, 132, 24,
-                249, 19, 196, 162, 146, 128, 195, 60, 253, 174, 10, 250, 92, 68,
+                9, 132, 107, 204, 133, 31, 226, 28, 232, 66, 43, 174, 46, 43, 244, 154, 201, 222,
+                106, 132, 171, 54, 241, 222, 224, 143, 251, 183, 116, 25, 211, 220,
             ]
-        );
+        };
+        assert_eq!(full_preprocessing_digest(&program).unwrap(), expected);
     }
 
     #[test]

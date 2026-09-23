@@ -60,7 +60,7 @@ use jolt_profiling::{
     TracingFormat, BYTES_PER_GIB,
 };
 #[cfg(feature = "field-inline")]
-use jolt_program::execution::{ExecutionBackend, TraceSource};
+use jolt_program::execution::ExecutionBackend;
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing};
 #[cfg(not(feature = "field-inline"))]
@@ -704,7 +704,10 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         &program_preprocessing.bytecode,
         &input,
     );
+    #[cfg(not(feature = "field-inline"))]
     let trace_length = trace_output.trace.len();
+    #[cfg(feature = "field-inline")]
+    let trace_length = trace_output.trace.rows().len();
 
     // --- The compiled protocol's preprocessing + prove + verify.
     let run = prove_workload(&jolt_program, program_preprocessing, trace_output, backend);
