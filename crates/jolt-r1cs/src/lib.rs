@@ -10,11 +10,28 @@
 //! - [`constraints::field_constraints`] — native field-inline constraint layout
 //! - [`constraints::jolt`] — compile-time feature-gated composition of Jolt R1CS constraints
 
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::indexing_slicing,
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+
 pub mod builder;
 pub mod column;
 pub mod constraint;
 pub mod constraints;
 pub mod key;
+#[cfg(feature = "claim-lowering")]
 pub mod lowering;
 pub mod provider;
 
@@ -25,6 +42,7 @@ pub use constraint::{
     WeightedMatrixColumns,
 };
 pub use key::R1csKey;
+#[cfg(feature = "claim-lowering")]
 pub use lowering::{
     assert_claim_expr_eq, lower_claim_expr, ClaimLoweringError, ClaimSourceTable, ClaimSources,
     SourceValue,

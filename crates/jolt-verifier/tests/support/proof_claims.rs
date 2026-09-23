@@ -1,20 +1,22 @@
 //! Opening-claim projection for verifier-native prover proofs.
 #[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
     self as native,
     geometry::{
         booleanity, bytecode,
+        claim_reductions::instruction as instruction_claim_reduction,
         claim_reductions::registers as registers_claim_reduction,
-        claim_reductions::{advice, instruction as instruction_claim_reduction},
         instruction, ram, registers, spartan,
         spartan::{outer_opening, outer_uniskip_opening, product_uniskip_opening},
     },
     JoltAdviceKind, JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::CircuitFlags;
@@ -96,7 +98,7 @@ where
     claim_mut_from_clear(claims, proof.trace_length, id)
 }
 
-fn claim_from_clear<F: Field>(
+fn claim_from_clear<F: JoltField>(
     claims: &ClearProofClaims<F>,
     trace_length: usize,
     id: native::JoltOpeningId,
@@ -107,7 +109,7 @@ fn claim_from_clear<F: Field>(
     claim_mut_from_clear(&mut copy, trace_length, id).map(|value| *value)
 }
 
-fn claim_mut_from_clear<F: Field>(
+fn claim_mut_from_clear<F: JoltField>(
     claims: &mut ClearProofClaims<F>,
     trace_length: usize,
     id: native::JoltOpeningId,
@@ -130,7 +132,7 @@ fn claim_mut_from_clear<F: Field>(
         .or_else(|| claim_mut_from_stage6_outputs(&mut claims.stage6a, &mut claims.stage6b, id))
 }
 
-fn claim_mut_from_spartan_outer<F: Field>(
+fn claim_mut_from_spartan_outer<F: JoltField>(
     claims: &mut Stage1BatchOutputClaims<F>,
     variable: JoltVirtualPolynomial,
 ) -> Option<&mut F> {
@@ -189,7 +191,7 @@ fn stage1_outer_variable(
         .find(|variable| id == outer_opening(*variable))
 }
 
-fn claim_mut_from_stage2_batch_outputs<F: Field>(
+fn claim_mut_from_stage2_batch_outputs<F: JoltField>(
     claims: &mut Stage2BatchOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
@@ -255,7 +257,7 @@ fn claim_mut_from_stage2_batch_outputs<F: Field>(
     }
 }
 
-fn claim_mut_from_stage3_outputs<F: Field>(
+fn claim_mut_from_stage3_outputs<F: JoltField>(
     claims: &mut Stage3OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
@@ -309,7 +311,7 @@ fn claim_mut_from_stage3_outputs<F: Field>(
     }
 }
 
-fn claim_mut_from_stage4_outputs<F: Field>(
+fn claim_mut_from_stage4_outputs<F: JoltField>(
     claims: &mut Stage4OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
@@ -340,7 +342,7 @@ fn claim_mut_from_stage4_outputs<F: Field>(
     }
 }
 
-fn claim_mut_from_stage5_outputs<F: Field>(
+fn claim_mut_from_stage5_outputs<F: JoltField>(
     claims: &mut Stage5OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
@@ -379,7 +381,7 @@ fn claim_mut_from_stage5_outputs<F: Field>(
     }
 }
 
-fn claim_mut_from_stage6_outputs<'a, F: Field>(
+fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
     stage6a: &'a mut Stage6aOutputClaims<F>,
     stage6b: &'a mut Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
@@ -424,8 +426,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
             return Some(opening_claim);
         }
     }
-    let ram_hamming_weight = ram::ram_hamming_weight();
-    if id == ram_hamming_weight {
+    if id == ram::ram_hamming_weight() {
         return Some(&mut stage6b.ram_hamming_booleanity.ram_hamming_weight);
     }
     for (index, opening_claim) in stage6b.ram_ra_virtualization.ram_ra.iter_mut().enumerate() {
@@ -456,6 +457,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
         id if id == ram_inc => Some(&mut stage6b.inc_claim_reduction.ram_inc),
         #[cfg(not(feature = "akita"))]
         id if id == rd_inc => Some(&mut stage6b.inc_claim_reduction.rd_inc),
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -464,6 +466,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
                 .as_mut()
                 .map(|claim| &mut claim.trusted)
         }
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
@@ -476,7 +479,7 @@ fn claim_mut_from_stage6_outputs<'a, F: Field>(
     }
 }
 
-fn claim_mut_from_stage7_outputs<F: Field>(
+fn claim_mut_from_stage7_outputs<F: JoltField>(
     claims: &mut Stage7OutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&mut F> {
@@ -526,15 +529,23 @@ fn claim_mut_from_stage7_outputs<F: Field>(
         }
     }
 
-    match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
-            .trusted_advice
-            .as_mut()
-            .map(|claims| &mut claims.trusted),
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
-            .untrusted_advice
-            .as_mut()
-            .map(|claims| &mut claims.untrusted),
-        _ => None,
+    #[cfg(not(feature = "akita"))]
+    {
+        match id {
+            id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
+                .trusted_advice
+                .as_mut()
+                .map(|claims| &mut claims.trusted),
+            id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
+                .untrusted_advice
+                .as_mut()
+                .map(|claims| &mut claims.untrusted),
+            _ => None,
+        }
+    }
+    #[cfg(feature = "akita")]
+    {
+        let _ = id;
+        None
     }
 }

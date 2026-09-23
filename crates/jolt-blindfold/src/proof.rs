@@ -1,5 +1,5 @@
 use jolt_crypto::VectorCommitmentOpening;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::CompressedSumcheckProof;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
     serialize = "F: Serialize, Com: Serialize",
     deserialize = "F: for<'a> Deserialize<'a>, Com: Deserialize<'de>"
 ))]
-pub struct BlindFoldProof<F: Field, Com> {
+pub struct BlindFoldProof<F: JoltField, Com> {
     pub auxiliary_row_commitments: Vec<Com>,
     pub random_round_commitments: Vec<Com>,
     pub random_output_claim_row_commitments: Vec<Com>,

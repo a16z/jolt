@@ -1,11 +1,11 @@
 #![no_main]
 
-//! Differential check of `Fr::from_le_bytes_mod_order` against a `num-bigint`
+//! Differential check of `Fr::from_bytes_le_reduced` against a `num-bigint`
 //! reference reduction, plus canonicality of the re-encoding.
 
 use std::sync::OnceLock;
 
-use jolt_field::{FixedBytes, Fr, ReducingBytes};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigUint;
 
@@ -22,14 +22,14 @@ fn modulus() -> &'static BigUint {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let a = <Fr as ReducingBytes>::from_le_bytes_mod_order(data);
-    let canonical = a.to_bytes_array();
+    let a = <Fr as CanonicalEncoding>::from_bytes_le_reduced(data);
+    let canonical = a.to_bytes_le_vec();
 
     let got = BigUint::from_bytes_le(&canonical);
     assert!(&got < modulus(), "canonical encoding is not fully reduced");
     assert_eq!(
         got,
         BigUint::from_bytes_le(data) % modulus(),
-        "from_le_bytes_mod_order disagrees with num-bigint reduction"
+        "from_bytes_le_reduced disagrees with num-bigint reduction"
     );
 });

@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::ReadWriteDimensions, JoltDerivedId, JoltRelationId, RamReadWritePublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -21,7 +21,7 @@ use crate::VerifierError;
 
 /// Wire the consumed RAM read/write value opening *values* from stage 1's outer
 /// sumcheck. (Verifier-side constructor for the moved [`RamReadWriteInputClaims`].)
-pub fn ram_read_write_input_values_from_upstream<F: Field>(
+pub fn ram_read_write_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
 ) -> RamReadWriteInputClaims<F> {
     let outer = &stage1.output_values.outer_remainder;
@@ -32,14 +32,14 @@ pub fn ram_read_write_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct RamReadWriteChecking<F: Field> {
+pub struct RamReadWriteChecking<F: JoltField> {
     symbolic: relations::ram::ReadWriteChecking,
     dimensions: ReadWriteDimensions,
     ram_log_k: usize,
     product_tau_low: Vec<F>,
 }
 
-impl<F: Field> RamReadWriteChecking<F> {
+impl<F: JoltField> RamReadWriteChecking<F> {
     pub fn new(dimensions: ReadWriteDimensions, ram_log_k: usize, product_tau_low: Vec<F>) -> Self {
         Self {
             symbolic: relations::ram::ReadWriteChecking::new(dimensions),
@@ -57,7 +57,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> RamReadWriteChecking<F> {
+impl<F: JoltField> RamReadWriteChecking<F> {
     pub fn dimensions(&self) -> ReadWriteDimensions {
         self.dimensions
     }
@@ -71,7 +71,7 @@ impl<F: Field> RamReadWriteChecking<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
     type Symbolic = relations::ram::ReadWriteChecking;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -109,7 +109,13 @@ impl<F: Field> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the
             // cycle sub-point is the suffix past the address bits.
             RamReadWritePublic::EqCycle => {
-                let r_cycle = &output_points.val()[self.ram_log_k..];
+                let r_cycle = output_points.val().get(self.ram_log_k..).ok_or_else(|| {
+                    public_input_failed(format!(
+                        "RAM read-write opening point is too short: expected at least {}, got {}",
+                        self.ram_log_k,
+                        output_points.val().len()
+                    ))
+                })?;
                 try_eq_mle(&self.product_tau_low, r_cycle).map_err(public_input_failed)
             }
         }

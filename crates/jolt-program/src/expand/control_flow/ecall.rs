@@ -23,27 +23,17 @@ pub(in crate::expand) fn expand_ecall(
     // AUIPC materializes this ECALL row's PC so mepc points back to the trap
     // source, matching the tracer's ECALL trap semantics.
     let ecall_addr = asm.allocate()?;
-    asm.emit_u(JoltInstructionKind::AUIPC, ecall_addr.operand(), 0);
-    asm.emit_i(
-        JoltInstructionKind::ADDI,
-        reg(vr_mepc),
-        ecall_addr.operand(),
-        0,
-    );
+    asm.emit_u(Kind::AUIPC, ecall_addr.operand(), 0);
+    asm.emit_i(Kind::ADDI, reg(vr_mepc), ecall_addr.operand(), 0);
     asm.release(ecall_addr);
     // Machine-mode environment call, with no trap value.
-    asm.emit_i(
-        JoltInstructionKind::ADDI,
-        reg(vr_mcause),
-        reg(0),
-        MCAUSE_ECALL_FROM_MMODE,
-    );
-    asm.emit_i(JoltInstructionKind::ADDI, reg(vr_mtval), reg(0), 0);
+    asm.emit_i(Kind::ADDI, reg(vr_mcause), reg(0), MCAUSE_ECALL_FROM_MMODE);
+    asm.emit_i(Kind::ADDI, reg(vr_mtval), reg(0), 0);
 
     // 3 << 11 sets MPP=M-mode and leaves the interrupt-enable bits cleared.
     let three = asm.allocate()?;
-    asm.emit_i(JoltInstructionKind::ADDI, three.operand(), reg(0), 3);
-    asm.expand_i(
+    asm.emit_i(Kind::ADDI, three.operand(), reg(0), 3);
+    asm.emit_i(
         SourceInstructionKind::SLLI,
         reg(vr_mstatus),
         three.operand(),
@@ -54,12 +44,7 @@ pub(in crate::expand) fn expand_ecall(
     // Jump to mtvec. The link register is a temporary because ECALL does not
     // expose a return address through the architectural register file.
     let jalr_rd = asm.allocate()?;
-    asm.emit_i(
-        JoltInstructionKind::JALR,
-        jalr_rd.operand(),
-        reg(v_trap_handler_reg),
-        0,
-    );
+    asm.emit_i(Kind::JALR, jalr_rd.operand(), reg(v_trap_handler_reg), 0);
     asm.release(jalr_rd);
 
     asm.finalize()

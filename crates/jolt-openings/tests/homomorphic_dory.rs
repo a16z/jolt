@@ -96,6 +96,26 @@ fn dory_homomorphic_batch_rejects_mismatched_points() {
 }
 
 #[test]
+fn dory_homomorphic_batch_rejects_witness_count_mismatch() {
+    let (polynomials, point) = homomorphic_polynomials(3, 3, 0x71_00_05);
+    let prover_setup = DoryScheme::setup_prover(point.len());
+    let (claims, mut hints) = clear_claims::<DoryScheme>(&polynomials, &point, &prover_setup);
+    let mut polynomial_sources = sources(&polynomials);
+    let _dropped = polynomial_sources.pop();
+    let _dropped_hint = hints.pop();
+
+    let mut transcript = Blake2bTranscript::new(b"dory-batch-witness-count");
+    let result = <HomomorphicDoryBatch as BatchOpeningScheme>::prove_batch(
+        &prover_setup,
+        claims,
+        polynomial_sources,
+        hints,
+        &mut transcript,
+    );
+    assert!(matches!(result, Err(OpeningsError::InvalidBatch(_))));
+}
+
+#[test]
 fn dory_homomorphic_batch_rejects_wrong_witness_dimension() {
     let (polynomials, point) = homomorphic_polynomials(3, 3, 0x71_00_02);
     let prover_setup = DoryScheme::setup_prover(point.len());

@@ -1,19 +1,22 @@
 //! Verifier preprocessing inputs.
 
+use blake2::{digest::consts::U32, Blake2b, Digest};
 use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::JoltRelationId;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::VerifierError;
 
 /// Committed-program verifier inputs: trusted bytecode-chunk and program-image
-/// commitments plus the program metadata they bind to. Mirrors `jolt-prover-legacy`'s
-/// `CommittedProgramPreprocessing`; the chunk count is implied by
-/// `bytecode_chunk_commitments.len()`.
+/// commitments plus the program metadata they bind to.
+/// For Dory, the chunk count is implied by `bytecode_chunk_commitments.len()`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "PCS::Output: Serialize",
@@ -27,13 +30,14 @@ pub struct CommittedProgramPreprocessing<PCS: CommitmentScheme> {
     pub bytecode_chunk_commitments: Vec<PCS::Output>,
     #[cfg(not(feature = "akita"))]
     pub program_image_commitment: PCS::Output,
-    /// The one packed `ProgramOneHot` commitment covering every bytecode lane
-    /// sub-column and the program image bytes (the per-chunk/image commitment
-    /// pair does not exist on the packed path).
+    /// Direct bounded-dense program objects in canonical order: indexed
+    /// bytecode chunks, then the program image.
     #[cfg(feature = "akita")]
-    pub program_one_hot_commitment: PCS::Output,
+    pub direct_program_commitments: Vec<PCS::Output>,
     #[cfg(feature = "akita")]
     pub bytecode_chunk_count: usize,
+    #[cfg(feature = "akita")]
+    pub trace_order: TracePolynomialOrder,
 }
 
 impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
@@ -49,10 +53,14 @@ impl<PCS: CommitmentScheme> CommittedProgramPreprocessing<PCS> {
     }
 }
 
-/// Program preprocessing in one of two modes, detected at runtime from the
-/// deserialized preprocessing exactly like `jolt-prover-legacy`'s
-/// `ProgramPreprocessing`: `Full` carries the bytecode table and initial RAM
-/// image, `Committed` replaces them with trusted commitments plus metadata.
+/// Program preprocessing in one of two modes. `Full` carries the bytecode
+/// table and initial RAM image; `Committed` replaces them with trusted
+/// commitments plus metadata.
+///
+/// The serde layout of everything reachable from this enum is hashed into
+/// the Fiat-Shamir preamble by [`digest`](Self::digest) and pinned by the
+/// golden tests below, so a field or variant reorder anywhere in that
+/// closure is a protocol change: bump `PROGRAM_PREPROCESSING_DIGEST_DOMAIN`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "PCS::Output: Serialize",
@@ -156,11 +164,54 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     }
 }
 
+/// Domain separator for [`ProgramPreprocessing::digest`]. Bump the version
+/// whenever the digest input changes: it is the only compatibility switch a
+/// deployed verifier sees.
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v2";
+
+impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
+    /// The 32-byte program binding absorbed first into the Fiat-Shamir
+    /// preamble: Blake2b-256 over the domain tag and this value's bincode
+    /// encoding. Hashing the whole type binds every field the verifier trusts
+    /// (mode, bytecode or its commitments, RAM image, memory layout, trace
+    /// bound) without a hand-maintained field list, so a field added to any
+    /// preprocessing type enters the digest by construction. The flip side is
+    /// that cfg-gated fields enter it too: a prover and a separately built
+    /// verifier must agree on `jolt-program/field-inline` (adds a `Full`
+    /// field) and on the PCS (`Committed` carries PCS-specific fields).
+    pub(crate) fn digest(&self) -> Result<[u8; 32], VerifierError> {
+        let encoded =
+            bincode::serde::encode_to_vec(self, bincode::config::standard()).map_err(|error| {
+                VerifierError::PreprocessingDigestFailed {
+                    reason: error.to_string(),
+                }
+            })?;
+        Ok(
+            Blake2b::<U32>::new_with_prefix(PROGRAM_PREPROCESSING_DIGEST_DOMAIN)
+                .chain_update(encoded)
+                .finalize()
+                .into(),
+        )
+    }
+}
+
+/// Verifier inputs for one program: its preprocessing view, the digest that
+/// binds it into the Fiat-Shamir preamble, and the PCS and BlindFold setups.
+///
+/// `preprocessing_digest` is derived from `program` by [`new`](Self::new) and
+/// is never on the wire: `Serialize` omits it and `Deserialize` rebuilds
+/// through `new`, so a persisted verifier preprocessing cannot carry a stale
+/// digest. In memory the field is public and `verify` absorbs it as stored;
+/// the Fiat-Shamir attack tests rely on flipping it.
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "ProgramPreprocessing<PCS>: Serialize, PCS::VerifierSetup: Serialize, VC::Setup: Serialize",
-    deserialize = "ProgramPreprocessing<PCS>: serde::de::DeserializeOwned, PCS::VerifierSetup: serde::de::DeserializeOwned, VC::Setup: serde::de::DeserializeOwned"
-))]
+#[serde(
+    into = "VerifierPreprocessingWire<PCS, VC>",
+    try_from = "VerifierPreprocessingWire<PCS, VC>",
+    bound(
+        serialize = "PCS: Clone, VC: Clone, VC::Setup: Serialize",
+        deserialize = "VC::Setup: DeserializeOwned"
+    )
+)]
 pub struct JoltVerifierPreprocessing<PCS, VC>
 where
     PCS: CommitmentScheme,
@@ -169,17 +220,9 @@ where
     pub program: ProgramPreprocessing<PCS>,
     pub preprocessing_digest: [u8; 32],
     /// The main PCS setup: every per-polynomial opening on the homomorphic
-    /// build, the `OneHotTrace` object on the `akita` build (whose remaining
-    /// objects carry their own shape-exact setups below).
+    /// build, or the complete grouped opening on the `akita` build.
     pub pcs_setup: PCS::VerifierSetup,
     pub vc_setup: Option<VC::Setup>,
-    #[cfg(feature = "akita")]
-    pub untrusted_advice_setup: Option<PCS::VerifierSetup>,
-    #[cfg(feature = "akita")]
-    pub trusted_advice_setup: Option<PCS::VerifierSetup>,
-    /// Committed-program mode: the `ProgramOneHot` object setup.
-    #[cfg(feature = "akita")]
-    pub program_one_hot_setup: Option<PCS::VerifierSetup>,
 }
 
 impl<PCS, VC> JoltVerifierPreprocessing<PCS, VC>
@@ -189,21 +232,154 @@ where
 {
     pub fn new(
         program: ProgramPreprocessing<PCS>,
-        preprocessing_digest: [u8; 32],
         pcs_setup: PCS::VerifierSetup,
         vc_setup: Option<VC::Setup>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, VerifierError> {
+        let preprocessing_digest = program.digest()?;
+        Ok(Self {
             program,
             preprocessing_digest,
             pcs_setup,
             vc_setup,
-            #[cfg(feature = "akita")]
-            untrusted_advice_setup: None,
-            #[cfg(feature = "akita")]
-            trusted_advice_setup: None,
-            #[cfg(feature = "akita")]
-            program_one_hot_setup: None,
+        })
+    }
+}
+
+/// Wire form of [`JoltVerifierPreprocessing`]: everything except the derived
+/// digest.
+#[derive(Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "VC::Setup: Serialize",
+    deserialize = "VC::Setup: DeserializeOwned"
+))]
+struct VerifierPreprocessingWire<PCS, VC>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    program: ProgramPreprocessing<PCS>,
+    pcs_setup: PCS::VerifierSetup,
+    vc_setup: Option<VC::Setup>,
+}
+
+impl<PCS, VC> TryFrom<VerifierPreprocessingWire<PCS, VC>> for JoltVerifierPreprocessing<PCS, VC>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    type Error = VerifierError;
+
+    fn try_from(wire: VerifierPreprocessingWire<PCS, VC>) -> Result<Self, Self::Error> {
+        Self::new(wire.program, wire.pcs_setup, wire.vc_setup)
+    }
+}
+
+impl<PCS, VC> From<JoltVerifierPreprocessing<PCS, VC>> for VerifierPreprocessingWire<PCS, VC>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    fn from(preprocessing: JoltVerifierPreprocessing<PCS, VC>) -> Self {
+        Self {
+            program: preprocessing.program,
+            pcs_setup: preprocessing.pcs_setup,
+            vc_setup: preprocessing.vc_setup,
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "digest fixtures fail loudly")]
+mod tests {
+    use std::sync::Arc;
+
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
+    #[cfg(feature = "akita")]
+    use jolt_akita::{AkitaCommitment as Commitment, AkitaScheme as Pcs};
+    #[cfg(feature = "akita")]
+    use jolt_claims::protocols::jolt::TracePolynomialOrder;
+    #[cfg(not(feature = "akita"))]
+    use jolt_dory::{DoryCommitment as Commitment, DoryScheme as Pcs};
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_riscv::RV64IMAC_JOLT;
+
+    use super::{CommittedProgramPreprocessing, ProgramPreprocessing};
+
+    /// Golden digests. A change here is a Fiat-Shamir break for every
+    /// deployed verifier: bump `PROGRAM_PREPROCESSING_DIGEST_DOMAIN` and say so
+    /// in the PR. Pinned for a build without `jolt-program/field-inline`,
+    /// which adds a field to the `Full` encoding; CI never unifies that
+    /// feature into a jolt-verifier test build.
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        42, 63, 50, 98, 242, 124, 42, 171, 43, 223, 155, 146, 108, 130, 235, 136, 177, 93, 248,
+        227, 104, 23, 145, 35, 121, 150, 138, 9, 19, 215, 204, 12,
+    ];
+    #[cfg(not(feature = "akita"))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        76, 161, 182, 52, 209, 226, 192, 126, 13, 13, 181, 24, 203, 128, 171, 65, 168, 64, 127,
+        107, 153, 86, 181, 56, 83, 191, 66, 19, 164, 158, 146, 116,
+    ];
+    #[cfg(feature = "akita")]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        251, 63, 111, 254, 167, 21, 41, 185, 193, 117, 188, 112, 255, 206, 156, 249, 230, 201, 4,
+        155, 92, 191, 65, 14, 2, 241, 131, 79, 154, 216, 42, 71,
+    ];
+
+    /// An empty program over a real (non-zero) memory layout, so every layout
+    /// field participates in the pinned bytes.
+    fn program() -> JoltProgramPreprocessing {
+        let memory_layout = MemoryLayout::new(&MemoryConfig {
+            max_untrusted_advice_size: 4096,
+            max_trusted_advice_size: 4096,
+            max_input_size: 4096,
+            max_output_size: 4096,
+            stack_size: 4096,
+            heap_size: 65536,
+            program_size: Some(1 << 20),
+        });
+        JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            memory_layout,
+            0,
+            1 << 16,
+            RV64IMAC_JOLT,
+        )
+        .unwrap()
+    }
+
+    fn committed() -> CommittedProgramPreprocessing<Pcs> {
+        let full = program();
+        CommittedProgramPreprocessing {
+            meta: full.metadata().unwrap(),
+            memory_layout: full.memory_layout,
+            max_padded_trace_length: full.max_padded_trace_length,
+            #[cfg(not(feature = "akita"))]
+            bytecode_chunk_commitments: vec![Commitment::default(), Commitment::default()],
+            #[cfg(not(feature = "akita"))]
+            program_image_commitment: Commitment::default(),
+            #[cfg(feature = "akita")]
+            direct_program_commitments: vec![Commitment::default(), Commitment::default()],
+            #[cfg(feature = "akita")]
+            bytecode_chunk_count: 1,
+            #[cfg(feature = "akita")]
+            trace_order: TracePolynomialOrder::CycleMajor,
+        }
+    }
+
+    #[test]
+    fn full_program_digest_is_stable() {
+        let digest = ProgramPreprocessing::<Pcs>::Full(Arc::new(program()))
+            .digest()
+            .unwrap();
+        assert_eq!(digest, FULL_PROGRAM_DIGEST);
+    }
+
+    #[test]
+    fn committed_program_digest_is_stable() {
+        let digest = ProgramPreprocessing::<Pcs>::Committed(committed())
+            .digest()
+            .unwrap();
+        assert_eq!(digest, COMMITTED_PROGRAM_DIGEST);
     }
 }

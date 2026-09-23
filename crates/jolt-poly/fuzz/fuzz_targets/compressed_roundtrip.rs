@@ -5,7 +5,7 @@
 //! reproduce the original polynomial and its evaluations. This is the wire
 //! transformation every compressed sumcheck round goes through.
 
-use jolt_field::{Fr, FromPrimitiveInt, ReducingBytes};
+use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use libfuzzer_sys::fuzz_target;
 
@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let scalar_at = |index: usize| {
         let start = 1 + index * SCALAR_BYTES;
-        <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[start..start + SCALAR_BYTES])
+        <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[start..start + SCALAR_BYTES])
     };
     let coefficients: Vec<Fr> = (0..coeff_count).map(scalar_at).collect();
     let x = scalar_at(coeff_count);

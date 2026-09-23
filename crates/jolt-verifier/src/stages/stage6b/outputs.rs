@@ -2,7 +2,7 @@
 //! verification.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::BytecodeOutputWeightInputs;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use crate::stages::relations::SumcheckBatch;
@@ -15,6 +15,9 @@ pub use super::booleanity::BooleanityOutputClaims;
 pub use super::bytecode_read_raf::BytecodeReadRafOutputClaims;
 pub use super::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhaseOutputClaims, ProgramImageReductionCyclePhaseOutputClaims,
+};
+#[cfg(not(feature = "akita"))]
+pub use super::committed_reduction_cycle_phase::{
     TrustedAdviceCyclePhaseOutputClaims, UntrustedAdviceCyclePhaseOutputClaims,
 };
 pub use super::inc_claim_reduction::IncClaimReductionOutputClaims;
@@ -25,9 +28,10 @@ pub use super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
 use super::booleanity::Booleanity;
 use super::bytecode_read_raf::BytecodeReadRafCycle;
 use super::committed_reduction_cycle_phase::{
-    BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
-    UntrustedAdviceCyclePhase,
+    BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
 };
+#[cfg(not(feature = "akita"))]
+use super::committed_reduction_cycle_phase::{TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
@@ -71,7 +75,7 @@ use super::ram_ra_virtualization::RamRaVirtualization;
     no_output_shape,
     crate = "crate"
 )]
-pub struct Stage6bSumchecks<F: Field> {
+pub struct Stage6bSumchecks<F: JoltField> {
     pub bytecode_read_raf: BytecodeReadRafCycle<F>,
     pub booleanity: Booleanity<F>,
     pub ram_hamming_booleanity: RamHammingBooleanity<F>,
@@ -81,11 +85,12 @@ pub struct Stage6bSumchecks<F: Field> {
     /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
-    /// On the prove side the four precommitted reduction kernels span the
-    /// 6b→7 batch boundary as `ProofSession` carries: each cycle kernel parks
-    /// the shared two-phase state at prepare, and stage 7's address-phase
-    /// members reclaim it.
+    /// On the prove side the precommitted reduction kernels span the 6b→7 batch
+    /// boundary as `ProofSession` carries: each cycle kernel parks the shared
+    /// two-phase state at prepare, and stage 7's address-phase members reclaim it.
+    #[cfg(not(feature = "akita"))]
     pub trusted_advice: Option<TrustedAdviceCyclePhase<F>>,
+    #[cfg(not(feature = "akita"))]
     pub untrusted_advice: Option<UntrustedAdviceCyclePhase<F>>,
     pub bytecode_reduction: Option<BytecodeReductionCyclePhase<F>>,
     pub program_image_reduction: Option<ProgramImageReductionCyclePhase<F>>,
@@ -96,7 +101,7 @@ pub struct Stage6bSumchecks<F: Field> {
 /// cells. The per-reduction `cycle_phase_variables` are recovered as
 /// `reverse(opening_point)` (see `cycle_phase_opening_point` in `jolt-claims`
 /// `claim_reductions::precommitted`).
-impl<F: Field> Stage6bOutputPoints<F> {
+impl<F: JoltField> Stage6bOutputPoints<F> {
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
@@ -104,7 +109,7 @@ impl<F: Field> Stage6bOutputPoints<F> {
         #[cfg(not(feature = "akita"))]
         let chunk_fallback = None;
         #[cfg(feature = "akita")]
-        let chunk_fallback = self.booleanity.unsigned_inc_chunks.first();
+        let chunk_fallback = self.booleanity.balanced_inc_digits.first();
         self.booleanity
             .instruction_ra
             .first()
@@ -130,6 +135,7 @@ impl<F: Field> Stage6bOutputPoints<F> {
 
     /// The advice cycle-phase opening point for `kind`, present only when that
     /// advice reduction ran a cycle phase.
+    #[cfg(not(feature = "akita"))]
     pub fn advice_cycle_phase_opening_point(
         &self,
         kind: jolt_claims::protocols::jolt::JoltAdviceKind,
@@ -167,6 +173,7 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// cycle challenges, recovered as `reverse(opening_point)` (the cycle opening
     /// point is the reverse of the variable challenges). Stage 7's address phase
     /// reconstructs its opening point from these.
+    #[cfg(not(feature = "akita"))]
     pub fn advice_cycle_phase_variables(
         &self,
         kind: jolt_claims::protocols::jolt::JoltAdviceKind,
@@ -190,6 +197,10 @@ impl<F: Field> Stage6bOutputPoints<F> {
     /// output claims. ZK-only, hence base-only (no zk protocol exists over the
     /// packed axis).
     #[cfg(not(feature = "akita"))]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a sum of in-memory vector lengths and small constants cannot overflow usize"
+    )]
     pub fn point_count(&self) -> usize {
         self.bytecode_read_raf.bytecode_ra.len()
             + self.booleanity.instruction_ra.len()
@@ -211,11 +222,12 @@ impl<F: Field> Stage6bOutputPoints<F> {
     }
 }
 
-impl<F: Field> Stage6bOutputClaims<F> {
+impl<F: JoltField> Stage6bOutputClaims<F> {
     /// The consumed cycle-phase advice opening *value* for `kind` (the trusted /
     /// untrusted slot of that advice member), present only when the advice
     /// reduction ran a cycle phase. Read by stage 7's advice input wiring and stage
     /// 8's precommitted finals resolution.
+    #[cfg(not(feature = "akita"))]
     pub fn advice_cycle_phase_claim(
         &self,
         kind: jolt_claims::protocols::jolt::JoltAdviceKind,
@@ -230,7 +242,7 @@ impl<F: Field> Stage6bOutputClaims<F> {
     }
 }
 
-fn reversed<F: Field>(point: &[F]) -> Vec<F> {
+fn reversed<F: JoltField>(point: &[F]) -> Vec<F> {
     point.iter().rev().copied().collect()
 }
 
@@ -238,7 +250,7 @@ fn reversed<F: Field>(point: &[F]) -> Vec<F> {
 /// instruction-RA and increment gammas, and (committed-program only) the bytecode
 /// claim-reduction `eta`. Kept as field names greppable from BlindFold.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6bCarriedChallenges<F: Field> {
+pub struct Stage6bCarriedChallenges<F: JoltField> {
     pub instruction_ra_gamma: F,
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
@@ -249,7 +261,7 @@ pub struct Stage6bCarriedChallenges<F: Field> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct Stage6bClearOutput<F: Field> {
+pub struct Stage6bClearOutput<F: JoltField> {
     /// The produced opening *values* (wire form); read by later stages and the
     /// Fiat-Shamir opening-claim encoder.
     pub output_values: Stage6bOutputClaims<F>,
@@ -265,7 +277,7 @@ pub struct Stage6bClearOutput<F: Field> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage6bZkOutput<F: Field, C> {
+pub struct Stage6bZkOutput<F: JoltField, C> {
     pub challenges: Stage6bCarriedChallenges<F>,
     pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
     pub batch_output_claims: CommittedOutputClaimOutput<C>,
@@ -280,12 +292,12 @@ pub struct Stage6bZkOutput<F: Field, C> {
 // The clear variant carries the located opening claims read on the hot path; the
 // ZK variant carries committed consistency plus the point-only `output_points`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage6bOutput<F: Field, C> {
+pub enum Stage6bOutput<F: JoltField, C> {
     Clear(Stage6bClearOutput<F>),
     Zk(Stage6bZkOutput<F, C>),
 }
 
-impl<F: Field, C> Stage6bOutput<F, C> {
+impl<F: JoltField, C> Stage6bOutput<F, C> {
     /// The produced opening *points*, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage6bOutputPoints<F> {
         match self {
@@ -316,13 +328,13 @@ impl<F: Field, C> Stage6bOutput<F, C> {
 /// cycle point, and the gamma-folded lane weights.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-pub struct BytecodeReductionWeights<F: Field> {
+pub struct BytecodeReductionWeights<F: JoltField> {
     pub r_bc: Vec<F>,
     pub chunk_rbc_weights: Vec<F>,
     pub lane_weights: Vec<F>,
 }
 
-impl<F: Field> BytecodeReductionWeights<F> {
+impl<F: JoltField> BytecodeReductionWeights<F> {
     /// Borrow the weights as the jolt-claims `BytecodeOutputWeightInputs` the
     /// bytecode reduction's output-weight publics resolve against.
     pub(crate) fn as_inputs(&self) -> BytecodeOutputWeightInputs<'_, F> {

@@ -37,5 +37,13 @@ fn phase1_instance_point_offset(
                 dimensions.read_write_rounds()
             ),
         })?;
-    Ok(window_offset + dimensions.phase1_num_rounds())
+    window_offset
+        .checked_add(dimensions.phase1_num_rounds())
+        .ok_or_else(|| VerifierError::StageClaimSumcheckFailed {
+            stage: format!("{stage:?}"),
+            reason: format!(
+                "stage-2 window offset {window_offset} plus {} phase-1 rounds overflows usize",
+                dimensions.phase1_num_rounds()
+            ),
+        })
 }

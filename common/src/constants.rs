@@ -18,7 +18,7 @@ pub const ONEHOT_CHUNK_THRESHOLD_LOG_T: usize = 25;
 /// This value was empirically determined.
 pub const INSTRUCTION_PHASES_THRESHOLD_LOG_T: usize = 24;
 
-pub const RAM_START_ADDRESS: u64 = 0x80000000;
+pub const RAM_START_ADDRESS: u64 = 0x8000_0000;
 
 pub const DEFAULT_HEAP_SIZE: u64 = 1024 * 1024 * 32;
 

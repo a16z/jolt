@@ -1,112 +1,36 @@
-use common::attributes::{parse_attributes, Attributes};
-use common::jolt_device::{MemoryConfig, MemoryLayout};
-
 use std::{
     fs::{self, File},
     io::Write,
     path::Path,
 };
 
-use ark_bn254::Fr;
 use eyre::Result;
-use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
-use jolt_prover_legacy::{
-    curve::Bn254Curve,
-    host::Program,
-    poly::commitment::dory::DoryCommitmentScheme,
-    zkvm::{
-        preprocessing::JoltSharedPreprocessing, program::ProgramPreprocessing,
-        prover::JoltProverPreprocessing,
-    },
-};
-use jolt_sdk::serialize_verifier_object;
-use syn::{punctuated::Punctuated, Attribute, ItemFn, Meta, PathSegment, Token};
+use syn::{Attribute, ItemFn, PathSegment};
 use toml_edit::{value, Array, DocumentMut, Item, Table};
 
-struct FunctionAttributes {
-    pub func_name: String,
-    pub attributes: Attributes,
-}
-
-fn preprocess_and_save(func_name: &str, attributes: &Attributes, is_std: bool) -> Result<()> {
-    let mut host_program = Program::new("guest");
-
-    host_program.set_func(func_name);
-    host_program.set_std(is_std);
-    host_program.set_heap_size(attributes.heap_size);
-    host_program.set_stack_size(attributes.stack_size);
-    host_program.set_max_input_size(attributes.max_input_size);
-    host_program.set_max_output_size(attributes.max_output_size);
-
-    let (bytecode, memory_init, program_size, e_entry) = host_program.decode();
-
-    let memory_config = MemoryConfig {
-        max_input_size: attributes.max_input_size,
-        max_trusted_advice_size: attributes.max_trusted_advice_size,
-        max_untrusted_advice_size: attributes.max_untrusted_advice_size,
-        max_output_size: attributes.max_output_size,
-        stack_size: attributes.stack_size,
-        heap_size: attributes.heap_size,
-        program_size: Some(program_size),
-    };
-    let memory_layout = MemoryLayout::new(&memory_config);
-
-    let preprocessed_program = ProgramPreprocessing::preprocess(bytecode, memory_init, e_entry)?;
-    let shared = JoltSharedPreprocessing::new(
-        preprocessed_program,
-        memory_layout,
-        attributes.max_trace_length as usize,
-    );
-
-    let prover_preprocessing =
-        JoltProverPreprocessing::<Fr, Bn254Curve, DoryCommitmentScheme>::new(shared);
-    let verifier_preprocessing = verifier_preprocessing_from_prover(&prover_preprocessing);
-
-    let verifier_bytes = serialize_verifier_object(&verifier_preprocessing)?;
-
-    let target_dir = Path::new("target/wasm32-unknown-unknown/release");
-    fs::create_dir_all(target_dir)?;
-
-    let verifier_path = target_dir.join(format!("preprocessed_{func_name}_verifier.bin"));
-    let mut file = File::create(verifier_path)?;
-    file.write_all(&verifier_bytes)?;
-
-    let elf_bytes = host_program
-        .get_elf_contents()
-        .expect("ELF not found after decode");
-    let elf_path = target_dir.join(format!("{func_name}.elf"));
-    let mut file = File::create(elf_path)?;
-    file.write_all(&elf_bytes)?;
-
-    Ok(())
-}
-
-fn extract_provable_functions() -> Vec<FunctionAttributes> {
+fn extract_provable_functions() -> Vec<String> {
     let guest_path = Path::new("guest/src/lib.rs");
     let content = fs::read_to_string(guest_path)
         .unwrap_or_else(|_| panic!("Unable to read file: {guest_path:?}"));
-    let syntax: syn::File = syn::parse_file(&content)
-        .unwrap_or_else(|_| panic!("Unable to parse file: {guest_path:?}"));
+    functions_from_guest_source(&content)
+}
+
+fn functions_from_guest_source(content: &str) -> Vec<String> {
+    let syntax: syn::File =
+        syn::parse_file(content).unwrap_or_else(|_| panic!("Unable to parse guest source"));
 
     syntax
         .items
         .iter()
         .filter_map(|item| {
-            if let syn::Item::Fn(ItemFn { attrs, sig, .. }) = item {
-                if let Some(provable_attr) = attrs.iter().find(|attr| is_provable(attr)) {
-                    if let Meta::List(meta_list) = &provable_attr.meta {
-                        let parsed: Punctuated<Meta, Token![,]> = meta_list
-                            .parse_args_with(Punctuated::parse_terminated)
-                            .expect("Unable to parse attribute args");
-                        let attributes = parse_attributes(&parsed);
-                        return Some(FunctionAttributes {
-                            func_name: sig.ident.to_string(),
-                            attributes,
-                        });
-                    }
-                }
+            let syn::Item::Fn(ItemFn { attrs, sig, .. }) = item else {
+                return None;
+            };
+            if attrs.iter().any(is_provable) {
+                Some(sig.ident.to_string())
+            } else {
+                None
             }
-            None
         })
         .collect()
 }
@@ -131,27 +55,15 @@ fn get_project_name() -> Option<String> {
     })
 }
 
-fn is_std() -> Option<bool> {
-    let content = fs::read_to_string("guest/Cargo.toml").expect("Failed to read Cargo.toml");
-    let doc = content
-        .parse::<DocumentMut>()
-        .expect("Failed to parse Cargo.toml");
-
-    let dependencies = doc["dependencies"]["jolt"].as_inline_table()?;
-    let package = dependencies.get("package")?.as_str()?;
-    if package != "jolt-sdk" {
-        return None;
-    }
-
-    Some(
-        dependencies
-            .get("features")
-            .and_then(|v| v.as_array())
-            .is_some_and(|features| features.iter().any(|f| f.as_str() == Some("guest-std"))),
-    )
+fn create_index_html(func_names: &[String]) -> Result<()> {
+    let project_name = get_project_name().unwrap();
+    let html_content = index_html_source(func_names, &project_name);
+    let mut file = File::create("index.html")?;
+    file.write_all(html_content.as_bytes())?;
+    Ok(())
 }
 
-fn create_index_html(func_names: &[String]) -> Result<()> {
+fn index_html_source(func_names: &[String], project_name: &str) -> String {
     let func_names_with_verify_prefix: Vec<String> = func_names
         .iter()
         .map(|name| format!("verify_{name}"))
@@ -166,6 +78,7 @@ fn create_index_html(func_names: &[String]) -> Result<()> {
         <label>{func_name}</label><br/>
         <input type="file" id="proofFile_{func_name}" />
         <input type="file" id="ioFile_{func_name}" />
+        <input type="file" id="trustedAdviceFile_{func_name}" />
         <button id="verifyButton_{func_name}">Verify</button>
     </div>
 "#
@@ -181,7 +94,7 @@ fn create_index_html(func_names: &[String]) -> Result<()> {
             await init();
 "#,
         func_names_with_verify_prefix.join(", "),
-        get_project_name().unwrap()
+        project_name
     ));
 
     for func_name in func_names {
@@ -190,6 +103,7 @@ fn create_index_html(func_names: &[String]) -> Result<()> {
             document.getElementById('verifyButton_{func_name}').addEventListener('click', async () => {{
                 const proofInput = document.getElementById('proofFile_{func_name}');
                 const ioInput = document.getElementById('ioFile_{func_name}');
+                const trustedInput = document.getElementById('trustedAdviceFile_{func_name}');
                 if (proofInput.files.length === 0 || ioInput.files.length === 0) {{
                     alert("Please select proof and I/O files.");
                     return;
@@ -197,11 +111,14 @@ fn create_index_html(func_names: &[String]) -> Result<()> {
 
                 const proofData = new Uint8Array(await proofInput.files[0].arrayBuffer());
                 const ioData = new Uint8Array(await ioInput.files[0].arrayBuffer());
+                const trustedData = trustedInput.files.length === 0
+                    ? new Uint8Array()
+                    : new Uint8Array(await trustedInput.files[0].arrayBuffer());
 
                 const ppResp = await fetch('target/wasm32-unknown-unknown/release/preprocessed_{func_name}_verifier.bin');
                 const ppData = new Uint8Array(await ppResp.arrayBuffer());
 
-                const result = verify_{func_name}(ppData, proofData, ioData);
+                const result = verify_{func_name}(ppData, proofData, ioData, trustedData);
                 alert(result ? "Proof is valid!" : "Proof is invalid.");
             }});
 "#
@@ -209,18 +126,21 @@ fn create_index_html(func_names: &[String]) -> Result<()> {
     }
 
     html_content.push_str(HTML_TAIL);
-
-    let mut file = File::create("index.html")?;
-    file.write_all(html_content.as_bytes())?;
-    Ok(())
+    html_content
 }
 
 fn generate_wasm_verify_rs(func_names: &[String]) -> Result<()> {
     let src_dir = Path::new("src");
     fs::create_dir_all(src_dir)?;
 
-    let mut code = String::new();
-    code.push_str(
+    let path = src_dir.join("wasm_verify.rs");
+    let mut file = File::create(path)?;
+    file.write_all(wasm_verify_source(func_names).as_bytes())?;
+    Ok(())
+}
+
+fn wasm_verify_source(func_names: &[String]) -> String {
+    let mut code = String::from(
         r#"use wasm_bindgen::prelude::*;
 use jolt_sdk::{
     deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,
@@ -232,7 +152,12 @@ use jolt_sdk::{
         code.push_str(&format!(
             r#"
 #[wasm_bindgen]
-pub fn verify_{func_name}(preprocessing_data: &[u8], proof_data: &[u8], io_data: &[u8]) -> bool {{
+pub fn verify_{func_name}(
+    preprocessing_data: &[u8],
+    proof_data: &[u8],
+    io_data: &[u8],
+    trusted_advice_commitment_bytes: &[u8],
+) -> bool {{
     let preprocessing: JoltVerifierPreprocessing = match deserialize_verifier_object(preprocessing_data) {{
         Ok(p) => p,
         Err(_) => return false,
@@ -245,21 +170,103 @@ pub fn verify_{func_name}(preprocessing_data: &[u8], proof_data: &[u8], io_data:
         Ok(d) => d,
         Err(_) => return false,
     }};
+    let trusted_advice_commitment: Option<jolt_sdk::VerifierTrustedAdviceCommitment> =
+        if trusted_advice_commitment_bytes.is_empty() {{
+            None
+        }} else {{
+            match deserialize_verifier_object(trusted_advice_commitment_bytes) {{
+                Ok(commitment) => commitment,
+                Err(_) => return false,
+            }}
+        }};
     jolt_sdk::jolt_verifier::verify::<
         jolt_sdk::VerifierField,
         jolt_sdk::VerifierPCS,
         jolt_sdk::VerifierVC,
         jolt_sdk::VerifierTranscript,
-    >(&preprocessing, &program_io, &proof, None).is_ok()
+    >(&preprocessing, &program_io, &proof, trusted_advice_commitment.as_ref()).is_ok()
 }}
 "#
         ));
     }
 
-    let path = src_dir.join("wasm_verify.rs");
-    let mut file = File::create(path)?;
-    file.write_all(code.as_bytes())?;
-    Ok(())
+    code
+}
+
+fn wasm_preprocess_source(func_names: &[String]) -> String {
+    let mut code = String::from(
+        r#"fn main() {
+    let target_dir = "/tmp/jolt-guest-targets";
+    let out_dir = std::path::Path::new("target/wasm32-unknown-unknown/release");
+    std::fs::create_dir_all(out_dir).expect("create wasm preprocessing directory");
+"#,
+    );
+
+    for func_name in func_names {
+        code.push_str(&format!(
+            r#"
+    {{
+        let mut program = guest::compile_{func_name}(target_dir);
+        let shared = guest::preprocess_shared_{func_name}(&mut program)
+            .unwrap_or_else(|err| panic!("shared preprocessing failed for {func_name}: {{err}}"));
+        let prover = guest::preprocess_prover_{func_name}(shared);
+        let verifier = guest::verifier_preprocessing_from_prover_{func_name}(&prover);
+        let bytes = jolt_sdk::serialize_verifier_object(&verifier)
+            .unwrap_or_else(|err| panic!("serialize preprocessing failed for {func_name}: {{err}}"));
+        std::fs::write(out_dir.join("preprocessed_{func_name}_verifier.bin"), &bytes)
+            .unwrap_or_else(|err| panic!("write preprocessing failed for {func_name}: {{err}}"));
+    }}
+"#
+        ));
+    }
+
+    code.push_str("}\n");
+    code
+}
+
+fn run_project_native_preprocess(func_names: &[String]) {
+    let bin_dir = Path::new("src/bin");
+    fs::create_dir_all(bin_dir).expect("Failed to create src/bin for WASM preprocessing");
+    let bin_path = bin_dir.join("jolt_wasm_preprocess.rs");
+    fs::write(&bin_path, wasm_preprocess_source(func_names))
+        .expect("Failed to write WASM preprocessing helper");
+
+    let output = std::process::Command::new("cargo")
+        .args(["run", "--release", "--bin", "jolt_wasm_preprocess"])
+        .output()
+        .expect("Failed to execute cargo run for WASM preprocessing");
+
+    let _ = fs::remove_file(&bin_path);
+    if fs::read_dir(bin_dir)
+        .ok()
+        .is_some_and(|mut entries| entries.next().is_none())
+    {
+        let _ = fs::remove_dir(bin_dir);
+    }
+
+    if !output.status.success() {
+        eprintln!("Error: project-native WASM preprocessing failed");
+        eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("stderr: {}", String::from_utf8_lossy(&output.stderr));
+        panic!("WASM preprocessing failed");
+    }
+
+    for func_name in func_names {
+        let path = Path::new("target/wasm32-unknown-unknown/release")
+            .join(format!("preprocessed_{func_name}_verifier.bin"));
+        let metadata = fs::metadata(&path).unwrap_or_else(|_| {
+            panic!(
+                "WASM preprocessing did not produce {}: the command cannot package missing or stale preprocessing",
+                path.display()
+            )
+        });
+        if metadata.len() == 0 {
+            panic!(
+                "WASM preprocessing produced an empty artifact at {}",
+                path.display()
+            );
+        }
+    }
 }
 
 pub fn modify_cargo_toml(name: &str) -> Result<()> {
@@ -331,15 +338,10 @@ pub fn modify_cargo_toml(name: &str) -> Result<()> {
 pub fn build_wasm() {
     println!("Building the project with wasm-pack...");
     let functions = extract_provable_functions();
-    let function_names: Vec<String> = functions.iter().map(|f| f.func_name.clone()).collect();
-    let is_std = is_std().expect("Failed to check if std feature is enabled");
-    for function in &functions {
-        preprocess_and_save(&function.func_name, &function.attributes, is_std)
-            .expect("Failed to preprocess functions");
-    }
+    run_project_native_preprocess(&functions);
 
-    generate_wasm_verify_rs(&function_names).expect("Failed to generate wasm_verify.rs");
-    create_index_html(&function_names).expect("Failed to create index.html");
+    generate_wasm_verify_rs(&functions).expect("Failed to generate wasm_verify.rs");
+    create_index_html(&functions).expect("Failed to create index.html");
 
     modify_cargo_toml(".").expect("Failed to update Cargo.toml for WASM build");
 

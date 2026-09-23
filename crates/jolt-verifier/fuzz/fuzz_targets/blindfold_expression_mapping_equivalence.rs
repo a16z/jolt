@@ -9,29 +9,26 @@
 
 use jolt_claims::{
     protocols::jolt::{
-        AdviceClaimReductionPublic, BooleanityChallenge, BytecodeChunkReconstructionChallenge,
-        BytecodeChunkReconstructionPublic, BytecodeClaimReductionChallenge,
+        AdviceClaimReductionPublic, BooleanityChallenge, BytecodeClaimReductionChallenge,
         BytecodeClaimReductionPublic, BytecodeReadRafChallenge, BytecodeReadRafPublic,
-        BytecodeRegisterLane, HammingWeightClaimReductionChallenge,
-        HammingWeightClaimReductionPublic, IncClaimReductionChallenge,
-        IncClaimReductionPublic, InstructionClaimReductionChallenge,
+        HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
+        IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
         InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
         InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
         InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
         JoltCommittedPolynomial, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
-        JoltVirtualPolynomial, ProgramImageClaimReductionPublic, ProgramImageReconstructionPublic,
-        RamHammingBooleanityPublic, RamOutputCheckPublic, RamRaClaimReductionChallenge,
-        RamRaClaimReductionPublic, RamRaVirtualizationPublic, RamRafEvaluationPublic,
-        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+        JoltVirtualPolynomial, ProgramImageClaimReductionPublic, RamHammingBooleanityPublic,
+        RamOutputCheckPublic, RamRaClaimReductionChallenge, RamRaClaimReductionPublic,
+        RamRaVirtualizationPublic, RamRafEvaluationPublic, RamReadWriteChallenge,
+        RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
         RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
         SpartanOuterPublic, SpartanProductVirtualizationPublic, SpartanShiftChallenge,
-        SpartanShiftPublic, TrustedAdviceReconstructionPublic, UntrustedAdviceReconstructionChallenge,
-        UntrustedAdviceReconstructionPublic,
+        SpartanShiftPublic,
     },
     Source, Term,
 };
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_verifier::stages::zk::blindfold::evaluate_mapped_expression;
 use libfuzzer_sys::fuzz_target;
 
@@ -86,7 +83,10 @@ fuzz_target!(|data: &[u8]| {
             JoltVirtualPolynomial::Product,
             JoltRelationId::SpartanProductVirtualization,
         ),
-        JoltOpeningId::virtual_polynomial(JoltVirtualPolynomial::RamVal, JoltRelationId::RamValCheck),
+        JoltOpeningId::virtual_polynomial(
+            JoltVirtualPolynomial::RamVal,
+            JoltRelationId::RamValCheck,
+        ),
         JoltOpeningId::virtual_polynomial(
             JoltVirtualPolynomial::RegistersVal,
             JoltRelationId::RegistersValEvaluation,
@@ -115,8 +115,6 @@ fuzz_target!(|data: &[u8]| {
         JoltChallengeId::from(InstructionInputChallenge::Gamma),
         JoltChallengeId::from(InstructionReadRafChallenge::Gamma),
         JoltChallengeId::from(InstructionRaVirtualizationChallenge::Gamma),
-        JoltChallengeId::from(UntrustedAdviceReconstructionChallenge::Gamma),
-        JoltChallengeId::from(BytecodeChunkReconstructionChallenge::Gamma),
     ];
     let derived_ids = [
         JoltDerivedId::from(RamReadWritePublic::EqCycle),
@@ -133,7 +131,9 @@ fuzz_target!(|data: &[u8]| {
         JoltDerivedId::from(BytecodeReadRafPublic::StageValue(0)),
         JoltDerivedId::from(BytecodeReadRafPublic::StageCycleEq(0)),
         JoltDerivedId::from(BytecodeReadRafPublic::Entry),
-        JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(JoltAdviceKind::Untrusted)),
+        JoltDerivedId::from(AdviceClaimReductionPublic::FinalScale(
+            JoltAdviceKind::Untrusted,
+        )),
         JoltDerivedId::from(BytecodeClaimReductionPublic::ChunkOutputWeight(0)),
         JoltDerivedId::from(ProgramImageClaimReductionPublic::FinalScale),
         JoltDerivedId::from(SpartanShiftPublic::EqPlusOneProduct),
@@ -147,13 +147,6 @@ fuzz_target!(|data: &[u8]| {
         JoltDerivedId::from(InstructionInputPublic::EqProduct),
         JoltDerivedId::from(InstructionReadRafPublic::EqRafFlag),
         JoltDerivedId::from(InstructionRaVirtualizationPublic::EqCycle),
-        JoltDerivedId::from(UntrustedAdviceReconstructionPublic::ByteDecode),
-        JoltDerivedId::from(TrustedAdviceReconstructionPublic::ByteDecode),
-        JoltDerivedId::from(ProgramImageReconstructionPublic::ByteDecode),
-        JoltDerivedId::from(BytecodeChunkReconstructionPublic::RegisterSelectorWeight(
-            BytecodeRegisterLane::Rs1,
-        )),
-        JoltDerivedId::from(BytecodeChunkReconstructionPublic::LaneWeight(0)),
     ];
 
     let mut cursor = 1;

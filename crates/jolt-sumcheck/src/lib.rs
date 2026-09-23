@@ -19,6 +19,7 @@
 //! | [`proof`] | [`ClearProof`], [`ClearSumcheckProof`], [`CompressedSumcheckProof`], and [`SumcheckProof`] — serializable proofs |
 //! | [`verifier`] | [`SumcheckVerifier`] engine |
 //! | [`prover`] | [`ProveRounds`], [`prove_batch`], and the uni-skip provers — the prove-side engine |
+//! | [`prover`] | [`RoundScheduler`] / [`SequentialRounds`] — the per-round member-traversal seam |
 //! | [`recorder`] | [`SumcheckRecorder`] — the clear/ZK proof-recording seam |
 //! | [`domain`] | [`SumcheckDomain`] implementations for round-sum checks |
 //! | `r1cs` | R1CS lowering for sumcheck verifier equations (`r1cs` feature) |
@@ -60,10 +61,33 @@
 //! ```text
 //! jolt-field      ─┐
 //! jolt-poly       ─┼─> jolt-sumcheck
-//! jolt-transcript ─┤
-//! jolt-crypto     ─┘
+//! jolt-transcript ─┘
+//!
+//! optional: jolt-crypto (`committed`), jolt-r1cs (`r1cs`)
 //! ```
 //!
+//! Polynomial and clear sumcheck arithmetic is generic over
+//! [`Field`](jolt_field::Field). Stock clear transcript adapters additionally
+//! require [`AppendToTranscript`](jolt_transcript::AppendToTranscript) where
+//! field values are absorbed. Optimized Jolt kernels and commitment backends
+//! retain their stronger capability bounds at their own integration points.
+//!
+
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::indexing_slicing,
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
 
 pub mod batch;
 pub mod claim;
@@ -76,10 +100,11 @@ pub mod prover;
 pub mod r1cs;
 pub mod recorder;
 pub mod round_proof;
-pub mod scalar;
 pub mod verifier;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "committed"))]
+mod round_scheduler_tests;
+#[cfg(all(test, feature = "committed"))]
 mod tests;
 
 /// Transcript label used for ordinary sumcheck round polynomials.
@@ -102,17 +127,21 @@ where
 
 pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
+#[cfg(feature = "committed")]
+pub use committed::CommittedSumcheckBuilder;
 pub use committed::{
     BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
-    CommittedRoundWitness, CommittedSumcheckBuilder, CommittedSumcheckConsistency,
-    CommittedSumcheckProof, CommittedSumcheckWitness, VerifiedCommittedRound,
+    CommittedRoundWitness, CommittedSumcheckConsistency, CommittedSumcheckProof,
+    CommittedSumcheckWitness, VerifiedCommittedRound,
 };
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
+#[cfg(feature = "committed")]
+pub use prover::prove_uniskip_committed;
 pub use prover::{
-    prove_batch, prove_uniskip_clear, prove_uniskip_committed, ProveRounds, ProvedBatch,
-    ProvedUniskip, ProvedUniskipCommitted,
+    prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
+    ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
 };
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
@@ -120,9 +149,8 @@ pub use r1cs::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
-pub use recorder::{
-    ClearSumcheckRecorder, CommittedSumcheckRecorder, RecordedSumcheck, SumcheckRecorder,
-};
+#[cfg(feature = "committed")]
+pub use recorder::CommittedSumcheckRecorder;
+pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
-pub use scalar::SumcheckScalar;
 pub use verifier::SumcheckVerifier;

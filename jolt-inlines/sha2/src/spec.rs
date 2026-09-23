@@ -34,7 +34,7 @@ impl InlineSpec for Sha256Compression {
     }
 
     fn load(harness: &mut InlineTestHarness, (state, block): &Self::Input) {
-        harness.load_input32(block);
+        harness.load_input32(&block.map(u32::to_be));
         harness.load_state32(state);
     }
 
@@ -68,7 +68,7 @@ impl InlineSpec for Sha256CompressionInitial {
     }
 
     fn load(harness: &mut InlineTestHarness, block: &Self::Input) {
-        harness.load_input32(block);
+        harness.load_input32(&block.map(u32::to_be));
     }
 
     fn read(harness: &mut InlineTestHarness) -> Self::Output {

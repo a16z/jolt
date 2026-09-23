@@ -14,7 +14,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, IncClaimReductionPublic, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::try_eq_mle;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -27,7 +27,7 @@ use crate::VerifierError;
 
 /// Wire the four reduced `Inc` opening *values* from the read-write / value
 /// relations of RAM and registers. Clear-only.
-pub fn inc_claim_reduction_input_values_from_upstream<F: Field>(
+pub fn inc_claim_reduction_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,
@@ -42,7 +42,7 @@ pub fn inc_claim_reduction_input_values_from_upstream<F: Field>(
 
 /// Wire the four reduced `Inc` opening *points* from the read-write / value
 /// relations of RAM and registers. ZK-agnostic.
-pub fn inc_claim_reduction_input_points_from_upstream<F: Field>(
+pub fn inc_claim_reduction_input_points_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputPoints<F>,
     stage4: &Stage4OutputPoints<F>,
     stage5: &Stage5OutputPoints<F>,
@@ -56,7 +56,7 @@ pub fn inc_claim_reduction_input_points_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct IncClaimReduction<F: Field> {
+pub struct IncClaimReduction<F: JoltField> {
     symbolic: relations::claim_reductions::increments::ClaimReduction,
     ram_read_write_cycle: Vec<F>,
     ram_val_check_cycle: Vec<F>,
@@ -64,7 +64,7 @@ pub struct IncClaimReduction<F: Field> {
     registers_val_evaluation_cycle: Vec<F>,
 }
 
-impl<F: Field> IncClaimReduction<F> {
+impl<F: JoltField> IncClaimReduction<F> {
     pub fn new(
         trace_dimensions: TraceDimensions,
         ram_read_write_cycle: Vec<F>,
@@ -102,7 +102,7 @@ fn public_input_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for IncClaimReduction<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for IncClaimReduction<F> {
     type Symbolic = relations::claim_reductions::increments::ClaimReduction;
 
     fn symbolic(&self) -> &Self::Symbolic {

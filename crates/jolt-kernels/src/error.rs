@@ -1,14 +1,14 @@
 use crate::SumcheckKernelError;
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::MissingOpeningValue;
-use jolt_field::FieldCore;
+use jolt_field::Field;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 use jolt_witness::WitnessError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum KernelError<F: FieldCore> {
+pub enum KernelError<F: Field> {
     #[error(transparent)]
     Witness(#[from] WitnessError),
 

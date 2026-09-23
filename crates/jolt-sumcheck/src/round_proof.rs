@@ -5,7 +5,6 @@ use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
 
 use crate::error::SumcheckError;
-use crate::scalar::SumcheckScalar;
 use crate::{SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL};
 
 /// Common interface for one sumcheck round message.
@@ -16,7 +15,7 @@ pub trait RoundMessage {
 }
 
 /// A round message whose polynomial is available to the verifier.
-pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
+pub trait ClearRound<F: Field>: RoundMessage {
     fn evaluate(&self, challenge: F) -> F;
 
     fn coefficient_linear_combination(&self, coefficients: &[F]) -> F;
@@ -26,7 +25,7 @@ pub trait ClearRound<F: SumcheckScalar>: RoundMessage {
     }
 }
 
-impl<F: Field> RoundMessage for UnivariatePoly<F> {
+impl<F: Field + AppendToTranscript> RoundMessage for UnivariatePoly<F> {
     fn degree(&self) -> usize {
         UnivariatePolynomial::degree(self)
     }
@@ -38,7 +37,7 @@ impl<F: Field> RoundMessage for UnivariatePoly<F> {
     }
 }
 
-impl<F: Field> ClearRound<F> for UnivariatePoly<F> {
+impl<F: Field + AppendToTranscript> ClearRound<F> for UnivariatePoly<F> {
     fn evaluate(&self, challenge: F) -> F {
         UnivariatePoly::evaluate(self, challenge)
     }
@@ -72,7 +71,7 @@ impl<'a, F: Field> LabeledRoundPoly<'a, F> {
     }
 }
 
-impl<F: Field> RoundMessage for LabeledRoundPoly<'_, F> {
+impl<F: Field + AppendToTranscript> RoundMessage for LabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
     }
@@ -86,7 +85,7 @@ impl<F: Field> RoundMessage for LabeledRoundPoly<'_, F> {
     }
 }
 
-impl<F: Field> ClearRound<F> for LabeledRoundPoly<'_, F> {
+impl<F: Field + AppendToTranscript> ClearRound<F> for LabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }
@@ -121,22 +120,29 @@ impl<'a, F: Field> CompressedLabeledRoundPoly<'a, F> {
     }
 }
 
-impl<F: Field> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field + AppendToTranscript> RoundMessage for CompressedLabeledRoundPoly<'_, F> {
     fn degree(&self) -> usize {
         <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
     }
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         let coeffs = self.poly.coefficients();
+        // An empty round polynomial would absorb nothing (not even the
+        // label) and silently desynchronize the prover and verifier
+        // transcripts; every construction path produces >= 2 coefficients.
+        debug_assert!(!coeffs.is_empty(), "round polynomial has no coefficients");
+        let Some((constant, rest)) = coeffs.split_first() else {
+            return;
+        };
         transcript.append(&LabelWithCount(self.label, (coeffs.len() - 1) as u64));
-        coeffs[0].append_to_transcript(transcript);
-        for c in coeffs.iter().skip(2) {
+        constant.append_to_transcript(transcript);
+        for c in rest.iter().skip(1) {
             c.append_to_transcript(transcript);
         }
     }
 }
 
-impl<F: Field> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
+impl<F: Field + AppendToTranscript> ClearRound<F> for CompressedLabeledRoundPoly<'_, F> {
     fn evaluate(&self, challenge: F) -> F {
         <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
     }

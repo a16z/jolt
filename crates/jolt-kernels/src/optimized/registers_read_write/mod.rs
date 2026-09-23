@@ -1,51 +1,18 @@
-//! The optimized registers read/write-checking (stage 4) kernel: the legacy
-//! prover's sparse-matrix algorithm behind the `PrepareKernel` seam.
+//! Optimized register read/write check (stage 4).
 //!
-//! Byte-parity contract: identical round polynomials and output claims to the
-//! reference kernel (`reference/registers_read_write.rs`), which sums the
-//! summand over dense `2^(log_K + log_T)` register-major tables. This kernel
-//! computes the same polynomials from the sparse structure of the one-hot
-//! grids — field arithmetic is exact, so algebraic refactorings (eq
-//! factoring, γ-combined ra, deferred-reduction accumulation) preserve every
-//! wire byte.
+//! Stores at most three sparse entries per cycle and combines reads as
+//! `ra = γ·rs1_ra + γ²·rs2_ra`. Gruen factoring handles cycle rounds;
+//! address rounds use three dense `K`-sized arrays.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/registers/read_write_checking.rs` and
-//! `subprotocols/read_write_matrix/{cycle_major,registers}.rs`:
+//! `SeedEntry` omits the round-0 field value. The first challenge is held
+//! without materializing `T/2`; the second bind creates the `T/4` indexed SoA
+//! layout. Coefficients stay as LUT indices until the `u16` domain saturates.
 //!
-//! - **Sparse cycle-major matrix**: `rd_wa`/`rs1_ra`/`rs2_ra`/`Val` are
-//!   represented by ≤ 3 entries per cycle (the touched registers) instead of
-//!   three dense `K × T` grids. Between touches a register's value is
-//!   constant, so a missing merge partner is inferred from its neighbor's
-//!   raw `prev_val`/`next_val` (a constant slice binds to itself).
-//! - **γ-combined read coefficient**: one `ra = γ·rs1_ra + γ²·rs2_ra` column
-//!   per entry (exact by distributivity).
-//! - **Gruen split-eq factoring** for the cycle rounds:
-//!   `s(t) = l(t) · Σ_z E_out·E_in·inner(t, z)` via
-//!   [`GruenSplitEqPolynomial::gruen_poly_deg_3`].
-//! - **Small fixed K**: after the cycle rounds the state collapses to three
-//!   `K = 2^REGISTER_ADDRESS_BITS` dense arrays plus two scalars (bound eq,
-//!   bound inc); address rounds cost O(K).
-//! - **Direct one-hot claims at extraction**: `rs1_ra(r)`/`rs2_ra(r)` are
-//!   computed straight from the per-cycle indices with a 2-way split-eq walk
-//!   (legacy's `compute_rs2_ra_claim`, applied to both operands — no γ⁻¹).
-//!
-//! - **u16 coefficient lookup table** (legacy's `OneHotCoeffLookupTable`):
-//!   entries carry `u16` indices into small ra/wa value tables instead of two
-//!   field elements — 64 bytes per entry instead of 128 through the first
-//!   four cycle rounds, exactly where the entry count peaks (≤ 3·T). The
-//!   tables square on each bind (all `b + r·(a − b)` pairs) and the entries
-//!   combine indices, so every looked-up value equals the field element the
-//!   direct representation would hold; entries deref to field coefficients
-//!   when one more squaring would overflow the `u16` index domain.
-//!
-//! Like the reference kernel, only the default read-write config (phase 1 =
-//! all cycle rounds, phase 2 = 0) is supported.
+//! Only the default read-write config is supported.
 
-use jolt_claims::protocols::jolt::geometry::registers::rd_inc_read_write;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
-use jolt_field::{AdditiveAccumulator, Field};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_field::{Accumulator, JoltField};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -65,7 +32,7 @@ use crate::{
 mod rows;
 mod sparse;
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::panic, reason = "test support module")]
+#[expect(clippy::unwrap_used, reason = "test support module")]
 pub(crate) mod test_support;
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
@@ -74,11 +41,11 @@ mod tests;
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use rows::CollectRegisterEntries;
-use sparse::{CoeffLut, SparseEntries};
+use sparse::{CoeffLut, CycleState};
 
 pub struct OptimizedRegistersReadWrite;
 
-impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
+impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegistersReadWrite {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -113,15 +80,6 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         }
         let cycles = 1usize << log_t;
 
-        let inc_table: Vec<F> = witness.oracle_table(rd_inc_read_write().polynomial_id())?;
-        if inc_table.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: format!("{:?}", rd_inc_read_write()),
-                expected: cycles,
-                got: inc_table.len(),
-            });
-        }
-
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
 
@@ -133,12 +91,14 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
             rs1_indices,
             rs2_indices,
             rd_indices,
+            rd_inc,
         } = CollectRegisterEntries::collect(witness, cycles)?;
-        let entries = SparseEntries::Indexed {
+        let cycle = CycleState::new(
             entries,
-            ra_lut: CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
-            wa_lut: CoeffLut::new(vec![F::zero(), F::one()]),
-        };
+            CoeffLut::new(vec![F::zero(), gamma, gamma_sq, gamma + gamma_sq]),
+            CoeffLut::new(vec![F::zero(), F::one()]),
+            rd_inc,
+        );
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
         session.park(SharedRdIndices(rd_indices));
@@ -146,9 +106,8 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
         Ok(Box::new(ReadWriteKernel {
             log_t,
             log_k,
-            entries,
+            cycle,
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            inc: Polynomial::new(inc_table),
             ra: Vec::new(),
             wa: Vec::new(),
             val: Vec::new(),
@@ -161,61 +120,37 @@ impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for OptimizedRegi
     }
 }
 
-struct ReadWriteKernel<F: Field> {
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct ReadWriteKernel<F: JoltField> {
     log_t: usize,
     log_k: usize,
     /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
     /// cycle→address transition.
-    entries: SparseEntries<F>,
+    cycle: CycleState<F>,
     gruen: GruenSplitEqPolynomial<F>,
-    inc: Polynomial<F>,
     // Address-phase dense state (K-sized), materialized at the transition.
     ra: Vec<F>,
     wa: Vec<F>,
     val: Vec<F>,
     /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     eq_scalar: F,
     /// Fully bound `rd_inc` — constant across the address rounds.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     inc_scalar: F,
     rs1_indices: Vec<Option<u8>>,
     rs2_indices: Vec<Option<u8>>,
     challenges: RoundChallenges<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ReadWriteKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    let entries = match &kernel.entries {
-        SparseEntries::Indexed {
-            entries,
-            ra_lut,
-            wa_lut,
-        } => {
-            vec_heap_bytes(entries)
-                + vec_heap_bytes(&ra_lut.values)
-                + vec_heap_bytes(&wa_lut.values)
-        }
-        SparseEntries::Direct(entries) => vec_heap_bytes(entries),
-    };
-    entries
-        + kernel.gruen.heap_bytes()
-        + poly_heap_bytes(&kernel.inc)
-        + vec_heap_bytes(&kernel.ra)
-        + vec_heap_bytes(&kernel.wa)
-        + vec_heap_bytes(&kernel.val)
-        + vec_heap_bytes(&kernel.rs1_indices)
-        + vec_heap_bytes(&kernel.rs2_indices)
-        + kernel.challenges.heap_bytes()
-});
-
-impl<F: Field> ReadWriteKernel<F> {
+impl<F: JoltField> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
     fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
-        let quadratic = self.entries.quadratic(e_in, e_out, self.inc.evals());
+        let quadratic = self.cycle.quadratic(e_in, e_out);
         self.gruen
             .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
     }
@@ -262,10 +197,10 @@ impl<F: Field> ReadWriteKernel<F> {
     /// sparse rows; the final cycle bind collapses to the K-sized dense
     /// address state; address rounds bind the three dense arrays.
     fn bind(&mut self, r: F) {
+        let mut layout_transitioned = false;
         if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
-            self.inc.bind_with_order(r, BindingOrder::LowToHigh);
-            self.entries.bind(r);
+            layout_transitioned = self.cycle.bind(r);
         } else {
             for table in [&mut self.ra, &mut self.wa, &mut self.val] {
                 bind_pairs(table, r);
@@ -276,10 +211,14 @@ impl<F: Field> ReadWriteKernel<F> {
         if self.challenges.bound() == self.log_t {
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
-            let entries = std::mem::replace(&mut self.entries, SparseEntries::Direct(Vec::new()));
-            (self.ra, self.wa, self.val) = entries.into_dense(1usize << self.log_k);
+            (self.ra, self.wa, self.val, self.inc_scalar) =
+                self.cycle.take_dense(1usize << self.log_k);
             self.eq_scalar = self.gruen.current_scalar();
-            self.inc_scalar = self.inc.evals()[0];
+        }
+
+        // Return replaced entry generations immediately.
+        if layout_transitioned {
+            crate::mem::purge_retained_memory(self.log_t);
         }
     }
 
@@ -358,7 +297,7 @@ impl<F: Field> ReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t + self.log_k
     }
@@ -385,7 +324,7 @@ impl<F: Field> ProveRounds<F> for ReadWriteKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ReadWriteKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
     type Relation = RegistersReadWriteChecking<F>;
 
     fn output_claims(

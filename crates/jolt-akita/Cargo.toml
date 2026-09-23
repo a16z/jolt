@@ -8,33 +8,39 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 [lints]
 workspace = true
 
+[features]
+profiling = []
+
 [dependencies]
-akita-config = { workspace = true, features = [
-  "schedules-fp128-d64-dense",
-  "schedules-fp128-d64-onehot",
-] }
-akita-pcs = { workspace = true, features = ["parallel"] }
+# Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
+# catalogs do not cover this adapter's complete production and test grids.
+akita-algebra.workspace = true
+akita-config.workspace = true
+akita-error.workspace = true
+akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
 akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
-akita-transcript.workspace = true
+akita-schedules.workspace = true
 akita-types.workspace = true
-jolt-crypto.workspace = true
-jolt-field = { workspace = true, features = ["akita"] }
-jolt-openings.workspace = true
+jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
+  "parallel",
+] }
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "solinas",
+] }
+jolt-openings = { path = "../jolt-openings", default-features = false, features = [
+  "parallel",
+] }
 jolt-poly.workspace = true
-jolt-transcript.workspace = true
+jolt-transcript = { path = "../jolt-transcript", default-features = false }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 
 [dev-dependencies]
-criterion = { workspace = true }
-jolt-dory = { workspace = true }
-# Subscriber stack only (bench tracing setup); no summary pipeline.
-jolt-profiling = { path = "../jolt-profiling", default-features = false }
+bincode.workspace = true
+jolt-transcript = { workspace = true, default-features = false, features = [
+  "transcript-blake2b",
+] }
 serde_json = { workspace = true, features = ["std"] }
-
-[[bench]]
-name = "akita_paths"
-harness = false

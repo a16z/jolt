@@ -9,7 +9,7 @@
 //!
 //! Both `x` and `y` are in **big-endian** bit ordering (`point[0]` = MSB).
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::EqPolynomial;
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -18,12 +18,12 @@ use jolt_utils::unsafe_allocate_zero_vec;
 ///
 /// Stores a fixed point `x` in big-endian order. Call [`evaluate`](Self::evaluate)
 /// to compute `eq+1(x, y)` at any `y`.
-pub struct EqPlusOnePolynomial<F: Field> {
+pub struct EqPlusOnePolynomial<F: JoltField> {
     /// Fixed point (big-endian: `point[0]` = MSB).
     point: Vec<F>,
 }
 
-impl<F: Field> EqPlusOnePolynomial<F> {
+impl<F: JoltField> EqPlusOnePolynomial<F> {
     pub fn new(point: Vec<F>) -> Self {
         Self { point }
     }
@@ -70,6 +70,7 @@ impl<F: Field> EqPlusOnePolynomial<F> {
     /// partial `eq` table and a product of the remaining `r` coordinates.
     pub fn evals(r: &[F], scaling_factor: Option<F>) -> (Vec<F>, Vec<F>) {
         let ell = r.len();
+        jolt_utils::math::assert_shiftable_dim(ell);
         let size = 1usize << ell;
         let mut eq_evals: Vec<F> = unsafe_allocate_zero_vec(size);
         eq_evals[0] = scaling_factor.unwrap_or(F::one());
@@ -130,7 +131,7 @@ impl<F: Field> EqPlusOnePolynomial<F> {
 /// half of the shift sumcheck to operate on √N-sized buffers rather than N.
 ///
 /// See <https://eprint.iacr.org/2025/611.pdf> (Appendix A).
-pub struct EqPlusOnePrefixSuffix<F: Field> {
+pub struct EqPlusOnePrefixSuffix<F: JoltField> {
     /// Evals of `eq+1(r_lo, j)` for `j ∈ {0,1}^{n/2}`.
     pub prefix_0: Vec<F>,
     /// Evals of `eq(r_hi, j)` for `j ∈ {0,1}^{n/2}`.
@@ -141,11 +142,12 @@ pub struct EqPlusOnePrefixSuffix<F: Field> {
     pub suffix_1: Vec<F>,
 }
 
-impl<F: Field> EqPlusOnePrefixSuffix<F> {
+impl<F: JoltField> EqPlusOnePrefixSuffix<F> {
     /// Creates the decomposition from a big-endian point `r`.
     ///
     /// Splits at `r.len() / 2`: the first half is `r_hi`, the second is `r_lo`.
     pub fn new(r: &[F]) -> Self {
+        jolt_utils::math::assert_shiftable_dim(r.len());
         let mid = r.len() / 2;
         let (r_hi, r_lo) = r.split_at(mid);
 
@@ -170,7 +172,7 @@ impl<F: Field> EqPlusOnePrefixSuffix<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -306,6 +308,13 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds usize shift width")]
+    fn evals_rejects_shift_overflowing_dimension() {
+        let r = vec![Fr::one(); usize::BITS as usize];
+        let _ = EqPlusOnePolynomial::evals(&r, None);
     }
 
     #[test]

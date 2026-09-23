@@ -41,16 +41,16 @@ members = [
   "crates/jolt-witness",
   "crates/jolt-witness-derive",
   "crates/jolt-dory",
-  "crates/jolt-hyperkzg",
   "crates/jolt-riscv",
+  "crates/jolt-tracer-x86",
   "crates/jolt-transcript",
   "crates/jolt-utils",
   "crates/jolt-profiling",
   "crates/jolt-field",
+  "crates/jolt-host",
   "crates/jolt-kernels",
   "crates/jolt-kernels-derive",
   "crates/jolt-prover",
-  "crates/jolt-prover-legacy",
   "tracer",
   "common",
   "jolt-platform",
@@ -88,6 +88,8 @@ members = [
   "examples/multi-function/guest",
   "examples/alloc",
   "examples/alloc/guest",
+  "examples/large-alloc",
+  "examples/large-alloc/guest",
   "examples/stdlib",
   "examples/stdlib/guest",
   "examples/muldiv",
@@ -150,11 +152,8 @@ log.workspace = true
 env_logger.workspace = true
 zeroos-build.workspace = true
 
-ark-bn254.workspace = true
-
 jolt-sdk = { workspace = true, features = ["host"] }
-jolt-prover-legacy = { workspace = true, features = ["default"] }
-common = { workspace = true, features = ["std"] }
+jolt-prover.workspace = true
 
 [profile.test]
 opt-level = 3
@@ -187,11 +186,20 @@ lto = "fat"
 strip = false
 codegen-units = 1
 
-[replace]
-"ark-bn254:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-ff:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-ec:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-"ark-serialize:0.5.0" = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+## Exact-version arkworks overrides. This is a patch table rather than the
+## deprecated `replace` form because the Akita cutover also needs a Git-source
+## patch for the shared `jolt-field` package identity below.
+[patch.crates-io]
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+
+# The refreshed Akita cutover consumes jolt-field from this exact Git source.
+# Redirect that package to the workspace member so Cargo resolves one shared
+# field identity rather than separate path and Git copies.
+[patch."https://github.com/a16z/jolt"]
+jolt-field = { path = "crates/jolt-field" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -278,24 +286,25 @@ blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false, features = [
-  "sha3",
-] }
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.4.1", features = [
+dory = { package = "dory-pcs", version = "0.4.2", features = [
   "backends",
   "cache",
   "disk-persistence",
   "zk",
 ] }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-field = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "fc2071619bea728d8f366afae0b7affaf261d495", default-features = false }
+# Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "252abb895046cc1d5b9955a26a2ad2318148ac26", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -355,23 +364,19 @@ tracing = { version = "0.1.37", default-features = false, features = [
 ] }
 tracing-chrome = "0.7.1"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
-inferno = { version = "0.12.3" }
 allocative = { version = "=0.3.6" }
-pprof = { version = "0.15", features = [
-  "prost-codec",
-  "flamegraph",
-  "frame-pointer",
-] }
-prost = "0.14"
+# No `flamegraph` feature: it pulls in inferno 0.11 (quick-xml 0.26,
+# RUSTSEC-2026-0194/0195) and only the `.pprof()` protobuf output is used.
+pprof = { version = "0.15", features = ["prost-codec", "frame-pointer"] }
 
 # Parsing
-syn = { version = "2", features = ["full"] }
+syn = { version = "3", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.79"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
-object = { version = "0.39.1", features = [
+object = { version = "0.40.0", features = [
   "build_core",
   "elf",
 ], default-features = false }
@@ -393,15 +398,15 @@ iai-callgrind = "0.16.1"
 # Runner summary structs only, as the schema oracle for the callgrind
 # objective's JSON parser (jolt-eval dev-dependency).
 iai-callgrind-runner = "0.16.1"
-serial_test = "3.5.0"
+serial_test = "4.0.1"
 
 # Logging
 log = { version = "0.4" }
 env_logger = { version = "0.11" }
 
 # ZeroOS build system
-zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "3b132ce862ba6769a4261d151f69ff32c5f0dc30" }
-zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "3b132ce862ba6769a4261d151f69ff32c5f0dc30" }
+zeroos-build = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "c572b88a643474317e4b0c7e53ac722a98a0e050" }
+zeroos = { git = "https://github.com/LayerZero-Labs/ZeroOS.git", default-features = false, rev = "c572b88a643474317e4b0c7e53ac722a98a0e050" }
 cfg-if = "1.0"
 riscv = { version = "0.16", default-features = false }
 
@@ -409,7 +414,7 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.5", features = ["rayon", "serde"] }
+reth-primitives-traits = { version = "0.7", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
@@ -418,7 +423,6 @@ secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
 # Internal dependencies
 common = { path = "./common", default-features = false }
 tracer = { path = "./tracer", default-features = false }
-jolt-prover-legacy = { path = "./crates/jolt-prover-legacy", default-features = false }
 jolt-akita = { path = "./crates/jolt-akita" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
@@ -426,7 +430,7 @@ jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
-jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
+jolt-host = { path = "./crates/jolt-host" }
 jolt-openings = { path = "./crates/jolt-openings" }
 jolt-verifier = { path = "./crates/jolt-verifier" }
 jolt-verifier-derive = { path = "./crates/jolt-verifier-derive" }
@@ -438,11 +442,12 @@ jolt-witness = { path = "./crates/jolt-witness" }
 jolt-witness-derive = { path = "./crates/jolt-witness-derive" }
 jolt-poly = { path = "./crates/jolt-poly" }
 jolt-r1cs = { path = "./crates/jolt-r1cs" }
-jolt-transcript = { path = "./crates/jolt-transcript" }
+jolt-transcript = { path = "./crates/jolt-transcript", default-features = false }
 jolt-utils = { path = "./crates/jolt-utils" }
 jolt-sumcheck = { path = "./crates/jolt-sumcheck" }
 jolt-riscv = { path = "./crates/jolt-riscv", default-features = false }
 jolt-program = { path = "./crates/jolt-program", default-features = false }
+jolt-tracer-x86 = { path = "./crates/jolt-tracer-x86" }
 jolt-lookup-tables = { path = "./crates/jolt-lookup-tables" }
 jolt-platform = { path = "./jolt-platform", default-features = false }
 jolt-sdk = { path = "./jolt-sdk", default-features = false }

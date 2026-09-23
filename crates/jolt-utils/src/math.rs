@@ -32,6 +32,16 @@ pub fn log2_power_of_two(value: usize) -> usize {
     value.trailing_zeros() as usize
 }
 
+/// Asserts that a point dimension is below the `usize` shift width, so
+/// `1usize << dim` (the eval-table size) cannot overflow the shift.
+#[inline]
+pub fn assert_shiftable_dim(dim: usize) {
+    assert!(
+        dim < usize::BITS as usize,
+        "point dimension {dim} exceeds usize shift width"
+    );
+}
+
 /// Returns `log2(value)` if `value` is a power of two, `None` otherwise
 /// (zero included).
 pub fn checked_log2_power_of_two(value: usize) -> Option<usize> {

@@ -11,13 +11,11 @@ use std::sync::OnceLock;
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::{DoryCommitment, DoryScheme};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
 use jolt_transcript::LegacyBlake2bTranscript;
-use jolt_verifier::{
-    verify, JoltProof, JoltProofClaims, JoltVerifierPreprocessing, ZkConfig,
-};
+use jolt_verifier::{verify, JoltProof, JoltProofClaims, JoltVerifierPreprocessing, ZkConfig};
 use libfuzzer_sys::fuzz_target;
 
 type Preprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
@@ -70,7 +68,7 @@ fn stage_proof(proof: &mut Proof, index: usize) -> &mut StageProof {
     }
 }
 
-fn mutate_clear_sumcheck(proof: &mut StageProof, operation: u8, index: usize) -> bool {
+fn mutate_clear_sumcheck(proof: &mut StageProof, operation: u8, index: usize, delta: Fr) -> bool {
     let before = proof.clone();
     match proof {
         SumcheckProof::Clear(ClearProof::Full(clear)) => match operation % 3 {
@@ -85,8 +83,10 @@ fn mutate_clear_sumcheck(proof: &mut StageProof, operation: u8, index: usize) ->
                     return false;
                 }
                 let round = index % clear.round_polynomials.len();
-                clear.round_polynomials[round] =
-                    UnivariatePoly::new(vec![Fr::from_u64(index as u64 + 17)]);
+                let mut coefficients = clear.round_polynomials[round].coefficients().to_vec();
+                let coefficient = operation as usize / 3 % coefficients.len();
+                coefficients[coefficient] += delta;
+                clear.round_polynomials[round] = UnivariatePoly::new(coefficients);
             }
         },
         SumcheckProof::Clear(ClearProof::Compressed(clear)) => match operation % 3 {
@@ -101,8 +101,12 @@ fn mutate_clear_sumcheck(proof: &mut StageProof, operation: u8, index: usize) ->
                     return false;
                 }
                 let round = index % clear.round_polynomials.len();
-                clear.round_polynomials[round] =
-                    CompressedPoly::new(vec![Fr::from_u64(index as u64 + 17)]);
+                let mut coefficients = clear.round_polynomials[round]
+                    .coeffs_except_linear_term()
+                    .to_vec();
+                let coefficient = operation as usize / 3 % coefficients.len();
+                coefficients[coefficient] += delta;
+                clear.round_polynomials[round] = CompressedPoly::new(coefficients);
             }
         },
         SumcheckProof::Committed(_) => return false,
@@ -110,11 +114,10 @@ fn mutate_clear_sumcheck(proof: &mut StageProof, operation: u8, index: usize) ->
     *proof != before
 }
 
-fn mutate_clear_claim(proof: &mut Proof, stage: usize) -> bool {
+fn mutate_clear_claim(proof: &mut Proof, stage: usize, delta: Fr) -> bool {
     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
         return false;
     };
-    let delta = Fr::from_u64(1);
     match stage % 8 {
         0 => claims.stage1.uniskip_output_claim += delta,
         1 => claims.stage2.product_uniskip_output_claim += delta,
@@ -139,7 +142,7 @@ fn mutate_clear_claim(proof: &mut Proof, stage: usize) -> bool {
 }
 
 fuzz_target!(|data: &[u8]| {
-    if data.len() < 4 {
+    if data.len() < 5 {
         return;
     }
     let fixture = &bundles()[data[0] as usize % bundles().len()];
@@ -148,8 +151,13 @@ fuzz_target!(|data: &[u8]| {
     let mut proof = fixture.2.clone();
     let mut advice = fixture.3.clone();
     let mutation = data[1] % 16;
-    let index = data[2] as usize;
+    let stage = data[2] as usize;
     let operation = data[3];
+    let index = data[4] as usize;
+    let mut delta = Fr::from_bytes_le_reduced(&data[5..data.len().min(37)]);
+    if delta == Fr::from_u64(0) {
+        delta = Fr::from_u64(1);
+    }
 
     let changed = match mutation {
         // Legal-but-wrong dimensions: still powers of two, so they pass
@@ -179,8 +187,7 @@ fuzz_target!(|data: &[u8]| {
             true
         }
         4 => {
-            public_io.memory_layout.heap_size =
-                public_io.memory_layout.heap_size.saturating_add(1);
+            public_io.memory_layout.heap_size = public_io.memory_layout.heap_size.saturating_add(1);
             true
         }
         5 => {
@@ -204,11 +211,10 @@ fuzz_target!(|data: &[u8]| {
             proof.commitments.instruction_ra[position] != before
         }
         8 => {
-            proof.untrusted_advice_commitment =
-                match proof.untrusted_advice_commitment.take() {
-                    Some(_) => None,
-                    None => Some(DoryCommitment::default()),
-                };
+            proof.untrusted_advice_commitment = match proof.untrusted_advice_commitment.take() {
+                Some(_) => None,
+                None => Some(DoryCommitment::default()),
+            };
             true
         }
         9 => {
@@ -218,8 +224,8 @@ fuzz_target!(|data: &[u8]| {
             };
             true
         }
-        10 => mutate_clear_sumcheck(stage_proof(&mut proof, index), operation, index),
-        11 => mutate_clear_claim(&mut proof, index),
+        10 => mutate_clear_sumcheck(stage_proof(&mut proof, stage), operation, index, delta),
+        11 => mutate_clear_claim(&mut proof, stage, delta),
         12 => proof.joint_opening_proof.0.final_message.take().is_some(),
         13 => {
             preprocessing.program = bundles()[(data[0] as usize + 1) % bundles().len()]

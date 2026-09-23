@@ -9,12 +9,9 @@
 //! fixture; the fuzzer drives the scalar dimensions (trace length, RAM size,
 //! advice presence, ZK flag) and the public I/O buffer sizes.
 //!
-//! NOT covered: the prover-chosen configuration surface. `one_hot_config` is
-//! passed verbatim from the fixture and `rw_config` is not a parameter of
-//! `validate_inputs_from_parts` at all, so verifier soundness audit Findings
-//! 1 and 2 (config validators never called by the verifier; validator-legal
-//! RAM phase splits the prover mis-proves) remain open — this harness does
-//! not close them.
+//! `one_hot_config` is held at its fixture value; `rw_config` is not a
+//! parameter of `validate_inputs_from_parts`. Configuration mutations and
+//! the full verifier are outside this target's scope.
 
 use std::sync::OnceLock;
 

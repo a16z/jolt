@@ -11,10 +11,9 @@
 //! proof session (`park_residue`) — each `prepare` reclaims its carry by
 //! move and mounts a fresh address-phase kernel over it.
 
-use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -23,6 +22,7 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
+use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
 use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
 use jolt_verifier::CheckedInputs;
@@ -33,7 +33,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 8 consumes.
-pub struct Stage7ProverOutput<F: Field, C> {
+pub struct Stage7ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage7OutputClaims<F>,
     pub clear_output: Stage7ClearOutput<F>,
@@ -57,7 +57,7 @@ pub fn prove_stage7<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage7ProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -69,10 +69,10 @@ where
         preprocessing.verifier.program.bytecode_len(),
         JoltRelationId::HammingWeightClaimReduction,
     )?;
-    let hamming_dimensions = HammingWeightClaimReductionDimensions::new(
+    let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
         config.one_hot_config.committed_chunk_bits(),
-    );
+    )?;
 
     let sumchecks = build_stage7_sumchecks(
         hamming_dimensions,
@@ -85,9 +85,11 @@ where
     let inputs = stage7_input_values_from_upstream(&sumchecks, stage6b)?;
     let input_points = sumchecks.empty_input_points();
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

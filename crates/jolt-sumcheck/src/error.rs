@@ -1,6 +1,6 @@
 //! Error types for sumcheck protocol verification failures.
 
-use jolt_field::FieldCore;
+use jolt_field::Field;
 
 /// Errors that can occur during sumcheck verification.
 ///
@@ -9,7 +9,7 @@ use jolt_field::FieldCore;
 /// diverged.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum SumcheckError<F: FieldCore> {
+pub enum SumcheckError<F: Field> {
     /// Round check failed: the domain sum did not match the expected value
     /// carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]
@@ -30,6 +30,54 @@ pub enum SumcheckError<F: FieldCore> {
         /// Maximum allowed degree from the claim.
         max: usize,
     },
+
+    /// A batch with rounds to prove declared a maximum degree of zero. A
+    /// sumcheck round polynomial must have degree at least 1 — the same
+    /// invariant `SumcheckClaim::new` enforces on the verify side.
+    #[error("batch declares max degree 0 with {max_num_vars} rounds to prove")]
+    ZeroBatchDegree {
+        /// Number of rounds that would need round polynomials.
+        max_num_vars: usize,
+    },
+
+    /// A batch member declared more rounds than the batch contains.
+    #[error(
+        "batch member {member} has {rounds} rounds, exceeding the batch's {max_num_vars} rounds"
+    )]
+    BatchMemberRoundsOutOfRange {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// Round count declared for this member.
+        rounds: usize,
+        /// The batch's total round count.
+        max_num_vars: usize,
+    },
+
+    /// The field implementation cannot represent this batch's padding scale.
+    #[error("batch member {member} requires unsupported padding exponent {exponent}")]
+    BatchPaddingExponentOutOfRange {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// `max_num_vars - rounds`, which `Ring::mul_pow_2` cannot represent above 255.
+        exponent: usize,
+    },
+
+    /// A batch activation window overflowed `usize`.
+    #[error(
+        "batch member {member}: activation window overflow for offset {offset}, rounds {rounds}"
+    )]
+    BatchMemberWindowOverflow {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+        /// The member's activation offset.
+        offset: usize,
+        /// The member's round count.
+        rounds: usize,
+    },
+
+    /// Adding one to the declared degree overflowed `usize`.
+    #[error("sumcheck degree {degree} cannot be represented with its coefficient count")]
+    DegreeOverflow { degree: usize },
 
     /// A round polynomial encoded in compressed form had fewer than two
     /// coefficients, so there is no linear term to omit. Any valid
@@ -133,6 +181,26 @@ pub enum SumcheckError<F: FieldCore> {
         rounds: usize,
         /// The batch's total round count.
         max_num_vars: usize,
+    },
+
+    /// The batch's round scheduler returned no round message for an active
+    /// member. Reported rather than folded as that member's `claim / 2`
+    /// padding (which would surface only as a round-sum mismatch).
+    #[error("batch member {member}: round scheduler produced no round message")]
+    MissingRoundMessage {
+        /// Zero-indexed member position (declaration order).
+        member: usize,
+    },
+
+    /// A round handle came back carrying a member index the batch does not
+    /// have. The engine assigns those indices, so this means the scheduler
+    /// rewrote one; attributing the message by it would misfold the round.
+    #[error("round scheduler returned member index {member}, but the batch has {members} members")]
+    RoundMemberIndexOutOfRange {
+        /// The out-of-range index carried by the returned handle.
+        member: usize,
+        /// Number of members in the batch.
+        members: usize,
     },
 
     /// The caller selected a verifier path that is incompatible with the proof

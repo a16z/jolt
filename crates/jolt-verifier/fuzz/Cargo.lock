@@ -350,7 +350,7 @@ dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
  "serde",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -497,9 +497,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc655754c8ddb6b75f528efcfcddf2cd8db59bdea777de157400d642048bd2f4"
+checksum = "065945e9fff3c7dac5d6f72f8260eac82ad577e7c7009b6290847d1252d14d78"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -692,7 +692,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -741,10 +741,11 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
+ "cc",
  "num-traits",
- "rand 0.8.7",
  "rand_core 0.6.4",
  "serde",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -765,8 +766,6 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
- "jolt-utils",
- "rayon",
  "serde",
  "thiserror 2.0.19",
  "tracing",
@@ -795,6 +794,7 @@ name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -845,7 +845,6 @@ version = "0.1.0"
 dependencies = [
  "jolt-crypto",
  "jolt-field",
- "jolt-openings",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
@@ -881,6 +880,8 @@ name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0",
+ "bincode 2.0.1",
+ "blake2 0.11.0-rc.6",
  "common",
  "jolt-blindfold",
  "jolt-claims",
@@ -895,7 +896,6 @@ dependencies = [
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
- "jolt-utils",
  "jolt-verifier-derive",
  "num-traits",
  "serde",
@@ -908,7 +908,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]

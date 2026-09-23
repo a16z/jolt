@@ -1,5 +1,5 @@
 use jolt_crypto::VectorOpeningError;
-use jolt_field::FieldCore;
+use jolt_field::JoltField;
 use jolt_r1cs::{ClaimLoweringError, ConstraintMatrixEvalError};
 use jolt_sumcheck::{SumcheckError, SumcheckR1csError};
 use thiserror::Error as ThisError;
@@ -85,7 +85,7 @@ pub enum RelaxedError {
 }
 
 #[derive(Debug, ThisError)]
-pub enum ProverError<F: FieldCore> {
+pub enum ProverError<F: JoltField> {
     #[error(transparent)]
     Relaxed(#[from] RelaxedError),
     #[error(transparent)]
@@ -153,7 +153,7 @@ pub enum ProverError<F: FieldCore> {
 }
 
 #[derive(Debug, ThisError)]
-pub enum VerificationError<F: FieldCore> {
+pub enum VerificationError<F: JoltField> {
     #[error("claims have {claim_stages} stages but proof has {proof_stages}")]
     StageCountMismatch {
         claim_stages: usize,

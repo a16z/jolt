@@ -30,11 +30,11 @@ pub fn frobenius_psi_power_projective(p: &G2Projective, k: usize) -> G2Projectiv
             res.y *= coeffs.psi2_coef3;
             res
         }
-        3 => {
+        // k % 4 == 3: the remainder makes this arm exhaustive.
+        _ => {
             res.x *= coeffs.psi3_coef2;
             res.y *= coeffs.psi3_coef3;
             res
         }
-        _ => unreachable!(),
     }
 }

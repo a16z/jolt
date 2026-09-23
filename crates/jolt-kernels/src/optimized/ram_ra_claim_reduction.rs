@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaClaimReductionPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
@@ -37,7 +37,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
 use super::support::{bind_pairs, pin_derived_term, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -48,7 +48,7 @@ use crate::{
 /// The three consumed claims (RAF, read-write, val-check), in γ-power order.
 const TERMS: usize = 3;
 
-impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -75,8 +75,8 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
         // hard-checks that all three inputs agree on it).
         let r_address = &input_points.read_write()[..ram_log_k];
 
-        let columns = RamAccessColumns::shared(session, witness, log_t)?;
-        columns.validate_addresses(1usize << ram_log_k)?;
+        let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
+        super::ram_trace::validate_addresses(&addresses, 1usize << ram_log_k)?;
         let eq_address = eq_table(r_address);
 
         let gamma = inputs.challenges.gamma;
@@ -93,16 +93,16 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
 
         let phase = if prefix_bits == 0 {
             Phase::Suffix {
-                h: columns.fold_addresses(&eq_address),
+                h: super::ram_trace::fold_addresses(&addresses, &eq_address),
                 eq_hi,
                 scales: [F::one(); TERMS],
             }
         } else {
             Phase::Prefix {
                 p: cycle_points.map(|r| eq_table(&r[suffix_bits..])),
-                q: build_q_tables(&columns, &eq_address, &eq_hi, prefix_bits),
+                q: build_q_tables(&addresses, &eq_address, &eq_hi, prefix_bits),
                 eq_hi,
-                columns,
+                addresses,
                 eq_address,
                 r_cycle_lo: cycle_points.map(|r| r[suffix_bits..].to_vec()),
                 challenges: Vec::with_capacity(prefix_bits),
@@ -110,7 +110,6 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
         };
 
         Ok(Box::new(RaReductionKernel {
-            rounds: log_t,
             progress: RoundProgress::new(log_t),
             prefix_bits,
             gamma_powers,
@@ -121,14 +120,14 @@ impl<F: Field> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend {
 
 /// `Q_x[c_lo] = Σ_{c_hi} eq(r_address)[addresses[c_hi‖c_lo]] · eq_hi_x[c_hi]`
 /// for the three cycle points, in one pass over the access columns.
-fn build_q_tables<F: Field>(
-    columns: &RamAccessColumns,
+fn build_q_tables<F: JoltField>(
+    addresses: &[u32],
     eq_address: &[F],
     eq_hi: &[Vec<F>; TERMS],
     prefix_bits: usize,
 ) -> [Vec<F>; TERMS] {
     let prefix_size = 1usize << prefix_bits;
-    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u64]| {
+    let fill = |q: &mut [Vec<F>; TERMS], base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
@@ -146,8 +145,7 @@ fn build_q_tables<F: Field>(
     #[cfg(feature = "parallel")]
     {
         const CHUNK: usize = 1 << 14;
-        columns
-            .addresses
+        addresses
             .par_chunks(CHUNK)
             .enumerate()
             .fold(
@@ -172,7 +170,7 @@ fn build_q_tables<F: Field>(
     #[cfg(not(feature = "parallel"))]
     {
         let mut q = core::array::from_fn(|_| vec![F::zero(); prefix_size]);
-        fill(&mut q, 0, &columns.addresses);
+        fill(&mut q, 0, addresses);
         q
     }
 }
@@ -180,8 +178,8 @@ fn build_q_tables<F: Field>(
 /// `H'[c_hi] = Σ_{c_lo} eq(r_address)[addresses[c_hi‖c_lo]] · eq_prefix[c_lo]`
 /// — the partial evaluation of the address-folded `ra` at the prefix
 /// challenges, regathered from the access columns.
-fn gather_h_prime<F: Field>(
-    columns: &RamAccessColumns,
+fn gather_h_prime<F: JoltField>(
+    addresses: &[u32],
     eq_address: &[F],
     eq_prefix: &[F],
     prefix_bits: usize,
@@ -189,7 +187,7 @@ fn gather_h_prime<F: Field>(
 ) -> Vec<F> {
     let prefix_size = 1usize << prefix_bits;
     let suffix_size = 1usize << suffix_bits;
-    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u64]| {
+    let fill = |h: &mut Vec<F>, base: usize, chunk: &[u32]| {
         for (i, &address) in chunk.iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
@@ -202,8 +200,7 @@ fn gather_h_prime<F: Field>(
     #[cfg(feature = "parallel")]
     {
         const CHUNK: usize = 1 << 14;
-        columns
-            .addresses
+        addresses
             .par_chunks(CHUNK)
             .enumerate()
             .fold(
@@ -226,7 +223,7 @@ fn gather_h_prime<F: Field>(
     #[cfg(not(feature = "parallel"))]
     {
         let mut h = vec![F::zero(); suffix_size];
-        fill(&mut h, 0, &columns.addresses);
+        fill(&mut h, 0, addresses);
         h
     }
 }
@@ -235,7 +232,8 @@ fn gather_h_prime<F: Field>(
     clippy::large_enum_variant,
     reason = "one kernel object per proof; boxing buys nothing"
 )]
-enum Phase<F: Field> {
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum Phase<F: JoltField> {
     /// Rounds over the low (prefix) cycle variables: six `O(√T)` tables. The
     /// suffix eq tables and the transition inputs (columns, address eq,
     /// low-half cycle points, collected challenges) ride along.
@@ -243,7 +241,7 @@ enum Phase<F: Field> {
         p: [Vec<F>; TERMS],
         q: [Vec<F>; TERMS],
         eq_hi: [Vec<F>; TERMS],
-        columns: Arc<RamAccessColumns>,
+        addresses: Arc<Vec<u32>>,
         eq_address: Vec<F>,
         r_cycle_lo: [Vec<F>; TERMS],
         challenges: Vec<F>,
@@ -253,49 +251,22 @@ enum Phase<F: Field> {
     Suffix {
         h: Vec<F>,
         eq_hi: [Vec<F>; TERMS],
+        #[cfg_attr(feature = "allocative", allocative(skip))]
         scales: [F; TERMS],
     },
 }
 
-struct RaReductionKernel<F: Field> {
-    rounds: usize,
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct RaReductionKernel<F: JoltField> {
     progress: RoundProgress,
     prefix_bits: usize,
     /// `[1, γ, γ²]` — the consumed-claim batching coefficients.
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; TERMS],
     phase: Phase<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RaReductionKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    match &kernel.phase {
-        Phase::Prefix {
-            p,
-            q,
-            eq_hi,
-            columns,
-            eq_address,
-            r_cycle_lo,
-            challenges,
-        } => {
-            p.iter()
-                .chain(q)
-                .chain(eq_hi)
-                .chain(r_cycle_lo)
-                .map(vec_heap_bytes)
-                .sum::<usize>()
-                + columns.heap_bytes()
-                + vec_heap_bytes(eq_address)
-                + vec_heap_bytes(challenges)
-        }
-        Phase::Suffix { h, eq_hi, .. } => {
-            vec_heap_bytes(h) + eq_hi.iter().map(vec_heap_bytes).sum::<usize>()
-        }
-    }
-});
-
-impl<F: Field> RaReductionKernel<F> {
+impl<F: JoltField> RaReductionKernel<F> {
     fn bind(&mut self, r: F) {
         self.progress.advance();
         match &mut self.phase {
@@ -330,7 +301,7 @@ impl<F: Field> RaReductionKernel<F> {
         };
         let Phase::Prefix {
             eq_hi,
-            columns,
+            addresses,
             eq_address,
             r_cycle_lo,
             challenges,
@@ -344,11 +315,11 @@ impl<F: Field> RaReductionKernel<F> {
         let r_prefix: Vec<F> = challenges.iter().rev().copied().collect();
         let eq_prefix = eq_table(&r_prefix);
         let h = gather_h_prime(
-            &columns,
+            &addresses,
             &eq_address,
             &eq_prefix,
             self.prefix_bits,
-            self.rounds - self.prefix_bits,
+            self.progress.total() - self.prefix_bits,
         );
         let scales = core::array::from_fn(|x| EqPolynomial::<F>::mle(&r_cycle_lo[x], &r_prefix));
         self.phase = Phase::Suffix { h, eq_hi, scales };
@@ -395,9 +366,9 @@ impl<F: Field> RaReductionKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RaReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RaReductionKernel<F> {
     fn num_rounds(&self) -> usize {
-        self.rounds
+        self.progress.total()
     }
 
     fn prove_round(
@@ -421,7 +392,7 @@ impl<F: Field> ProveRounds<F> for RaReductionKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RaReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RaReductionKernel<F> {
     type Relation = RamRaClaimReduction<F>;
 
     fn output_claims(
@@ -480,7 +451,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::{
         RamRaClaimReductionChallenges, RamRaClaimReductionInputClaims,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     use super::super::testing::{
         assert_parity, random_scalars, with_ram_fixture, FixtureShape, RamOp,

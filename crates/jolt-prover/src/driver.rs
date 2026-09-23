@@ -1,7 +1,7 @@
 //! The prover-owned generated stage driver.
 //!
 //! [`StageProver`] is the driver trait, implemented for each stage batch
-//! struct by [`impl_stage_prover!`] — expanded from the batch's
+//! struct by `impl_stage_prover!`, expanded from the batch's
 //! derive-emitted member-list callback macro (`jolt-verifier`'s
 //! `<snake_case_struct>_members!`), so no stage's member list, order, or
 //! presence is ever restated on the prove side. One recorder-generic
@@ -23,12 +23,14 @@
 
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{
     PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{ProveRounds, RecordedSumcheck, SumcheckError, SumcheckRecorder};
+use jolt_sumcheck::{
+    ProveRounds, RecordedSumcheck, RoundScheduler, SumcheckError, SumcheckRecorder,
+};
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
@@ -40,12 +42,12 @@ use jolt_witness::JoltWitnessPlane;
 use crate::ProverError;
 
 /// The generated per-stage driver: implemented for each batch struct by
-/// [`impl_stage_prover!`], never by hand. The associated types are the
+/// `impl_stage_prover!`, never by hand. The associated types are the
 /// derive-generated aggregate projections of the batch declaration;
 /// [`Kernels`](Self::Kernels) is the typed kernel bundle — one boxed
 /// [`SumcheckKernel`] per member, `Option`-wrapped for a conditional member,
 /// in declaration order — that [`KernelSource::prepare_members`] mints.
-pub trait StageProver<F: Field>: Sized {
+pub trait StageProver<F: JoltField>: Sized {
     type InputClaims;
     type InputPoints;
     type Challenges;
@@ -65,6 +67,7 @@ pub trait StageProver<F: Field>: Sized {
         &self,
         kernels: &B,
         session: &mut ProofSession,
+        scheduler: &mut dyn RoundScheduler<F>,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: &Self::InputClaims,
         input_points: &Self::InputPoints,
@@ -79,7 +82,7 @@ pub trait StageProver<F: Field>: Sized {
 
     /// The stage's absorbed opening scalars, in the stage's curated order
     /// (stage 6b's runtime point dedup reorders the returned values). The
-    /// default emitted by [`impl_stage_prover!`] returns the derive-generated
+    /// default emitted by `impl_stage_prover!` returns the derive-generated
     /// canonical order (`opening_values`); curated stages supply an override
     /// block at the macro invocation site.
     fn curate_opening_values(
@@ -89,14 +92,14 @@ pub trait StageProver<F: Field>: Sized {
     ) -> Result<Vec<F>, ProverError<F>>;
 }
 
-/// The per-stage kernel-source bound collector: [`impl_stage_prover!`] emits
+/// The per-stage kernel-source bound collector: `impl_stage_prover!` emits
 /// one blanket impl per stage — over any `B` carrying `PrepareKernel<F, R>`
 /// for exactly that stage's member relations — so [`StageProver::prove`]'s `B`
 /// bound stays uniform while each stage demands exactly its members' slots.
 /// `prepare_members` mints the typed kernel bundle in declaration order
 /// (`Option` members gated on presence, mismatched presence attributed to the
 /// member's relation id).
-pub trait KernelSource<F: Field, S: StageProver<F>> {
+pub trait KernelSource<F: JoltField, S: StageProver<F>> {
     fn prepare_members(
         &self,
         batch: &S,
@@ -113,7 +116,7 @@ pub trait KernelSource<F: Field, S: StageProver<F>> {
 /// witness for a committed recorder), the typed output claims and derived
 /// opening points, and the batch's final running claim (already hard-checked
 /// against the generated `expected_final_claim`).
-pub struct Proved<F: Field, S: StageProver<F>, C> {
+pub struct Proved<F: JoltField, S: StageProver<F>, C> {
     pub recorded: RecordedSumcheck<F, C>,
     pub output_claims: S::OutputClaims,
     pub output_points: S::OutputPoints,
@@ -138,7 +141,7 @@ pub struct SpannedRounds<K, SR, SF> {
 
 impl<F, K, SR, SF> ProveRounds<F> for SpannedRounds<Box<K>, SR, SF>
 where
-    F: Field,
+    F: JoltField,
     K: ProveRounds<F> + ?Sized,
     SR: Fn() -> tracing::Span,
     SF: Fn() -> tracing::Span,
@@ -200,7 +203,7 @@ pub fn prepare_required<F, R, B>(
     challenges: &ConcreteSumcheckChallenges<F, R>,
 ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
     SumcheckInputClaims<F, R>: InputClaims<F>,
@@ -238,7 +241,7 @@ pub fn prepare_optional<F, R, B>(
     challenges: Option<&ConcreteSumcheckChallenges<F, R>>,
 ) -> Result<Option<Box<dyn SumcheckKernel<F, Relation = R>>>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
     SumcheckInputClaims<F, R>: InputClaims<F>,
@@ -277,7 +280,7 @@ pub fn validate_optional_tables<F, R>(
     challenges: Option<&ConcreteSumcheckChallenges<F, R>>,
 ) -> Result<(), SumcheckKernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -305,7 +308,7 @@ pub fn extract_optional<F, R>(
     inputs: Option<&SumcheckInputClaims<F, R>>,
 ) -> Result<Option<SumcheckOutputClaims<F, R>>, SumcheckKernelError<F>>
 where
-    F: Field,
+    F: JoltField,
     R: ConcreteSumcheck<F>,
     SumcheckInputClaims<F, R>: InputClaims<F>,
     SumcheckOutputClaims<F, R>: OutputClaims<F>,
@@ -486,7 +489,7 @@ macro_rules! impl_stage_prover {
             $({ name: $member:ident, relation: $relation:ident, presence: $presence:ident },)+
         ]
     ) => {
-        impl<F: ::jolt_field::Field> $crate::driver::StageProver<F> for $batch<F> {
+        impl<F: ::jolt_field::JoltField> $crate::driver::StageProver<F> for $batch<F> {
             type InputClaims = $input_claims<F>;
             type InputPoints = $input_points<F>;
             type Challenges = $challenges_ty<F>;
@@ -498,6 +501,7 @@ macro_rules! impl_stage_prover {
                 &self,
                 kernels: &B,
                 session: &mut ::jolt_kernels::ProofSession,
+                scheduler: &mut dyn ::jolt_sumcheck::RoundScheduler<F>,
                 witness: &dyn ::jolt_witness::JoltWitnessPlane<F>,
                 inputs: &Self::InputClaims,
                 input_points: &Self::InputPoints,
@@ -549,6 +553,7 @@ macro_rules! impl_stage_prover {
                 let __proved = ::jolt_sumcheck::prove_batch(
                     &__batch,
                     &mut __rounds,
+                    scheduler,
                     &mut recorder,
                     transcript,
                 )?;
@@ -609,7 +614,7 @@ macro_rules! impl_stage_prover {
             }
         }
 
-        impl<F: ::jolt_field::Field, B> $crate::driver::KernelSource<F, $batch<F>> for B
+        impl<F: ::jolt_field::JoltField, B> $crate::driver::KernelSource<F, $batch<F>> for B
         where
             B: ?Sized $(+ ::jolt_kernels::PrepareKernel<F, $relation<F>>)+,
         {

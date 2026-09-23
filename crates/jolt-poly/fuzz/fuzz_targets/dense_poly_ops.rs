@@ -3,7 +3,7 @@
 //! Differential check of `Polynomial` evaluation paths against a naive
 //! per-index multilinear-extension reference.
 
-use jolt_field::{Fr, FromPrimitiveInt, ReducingBytes};
+use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::Polynomial;
 use libfuzzer_sys::fuzz_target;
 
@@ -28,7 +28,7 @@ fuzz_target!(|data: &[u8]| {
 
     let scalar_at = |index: usize| {
         let start = 1 + index * SCALAR_BYTES;
-        <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[start..start + SCALAR_BYTES])
+        <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[start..start + SCALAR_BYTES])
     };
     let evals: Vec<Fr> = (0..n).map(scalar_at).collect();
     let point: Vec<Fr> = (0..num_vars).map(|i| scalar_at(n + i)).collect();
@@ -56,5 +56,8 @@ fuzz_target!(|data: &[u8]| {
         }
         reference += coeff * weight;
     }
-    assert_eq!(eval, reference, "evaluate disagrees with naive MLE reference");
+    assert_eq!(
+        eval, reference,
+        "evaluate disagrees with naive MLE reference"
+    );
 });

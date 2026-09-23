@@ -40,6 +40,12 @@ pr-seconds = 45
 daily-seconds = 900
 weekly-seconds = 1800
 
+[package.metadata.jolt-fuzz.targets.tracer_backend_equivalence]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1200
+
 [package.metadata.cargo-machete]
 ignored = ["libfuzzer-sys"]
 
@@ -64,6 +70,13 @@ bench = false
 [[bin]]
 name = "split_eq_bind_low_high"
 path = "fuzz_targets/split_eq_bind_low_high.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tracer_backend_equivalence"
+path = "fuzz_targets/tracer_backend_equivalence.rs"
 test = false
 doc = false
 bench = false

@@ -10,7 +10,7 @@
 //! shared here.
 
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_r1cs::constraints::jolt::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
@@ -92,9 +92,13 @@ impl UniskipParams {
 /// single-sourced.
 pub fn draw_spartan_outer_tau<F, T>(transcript: &mut T, log_t: usize) -> Vec<F>
 where
-    F: Field,
+    F: JoltField,
     T: Transcript<Challenge = F>,
 {
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
+    )]
     transcript.challenge_vector(log_t + 2)
 }
 
@@ -105,7 +109,7 @@ where
 /// without changing the transcript bytes.
 pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> F
 where
-    F: Field,
+    F: JoltField,
     T: Transcript<Challenge = F>,
 {
     transcript.challenge()
@@ -114,7 +118,7 @@ where
 /// The ZK uni-skip step's outputs: the committed round consistency and output
 /// claim commitments (carried downstream for BlindFold), plus the reduction
 /// challenge.
-pub(crate) struct UniskipZk<F: Field, C> {
+pub(crate) struct UniskipZk<F: JoltField, C> {
     pub consistency: CommittedSumcheckConsistency<F, C>,
     pub output_claims: CommittedOutputClaimOutput<C>,
     pub challenge: F,
@@ -138,7 +142,7 @@ pub fn verify_clear<F, C, T>(
     transcript: &mut T,
 ) -> Result<F, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     T: Transcript<Challenge = F>,
 {
     let reduction = proof
@@ -176,7 +180,7 @@ pub(crate) fn verify_zk<F, C, T>(
     transcript: &mut T,
 ) -> Result<UniskipZk<F, C>, VerifierError>
 where
-    F: Field,
+    F: JoltField,
     C: Clone + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {

@@ -1,6 +1,6 @@
 //! The cycle-phase split of the booleanity symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use super::monolith::{BooleanityInputClaims, BooleanityOutputClaims};
 use crate::opening;
@@ -54,11 +54,11 @@ impl SymbolicSumcheck for BooleanityCyclePhase {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(booleanity_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         booleanity_cycle_output(self.shape)
     }
 }

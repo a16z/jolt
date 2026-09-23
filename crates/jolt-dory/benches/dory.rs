@@ -7,7 +7,7 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use jolt_dory::{DoryScheme, DoryVerifierSetup};
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{Field, Fr};
 use jolt_openings::{CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
 use jolt_poly::{OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
@@ -62,9 +62,8 @@ fn bench_open(c: &mut Criterion) {
                     || {
                         let mut rng = ChaCha20Rng::seed_from_u64(0);
                         let poly = Polynomial::<Fr>::random(nv, &mut rng);
-                        let point: Vec<Fr> = (0..nv)
-                            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-                            .collect();
+                        let point: Vec<Fr> =
+                            (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
                         (poly, point, eval)
                     },
@@ -93,9 +92,8 @@ fn bench_verify(c: &mut Criterion) {
                     || {
                         let mut rng = ChaCha20Rng::seed_from_u64(0);
                         let poly = Polynomial::<Fr>::random(nv, &mut rng);
-                        let point: Vec<Fr> = (0..nv)
-                            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-                            .collect();
+                        let point: Vec<Fr> =
+                            (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
                         let (commitment, _) =
                             DoryScheme::commit(poly.evaluations(), &setup).unwrap();
@@ -166,8 +164,8 @@ fn bench_combine(c: &mut Criterion) {
         let poly_b = Polynomial::<Fr>::random(num_vars, &mut rng);
         let (commit_a, _) = DoryScheme::commit(poly_a.evaluations(), &setup).unwrap();
         let (commit_b, _) = DoryScheme::commit(poly_b.evaluations(), &setup).unwrap();
-        let s_a = <Fr as RandomSampling>::random(&mut rng);
-        let s_b = <Fr as RandomSampling>::random(&mut rng);
+        let s_a = <Fr as Field>::random(&mut rng);
+        let s_b = <Fr as Field>::random(&mut rng);
 
         group.bench_with_input(BenchmarkId::from_parameter(num_vars), &num_vars, |b, _| {
             b.iter(|| {
@@ -192,7 +190,7 @@ fn bench_combine_hints(c: &mut Criterion) {
             .map(|_| {
                 let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
                 let (_, hint) = DoryScheme::commit(poly.evaluations(), &setup).unwrap();
-                (hint, <Fr as RandomSampling>::random(&mut rng))
+                (hint, <Fr as Field>::random(&mut rng))
             })
             .collect();
         let hints: Vec<_> = hints_and_scalars.iter().map(|(h, _)| h.clone()).collect();
@@ -229,9 +227,8 @@ fn bench_open_zk(c: &mut Criterion) {
                     || {
                         let mut rng = ChaCha20Rng::seed_from_u64(0);
                         let poly = Polynomial::<Fr>::random(nv, &mut rng);
-                        let point: Vec<Fr> = (0..nv)
-                            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-                            .collect();
+                        let point: Vec<Fr> =
+                            (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
                         let (_, hint) =
                             <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup)
@@ -264,9 +261,8 @@ fn bench_verify_zk(c: &mut Criterion) {
                     || {
                         let mut rng = ChaCha20Rng::seed_from_u64(0);
                         let poly = Polynomial::<Fr>::random(nv, &mut rng);
-                        let point: Vec<Fr> = (0..nv)
-                            .map(|_| <Fr as RandomSampling>::random(&mut rng))
-                            .collect();
+                        let point: Vec<Fr> =
+                            (0..nv).map(|_| <Fr as Field>::random(&mut rng)).collect();
                         let eval = poly.evaluate(&point);
                         let (commitment, hint) =
                             <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup)

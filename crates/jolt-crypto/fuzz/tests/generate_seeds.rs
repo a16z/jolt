@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use jolt_crypto::{Bn254, JoltGroup, PairingGroup, PedersenSetup};
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{Field, Fr};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 

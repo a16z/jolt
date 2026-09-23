@@ -1,5 +1,5 @@
-use jolt_field::arkworks::bn254::Fr;
-use jolt_field::{MulPrimitiveInt, RandomSampling};
+use jolt_field::Fr;
+use jolt_field::{Field, Ring};
 
 use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
 
@@ -27,7 +27,7 @@ impl Objective for MulU64Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_u64 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_u64 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {
@@ -62,7 +62,7 @@ impl Objective for MulI64Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_i64 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_i64 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {
@@ -97,7 +97,7 @@ impl Objective for MulU128Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_u128 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_u128 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {
@@ -132,7 +132,7 @@ impl Objective for MulI128Objective {
     }
 
     fn description(&self) -> String {
-        format!("Wall-clock time of Field::mul_i128 ({NUM_ITERS} iterations)")
+        format!("Wall-clock time of JoltField::mul_i128 ({NUM_ITERS} iterations)")
     }
 
     fn setup(&self) -> Self::Setup {

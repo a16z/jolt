@@ -16,7 +16,7 @@
 
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
@@ -43,7 +43,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 6b consumes.
-pub struct Stage6aProverOutput<F: Field, C> {
+pub struct Stage6aProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6aOutputClaims<F>,
     pub clear_output: Stage6aClearOutput<F>,
@@ -70,7 +70,7 @@ pub fn prove_stage6a<F, PCS, VC, T>(
     transcript: &mut T,
 ) -> Result<Stage6aProverOutput<F, VC::Output>, ProverError<F>>
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
@@ -112,20 +112,36 @@ where
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
     let input_points = sumchecks.empty_input_points();
+    let bytecode_input_values = bytecode_read_raf_address_phase_input_values_from_upstream(
+        &stage1.output_values,
+        &stage2.output_values,
+        &stage3.output_values,
+        &stage4.output_values,
+        &stage5.output_values,
+    );
+    // The packed build folds the four reduced `Inc` claims into the bytecode
+    // address-phase input at the fused-inc consumer stage slots — the same
+    // wrapper the verifier's `stage6a::verify` applies.
+    #[cfg(feature = "akita")]
+    let bytecode_input_values =
+        jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims {
+            base: bytecode_input_values,
+            inc: jolt_verifier::stages::stage6b::inc_claim_reduction::inc_claim_reduction_input_values_from_upstream(
+                &stage2.output_values,
+                &stage4.output_values,
+                &stage5.output_values,
+            ),
+        };
     let inputs = Stage6aInputClaims {
-        bytecode_read_raf: bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.output_values,
-            &stage2.output_values,
-            &stage3.output_values,
-            &stage4.output_values,
-            &stage5.output_values,
-        ),
+        bytecode_read_raf: bytecode_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
+    let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
         session,
+        &mut *scheduler,
         witness,
         &inputs,
         &input_points,

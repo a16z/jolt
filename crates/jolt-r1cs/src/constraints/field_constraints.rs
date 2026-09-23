@@ -4,9 +4,17 @@
 //! instruction semantics. The bridge constraints here use a native single-field
 //! representation for ordinary values; multi-limb bridge packing should be
 //! layered on once those bridge payloads are explicit in the trace.
+//!
+//! WARNING: the load/store/imm bridge rows are placeholder identity
+//! equalities with no range or canonical-encoding binding (spec
+//! `field-inline-protocol.md` step 5: `decode_x_register` /
+//! `encode_field_register` / `decode_immediate`). Until that lands, a bridge
+//! row can equate a full field element with a shared 64-bit RV64 column
+//! (e.g. `RdWriteValue`), so the composed matrices are unsound as a verifier
+//! statement and must not back a proof path.
 
 use crate::constraint::SparseRow;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
 
@@ -61,7 +69,7 @@ pub const fn input_column(input_index: usize) -> Option<usize> {
     }
 }
 
-fn row<F: Field>(entries: &[(usize, i64)]) -> SparseRow<F> {
+fn row<F: JoltField>(entries: &[(usize, i64)]) -> SparseRow<F> {
     entries
         .iter()
         .filter(|(_, coefficient)| *coefficient != 0)
@@ -69,7 +77,7 @@ fn row<F: Field>(entries: &[(usize, i64)]) -> SparseRow<F> {
         .collect()
 }
 
-fn field_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
+fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     let mut a_rows = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
     let mut b_rows = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
     let mut c_rows = Vec::with_capacity(NUM_EQ_CONSTRAINTS);
@@ -122,7 +130,7 @@ fn field_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
     (a_rows, b_rows, c_rows)
 }
 
-fn append_product_constraints<F: Field>(
+fn append_product_constraints<F: JoltField>(
     a_rows: &mut Vec<SparseRow<F>>,
     b_rows: &mut Vec<SparseRow<F>>,
     c_rows: &mut Vec<SparseRow<F>>,
@@ -140,7 +148,7 @@ fn append_product_constraints<F: Field>(
 ///
 /// Product constraints are intentionally excluded for consumers that handle the
 /// field multiplication checks in a separate protocol step.
-pub fn field_inline_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
     let (a_rows, b_rows, c_rows) = field_eq_constraint_rows();
     crate::ConstraintMatrices::new(
         NUM_EQ_CONSTRAINTS,
@@ -156,7 +164,7 @@ pub fn field_inline_spartan_outer_constraints<F: Field>() -> crate::ConstraintMa
 /// Returns 10 constraints over 17 variables per cycle:
 /// - 8 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
-pub fn field_inline_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
+pub fn field_inline_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = field_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
     b_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -174,9 +182,10 @@ pub fn field_inline_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests may unwind via panic")]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt, Invertible};
+    use jolt_field::{Field, Fr, Ring};
     use num_traits::Zero;
 
     fn witness(field_rs1: Fr, field_rs2: Fr, field_rd: Fr, flags: &[(usize, Fr)]) -> Vec<Fr> {

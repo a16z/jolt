@@ -94,7 +94,8 @@ impl<G: JoltGroup> VectorCommitment for Pedersen<G> {
             values.len(),
             setup.message_generators.len(),
         );
-        let msg = G::msm(&setup.message_generators[..values.len()], values);
+        let (generators, _) = setup.message_generators.split_at(values.len());
+        let msg = G::msm(generators, values);
         let blind = setup.blinding_generator.scalar_mul(blinding);
         msg + blind
     }

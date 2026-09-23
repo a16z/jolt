@@ -1,19 +1,20 @@
 //! Split equality tables for sqrt-memory sumcheck kernels.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TensorEqTable<F: Field> {
+pub struct TensorEqTable<F: JoltField> {
     e_out: Vec<F>,
     e_in: Vec<F>,
     in_bits: usize,
 }
 
-impl<F: Field> TensorEqTable<F> {
+impl<F: JoltField> TensorEqTable<F> {
     pub fn new(point: &[F]) -> Self {
         let split = point.len() / 2;
         let (out_point, in_point) = point.split_at(split);
@@ -155,8 +156,9 @@ impl<F: Field> TensorEqTable<F> {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GruenSplitEqPolynomial<F: Field> {
+pub struct GruenSplitEqPolynomial<F: JoltField> {
     current_index: usize,
     current_scalar: F,
     point: Vec<F>,
@@ -165,24 +167,7 @@ pub struct GruenSplitEqPolynomial<F: Field> {
     binding_order: BindingOrder,
 }
 
-impl<F: Field> GruenSplitEqPolynomial<F> {
-    /// Keeps field-generic profilers from requiring `F: Allocative`.
-    pub fn heap_bytes(&self) -> usize {
-        self.point.capacity() * std::mem::size_of::<F>()
-            + self.e_in_vec.capacity() * std::mem::size_of::<Vec<F>>()
-            + self
-                .e_in_vec
-                .iter()
-                .map(|table| table.capacity() * std::mem::size_of::<F>())
-                .sum::<usize>()
-            + self.e_out_vec.capacity() * std::mem::size_of::<Vec<F>>()
-            + self
-                .e_out_vec
-                .iter()
-                .map(|table| table.capacity() * std::mem::size_of::<F>())
-                .sum::<usize>()
-    }
-
+impl<F: JoltField> GruenSplitEqPolynomial<F> {
     pub fn new(point: &[F], binding_order: BindingOrder) -> Self {
         Self::new_with_scaling(point, binding_order, None)
     }
@@ -512,7 +497,7 @@ impl<F: Field> GruenSplitEqPolynomial<F> {
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Fr, Ring};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 

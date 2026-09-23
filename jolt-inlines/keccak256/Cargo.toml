@@ -19,4 +19,5 @@ hex-literal.workspace = true
 jolt-inlines-sdk = { workspace = true, features = ["test-utils"] }
 rand = { workspace = true, features = ["std", "std_rng"] }
 sha3.workspace = true
+tiny-keccak = { version = "2.0", features = ["keccak"] }
 tracer = { workspace = true, features = ["std", "test-utils"] }

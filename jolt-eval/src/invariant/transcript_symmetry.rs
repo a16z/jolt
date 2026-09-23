@@ -3,8 +3,8 @@
 //! sequence must round-trip every prover message and produce the same
 //! verifier challenges.
 
-use arbitrary::{Arbitrary, Unstructured};
-use jolt_field::{FixedBytes, Fr as JFr};
+use arbitrary::{Arbitrary, Result as ArbitraryResult, Unstructured};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr as JFr};
 use spongefish::instantiations::{Blake2b512, Keccak};
 
 use jolt_transcript::{prover_transcript, verifier_transcript, BytesMsg, PoseidonSponge};
@@ -37,7 +37,7 @@ pub struct Input {
 }
 
 impl<'a> Arbitrary<'a> for Input {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+    fn arbitrary(u: &mut Unstructured<'a>) -> ArbitraryResult<Self> {
         let n = u.int_in_range(0u8..=20)? as usize;
         let mut ops = Vec::with_capacity(n);
         for _ in 0..n {
@@ -54,14 +54,14 @@ impl<'a> Arbitrary<'a> for Input {
     }
 }
 
-fn arb_bytes(u: &mut Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+fn arb_bytes(u: &mut Unstructured<'_>) -> ArbitraryResult<Vec<u8>> {
     let len = u.int_in_range(0u8..=64)? as usize;
     (0..len).map(|_| u.arbitrary()).collect()
 }
 
-fn arb_scalar(u: &mut Unstructured<'_>) -> arbitrary::Result<JFr> {
+fn arb_scalar(u: &mut Unstructured<'_>) -> ArbitraryResult<JFr> {
     let bytes: [u8; 32] = u.arbitrary()?;
-    Ok(JFr::from_le_bytes_mod_order(&bytes))
+    Ok(JFr::from_bytes_le_reduced(&bytes))
 }
 
 fn run_check<H>(input: &Input, build_sponge: impl Fn() -> H) -> Result<(), CheckError>
@@ -125,7 +125,9 @@ where
 }
 
 fn scalar_bytes(value: JFr) -> [u8; 32] {
-    value.to_bytes_array()
+    let mut out = [0u8; 32];
+    value.to_bytes_le(&mut out);
+    out
 }
 
 fn violation(what: &str, op_idx: usize, err: spongefish::VerificationError) -> CheckError {
@@ -143,7 +145,7 @@ fn mismatch(what: &str, op_idx: usize) -> CheckError {
 }
 
 fn seed_corpus_shared() -> Vec<Input> {
-    let scalar = JFr::from_le_bytes_mod_order(&[0xABu8; 32]);
+    let scalar = JFr::from_bytes_le_reduced(&[0xABu8; 32]);
     let mut mixed_1k = Vec::with_capacity(1000);
     for i in 0..1000u64 {
         mixed_1k.push(match i % 5 {
@@ -217,7 +219,7 @@ pub struct SpongeInput {
 }
 
 impl<'a> Arbitrary<'a> for SpongeInput {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+    fn arbitrary(u: &mut Unstructured<'a>) -> ArbitraryResult<Self> {
         let sponge = match u.int_in_range(0u8..=2)? {
             0 => SpongeKind::Blake2b,
             1 => SpongeKind::Keccak,

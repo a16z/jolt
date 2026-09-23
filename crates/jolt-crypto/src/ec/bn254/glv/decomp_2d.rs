@@ -4,7 +4,7 @@
 //! is the GLV endomorphism eigenvalue, halving the bit-length of each component.
 
 use ark_bn254::{Fq, Fr, G1Projective};
-use ark_ff::{BigInteger, MontFp, PrimeField};
+use ark_ff::{BigInt as ArkBigInt, BigInteger, MontFp, PrimeField};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed};
@@ -16,16 +16,10 @@ const ENDO_COEFF: Fq =
 
 /// Lattice coefficients for the BN254 GLV decomposition
 const SCALAR_DECOMP_COEFFS: [(bool, <Fr as PrimeField>::BigInt); 4] = [
-    (
-        false,
-        ark_ff::BigInt!("147946756881789319000765030803803410728"),
-    ),
-    (true, ark_ff::BigInt!("9931322734385697763")),
-    (false, ark_ff::BigInt!("9931322734385697763")),
-    (
-        false,
-        ark_ff::BigInt!("147946756881789319010696353538189108491"),
-    ),
+    (false, ArkBigInt!("147946756881789319000765030803803410728")),
+    (true, ArkBigInt!("9931322734385697763")),
+    (false, ArkBigInt!("9931322734385697763")),
+    (false, ArkBigInt!("147946756881789319010696353538189108491")),
 ];
 
 /// Decompose a BN254 scalar into two ~128-bit components via GLV lattice reduction.

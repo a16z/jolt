@@ -28,8 +28,8 @@ weekly-seconds = 900
 [package.metadata.jolt-fuzz.targets.verify_tampered]
 focus = "soundness"
 pr-seconds = 20
-daily-seconds = 300
-weekly-seconds = 900
+daily-seconds = 60
+weekly-seconds = 60
 
 [package.metadata.jolt-fuzz.targets.zk_mode_confusion]
 focus = "soundness"

@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::{
     geometry::dimensions::TraceDimensions, JoltDerivedId, SpartanShiftPublic,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPlusOnePolynomial;
 
 use crate::stages::relations::ConcreteSumcheck;
@@ -23,7 +23,7 @@ use crate::VerifierError;
 /// Wire shift's consumed opening *values* from stage 1's outer sumcheck (`Next*`
 /// PC/flag values) and stage 2's product-remainder `next_is_noop`. Takes the
 /// ZK-agnostic upstream output-claims aggregates.
-pub fn spartan_shift_input_values_from_upstream<F: Field>(
+pub fn spartan_shift_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1BatchOutputClaims<F>,
     stage2: &Stage2BatchOutputClaims<F>,
 ) -> SpartanShiftInputClaims<F> {
@@ -38,13 +38,13 @@ pub fn spartan_shift_input_values_from_upstream<F: Field>(
 }
 
 #[derive(Clone)]
-pub struct SpartanShift<F: Field> {
+pub struct SpartanShift<F: JoltField> {
     symbolic: relations::spartan::Shift,
     product_uniskip_tau_low: Vec<F>,
     product_remainder_opening_point: Vec<F>,
 }
 
-impl<F: Field> SpartanShift<F> {
+impl<F: JoltField> SpartanShift<F> {
     pub fn new(
         trace_dimensions: TraceDimensions,
         product_uniskip_tau_low: Vec<F>,
@@ -66,7 +66,7 @@ impl<F: Field> SpartanShift<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for SpartanShift<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for SpartanShift<F> {
     type Symbolic = relations::spartan::Shift;
 
     fn symbolic(&self) -> &Self::Symbolic {

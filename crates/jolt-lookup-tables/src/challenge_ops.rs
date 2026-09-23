@@ -5,16 +5,16 @@
 //! needed for prefix/suffix MLE computation.
 //!
 //! Since challenges are now just field elements (`C = F`), these traits are trivially
-//! satisfied by any `F: Field`. They remain as named bounds for readability at use sites.
+//! satisfied by any `F: JoltField`. They remain as named bounds for readability at use sites.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::ops::{Add, Mul, Sub};
 
 /// A challenge value that can do arithmetic with field elements and other challenges.
 ///
 /// The key property is that all arithmetic produces field elements `F`, even
 /// operations between two challenges (`C * C -> F`).
-pub trait ChallengeOps<F: Field>:
+pub trait ChallengeOps<F: JoltField>:
     Copy
     + Send
     + Sync
@@ -31,7 +31,7 @@ pub trait ChallengeOps<F: Field>:
 {
 }
 
-impl<F: Field, C> ChallengeOps<F> for C where
+impl<F: JoltField, C> ChallengeOps<F> for C where
     C: Copy
         + Send
         + Sync

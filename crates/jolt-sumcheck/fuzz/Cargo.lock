@@ -529,51 +529,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-crypto"
-version = "0.1.0"
-dependencies = [
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "ark-std 0.5.0",
- "jolt-field",
- "jolt-poly",
- "jolt-transcript",
- "num-bigint",
- "num-integer",
- "num-traits",
- "rand_core 0.6.4",
- "rayon",
- "serde",
-]
-
-[[package]]
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
+ "cc",
  "num-traits",
- "rand 0.8.7",
  "rand_core 0.6.4",
  "serde",
-]
-
-[[package]]
-name = "jolt-openings"
-version = "0.1.0"
-dependencies = [
- "jolt-crypto",
- "jolt-field",
- "jolt-poly",
- "jolt-transcript",
- "jolt-utils",
- "rayon",
- "serde",
  "thiserror 2.0.19",
- "tracing",
 ]
 
 [[package]]
@@ -594,12 +560,9 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "jolt-crypto",
  "jolt-field",
- "jolt-openings",
  "jolt-poly",
  "jolt-transcript",
- "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.19",
  "tracing",

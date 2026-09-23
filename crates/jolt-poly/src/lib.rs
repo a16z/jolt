@@ -42,11 +42,27 @@
 //! - [`lagrange`]: Lagrange interpolation, integer-domain power sums, polynomial
 //!   multiplication, Newton-form interpolation over integer domains
 
+// In the jolt-verifier runtime closure: stricter panic and unsafe discipline
+// than the workspace lints (specs/verifier-closure-lints.md).
+#![deny(unsafe_op_in_unsafe_fn)]
+#![deny(
+    clippy::get_unwrap,
+    clippy::string_slice,
+    clippy::fallible_impl_from,
+    clippy::mem_forget,
+    clippy::exit,
+    clippy::panic_in_result_fn,
+    clippy::let_underscore_must_use,
+    clippy::host_endian_bytes,
+    clippy::wildcard_enum_match_arm
+)]
+
 mod binding;
 mod compressed_univariate;
 mod dense;
 mod eq;
 mod eq_plus_one;
+mod evaluation_claim;
 mod identity;
 pub mod lagrange;
 mod lt;
@@ -64,6 +80,7 @@ pub use eq::{
     boolean_bits_msb, boolean_index_msb, boolean_point_msb, eq_index_msb, try_eq_mle, EqPolynomial,
 };
 pub use eq_plus_one::{EqPlusOnePolynomial, EqPlusOnePrefixSuffix};
+pub use evaluation_claim::EvaluationClaim;
 pub use identity::{IdentityPolynomial, OperandPolynomial, OperandSide};
 pub use lt::LtPolynomial;
 pub use mle::{

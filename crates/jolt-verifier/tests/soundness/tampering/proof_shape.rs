@@ -10,7 +10,7 @@ use jolt_verifier::proof::JoltProofClaims;
 use {
     jolt_blindfold::BlindFoldProof,
     jolt_crypto::VectorCommitmentOpening,
-    jolt_field::{Fr, FromPrimitiveInt},
+    jolt_field::{Fr, Ring},
     jolt_sumcheck::CompressedSumcheckProof,
 };
 

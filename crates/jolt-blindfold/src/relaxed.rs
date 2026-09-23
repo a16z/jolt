@@ -1,5 +1,5 @@
 use jolt_crypto::HomomorphicCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::RelaxedError;
 
@@ -29,7 +29,7 @@ impl<F, Com> RelaxedInstance<F, Com> {
 
 impl<F, Com> RelaxedInstance<F, Com>
 where
-    F: Field,
+    F: JoltField,
     Com: HomomorphicCommitment<F>,
 {
     pub fn fold(
@@ -118,7 +118,7 @@ impl<F> RelaxedWitness<F> {
     }
 }
 
-impl<F: Field> RelaxedWitness<F> {
+impl<F: JoltField> RelaxedWitness<F> {
     pub fn fold(
         &self,
         random: &Self,
@@ -218,7 +218,7 @@ fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), 
 mod tests {
     use super::*;
     use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn f(value: u64) -> Fr {
         Fr::from_u64(value)

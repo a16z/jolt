@@ -466,9 +466,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc655754c8ddb6b75f528efcfcddf2cd8db59bdea777de157400d642048bd2f4"
+checksum = "065945e9fff3c7dac5d6f72f8260eac82ad577e7c7009b6290847d1252d14d78"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -683,10 +683,11 @@ dependencies = [
  "ark-bn254",
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
+ "cc",
  "num-traits",
- "rand 0.8.7",
  "rand_core 0.6.4",
  "serde",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -697,8 +698,6 @@ dependencies = [
  "jolt-field",
  "jolt-poly",
  "jolt-transcript",
- "jolt-utils",
- "rayon",
  "serde",
  "thiserror 2.0.19",
  "tracing",
@@ -727,6 +726,7 @@ name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
+ "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",

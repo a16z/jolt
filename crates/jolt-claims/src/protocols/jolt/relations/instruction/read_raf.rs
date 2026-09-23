@@ -1,6 +1,6 @@
 //! Instruction read-RAF symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use serde::{Deserialize, Serialize};
 
@@ -87,14 +87,14 @@ impl SymbolicSumcheck for ReadRaf {
         self.shape.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         let gamma = challenge(InstructionReadRafChallenge::Gamma);
         opening(lookup_output_reduced())
             + gamma.clone() * opening(left_lookup_operand_reduced())
             + gamma.pow(2) * opening(right_lookup_operand_reduced())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         let ra_product = instruction_ra_product(self.shape);
         let mut output = JoltExpr::zero();
 
@@ -123,7 +123,7 @@ mod tests {
     use crate::protocols::jolt::{
         JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltVirtualPolynomial,
     };
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))

@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_poly::EqPolynomial;
 use jolt_riscv::NUM_CIRCUIT_FLAGS;
@@ -144,7 +144,7 @@ pub fn validate_bytecode_rows(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FieldInlineBytecodeReadRafPublicValues<F: Field> {
+pub struct FieldInlineBytecodeReadRafPublicValues<F: JoltField> {
     pub stage_values: [F; 5],
 }
 
@@ -167,7 +167,7 @@ pub fn read_raf_public_values<F>(
     inputs: FieldInlineBytecodeReadRafEvaluationInputs<'_, F>,
 ) -> Result<FieldInlineBytecodeReadRafPublicValues<F>, FieldInlineBytecodeReadRafError>
 where
-    F: Field,
+    F: JoltField,
 {
     require_len(
         inputs.stage1_gammas,
@@ -245,7 +245,7 @@ pub fn read_raf_register_eq_evals<F>(
     field_register_val_evaluation_point: &[F],
 ) -> FieldInlineBytecodeReadRafRegisterEqEvals<F>
 where
-    F: Field,
+    F: JoltField,
 {
     FieldInlineBytecodeReadRafRegisterEqEvals {
         read_write: EqPolynomial::<F>::evals(field_register_read_write_point, None),
@@ -257,7 +257,7 @@ pub fn read_raf_stage_values<F>(
     inputs: FieldInlineBytecodeReadRafStageValueInputs<'_, F>,
 ) -> Vec<[F; 5]>
 where
-    F: Field,
+    F: JoltField,
 {
     let field_register_eq = read_raf_register_eq_evals(
         inputs.field_register_read_write_point,
@@ -288,7 +288,7 @@ pub fn read_raf_row_values<F>(
     stage5_gammas: &[F],
 ) -> [F; 5]
 where
-    F: Field,
+    F: JoltField,
 {
     let mut stage1 = F::zero();
     for (index, flag) in FIELD_INLINE_BYTECODE_STAGE1_FLAGS.into_iter().enumerate() {
@@ -393,7 +393,7 @@ fn validate_register(
     Ok(())
 }
 
-fn register_eq<F: Field>(register: Option<u8>, eq: &[F]) -> F {
+fn register_eq<F: JoltField>(register: Option<u8>, eq: &[F]) -> F {
     register
         .and_then(|register| eq.get(register as usize))
         .copied()
@@ -415,7 +415,7 @@ fn require_len<F>(values: &[F], expected: usize) -> Result<(), FieldInlineByteco
 #[cfg(test)]
 #[expect(clippy::panic)]
 mod tests {
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
 
     use super::*;

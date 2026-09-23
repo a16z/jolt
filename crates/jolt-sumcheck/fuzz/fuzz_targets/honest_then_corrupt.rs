@@ -12,7 +12,7 @@
 //! belt-and-braces discharge, an accept of a false statement only counts as
 //! sound if the returned claim matches the true product evaluation.
 
-use jolt_field::{Fr, FromPrimitiveInt, Invertible, ReducingBytes};
+use jolt_field::{CanonicalEncoding, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
@@ -52,7 +52,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let scalar_at = |index: usize| {
         let start = 4 + index * SCALAR_BYTES;
-        <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[start..start + SCALAR_BYTES])
+        <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[start..start + SCALAR_BYTES])
     };
     let corruption_scalar = scalar_at(0);
     let evals_a: Vec<Fr> = (0..n).map(|i| scalar_at(1 + i)).collect();

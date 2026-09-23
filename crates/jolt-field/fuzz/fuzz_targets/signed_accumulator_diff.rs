@@ -1,16 +1,13 @@
 #![no_main]
 
 //! Differential check of the optimized `Fr` accumulators against their naive
-//! counterparts: the same op sequence through `FrSmallScalarAccumulator` /
-//! `FrSignedProductAccumulator` and `NaiveSignedScalarAccumulator` /
-//! `NaiveSignedProductAccumulator` must reduce to the same field element.
+//! counterparts: deferred signed reduction must agree with ordinary field
+//! arithmetic over the same operation sequence.
 
-use jolt_field::limbs::Limbs;
 use jolt_field::signed::S256;
 use jolt_field::{
-    Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, NaiveSignedProductAccumulator,
-    NaiveSignedScalarAccumulator, ReducingBytes, SignedProductAccumulator,
-    SignedScalarAccumulator,
+    Accumulator, CanonicalEncoding, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator,
+    Limbs, NaiveAccumulator,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -32,9 +29,9 @@ fn bounded_i64(raw: u64) -> i64 {
 
 fuzz_target!(|data: &[u8]| {
     let mut small = FrSmallScalarAccumulator::default();
-    let mut small_naive = NaiveSignedScalarAccumulator::<Fr>::default();
+    let mut small_naive = NaiveAccumulator::<Fr>::default();
     let mut product = FrSignedProductAccumulator::default();
-    let mut product_naive = NaiveSignedProductAccumulator::<Fr>::default();
+    let mut product_naive = NaiveAccumulator::<Fr>::default();
 
     let mut cursor = 0;
     let mut ops = 0;
@@ -45,7 +42,7 @@ fuzz_target!(|data: &[u8]| {
             break;
         }
         let value =
-            <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[cursor..cursor + SCALAR_BYTES]);
+            <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[cursor..cursor + SCALAR_BYTES]);
         cursor += SCALAR_BYTES;
 
         match tag % 4 {
@@ -57,9 +54,8 @@ fuzz_target!(|data: &[u8]| {
                 if cursor + 8 > data.len() {
                     break;
                 }
-                let scalar =
-                    u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap())
-                        & SMALL_SCALAR_MASK;
+                let scalar = u64::from_le_bytes(data[cursor..cursor + 8].try_into().unwrap())
+                    & SMALL_SCALAR_MASK;
                 cursor += 8;
                 small.fmadd_u64(value, scalar);
                 small_naive.fmadd_u64(value, scalar);

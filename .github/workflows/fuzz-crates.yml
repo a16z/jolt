@@ -54,7 +54,7 @@ jobs:
     outputs:
       matrix: ${{ steps.inventory.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Test repository fuzz runner
@@ -79,10 +79,6 @@ jobs:
       contents: read
       # Corpus-cache pruning below deletes superseded cache entries.
       actions: write
-    # Sized against the largest weekly workspace: jolt-verifier is 240 minutes
-    # of sequential mutation before build, replay, cmin, and coverage. 360 is
-    # the GitHub-hosted job ceiling; weekly budgets must keep every workspace's
-    # mutation time comfortably under it.
     timeout-minutes: 360
     strategy:
       fail-fast: false
@@ -92,7 +88,7 @@ jobs:
       group: fuzz-${{ github.event.schedule || github.head_ref || github.ref }}-${{ matrix.workspace }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Select fuzz profile
@@ -126,14 +122,18 @@ jobs:
           esac
 
           echo "name=$profile" >> "$GITHUB_OUTPUT"
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
-          toolchain: nightly-2026-07-20
+          toolchain: nightly-2026-08-24
           components: llvm-tools-preview,rust-src
+          targets: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
       - name: Install pinned cargo-fuzz
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-fuzz@0.13.2
+      - name: Install guest builder
+        if: matrix.workspace == 'jolt-eval'
+        run: cargo install --path . --locked
       - name: Cache fuzz builds
         uses: actions/cache@v6
         with:
@@ -179,10 +179,6 @@ jobs:
             fuzz-coverage-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
       - name: Generate weekly coverage
         if: success() && steps.profile.outputs.name == 'weekly'
-        env:
-          # Relative: resolved against the fuzz workspace directory fuzz.py
-          # runs cargo from.
-          CARGO_TARGET_DIR: target-coverage
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu coverage
       - name: Save trusted corpus
         if: success() && github.event_name == 'schedule' && github.ref == 'refs/heads/main'

@@ -3,7 +3,7 @@
 //!
 //! Under the cycle-major order every committed column is fed from ONE fused
 //! pass over the trace: the commit consumer implements [`StreamConsumer`]
-//! over the [`CommittedColumnsWitness`] fact bundle, holds every column's
+//! over the `CommittedColumnsWitness` fact bundle, holds every column's
 //! partial commitment state (the runtime arity lives here, in the consumer),
 //! and per row window feeds dense columns through the
 //! [`StreamingCommitment::feed`] family and one-hot columns through the
@@ -23,11 +23,11 @@
 use jolt_claims::protocols::jolt::{
     JoltCommittedPolynomial, JoltPolynomialId, TracePolynomialOrder,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
@@ -37,17 +37,17 @@ use crate::{KernelError, ProofSession, ReferenceBackend};
 
 impl<F, PCS> CommitWitness<F, PCS> for ReferenceBackend
 where
-    F: Field,
+    F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
-    // The backend-neutral `commit_witness` span lives at the stage-0 call
-    // boundary (`crates/jolt-prover/src/stages/stage0.rs`), so every
+    // The backend-neutral `commit_witness` span lives at the Dory stage-0 call
+    // boundary (`crates/jolt-prover/src/dory/stages/stage0.rs`), so every
     // `CommitWitness` implementation inherits it — see the taxonomy's
     // kernel-seam contract.
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        source: &dyn JoltWitnessPlane<F>,
+        source: &dyn RowSource,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -156,7 +156,7 @@ impl ColumnKind {
     pub(crate) fn hot_address(self, row: &CommittedColumnsWitness) -> Option<usize> {
         match self {
             Self::InstructionRa(selector) => Some(selector.chunk_u128(row.lookup_index.0)),
-            Self::BytecodeRa(selector) => row.bytecode_pc.0.map(|pc| selector.chunk_usize(pc)),
+            Self::BytecodeRa(selector) => Some(selector.chunk_usize(row.bytecode_pc.0)),
             Self::RamRa(selector) => row
                 .ram_address
                 .0
@@ -169,7 +169,7 @@ impl ColumnKind {
 /// Resolve `ids` to column derivations. Family sizes come from the ids
 /// themselves (the committed order carries whole families); the chunk width
 /// is the grid's.
-pub(crate) fn column_kinds<F: Field>(
+pub(crate) fn column_kinds<F: JoltField>(
     ids: &[JoltCommittedPolynomial],
     grid: CommitmentGrid,
 ) -> Result<Vec<ColumnKind>, KernelError<F>> {
@@ -207,7 +207,7 @@ pub(crate) fn column_kinds<F: Field>(
 
 /// The fused cycle-major commit consumer: every column's in-progress
 /// commitment, advanced per row window.
-struct FusedColumns<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> {
+struct FusedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> {
     columns: Vec<ColumnCommitState<PCS>>,
     one_hot_k: usize,
     setup: &'a PCS::ProverSetup,
@@ -232,7 +232,7 @@ enum ColumnCommitState<PCS: StreamingCommitment> {
     },
 }
 
-impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
+impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     FusedColumns<'a, F, PCS>
 {
     fn begin(
@@ -283,7 +283,7 @@ impl<'a, F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment>
     }
 }
 
-impl<F: Field, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
+impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> StreamConsumer
     for FusedColumns<'_, F, PCS>
 {
     type Witness = CommittedColumnsWitness;
@@ -329,7 +329,7 @@ struct MaterializedColumn<F> {
     flat_cycles: Option<usize>,
 }
 
-impl<F: Field> MaterializedColumn<F> {
+impl<F: JoltField> MaterializedColumn<F> {
     fn begin(kind: ColumnKind, grid: CommitmentGrid) -> Self {
         // Widened cycle-major grids materialize one-hots as the flat (K × T)
         // matrix and dense columns in the plain cycle-major layout;
@@ -365,7 +365,7 @@ impl<F: Field> MaterializedColumn<F> {
     }
 }
 
-impl<F: Field> StreamConsumer for MaterializedColumn<F> {
+impl<F: JoltField> StreamConsumer for MaterializedColumn<F> {
     type Witness = CommittedColumnsWitness;
 
     fn consume(&mut self, chunk: &[CommittedColumnsWitness]) {

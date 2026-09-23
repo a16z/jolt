@@ -1,6 +1,6 @@
 //! Lookup-table-related traits.
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
     FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
@@ -20,7 +20,7 @@ pub trait LookupTable: Clone + Debug + Send + Sync {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>;
+        F: JoltField + FieldOps<C>;
 }
 
 /// Maps an instruction to the lookup table it decomposes into for the proving system.

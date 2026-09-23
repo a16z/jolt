@@ -13,7 +13,7 @@
 //! Runs at test size `XLEN = 8`, where the interleaved index is 16 bits and a
 //! fuzzed `u16` covers the entire index space of all ~40 tables.
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_lookup_tables::tables::LookupTableKind;
 use libfuzzer_sys::fuzz_target;
 

@@ -1,10 +1,18 @@
 //! Spongefish-native [`VerifierTranscript`] surface.
 
+#[cfg(all(
+    feature = "bn254",
+    any(feature = "transcript-blake2b", feature = "transcript-keccak")
+))]
 use jolt_field::Fr;
 use spongefish::{
     Decoding, DuplexSpongeInterface, Encoding, NargDeserialize, VerificationResult, VerifierState,
 };
 
+#[cfg(all(
+    feature = "bn254",
+    any(feature = "transcript-blake2b", feature = "transcript-keccak")
+))]
 use crate::prover::OptimizedChallenge;
 
 /// Verifier-side spongefish transcript.
@@ -56,14 +64,14 @@ where
     }
 }
 
-#[cfg(feature = "transcript-blake2b")]
+#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Blake2b512> {
     fn challenge_128(&mut self) -> Fr {
         Fr::from(VerifierState::verifier_message::<u128>(self))
     }
 }
 
-#[cfg(feature = "transcript-keccak")]
+#[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
 impl OptimizedChallenge for VerifierState<'_, spongefish::instantiations::Keccak> {
     fn challenge_128(&mut self) -> Fr {
         Fr::from(VerifierState::verifier_message::<u128>(self))

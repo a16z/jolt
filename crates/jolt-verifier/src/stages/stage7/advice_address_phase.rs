@@ -12,6 +12,7 @@
 //! function of the reduction's final opening point, which `derive_output_term`
 //! recovers from the output claims.
 
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::advice::cycle_phase_advice_opening;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
@@ -23,16 +24,18 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::stages::relations::ConcreteSumcheck;
+#[cfg(not(feature = "akita"))]
 use crate::stages::stage6b::outputs::Stage6bOutputClaims;
 use crate::VerifierError;
 
 /// The consumed cycle-phase trusted-advice opening *value*, read off the stage-6b
 /// cycle-phase output. Errors if the cycle phase produced no trusted-advice opening
 /// (the address phase runs only when it did).
-pub fn trusted_advice_input_values_from_upstream<F: Field>(
+#[cfg(not(feature = "akita"))]
+pub fn trusted_advice_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> Result<TrustedAdviceAddressPhaseInputClaims<F>, VerifierError> {
     let trusted = cycle_phase
@@ -44,7 +47,8 @@ pub fn trusted_advice_input_values_from_upstream<F: Field>(
 }
 
 /// The consumed cycle-phase untrusted-advice opening *value*.
-pub fn untrusted_advice_input_values_from_upstream<F: Field>(
+#[cfg(not(feature = "akita"))]
+pub fn untrusted_advice_input_values_from_upstream<F: JoltField>(
     cycle_phase: &Stage6bOutputClaims<F>,
 ) -> Result<UntrustedAdviceAddressPhaseInputClaims<F>, VerifierError> {
     let untrusted = cycle_phase
@@ -63,7 +67,7 @@ fn advice_public_failed(reason: impl ToString) -> VerifierError {
 }
 
 #[derive(Clone)]
-pub struct TrustedAdviceAddressPhase<F: Field> {
+pub struct TrustedAdviceAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::TrustedAddressPhase,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -74,7 +78,7 @@ pub struct TrustedAdviceAddressPhase<F: Field> {
     reference_opening_point: Option<Vec<F>>,
 }
 
-impl<F: Field> TrustedAdviceAddressPhase<F> {
+impl<F: JoltField> TrustedAdviceAddressPhase<F> {
     /// `reference_opening_point` is the RAM address point of the staged advice
     /// opening from RAM value-check (stage 4), `None` in ZK (clear-only aux). It and
     /// the cycle-phase variables are known before the stage-7 sumcheck.
@@ -94,7 +98,7 @@ impl<F: Field> TrustedAdviceAddressPhase<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceAddressPhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceAddressPhase<F> {
     type Symbolic = relations::claim_reductions::advice::TrustedAddressPhase;
 
     fn symbolic(&self) -> &Self::Symbolic {
@@ -147,7 +151,7 @@ impl<F: Field> ConcreteSumcheck<F> for TrustedAdviceAddressPhase<F> {
 }
 
 #[derive(Clone)]
-pub struct UntrustedAdviceAddressPhase<F: Field> {
+pub struct UntrustedAdviceAddressPhase<F: JoltField> {
     symbolic: relations::claim_reductions::advice::UntrustedAddressPhase,
     layout: AdviceClaimReductionLayout,
     cycle_phase_variables: Vec<F>,
@@ -158,7 +162,7 @@ pub struct UntrustedAdviceAddressPhase<F: Field> {
     reference_opening_point: Option<Vec<F>>,
 }
 
-impl<F: Field> UntrustedAdviceAddressPhase<F> {
+impl<F: JoltField> UntrustedAdviceAddressPhase<F> {
     pub fn new(
         layout: &AdviceClaimReductionLayout,
         reference_opening_point: Option<Vec<F>>,
@@ -175,7 +179,7 @@ impl<F: Field> UntrustedAdviceAddressPhase<F> {
     }
 }
 
-impl<F: Field> ConcreteSumcheck<F> for UntrustedAdviceAddressPhase<F> {
+impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceAddressPhase<F> {
     type Symbolic = relations::claim_reductions::advice::UntrustedAddressPhase;
 
     fn symbolic(&self) -> &Self::Symbolic {

@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::opening;
@@ -40,7 +40,7 @@ impl<C> Default for BooleanityAddressPhaseInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
+impl<F: JoltField> InputClaims<F> for BooleanityAddressPhaseInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -73,7 +73,7 @@ pub struct BooleanityAddressPhaseChallenges<F> {
     pub gamma: F,
 }
 
-impl<F: Field> SumcheckChallenges<F> for BooleanityAddressPhaseChallenges<F> {
+impl<F: JoltField> SumcheckChallenges<F> for BooleanityAddressPhaseChallenges<F> {
     fn from_transcript_values<I: Iterator<Item = F>>(
         _values: I,
     ) -> Result<Self, ChallengeDrawError> {
@@ -118,11 +118,11 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(booleanity_address_phase_opening())
     }
 }

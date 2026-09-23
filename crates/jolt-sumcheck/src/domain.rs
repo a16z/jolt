@@ -2,10 +2,10 @@
 
 use crate::error::SumcheckError;
 use crate::round_proof::ClearRound;
-use crate::scalar::SumcheckScalar;
+use jolt_field::Field;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
 
-pub trait SumcheckDomain<F: SumcheckScalar> {
+pub trait SumcheckDomain<F: Field> {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>>;
 
     fn check_round_sum<R>(
@@ -55,7 +55,7 @@ impl SumcheckDomainSpec {
 
 impl<F> SumcheckDomain<F> for SumcheckDomainSpec
 where
-    F: SumcheckScalar,
+    F: Field,
 {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
         match *self {
@@ -72,12 +72,12 @@ pub struct BooleanHypercube;
 
 impl<F> SumcheckDomain<F> for BooleanHypercube
 where
-    F: SumcheckScalar,
+    F: Field,
 {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
-        let mut coefficients = vec![F::one(); degree + 1];
-        coefficients[0] = F::from_u64(2);
-        Ok(coefficients)
+        Ok(core::iter::once(F::from_u64(2))
+            .chain(core::iter::repeat_n(F::one(), degree))
+            .collect())
     }
 }
 
@@ -106,7 +106,7 @@ impl CenteredIntegerDomain {
 
 impl<F> SumcheckDomain<F> for CenteredIntegerDomain
 where
-    F: SumcheckScalar,
+    F: Field,
 {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
         self.power_sums(degree + 1)

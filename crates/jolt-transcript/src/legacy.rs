@@ -2,15 +2,21 @@
 //! `jolt-crypto`.
 //!
 //! Wraps a duplex sponge over each of the three backends and re-exposes
-//! the legacy `Transcript` / `AppendToTranscript` API. Removed once
-//! jolt-prover-legacy migrates to the split-trait surface.
+//! the compatibility `Transcript` / `AppendToTranscript` API. It can be
+//! removed once all consumers migrate to the split-trait surface.
 
+#[cfg(feature = "spongefish")]
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, Field, FromPrimitiveInt, TranscriptChallenge};
+#[cfg(feature = "spongefish")]
+use jolt_field::CanonicalEncoding;
+use jolt_field::{CanonicalBytes, Ring};
+#[cfg(feature = "spongefish")]
 use spongefish::{DuplexSpongeInterface, Encoding};
 
+#[cfg(feature = "spongefish")]
 use crate::codec::BytesMsg;
+#[cfg(feature = "spongefish")]
 use crate::setup::{EmptyInstance, PROTOCOL_ID};
 
 /// Maximum label length in bytes accepted by [`Transcript::new`] and the
@@ -29,8 +35,10 @@ pub const MAX_LABEL_LEN: usize = 32;
 /// spongefish session value, so distinct labels carry distinct domain
 /// barriers.
 pub trait Transcript: Default + Sync + Send + 'static {
-    /// The challenge type produced by this transcript.
-    type Challenge: TranscriptChallenge;
+    /// The challenge type produced by this transcript. Concrete transcript
+    /// implementations state any decoding or canonical-encoding capability
+    /// they need; custom transcripts may return an algebra-only field type.
+    type Challenge;
 
     /// Creates a new transcript with the given domain separation label.
     ///
@@ -81,14 +89,13 @@ pub trait Transcript: Default + Sync + Send + 'static {
     #[must_use]
     fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge>
     where
-        Self::Challenge: Field,
+        Self::Challenge: Ring,
     {
         let gamma = self.challenge_scalar();
-        let mut powers = vec![Self::Challenge::from_u64(1); len];
-        for index in 1..len {
-            powers[index] = powers[index - 1] * gamma;
-        }
-        powers
+        let one = Self::Challenge::from_u64(1);
+        std::iter::successors(Some(one), |power| Some(*power * gamma))
+            .take(len)
+            .collect()
     }
 
     /// Current 256-bit transcript state. Peeked non-destructively by
@@ -111,15 +118,14 @@ pub trait AppendToTranscript {
     /// Absorbs this value into the transcript.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
 
-    /// Byte length of the payload absorbed by [`append_to_transcript`], when
-    /// the type participates in jolt-prover-legacy's variable-length labeled appends.
+    /// Byte length of the payload absorbed by [`Self::append_to_transcript`], when
+    /// the type participates in variable-length labeled appends.
     fn transcript_payload_len(&self) -> Option<u64> {
         None
     }
 }
 
-/// Big-endian field element absorption (matches jolt-prover-legacy's EVM-compatible
-/// byte order).
+/// Big-endian field element absorption used by the deployed proof format.
 impl<F: CanonicalBytes> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         let mut buf = vec![0u8; F::NUM_BYTES];
@@ -146,7 +152,7 @@ where
     transcript.append(payload);
 }
 
-/// 32-byte zero-padded label word (matches jolt-prover-legacy's `raw_append_label`).
+/// 32-byte zero-padded label word used by the deployed proof format.
 pub struct Label(pub &'static [u8]);
 
 impl AppendToTranscript for Label {
@@ -157,13 +163,14 @@ impl AppendToTranscript for Label {
             core::str::from_utf8(self.0)
         );
         let mut padded = [0u8; 32];
-        padded[..self.0.len()].copy_from_slice(self.0);
+        let (head, _) = padded.split_at_mut(self.0.len());
+        head.copy_from_slice(self.0);
         transcript.append_bytes(&padded);
     }
 }
 
 /// Packed label (24 bytes) + count (8-byte big-endian) in one 32-byte word
-/// (matches jolt-prover-legacy's `raw_append_label_with_len`).
+/// used by the deployed proof format.
 pub struct LabelWithCount(pub &'static [u8], pub u64);
 
 impl AppendToTranscript for LabelWithCount {
@@ -174,14 +181,14 @@ impl AppendToTranscript for LabelWithCount {
             core::str::from_utf8(self.0)
         );
         let mut packed = [0u8; 32];
-        packed[..self.0.len()].copy_from_slice(self.0);
+        let (head, _) = packed.split_at_mut(self.0.len());
+        head.copy_from_slice(self.0);
         packed[24..32].copy_from_slice(&self.1.to_be_bytes());
         transcript.append_bytes(&packed);
     }
 }
 
-/// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value (matches
-/// jolt-prover-legacy's `raw_append_u64`).
+/// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value.
 pub struct U64Word(pub u64);
 
 impl AppendToTranscript for U64Word {
@@ -201,25 +208,28 @@ impl AppendToTranscript for U64Word {
 ///
 /// Construction mirrors spongefish's `DomainSeparator` builder:
 /// `protocol_id || session(label) || instance(())` are absorbed in order.
-pub struct SpongeTranscript<H, F = jolt_field::Fr>
+#[cfg(feature = "spongefish")]
+pub struct SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: TranscriptChallenge,
+    F: CanonicalEncoding,
 {
     sponge: H,
     _field: PhantomData<F>,
 }
 
+#[cfg(feature = "spongefish")]
 impl<H, F> Default for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: TranscriptChallenge,
+    F: CanonicalEncoding,
 {
     fn default() -> Self {
         Self::new(b"")
     }
 }
 
+#[cfg(feature = "spongefish")]
 fn absorb_encoded<H, T>(sponge: &mut H, value: &T)
 where
     H: DuplexSpongeInterface<U = u8>,
@@ -229,6 +239,7 @@ where
 }
 
 /// Peeks 32 bytes from a clone of the sponge so the real state stays put.
+#[cfg(feature = "spongefish")]
 fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] {
     let mut clone = sponge.clone();
     let mut buf = [0u8; 32];
@@ -236,10 +247,11 @@ fn peek_state<H: DuplexSpongeInterface<U = u8> + Clone>(sponge: &H) -> [u8; 32] 
     buf
 }
 
+#[cfg(feature = "spongefish")]
 impl<H, F> Transcript for SpongeTranscript<H, F>
 where
     H: DuplexSpongeInterface<U = u8> + Clone + Default + Send + Sync + 'static,
-    F: TranscriptChallenge,
+    F: CanonicalEncoding,
 {
     type Challenge = F;
 
@@ -282,7 +294,7 @@ where
         // see `prover.rs:53-55`) deliberately makes 128-bit challenges a
         // compile error on Poseidon-backed states. The two surfaces
         // disagree on purpose: the legacy facade preserves the legacy
-        // jolt-prover-legacy challenge width for in-flight consumers (jolt-sumcheck,
+        // deployed challenge width for in-flight consumers (jolt-sumcheck,
         // jolt-openings, jolt-crypto). Once those migrate to the split-trait
         // surface this facade goes away and the inconsistency with it.
         let mut buf = [0u8; 16];

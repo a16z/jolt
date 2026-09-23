@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::lookup_bits::LookupBits;
 use crate::tables::virtual_rev8w::rev8w;
@@ -7,7 +7,7 @@ use super::{PrefixEval, Prefixes, SparseDensePrefix};
 
 pub enum Rev8WPrefix {}
 
-impl<F: Field> SparseDensePrefix<F> for Rev8WPrefix {
+impl<F: JoltField> SparseDensePrefix<F> for Rev8WPrefix {
     fn default_checkpoint() -> F {
         F::zero()
     }

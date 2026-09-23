@@ -23,7 +23,7 @@
 //! disjointness check on the public bytecode re-verifies this per row at
 //! preprocessing.
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::bytecode::{
@@ -59,7 +59,7 @@ pub struct LatticeReadRafAddressPhaseInputClaims<C> {
     pub inc: IncClaimReductionInputClaims<C>,
 }
 
-impl<F: Field> InputClaims<F> for LatticeReadRafAddressPhaseInputClaims<F> {
+impl<F: JoltField> InputClaims<F> for LatticeReadRafAddressPhaseInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         let mut order = self.base.canonical_order();
         order.extend(InputClaims::<F>::canonical_order(&self.inc));
@@ -74,7 +74,7 @@ impl<F: Field> InputClaims<F> for LatticeReadRafAddressPhaseInputClaims<F> {
 }
 
 /// The four consumed inc claims in stage order (`γ^5..8`).
-fn fused_inc_stage_claims<F: RingCore>() -> Vec<JoltExpr<F>> {
+fn fused_inc_stage_claims<F: Ring>() -> Vec<JoltExpr<F>> {
     vec![
         opening(ram_inc()),
         opening(ram_inc_val_check()),
@@ -116,17 +116,18 @@ impl SymbolicSumcheck for LatticeReadRafAddressPhase {
         self.shape.num_committed_ra_polys() + 1
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_address_input_fold(fused_inc_stage_claims())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 }
 
 /// The lattice cycle-phase produced openings: the committed `BytecodeRa`
 /// chunks plus the `FusedInc` stream at the bound cycle point.
+#[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
     serialize = "C: serde::Serialize",
@@ -173,11 +174,11 @@ impl SymbolicSumcheck for LatticeReadRafCyclePhase {
         self.shape.num_committed_ra_polys() + 2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_cycle_output_lattice(self.shape)
     }
 }
@@ -215,11 +216,11 @@ impl SymbolicSumcheck for LatticeReadRafCyclePhaseCommitted {
         self.shape.num_committed_ra_polys() + 2
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         opening(bytecode_read_raf_address_phase_opening())
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         read_raf_cycle_output_committed_lattice(self.shape)
     }
 }
@@ -234,7 +235,7 @@ mod tests {
     use crate::protocols::jolt::geometry::spartan::pc_shift;
     use crate::protocols::jolt::BytecodeReadRafPublic;
     use crate::SymbolicSumcheck;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> BytecodeReadRafDimensions {
         BytecodeReadRafDimensions::new(5, 10, 2)

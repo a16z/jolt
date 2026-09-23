@@ -10,7 +10,7 @@
 //! and requires identical challenges and final claims. A divergence means
 //! the c₁-recovery arithmetic disagrees with the polynomial it defines.
 
-use jolt_field::{Fr, ReducingBytes};
+use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::CompressedPoly;
 use jolt_sumcheck::{
     BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, SumcheckClaim, SumcheckVerifier,
@@ -91,5 +91,5 @@ fuzz_target!(|data: &[u8]| {
 #[inline]
 fn read_scalar(bytes: &[u8]) -> Fr {
     debug_assert_eq!(bytes.len(), SCALAR_BYTES);
-    <Fr as ReducingBytes>::from_le_bytes_mod_order(bytes)
+    <Fr as CanonicalEncoding>::from_bytes_le_reduced(bytes)
 }

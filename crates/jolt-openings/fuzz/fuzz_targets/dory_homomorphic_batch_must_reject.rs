@@ -10,7 +10,7 @@
 use std::sync::OnceLock;
 
 use jolt_dory::{DoryCommitment, DoryHint, DoryProverSetup, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, HomomorphicBatch, VerifierOpeningClaim,
     ZkBatchOpeningScheme, ZkOpeningScheme,
@@ -340,8 +340,9 @@ fuzz_target!(|data: &[u8]| {
             .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
 
             let alternate = alternate_polynomial(&polynomials[0]);
-            let (wrong_commitment, _) = DoryScheme::commit_zk(alternate.evaluations(), prover_setup)
-                .unwrap_or_else(|error| panic!("alternate ZK commit failed: {error}"));
+            let (wrong_commitment, _) =
+                DoryScheme::commit_zk(alternate.evaluations(), prover_setup)
+                    .unwrap_or_else(|error| panic!("alternate ZK commit failed: {error}"));
             if wrong_commitment == commitments[0] {
                 return;
             }

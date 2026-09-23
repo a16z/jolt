@@ -10,7 +10,7 @@
 use std::sync::OnceLock;
 
 use jolt_crypto::{Bn254, Bn254G1, Pedersen, PedersenSetup, VectorCommitment};
-use jolt_field::{Fr, FromPrimitiveInt, ReducingBytes};
+use jolt_field::{CanonicalEncoding, Fr, Ring};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -39,7 +39,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let scalar_at = |index: usize| {
         let start = 1 + index * SCALAR_BYTES;
-        <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[start..start + SCALAR_BYTES])
+        <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[start..start + SCALAR_BYTES])
     };
     let values_a: Vec<Fr> = (0..len).map(scalar_at).collect();
     let values_b: Vec<Fr> = (0..len).map(|i| scalar_at(len + i)).collect();

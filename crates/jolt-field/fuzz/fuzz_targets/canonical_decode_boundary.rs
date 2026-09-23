@@ -10,7 +10,7 @@
 
 use std::sync::OnceLock;
 
-use jolt_field::{FixedBytes, Fr, ReducingBytes};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigUint;
 
@@ -54,8 +54,8 @@ fuzz_target!(|data: &[u8]| {
         _ => raw,
     };
 
-    let decoded = <Fr as ReducingBytes>::from_le_bytes_mod_order(&candidate);
-    let canonical = decoded.to_bytes_array();
+    let decoded = <Fr as CanonicalEncoding>::from_bytes_le_reduced(&candidate);
+    let canonical = decoded.to_bytes_le_vec();
     let got = BigUint::from_bytes_le(&canonical);
 
     assert!(&got < modulus(), "canonical encoding is not fully reduced");

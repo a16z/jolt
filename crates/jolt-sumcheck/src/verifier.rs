@@ -12,7 +12,6 @@ use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::proof::CompressedSumcheckProof;
 use crate::round_proof::{ClearRound, RoundMessage};
-use crate::scalar::SumcheckScalar;
 
 /// Stateless sumcheck verifier engine.
 pub struct SumcheckVerifier;
@@ -52,7 +51,7 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
+        F: Field,
         T: Transcript<Challenge = F>,
         R: ClearRound<F>,
         D: SumcheckDomain<F>,
@@ -93,7 +92,7 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: Field,
+        F: Field + AppendToTranscript,
         T: Transcript<Challenge = F>,
     {
         if proof.round_polynomials.len() != claim.num_vars {
@@ -142,7 +141,7 @@ impl SumcheckVerifier {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
+        F: Field,
         T: Transcript<Challenge = F>,
         C: Clone + AppendToTranscript,
     {
@@ -176,7 +175,7 @@ impl SumcheckVerifier {
 
 impl<F> CompressedSumcheckProof<F>
 where
-    F: Field,
+    F: Field + AppendToTranscript,
 {
     pub fn verify<T>(
         &self,
@@ -203,7 +202,7 @@ impl<C> CommittedSumcheckProof<C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        F: SumcheckScalar,
+        F: Field,
         T: Transcript<Challenge = F>,
         C: Clone + AppendToTranscript,
     {

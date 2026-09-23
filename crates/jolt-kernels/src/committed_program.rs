@@ -14,11 +14,12 @@
 //! are built here once and shared.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::{
-    is_valid_committed_bytecode_chunking_for_len, total_lanes, BYTECODE_LANE_LAYOUT,
-    COMMITTED_BYTECODE_LANE_CAPACITY,
+    is_valid_committed_bytecode_chunking_for_len, is_valid_committed_program_immediate,
+    total_lanes, BYTECODE_LANE_LAYOUT, COMMITTED_BYTECODE_LANE_CAPACITY,
+    INVALID_COMMITTED_PROGRAM_IMMEDIATE,
 };
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_lookup_tables::{InstructionLookupTable, XLEN};
 use jolt_riscv::instructions::Noop;
 use jolt_riscv::{
@@ -40,7 +41,7 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
 ];
 
 /// The sparse `(lane, value)` encoding of one committed bytecode row.
-fn for_each_active_lane_value<F: Field>(
+fn for_each_active_lane_value<F: JoltField>(
     instruction: &JoltInstructionRow,
     mut visit: impl FnMut(usize, F),
 ) {
@@ -88,11 +89,19 @@ fn for_each_active_lane_value<F: Field>(
 /// Build the per-chunk committed bytecode coefficient grids, interleaved by
 /// the proof's trace order.
 #[tracing::instrument(skip_all, name = "build_committed_bytecode_chunk_coeffs")]
-pub fn build_committed_bytecode_chunk_coeffs<F: Field>(
+pub fn build_committed_bytecode_chunk_coeffs<F: JoltField>(
     instructions: &[JoltInstructionRow],
     chunk_count: usize,
     order: TracePolynomialOrder,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
+    if instructions
+        .iter()
+        .any(|instruction| !is_valid_committed_program_immediate(instruction.operands.imm))
+    {
+        return Err(KernelError::InvalidGeometry {
+            reason: INVALID_COMMITTED_PROGRAM_IMMEDIATE.to_owned(),
+        });
+    }
     let bytecode_len = instructions.len();
     if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
         return Err(KernelError::InvalidGeometry {

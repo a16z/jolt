@@ -19,7 +19,7 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
-use jolt_field::FromPrimitiveInt;
+use jolt_field::Ring;
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::LegacyBlake2bTranscript;
 
@@ -341,7 +341,8 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
 #[cfg(feature = "akita")]
 #[test]
 fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
-    use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaScheme, AkitaTranscript, AkitaVc};
+    use jolt_akita::{AkitaField, AkitaScheme};
+    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
     use support::akita_fixtures::akita_muldiv_case;
 
     let case = akita_muldiv_case();
@@ -393,7 +394,9 @@ fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
 #[cfg(feature = "akita")]
 #[test]
 fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
-    use jolt_prover_legacy::zkvm::packed::{AkitaField, AkitaScheme, AkitaTranscript, AkitaVc};
+    use jolt_akita::{AkitaField, AkitaScheme};
+    use jolt_field::Ring;
+    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
     use support::akita_fixtures::akita_muldiv_case;
 
     let case = akita_muldiv_case();

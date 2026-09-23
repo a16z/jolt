@@ -262,8 +262,11 @@ impl<C: GrumpkinFieldConfig> GrumpkinField<C> {
             .ok_or(C::invalid_element_error())
     }
 
+    /// # Invariants
+    /// `arr` must be a canonical value in `[0, modulus)`. Non-canonical limbs
+    /// break the field inlines' operand contract and spoil the proof.
     #[inline(always)]
-    pub fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
+    pub(crate) fn from_u64_arr_unchecked(arr: &[u64; 4]) -> Self {
         Self::new(C::new_unchecked(BigInt(*arr)))
     }
 
@@ -484,7 +487,6 @@ pub struct GrumpkinCurve;
 
 impl CurveParams<GrumpkinFq> for GrumpkinCurve {
     type Error = GrumpkinError;
-    const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = true;
     fn curve_b() -> GrumpkinFq {
         GrumpkinFq::negative_seventeen()
     }

@@ -1,46 +1,47 @@
+pub mod btreemap;
 pub mod fibonacci;
 pub mod secp256k1_ecdsa;
+pub mod sha2;
 pub mod sha2_chain;
+pub mod sha3;
+pub mod sha3_chain;
 
-use ark_bn254::Fr;
-use jolt_prover_legacy::curve::Bn254Curve;
-use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_prover_legacy::transcripts::Blake2bTranscript;
-use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
 pub use jolt_verifier::VerifierError;
 
 use common::constants::{DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE};
 use common::jolt_device::MemoryConfig;
+use jolt_prover::dory::DoryProverPreprocessing;
 
+pub use btreemap::BTreeMapOps;
 pub use fibonacci::Fibonacci;
-pub use jolt_prover_legacy::guest::program::Program as GuestProgram;
+pub use jolt_host::Program as GuestProgram;
 pub use secp256k1_ecdsa::Secp256k1EcdsaVerify;
+pub use sha2::Sha2;
 pub use sha2_chain::Sha2Chain;
+pub use sha3::Sha3;
+pub use sha3_chain::Sha3Chain;
 pub use tracer::JoltDevice;
 
-pub type F = Fr;
-pub type C = Bn254Curve;
-pub type PCS = DoryCommitmentScheme;
-pub type FS = Blake2bTranscript;
 pub type VerifierField = jolt_field::Fr;
 pub type VerifierPCS = jolt_dory::DoryScheme;
 pub type VerifierVC = jolt_crypto::Pedersen<jolt_crypto::Bn254G1>;
 pub type VerifierTranscript = jolt_transcript::LegacyBlake2bTranscript<VerifierField>;
 
 pub type Proof = jolt_verifier::JoltProof<VerifierPCS, VerifierVC>;
-pub type ProverPreprocessing = jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing<F, C, PCS>;
+pub type ProverPreprocessing = DoryProverPreprocessing;
 pub type VerifierPreprocessing = jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
 
 pub fn prover_preprocessing(
-    program: &GuestProgram,
+    program: &mut GuestProgram,
+    memory_config: MemoryConfig,
     max_trace_length: usize,
 ) -> ProverPreprocessing {
-    jolt_prover_legacy::guest::prover::preprocess(program, max_trace_length)
+    jolt_sdk::preprocess_program(program, memory_config, max_trace_length, None)
         .expect("prover preprocessing failed")
 }
 
 pub fn verifier_preprocessing(prover_pp: &ProverPreprocessing) -> VerifierPreprocessing {
-    verifier_preprocessing_from_prover(prover_pp)
+    prover_pp.verifier_preprocessing()
 }
 
 pub fn prove(
@@ -48,19 +49,8 @@ pub fn prove(
     prover_pp: &ProverPreprocessing,
     inputs: &[u8],
 ) -> (Proof, JoltDevice) {
-    let mut output_bytes = vec![0u8; program.memory_config.max_output_size as usize];
-    let (proof, io_device, _debug) = jolt_prover_legacy::guest::prover::prove::<F, C, PCS, FS>(
-        program,
-        inputs,
-        &[],
-        &[],
-        None,
-        None,
-        &mut output_bytes,
-        prover_pp,
-    )
-    .expect("prover should produce verifier-native proof");
-    (proof, io_device)
+    jolt_sdk::prove_program(program, prover_pp, inputs, &[], &[], None, None, None)
+        .expect("prover should produce verifier-native proof")
 }
 
 pub fn verify(
@@ -114,6 +104,15 @@ pub trait GuestConfig: Default + Send + Sync {
     /// Cargo package name (e.g. "fibonacci-guest").
     fn package(&self) -> &str;
 
+    /// Provable function to build when the package defines more than one.
+    fn func(&self) -> Option<&str> {
+        None
+    }
+
+    /// Objective-neutral guest label including parameters
+    /// (e.g. "fibonacci_400000"). Objectives prefix it with their own name.
+    fn label(&self) -> String;
+
     fn memory_config(&self) -> MemoryConfig {
         MemoryConfig {
             max_input_size: 4096,
@@ -130,5 +129,7 @@ pub trait GuestConfig: Default + Send + Sync {
     fn input(&self) -> Vec<u8>;
 
     /// Display name for the benchmark.
-    fn bench_name(&self) -> String;
+    fn bench_name(&self) -> String {
+        format!("prover_time_{}", self.label())
+    }
 }

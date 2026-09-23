@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use jolt_dory::DoryScheme;
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{Field, Fr};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -29,11 +29,17 @@ fn generate_deser_commitment_seeds() {
     let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
     let point: Vec<Fr> = (0..num_vars).map(|_| Fr::random(&mut rng)).collect();
     let eval = poly.evaluate(&point);
-    let (commitment, hint) =
-        DoryScheme::commit(poly.evaluations(), &prover_setup).expect("commit");
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup).expect("commit");
     let mut transcript = Blake2bTranscript::new(b"seed-gen");
-    let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut transcript)
-        .expect("open");
+    let proof = DoryScheme::open(
+        &poly,
+        &point,
+        eval,
+        &prover_setup,
+        Some(hint),
+        &mut transcript,
+    )
+    .expect("open");
 
     let commitment_bytes =
         bincode::serde::encode_to_vec(&commitment, config).expect("encode commitment");

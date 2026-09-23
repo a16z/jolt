@@ -31,8 +31,6 @@ pr-seconds = 90
 daily-seconds = 1800
 weekly-seconds = 5400
 
-# Weekly budgets sized so the workspace total (with valid_prefix_proof's
-# 90m) plus build, replay, cmin, and coverage fits the 240-minute job.
 [package.metadata.jolt-fuzz.targets.honest_then_corrupt]
 focus = "soundness"
 pr-seconds = 60
@@ -46,12 +44,15 @@ daily-seconds = 600
 weekly-seconds = 900
 
 [dependencies]
+num-traits = "0.2"
 libfuzzer-sys = "0.4"
 jolt-field = { path = "../../jolt-field" }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-sumcheck = { path = ".." }
-jolt-transcript = { path = "../../jolt-transcript" }
-num-traits = "0.2"
+jolt-transcript = { path = "../../jolt-transcript", features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 
 [[bin]]
 name = "sumcheck_verifier"

@@ -70,7 +70,9 @@ impl PoseidonSponge {
         let bytes = self.state.into_bigint().to_bytes_le();
         self.pending_squeeze.fill(0);
         let n = bytes.len().min(SQUEEZE_BYTES);
-        self.pending_squeeze[..n].copy_from_slice(&bytes[..n]);
+        let (dst, _) = self.pending_squeeze.split_at_mut(n);
+        let (src, _) = bytes.split_at(n);
+        dst.copy_from_slice(src);
         self.squeeze_offset = 0;
     }
 
@@ -131,19 +133,19 @@ impl DuplexSpongeInterface for PoseidonSponge {
     }
 
     fn squeeze(&mut self, output: &mut [u8]) -> &mut Self {
-        let mut written = 0;
-        while written < output.len() {
+        let mut remaining = &mut *output;
+        while !remaining.is_empty() {
             if self.squeeze_offset >= SQUEEZE_BYTES {
                 self.refill_squeeze();
             }
             let avail = SQUEEZE_BYTES - self.squeeze_offset;
-            let want = output.len() - written;
-            let take = avail.min(want);
-            output[written..written + take].copy_from_slice(
-                &self.pending_squeeze[self.squeeze_offset..self.squeeze_offset + take],
-            );
+            let take = avail.min(remaining.len());
+            let (head, tail) = std::mem::take(&mut remaining).split_at_mut(take);
+            let (_, pending) = self.pending_squeeze.split_at(self.squeeze_offset);
+            let (src, _) = pending.split_at(take);
+            head.copy_from_slice(src);
             self.squeeze_offset += take;
-            written += take;
+            remaining = tail;
         }
         self
     }

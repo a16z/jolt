@@ -1,18 +1,20 @@
 //! registers read-write checking symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use crate::protocols::jolt::geometry::registers::{
     rd_inc_read_write, rd_wa_read_write, rd_write_value_claim, registers_val_read_write,
     rs1_ra_read_write, rs1_value_claim, rs2_ra_read_write, rs2_value_claim,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, ReadWriteDimensions, RegistersReadWriteChallenge,
-    RegistersReadWritePublic,
+    JoltCommittedPolynomial, JoltExpr, JoltRelationId, JoltVirtualPolynomial, ReadWriteDimensions,
+    RegistersReadWriteChallenge, RegistersReadWritePublic, UnbatchedClaim, UnbatchedClaimExpr,
+    UnbatchedRelation,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced register read-write openings, all sharing the single read-write
 /// opening point. Generic over the opening cell (`F` for the serialized wire
@@ -66,6 +68,44 @@ pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
 }
 
+impl ReadWriteChecking {
+    pub fn unbatched_relation() -> UnbatchedRelation {
+        let v = UnbatchedClaimExpr::polynomial;
+        let c = |polynomial: JoltCommittedPolynomial| UnbatchedClaimExpr::polynomial(polynomial);
+        UnbatchedRelation {
+            output_relation: JoltRelationId::RegistersReadWriteChecking,
+            gamma: RegistersReadWriteChallenge::Gamma.into(),
+            claims: vec![
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::RegistersClaimReduction,
+                    input: v(JoltVirtualPolynomial::RdWriteValue),
+                    output: v(JoltVirtualPolynomial::RdWa)
+                        * (v(JoltVirtualPolynomial::RegistersVal)
+                            + c(JoltCommittedPolynomial::RdInc)),
+                    output_weight: RegistersReadWritePublic::EqCycle.into(),
+                    offset: false,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::RegistersClaimReduction,
+                    input: v(JoltVirtualPolynomial::Rs1Value),
+                    output: v(JoltVirtualPolynomial::Rs1Ra)
+                        * v(JoltVirtualPolynomial::RegistersVal),
+                    output_weight: RegistersReadWritePublic::EqCycle.into(),
+                    offset: false,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::RegistersClaimReduction,
+                    input: v(JoltVirtualPolynomial::Rs2Value),
+                    output: v(JoltVirtualPolynomial::Rs2Ra)
+                        * v(JoltVirtualPolynomial::RegistersVal),
+                    output_weight: RegistersReadWritePublic::EqCycle.into(),
+                    offset: false,
+                },
+            ],
+        }
+    }
+}
+
 impl SymbolicSumcheck for ReadWriteChecking {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
@@ -92,26 +132,12 @@ impl SymbolicSumcheck for ReadWriteChecking {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(RegistersReadWriteChallenge::Gamma);
-        opening(rd_write_value_claim())
-            + gamma.clone() * opening(rs1_value_claim())
-            + gamma.clone().pow(2) * opening(rs2_value_claim())
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
+        Self::unbatched_relation().folded_input()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
-        let gamma = challenge(RegistersReadWriteChallenge::Gamma);
-        let eq_cycle = derived(RegistersReadWritePublic::EqCycle);
-        eq_cycle.clone() * opening(rd_wa_read_write()) * opening(rd_inc_read_write())
-            + eq_cycle.clone() * opening(rd_wa_read_write()) * opening(registers_val_read_write())
-            + eq_cycle.clone()
-                * gamma.clone()
-                * opening(rs1_ra_read_write())
-                * opening(registers_val_read_write())
-            + eq_cycle
-                * gamma.pow(2)
-                * opening(rs2_ra_read_write())
-                * opening(registers_val_read_write())
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
+        Self::unbatched_relation().folded_output()
     }
 }
 
@@ -119,7 +145,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 7, 2, 1)

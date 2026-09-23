@@ -9,7 +9,7 @@
 use jolt_claims::protocols::jolt::geometry::{
     booleanity::BooleanityDimensions, dimensions::JoltFormulaDimensions,
 };
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::{bytecode_stage_points, BytecodeReadRafAddressPhase};
@@ -23,7 +23,7 @@ use crate::VerifierError;
 /// The batch legs [`Stage6aSumchecks::build_from_parts`] assembles the members
 /// from: protocol geometry and the mode-agnostic upstream opening points.
 /// Every field is data both the verifier and the prover hold.
-pub struct Stage6aBuildParts<'a, F: Field> {
+pub struct Stage6aBuildParts<'a, F: JoltField> {
     pub formula_dimensions: &'a JoltFormulaDimensions,
     pub committed_chunk_bits: usize,
     pub committed_program: bool,
@@ -35,7 +35,7 @@ pub struct Stage6aBuildParts<'a, F: Field> {
     pub stage5_points: &'a Stage5OutputPoints<F>,
 }
 
-impl<F: Field> Stage6aSumchecks<F> {
+impl<F: JoltField> Stage6aSumchecks<F> {
     /// Assemble the address-phase batch: the bytecode member carries the
     /// upstream cycle/register points and the entry index (full geometry at
     /// construction — the prover's kernel read path; the verifier itself

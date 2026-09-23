@@ -1,6 +1,6 @@
 //! field_inline rd-inc claim-reduction symbolic sumcheck relation.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::protocols::field_inline::geometry::claim_reductions::increments::{
     field_rd_inc_read_write, field_rd_inc_reduced, field_rd_inc_val_evaluation,
@@ -45,13 +45,13 @@ impl SymbolicSumcheck for ClaimReduction {
         2
     }
 
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn input_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         let eta = challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
 
         opening(field_rd_inc_read_write()) + eta * opening(field_rd_inc_val_evaluation())
     }
 
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn output_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         let eta = challenge(FieldRegistersIncClaimReductionChallenge::Gamma);
 
         let output_coeff = derived(FieldRegistersIncClaimReductionPublic::EqReadWrite)
@@ -64,7 +64,7 @@ impl SymbolicSumcheck for ClaimReduction {
 mod tests {
     use super::*;
 
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn dimensions() -> FieldRegistersTraceDimensions {
         FieldRegistersTraceDimensions::new(5)

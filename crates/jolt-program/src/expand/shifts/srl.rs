@@ -11,15 +11,13 @@ pub(in crate::expand) fn expand_srl(
     let v_bitmask = asm.allocate()?;
 
     asm.emit_i(
-        JoltInstructionKind::VirtualShiftRightBitmask(
-            jolt_riscv::instructions::VirtualShiftRightBitmask(()),
-        ),
+        Kind::VirtualShiftRightBitmask(jolt_riscv::instructions::VirtualShiftRightBitmask(())),
         v_bitmask.operand(),
         reg(rs2(instruction)?),
         0,
     );
     asm.emit_r(
-        JoltInstructionKind::VirtualSRL,
+        Kind::VirtualSRL,
         reg(rd(instruction)?),
         reg(rs1(instruction)?),
         v_bitmask.operand(),

@@ -1,0 +1,88 @@
+# Posts one sticky PR comment classifying the diff into actual code / tests /
+# docs / fixtures (scripts/ci/diff_classifier.py). Informational only: the job
+# never fails the PR — classification errors degrade to a note in the job
+# summary, and fork PRs (whose token cannot write comments) degrade to the
+# job summary alone.
+name: PR Diff Classification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # blob:none keeps the full-history fetch small (commits + trees only);
+      # the classifier needs real history for an exact merge-base, and git
+      # lazily batch-fetches just the blobs the diff touches.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Classify diff
+        id: classify
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if python3 scripts/ci/diff_classifier.py \
+              --base "origin/${BASE_REF}" \
+              --head "${HEAD_SHA}" \
+              --format markdown \
+              --details \
+              --output "${RUNNER_TEMP}/diff-classifier.md"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            cat "${RUNNER_TEMP}/diff-classifier.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Never fail the PR on classification errors.
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "Diff classification failed; skipping the PR comment." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Fork PRs get a read-only token, so the comment step is skipped for
+      # them; the classification above still lands in the job summary.
+      - name: Upsert sticky comment
+        if: steps.classify.outputs.ok == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        uses: actions/github-script@v9
+        env:
+          COMMENT_PATH: ${{ runner.temp }}/diff-classifier.md
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- diff-classifier -->';
+            const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            }

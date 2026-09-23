@@ -2,7 +2,7 @@
 
 use std::{cmp::min, ops::Range};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 
 use super::super::super::{JoltAdviceKind, JoltOpeningId, JoltRelationId};
@@ -97,7 +97,7 @@ impl AdviceClaimReductionLayout {
 
     /// `FinalScale` value when the reduction completes in the cycle phase
     /// (i.e. no active address-phase rounds remain).
-    pub fn cycle_phase_final_output_scale<F: Field>(
+    pub fn cycle_phase_final_output_scale<F: JoltField>(
         &self,
         reference_opening_point: &[F],
         challenges: &[F],
@@ -113,7 +113,7 @@ impl AdviceClaimReductionLayout {
     /// opening point, rather than re-deriving it from the sumcheck challenges.
     /// Lets the cycle-phase relation object's `resolve_public` recover the scale
     /// from the opening point it produced in `derive_opening_points`.
-    pub fn cycle_phase_scale_at_opening_point<F: Field>(
+    pub fn cycle_phase_scale_at_opening_point<F: JoltField>(
         &self,
         reference_opening_point: &[F],
         opening_point: &[F],
@@ -126,7 +126,7 @@ impl AdviceClaimReductionLayout {
     }
 
     /// `FinalScale` value when the reduction completes in the address phase.
-    pub fn address_phase_final_output_scale<F: Field>(
+    pub fn address_phase_final_output_scale<F: JoltField>(
         &self,
         reference_opening_point: &[F],
         cycle_var_challenges: &[F],
@@ -142,7 +142,7 @@ impl AdviceClaimReductionLayout {
     /// opening point, rather than re-deriving it from the cycle/sumcheck
     /// challenges. Lets the stage 7 relation object's `resolve_public` recover the
     /// scale from the opening point it produced in `derive_opening_points`.
-    pub fn address_phase_scale_at_opening_point<F: Field>(
+    pub fn address_phase_scale_at_opening_point<F: JoltField>(
         &self,
         reference_opening_point: &[F],
         opening_point: &[F],
@@ -158,7 +158,7 @@ impl PrecommittedReductionLayout for AdviceClaimReductionLayout {
     }
 }
 
-fn final_advice_eq_eval<F: Field>(
+fn final_advice_eq_eval<F: JoltField>(
     reference_opening_point: &[F],
     opening_point: &[F],
 ) -> Result<F, JoltFormulaPointError> {

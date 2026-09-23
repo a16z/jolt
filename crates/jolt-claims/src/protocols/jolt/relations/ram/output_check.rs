@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::ram::ram_val_final;
@@ -42,7 +42,7 @@ impl<C> Default for RamOutputCheckInputClaims<C> {
     }
 }
 
-impl<F: Field> InputClaims<F> for RamOutputCheckInputClaims<F> {
+impl<F: JoltField> InputClaims<F> for RamOutputCheckInputClaims<F> {
     fn canonical_order(&self) -> Vec<JoltOpeningId> {
         Vec::new()
     }
@@ -67,7 +67,7 @@ pub struct RamOutputCheckChallenges<F> {
     pub output_address: Vec<F>,
 }
 
-impl<F: Field> SumcheckChallenges<F> for RamOutputCheckChallenges<F> {
+impl<F: JoltField> SumcheckChallenges<F> for RamOutputCheckChallenges<F> {
     fn from_transcript_values<I: Iterator<Item = F>>(
         _values: I,
     ) -> Result<Self, ChallengeDrawError> {
@@ -113,11 +113,11 @@ impl SymbolicSumcheck for OutputCheck {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
         JoltExpr::zero()
     }
 
-    fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
         derived(RamOutputCheckPublic::EqAddress)
             * derived(RamOutputCheckPublic::IoMask)
             * opening(ram_val_final())
@@ -131,7 +131,7 @@ impl SymbolicSumcheck for OutputCheck {
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {
         ReadWriteDimensions::new(5, 4, 2, 1)

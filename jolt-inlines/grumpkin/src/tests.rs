@@ -111,6 +111,25 @@ mod sequence_tests {
         assert_divr_trace_equiv(&a, &b);
     }
 
+    /// A zero divisor must not abort advice generation: the inline emits `c = 0`
+    /// and the guest-side check in `div_assume_nonzero` spoils the proof.
+    #[test]
+    fn test_grumpkin_div_zero_divisor_yields_zero_advice() {
+        for funct3 in [GRUMPKIN_DIVQ_ADV_FUNCT3, GRUMPKIN_DIVR_ADV_FUNCT3] {
+            let layout = InlineMemoryLayout::two_inputs(32, 32, 32);
+            let mut harness = InlineTestHarness::new(layout);
+            harness.setup_registers();
+            harness.load_input64(&[1u64, 2u64, 3u64, 4u64]);
+            harness.load_input2_64(&[0u64; 4]);
+            harness.execute_inline(InlineTestHarness::create_default_instruction(
+                INLINE_OPCODE,
+                funct3,
+                GRUMPKIN_FUNCT7,
+            ));
+            assert_eq!(harness.read_output64(4), vec![0u64; 4]);
+        }
+    }
+
     fn u64_point_mul(scalar: u64, point: &GrumpkinPoint) -> GrumpkinPoint {
         let mut res = GrumpkinPoint::infinity();
         for i in (0..64).rev() {

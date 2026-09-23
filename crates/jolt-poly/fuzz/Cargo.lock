@@ -323,10 +323,11 @@ dependencies = [
  "ark-bn254",
  "ark-ff",
  "ark-serialize",
+ "cc",
  "num-traits",
- "rand",
  "rand_core",
  "serde",
+ "thiserror",
 ]
 
 [[package]]

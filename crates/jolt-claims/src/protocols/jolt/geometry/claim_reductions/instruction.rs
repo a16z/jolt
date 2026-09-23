@@ -1,4 +1,4 @@
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::{challenge, opening};
 
@@ -15,7 +15,7 @@ pub(crate) fn weighted_claims<F>(
     right_instruction_input: JoltOpeningId,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let gamma = challenge(InstructionClaimReductionChallenge::Gamma);
 

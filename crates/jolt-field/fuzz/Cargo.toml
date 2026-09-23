@@ -45,11 +45,27 @@ pr-seconds = 30
 daily-seconds = 600
 weekly-seconds = 1500
 
+[package.metadata.jolt-fuzz.targets.solinas_field_arith]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
+[package.metadata.jolt-fuzz.targets.fp128_asm_differential]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-field = { path = ".." }
-num-bigint = "0.4"
+jolt-field = { path = "..", default-features = false, features = [
+  "bn254",
+  "fuzzing",
+  "solinas",
+] }
 num-traits = "0.2"
+num-bigint = "0.4"
 
 [[bin]]
 name = "from_bytes"
@@ -91,4 +107,18 @@ name = "wide_accumulator_merge"
 path = "fuzz_targets/wide_accumulator_merge.rs"
 test = false
 doc = false
+bench = false
+
+[[bin]]
+name = "solinas_field_arith"
+path = "fuzz_targets/solinas_field_arith.rs"
+doc = false
+test = false
+bench = false
+
+[[bin]]
+name = "fp128_asm_differential"
+path = "fuzz_targets/fp128_asm_differential.rs"
+doc = false
+test = false
 bench = false

@@ -11,7 +11,7 @@
 //! the staged stage-4 contribution.
 
 use jolt_claims::protocols::jolt::{PrecommittedReductionLayout, ProgramImageClaimReductionLayout};
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 use crate::ProverInputs;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::ProgramImageReductionCyclePhase;
@@ -22,7 +22,7 @@ use crate::committed_program::program_image_words_padded;
 use crate::precommitted_reduction::{permute_tables, CycleReductionKernel};
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
-impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -45,7 +45,7 @@ impl<F: Field> PrepareKernel<F, ProgramImageReductionCyclePhase<F>> for Referenc
 
 /// The program-image reduction's cycle-phase kernel — see the module doc for
 /// the value/eq table construction.
-fn program_image_reduction_kernel<F: Field>(
+fn program_image_reduction_kernel<F: JoltField>(
     layout: &ProgramImageClaimReductionLayout,
     r_addr_rw: &[F],
     start_index: usize,

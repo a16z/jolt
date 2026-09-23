@@ -43,7 +43,13 @@ const fn pad_id(src: &[u8]) -> [u8; 64] {
     let mut buf = [0u8; 64];
     let mut i = 0;
     while i < src.len() {
-        buf[i] = src[i];
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < src.len() <= 64 == buf.len(); const-evaluated, so an out-of-bounds index fails compilation"
+        )]
+        {
+            buf[i] = src[i];
+        }
         i += 1;
     }
     buf

@@ -39,20 +39,18 @@ impl RISCVTrace for REM {
         let x = cpu.x[self.operands.rs1 as usize];
         let y = cpu.x[self.operands.rs2 as usize];
 
-        let (quotient, remainder) = if y == 0 {
-            (u64::MAX, x.unsigned_abs())
+        let quotient_magnitude = if y == 0 {
+            0
         } else if x == cpu.most_negative() && y == -1 {
-            (x as u64, 0)
+            1 << 63
         } else {
-            let quotient = x / y;
-            let remainder = x % y;
-            (quotient as u64, remainder.unsigned_abs())
+            (x / y).unsigned_abs()
         };
 
         super::trace_inline_sequence_with_advice(
             &Instruction::from(*self),
             cpu,
-            &[quotient, remainder],
+            &[quotient_magnitude],
             trace,
         );
     }

@@ -648,9 +648,6 @@ impl CurveParams<P256Fq> for P256Curve {
         P256Fq::from_u64_arr_unchecked(&crate::P256_CURVE_B)
     }
 
-    // Fake GLV Shamir verification produces infinity -- needs this check.
-    const DOUBLE_AND_ADD_DIVISOR_CHECK: bool = true;
-
     fn not_on_curve_error() -> Self::Error {
         P256Error::NotOnCurve
     }

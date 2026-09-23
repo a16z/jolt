@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use jolt_field::{Field, RingCore};
+use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::InstructionFlags;
 
@@ -51,7 +51,7 @@ pub const CANONICAL_INSTRUCTION_ADDRESS: bool = cfg!(feature = "akita");
 /// product. Taking the trailing half instead would both miss the aliases and
 /// reject honest cycles — `SUB(2^64-1, 0)` has index `0x1_FFFF_FFFF_FFFF_FFFF`,
 /// whose low limb is all ones.
-pub fn upper_half_all_ones<F: Field>(r_address: &[F]) -> F {
+pub fn upper_half_all_ones<F: JoltField>(r_address: &[F]) -> F {
     r_address[..r_address.len() / 2]
         .iter()
         .copied()
@@ -164,7 +164,7 @@ impl InstructionReadRafDimensions {
         self.instruction_address_bits + self.log_t
     }
 
-    pub fn opening_point<F: Field>(
+    pub fn opening_point<F: JoltField>(
         self,
         challenges: &[F],
     ) -> Result<InstructionReadRafOpeningPoint<F>, JoltFormulaPointError> {
@@ -190,7 +190,7 @@ impl InstructionReadRafDimensions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstructionReadRafOpeningPoint<F: Field> {
+pub struct InstructionReadRafOpeningPoint<F: JoltField> {
     pub r_address: Vec<F>,
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
@@ -231,6 +231,11 @@ impl InstructionRaVirtualizationDimensions {
         num_virtual_ra_polys: NonZeroUsize,
         num_committed_per_virtual: NonZeroUsize,
     ) -> Result<Self, JoltFormulaDimensionsError> {
+        let _sumcheck_degree = num_committed_per_virtual.get().checked_add(1).ok_or(
+            JoltFormulaDimensionsError::Overflow {
+                name: "instruction RA virtualization sumcheck degree",
+            },
+        )?;
         let num_committed_ra_polys = num_virtual_ra_polys
             .get()
             .checked_mul(num_committed_per_virtual.get())
@@ -374,7 +379,7 @@ pub(crate) fn weighted_instruction_ra_sum<F>(
     gamma: JoltExpr<F>,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut sum = JoltExpr::zero();
     for i in 0..dimensions.num_virtual_ra_polys() {
@@ -385,7 +390,7 @@ where
 
 pub(crate) fn instruction_ra_product<F>(dimensions: InstructionReadRafDimensions) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut product = JoltExpr::one();
     for i in 0..dimensions.num_virtual_ra_polys() {
@@ -399,7 +404,7 @@ pub(crate) fn committed_instruction_ra_product<F>(
     virtual_index: usize,
 ) -> JoltExpr<F>
 where
-    F: RingCore,
+    F: Ring,
 {
     let mut product = JoltExpr::one();
     let start = virtual_index * dimensions.num_committed_per_virtual();
@@ -497,7 +502,7 @@ pub fn imm() -> JoltOpeningId {
 #[expect(clippy::panic)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     #[test]
     fn read_raf_rejects_empty_dimensions() {
@@ -547,5 +552,7 @@ mod tests {
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 0, 1)).is_err());
         assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, 0)).is_err());
         assert!(InstructionRaVirtualizationDimensions::try_from((5, usize::MAX, 2)).is_err());
+        assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, usize::MAX)).is_err());
+        assert!(InstructionRaVirtualizationDimensions::try_from((5, 1, usize::MAX - 1)).is_ok());
     }
 }

@@ -1,6 +1,6 @@
 use jolt_claims::protocols::jolt::{geometry::spartan::SpartanOuterDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_field::FromPrimitiveInt;
+use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
@@ -28,7 +28,7 @@ where
     T: Transcript<Challenge = PCS::Field>,
 {
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
-    let log_t = checked.trace_length.ilog2() as usize;
+    let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
     let tau = uniskip::draw_spartan_outer_tau(transcript, log_t);
 

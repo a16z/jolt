@@ -4,26 +4,33 @@
 //! [`prove_batch`] is the single batched-sumcheck prover, the mirror of the
 //! generated per-stage `verify_clear`/`verify_zk` tails in `jolt-verifier`: it
 //! consumes the [`BatchPrelude`] the generated `begin_batch` produced (so the
-//! head's Fiat-Shamir sequence is shared code, not convention), drives the
-//! members through the offset-windowed round loop, and records rounds
-//! through a [`SumcheckRecorder`] — the clear/ZK seam. Only this engine and
-//! the recorder touch the transcript; batch members compute pure field data.
+//! head's Fiat-Shamir sequence is shared code, not convention), delegates each
+//! round's member calls to a [`RoundScheduler`] (stock: [`SequentialRounds`]),
+//! and records rounds through a [`SumcheckRecorder`] — the clear/ZK seam. Only
+//! this engine and the recorder touch the transcript; batch members compute
+//! pure field data.
 //!
-//! [`prove_uniskip_clear`] / [`prove_uniskip_committed`] mirror
+//! [`prove_uniskip_clear`] and the `committed` feature's uni-skip prover mirror
 //! `jolt-verifier/src/stages/uniskip.rs`'s two verify arms: a univariate-skip
 //! round is a genuinely different round type (separate wire proof, single
 //! degree-bounded round over a centered integer domain, full — not compressed
 //! — coefficients in the clear), so it is not a batch member and does not go
 //! through the recorder.
 
+#[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::Field;
-use jolt_poly::UnivariatePoly;
-use jolt_transcript::Transcript;
+#[cfg(feature = "committed")]
+use jolt_field::JoltField;
+use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_transcript::{AppendToTranscript, Transcript};
+#[cfg(feature = "committed")]
 use rand_core::RngCore;
 
 use crate::batch::BatchPrelude;
-use crate::committed::{CommittedSumcheckBuilder, CommittedSumcheckWitness};
+#[cfg(feature = "committed")]
+use crate::committed::CommittedSumcheckBuilder;
+use crate::committed::CommittedSumcheckWitness;
 use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
 use crate::error::SumcheckError;
 use crate::proof::{ClearProof, ClearSumcheckProof, SumcheckProof};
@@ -70,6 +77,80 @@ pub trait ProveRounds<F: Field> {
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
 }
 
+/// One active member for a single batch round.
+pub struct MemberRound<'a, F: Field> {
+    pub index: usize,
+    pub local_round: usize,
+    pub bind: Option<F>,
+    pub claim: F,
+    pub member: &'a mut dyn ProveRounds<F>,
+    pub message: Option<UnivariatePoly<F>>,
+}
+
+impl<F: Field> MemberRound<'_, F> {
+    pub fn run(&mut self) -> Result<(), SumcheckError<F>> {
+        self.message = Some(
+            self.member
+                .prove_round(self.bind, self.local_round, self.claim)?,
+        );
+        Ok(())
+    }
+}
+
+/// One ever-active member and its final bind, for after the round loop.
+pub struct MemberFinish<'a, F: Field> {
+    pub bind: F,
+    pub member: &'a mut dyn ProveRounds<F>,
+}
+
+impl<F: Field> MemberFinish<'_, F> {
+    pub fn run(&mut self) -> Result<(), SumcheckError<F>> {
+        self.member.finish_rounds(self.bind)
+    }
+}
+
+/// How a batch's rounds visit its members. Order and transport are free;
+/// activity, padding, fold, round-sum checks, and transcript stay in
+/// [`prove_batch`]. Leaving a handle's message unset is
+/// [`SumcheckError::MissingRoundMessage`].
+pub trait RoundScheduler<F: Field> {
+    fn batch_prove_round(
+        &mut self,
+        work: &mut [MemberRound<'_, F>],
+    ) -> Result<(), SumcheckError<F>>;
+
+    fn batch_finish_rounds(
+        &mut self,
+        finishes: &mut [MemberFinish<'_, F>],
+    ) -> Result<(), SumcheckError<F>>;
+}
+
+/// Declaration-order traversal. Stateless.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SequentialRounds;
+
+impl<F: Field> RoundScheduler<F> for SequentialRounds {
+    fn batch_prove_round(
+        &mut self,
+        work: &mut [MemberRound<'_, F>],
+    ) -> Result<(), SumcheckError<F>> {
+        for item in work.iter_mut() {
+            item.run()?;
+        }
+        Ok(())
+    }
+
+    fn batch_finish_rounds(
+        &mut self,
+        finishes: &mut [MemberFinish<'_, F>],
+    ) -> Result<(), SumcheckError<F>> {
+        for item in finishes.iter_mut() {
+            item.run()?;
+        }
+        Ok(())
+    }
+}
+
 /// A proved batch: the round challenges (the batch opening point), the final
 /// combined running claim (what the verifier's `expected_final_claim` must
 /// reproduce — stage recipes hard-check this), and each member's final bound
@@ -106,11 +187,10 @@ fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F
 /// stage-side, so the stage computes its canonical opening values and calls
 /// `recorder.finish` itself.
 ///
-/// # Panics
-///
-/// Panics if `prelude.max_degree == 0` and the batch has rounds to prove — a
-/// sumcheck round polynomial must have degree at least 1 (the same invariant
-/// `SumcheckClaim::new` enforces on the verify side).
+/// Returns [`SumcheckError::ZeroBatchDegree`] if `prelude.max_degree == 0` and
+/// the batch has rounds to prove — a sumcheck round polynomial must have
+/// degree at least 1 (the same invariant `SumcheckClaim::new` enforces on the
+/// verify side).
 #[tracing::instrument(
     skip_all,
     name = "prove_batch",
@@ -119,6 +199,7 @@ fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F
 pub fn prove_batch<F, R, T>(
     prelude: &BatchPrelude<F>,
     members: &mut [&mut dyn ProveRounds<F>],
+    scheduler: &mut dyn RoundScheduler<F>,
     recorder: &mut R,
     transcript: &mut T,
 ) -> Result<ProvedBatch<F>, SumcheckError<F>>
@@ -141,29 +222,12 @@ where
                 got: member.num_rounds(),
             });
         }
-        // An oversized window would silently truncate: the round loop would
-        // never consult the member's final local rounds, yet every in-engine
-        // round check would still pass.
-        if described.offset + described.rounds > prelude.max_num_vars {
-            return Err(SumcheckError::BatchMemberWindowOutOfRange {
-                member: index,
-                offset: described.offset,
-                rounds: described.rounds,
-                max_num_vars: prelude.max_num_vars,
-            });
-        }
     }
+    prelude.validate()?;
     let max_num_vars = prelude.max_num_vars;
-    assert!(
-        max_num_vars == 0 || prelude.max_degree >= 1,
-        "sumcheck round polynomial must have degree >= 1"
-    );
 
-    #[expect(
-        clippy::unwrap_used,
-        reason = "2 is invertible in any field of characteristic != 2, and Jolt fields are large-prime"
-    )]
-    let two_inv = F::from_u64(2).inverse().unwrap();
+    let two_inv = F::two_inv();
+    let coefficient_count = prelude.max_degree + 1;
     // Each member's running claim, at the dummy-round padding scale: a member
     // starts at `input_claim * 2^(max - rounds)` and halves once per inactive
     // round. A tail-aligned member reaches its true input claim exactly when
@@ -185,36 +249,58 @@ where
         // Per-round span (~log T per batch): members' `<Relation>::prove_round`
         // spans nest under it, never inside per-index inner loops.
         let _round_span = tracing::info_span!("sumcheck_round", round).entered();
-        let mut batched_coefficients = vec![F::zero(); prelude.max_degree + 1];
-        let mut round_polys: Vec<Option<UnivariatePoly<F>>> = Vec::with_capacity(members.len());
 
-        for (index, member) in members.iter_mut().enumerate() {
-            let described = &prelude.members[index];
+        let mut batched_coefficients = vec![F::zero(); coefficient_count];
+        let mut work: Vec<MemberRound<'_, F>> = Vec::with_capacity(members.len());
+        for (index, ((member, described), (member_claim, pending_bind))) in members
+            .iter_mut()
+            .zip(&prelude.members)
+            .zip(member_claims.iter_mut().zip(pending_binds.iter_mut()))
+            .enumerate()
+        {
             let active = round >= described.offset && round < described.offset + described.rounds;
             if !active {
                 // Inactive: the constant polynomial `claim / 2`, so
                 // `s(0) + s(1)` preserves the member's claim and evaluation at
                 // any challenge halves it.
-                batched_coefficients[0] += described.coefficient * member_claims[index] * two_inv;
-                round_polys.push(None);
+                *member_claim *= two_inv;
+                if let Some(constant) = batched_coefficients.first_mut() {
+                    *constant += described.coefficient * *member_claim;
+                }
                 continue;
             }
-            let poly = member.prove_round(
-                pending_binds[index].take(),
-                round - described.offset,
-                member_claims[index],
-            )?;
-            let poly_degree = poly.degree();
+            work.push(MemberRound {
+                index,
+                local_round: round - described.offset,
+                bind: pending_bind.take(),
+                claim: *member_claim,
+                member: &mut **member,
+                message: None,
+            });
+        }
+        scheduler.batch_prove_round(&mut work)?;
+
+        for item in &work {
+            let poly = item
+                .message
+                .as_ref()
+                .ok_or(SumcheckError::MissingRoundMessage { member: item.index })?;
+            let poly_degree = UnivariatePolynomial::degree(poly);
             if poly_degree > prelude.max_degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
                     got: poly_degree,
                     max: prelude.max_degree,
                 });
             }
+            let described = prelude.members.get(item.index).ok_or(
+                SumcheckError::RoundMemberIndexOutOfRange {
+                    member: item.index,
+                    members: prelude.members.len(),
+                },
+            )?;
             for (slot, coefficient) in batched_coefficients.iter_mut().zip(poly.coefficients()) {
                 *slot += described.coefficient * *coefficient;
             }
-            round_polys.push(Some(poly));
         }
 
         let batched_poly = trim_round_polynomial(batched_coefficients);
@@ -231,24 +317,32 @@ where
         running_claim = batched_poly.evaluate(challenge);
         challenges.push(challenge);
 
-        for (index, poly) in round_polys.into_iter().enumerate() {
-            match poly {
-                Some(poly) => {
-                    member_claims[index] = poly.evaluate(challenge);
-                    pending_binds[index] = Some(challenge);
-                }
-                None => member_claims[index] *= two_inv,
+        // Attribution is by member index, not position: a reordering traversal
+        // makes declaration-order zip impossible here.
+        for item in &work {
+            if let Some(poly) = &item.message {
+                let out_of_range = || SumcheckError::RoundMemberIndexOutOfRange {
+                    member: item.index,
+                    members: prelude.members.len(),
+                };
+                *member_claims.get_mut(item.index).ok_or_else(out_of_range)? =
+                    poly.evaluate(challenge);
+                *pending_binds.get_mut(item.index).ok_or_else(out_of_range)? = Some(challenge);
             }
         }
     }
 
-    // Deliver each ever-active member's final round challenge; a member with
-    // no rounds never activated and has nothing pending.
-    for (member, pending) in members.iter_mut().zip(pending_binds) {
-        if let Some(bind) = pending {
-            member.finish_rounds(bind)?;
+    // Members that never activated have nothing pending.
+    let mut finishes: Vec<MemberFinish<'_, F>> = Vec::with_capacity(members.len());
+    for (member, bind) in members.iter_mut().zip(pending_binds.iter()) {
+        if let Some(bind) = *bind {
+            finishes.push(MemberFinish {
+                bind,
+                member: &mut **member,
+            });
         }
     }
+    scheduler.batch_finish_rounds(&mut finishes)?;
 
     Ok(ProvedBatch {
         challenges,
@@ -262,7 +356,7 @@ where
 /// challenge — the batch driver absorbs it again as the remainder's input
 /// claim).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProvedUniskip<F: Field, C> {
+pub struct ProvedUniskip<F: Field, C = ()> {
     pub proof: SumcheckProof<F, C>,
     pub challenge: F,
     pub output_claim: F,
@@ -282,15 +376,16 @@ pub struct ProvedUniskipCommitted<F: Field, C> {
 /// Self-check the uni-skip round polynomial against the verifier's round
 /// checks before anything reaches the transcript: degree bound and
 /// centered-integer-domain round sum.
-fn check_uniskip_round<F: Field>(
+fn check_uniskip_round<F: Field + AppendToTranscript>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
     domain_size: usize,
 ) -> Result<(), SumcheckError<F>> {
-    if round_poly.degree() > degree {
+    let round_degree = UnivariatePolynomial::degree(round_poly);
+    if round_degree > degree {
         return Err(SumcheckError::DegreeBoundExceeded {
-            got: round_poly.degree(),
+            got: round_degree,
             max: degree,
         });
     }
@@ -316,7 +411,7 @@ pub fn prove_uniskip_clear<F, C, T>(
     transcript: &mut T,
 ) -> Result<ProvedUniskip<F, C>, SumcheckError<F>>
 where
-    F: Field,
+    F: Field + AppendToTranscript,
     T: Transcript<Challenge = F>,
 {
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
@@ -341,6 +436,7 @@ where
 /// output claim. The claim scalar never reaches the transcript. Blindings
 /// come from the caller-supplied `rng`.
 #[tracing::instrument(skip_all, name = "prove_uniskip_committed")]
+#[cfg(feature = "committed")]
 pub fn prove_uniskip_committed<F, VC, T, R>(
     round_poly: UnivariatePoly<F>,
     input_claim: F,
@@ -351,7 +447,7 @@ pub fn prove_uniskip_committed<F, VC, T, R>(
     transcript: &mut T,
 ) -> Result<ProvedUniskipCommitted<F, VC::Output>, SumcheckError<F>>
 where
-    F: Field,
+    F: JoltField,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
     R: RngCore,

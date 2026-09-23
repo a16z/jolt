@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 
 use dory::primitives::arithmetic::Group;
 use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Fr, RandomSampling};
+use jolt_field::{Field, Fr};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -41,8 +41,8 @@ fn fixture() -> &'static Fixture {
         let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
         let point: Vec<Fr> = (0..NUM_VARS).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
-        let (commitment, hint) = DoryScheme::commit(poly.evaluations(), &prover_setup)
-            .expect("fixture commit");
+        let (commitment, hint) =
+            DoryScheme::commit(poly.evaluations(), &prover_setup).expect("fixture commit");
 
         let mut pt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
         let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt)

@@ -6,7 +6,8 @@
 use ark_bn254::{Fr, G2Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};
-use ark_std::Zero;
+use ark_std::{cfg_iter, Zero};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::decomp_4d::decompose_scalar_4d;
@@ -18,8 +19,7 @@ use super::frobenius::frobenius_psi_power_projective;
 pub fn glv_four_scalar_mul_online(scalar: Fr, points: &[G2Projective]) -> Vec<G2Projective> {
     let (coeffs, signs) = decompose_scalar_4d(scalar);
 
-    points
-        .par_iter()
+    cfg_iter!(points)
         .map(|point| {
             let bases = [
                 *point,
@@ -48,6 +48,10 @@ pub(crate) fn shamir_glv_mul_4d(
     for bit_idx in (0..max_bits).rev() {
         result = result.double();
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < 4 from enumerating fixed-size-4 arrays; signs is also [bool; 4]"
+        )]
         for (i, (coeff, &base)) in coeffs.iter().zip(bases.iter()).enumerate() {
             if coeff.get_bit(bit_idx) {
                 if signs[i] {

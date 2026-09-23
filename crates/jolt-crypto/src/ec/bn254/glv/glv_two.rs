@@ -6,7 +6,8 @@
 use ark_bn254::{Fr, G1Projective};
 use ark_ec::AdditiveGroup;
 use ark_ff::{BigInteger, PrimeField};
-use ark_std::Zero;
+use ark_std::{cfg_iter, cfg_iter_mut, Zero};
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::decomp_2d::{decompose_scalar_2d, glv_endomorphism};
@@ -27,6 +28,10 @@ pub(crate) fn shamir_glv_mul_2d(
     for bit_idx in (0..max_bits).rev() {
         result = result.double();
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < 2 from enumerating fixed-size-2 arrays; signs is also [bool; 2]"
+        )]
         for (i, (coeff, &base)) in coeffs.iter().zip(bases.iter()).enumerate() {
             if coeff.get_bit(bit_idx) {
                 if signs[i] {
@@ -51,7 +56,7 @@ impl PrecomputedShamir2Table {
     fn new(bases: &[G1Projective; 2]) -> Self {
         let mut table = [G1Projective::zero(); 16];
 
-        table.par_iter_mut().enumerate().for_each(|(idx, point)| {
+        cfg_iter_mut!(table).enumerate().for_each(|(idx, point)| {
             let point_mask = idx & 0x3;
             let sign_mask = idx >> 2;
 
@@ -71,6 +76,10 @@ impl PrecomputedShamir2Table {
     }
 
     #[inline]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "point_mask and sign_mask are 2-bit values, so the index is < 16"
+    )]
     fn get(&self, point_mask: usize, sign_mask: usize) -> G1Projective {
         self.table[point_mask | (sign_mask << 2)]
     }
@@ -95,6 +104,10 @@ fn shamir_glv_mul_2d_precomputed(
         let mut point_mask = 0;
         let mut sign_mask = 0;
 
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "i < 2 from enumerating a fixed-size-2 array; signs is also [bool; 2]"
+        )]
         for (i, coeff) in coeffs.iter().enumerate() {
             if coeff.get_bit(bit_idx) {
                 point_mask |= 1 << i;
@@ -141,8 +154,7 @@ impl FixedBasePrecomputedG1 {
     }
 
     fn mul_scalars(&self, scalars: &[Fr]) -> Vec<G1Projective> {
-        scalars
-            .par_iter()
+        cfg_iter!(scalars)
             .map(|&scalar| self.mul_scalar(scalar))
             .collect()
     }

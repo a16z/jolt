@@ -11,9 +11,8 @@
 //!   no-access cycles), so the address-folded value is a single eq-table
 //!   lookup — `ra_i(r_chunk_i, j) = eq_table_i[chunk_i(address_j)]`, zero
 //!   when the cycle makes no access. `T` lookups per chunk, no grid.
-//! - **Session-carried access columns**: the per-cycle addresses come from
-//!   [`RamAccessColumns::shared`] — one typed trace walk shared with the
-//!   whole optimized RAM family across the proof session.
+//! - **Shared address column**: [`SharedRamAddresses::shared`] supplies one
+//!   address column to the optimized RAM kernels.
 //! - **Gruen split-eq factoring**: `eq(r_cycle, ·)` is never materialized or
 //!   bound; each round emits `s(t) = ℓ(t) · Σ_y E(y) · Π_i ra_i(t, y)` at
 //!   the naive prover's `t = 0..=degree` sample points through the same
@@ -23,7 +22,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use std::sync::Arc;
 
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
@@ -35,7 +34,7 @@ use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{RamAccessColumns, NO_ACCESS};
+use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
 use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -43,7 +42,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -76,12 +75,10 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
             });
         }
 
-        let columns = RamAccessColumns::shared(session, witness, log_t)?;
-        // This is the RAM family's last consumer: remove the session's copy
-        // so the columns free at the lazy fold's materialization instead of
-        // living to the end of the proof.
-        let _ = session.take::<Arc<RamAccessColumns>>();
-        columns.validate_addresses(1usize << ram_reduced_address.len())?;
+        let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
+        // Last RAM consumer: release the session's address handle.
+        let _ = session.take::<SharedRamAddresses>();
+        super::ram_trace::validate_addresses(&addresses, 1usize << ram_reduced_address.len())?;
 
         // One eq table per committed chunk point (each `2^w` entries); the
         // point-mass fold stays lazy — one table lookup per accessed cycle —
@@ -90,7 +87,7 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
             RamAddressChunks {
-                columns,
+                addresses,
                 num_committed,
                 committed_chunk_bits,
             },
@@ -104,10 +101,10 @@ impl<F: Field> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend {
     }
 }
 
-/// Lazy-RA index source: chunk `i` of the per-cycle remapped RAM address,
-/// cold on no-access cycles, off the session-shared access columns.
+/// Address chunk `i`, absent on no-access cycles.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
-    columns: Arc<RamAccessColumns>,
+    addresses: Arc<Vec<u32>>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
@@ -118,12 +115,12 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 
     fn cycles(&self) -> usize {
-        self.columns.addresses.len()
+        self.addresses.len()
     }
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
-        let address = self.columns.addresses[j];
+        let address = self.addresses[j];
         if address == NO_ACCESS {
             return None;
         }
@@ -133,7 +130,8 @@ impl ChunkIndexSource for RamAddressChunks {
     }
 }
 
-struct RamRaVirtualizationKernel<F: Field> {
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct RamRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(address_j))`, 0 on no-access
@@ -143,15 +141,7 @@ struct RamRaVirtualizationKernel<F: Field> {
     gruen: GruenSplitEqPolynomial<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(RamRaVirtualizationKernel, |kernel| {
-    kernel
-        .folded_ra
-        .heap_bytes(|source| source.columns.heap_bytes())
-        + kernel.gruen.heap_bytes()
-});
-
-impl<F: Field> RamRaVirtualizationKernel<F> {
+impl<F: JoltField> RamRaVirtualizationKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
     /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
     fn message(
@@ -172,9 +162,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
-                // `ram_k == 1` commits no RA polynomials; the empty committed
-                // product is 1 (the reference tier's fold over an empty chunk
-                // set), so q(t) degenerates to Σ_y E(y).
+                // With no committed RA polynomials, the product is one.
                 if num_committed == 0 {
                     for value in acc.iter_mut() {
                         *value += e_in;
@@ -222,7 +210,7 @@ impl<F: Field> RamRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
+impl<F: JoltField> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -245,7 +233,7 @@ impl<F: Field> ProveRounds<F> for RamRaVirtualizationKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for RamRaVirtualizationKernel<F> {
     type Relation = RamRaVirtualization<F>;
 
     fn output_claims(
@@ -288,7 +276,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationInputClaims;
     use jolt_claims::NoChallenges;
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::VerifierError;
 
@@ -376,7 +364,7 @@ mod tests {
             // Pre-warm the session so the kernel exercises the shared-columns
             // reclaim path (the real pipeline parks them in stage 2).
             let mut session = ProofSession::default();
-            let _ = RamAccessColumns::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
+            let _ = SharedRamAddresses::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
             let optimized = PrepareKernel::<Fr, _>::prepare(
                 &OptimizedBackend,
                 &mut session,
@@ -440,15 +428,7 @@ mod tests {
         );
     }
 
-    /// `ram_k = 1` commits ZERO RA polynomials (`log_k = 0` → no committed
-    /// chunks): the summand's committed product is the empty product 1, so
-    /// the round messages degenerate to `ℓ(t) · Σ_y E(y)`. The round loop
-    /// used to index out of bounds here (`evals[0]` of an empty vector); it
-    /// now stays in lockstep with the reference kernel through every round
-    /// and the output claims — and the geometry then fails CLOSED at the
-    /// driver's derived-table validation on BOTH kernels, because the
-    /// verifier relation recovers `r_cycle` for `EqCycle` from the first RA
-    /// opening point and there is none.
+    /// Covers the empty committed-RA product when `ram_k = 1`.
     #[test]
     fn zero_committed_chunks_prove_in_parity_and_fail_closed() {
         let seed = 443;

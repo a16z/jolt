@@ -13,7 +13,7 @@ use log::{debug, info};
 use rand::prelude::SliceRandom;
 use sysinfo::System;
 
-use build_wasm::{build_wasm, modify_cargo_toml};
+use build_wasm::build_wasm;
 use zeroos_build::cmds::{build::BacktraceMode, BuildArgs, StdMode};
 use zeroos_build::spec::TargetRenderOptions;
 
@@ -404,13 +404,10 @@ fn generate_linker_command(cli_args: JoltGenerateLinkerArgs) -> Result<()> {
 // Project scaffolding (original jolt new)
 // ============================================================================
 
-fn create_project(name: String, wasm: bool, zk: bool) {
+fn create_project(name: String, _wasm: bool, zk: bool) {
     create_folder_structure(&name).expect("could not create directory");
     create_host_files(&name, zk).expect("file creation failed");
     create_guest_files(&name, zk).expect("file creation failed");
-    if wasm {
-        modify_cargo_toml(&name).expect("Failed to update Cargo.toml");
-    }
     display_welcome();
 }
 
@@ -568,10 +565,9 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_fib(&mut program).unwrap();
 
-    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
+    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing);
     let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, None);
+        guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
 
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
@@ -626,11 +622,9 @@ pub fn main() {
 
     let shared_preprocessing = guest::preprocess_shared_fib(&mut program).unwrap();
 
-    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
-    let blindfold_setup = prover_preprocessing.blindfold_setup();
+    let prover_preprocessing = guest::preprocess_prover_fib(shared_preprocessing);
     let verifier_preprocessing =
-        guest::preprocess_verifier_fib(shared_preprocessing, verifier_setup, Some(blindfold_setup));
+        guest::verifier_preprocessing_from_prover_fib(&prover_preprocessing);
 
     let prove_fib = guest::build_prover_fib(program, prover_preprocessing);
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);

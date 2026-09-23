@@ -67,6 +67,7 @@ impl PublicIoMemory {
 #[cfg(test)]
 mod tests {
     #![expect(clippy::expect_used, reason = "tests should fail loudly")]
+    #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
     use super::*;
     use common::jolt_device::{JoltDevice, MemoryConfig};

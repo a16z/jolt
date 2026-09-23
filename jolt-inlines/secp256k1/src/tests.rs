@@ -7,6 +7,7 @@ mod sequence_tests {
     };
     use ark_ff::{BigInt, Field, PrimeField};
     use ark_secp256k1::{Fq, Fr};
+    use tracer::emulator::mmu::DRAM_BASE;
     use tracer::utils::inline_test_harness::{InlineMemoryLayout, InlineTestHarness};
 
     fn assert_divq_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
@@ -199,6 +200,58 @@ mod sequence_tests {
         assert_divr_trace_equiv(&a, &b);
     }
 
+    /// Division with the result buffer aliasing the dividend (`rs3 == rs1`).
+    /// The advised quotient must be stored only after every `VirtualAssertEQ`
+    /// against the dividend has run, otherwise the checks compare the stored
+    /// result against itself and any value would be accepted.
+    fn assert_div_trace_equiv_aliased(funct3: u32, a: &[u64; 4], b: &[u64; 4], expected: [u64; 4]) {
+        // rs1 == rs3: dividend and result share one 32-byte region
+        let layout = InlineMemoryLayout {
+            output_base: DRAM_BASE,
+            ..InlineMemoryLayout::two_inputs(32, 32, 32)
+        };
+
+        let mut harness = InlineTestHarness::new(layout);
+        harness.setup_registers();
+        harness.load_input64(a);
+        harness.load_input2_64(b);
+        harness.execute_inline(InlineTestHarness::create_default_instruction(
+            INLINE_OPCODE,
+            funct3,
+            SECP256K1_FUNCT7,
+        ));
+        let result_vec = harness.read_output64(4);
+        let mut result = [0u64; 4];
+        result.copy_from_slice(&result_vec);
+        assert_eq!(result, expected, "aliased div result mismatch");
+    }
+
+    #[test]
+    fn test_secp256k1_div_aliased_dividend_and_result() {
+        let a = [
+            0x123456789ABCDEF0,
+            0x0FEDCBA987654321,
+            0x1111111111111111,
+            0x2222222222222222,
+        ];
+        let b = [
+            0x0FEDCBA987654321,
+            0x123456789ABCDEF0,
+            0x3333333333333333,
+            0x4444444444444444,
+        ];
+
+        let expected_q = (Fq::new(BigInt(b)).inverse().unwrap() * Fq::new(BigInt(a)))
+            .into_bigint()
+            .0;
+        assert_div_trace_equiv_aliased(SECP256K1_DIVQ_FUNCT3, &a, &b, expected_q);
+
+        let expected_r = (Fr::new(BigInt(b)).inverse().unwrap() * Fr::new(BigInt(a)))
+            .into_bigint()
+            .0;
+        assert_div_trace_equiv_aliased(SECP256K1_DIVR_FUNCT3, &a, &b, expected_r);
+    }
+
     fn assert_mulr_trace_equiv(a: &[u64; 4], b: &[u64; 4]) {
         // get expected value
         let arr_to_fr = |arr: &[u64; 4]| Fr::new(BigInt(*arr));
@@ -285,6 +338,21 @@ mod sequence_tests {
         assert_squarer_trace_equiv(&a);
         let a = [1u64, 1u64, 1u64, 1u64];
         assert_squarer_trace_equiv(&a);
+    }
+
+    /// `double_and_add` divides by `x_self - x_{self+other}`, which is zero when
+    /// `other == -2*self`. That case must return infinity instead of dividing by
+    /// zero (which panics host advice generation and is unprovable in-guest).
+    #[test]
+    fn test_secp256k1_double_and_add_infinity() {
+        let g = Secp256k1Point::generator();
+        let neg_two_g = g.double().neg();
+
+        let result = g.double_and_add(&neg_two_g);
+        assert!(result.is_infinity(), "2G + (-2G) should be infinity");
+
+        let naive = g.double().add(&neg_two_g);
+        assert!(naive.is_infinity(), "naive 2G + (-2G) should be infinity");
     }
 
     fn u128_point_mul(scalar: u128, point: &Secp256k1Point) -> Secp256k1Point {

@@ -5,7 +5,7 @@
 //! (`eq_index_msb`), and the split tensor table (`TensorEqTable`) must agree
 //! on every hypercube index.
 
-use jolt_field::{Fr, ReducingBytes};
+use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::{eq_index_msb, EqPolynomial, TensorEqTable};
 use libfuzzer_sys::fuzz_target;
 
@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
     let point: Vec<Fr> = (0..num_vars)
         .map(|i| {
             let start = 1 + i * SCALAR_BYTES;
-            <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[start..start + SCALAR_BYTES])
+            <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[start..start + SCALAR_BYTES])
         })
         .collect();
 

@@ -100,7 +100,9 @@ class FuzzInventoryTests(unittest.TestCase):
 
             workspaces = FUZZ.discover_workspaces(root)
 
-            self.assertEqual([workspace.name for workspace in workspaces], ["alpha", "zeta"])
+            self.assertEqual(
+                [workspace.name for workspace in workspaces], ["alpha", "zeta"]
+            )
             self.assertEqual(workspaces[1].target_names(), ("first", "second"))
 
     def test_discovers_top_level_workspace(self) -> None:
@@ -161,10 +163,10 @@ class FuzzInventoryTests(unittest.TestCase):
                 targets=("alpha",),
                 policies={
                     "alpha": (
-                        'focus = "soundness"\n'
-                        'cargo-features = ["zk", "fuzzing"]\n'
+                        "focus = 'soundness' # TOML literal string\n"
+                        "cargo-features = [\n  'zk',\n  'fuzzing',\n]\n"
                         "pr-seconds = 30\n"
-                        "daily-seconds = 600\n"
+                        "daily-seconds = 600 # budget\n"
                         "weekly-seconds = 900\n"
                     )
                 },
@@ -247,7 +249,12 @@ class FuzzInventoryTests(unittest.TestCase):
                 FUZZ.discover_workspaces(root)
 
     def test_rejects_missing_or_invalid_budget(self) -> None:
-        for budget_line in ("", 'daily-seconds = "fast"\n', "daily-seconds = 3.5\n"):
+        for budget_line in (
+            "",
+            'daily-seconds = "fast"\n',
+            "daily-seconds = 3.5\n",
+            "daily-seconds = true\n",
+        ):
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 self.make_workspace(
@@ -327,8 +334,22 @@ class FuzzInventoryTests(unittest.TestCase):
             self.assertEqual(
                 commands,
                 [
-                    ["cargo", "check", "--locked", "--quiet", "--bin", "one"],
-                    ["cargo", "check", "--locked", "--quiet", "--bin", "two"],
+                    [
+                        "cargo",
+                        "check",
+                        "--locked",
+                        "--message-format=short",
+                        "--bin",
+                        "one",
+                    ],
+                    [
+                        "cargo",
+                        "check",
+                        "--locked",
+                        "--message-format=short",
+                        "--bin",
+                        "two",
+                    ],
                 ],
             )
 
@@ -563,6 +584,22 @@ class FuzzInventoryTests(unittest.TestCase):
             ):
                 FUZZ.check_workspace(root, workspace, resolve=False)
 
+    def test_resolution_failure_fails_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            self.make_validated_workspace(root, targets=("alpha",))
+            output, errors = StringIO(), StringIO()
+            with (
+                mock.patch.object(FUZZ, "repository_root", return_value=root),
+                mock.patch.object(FUZZ, "run_command", return_value=101) as command,
+                redirect_stdout(output),
+                redirect_stderr(errors),
+            ):
+                self.assertEqual(FUZZ.main(("check", "--resolve")), 1)
+            self.assertNotIn("Validated", output.getvalue())
+            self.assertIn("sample", errors.getvalue())
+            self.assertNotIn("--no-deps", command.call_args.args[0])
+
     def test_validation_rejects_missing_toolchain_component(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -607,7 +644,7 @@ class FuzzInventoryTests(unittest.TestCase):
                     FUZZ,
                     "run_command",
                     side_effect=lambda command, **_: commands.append(command) or 0,
-                ),
+                ) as invocation,
             ):
                 for command in ("reproduce", "tmin"):
                     status = FUZZ.main(
@@ -622,11 +659,35 @@ class FuzzInventoryTests(unittest.TestCase):
                     )
                     self.assertEqual(status, 0)
 
+            for call in invocation.call_args_list:
+                self.assertEqual(call.kwargs["cwd"], root)
             self.assertEqual(
                 commands,
                 [
-                    ["cargo", "fuzz", "run", "--sanitizer", "address", "alpha", str(artifact)],
-                    ["cargo", "fuzz", "tmin", "--sanitizer", "address", "alpha", str(artifact)],
+                    [
+                        "cargo",
+                        f"+{FUZZ.PINNED_NIGHTLY}",
+                        "fuzz",
+                        "run",
+                        "--fuzz-dir",
+                        str(root / "crates/sample/fuzz"),
+                        "--sanitizer",
+                        "address",
+                        "alpha",
+                        str(artifact),
+                    ],
+                    [
+                        "cargo",
+                        f"+{FUZZ.PINNED_NIGHTLY}",
+                        "fuzz",
+                        "tmin",
+                        "--fuzz-dir",
+                        str(root / "crates/sample/fuzz"),
+                        "--sanitizer",
+                        "address",
+                        "alpha",
+                        str(artifact),
+                    ],
                 ],
             )
 
@@ -655,10 +716,12 @@ class FuzzInventoryTests(unittest.TestCase):
                 )
                 self.assertEqual(FUZZ.main(("--sanitizer", "none", "coverage")), 0)
 
-            self.assertEqual(commands[0][:5], ["cargo", "fuzz", "run", "--sanitizer", "none"])
+            self.assertEqual([command[3] for command in commands], ["run", "coverage"])
+            for command in commands:
+                self.assertEqual(command[command.index("--sanitizer") + 1], "none")
             self.assertEqual(
-                commands[1][:5],
-                ["cargo", "fuzz", "coverage", "--sanitizer", "none"],
+                commands[1][commands[1].index("--target-dir") + 1],
+                str(fuzz_dir / "target-coverage"),
             )
 
     def test_reproducer_commands_require_workspace_and_target(self) -> None:

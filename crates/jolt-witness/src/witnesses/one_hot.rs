@@ -3,9 +3,9 @@
 //! `ExtractIndexed` index binding — which chunk of which decomposition is
 //! bound at the use site.
 
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
-use super::{Extract, ExtractIndexed, LookupIndex, MappedPc, RemappedRamAddress, WitnessEnv};
+use super::{BytecodePc, Extract, ExtractIndexed, LookupIndex, RemappedRamAddress, WitnessEnv};
 use crate::{WitnessError, JOLT_VM_LABEL};
 
 /// Selects one `chunk_bits`-wide chunk of a decomposed address, indexed from
@@ -53,14 +53,15 @@ impl RaChunkSelector {
 
 /// Hot address of one committed `InstructionRa` chunk: the selected chunk of
 /// the instruction's lookup index. Every cycle is hot — no-op rows look up
-/// index 0 — so, unlike its bytecode and RAM siblings, there is no cold case.
+/// index 0 — so there is no cold case.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InstructionRaChunk(pub usize);
 
 /// Hot address of one committed `BytecodeRa` chunk: the selected chunk of
-/// the bytecode PC; cold when the row has no bytecode mapping.
+/// the bytecode PC. Every cycle is hot — [`BytecodePc`] is total, so no-op
+/// rows land on the slot-0 chunk. `RamRaChunk` is the only cold one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BytecodeRaChunk(pub Option<usize>);
+pub struct BytecodeRaChunk(pub usize);
 
 /// Hot address of one committed `RamRa` chunk: the selected chunk of the
 /// remapped RAM word address; cold for no-ops and unremappable addresses.
@@ -68,7 +69,7 @@ pub struct BytecodeRaChunk(pub Option<usize>);
 pub struct RamRaChunk(pub Option<usize>);
 
 // A chunk witness is its per-cycle hot address; `None` is a cold cycle.
-// Instruction chunks are hot every cycle (no-op rows look up index 0).
+// Only RAM has one — instruction and bytecode chunks are hot every cycle.
 impl From<InstructionRaChunk> for Option<usize> {
     fn from(chunk: InstructionRaChunk) -> Self {
         Some(chunk.0)
@@ -77,7 +78,7 @@ impl From<InstructionRaChunk> for Option<usize> {
 
 impl From<BytecodeRaChunk> for Option<usize> {
     fn from(chunk: BytecodeRaChunk) -> Self {
-        chunk.0
+        Some(chunk.0)
     }
 }
 
@@ -106,11 +107,8 @@ impl ExtractIndexed<RaChunkSelector> for BytecodeRaChunk {
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(
-            MappedPc::extract(row, next, env)?
-                .0
-                .map(|pc| selector.chunk_usize(pc)),
-        ))
+        let pc = BytecodePc::extract(row, next, env)?.0;
+        Ok(Self(selector.chunk_usize(pc)))
     }
 }
 

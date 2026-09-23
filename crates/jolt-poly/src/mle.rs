@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use thiserror::Error;
 
 use crate::eq_index_msb;
@@ -21,7 +21,7 @@ pub enum MleError {
     BlockEndOutOfDomain { end: u128, domain_size: u128 },
 }
 
-pub fn sparse_mle_msb<F: Field>(start_index: u128, values: &[u64], point: &[F]) -> F {
+pub fn sparse_mle_msb<F: JoltField>(start_index: u128, values: &[u64], point: &[F]) -> F {
     values
         .iter()
         .enumerate()
@@ -33,7 +33,7 @@ pub fn sparse_mle_msb<F: Field>(start_index: u128, values: &[u64], point: &[F]) 
 
 pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
 where
-    F: Field,
+    F: JoltField,
     I: IntoIterator<Item = (u128, &'a [u64])>,
 {
     segments
@@ -42,7 +42,7 @@ where
         .sum()
 }
 
-pub fn block_selector_mle_msb<F: Field>(
+pub fn block_selector_mle_msb<F: JoltField>(
     start_index: u128,
     block_num_vars: usize,
     point: &[F],
@@ -86,7 +86,7 @@ pub fn block_selector_mle_msb<F: Field>(
     Ok(eq_index_msb(&point[..selector_point_len], block_index))
 }
 
-pub fn range_mask_mle_msb<F: Field>(
+pub fn range_mask_mle_msb<F: JoltField>(
     range_start: u128,
     range_end: u128,
     point: &[F],
@@ -110,7 +110,7 @@ pub fn range_mask_mle_msb<F: Field>(
     Ok(less_than_mle_msb(range_end, point) - less_than_mle_msb(range_start, point))
 }
 
-fn less_than_mle_msb<F: Field>(bound: u128, point: &[F]) -> F {
+fn less_than_mle_msb<F: JoltField>(bound: u128, point: &[F]) -> F {
     if Some(bound) == 1u128.checked_shl(point.len() as u32) {
         return F::one();
     }
@@ -142,7 +142,7 @@ mod tests {
 
     use super::*;
     use crate::{eq_index_msb, try_eq_mle};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use num_traits::{One, Zero};
 
     #[test]

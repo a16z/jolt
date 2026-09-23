@@ -5,8 +5,7 @@
 //! `K`-sized address-eq table and binds four dense tables (eq, mask, val_io,
 //! val_final) through the naive expression interpreter every round.
 //!
-//! Techniques ported from `jolt-prover-legacy/src/zkvm/ram/output_check.rs`
-//! (`OutputSumcheckProver`):
+//! Carries forward the former `OutputSumcheckProver` optimizations:
 //!
 //! - **Gruen split-eq factoring**: `eq(r_address, ·)` is held as an
 //!   `E_out ⊗ E_in` tensor plus a per-round linear factor
@@ -30,7 +29,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -46,7 +45,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
+impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -98,7 +97,8 @@ impl<F: Field> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
-struct OutputCheckKernel<F: Field> {
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct OutputCheckKernel<F: JoltField> {
     progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
     io_mask: Polynomial<F>,
@@ -106,18 +106,7 @@ struct OutputCheckKernel<F: Field> {
     val_final: Polynomial<F>,
     bind_scratch: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OutputCheckKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    kernel.gruen.heap_bytes()
-        + poly_heap_bytes(&kernel.io_mask)
-        + poly_heap_bytes(&kernel.val_io)
-        + poly_heap_bytes(&kernel.val_final)
-        + vec_heap_bytes(&kernel.bind_scratch)
-});
-
-impl<F: Field> OutputCheckKernel<F> {
+impl<F: JoltField> OutputCheckKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
     /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
     fn message(
@@ -174,7 +163,7 @@ impl<F: Field> OutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
+impl<F: JoltField> ProveRounds<F> for OutputCheckKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
     }
@@ -197,7 +186,7 @@ impl<F: Field> ProveRounds<F> for OutputCheckKernel<F> {
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
     type Relation = RamOutputCheck<F>;
 
     fn output_claims(
@@ -226,14 +215,8 @@ impl<F: Field> SumcheckKernel<F> for OutputCheckKernel<F> {
             (RamOutputCheckPublic::IoMask, self.io_mask.evals()[0]),
             (RamOutputCheckPublic::ValIo, self.val_io.evals()[0]),
         ] {
-            pin_derived_term(
-                relation,
-                JoltDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
-                got,
-            )?;
+            let id = JoltDerivedId::from(public);
+            pin_derived_term(relation, id, input_points, output_points, challenges, got)?;
         }
         Ok(())
     }
@@ -245,7 +228,7 @@ mod tests {
     use common::constants::RAM_START_ADDRESS;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, ReadWriteDimensions};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_program::execution::{JoltProgram, MemoryImage, OwnedTrace, TraceOutput, TraceRow};
     use jolt_program::preprocess::{
         BytecodePreprocessing, JoltProgramPreprocessing, PublicIoMemory, RAMPreprocessing,
@@ -306,10 +289,7 @@ mod tests {
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
         });
-        let rows = vec![TraceRow {
-            instruction,
-            ..TraceRow::default()
-        }];
+        let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
         // Post-execution DRAM bytes (outside the IO mask): nonzero
         // `val_final − val_io` there keeps the later round polynomials
         // nontrivial while the Boolean-point sum stays zero.
@@ -333,7 +313,7 @@ mod tests {
         let inputs = JoltVmWitnessInputs::new(
             &program,
             &preprocessing,
-            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory)),
+            TraceOutput::new(OwnedTrace::new(rows), device, Some(final_memory), None),
         );
         let backend = TraceBackend::new(config, inputs);
         f(&backend, public_memory)

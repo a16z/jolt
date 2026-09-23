@@ -8,7 +8,7 @@
 //! constraints, while changing only the claimed result must violate them.
 
 use jolt_claims::{Expr, Source, Term};
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_r1cs::{assert_claim_expr_eq, ClaimSourceTable, R1csBuilder, SourceValue};
 use libfuzzer_sys::fuzz_target;
 
@@ -25,11 +25,7 @@ fn word(data: &[u8], cursor: &mut usize) -> u64 {
     u64::from_le_bytes(bytes)
 }
 
-fn source_value(
-    builder: &mut R1csBuilder<Fr>,
-    value: Fr,
-    use_variable: bool,
-) -> SourceValue<Fr> {
+fn source_value(builder: &mut R1csBuilder<Fr>, value: Fr, use_variable: bool) -> SourceValue<Fr> {
     if use_variable {
         SourceValue::variable(builder.alloc(value))
     } else {
@@ -101,7 +97,9 @@ fuzz_target!(|data: &[u8]| {
     let output = builder.alloc(expected);
     assert_claim_expr_eq(&mut builder, &expression, output, &mut sources)
         .expect("all generated sources are registered");
-    let witness = builder.witness().expect("all generated variables are assigned");
+    let witness = builder
+        .witness()
+        .expect("all generated variables are assigned");
     let matrices = builder.into_matrices();
     assert!(
         matrices.check_witness(&witness).is_ok(),

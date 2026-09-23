@@ -17,7 +17,7 @@ use jolt_claims::protocols::jolt::geometry::registers::{
     rs2_ra_read_write,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersReadWritePublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
 use jolt_witness::JoltWitnessPlane;
@@ -27,7 +27,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, RegistersReadWriteChecking<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

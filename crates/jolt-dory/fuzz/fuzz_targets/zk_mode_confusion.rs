@@ -11,7 +11,7 @@
 use std::sync::OnceLock;
 
 use jolt_dory::{DoryProverSetup, DoryScheme, DoryVerifierSetup};
-use jolt_field::{Fr, ReducingBytes};
+use jolt_field::{CanonicalEncoding, Fr};
 use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
@@ -38,7 +38,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let scalar_at = |index: usize| {
         let start = index * SCALAR_BYTES;
-        <Fr as ReducingBytes>::from_le_bytes_mod_order(&data[start..start + SCALAR_BYTES])
+        <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[start..start + SCALAR_BYTES])
     };
     let evals: Vec<Fr> = (0..n).map(scalar_at).collect();
     let point: Vec<Fr> = (0..NUM_VARS).map(|i| scalar_at(n + i)).collect();
@@ -52,18 +52,16 @@ fuzz_target!(|data: &[u8]| {
         DoryScheme::commit_zk(poly.evaluations(), prover_setup).expect("commit_zk");
     let mut pt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
     let (zk_proof, _y_com, _blind) =
-        DoryScheme::open_zk(&poly, &point, eval, prover_setup, zk_hint, &mut pt)
-            .expect("open_zk");
+        DoryScheme::open_zk(&poly, &point, eval, prover_setup, zk_hint, &mut pt).expect("open_zk");
     let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
     DoryScheme::verify_zk(&zk_commitment, &point, &zk_proof, verifier_setup, &mut vt)
         .expect("honest ZK opening must verify in ZK mode");
 
     // Transparent completeness.
-    let (commitment, hint) =
-        DoryScheme::commit(poly.evaluations(), prover_setup).expect("commit");
+    let (commitment, hint) = DoryScheme::commit(poly.evaluations(), prover_setup).expect("commit");
     let mut pt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
-    let proof = DoryScheme::open(&poly, &point, eval, prover_setup, Some(hint), &mut pt)
-        .expect("open");
+    let proof =
+        DoryScheme::open(&poly, &point, eval, prover_setup, Some(hint), &mut pt).expect("open");
     let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
     DoryScheme::verify(&commitment, &point, eval, &proof, verifier_setup, &mut vt)
         .expect("honest transparent opening must verify");

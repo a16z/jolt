@@ -1,6 +1,6 @@
 //! field_inline registers symbolic sumcheck relations.
 
-use jolt_field::RingCore;
+use jolt_field::Ring;
 
 use crate::protocols::field_inline::geometry::registers::{
     field_rd_inc_read_write, field_rd_inc_val_evaluation, field_rd_value_claim,
@@ -49,14 +49,14 @@ impl SymbolicSumcheck for ReadWriteChecking {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn input_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
         opening(field_rd_value_claim())
             + gamma.clone() * opening(field_rs1_value_claim())
             + gamma.clone().pow(2) * opening(field_rs2_value_claim())
     }
 
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn output_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         let gamma = challenge(FieldRegistersReadWriteChallenge::Gamma);
         let eq_cycle = derived(FieldRegistersReadWritePublic::EqCycle);
         eq_cycle.clone() * opening(field_rd_wa_read_write()) * opening(field_rd_inc_read_write())
@@ -106,11 +106,11 @@ impl SymbolicSumcheck for ValEvaluation {
         3
     }
 
-    fn input_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn input_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         opening(field_registers_val_read_write())
     }
 
-    fn output_expression<F: RingCore>(&self) -> FieldInlineExpr<F> {
+    fn output_expression<F: Ring>(&self) -> FieldInlineExpr<F> {
         derived(FieldRegistersValEvaluationPublic::LtCycle)
             * opening(field_rd_inc_val_evaluation())
             * opening(field_rd_wa_val_evaluation())
@@ -121,7 +121,7 @@ impl SymbolicSumcheck for ValEvaluation {
 mod tests {
     use super::*;
 
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> FieldRegistersTraceDimensions {
         FieldRegistersTraceDimensions::new(5)

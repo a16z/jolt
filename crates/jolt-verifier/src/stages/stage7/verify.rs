@@ -1,19 +1,19 @@
 use jolt_claims::protocols::jolt::{
     geometry::{
         claim_reductions::{
-            advice,
             bytecode::{self as bytecode_reduction},
-            hamming_weight, program_image,
+            program_image,
         },
         dimensions::JoltFormulaDimensions,
     },
-    JoltAdviceKind, JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
+    JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
+#[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{
     trusted_advice_input_values_from_upstream, untrusted_advice_input_values_from_upstream,
     TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
@@ -23,26 +23,30 @@ use super::committed_reduction_address_phase::{
     ProgramImageReductionAddressPhase, ProgramImageReductionAddressPhaseInputClaims,
 };
 use super::hamming_weight_claim_reduction::{
-    hamming_weight_input_values_from_upstream, stage7_hamming_virtualization_address_points,
-    HammingDimensions, HammingWeightClaimReduction,
+    hamming_weight_claim_reduction_dimensions, hamming_weight_input_values_from_upstream,
+    stage7_hamming_virtualization_address_points, HammingWeightClaimReduction,
+    HammingWeightClaimReductionDimensions,
 };
 use super::outputs::{
     Stage7ClearOutput, Stage7InputClaims, Stage7Output, Stage7Sumchecks, Stage7ZkOutput,
 };
+#[cfg(not(feature = "akita"))]
+use crate::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
 use crate::{
     proof::JoltProof,
     stages::{
         stage4::{Stage4ClearOutput, Stage4Output},
-        stage6b::{
-            committed_reduction_cycle_phase::advice_reference_point_from_upstream,
-            outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput,
-        },
+        stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
         zk::committed,
         PrecommittedSchedule,
     },
     verifier::CheckedInputs,
     VerifierError,
 };
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltAdviceKind;
 
 #[jolt_verifier_derive::fs_scope(Stage7)]
 pub fn verify<PCS, VC, T, ZkProof>(
@@ -58,22 +62,10 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    let base_hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
+    let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
         proof.one_hot_config.committed_chunk_bits(),
-    );
-    #[cfg(not(feature = "akita"))]
-    let hamming_dimensions = base_hamming_dimensions;
-    #[cfg(feature = "akita")]
-    let hamming_dimensions =
-        jolt_claims::protocols::jolt::lattice::relations::hamming_weight::LatticeHammingWeightClaimReductionDimensions::new(
-            base_hamming_dimensions.layout,
-            base_hamming_dimensions.log_k_chunk,
-        )
-        .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-            stage: JoltRelationId::HammingWeightClaimReduction,
-            reason: error.to_string(),
-        })?;
+    )?;
 
     // The clear-only reference geometry each address phase's expected-output term
     // reads (advice / program-image RAM address points, bytecode cycle-phase
@@ -161,14 +153,13 @@ where
 }
 
 /// Build the stage-7 sumcheck batch once, for both proving paths. The hamming
-/// reduction and every present address phase are constructed from the stage-6
+/// reduction and reduction-backed address phases are constructed from the stage-6
 /// output points (mode-agnostic) and the clear-only stage 4/6 references (`None`
 /// in ZK, where the address phases' `FinalScale` term is proved by BlindFold and
-/// `derive_output_term` never runs). An address phase is present exactly when its
-/// precommitted layout is committed and its dimensions carry active address rounds
-/// — the presence flag the input / challenge aggregates track in lockstep.
-pub fn build_stage7_sumchecks<F: Field>(
-    hamming_dimensions: HammingDimensions,
+/// `derive_output_term` never runs). Advice reductions are skipped on Akita: the
+/// final grouped opening checks their direct stage-4 claims.
+pub fn build_stage7_sumchecks<F: JoltField>(
+    hamming_dimensions: HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
     clear: Option<(&Stage4ClearOutput<F>, &Stage6bClearOutput<F>)>,
@@ -199,6 +190,7 @@ pub fn build_stage7_sumchecks<F: Field>(
 
     // The staged advice RAM address point from stage 4's RAM value-check (`None`
     // in ZK), the clear-only reference the advice `FinalScale` term reads.
+    #[cfg(not(feature = "akita"))]
     let advice_reference = |kind| {
         clear.and_then(|(stage4, _)| {
             advice_reference_point_from_upstream(&stage4.ram_val_check_init, kind)
@@ -207,6 +199,7 @@ pub fn build_stage7_sumchecks<F: Field>(
 
     Ok(Stage7Sumchecks {
         hamming_weight_claim_reduction: hamming,
+        #[cfg(not(feature = "akita"))]
         trusted_advice: address_phase_member(
             schedule.trusted_advice.as_ref(),
             stage6_points.advice_cycle_phase_variables(JoltAdviceKind::Trusted),
@@ -219,6 +212,7 @@ pub fn build_stage7_sumchecks<F: Field>(
                 )
             },
         )?,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice: address_phase_member(
             schedule.untrusted_advice.as_ref(),
             stage6_points.advice_cycle_phase_variables(JoltAdviceKind::Untrusted),
@@ -268,7 +262,7 @@ pub fn build_stage7_sumchecks<F: Field>(
 /// with active address rounds first (an absent layout yields `Ok(None)`, matching
 /// the member's presence flag), then lift missing stage-6b cycle-phase variables
 /// to `MissingOpeningClaim` before building the instance.
-fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
+fn address_phase_member<F: JoltField, L: PrecommittedReductionLayout, M>(
     layout: Option<&L>,
     cycle_phase_variables: Option<Vec<F>>,
     missing_cycle_opening: JoltOpeningId,
@@ -290,18 +284,20 @@ fn address_phase_member<F: Field, L: PrecommittedReductionLayout, M>(
 /// phase runs (tracking each `Stage7Sumchecks` member's presence), so a present
 /// member always has its input cell populated. Public because the prover's
 /// stage-7 recipe builds its batch inputs through the same wiring.
-pub fn stage7_input_values_from_upstream<F: Field>(
+pub fn stage7_input_values_from_upstream<F: JoltField>(
     sumchecks: &Stage7Sumchecks<F>,
     stage6: &Stage6bClearOutput<F>,
 ) -> Result<Stage7InputClaims<F>, VerifierError> {
     let cycle_phase = &stage6.output_values;
     Ok(Stage7InputClaims {
         hamming_weight_claim_reduction: hamming_weight_input_values_from_upstream(cycle_phase),
+        #[cfg(not(feature = "akita"))]
         trusted_advice: sumchecks
             .trusted_advice
             .as_ref()
             .map(|_| trusted_advice_input_values_from_upstream(cycle_phase))
             .transpose()?,
+        #[cfg(not(feature = "akita"))]
         untrusted_advice: sumchecks
             .untrusted_advice
             .as_ref()

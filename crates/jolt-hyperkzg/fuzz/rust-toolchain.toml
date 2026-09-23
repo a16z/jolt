@@ -1,3 +1,0 @@
-[toolchain]
-channel = "nightly-2026-07-20"
-components = ["llvm-tools-preview", "rust-src"]

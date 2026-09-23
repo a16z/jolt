@@ -9,6 +9,7 @@ use crate::{
     verifier::SumcheckVerifier,
     SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
+use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{Deserialize, Serialize};
@@ -24,27 +25,27 @@ use serde::{Deserialize, Serialize};
 /// the verifier is left with a single evaluation claim at the point
 /// $(r_1, \ldots, r_n)$.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct ClearSumcheckProof<F: jolt_field::Field> {
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct ClearSumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct CompressedSumcheckProof<F: jolt_field::Field> {
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct CompressedSumcheckProof<F: Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub enum ClearProof<F: jolt_field::Field> {
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub enum ClearProof<F: Field> {
     Full(ClearSumcheckProof<F>),
     Compressed(CompressedSumcheckProof<F>),
 }
 
-impl<F: jolt_field::Field> Default for ClearProof<F> {
+impl<F: Field> Default for ClearProof<F> {
     fn default() -> Self {
         Self::Full(ClearSumcheckProof::default())
     }
@@ -53,14 +54,14 @@ impl<F: jolt_field::Field> Default for ClearProof<F> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "F: Serialize, C: Serialize",
-    deserialize = "F: for<'a> Deserialize<'a>, C: Deserialize<'de>"
+    deserialize = "F: Deserialize<'de>, C: Deserialize<'de>"
 ))]
-pub enum SumcheckProof<F: jolt_field::Field, C> {
+pub enum SumcheckProof<F: Field, C> {
     Clear(ClearProof<F>),
     Committed(CommittedSumcheckProof<C>),
 }
 
-impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
+impl<F: Field, C> SumcheckProof<F, C> {
     pub fn is_committed(&self) -> bool {
         matches!(self, Self::Committed(_))
     }
@@ -92,6 +93,7 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
+        F: AppendToTranscript,
         T: Transcript<Challenge = F>,
         D: SumcheckDomain<F>,
     {
@@ -129,6 +131,7 @@ impl<F: jolt_field::Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
+        F: AppendToTranscript,
         T: Transcript<Challenge = F>,
     {
         match self {

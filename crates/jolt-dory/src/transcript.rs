@@ -4,11 +4,6 @@
 //! traverse this adapter. The surrounding Jolt transcript is responsible for
 //! matching the core Fiat-Shamir byte layout before this adapter is entered.
 
-#![expect(
-    clippy::expect_used,
-    reason = "transcript serialization failures are fatal"
-)]
-
 use dory::backends::arkworks::BN254;
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::transcript::Transcript as DoryTranscript;
@@ -44,6 +39,10 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
         jolt_scalar.append_to_transcript(self.transcript);
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "transcript serialization failures are fatal"
+    )]
     fn append_group<G: DoryGroup>(&mut self, _label: &[u8], g: &G) {
         let mut buffer = Vec::new();
         g.serialize_compressed(&mut buffer)
@@ -53,6 +52,10 @@ impl<T: Transcript<Challenge = Fr>> DoryTranscript for JoltToDoryTranscript<'_, 
         self.transcript.append_bytes(&buffer);
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "transcript serialization failures are fatal"
+    )]
     fn append_serde<S: DorySerialize>(&mut self, _label: &[u8], s: &S) {
         let mut buffer = Vec::new();
         s.serialize_compressed(&mut buffer)

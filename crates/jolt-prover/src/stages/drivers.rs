@@ -91,9 +91,15 @@ mod stage6b {
     use jolt_verifier::stages::stage6b::booleanity::Booleanity;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
-        BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
-        UntrustedAdviceCyclePhase,
+        BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
     };
+    #[cfg(not(feature = "akita"))]
+    use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
+        TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase,
+    };
+    // The packed batch has no inc member — the fused-inc read-raf stages
+    // discharge the reduced inc claims instead.
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage6b::inc_claim_reduction::IncClaimReduction;
     use jolt_verifier::stages::stage6b::instruction_ra_virtualization::InstructionRaVirtualization;
     use jolt_verifier::stages::stage6b::outputs::{
@@ -129,6 +135,7 @@ mod stage6b {
 }
 
 mod stage7 {
+    #[cfg(not(feature = "akita"))]
     use jolt_verifier::stages::stage7::advice_address_phase::{
         TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase,
     };
@@ -167,14 +174,15 @@ mod twin_tests {
         JoltExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
     };
     use jolt_claims::{opening, NoChallenges, OutputClaims as _, SymbolicSumcheck};
-    use jolt_field::{Field, Fr, FromPrimitiveInt, MulPow2, RingCore};
+    use jolt_field::{Fr, JoltField, Ring};
     use jolt_kernels::{
         KernelError, KernelSlots, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel,
         SumcheckKernelError,
     };
     use jolt_poly::UnivariatePoly;
     use jolt_sumcheck::{
-        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, SumcheckError,
+        ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, RoundScheduler,
+        SequentialRounds, SumcheckError,
     };
     use jolt_transcript::{Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
@@ -253,14 +261,14 @@ mod twin_tests {
                     1
                 }
 
-                fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
+                fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
                     opening(JoltOpeningId::virtual_polynomial(
                         JoltVirtualPolynomial::$input,
                         JoltRelationId::$rel,
                     ))
                 }
 
-                fn output_expression<F: RingCore>(&self) -> JoltExpr<F> {
+                fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
                     opening(JoltOpeningId::virtual_polynomial(
                         JoltVirtualPolynomial::$output,
                         JoltRelationId::$rel,
@@ -269,12 +277,12 @@ mod twin_tests {
             }
 
             #[derive(Clone)]
-            struct $relation<F: Field> {
+            struct $relation<F: JoltField> {
                 symbolic: $symbolic,
                 _field: PhantomData<F>,
             }
 
-            impl<F: Field> $relation<F> {
+            impl<F: JoltField> $relation<F> {
                 fn new(rounds: usize) -> Self {
                     Self {
                         symbolic: $symbolic::new(rounds),
@@ -283,7 +291,7 @@ mod twin_tests {
                 }
             }
 
-            impl<F: Field> ConcreteSumcheck<F> for $relation<F> {
+            impl<F: JoltField> ConcreteSumcheck<F> for $relation<F> {
                 type Symbolic = $symbolic;
 
                 fn symbolic(&self) -> &$symbolic {
@@ -366,7 +374,7 @@ mod twin_tests {
     );
 
     #[derive(SumcheckBatch)]
-    struct ToyDriverSumchecks<F: Field> {
+    struct ToyDriverSumchecks<F: JoltField> {
         alpha: ToyAlpha<F>,
         beta: Option<ToyBeta<F>>,
         gamma: ToyGamma<F>,
@@ -376,7 +384,7 @@ mod twin_tests {
     /// member active from round 0, whose final bind the engine delivers only
     /// after the trailing dummy rounds (the delayed `finish_rounds` path).
     #[derive(SumcheckBatch)]
-    struct ToyHeadSumchecks<F: Field> {
+    struct ToyHeadSumchecks<F: JoltField> {
         alpha: ToyAlpha<F>,
         delta: ToyDelta<F>,
     }
@@ -757,6 +765,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -861,6 +870,7 @@ mod twin_tests {
             .prove(
                 &kernels,
                 &mut session,
+                &mut SequentialRounds,
                 &NoWitness,
                 &inputs,
                 &input_points,
@@ -923,6 +933,7 @@ mod twin_tests {
         let result = sumchecks.prove(
             &kernels,
             &mut session,
+            &mut SequentialRounds,
             &NoWitness,
             &inputs,
             &input_points,
@@ -976,6 +987,7 @@ mod twin_tests {
         sumchecks: &ToyDriverSumchecks<Fr>,
         kernels: &ToyKernels,
         session: &mut ProofSession,
+        scheduler: &mut dyn RoundScheduler<Fr>,
         inputs: &ToyDriverInputClaims<Fr>,
         input_points: &ToyDriverInputPoints<Fr>,
         challenges: &ToyDriverChallenges<Fr>,
@@ -990,6 +1002,7 @@ mod twin_tests {
         sumchecks.prove(
             kernels,
             session,
+            scheduler,
             &NoWitness,
             inputs,
             input_points,

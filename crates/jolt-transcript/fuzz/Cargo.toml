@@ -33,7 +33,11 @@ weekly-seconds = 900
 
 [dependencies]
 libfuzzer-sys = "0.4"
-jolt-transcript = { path = ".." }
+jolt-transcript = { path = "..", features = [
+  "transcript-blake2b",
+  "transcript-keccak",
+  "transcript-poseidon",
+] }
 
 [[bin]]
 name = "transcript_determinism"

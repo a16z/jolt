@@ -94,42 +94,65 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: git fetch origin "+refs/pull/${PR_NUMBER}/head"
 
-      - name: Check PR size
+      - name: Check actual-code size
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          THRESHOLD: "500"
         run: |
           set -euo pipefail
 
-          # Count changed lines (additions + deletions), excluding spec files.
-          # Three-dot diff (`BASE...HEAD`) diffs the merge-base against HEAD so
-          # unrelated progress on the base branch isn't counted as PR changes.
-          LINES=$(git diff --numstat "$BASE"..."$HEAD" -- . ':!specs/' | \
-            awk '$1 != "-" && $2 != "-" { added += $1; removed += $2 } END { print (added + removed) ? added + removed : 0 }')
+          # The spec nudge counts only ACTUAL CODE lines (added + removed):
+          # the diff classifier's "code" category — Rust/jolt code. Tests,
+          # docs, fixtures, and helper scripts are excluded, so e.g. a large
+          # test-only or CI-only PR no longer trips the spec requirement.
+          # The classifier diffs merge-base(BASE, HEAD) against HEAD, same
+          # three-dot semantics as before. It runs from the BASE checkout
+          # (pull_request_target), never code from the PR head.
+          CODE_LINES=""
+          if JSON=$(python3 scripts/ci/diff_classifier.py --base "$BASE" --head "$HEAD" --format json); then
+            # `|| true`-shaped fallback: a jq failure must reach the numstat
+            # fallback below, not fail the step under `set -e`.
+            CODE_LINES=$(printf '%s\n' "$JSON" | jq '.code.added + .code.removed') || CODE_LINES=""
+          fi
+          if ! [ "$CODE_LINES" -ge 0 ] 2>/dev/null; then
+            # Classifier unavailable: fall back to counting all non-spec
+            # lines (the previous behavior) so the nudge never silently
+            # disappears.
+            CODE_LINES=$(git diff --numstat "$BASE"..."$HEAD" -- . ':!specs/' | \
+              awk '$1 != "-" && $2 != "-" { added += $1; removed += $2 } END { print (added + removed) ? added + removed : 0 }')
+            echo "diff classifier failed; falling back to total changed lines: ${CODE_LINES}" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           # Check if any spec file exists in the diff. Pathspec excludes
           # README/TEMPLATE directly so the pipeline has no `grep -v`
           # (which exits 1 on empty input and would trip `pipefail`).
           HAS_SPEC=$(git diff --name-only "$BASE"..."$HEAD" -- 'specs/*.md' ':!specs/README.md' ':!specs/TEMPLATE.md' | head -1)
 
-          if [ "$LINES" -gt 500 ] && [ -z "$HAS_SPEC" ]; then
-            EXISTING=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' | grep -c "more than 500 changed lines" || true)
-            if [ "$EXISTING" -eq 0 ]; then
-              BODY="> [!WARNING]"
-              BODY="$BODY
-          > This PR has **more than 500 changed lines** and does not include a spec."
-              BODY="$BODY
-          >"
-              BODY="$BODY
-          > Large features and architectural changes benefit from a spec-driven workflow."
-              BODY="$BODY
-          > See [CONTRIBUTING.md](https://github.com/a16z/jolt/blob/main/CONTRIBUTING.md) for details on how to create a spec."
-              BODY="$BODY
-          >"
-              BODY="$BODY
-          > If this PR is a bug fix, refactor, or doesn't warrant a spec, feel free to ignore this message."
-              gh pr comment "$PR_NUMBER" --body "$BODY"
-            fi
+          if [ "$CODE_LINES" -le "$THRESHOLD" ]; then
+            echo "spec not required: ${CODE_LINES} actual-code lines <= ${THRESHOLD}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -n "$HAS_SPEC" ]; then
+            echo "spec present: ${CODE_LINES} actual-code lines > ${THRESHOLD} and the PR includes a spec" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "spec suggested: ${CODE_LINES} actual-code lines > ${THRESHOLD} and no spec file" >> "$GITHUB_STEP_SUMMARY"
+          # Keep "more than 500 changed lines" in the body: the dedupe grep
+          # below matches it in both the old and new comment wording.
+          EXISTING=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[].body' | grep -c "more than 500 changed lines" || true)
+          if [ "$EXISTING" -eq 0 ]; then
+            cat > "$RUNNER_TEMP/spec-warning.md" <<EOF
+          > [!WARNING]
+          > This PR has **more than 500 changed lines of actual code** (${CODE_LINES} added+removed; tests, docs, fixtures, and helper scripts are excluded) and does not include a spec.
+          >
+          > Large features and architectural changes benefit from a spec-driven workflow.
+          > See [CONTRIBUTING.md](https://github.com/a16z/jolt/blob/main/CONTRIBUTING.md) for details on how to create a spec.
+          >
+          > If this PR is a bug fix, refactor, or doesn't warrant a spec, feel free to ignore this message.
+          EOF
+            gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/spec-warning.md"
           fi

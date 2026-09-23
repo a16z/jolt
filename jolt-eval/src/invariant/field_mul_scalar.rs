@@ -1,6 +1,6 @@
 use arbitrary::{Arbitrary, Unstructured};
-use jolt_field::arkworks::bn254::Fr;
-use jolt_field::{FromPrimitiveInt, MulPrimitiveInt};
+use jolt_field::Ring;
+use jolt_field::{CanonicalEncoding, Fr};
 
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
 
@@ -19,7 +19,7 @@ impl<'a> Arbitrary<'a> for FieldMulScalarInput {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let bytes: [u8; 32] = u.arbitrary()?;
         Ok(Self {
-            field: Fr::from_le_bytes_mod_order(&bytes),
+            field: Fr::from_bytes_le_reduced(&bytes),
             u64_scalar: u.arbitrary()?,
             i64_scalar: u.arbitrary()?,
             u128_scalar: u.arbitrary()?,
@@ -28,7 +28,7 @@ impl<'a> Arbitrary<'a> for FieldMulScalarInput {
     }
 }
 
-/// `Field::mul_{u64,i64,u128,i128}` must agree with the reference
+/// `JoltField::mul_{u64,i64,u128,i128}` must agree with the reference
 /// formula `self * Self::from_*(scalar)` for every input.
 #[jolt_eval_macros::invariant(Test, Fuzz)]
 #[derive(Default)]
@@ -43,7 +43,7 @@ impl Invariant for FieldMulScalarInvariant {
     }
 
     fn description(&self) -> String {
-        "The optimized Field::mul_{u64,i64,u128,i128} methods on BN254 Fr \
+        "The optimized JoltField::mul_{u64,i64,u128,i128} methods on BN254 Fr \
          must produce the same result as the reference `self * Self::from_*(n)`."
             .to_string()
     }

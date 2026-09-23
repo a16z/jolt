@@ -25,7 +25,9 @@ weekly-seconds = 3600
 libfuzzer-sys = "0.4"
 jolt-claims = { path = "../../jolt-claims" }
 jolt-field = { path = "../../jolt-field", features = ["bn254"] }
-jolt-r1cs = { path = "..", default-features = false }
+jolt-r1cs = { path = "..", default-features = false, features = [
+  "claim-lowering",
+] }
 
 [[bin]]
 name = "claim_lowering_equivalence"

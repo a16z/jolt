@@ -15,7 +15,7 @@ use jolt_claims::protocols::jolt::geometry::registers::{
     rd_inc_val_evaluation, rd_wa_val_evaluation,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, LtPolynomial, Polynomial};
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_witness::JoltWitnessPlane;
@@ -25,7 +25,7 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 
-impl<F: Field> PrepareKernel<F, RegistersValEvaluation<F>> for ReferenceBackend {
+impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for ReferenceBackend {
     fn prepare(
         &self,
         _session: &mut ProofSession,

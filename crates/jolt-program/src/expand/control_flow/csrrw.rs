@@ -16,51 +16,21 @@ pub(in crate::expand) fn expand_csrrw(
 
     if rd(instruction)? == 0 {
         // `csrw csr, rs1`: write the CSR and discard the old value.
-        asm.emit_i(
-            JoltInstructionKind::ADDI,
-            reg(virtual_reg),
-            reg(rs1(instruction)?),
-            0,
-        );
+        asm.emit_i(Kind::ADDI, reg(virtual_reg), reg(rs1(instruction)?), 0);
         return asm.finalize();
     } else if rd(instruction)? == rs1(instruction)? {
         // Preserve rs1 before rd is overwritten with the old CSR value.
         let temp = asm.allocate()?;
-        asm.emit_i(
-            JoltInstructionKind::ADDI,
-            temp.operand(),
-            reg(rs1(instruction)?),
-            0,
-        );
-        asm.emit_i(
-            JoltInstructionKind::ADDI,
-            reg(rd(instruction)?),
-            reg(virtual_reg),
-            0,
-        );
-        asm.emit_i(
-            JoltInstructionKind::ADDI,
-            reg(virtual_reg),
-            temp.operand(),
-            0,
-        );
+        asm.emit_i(Kind::ADDI, temp.operand(), reg(rs1(instruction)?), 0);
+        asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
+        asm.emit_i(Kind::ADDI, reg(virtual_reg), temp.operand(), 0);
         asm.release(temp);
         return asm.finalize();
     }
 
     // General case: copy old CSR to rd, then copy rs1 into the CSR.
-    asm.emit_i(
-        JoltInstructionKind::ADDI,
-        reg(rd(instruction)?),
-        reg(virtual_reg),
-        0,
-    );
-    asm.emit_i(
-        JoltInstructionKind::ADDI,
-        reg(virtual_reg),
-        reg(rs1(instruction)?),
-        0,
-    );
+    asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
+    asm.emit_i(Kind::ADDI, reg(virtual_reg), reg(rs1(instruction)?), 0);
 
     asm.finalize()
 }

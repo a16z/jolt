@@ -25,7 +25,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_field::{Field, RingAccumulator, WithAccumulator};
+use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
@@ -107,7 +107,7 @@ pub(crate) fn prove_blindfold<F, PCS, VC, T>(
     forward_state: [u8; 32],
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
@@ -115,7 +115,7 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    <F as WithAccumulator>::Accumulator: RingAccumulator<Element = F>,
+    <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let (protocol, mut transcript) = replay_stages::<F, PCS, VC, T>(
         &preprocessing.verifier,
@@ -179,7 +179,7 @@ fn replay_stages<F, PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(BlindFoldProtocol<F, VC::Output>, T), ProverError<F>>
 where
-    F: Field + AppendToTranscript,
+    F: JoltField + AppendToTranscript,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output>,

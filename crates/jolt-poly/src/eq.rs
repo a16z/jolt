@@ -2,7 +2,7 @@
 
 use std::ops::{Mul, SubAssign};
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ use jolt_utils::Math;
 /// $$f(r) = \sum_{x \in \{0,1\}^n} f(x) \cdot \widetilde{eq}(x, r)$$
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
-pub struct EqPolynomial<F: Field> {
+pub struct EqPolynomial<F: JoltField> {
     point: Vec<F>,
 }
 
@@ -29,7 +29,7 @@ pub struct EqPolynomial<F: Field> {
 #[cfg(feature = "parallel")]
 const PAR_THRESHOLD: usize = 1024;
 
-impl<F: Field> EqPolynomial<F> {
+impl<F: JoltField> EqPolynomial<F> {
     /// Creates a new equality polynomial for the given point $r \in \mathbb{F}^n$.
     pub fn new(point: Vec<F>) -> Self {
         Self { point }
@@ -118,7 +118,7 @@ impl<F: Field> EqPolynomial<F> {
     }
 }
 
-pub fn try_eq_mle<F: Field>(left: &[F], right: &[F]) -> Result<F, MleError> {
+pub fn try_eq_mle<F: JoltField>(left: &[F], right: &[F]) -> Result<F, MleError> {
     if left.len() != right.len() {
         return Err(MleError::EqualityArityMismatch {
             left: left.len(),
@@ -128,7 +128,7 @@ pub fn try_eq_mle<F: Field>(left: &[F], right: &[F]) -> Result<F, MleError> {
     Ok(EqPolynomial::<F>::mle(left, right))
 }
 
-pub fn eq_index_msb<F: Field>(point: &[F], index: u128) -> F {
+pub fn eq_index_msb<F: JoltField>(point: &[F], index: u128) -> F {
     let mut eq = F::one();
     for (position, challenge) in point.iter().enumerate() {
         let shift = point.len() - 1 - position;
@@ -160,14 +160,14 @@ pub fn boolean_bits_msb(num_vars: usize, index: usize) -> Vec<bool> {
         .collect()
 }
 
-pub fn boolean_point_msb<F: Field>(num_vars: usize, index: usize) -> Vec<F> {
+pub fn boolean_point_msb<F: JoltField>(num_vars: usize, index: usize) -> Vec<F> {
     boolean_bits_msb(num_vars, index)
         .into_iter()
         .map(|bit| F::from_u64(bit as u64))
         .collect()
 }
 
-pub fn boolean_index_msb<F: Field>(point: &[F]) -> Option<usize> {
+pub fn boolean_index_msb<F: JoltField>(point: &[F]) -> Option<usize> {
     let mut index = 0usize;
     for value in point {
         index = index.checked_shl(1)?;
@@ -185,7 +185,7 @@ pub fn boolean_index_msb<F: Field>(point: &[F]) -> Option<usize> {
 /// These accept challenge or field-element slices and produce materialized
 /// tables without constructing an `EqPolynomial` instance. They are used
 /// by split-eq evaluators and sumcheck witnesses.
-impl<F: Field> EqPolynomial<F> {
+impl<F: JoltField> EqPolynomial<F> {
     /// Computes `eq(x, y) = Π_i (x_i y_i + (1 - x_i)(1 - y_i))` for two slices.
     pub fn mle<C>(x: &[C], y: &[C]) -> F
     where
@@ -458,7 +458,7 @@ impl<F: Field> EqPolynomial<F> {
     }
 }
 
-impl<F: Field> crate::MultilinearEvaluation<F> for EqPolynomial<F> {
+impl<F: JoltField> crate::MultilinearEvaluation<F> for EqPolynomial<F> {
     fn num_vars(&self) -> usize {
         self.point.len()
     }
@@ -476,7 +476,7 @@ impl<F: Field> crate::MultilinearEvaluation<F> for EqPolynomial<F> {
 mod tests {
     use super::*;
     use jolt_field::Fr;
-    use jolt_field::{FromPrimitiveInt, RandomSampling};
+    use jolt_field::{Field, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;

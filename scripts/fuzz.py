@@ -11,20 +11,16 @@ import shlex
 import subprocess
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
 PINNED_CARGO_FUZZ = "cargo-fuzz 0.13.2"
-PINNED_NIGHTLY = "nightly-2026-07-20"
+PINNED_NIGHTLY = "nightly-2026-08-24"
 REQUIRED_TOOLCHAIN_COMPONENTS = frozenset(("llvm-tools-preview", "rust-src"))
 PROFILES = ("pr", "daily", "weekly")
 FOCUS_VALUES = frozenset(("soundness", "correctness", "defensive"))
-
-POLICY_TABLE = re.compile(
-    r"(?ms)^\[package\.metadata\.jolt-fuzz\.targets\.(?P<name>[A-Za-z0-9_-]+)\]\s*$"
-    r"(?P<body>.*?)(?=^\[|\Z)"
-)
 
 
 class FuzzConfigurationError(RuntimeError):
@@ -77,49 +73,36 @@ def repository_root() -> Path:
 
 
 def parse_target_policy(
-    manifest_name: str, target_name: str, body: str
+    manifest_name: str, target_name: str, policy: dict
 ) -> FuzzTarget:
-    focus_match = re.search(r'(?m)^focus\s*=\s*"([^"]+)"\s*$', body)
-    focus = focus_match.group(1) if focus_match else None
-    if focus not in FOCUS_VALUES:
+    focus = policy.get("focus")
+    if not isinstance(focus, str) or focus not in FOCUS_VALUES:
         choices = ", ".join(sorted(FOCUS_VALUES))
         raise FuzzConfigurationError(
             f"{manifest_name} target {target_name!r} focus must be one of: {choices}"
         )
-    feature_match = re.search(r"(?m)^cargo-features\s*=\s*(.+?)\s*$", body)
-    cargo_features: tuple[str, ...] = ()
-    if feature_match is not None:
-        try:
-            parsed_features = json.loads(feature_match.group(1))
-        except json.JSONDecodeError as error:
-            raise FuzzConfigurationError(
-                f"{manifest_name} target {target_name!r} cargo-features must be "
-                "an array of feature strings"
-            ) from error
-        if (
-            not isinstance(parsed_features, list)
-            or any(
-                not isinstance(feature, str)
-                or not feature
-                or re.fullmatch(r"[A-Za-z0-9_./:+-]+", feature) is None
-                for feature in parsed_features
-            )
-            or len(parsed_features) != len(set(parsed_features))
-        ):
-            raise FuzzConfigurationError(
-                f"{manifest_name} target {target_name!r} cargo-features must be "
-                "a unique array of non-empty feature strings"
-            )
-        cargo_features = tuple(parsed_features)
+    features = policy.get("cargo-features", [])
+    if (
+        not isinstance(features, list)
+        or any(
+            not isinstance(feature, str)
+            or re.fullmatch(r"[A-Za-z0-9_./:+-]+", feature) is None
+            for feature in features
+        )
+        or len(features) != len(set(features))
+    ):
+        raise FuzzConfigurationError(
+            f"{manifest_name} target {target_name!r} cargo-features must be "
+            "a unique array of non-empty feature strings"
+        )
     budgets = {}
     for key in ("pr-seconds", "daily-seconds", "weekly-seconds"):
-        value_match = re.search(rf"(?m)^{key}\s*=\s*(-?\d+)\s*$", body)
-        if value_match is None:
+        value = policy.get(key)
+        if type(value) is not int:
             raise FuzzConfigurationError(
                 f"{manifest_name} target {target_name!r} is missing or has an "
                 f"invalid {key} (expected an integer)"
             )
-        value = int(value_match.group(1))
         if value <= 0:
             raise FuzzConfigurationError(
                 f"{manifest_name} target {target_name!r} {key} must be positive"
@@ -128,11 +111,18 @@ def parse_target_policy(
     return FuzzTarget(
         name=target_name,
         focus=focus,
-        cargo_features=cargo_features,
+        cargo_features=tuple(features),
         pr_seconds=budgets["pr-seconds"],
         daily_seconds=budgets["daily-seconds"],
         weekly_seconds=budgets["weekly-seconds"],
     )
+
+
+def read_toml(path: Path) -> dict:
+    try:
+        return tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as error:
+        raise FuzzConfigurationError(f"{path}: {error}") from error
 
 
 def discover_workspaces(root: Path) -> tuple[FuzzWorkspace, ...]:
@@ -141,42 +131,24 @@ def discover_workspaces(root: Path) -> tuple[FuzzWorkspace, ...]:
     )
     workspaces = []
     for manifest_path in manifest_paths:
-        manifest = manifest_path.read_text()
-        metadata = re.search(
-            r"(?ms)^\[package\.metadata\]\s*$"
-            r"(?P<body>.*?)(?=^\[|\Z)",
-            manifest,
-        )
-        if metadata is None or not re.search(
-            r"(?m)^cargo-fuzz\s*=\s*true\s*$", metadata.group("body")
-        ):
+        manifest = read_toml(manifest_path)
+        metadata = manifest.get("package", {}).get("metadata", {})
+        if metadata.get("cargo-fuzz") is not True:
             raise FuzzConfigurationError(
                 f"{manifest_path.relative_to(root)} must set "
                 "[package.metadata].cargo-fuzz = true"
             )
 
         manifest_name = manifest_path.relative_to(root).as_posix()
-        policies = {}
-        for policy in POLICY_TABLE.finditer(manifest):
-            policy_name = policy.group("name")
-            if policy_name in policies:
-                raise FuzzConfigurationError(
-                    f"{manifest_name} has duplicate policy entries for "
-                    f"target {policy_name!r}"
-                )
-            policies[policy_name] = policy.group("body")
+        policies = metadata.get("jolt-fuzz", {}).get("targets", {})
 
         target_names = []
-        for target in re.split(r"(?m)^\[\[bin\]\]\s*$", manifest)[1:]:
-            name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', target)
-            path_match = re.search(r'(?m)^path\s*=\s*"([^"]+)"\s*$', target)
-            if name_match is None or path_match is None:
+        for target in manifest.get("bin", []):
+            name, path = target.get("name"), target.get("path")
+            if not isinstance(name, str) or not isinstance(path, str):
                 raise FuzzConfigurationError(
-                    f"{manifest_name} has a [[bin]] without "
-                    "string name and path fields"
+                    f"{manifest_name} has a [[bin]] without string name and path fields"
                 )
-            name = name_match.group(1)
-            path = path_match.group(1)
             target_path = manifest_path.parent / path
             if not target_path.is_file():
                 raise FuzzConfigurationError(
@@ -188,9 +160,7 @@ def discover_workspaces(root: Path) -> tuple[FuzzWorkspace, ...]:
         if not target_names:
             raise FuzzConfigurationError(f"{manifest_name} has no fuzz targets")
         if len(target_names) != len(set(target_names)):
-            raise FuzzConfigurationError(
-                f"{manifest_name} has duplicate target names"
-            )
+            raise FuzzConfigurationError(f"{manifest_name} has duplicate target names")
 
         targets = []
         for name in target_names:
@@ -248,24 +218,14 @@ def check_workspace(root: Path, workspace: FuzzWorkspace, resolve: bool) -> None
         raise FuzzConfigurationError(
             f"{workspace.relative_directory(root)} is missing rust-toolchain.toml"
         )
-    channel_match = re.search(
-        r'(?m)^channel\s*=\s*"([^"]+)"\s*$', toolchain_path.read_text()
-    )
-    channel = channel_match.group(1) if channel_match else None
+    toolchain = read_toml(toolchain_path).get("toolchain", {})
+    channel = toolchain.get("channel")
     if channel != PINNED_NIGHTLY:
         raise FuzzConfigurationError(
             f"{toolchain_path.relative_to(root)} pins {channel!r}; "
             f"expected {PINNED_NIGHTLY!r}"
         )
-    components_match = re.search(
-        r"(?m)^components\s*=\s*\[(?P<components>[^\]]*)\]\s*$",
-        toolchain_path.read_text(),
-    )
-    components = (
-        set(re.findall(r'"([^"]+)"', components_match.group("components")))
-        if components_match
-        else set()
-    )
+    components = set(toolchain.get("components", []))
     missing_components = REQUIRED_TOOLCHAIN_COMPONENTS - components
     if missing_components:
         missing = ", ".join(sorted(missing_components))
@@ -290,11 +250,15 @@ def check_workspace(root: Path, workspace: FuzzWorkspace, resolve: bool) -> None
             )
 
     if resolve:
-        run_command(
-            ["cargo", "metadata", "--locked", "--format-version=1", "--no-deps"],
+        status = run_command(
+            ["cargo", "metadata", "--locked", "--format-version=1"],
             cwd=workspace.directory,
             quiet=True,
         )
+        if status != 0:
+            raise FuzzConfigurationError(
+                f"{workspace.name}: lockfile resolution failed (exit {status})"
+            )
 
 
 def check_cargo_fuzz_version() -> None:
@@ -341,7 +305,9 @@ def run_command(
     return result.returncode
 
 
-def seed_and_regression_files(workspace: FuzzWorkspace, target: str) -> tuple[Path, ...]:
+def seed_and_regression_files(
+    workspace: FuzzWorkspace, target: str
+) -> tuple[Path, ...]:
     files = []
     for directory_name in ("seeds", "regressions"):
         directory = workspace.directory / directory_name / target
@@ -403,9 +369,19 @@ def run_for_targets(
     for workspace in workspaces:
         check_workspace(root, workspace, resolve=True)
         for target in selected_targets(workspace, args.target):
-            sanitizer = ["--sanitizer", args.sanitizer]
-            target_triple = cargo_target_args(args)
-            features = cargo_feature_args(target)
+            command = [
+                "cargo",
+                f"+{PINNED_NIGHTLY}",
+                "fuzz",
+                "run" if args.command in ("replay", "reproduce") else args.command,
+                "--fuzz-dir",
+                str(workspace.directory),
+                "--sanitizer",
+                args.sanitizer,
+                *cargo_target_args(args),
+                *cargo_feature_args(target),
+                target.name,
+            ]
             seconds = None
             if args.command == "replay":
                 files = seed_and_regression_files(workspace, target.name)
@@ -413,38 +389,9 @@ def run_for_targets(
                     raise FuzzConfigurationError(
                         f"{workspace.name}/{target.name} has no seeds or regressions"
                     )
-                command = [
-                    "cargo",
-                    "fuzz",
-                    "run",
-                    *sanitizer,
-                    *target_triple,
-                    *features,
-                    target.name,
-                ]
                 command.extend(str(path) for path in files)
-            elif args.command == "reproduce":
-                command = [
-                    "cargo",
-                    "fuzz",
-                    "run",
-                    *sanitizer,
-                    *target_triple,
-                    *features,
-                    target.name,
-                    str(args.input),
-                ]
-            elif args.command == "tmin":
-                command = [
-                    "cargo",
-                    "fuzz",
-                    "tmin",
-                    *sanitizer,
-                    *target_triple,
-                    *features,
-                    target.name,
-                    str(args.input),
-                ]
+            elif args.command in ("reproduce", "tmin"):
+                command.append(str(args.input))
             elif args.command == "run":
                 seconds = (
                     args.seconds
@@ -455,16 +402,7 @@ def run_for_targets(
                 artifacts = workspace.directory / "artifacts" / target.name
                 corpus.mkdir(parents=True, exist_ok=True)
                 artifacts.mkdir(parents=True, exist_ok=True)
-                command = [
-                    "cargo",
-                    "fuzz",
-                    "run",
-                    *sanitizer,
-                    *target_triple,
-                    *features,
-                    target.name,
-                    str(corpus),
-                ]
+                command.append(str(corpus))
                 command.extend(
                     str(path)
                     for path in corpus_directories(workspace, target.name)
@@ -487,37 +425,22 @@ def run_for_targets(
                 if not corpus.is_dir() or not any(corpus.iterdir()):
                     print(f"Skipping empty corpus for {workspace.name}/{target.name}")
                     continue
-                command = [
-                    "cargo",
-                    "fuzz",
-                    "cmin",
-                    *sanitizer,
-                    *target_triple,
-                    *features,
-                    target.name,
-                    str(corpus),
-                ]
+                command.append(str(corpus))
             elif args.command == "coverage":
                 directories = corpus_directories(workspace, target.name)
                 if not directories:
                     raise FuzzConfigurationError(
                         f"{workspace.name}/{target.name} has no corpus inputs"
                     )
-                command = [
-                    "cargo",
-                    "fuzz",
-                    "coverage",
-                    *sanitizer,
-                    *target_triple,
-                    *features,
-                    target.name,
-                ]
+                command.extend(
+                    ["--target-dir", str(workspace.directory / "target-coverage")]
+                )
                 command.extend(str(path) for path in directories)
-            else:
+            elif args.command != "build":
                 raise AssertionError(f"unsupported target command {args.command}")
 
             started = time.monotonic()
-            status = run_command(command, cwd=workspace.directory)
+            status = run_command(command, cwd=root)
             elapsed = time.monotonic() - started
             if args.command == "run":
                 print(
@@ -611,7 +534,9 @@ def create_parser() -> argparse.ArgumentParser:
         "--workspace",
         help="operate on one crate name instead of every fuzz workspace",
     )
-    parser.add_argument("--target", help="operate on one target in the selected workspace")
+    parser.add_argument(
+        "--target", help="operate on one target in the selected workspace"
+    )
     parser.add_argument(
         "--sanitizer",
         choices=("address", "none"),
@@ -722,7 +647,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                                 "cargo",
                                 "check",
                                 "--locked",
-                                "--quiet",
+                                "--message-format=short",
                                 "--bin",
                                 target.name,
                                 *cargo_feature_args(target),
@@ -741,29 +666,6 @@ def main(argv: Iterable[str] | None = None) -> int:
                 f"Validated {len(workspaces)} fuzz workspaces with "
                 f"{sum(len(workspace.targets) for workspace in workspaces)} targets"
             )
-        elif args.command == "build":
-            check_cargo_fuzz_version()
-            failures = []
-            for workspace in workspaces:
-                check_workspace(root, workspace, resolve=True)
-                for target in selected_targets(workspace, args.target):
-                    command = [
-                        "cargo",
-                        "fuzz",
-                        "build",
-                        "--sanitizer",
-                        args.sanitizer,
-                        *cargo_target_args(args),
-                        *cargo_feature_args(target),
-                        target.name,
-                    ]
-                    status = run_command(command, cwd=workspace.directory)
-                    if status != 0:
-                        failures.append(
-                            f"{workspace.name}/{target.name} (exit {status})"
-                        )
-            if failures:
-                raise RuntimeError("fuzz builds failed: " + ", ".join(failures))
         else:
             if args.command == "run":
                 if (args.profile is None) == (args.seconds is None):

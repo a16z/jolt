@@ -37,7 +37,12 @@ impl From<MemoryLayoutError> for RamDomainError {
 }
 
 impl RAMPreprocessing {
-    pub fn preprocess(memory_init: Vec<(u64, u8)>) -> Self {
+    pub fn preprocess(mut memory_init: Vec<(u64, u8)>) -> Self {
+        // `chunk_by` below groups only *consecutive* entries of the same
+        // word; unsorted init data would split a word across chunks and let
+        // a later chunk silently overwrite an earlier one byte-for-byte.
+        // Sorting makes the grouping total regardless of the caller.
+        memory_init.sort_by_key(|(address, _)| *address);
         let min_bytecode_address = memory_init
             .iter()
             .map(|(address, _)| *address)
@@ -57,13 +62,28 @@ impl RAMPreprocessing {
         for chunk in
             memory_init.chunk_by(|(address_a, _), (address_b, _)| address_a / 8 == address_b / 8)
         {
+            let Some(&(chunk_address, _)) = chunk.first() else {
+                continue;
+            };
             let mut word = [0u8; 8];
             for (address, byte) in chunk {
-                word[(address % 8) as usize] = *byte;
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "address % 8 < 8 indexes an 8-byte array"
+                )]
+                {
+                    word[(address % 8) as usize] = *byte;
+                }
             }
             let word = u64::from_le_bytes(word);
-            let remapped_index = (chunk[0].0 / 8 - min_bytecode_address / 8) as usize;
-            bytecode_words[remapped_index] = word;
+            let remapped_index = (chunk_address / 8 - min_bytecode_address / 8) as usize;
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "num_words covers every word between the min and max init addresses, so remapped_index < bytecode_words.len()"
+            )]
+            {
+                bytecode_words[remapped_index] = word;
+            }
         }
 
         Self {
@@ -150,6 +170,7 @@ impl PublicInitialRam {
 }
 
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::{compute_max_ram_k, compute_min_ram_k, PublicInitialRam, RAMPreprocessing};
     use common::jolt_device::{JoltDevice, MemoryConfig};

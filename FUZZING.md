@@ -9,13 +9,17 @@ rationale lives in [`specs/production-fuzz-infra.md`](specs/production-fuzz-infr
 
 | Tool | Pinned version |
 |------|----------------|
-| Rust toolchain | `nightly-2026-07-20` with `llvm-tools-preview` and `rust-src` (installed automatically via each workspace's `rust-toolchain.toml`) |
+| Rust toolchain | `nightly-2026-08-24` with `llvm-tools-preview` and `rust-src` (installed automatically via each workspace's `rust-toolchain.toml`) |
 | cargo-fuzz | `0.13.2` |
-| Python | 3.10+ (standard library only) |
+| Python | 3.11+ (standard library only) |
 
 ```bash
 cargo install cargo-fuzz --version 0.13.2 --locked
 ```
+
+The `jolt-eval/tracer_backend_equivalence` target builds guest programs during
+setup. Install the current checkout's CLI with `cargo install --path . --locked`
+before replaying or fuzzing that workspace.
 
 The runner refuses to fuzz with a mismatched `cargo-fuzz` version, an unpinned
 toolchain, or a missing lockfile, so drift fails loudly instead of producing
@@ -63,8 +67,7 @@ exit status are listed at the end of the run. One broken target does not stop
 the remaining selected targets; the command still exits non-zero.
 
 Target builds use AddressSanitizer by default. On macOS the workspaces whose
-dependency tree includes the patched arkworks fork (`jolt-crypto`, `jolt-dory`,
-`jolt-hyperkzg`) fail to **link** under ASan: the fork's `ark-ff` enables its
+dependency tree includes the patched arkworks fork (`jolt-crypto` and `jolt-dory`) fail to **link** under ASan: the fork's `ark-ff` enables its
 `allocative` feature by default, which pulls in `ctor`, and the macOS linker
 rejects `ctor`'s static initializer in sanitized builds (`ld: initializer
 pointer has no target`). CI fuzzes on Linux and passes
@@ -90,7 +93,7 @@ Each state directory has a distinct lifecycle and owner:
 
 | Directory | Committed to Git | Purpose |
 |-----------|------------------|---------|
-| `fuzz/seeds/<target>/` | yes | Small, reviewed bootstrap inputs. Every target must have at least one seed that reaches its parser and satisfies any minimum-length gate; `check` enforces this. |
+| `fuzz/seeds/<target>/` | yes | Small, reviewed bootstrap inputs. Every target must have a seed file; `check` enforces file presence, not parser acceptance. Review seed bytes against the target's input format. |
 | `fuzz/regressions/<target>/` | yes | Minimized, reviewed reproducers for fixed bugs. Replayed deterministically before any mutation work. |
 | `fuzz/corpus/<target>/` | no (gitignored) | Mutable coverage-guided state. Persisted only by trusted scheduled CI runs; safe to delete locally. |
 | `fuzz/artifacts/<target>/` | no (gitignored) | Raw failure outputs from libFuzzer. Triage material, never committed as-is. |
@@ -103,8 +106,10 @@ ignored test and committed under `fuzz/fixtures/` or `fuzz/seeds/`:
 
 ```bash
 # jolt-verifier tamper fixture (needs the host/prover build):
+JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES=1 \
 cargo nextest run -p jolt-verifier --features prover-fixtures \
     --test generate_fuzz_fixture --run-ignored ignored-only --cargo-quiet
+JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES=1 \
 cargo nextest run -p jolt-verifier --features prover-fixtures,zk \
     --test generate_fuzz_fixture --run-ignored ignored-only --cargo-quiet
 # crypto/PCS real serialized seeds:
@@ -140,9 +145,7 @@ each workspace's total runtime per profile; soundness-focused targets get the
 largest budgets, and hot parser/no-panic targets the smallest.
 
 The current allocations are priors, not measurements. Before materially
-changing a budget, run the calibration procedure in the spec (same starting
-corpus, at least three independent 30-minute trials per target, metrics
-recorded at 5/10/30 minutes) and reallocate toward targets that still reach
+changing a budget, run the [calibration procedure](specs/production-fuzz-infra.md#budget-calibration) and reallocate toward targets that still reach
 new high-value states. A plateaued soundness target keeps a baseline budget;
 a plateaued defensive target is a candidate for reduction.
 
@@ -182,12 +185,15 @@ reuse build artifacts. The profile is selected from the triggering event:
 Budgets come from each target's manifest policy (see [Target
 budgets](#target-budgets)); the workflow passes only the profile name.
 
-| Profile | Trigger | Aggregate mutation time | Corpus cache | Extras |
-|---------|---------|-------------------------|--------------|--------|
-| `pr` | pull request / push to main | 23m 20s (longest workspace 3m 30s) | restore only | |
-| `daily` | cron `17 4 * * *` | 9h 5m (longest workspace 90m) | restore + save on success | |
-| `weekly` | cron `43 3 * * 0` | 23h (longest workspace 300m) | restore + save on success | `cmin` + coverage upload |
-| manual | `workflow_dispatch` | per chosen profile | per chosen profile | |
+| Profile | Trigger | Corpus cache | Extras |
+|---------|---------|--------------|--------|
+| `pr` | pull request / push to main | restore only | |
+| `daily` | cron `17 4 * * *` | restore + save on success | |
+| `weekly` | cron `43 3 * * 0` | restore + save on success | `cmin` + coverage upload |
+| manual | `workflow_dispatch` | restore only | chosen profile |
+
+Use `scripts/fuzz.py inventory` for current targets and per-workspace runtimes.
+Coverage builds use `fuzz/target-coverage/`, cached separately from ASan builds.
 
 All profiles validate the configuration and replay seeds and regressions
 before mutation. Pull-request jobs may consume the latest trusted corpus but
@@ -195,8 +201,9 @@ never publish new corpus state — only successful scheduled runs on the default
 branch save a new cache, so contributor-controlled code and inputs cannot
 poison trusted state. A failed run never replaces the previous cache.
 
-The workflow runs with read-only permissions and exposes no secrets to fuzzed
-code. Failure artifacts are retained for 7 days, weekly coverage output for
+Checkout does not persist credentials. Fuzz jobs have `contents: read` and
+`actions: write`; the latter permits scheduled cache pruning. The repository
+token is passed only to that pruning step. Failure artifacts are retained for 7 days, weekly coverage output for
 14 days. The corpus cache is an efficiency mechanism, not the only copy of
 anything important: any reproducer worth keeping is minimized, reviewed, and
 committed under `regressions/`.

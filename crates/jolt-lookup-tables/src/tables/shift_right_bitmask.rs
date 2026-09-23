@@ -1,4 +1,4 @@
-use jolt_field::Field;
+use jolt_field::JoltField;
 use serde::{Deserialize, Serialize};
 
 use crate::challenge_ops::{ChallengeOps, FieldOps};
@@ -20,7 +20,7 @@ impl<const XLEN: usize> LookupTable for ShiftRightBitmaskTable<XLEN> {
     fn evaluate_mle<F, C>(&self, r: &[C]) -> F
     where
         C: ChallengeOps<F>,
-        F: Field + FieldOps<C>,
+        F: JoltField + FieldOps<C>,
     {
         debug_assert_eq!(r.len(), 2 * XLEN);
         let log_w = XLEN.trailing_zeros() as usize;
@@ -54,7 +54,7 @@ impl<const XLEN: usize> PrefixSuffixDecomposition<XLEN> for ShiftRightBitmaskTab
     }
 
     #[expect(clippy::unwrap_used)]
-    fn combine<F: Field>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
+    fn combine<F: JoltField>(&self, prefixes: &[PrefixEval<F>], suffixes: &[SuffixEval<F>]) -> F {
         debug_assert_eq!(self.suffixes().len(), suffixes.len());
         let [one, pow2] = suffixes.try_into().unwrap();
         F::from_u128(1 << XLEN) * one - prefixes[Prefixes::Pow2] * pow2

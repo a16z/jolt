@@ -24,7 +24,7 @@
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial};
-use jolt_field::Field;
+use jolt_field::JoltField;
 use jolt_poly::MultilinearPoly;
 use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 
@@ -35,17 +35,19 @@ use crate::{KernelError, ProofSession};
 /// the given order — the final-opening batch order) embedded over `grid`.
 /// `precommitted_tables` carries the committed-program polynomials (bytecode
 /// chunks, program image) the recipe materialized from the prover-retained
-/// full program — they are preprocessing data, not witness oracles.
+/// full program — they are preprocessing data, not witness oracles. It is
+/// consumed: each table moves into its opened polynomial rather than being
+/// copied alongside the caller's map.
 /// Receives the full witness plane (not just the oracle surface) so
 /// implementations can rebuild the committed columns from typed trace
 /// bundles instead of materialized `K × T` oracle grids.
-pub trait JointOpeningPolynomials<F: Field> {
+pub trait JointOpeningPolynomials<F: JoltField> {
     fn prepare(
         &self,
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>>;
 }
@@ -56,7 +58,7 @@ pub trait JointOpeningPolynomials<F: Field> {
 /// opening evaluation), so it keeps a hand-shaped trait; the advice
 /// polynomial's REDUCTION duties are ordinary `PrepareKernel` members
 /// (`precommitted_reduction`).
-pub trait AdviceOpeningEvaluation<F: Field> {
+pub trait AdviceOpeningEvaluation<F: JoltField> {
     fn evaluate(
         &self,
         session: &mut ProofSession,

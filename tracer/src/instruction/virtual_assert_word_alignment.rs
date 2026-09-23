@@ -38,9 +38,8 @@ mod tests {
     /// `rs1 + imm` must use wrapping arithmetic to match RV64 semantics
     /// (effective addresses are mod 2^64) and the convention used by every
     /// other tracer instruction (LB/LBU/LH/LHU/LW/LWU/LD, SB/SH/SW/SD,
-    /// VirtualLW/VirtualSW, AMO*). Plain `+` panics on i64 overflow in
-    /// debug builds for any rs1/imm pair whose signed sum falls outside
-    /// `[i64::MIN, i64::MAX]`.
+    /// AMO*). Plain `+` panics on i64 overflow in debug builds for any
+    /// rs1/imm pair whose signed sum falls outside `[i64::MIN, i64::MAX]`.
     #[test]
     fn wraps_on_overflow() {
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));

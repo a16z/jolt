@@ -6,7 +6,7 @@
 
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-use jolt_field::{Fr, FromPrimitiveInt};
+use jolt_field::{Fr, Ring};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::ClearSumcheckProof;
@@ -26,7 +26,7 @@ type F = Fr;
 fn prove_product(
     polys: &[Vec<F>],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript,
+    transcript: &mut Blake2bTranscript<F>,
 ) -> (ClearSumcheckProof<F>, F) {
     let degree = polys.len();
     let n = 1 << num_vars;

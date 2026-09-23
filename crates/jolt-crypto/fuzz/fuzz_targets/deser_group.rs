@@ -18,8 +18,8 @@ macro_rules! check_bincode {
             let (decoded, used) = bincode::serde::decode_from_slice::<$ty, _>(&encoded, $config)
                 .expect("canonical encoding must decode");
             assert_eq!(used, encoded.len(), "canonical encoding has trailing bytes");
-            let re_encoded = bincode::serde::encode_to_vec(&decoded, $config)
-                .expect("decoded value re-encodes");
+            let re_encoded =
+                bincode::serde::encode_to_vec(&decoded, $config).expect("decoded value re-encodes");
             assert_eq!(re_encoded, encoded, "decode → encode is not canonical");
         }
     };

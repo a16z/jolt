@@ -5,8 +5,7 @@
 //! four dense `T`-sized tables (`eq(τ_low)` plus the three value columns)
 //! every round.
 //!
-//! Techniques ported from
-//! `jolt-prover-legacy/src/zkvm/claim_reductions/registers.rs`:
+//! Carries forward the former registers claim-reduction optimizations:
 //!
 //! - **Prefix–suffix P·Q decomposition** (eprint 2025/611, Appendix A) for
 //!   the first half of the rounds: `Σ_j eq(τ, j)·V(j)` becomes
@@ -27,7 +26,7 @@
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, RegistersClaimReductionPublic,
 };
-use jolt_field::{AdditiveAccumulator, Field, RingAccumulator, SignedScalarAccumulator};
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
@@ -43,9 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    bind_pairs, collect_rows, fmadd_u64_split, pin_derived_term, RoundChallenges,
-};
+use super::support::{bind_pairs, fmadd_u64_split, pin_derived_term, BundleStore, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -53,6 +50,7 @@ use crate::{
 /// Per-cycle `[rd write value, rs1 value, rs2 value]`, kept as raw `u64`s so
 /// the eq folds run on small-scalar fused multiply-adds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RegisterValuesRow([u64; 3]);
 
 impl WitnessBundle for RegisterValuesRow {
@@ -62,9 +60,9 @@ impl WitnessBundle for RegisterValuesRow {
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
         Ok(Self([
-            row.registers.rd.map_or(0, |write| write.post_value),
-            row.registers.rs1.map_or(0, |read| read.value),
-            row.registers.rs2.map_or(0, |read| read.value),
+            row.rd_write_value(),
+            row.rs1_value(),
+            row.rs2_value(),
         ]))
     }
 
@@ -75,7 +73,9 @@ impl WitnessBundle for RegisterValuesRow {
 
 pub struct OptimizedRegistersClaimReduction;
 
-impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegistersClaimReduction {
+impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
+    for OptimizedRegistersClaimReduction
+{
     fn prepare(
         &self,
         _session: &mut ProofSession,
@@ -97,7 +97,9 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
             });
         }
         let cycles = 1usize << log_t;
-        let values: Vec<RegisterValuesRow> = collect_rows(witness, cycles)?;
+        // Slice-backed witnesses re-extract rows without retaining a vector.
+        let values = BundleStore::<RegisterValuesRow>::resolve(witness, cycles)?;
+        let access = values.access();
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
@@ -112,28 +114,34 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
         // Q(x_lo) = Σ_{x_hi} eq(τ_hi)[x_hi] · V(x_hi ‖ x_lo), with the three
         // value columns folded on u64 accumulators and γ-combined once.
         const BLOCK: usize = 32;
-        let build_q_block = |(block_index, q_block): (usize, &mut [F])| {
-            let mut folds = vec![[F::SmallScalarAccumulator::default(); 3]; q_block.len()];
-            for (x_hi, &eq_hi) in eq_suffix.iter().enumerate() {
-                let eq_hi_shifted = eq_hi.mul_pow_2(32);
-                let base = x_hi << prefix_vars;
-                for (i, fold) in folds.iter_mut().enumerate() {
-                    let x_lo = block_index * BLOCK + i;
-                    let row = values[base + x_lo].0;
-                    fmadd_u64_split(&mut fold[0], eq_hi, eq_hi_shifted, row[0]);
-                    fmadd_u64_split(&mut fold[1], eq_hi, eq_hi_shifted, row[1]);
-                    fmadd_u64_split(&mut fold[2], eq_hi, eq_hi_shifted, row[2]);
+        let build_q_block =
+            |(block_index, q_block): (usize, &mut [F])| -> Result<(), WitnessError> {
+                let mut folds = vec![[F::SmallScalarAccumulator::default(); 3]; q_block.len()];
+                for (x_hi, &eq_hi) in eq_suffix.iter().enumerate() {
+                    let eq_hi_shifted = eq_hi.mul_pow_2(32);
+                    let base = x_hi << prefix_vars;
+                    for (i, fold) in folds.iter_mut().enumerate() {
+                        let x_lo = block_index * BLOCK + i;
+                        let row = access.row(base + x_lo)?.0;
+                        fmadd_u64_split(&mut fold[0], eq_hi, eq_hi_shifted, row[0]);
+                        fmadd_u64_split(&mut fold[1], eq_hi, eq_hi_shifted, row[1]);
+                        fmadd_u64_split(&mut fold[2], eq_hi, eq_hi_shifted, row[2]);
+                    }
                 }
-            }
-            for (q, fold) in q_block.iter_mut().zip(folds) {
-                *q = fold[0].reduce() + gamma * fold[1].reduce() + gamma_sq * fold[2].reduce();
-            }
-        };
+                for (q, fold) in q_block.iter_mut().zip(folds) {
+                    *q = fold[0].reduce() + gamma * fold[1].reduce() + gamma_sq * fold[2].reduce();
+                }
+                Ok(())
+            };
         let mut q = vec![F::zero(); 1 << prefix_vars];
         #[cfg(feature = "parallel")]
-        q.par_chunks_mut(BLOCK).enumerate().for_each(build_q_block);
+        q.par_chunks_mut(BLOCK)
+            .enumerate()
+            .try_for_each(build_q_block)?;
         #[cfg(not(feature = "parallel"))]
-        q.chunks_mut(BLOCK).enumerate().for_each(build_q_block);
+        q.chunks_mut(BLOCK)
+            .enumerate()
+            .try_for_each(build_q_block)?;
 
         Ok(Box::new(ClaimReductionKernel {
             log_t,
@@ -147,6 +155,7 @@ impl<F: Field> PrepareKernel<F, RegistersClaimReduction<F>> for OptimizedRegiste
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum Phase<F> {
     /// First half of the rounds: the P·Q buffers over the prefix variables.
     PrefixSuffix { p: Vec<F>, q: Vec<F> },
@@ -159,73 +168,57 @@ enum Phase<F> {
     },
 }
 
-struct ClaimReductionKernel<F: Field> {
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct ClaimReductionKernel<F: JoltField> {
     log_t: usize,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_sq: F,
     /// The full `τ_low` point (big-endian) the summand's eq factor fixes.
     tau: Vec<F>,
-    /// Raw per-cycle `u64` values, kept for the phase-2 regeneration.
-    values: Vec<RegisterValuesRow>,
+    /// Raw values kept for phase-2 regeneration.
+    values: BundleStore<RegisterValuesRow>,
     phase: Phase<F>,
     challenges: RoundChallenges<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(ClaimReductionKernel, |kernel| {
-    use crate::backend::vec_heap_bytes;
-    let phase = match &kernel.phase {
-        Phase::PrefixSuffix { p, q } => vec_heap_bytes(p) + vec_heap_bytes(q),
-        Phase::Dense {
-            eq,
-            rd_write_value,
-            rs1_value,
-            rs2_value,
-        } => {
-            vec_heap_bytes(eq)
-                + vec_heap_bytes(rd_write_value)
-                + vec_heap_bytes(rs1_value)
-                + vec_heap_bytes(rs2_value)
-        }
-    };
-    vec_heap_bytes(&kernel.tau)
-        + vec_heap_bytes(&kernel.values)
-        + phase
-        + kernel.challenges.heap_bytes()
-});
-
-impl<F: Field> ClaimReductionKernel<F> {
+impl<F: JoltField> ClaimReductionKernel<F> {
     /// Regenerate the dense phase from the raw values: the three columns
     /// folded by `eq(r_prefix)` (their exact partial binds) and the suffix
     /// eq table scaled by the bound-prefix eq factor.
-    fn transition_to_dense(&mut self) {
+    fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let eq_prefix = EqPolynomial::<F>::evals(&r_prefix, None);
         let eq_prefix_shifted: Vec<F> = eq_prefix.iter().map(|eq| eq.mul_pow_2(32)).collect();
         let chunk = eq_prefix.len();
         let remaining = 1usize << (self.log_t - bound);
+        let access = self.values.access();
 
-        let fold_chunk = |rows: &[RegisterValuesRow]| -> [F; 3] {
+        let fold_chunk = |chunk_index: usize| -> Result<[F; 3], WitnessError> {
+            let base = chunk_index * chunk;
             let mut fold = [F::SmallScalarAccumulator::default(); 3];
-            for (row, (&eq, &eq_shifted)) in rows
-                .iter()
-                .zip(eq_prefix.iter().zip(eq_prefix_shifted.iter()))
+            for (offset, (&eq, &eq_shifted)) in
+                eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
             {
+                let row = access.row(base + offset)?;
                 fmadd_u64_split(&mut fold[0], eq, eq_shifted, row.0[0]);
                 fmadd_u64_split(&mut fold[1], eq, eq_shifted, row.0[1]);
                 fmadd_u64_split(&mut fold[2], eq, eq_shifted, row.0[2]);
             }
-            fold.map(F::SmallScalarAccumulator::reduce)
+            Ok(fold.map(F::SmallScalarAccumulator::reduce))
         };
         #[cfg(feature = "parallel")]
-        let folds: Vec<[F; 3]> = self.values.par_chunks(chunk).map(fold_chunk).collect();
+        let folds: Vec<[F; 3]> = (0..remaining)
+            .into_par_iter()
+            .map(fold_chunk)
+            .collect::<Result<_, _>>()?;
         #[cfg(not(feature = "parallel"))]
-        let folds: Vec<[F; 3]> = self.values.chunks(chunk).map(fold_chunk).collect();
-        debug_assert_eq!(folds.len(), remaining);
+        let folds: Vec<[F; 3]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
-        // The raw values only feed this regeneration; free them now.
-        self.values = Vec::new();
+        // Release retained raw values after regeneration.
+        self.values = BundleStore::Retained(Vec::new());
 
         let (tau_hi, tau_lo) = self.tau.split_at(self.log_t / 2);
         let eq_prefix_eval = EqPolynomial::<F>::mle(&r_prefix, tau_lo);
@@ -235,15 +228,19 @@ impl<F: Field> ClaimReductionKernel<F> {
             rs1_value: folds.iter().map(|fold| fold[1]).collect(),
             rs2_value: folds.iter().map(|fold| fold[2]).collect(),
         };
+        Ok(())
     }
 
-    fn bind(&mut self, r: F) {
+    fn bind(&mut self, r: F) -> Result<(), SumcheckError<F>> {
         self.challenges.push(r);
         // Last prefix variable: regenerate the dense phase from the raw
         // values instead of binding the exhausted P·Q.
         if matches!(&self.phase, Phase::PrefixSuffix { p, .. } if p.len() == 2) {
-            self.transition_to_dense();
-            return;
+            return self.transition_to_dense().map_err(|_| {
+                SumcheckError::MissingEvaluationSource {
+                    kind: "register values row",
+                }
+            });
         }
         match &mut self.phase {
             Phase::PrefixSuffix { p, q } => {
@@ -262,10 +259,11 @@ impl<F: Field> ClaimReductionKernel<F> {
                 }
             }
         }
+        Ok(())
     }
 }
 
-impl<F: Field> ProveRounds<F> for ClaimReductionKernel<F> {
+impl<F: JoltField> ProveRounds<F> for ClaimReductionKernel<F> {
     fn num_rounds(&self) -> usize {
         self.log_t
     }
@@ -277,7 +275,7 @@ impl<F: Field> ProveRounds<F> for ClaimReductionKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
 
         // Degree-2 member: evals at t = 0 and t = 2; s(1) from the hint.
@@ -321,12 +319,11 @@ impl<F: Field> ProveRounds<F> for ClaimReductionKernel<F> {
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
-impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
+impl<F: JoltField> SumcheckKernel<F> for ClaimReductionKernel<F> {
     type Relation = RegistersClaimReduction<F>;
 
     fn output_claims(
@@ -367,14 +364,8 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
                 reason: "claim reduction must finish in the dense phase",
             });
         };
-        pin_derived_term(
-            relation,
-            JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan),
-            input_points,
-            output_points,
-            challenges,
-            eq[0],
-        )
+        let id = JoltDerivedId::from(RegistersClaimReductionPublic::EqSpartan);
+        pin_derived_term(relation, id, input_points, output_points, challenges, eq[0])
     }
 }
 
@@ -383,7 +374,7 @@ impl<F: Field> SumcheckKernel<F> for ClaimReductionKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
-    use jolt_field::{Fr, FromPrimitiveInt};
+    use jolt_field::{Fr, Ring};
     use jolt_poly::Polynomial;
     use jolt_verifier::stages::stage3::registers_claim_reduction::{
         RegistersClaimReduction, RegistersClaimReductionChallenges,

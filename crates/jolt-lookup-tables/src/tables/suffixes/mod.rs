@@ -10,10 +10,9 @@
 
 use crate::lookup_bits::LookupBits;
 
+mod align_addr;
 mod and;
 mod andnot;
-mod change_divisor;
-mod change_divisor_w;
 mod div_by_zero;
 mod eq;
 mod gt;
@@ -25,10 +24,16 @@ mod lower_half_word;
 mod lower_word;
 mod lsb;
 mod lt;
+mod offset_scale;
 mod one;
 mod or;
 mod overflow_bits_zero;
+mod pext;
+mod pext_helper;
 mod pow2;
+mod pow2_offset_b;
+mod pow2_offset_h;
+mod pow2_offset_w;
 mod pow2_w;
 mod rev8w;
 mod right_is_zero;
@@ -39,19 +44,24 @@ mod right_shift_helper;
 mod right_shift_padding;
 mod right_shift_w;
 mod right_shift_w_helper;
+mod shift_data;
 mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
+mod sign_extension_w;
 mod two_lsb;
 mod upper_word;
+mod window_sign;
+mod window_sign_pow2;
+mod x31_y0;
 mod xor;
 mod xor_rot;
+mod xor_rotl1;
 mod xor_rotw;
 
+use align_addr::AlignAddrSuffix;
 use and::AndSuffix;
 use andnot::AndNotSuffix;
-use change_divisor::ChangeDivisorSuffix;
-use change_divisor_w::ChangeDivisorWSuffix;
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
 use gt::GreaterThanSuffix;
@@ -63,10 +73,19 @@ use lower_half_word::LowerHalfWordSuffix;
 use lower_word::LowerWordSuffix;
 use lsb::LsbSuffix;
 use lt::LessThanSuffix;
+use offset_scale::OffsetScaleSuffix;
 use one::OneSuffix;
 use or::OrSuffix;
 use overflow_bits_zero::OverflowBitsZeroSuffix;
+use pext::PextSuffix;
+use pext_helper::PextHelperSuffix;
+// Shared bit-manipulation helpers: single source for the pext packing and
+// the window-sign convention, reused by the corresponding tables/prefixes.
+pub(crate) use pext::pext;
 use pow2::Pow2Suffix;
+use pow2_offset_b::Pow2OffsetBSuffix;
+use pow2_offset_h::Pow2OffsetHSuffix;
+use pow2_offset_w::Pow2OffsetWSuffix;
 use pow2_w::Pow2WSuffix;
 use rev8w::Rev8WSuffix;
 use right_is_zero::RightOperandIsZeroSuffix;
@@ -77,16 +96,23 @@ use right_shift_helper::RightShiftHelperSuffix;
 use right_shift_padding::RightShiftPaddingSuffix;
 use right_shift_w::RightShiftWSuffix;
 use right_shift_w_helper::RightShiftWHelperSuffix;
+use shift_data::ShiftDataSuffix;
 use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
+use sign_extension_w::SignExtensionWSuffix;
 use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
+pub(crate) use window_sign::window_sign_bit;
+use window_sign::WindowSignSuffix;
+use window_sign_pow2::WindowSignPow2Suffix;
+use x31_y0::X31Y0Suffix;
 use xor::XorSuffix;
 use xor_rot::XorRotSuffix;
+use xor_rotl1::{BottomXBitSuffix, TopYBitSuffix, XorRotL1PairsSuffix};
 use xor_rotw::XorRotWSuffix;
 
-use jolt_field::Field;
+use jolt_field::JoltField;
 
 /// A suffix polynomial: evaluates on unbound Boolean variables during sumcheck.
 ///
@@ -112,8 +138,6 @@ pub enum Suffixes {
     Or,
     RightOperand,
     RightOperandW,
-    ChangeDivisor,
-    ChangeDivisorW,
     UpperWord,
     LowerWord,
     LowerHalfWord,
@@ -148,6 +172,30 @@ pub enum Suffixes {
     XorRotW12,
     XorRotW8,
     XorRotW7,
+    Pow2OffsetW,
+    Pext,
+    PextHelper,
+    WindowSign,
+    WindowSignPow2,
+    XorRotW22,
+    XorRotW19,
+    XorRotW6,
+    /// SRAW sign-fill terms whose variables remain in the suffix.
+    SignExtensionW,
+    /// The suffix-owned product `x_{XLEN/2-1} * y_0` used by SRLW.
+    X31Y0,
+    Pow2OffsetB,
+    Pow2OffsetH,
+    AlignAddr,
+    ShiftDataB,
+    ShiftDataH,
+    ShiftDataW,
+    OffsetScaleB,
+    OffsetScaleH,
+    OffsetScaleW,
+    XorRotL1Pairs,
+    TopYBit,
+    BottomXBit,
 }
 
 /// Total number of suffix variants.
@@ -172,8 +220,9 @@ impl Suffixes {
                 | Suffixes::TwoLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
-                | Suffixes::ChangeDivisor
-                | Suffixes::ChangeDivisorW
+                | Suffixes::WindowSign
+                | Suffixes::TopYBit
+                | Suffixes::BottomXBit
         )
     }
 
@@ -187,8 +236,6 @@ impl Suffixes {
             Suffixes::Xor => XorSuffix::suffix_mle(b),
             Suffixes::RightOperand => RightOperandSuffix::suffix_mle(b),
             Suffixes::RightOperandW => RightOperandWSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisor => ChangeDivisorSuffix::suffix_mle(b),
-            Suffixes::ChangeDivisorW => ChangeDivisorWSuffix::suffix_mle(b),
             Suffixes::UpperWord => UpperWordSuffix::suffix_mle(b),
             Suffixes::LowerWord => LowerWordSuffix::suffix_mle(b),
             Suffixes::LowerHalfWord => LowerHalfWordSuffix::suffix_mle(b),
@@ -223,12 +270,34 @@ impl Suffixes {
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
             Suffixes::XorRotW16 => XorRotWSuffix::<16>::suffix_mle(b),
+            Suffixes::Pow2OffsetW => Pow2OffsetWSuffix::suffix_mle(b),
+            Suffixes::Pext => PextSuffix::suffix_mle(b),
+            Suffixes::PextHelper => PextHelperSuffix::suffix_mle(b),
+            Suffixes::WindowSign => WindowSignSuffix::suffix_mle(b),
+            Suffixes::WindowSignPow2 => WindowSignPow2Suffix::suffix_mle(b),
+            Suffixes::XorRotW22 => XorRotWSuffix::<22>::suffix_mle(b),
+            Suffixes::XorRotW19 => XorRotWSuffix::<19>::suffix_mle(b),
+            Suffixes::XorRotW6 => XorRotWSuffix::<6>::suffix_mle(b),
+            Suffixes::SignExtensionW => SignExtensionWSuffix::suffix_mle(b),
+            Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
+            Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
+            Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
+            Suffixes::AlignAddr => AlignAddrSuffix::suffix_mle(b),
+            Suffixes::ShiftDataB => ShiftDataSuffix::<1>::suffix_mle(b),
+            Suffixes::ShiftDataH => ShiftDataSuffix::<2>::suffix_mle(b),
+            Suffixes::ShiftDataW => ShiftDataSuffix::<4>::suffix_mle(b),
+            Suffixes::OffsetScaleB => OffsetScaleSuffix::<1>::suffix_mle(b),
+            Suffixes::OffsetScaleH => OffsetScaleSuffix::<2>::suffix_mle(b),
+            Suffixes::OffsetScaleW => OffsetScaleSuffix::<4>::suffix_mle(b),
+            Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
+            Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
+            Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
         }
     }
 
     /// Evaluate and promote to a field element.
     #[inline]
-    pub fn evaluate<F: Field>(&self, b: LookupBits) -> SuffixEval<F> {
+    pub fn evaluate<F: JoltField>(&self, b: LookupBits) -> SuffixEval<F> {
         F::from_u64(self.suffix_mle(b))
     }
 }

@@ -1,6 +1,6 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-mod support;
+pub mod support;
 
 use jolt_akita::{AkitaNativeBatching, AkitaProverHint, AkitaScheme};
 use jolt_openings::{
@@ -15,9 +15,9 @@ use support::{
 #[test]
 fn akita_native_batching_roundtrips_grouped_commitment() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =
@@ -49,16 +49,16 @@ fn akita_native_batching_roundtrips_grouped_commitment() {
 #[test]
 fn akita_native_batching_rejects_malformed_statements() {
     let (prover_setup, _) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (group_commitment, group_hint) =
         AkitaScheme::commit_group(&prover_setup, layout(7), &[poly_a.clone(), poly_b.clone()])
             .expect("grouped commit should succeed");
     let (other_commitment, _) =
-        AkitaScheme::commit_group(&prover_setup, layout(7), &[polynomial(13, 80)])
+        AkitaScheme::commit_group(&prover_setup, layout(7), &[polynomial(16, 80)])
             .expect("other commit should succeed");
 
     let mut transcript = Blake2bTranscript::new(b"akita-bb-empty");
@@ -128,9 +128,9 @@ fn akita_native_batching_rejects_malformed_statements() {
 #[test]
 fn akita_native_batching_rejects_bad_prover_witnesses() {
     let (prover_setup, _) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =
@@ -139,7 +139,7 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
     let (_, other_hint) = AkitaScheme::commit_group(
         &prover_setup,
         layout(7),
-        &[polynomial(13, 80), polynomial(13, 100)],
+        &[polynomial(16, 80), polynomial(16, 100)],
     )
     .expect("other grouped commit should succeed");
     let statement = native_statement(commitment, &point, [eval_a, eval_b]);
@@ -188,9 +188,9 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
 #[test]
 fn akita_native_batching_rejects_tampered_verifier_inputs() {
     let (prover_setup, verifier_setup) = native_setup();
-    let poly_a = polynomial(13, 1);
-    let poly_b = polynomial(13, 20);
-    let point: Vec<_> = (0..13).map(|i| f(2 + 3 * i)).collect();
+    let poly_a = polynomial(16, 1);
+    let poly_b = polynomial(16, 20);
+    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
     let eval_a = poly_a.evaluate(&point);
     let eval_b = poly_b.evaluate(&point);
     let (commitment, hint) =
@@ -221,13 +221,13 @@ fn akita_native_batching_rejects_tampered_verifier_inputs() {
     let (other_commitment, _) = AkitaScheme::commit_group(
         &prover_setup,
         layout(7),
-        &[polynomial(13, 80), polynomial(13, 100)],
+        &[polynomial(16, 80), polynomial(16, 100)],
     )
     .expect("other grouped commit should succeed");
     let tampered_commitment = native_statement(other_commitment, &point, [eval_a, eval_b]);
     assert_native_verify_rejects(&verifier_setup, tampered_commitment, &proof);
 
-    let (_, wrong_layout_setup) = setup_for(13, 2, layout(8));
+    let (_, wrong_layout_setup) = setup_for(16, 2, layout(8));
     assert_native_verify_rejects(&wrong_layout_setup, statement, &proof);
 }
 

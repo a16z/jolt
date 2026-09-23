@@ -7,13 +7,13 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FormatVirtualRightShiftR {
+pub struct FormatVirtualRightShiftR<const MASK_WIDTH: usize = 64> {
     pub rd: u8,
     pub rs1: u8,
     pub rs2: u8,
 }
 
-impl Default for FormatVirtualRightShiftR {
+impl<const MASK_WIDTH: usize> Default for FormatVirtualRightShiftR<MASK_WIDTH> {
     fn default() -> Self {
         Self {
             rd: 0,
@@ -24,13 +24,15 @@ impl Default for FormatVirtualRightShiftR {
 }
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RegisterStateVirtualRightShift {
+pub struct RegisterStateVirtualRightShift<const MASK_WIDTH: usize = 64> {
     pub rd: (u64, u64), // (old_value, new_value)
     pub rs1: u64,
     pub rs2: u64,
 }
 
-impl InstructionRegisterState for RegisterStateVirtualRightShift {
+impl<const MASK_WIDTH: usize> InstructionRegisterState
+    for RegisterStateVirtualRightShift<MASK_WIDTH>
+{
     #[cfg(any(feature = "test-utils", test))]
     fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
         use rand::RngCore;
@@ -40,8 +42,8 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
             rng.next_u64()
         };
 
-        let shift = rng.next_u64() & 0x3F;
-        let ones = (1u128 << (64 - shift)) - 1;
+        assert!((1..=64).contains(&MASK_WIDTH));
+        let shift = rng.next_u64() % MASK_WIDTH as u64;
 
         debug_assert_ne!(
             operands.rs2.unwrap(),
@@ -53,7 +55,7 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
             "rs2 cannot equal rs1 in VirtualRightShift instruction"
         );
 
-        let rs2_value = (ones << shift) as u64;
+        let rs2_value = ((1u128 << MASK_WIDTH) - (1u128 << shift)) as u64;
 
         Self {
             rd: (
@@ -82,8 +84,8 @@ impl InstructionRegisterState for RegisterStateVirtualRightShift {
     }
 }
 
-impl InstructionFormat for FormatVirtualRightShiftR {
-    type RegisterState = RegisterStateVirtualRightShift;
+impl<const MASK_WIDTH: usize> InstructionFormat for FormatVirtualRightShiftR<MASK_WIDTH> {
+    type RegisterState = RegisterStateVirtualRightShift<MASK_WIDTH>;
 
     fn parse(_: u32) -> Self {
         unimplemented!("virtual instruction")
@@ -124,7 +126,7 @@ impl InstructionFormat for FormatVirtualRightShiftR {
     }
 }
 
-impl From<NormalizedOperands> for FormatVirtualRightShiftR {
+impl<const MASK_WIDTH: usize> From<NormalizedOperands> for FormatVirtualRightShiftR<MASK_WIDTH> {
     fn from(operands: NormalizedOperands) -> Self {
         Self {
             rd: operands.rd.unwrap(),
@@ -134,8 +136,8 @@ impl From<NormalizedOperands> for FormatVirtualRightShiftR {
     }
 }
 
-impl From<FormatVirtualRightShiftR> for NormalizedOperands {
-    fn from(format: FormatVirtualRightShiftR) -> Self {
+impl<const MASK_WIDTH: usize> From<FormatVirtualRightShiftR<MASK_WIDTH>> for NormalizedOperands {
+    fn from(format: FormatVirtualRightShiftR<MASK_WIDTH>) -> Self {
         Self {
             rd: Some(format.rd),
             rs1: Some(format.rs1),
