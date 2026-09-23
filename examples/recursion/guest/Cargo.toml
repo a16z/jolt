@@ -25,7 +25,7 @@ jolt-field = { path = "../../../crates/jolt-field" }
 jolt-akita = { path = "../../../crates/jolt-akita", optional = true, default-features = false }
 jolt-dory = { path = "../../../crates/jolt-dory" }
 jolt-crypto = { path = "../../../crates/jolt-crypto", optional = true, default-features = false }
-jolt-transcript = { path = "../../../crates/jolt-transcript", optional = true }
+jolt-transcript = { path = "../../../crates/jolt-transcript", default-features = false, features = ["transcript-blake2b"], optional = true }
 
 [lib]
 test = false

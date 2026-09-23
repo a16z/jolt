@@ -13,17 +13,20 @@ cargo run --release -p recursion --features akita,field-inline -- \
 `trace` executes the verifier and reports its output; it does not prove that
 execution. Successful verification returns `Recursion output (trace-only): 1`.
 The `"verification"` cycle count excludes preprocessing and proof decoding;
-`trace length` includes the complete guest execution. Use `verify` instead of
-`trace` to also prove and verify the outer execution.
+`trace length` includes the complete guest execution. This Akita path supports
+trace execution only; its outer `verify` operation is not implemented.
 
-For the Dory verifier, omit `akita` from the feature list. Regenerate the inner
+For the Dory verifier, omit `akita` from the feature list. Its `verify` command
+also proves and verifies the outer execution. Regenerate the inner
 proof when changing the commitment backend, protocol, or schedule catalogs.
 Keep the same proof input when comparing algebra-preserving guest optimizations.
 
-Add `--embed` to `trace` or `verify` to bake the verifier setup into the guest
+Add `--embed` to `trace` (or Dory `verify`) to bake the verifier setup into the guest
 image. Proofs remain runtime inputs. Prepared binary catalogs, expanded matrices,
 and NTT caches are trusted setup data: embedding binds them to the guest image;
-in input mode the caller must authenticate the setup.
+in input mode the caller must authenticate the entire prepared setup, including
+the expanded matrix, NTT cache, and catalog bytes. The preprocessing digest alone
+does not authenticate these detached prepared objects.
 
 For instruction-level attribution:
 

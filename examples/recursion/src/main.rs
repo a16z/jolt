@@ -426,6 +426,8 @@ fn collect_guest_proofs(
     let max_trace_length = guest.get_max_trace_length(false);
     let mut memory_config = MemoryConfig { heap_size: 32768u64, ..Default::default() };
     let mut program = Program::new(guest.name());
+    #[cfg(feature = "field-inline")]
+    program.enable_field_inline();
     program.set_func(guest.func());
     program.set_std(false);
     program.set_memory_config(memory_config);
