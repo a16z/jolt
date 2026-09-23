@@ -1,8 +1,11 @@
 //! Optimized instruction claim reduction (stage 2).
 //!
 //! Combines five operands into `C(j) = Σ_i γ^i·o_i(j)` and binds only `C`.
+//! The first round streams native rows; only the first bound table is stored.
 //! Gruen factoring avoids a dense eq table. One split-eq row walk recovers
 //! the five output claims at the bound point.
+
+use std::mem::MaybeUninit;
 
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
@@ -80,6 +83,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
 }
 
 /// Coefficients for combining native scalar limbs in one wide accumulation.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct CombineCoefficients<F> {
     gamma_powers: [F; NUM_TABLES],
     right_lookup_hi: F,
@@ -134,11 +138,20 @@ impl<F: JoltField> CombineCoefficients<F> {
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum CombinedOperands<F: JoltField> {
+    Unbound {
+        coefficients: CombineCoefficients<F>,
+        first_evals: [F; 3],
+    },
+    Bound(Polynomial<F>),
+}
+
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
     /// table (the summand is linear in the five operands).
-    combined: Polynomial<F>,
+    combined: CombinedOperands<F>,
     /// Native rows used to recover individual output claims.
     rows: BundleStore<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
@@ -162,29 +175,49 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             }
         }
         let coefficients = CombineCoefficients::new(gamma);
-        // Build once; rounds only bind this table.
-        let combined: Vec<F> = {
+        let gruen = GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh);
+        let combined = if log_t == 0 {
+            CombinedOperands::Bound(Polynomial::new(vec![
+                coefficients.combine(&rows.access().row(0)?)
+            ]))
+        } else {
             let access = rows.access();
-            let coefficients = &coefficients;
-            let cell =
-                |j: usize| -> Result<F, WitnessError> { Ok(coefficients.combine(&access.row(j)?)) };
+            let e_out = gruen.e_out_current();
+            let e_in = gruen.e_in_current();
+            let block = |x_out: usize| -> Result<(F, F), WitnessError> {
+                let mut zero = F::zero();
+                let mut one = F::zero();
+                for (x_in, &weight) in e_in.iter().enumerate() {
+                    let j = 2 * (x_out * e_in.len() + x_in);
+                    zero += weight * coefficients.combine(&access.row(j)?);
+                    one += weight * coefficients.combine(&access.row(j + 1)?);
+                }
+                Ok((e_out[x_out] * zero, e_out[x_out] * one))
+            };
+            let add = |a: (F, F), b: (F, F)| (a.0 + b.0, a.1 + b.1);
             #[cfg(feature = "parallel")]
-            {
-                (0..1usize << log_t)
-                    .into_par_iter()
-                    .map(cell)
-                    .collect::<Result<_, _>>()?
-            }
+            let (zero, one) = (0..e_out.len())
+                .into_par_iter()
+                .map(block)
+                .try_reduce(|| (F::zero(), F::zero()), |a, b| Ok(add(a, b)))?;
             #[cfg(not(feature = "parallel"))]
-            {
-                (0..1usize << log_t).map(cell).collect::<Result<_, _>>()?
+            let (zero, one) = {
+                let mut sum = (F::zero(), F::zero());
+                for x_out in 0..e_out.len() {
+                    sum = add(sum, block(x_out)?);
+                }
+                sum
+            };
+            CombinedOperands::Unbound {
+                coefficients,
+                first_evals: [zero, one, one + one - zero],
             }
         };
         Ok(Self {
             progress: RoundProgress::new(log_t),
-            combined: Polynomial::new(combined),
+            combined,
             rows,
-            gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
+            gruen,
             bound_challenges: Vec::with_capacity(log_t),
         })
     }
@@ -246,7 +279,15 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 3;
-        let combined = &self.combined;
+        let combined = match &self.combined {
+            CombinedOperands::Unbound { first_evals, .. } => {
+                let mut q_evals = *first_evals;
+                return self
+                    .gruen
+                    .checked_round_poly(&mut q_evals, previous_claim, round);
+            }
+            CombinedOperands::Bound(combined) => combined,
+        };
         let mut q_evals = self.gruen.par_fold_out_in(
             || [F::zero(); POINTS],
             |acc, row, _x_in, e_in| {
@@ -277,12 +318,48 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
-    fn bind(&mut self, challenge: F) {
+    fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
+        match &mut self.combined {
+            CombinedOperands::Unbound { coefficients, .. } => {
+                let access = self.rows.access();
+                let len = 1usize << (self.progress.total() - 1);
+                let cell = |j: usize| -> Result<F, WitnessError> {
+                    let lo = coefficients.combine(&access.row(2 * j)?);
+                    let hi = coefficients.combine(&access.row(2 * j + 1)?);
+                    Ok(lo + challenge * (hi - lo))
+                };
+                let mut combined = Vec::with_capacity(len);
+                let initialize = |(j, slot): (usize, &mut MaybeUninit<F>)| {
+                    let value = cell(j)?;
+                    let _ = slot.write(value);
+                    Ok::<(), WitnessError>(())
+                };
+                #[cfg(feature = "parallel")]
+                let result = combined.spare_capacity_mut()[..len]
+                    .par_iter_mut()
+                    .enumerate()
+                    .try_for_each(initialize);
+                #[cfg(not(feature = "parallel"))]
+                let result = combined.spare_capacity_mut()[..len]
+                    .iter_mut()
+                    .enumerate()
+                    .try_for_each(initialize);
+                result.map_err(|_| SumcheckError::MissingEvaluationSource {
+                    kind: "instruction operands at the first bind",
+                })?;
+                // SAFETY: every slot below len was initialized successfully.
+                // Errors and panics leave len zero; F is Copy and has no drop.
+                unsafe { combined.set_len(len) };
+                self.combined = CombinedOperands::Bound(Polynomial::new(combined));
+            }
+            CombinedOperands::Bound(combined) => {
+                let _ = combined.bind_low_to_high_in_place(challenge);
+            }
+        }
         self.gruen.bind(challenge);
-        // Avoid a fresh half-size table each round.
-        let _ = self.combined.bind_low_to_high_in_place(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();
+        Ok(())
     }
 }
 
@@ -298,14 +375,13 @@ impl<F: JoltField> ProveRounds<F> for OptimizedInstructionClaimReductionKernel<F
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
-            self.bind(challenge);
+            self.bind(challenge)?;
         }
         self.message(round, previous_claim)
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind(bind);
-        Ok(())
+        self.bind(bind)
     }
 }
 
@@ -510,8 +586,10 @@ mod tests {
             );
             claim = reference_poly.evaluate(challenge(round));
         }
-        reference.finish_rounds(challenge(rounds - 1)).unwrap();
-        optimized.finish_rounds(challenge(rounds - 1)).unwrap();
+        if let Some(last_round) = rounds.checked_sub(1) {
+            reference.finish_rounds(challenge(last_round)).unwrap();
+            optimized.finish_rounds(challenge(last_round)).unwrap();
+        }
 
         let reference_outputs = reference.output_claims(&input_claims).unwrap();
         let optimized_outputs = optimized.output_claims(&input_claims).unwrap();
@@ -524,6 +602,13 @@ mod tests {
         optimized
             .validate_derived_tables(&relation, &input_points, &output_points, &challenges)
             .unwrap();
+    }
+
+    #[test]
+    fn parity_short_domains() {
+        for log_t in 0..=2 {
+            assert_parity(log_t, 123);
+        }
     }
 
     #[test]
