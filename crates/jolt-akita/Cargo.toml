@@ -48,13 +48,9 @@ bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }
-criterion = { workspace = true }
 # The FR provisioning pin test holds the registry's carried arity line to the
 # jolt-claims packing law across the whole swept range. No features: an akita
 # edge here would leak into workspace-wide unification and flip jolt-claims'
 # packed-mode geometry for every `--all` lane.
 jolt-claims = { workspace = true }
-jolt-dory = { workspace = true }
-# Subscriber stack only (bench tracing setup); no summary pipeline.
-jolt-profiling = { path = "../jolt-profiling", default-features = false }
 serde_json = { workspace = true, features = ["std"] }

@@ -25,7 +25,7 @@ use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
 use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
+use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError};
 
 use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
@@ -114,7 +114,7 @@ fn lock_exclusive(file: &fs::File) {
     }
 }
 
-pub type VerifierFixtureProof = jolt_verifier::JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+pub type VerifierFixtureProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
 #[cfg(not(feature = "zk"))]

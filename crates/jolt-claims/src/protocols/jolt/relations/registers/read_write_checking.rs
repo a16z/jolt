@@ -1,5 +1,6 @@
 //! registers read-write checking symbolic sumcheck relation.
 
+use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
