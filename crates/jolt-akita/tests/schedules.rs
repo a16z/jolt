@@ -30,6 +30,7 @@ use jolt_akita::{
 };
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn artifacts() -> AkitaScheduleArtifacts {
     AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
@@ -48,8 +49,8 @@ fn one_hot_catalog(one_hot_k: usize, profile: AkitaOneHotChunkProfile) -> Valida
 
 #[test]
 fn three_file_directory_supports_single_profile() {
-    let suffix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .expect("system time after Unix epoch")
         .as_nanos();
     let directory = std::env::temp_dir().join(format!(
