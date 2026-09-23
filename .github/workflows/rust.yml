@@ -116,6 +116,12 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features akita
       - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
         run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
+      # The Dory arms of the guest x mode matrix and the e2e suites compile
+      # only under prover-fixtures; lint both protocols like the akita pair.
+      - name: cargo clippy -p jolt-prover --features prover-fixtures
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures
+      - name: cargo clippy -p jolt-prover --features prover-fixtures,zk
+        run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,zk
       # The profiling feature gates the profile harness bin and smoke test.
       # The smoke test cannot RUN in CI yet (reference-backend memory — see
       # the NOTE above the prover test jobs), but everything behind the
@@ -191,19 +197,35 @@ jobs:
   test-prover:
     runs-on: ubuntu-latest
     name: Test jolt-prover
-    # No test in this job builds a guest: the Dory end-to-end proving runs in
-    # test-verifier-fixtures, and the akita/zk e2es sit behind their own
-    # features. So the guest toolchain and the jolt CLI are not installed here.
+    # The Dory clear arm of the guest x mode acceptance matrix
+    # (crates/jolt-prover/tests/e2e_matrix.rs) proves real guests here, so
+    # this lane installs the guest toolchain and the jolt CLI like the zk and
+    # akita lanes, which run the same matrix under their protocol.
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
+          components: rust-src
           cache: false
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-tests
           save-if: false
           cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Run jolt-prover tests
@@ -355,8 +377,8 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # Packed-prover acceptance: muldiv, forced K=256, advice,
-      # committed-program, and live tampering checks.
+      # The Akita arm of the guest x mode matrix plus the packed-prover
+      # specifics: forced K=256, advice, committed-program, and live tampers.
       - name: Run jolt-prover tests with akita feature
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features akita,prover-fixtures
 
