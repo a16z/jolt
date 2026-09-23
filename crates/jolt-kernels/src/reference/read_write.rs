@@ -93,11 +93,7 @@ impl ReadWriteTableLayout {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::ReadWriteDimensions;
-    #[cfg(not(feature = "akita"))]
-    use jolt_field::Fr as F;
-    #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7 as F;
-    use jolt_field::{Ring, Zero};
+    use jolt_field::{Fr as F, Ring, Zero};
 
     use super::ReadWriteTableLayout;
     use crate::KernelError;
