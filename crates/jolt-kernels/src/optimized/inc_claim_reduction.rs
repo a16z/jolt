@@ -255,10 +255,29 @@ impl<F: JoltField> IncKernel<F> {
             ))
         };
         #[cfg(feature = "parallel")]
-        let (ram, rd) = (0..half)
-            .into_par_iter()
-            .map(bound)
-            .collect::<Result<(Vec<F>, Vec<F>), _>>()?;
+        let (ram, rd) = {
+            // Fallible collection loses the exact length and stages chunk buffers.
+            // Write each bound pair directly into its final column instead.
+            let mut ram = Vec::with_capacity(half);
+            let mut rd = Vec::with_capacity(half);
+            ram.spare_capacity_mut()[..half]
+                .par_iter_mut()
+                .zip(rd.spare_capacity_mut()[..half].par_iter_mut())
+                .enumerate()
+                .try_for_each(|(y, (ram_y, rd_y))| {
+                    let (ram_value, rd_value) = bound(y)?;
+                    let _ = ram_y.write(ram_value);
+                    let _ = rd_y.write(rd_value);
+                    Ok::<(), SumcheckError<F>>(())
+                })?;
+            // SAFETY: successful iteration initialized every slot exactly once.
+            // On error or panic both vectors retain length zero; F is Copy.
+            unsafe {
+                ram.set_len(half);
+                rd.set_len(half);
+            }
+            (ram, rd)
+        };
         #[cfg(not(feature = "parallel"))]
         let (ram, rd) = {
             let mut ram = Vec::with_capacity(half);
