@@ -195,6 +195,11 @@ jobs:
           --features host,field-inline
           --
           -D warnings
+      # Recursion's non-default host paths are not selected by workspace checks.
+      - name: cargo clippy -p recursion --features field-inline
+        run: cargo clippy -p recursion --all-targets --features field-inline -- -D warnings
+      - name: cargo clippy -p recursion --features akita,field-inline,ntt-inline
+        run: cargo clippy -p recursion --all-targets --features akita,field-inline,ntt-inline -- -D warnings
 
   machete:
     runs-on: ubuntu-latest
