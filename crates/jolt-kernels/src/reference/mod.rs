@@ -47,6 +47,7 @@ pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
 pub mod ram_val_check;
+mod read_write;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;

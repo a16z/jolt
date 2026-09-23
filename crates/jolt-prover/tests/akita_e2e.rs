@@ -17,6 +17,7 @@ mod akita_tests {
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
+    use jolt_kernels::ReferenceBackend;
     use jolt_program::execution::OwnedTrace;
     use jolt_prover::akita::preprocessing::{
         self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
@@ -105,8 +106,17 @@ mod akita_tests {
             witness_config(&config, untrusted_advice, has_trusted_advice),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
+        let mut backend = JoltAkitaBackend::optimized();
+        if config.rw_config.ram_rw_phase1_num_rounds == 0
+            && config.rw_config.registers_rw_phase1_num_rounds == 0
+        {
+            backend.base.ram_read_write = Box::new(ReferenceBackend);
+            backend.base.ram_raf_evaluation = Box::new(ReferenceBackend);
+            backend.base.ram_output_check = Box::new(ReferenceBackend);
+            backend.base.registers_read_write = Box::new(ReferenceBackend);
+        }
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(),
+            &backend,
             &preprocessing,
             &config,
             trusted.as_ref(),
@@ -140,7 +150,20 @@ mod akita_tests {
 
     #[test]
     fn muldiv_e2e_akita() {
-        let (run, config) = muldiv_run();
+        check_muldiv_e2e(false);
+    }
+
+    #[test]
+    fn muldiv_address_first_e2e_akita() {
+        check_muldiv_e2e(true);
+    }
+
+    fn check_muldiv_e2e(address_first: bool) {
+        let (run, mut config) = muldiv_run();
+        if address_first {
+            config.rw_config.ram_rw_phase1_num_rounds = 0;
+            config.rw_config.registers_rw_phase1_num_rounds = 0;
+        }
         assert_eq!(config.one_hot_config.committed_chunk_bits(), 4);
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("Akita proof must verify");

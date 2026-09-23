@@ -142,12 +142,35 @@ impl ReadWriteDimensions {
         self.log_t + self.log_k - self.phase1_num_rounds
     }
 
+    /// Indices into read/write round challenges, in canonical address/cycle order.
+    pub fn read_write_opening_indices(
+        self,
+    ) -> Result<impl Iterator<Item = usize>, JoltFormulaPointError> {
+        let phase1 = self.phase1_num_rounds;
+        let address = self.address_opening_indices()?.map(move |i| i + phase1);
+        let cycle = (phase1 + self.phase2_num_rounds..self.log_t + self.phase2_num_rounds)
+            .rev()
+            .chain((0..phase1).rev());
+        Ok(address.chain(cycle))
+    }
+
+    /// Indices into address-relation round challenges, omitting inactive cycles.
+    pub fn address_opening_indices(
+        self,
+    ) -> Result<impl Iterator<Item = usize>, JoltFormulaPointError> {
+        self.validate_phase_split()?;
+        let cycle_gap = self.phase3_cycle_rounds();
+        Ok((self.phase2_num_rounds + cycle_gap..self.log_k + cycle_gap)
+            .rev()
+            .chain((0..self.phase2_num_rounds).rev()))
+    }
+
     pub fn read_write_opening_point<F: Field>(
         self,
         challenges: &[F],
     ) -> Result<ReadWriteOpeningPoint<F>, JoltFormulaPointError> {
-        self.validate_phase_split()?;
-        let expected = self.log_t + self.log_k;
+        let indices = self.read_write_opening_indices()?;
+        let expected = self.read_write_rounds();
         if challenges.len() != expected {
             return Err(JoltFormulaPointError::ChallengeLengthMismatch {
                 expected,
@@ -155,27 +178,11 @@ impl ReadWriteDimensions {
             });
         }
 
-        let (phase1, rest) = challenges.split_at(self.phase1_num_rounds);
-        let (phase2, rest) = rest.split_at(self.phase2_num_rounds);
-        let (phase3_cycle, phase3_address) = rest.split_at(self.log_t - self.phase1_num_rounds);
-
-        let r_cycle = phase3_cycle
-            .iter()
-            .rev()
-            .copied()
-            .chain(phase1.iter().rev().copied())
-            .collect::<Vec<_>>();
-        let r_address = phase3_address
-            .iter()
-            .rev()
-            .copied()
-            .chain(phase2.iter().rev().copied())
-            .collect::<Vec<_>>();
-        let opening_point = [r_address.as_slice(), r_cycle.as_slice()].concat();
-
+        let opening_point: Vec<F> = indices.map(|i| challenges[i]).collect();
+        let (r_address, r_cycle) = opening_point.split_at(self.log_k);
         Ok(ReadWriteOpeningPoint {
-            r_address,
-            r_cycle,
+            r_address: r_address.to_vec(),
+            r_cycle: r_cycle.to_vec(),
             opening_point,
         })
     }
@@ -184,9 +191,8 @@ impl ReadWriteDimensions {
         self,
         challenges: &[F],
     ) -> Result<Vec<F>, JoltFormulaPointError> {
-        self.validate_phase_split()?;
-        let cycle_gap_rounds = self.phase3_cycle_rounds();
-        let expected = self.log_k + cycle_gap_rounds;
+        let indices = self.address_opening_indices()?;
+        let expected = self.output_check_rounds();
         if challenges.len() != expected {
             return Err(JoltFormulaPointError::ChallengeLengthMismatch {
                 expected,
@@ -194,12 +200,7 @@ impl ReadWriteDimensions {
             });
         }
 
-        let phase3_address_start = self.phase2_num_rounds + cycle_gap_rounds;
-        let mut address = Vec::with_capacity(self.log_k);
-        address.extend_from_slice(&challenges[..self.phase2_num_rounds]);
-        address.extend_from_slice(&challenges[phase3_address_start..]);
-        address.reverse();
-        Ok(address)
+        Ok(indices.map(|i| challenges[i]).collect())
     }
 
     /// Rejects a phase split exceeding the trace/address geometry. Callers
