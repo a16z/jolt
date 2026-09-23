@@ -3,7 +3,7 @@
 //! sequence must round-trip every prover message and produce the same
 //! verifier challenges.
 
-use arbitrary::{Arbitrary, Unstructured};
+use arbitrary::{Arbitrary, Result as ArbitraryResult, Unstructured};
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr as JFr};
 use spongefish::instantiations::{Blake2b512, Keccak};
 
@@ -37,7 +37,7 @@ pub struct Input {
 }
 
 impl<'a> Arbitrary<'a> for Input {
-    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+    fn arbitrary(u: &mut Unstructured<'a>) -> ArbitraryResult<Self> {
         let n = u.int_in_range(0u8..=20)? as usize;
         let mut ops = Vec::with_capacity(n);
         for _ in 0..n {
@@ -54,12 +54,12 @@ impl<'a> Arbitrary<'a> for Input {
     }
 }
 
-fn arb_bytes(u: &mut Unstructured<'_>) -> arbitrary::Result<Vec<u8>> {
+fn arb_bytes(u: &mut Unstructured<'_>) -> ArbitraryResult<Vec<u8>> {
     let len = u.int_in_range(0u8..=64)? as usize;
     (0..len).map(|_| u.arbitrary()).collect()
 }
 
-fn arb_scalar(u: &mut Unstructured<'_>) -> arbitrary::Result<JFr> {
+fn arb_scalar(u: &mut Unstructured<'_>) -> ArbitraryResult<JFr> {
     let bytes: [u8; 32] = u.arbitrary()?;
     Ok(JFr::from_bytes_le_reduced(&bytes))
 }
@@ -200,8 +200,88 @@ fn description_for(label: &str) -> String {
     )
 }
 
+/// Sponge selector for the merged fuzz target. Blake2b512 and Keccak are
+/// upstream spongefish instantiations over the same generic layer, so per-
+/// sponge fuzz targets duplicated coverage; one target fuzzes all three with
+/// the fuzzer choosing the sponge.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub enum SpongeKind {
+    Blake2b,
+    Keccak,
+    Poseidon,
+}
+
+/// Input for the merged fuzz target: a sponge choice plus the op sequence.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct SpongeInput {
+    pub sponge: SpongeKind,
+    pub ops: Vec<Op>,
+}
+
+impl<'a> Arbitrary<'a> for SpongeInput {
+    fn arbitrary(u: &mut Unstructured<'a>) -> ArbitraryResult<Self> {
+        let sponge = match u.int_in_range(0u8..=2)? {
+            0 => SpongeKind::Blake2b,
+            1 => SpongeKind::Keccak,
+            _ => SpongeKind::Poseidon,
+        };
+        let Input { ops } = Input::arbitrary(u)?;
+        Ok(Self { sponge, ops })
+    }
+}
+
+/// Merged fuzz-facing symmetry invariant over all three sponges.
+///
+/// The per-sponge invariants below keep their deterministic Test/RedTeam
+/// coverage; this is the only one synthesized into a fuzz target.
+#[jolt_eval_macros::invariant(Fuzz)]
+#[derive(Default)]
+pub struct TranscriptConsistencyInvariant;
+
+impl Invariant for TranscriptConsistencyInvariant {
+    type Setup = ();
+    type Input = SpongeInput;
+
+    fn name(&self) -> &str {
+        "transcript_prover_verifier_consistency"
+    }
+
+    fn description(&self) -> String {
+        description_for("fuzzer-selected")
+    }
+
+    fn setup(&self) {}
+
+    fn check(&self, _setup: &(), input: SpongeInput) -> Result<(), CheckError> {
+        let ops = Input { ops: input.ops };
+        match input.sponge {
+            SpongeKind::Blake2b => run_check::<Blake2b512>(&ops, Blake2b512::default),
+            SpongeKind::Keccak => run_check::<Keccak>(&ops, Keccak::default),
+            SpongeKind::Poseidon => run_check::<PoseidonSponge>(&ops, PoseidonSponge::new),
+        }
+    }
+
+    fn seed_corpus(&self) -> Vec<SpongeInput> {
+        [
+            SpongeKind::Blake2b,
+            SpongeKind::Keccak,
+            SpongeKind::Poseidon,
+        ]
+        .into_iter()
+        .flat_map(|sponge| {
+            seed_corpus_shared()
+                .into_iter()
+                .map(move |input| SpongeInput {
+                    sponge,
+                    ops: input.ops,
+                })
+        })
+        .collect()
+    }
+}
+
 /// Spongefish symmetry invariant for the Blake2b512 sponge.
-#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
+#[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyBlake2bInvariant;
 
@@ -229,7 +309,7 @@ impl Invariant for TranscriptConsistencyBlake2bInvariant {
 }
 
 /// Spongefish symmetry invariant for the Keccak sponge.
-#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
+#[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyKeccakInvariant;
 
@@ -257,7 +337,7 @@ impl Invariant for TranscriptConsistencyKeccakInvariant {
 }
 
 /// Spongefish symmetry invariant for the Poseidon sponge.
-#[jolt_eval_macros::invariant(Test, Fuzz, RedTeam)]
+#[jolt_eval_macros::invariant(Test, RedTeam)]
 #[derive(Default)]
 pub struct TranscriptConsistencyPoseidonInvariant;
 
