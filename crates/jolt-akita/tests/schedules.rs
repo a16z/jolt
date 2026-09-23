@@ -17,15 +17,19 @@ use jolt_akita::configs::{
     JoltOneHotK256, JoltOneHotK256MultiChunk, JoltOneHotK256W2R2, JoltOneHotK256W4R2,
 };
 use jolt_akita::schedule_registry::{
-    dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+    dense_precommit_profile, PrecommittedScheduleParams, FIXTURE_K16_FINAL_NUM_VARS,
+    FIXTURE_TRUSTED_ADVICE_GROUP,
 };
 use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS, K256_PACKING_VARIABLES,
     ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
 };
 use jolt_akita::{
-    AkitaOneHotChunkProfile, AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaOneHotChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
+use jolt_openings::{CommitmentScheme, OpeningsError};
+use std::sync::Arc;
 
 fn artifacts() -> AkitaScheduleArtifacts {
     AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
@@ -40,6 +44,44 @@ fn one_hot_catalog(one_hot_k: usize, profile: AkitaOneHotChunkProfile) -> Valida
     artifacts()
         .one_hot_catalog_for_profile(one_hot_k, profile)
         .expect("one-hot catalog")
+}
+
+#[test]
+fn three_file_directory_supports_single_profile() {
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after Unix epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "jolt-akita-three-artifacts-{}-{suffix}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("temporary artifact directory");
+    for family in [
+        JoltDenseBounded::schedule_family_name(),
+        JoltOneHotK16::schedule_family_name(),
+        JoltOneHotK256::schedule_family_name(),
+    ] {
+        let name = format!("{family}.aks");
+        let _ = std::fs::copy(
+            AkitaScheduleArtifacts::packaged_directory().join(&name),
+            directory.join(&name),
+        )
+        .expect("copy original schedule artifact");
+    }
+
+    let loaded = AkitaScheduleArtifacts::from_directory(&directory)
+        .expect("original three-file directory must load");
+    let _ = loaded
+        .one_hot_catalog(AKITA_ONE_HOT_K16)
+        .expect("Single catalog must remain available");
+    let error = AkitaScheme::setup(
+        AkitaSetupParams::one_hot_only(16, 1, [3; 32], AKITA_ONE_HOT_K16, Arc::new(loaded))
+            .with_one_hot_chunk_profile(AkitaOneHotChunkProfile::Two),
+    )
+    .expect_err("selecting a missing companion catalog must fail setup");
+    assert!(matches!(error, OpeningsError::InvalidSetup(_)));
+    std::fs::remove_dir_all(directory).expect("remove temporary artifact directory");
 }
 
 #[test]
@@ -329,18 +371,21 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
 
 #[test]
 fn grouped_provisioning_rejects_out_of_family_final_arity() {
-    let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single);
-    let error = jolt_akita::schedule_registry::provision_precommitted_for_k(
-        &dense,
-        &base,
+    let final_num_vars = K16_NUM_VARS.0 - 1;
+    let request = PrecommittedScheduleParams::new(
         None,
         Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
-        &[],
+        final_num_vars,
+    );
+    let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
+        final_num_vars,
+        1,
+        2,
+        [3; 32],
         AKITA_ONE_HOT_K16,
-        AkitaOneHotChunkProfile::Single,
-        K16_NUM_VARS.0 - 1,
-    )
+        Some(request),
+        Arc::new(artifacts()),
+    ))
     .expect_err("a declared reachable arity outside the family must fail setup");
     assert!(error.to_string().contains("outside the supported range"));
 }

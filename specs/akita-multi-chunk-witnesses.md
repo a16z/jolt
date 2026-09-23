@@ -41,8 +41,8 @@ grouped-opening statement.
 - The batch kernel rejects malformed challenge counts, non-uniform live-block geometry, and
   invalid chunk partitions before witness construction.
 - The verifier setup serializes the selected profile and exact finalized catalog. The
-  Fiat-Shamir setup preamble absorbs the chunk count and catalog digest, preventing replay
-  across profiles or catalogs.
+  Fiat-Shamir setup preamble absorbs the catalog digest for every setup and a labeled chunk
+  count for nondefault one-hot profiles. `Single` and `Dense` keep their legacy preamble.
 
 No existing `jolt-eval` invariant changes. Its transcript invariants exercise the generic
 sponge API rather than Akita's setup preamble; the Akita-specific binding is covered by the
@@ -74,8 +74,8 @@ Fiat-Shamir inventory and setup round-trip tests.
   once.
 - [x] Grouped schedule provisioning inherits the selected trace profile, while dense-only setup
   rejects multi-chunk selection.
-- [x] Prover and verifier bind the chunk count in the setup transcript and use the same
-  profile-specific catalog digest.
+- [x] Prover and verifier bind a labeled chunk count for nondefault one-hot profiles and use
+  the same profile-specific catalog digest. `Single` and `Dense` retain their legacy preamble.
 
 ### Testing Strategy
 
@@ -87,8 +87,8 @@ cargo nextest run -p jolt-akita --cargo-quiet
 
 The suite compares streamed and materialized chunk witnesses, counts trace-row visits, checks
 the complete artifact grids, and round-trips both K values under all profiles. The Akita
-Fiat-Shamir inventory must also retain the chunk-profile absorption. Lint and formatting gates
-are:
+Fiat-Shamir inventory retains the conditional chunk-profile absorption sites, and a frozen
+digest test pins the legacy `Single` setup preamble. Lint and formatting gates are:
 
 ```text
 cargo clippy -p jolt-akita --all-targets -- -D warnings
@@ -113,11 +113,13 @@ property introduced here.
 
 ### Architecture
 
-`AkitaOneHotChunkProfile` is serialized in setup parameters and selects one of eight typed
-one-hot families: K=16 or K=256 crossed with one, two, four, or eight chunks. The existing dense
-catalog plus those eight families form a nine-artifact runtime bundle. `from_directory` loads all
-nine files; the three-artifact `AkitaScheduleArtifacts::new` constructor remains sufficient only
-for the default single-chunk path.
+`ProverConfig` passes `AkitaOneHotChunkProfile` to Akita setup, which selects one of eight typed
+one-hot families: K=16 or K=256 crossed with one, two, four, or eight chunks. The selected
+profile is serialized in `AkitaVerifierSetup`. The existing dense catalog plus those eight
+families form a nine-artifact runtime bundle. `from_directory` requires
+the original three files and loads any of the six companion files that are present. A selected
+profile whose companion artifact is absent fails during setup. The three-artifact
+`AkitaScheduleArtifacts::new` constructor remains sufficient for the default single-chunk path.
 
 The multi-chunk catalogs admit arities of at least 16. Their planner configurations use W2R2,
 W4R2, or W8R2 witness geometry. Existing single-chunk one-hot catalogs and the dense catalog
@@ -151,9 +153,9 @@ per-chunk batch-fold return contract and current committed-source planner API.
 
 ## Documentation
 
-`crates/jolt-akita/schedules/README.md` documents the nine runtime artifacts, profile geometry,
-supported arities, and regeneration selectors. No Jolt book change is required because this is an
-internal PCS setup and witness-construction option; `specs/lattice-claims.md` remains the
+`crates/jolt-akita/schedules/README.md` documents the three required artifacts, six optional
+companions, profile geometry, supported arities, and regeneration selectors. The Jolt book
+documents profile selection through `ProverConfig`; `specs/lattice-claims.md` remains the
 normative statement-level Akita contract.
 
 ## Execution
@@ -163,8 +165,9 @@ normative statement-level Akita contract.
   grouped provisioning, typed backend dispatch, and generator selectors.
 - Implement the chunk-aware streamed `OpeningBatchKernel` with one-pass accumulation and retain
   the one-chunk scalar path.
-- Serialize and transcript-bind the profile, update the Fiat-Shamir inventory, and cover all
-  profiles with differential, traversal-count, catalog, and end-to-end tests.
+- Serialize the profile in verifier setup, transcript-bind nondefault one-hot profiles, update the
+  Fiat-Shamir inventory, and cover all profiles with differential, traversal-count, catalog, and
+  end-to-end tests.
 - Pin Akita to the merged `main` revision and use its committed-source planner interface.
 
 ## References

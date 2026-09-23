@@ -304,53 +304,6 @@ impl AdvicePrecommitLayouts {
 pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(14, 1);
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
-/// Adapt grouped rows for optional advice followed by committed-program objects.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "setup provisioning receives the complete typed shape recipe plus its catalog inputs"
-)]
-pub fn provision_precommitted_for_k(
-    dense_catalog: &ValidatedScheduleCatalog,
-    one_hot_catalog: &ValidatedScheduleCatalog,
-    untrusted_physical_vars: Option<usize>,
-    trusted_physical_vars: Option<usize>,
-    direct_program_physical_vars: &[usize],
-    one_hot_k: usize,
-    profile: AkitaOneHotChunkProfile,
-    final_num_vars: usize,
-) -> Result<RegisteredRows, AkitaError> {
-    macro_rules! provision_for {
-        ($cfg:ty) => {
-            provision_precommitted_for_config::<$cfg>(
-                dense_catalog,
-                one_hot_catalog,
-                untrusted_physical_vars,
-                trusted_physical_vars,
-                direct_program_physical_vars,
-                one_hot_k,
-                final_num_vars,
-            )
-        };
-    }
-    match (one_hot_k, profile) {
-        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single) => provision_for!(JoltOneHotK16),
-        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Two) => provision_for!(JoltOneHotK16W2R2),
-        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Four) => provision_for!(JoltOneHotK16W4R2),
-        (AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Eight) => {
-            provision_for!(JoltOneHotK16MultiChunk)
-        }
-        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single) => provision_for!(JoltOneHotK256),
-        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Two) => provision_for!(JoltOneHotK256W2R2),
-        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Four) => provision_for!(JoltOneHotK256W4R2),
-        (AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Eight) => {
-            provision_for!(JoltOneHotK256MultiChunk)
-        }
-        other => Err(AkitaError::InvalidSetup(format!(
-            "unsupported one-hot schedule profile {other:?} for grouped schedule provisioning"
-        ))),
-    }
-}
-
 fn provision_precommitted_for_config<Cfg: CommitmentConfig>(
     dense_catalog: &ValidatedScheduleCatalog,
     one_hot_catalog: &ValidatedScheduleCatalog,

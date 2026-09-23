@@ -1084,6 +1084,43 @@ mod tests {
     }
 
     #[test]
+    fn legacy_single_setup_keeps_its_transcript() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (_, setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+            16,
+            1,
+            [3; 32],
+            AKITA_ONE_HOT_K16,
+            artifacts,
+        ))
+        .unwrap();
+        let mut legacy_json = serde_json::to_value(&setup).unwrap();
+        assert!(legacy_json
+            .as_object_mut()
+            .unwrap()
+            .remove("one_hot_chunk_profile")
+            .is_some());
+        let legacy: AkitaVerifierSetup = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(
+            legacy.one_hot_chunk_profile(),
+            AkitaOneHotChunkProfile::Single
+        );
+
+        let mut current_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
+        append_verifier_setup(&mut current_transcript, &setup, AkitaBackendFlavor::OneHot).unwrap();
+        let mut legacy_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
+        append_verifier_setup(&mut legacy_transcript, &legacy, AkitaBackendFlavor::OneHot).unwrap();
+        assert_eq!(
+            legacy_transcript.state(),
+            [
+                101, 3, 31, 117, 58, 205, 115, 86, 217, 136, 6, 160, 110, 234, 45, 130, 211, 169,
+                20, 96, 242, 154, 76, 46, 77, 138, 49, 109, 187, 54, 107, 118,
+            ]
+        );
+        assert_eq!(current_transcript.state(), legacy_transcript.state());
+    }
+
+    #[test]
     fn serde_transported_recursive_grouped_setup_restores_its_schedule_rows() {
         use crate::schedule_registry::{PrecommittedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_PACKING_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};

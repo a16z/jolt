@@ -414,6 +414,10 @@ fn add_rotated_dense_chunked_contributions<const D: usize>(
     chunk: impl Fn(usize) -> usize + Copy,
     table_index: impl Fn(usize, usize) -> usize + Copy,
 ) {
+    if dst.len() == 1 {
+        add_rotated_dense_contributions(&mut dst[0], rotated, contributions, table_index);
+        return;
+    }
     let mut remaining = contributions;
     while let Some(&(column, _)) = remaining.first() {
         let chunk_index = chunk(column);

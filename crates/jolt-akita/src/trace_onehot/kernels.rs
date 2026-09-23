@@ -117,6 +117,11 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
             num_digits,
             ..
         } = plan;
+        if num_positions_per_block == 0 {
+            return Err(AkitaError::InvalidInput(
+                "batched decompose_fold requires positive block geometry".to_string(),
+            ));
+        }
         plan.validate_uniform_batch(std::iter::once(
             RootPolyShape::<AkitaField, D>::num_ring_elems(source)
                 .div_ceil(num_positions_per_block),

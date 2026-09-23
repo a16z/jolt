@@ -4,7 +4,8 @@ This directory contains Jolt's base Akita schedule catalogs as canonical
 `.aks` files. They are runtime data, not generated Rust modules and not
 embedded into the executable.
 
-Application preprocessing loads the nine files once, wraps the resulting
+Application preprocessing loads the three original files and any present
+multi-chunk companions once, wraps the resulting
 `AkitaScheduleArtifacts` in `Arc`, and passes that immutable bundle explicitly
 to every `AkitaSetupParams` constructor. Production deployments should call
 `AkitaScheduleArtifacts::from_directory` with a versioned, deployment-owned
@@ -30,7 +31,9 @@ catalogs. The selected profile splits the root and first recursive fold into
 two, four, or eight chunks, while later folds remain single-chunk; their
 smallest admitted physical arity is 16 variables. The original one-hot
 catalogs and the dense advice and committed-program catalog remain
-single-chunk. Grouped precommit setups inherit the selected trace profile.
+single-chunk. Existing three-file directories continue to support `Single`;
+selecting a profile whose companion catalog is absent fails during setup.
+Grouped precommit setups inherit the selected trace profile.
 
 The cutoff comes from same-shape, release-mode K=16 comparisons on a 16-core
 Apple M4 Max host:

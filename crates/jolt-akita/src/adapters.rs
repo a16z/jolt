@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    io::Cursor,
+    io::{Cursor, ErrorKind},
     path::{Path, PathBuf},
     sync::Arc,
     sync::OnceLock,
@@ -106,16 +106,29 @@ impl AkitaScheduleArtifacts {
                 ))
             })
         };
+        let read_optional = |family: &str| {
+            let path = directory.join(format!("{family}.aks"));
+            match std::fs::read(&path) {
+                Ok(bytes) => Ok(bytes),
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(Vec::new()),
+                Err(error) => Err(OpeningsError::InvalidSetup(format!(
+                    "read Akita schedule artifact {}: {error}",
+                    path.display()
+                ))),
+            }
+        };
         Ok(Self {
             dense: read(JoltDenseBounded::schedule_family_name())?,
             one_hot_k16: read(JoltOneHotK16::schedule_family_name())?,
             one_hot_k256: read(JoltOneHotK256::schedule_family_name())?,
-            one_hot_k16_w2r2: read(JoltOneHotK16W2R2::schedule_family_name())?,
-            one_hot_k256_w2r2: read(JoltOneHotK256W2R2::schedule_family_name())?,
-            one_hot_k16_w4r2: read(JoltOneHotK16W4R2::schedule_family_name())?,
-            one_hot_k256_w4r2: read(JoltOneHotK256W4R2::schedule_family_name())?,
-            one_hot_k16_multi_chunk: read(JoltOneHotK16MultiChunk::schedule_family_name())?,
-            one_hot_k256_multi_chunk: read(JoltOneHotK256MultiChunk::schedule_family_name())?,
+            one_hot_k16_w2r2: read_optional(JoltOneHotK16W2R2::schedule_family_name())?,
+            one_hot_k256_w2r2: read_optional(JoltOneHotK256W2R2::schedule_family_name())?,
+            one_hot_k16_w4r2: read_optional(JoltOneHotK16W4R2::schedule_family_name())?,
+            one_hot_k256_w4r2: read_optional(JoltOneHotK256W4R2::schedule_family_name())?,
+            one_hot_k16_multi_chunk: read_optional(JoltOneHotK16MultiChunk::schedule_family_name())?,
+            one_hot_k256_multi_chunk: read_optional(
+                JoltOneHotK256MultiChunk::schedule_family_name(),
+            )?,
         })
     }
 
@@ -143,7 +156,8 @@ impl AkitaScheduleArtifacts {
     /// [`Self::packaged_directory`].
     ///
     /// The handle is what is shared, not the bytes: every call re-reads the
-    /// nine `.aks` files, so hosts still load once at preprocessing and pass
+    /// three required `.aks` files and any present profile companions, so hosts
+    /// still load once at preprocessing and pass
     /// the bundle to each setup. Callers that must compare setup provenance
     /// keep their own handle rather than calling this twice — the packed
     /// prover's advice guards test bundle identity with `Arc::ptr_eq`.
@@ -891,7 +905,12 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
     transcript.append(&U64Word(setup.max_total_batch_polys as u64));
     transcript.append(&U64Word(setup.one_hot_k as u64));
-    transcript.append(&U64Word(setup.one_hot_chunk_profile.num_chunks() as u64));
+    if flavor == AkitaBackendFlavor::OneHot
+        && setup.one_hot_chunk_profile != AkitaOneHotChunkProfile::Single
+    {
+        transcript.append(&Label(b"akita_one_hot_chunk_profile"));
+        transcript.append(&U64Word(setup.one_hot_chunk_profile.num_chunks() as u64));
+    }
     transcript.append_bytes(&setup.default_layout_digest);
     let catalog_digest = match flavor {
         AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
