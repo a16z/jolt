@@ -532,6 +532,7 @@ jobs:
         env:
           CARGO_BUILD_JOBS: 1
           CARGO_NET_OFFLINE: true
+          JOLT_BACKTRACE: "1"
         run: |
           export JOLT_PATH="$(command -v jolt)"
           target/ci/recursion generate --example fibonacci --proofs 1 --workdir "$RUNNER_TEMP/recursion-acceptance/proofs"
@@ -564,6 +565,7 @@ jobs:
         env:
           CARGO_BUILD_JOBS: 1
           CARGO_NET_OFFLINE: true
+          JOLT_BACKTRACE: "1"
         run: |
           export JOLT_PATH="$(command -v jolt)"
           target/ci/recursion tamper-opening --example fibonacci --workdir "$RUNNER_TEMP/recursion-acceptance/proofs" --output "$RUNNER_TEMP/recursion-acceptance/invalid-proofs"
