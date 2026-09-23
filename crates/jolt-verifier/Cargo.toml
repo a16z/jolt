@@ -19,7 +19,22 @@ allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = []
 fs-audit = []
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
-implicit-carry = ["jolt-claims/implicit-carry", "jolt-r1cs/implicit-carry"]
+# Forwarding to the dev-dependencies keeps the fixture prover feature-aligned:
+# `--features prover-fixtures,implicit-carry` must produce carry-lane proofs or
+# the tamper manifest's carry targets never execute, and `tracer`/`jolt-host`
+# must see the lane or the ADDC/MULC arms of the shared instruction macros
+# are missing from their expansions.
+implicit-carry = [
+  "jolt-claims/implicit-carry",
+  "jolt-host/implicit-carry",
+  "jolt-lookup-tables/implicit-carry",
+  "jolt-program/implicit-carry",
+  "jolt-prover/implicit-carry",
+  "jolt-r1cs/implicit-carry",
+  "jolt-riscv/implicit-carry",
+  "jolt-witness/implicit-carry",
+  "tracer/implicit-carry",
+]
 zk = ["jolt-prover/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
 # commitment object, co-batched reduction opening. Mutually exclusive with

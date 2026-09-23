@@ -36,6 +36,12 @@
 #[cfg(all(feature = "akita", feature = "zk"))]
 compile_error!("the `akita` and `zk` features are mutually exclusive");
 
+// The carry lane has no packed (Akita) witness layout and no BlindFold
+// constraints yet (spec #1710); both combinations fail closed here as well as
+// in the verifier's configuration.
+#[cfg(all(feature = "implicit-carry", any(feature = "akita", feature = "zk")))]
+compile_error!("the `implicit-carry` feature is mutually exclusive with `akita` and `zk`");
+
 #[cfg(feature = "akita")]
 pub mod akita;
 #[cfg(feature = "zk")]

@@ -10,6 +10,8 @@ use jolt_program::{
     },
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
+#[cfg(feature = "implicit-carry")]
+use jolt_riscv::RV64IMAC_JOLT_IMPLICIT_CARRY;
 use jolt_riscv::{
     CapturedState, CircuitFlags, InstructionFlags, JoltInstructionKind, JoltInstructionRow,
     JoltTraceRow, NonMemoryState, NormalizedOperands, RV64IMAC_JOLT,
@@ -886,6 +888,71 @@ fn rd_inc_materializes_register_write_deltas_and_padding() {
     );
 }
 
+/// The carry columns read the rows as materialized (the chain relation is
+/// R1CS's to enforce): `Carry` is each row's incoming carry, `NextCarry` the
+/// successor's (0 at the last cycle), and `CarryUsed` the incoming carry on
+/// `UsesCarry` rows only — row 2 carries a nonzero value into an `ADDI` to
+/// tell the flag gate apart from a zero carry. Padding rows are all zero.
+#[cfg(feature = "implicit-carry")]
+#[test]
+fn carry_columns_follow_row_carries_and_uses_carry_flag() -> Result<(), String> {
+    let program = Arc::new(JoltProgram::default());
+    let arithmetic = |kind: JoltInstructionKind, address: usize| JoltInstructionRow {
+        instruction_kind: kind,
+        address,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: Some(3),
+            imm: 0,
+        },
+        ..Default::default()
+    };
+    let base = RAM_START_ADDRESS as usize;
+    let bytecode = vec![
+        arithmetic(JoltInstructionKind::ADD, base),
+        arithmetic(JoltInstructionKind::ADDC, base + 4),
+        instruction(base + 8),
+        arithmetic(JoltInstructionKind::MULC, base + 12),
+    ];
+    let preprocessing = preprocessing_with_bytecode(
+        BytecodePreprocessing::preprocess(
+            bytecode.clone(),
+            RAM_START_ADDRESS,
+            RV64IMAC_JOLT_IMPLICIT_CARRY,
+        )
+        .unwrap(),
+    );
+    let rows = bytecode
+        .into_iter()
+        .zip([0, 5, 7, 9])
+        .map(|(instruction, carry)| {
+            checked_row(instruction, RegisterState::default(), RamAccess::NoOp).with_carry(carry)
+        })
+        .collect();
+    let inputs = JoltVmWitnessInputs::new(&program, &preprocessing, trace_output_with_rows(rows));
+    let witness = TraceBackend::new(config().with_log_t(3), inputs);
+
+    assert_eq!(
+        shape(&witness, JoltCommittedPolynomial::Carry),
+        Ok(Shape::new(3, PolynomialEncoding::Compact))
+    );
+    assert_eq!(
+        committed_table(&witness, JoltCommittedPolynomial::Carry),
+        Ok([0, 5, 7, 9, 0, 0, 0, 0].map(Fr::from_u64).to_vec())
+    );
+    assert_virtual_values(
+        &witness,
+        JoltVirtualPolynomial::NextCarry,
+        &[5, 7, 9, 0, 0, 0, 0, 0],
+    )?;
+    assert_virtual_values(
+        &witness,
+        JoltVirtualPolynomial::CarryUsed,
+        &[0, 5, 0, 9, 0, 0, 0, 0],
+    )
+}
+
 #[test]
 fn ram_inc_materializes_write_deltas_only() {
     let program = Arc::new(JoltProgram::default());
@@ -1115,8 +1182,6 @@ fn advice_rejects_disabled_and_oversized_advice() {
 
 #[test]
 fn excluded_ids_report_their_classification() {
-    #[cfg(feature = "implicit-carry")]
-    use super::oracle::CARRY_STAGED_REASON;
     use super::oracle::{COMMITTED_PROGRAM_REASON, PROTOCOL_INTERMEDIATE_REASON, UNSERVED_REASON};
     let program = Arc::new(JoltProgram::default());
     let preprocessing = preprocessing();
@@ -1162,19 +1227,6 @@ fn excluded_ids_report_their_classification() {
         JoltVirtualPolynomial::ProgramImageInitContributionRw,
     ] {
         assert_reason(JoltPolynomialId::Virtual(id), PROTOCOL_INTERMEDIATE_REASON);
-    }
-    #[cfg(feature = "implicit-carry")]
-    {
-        assert_reason(
-            JoltPolynomialId::Committed(JoltCommittedPolynomial::Carry),
-            CARRY_STAGED_REASON,
-        );
-        for id in [
-            JoltVirtualPolynomial::CarryUsed,
-            JoltVirtualPolynomial::NextCarry,
-        ] {
-            assert_reason(JoltPolynomialId::Virtual(id), CARRY_STAGED_REASON);
-        }
     }
 }
 

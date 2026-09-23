@@ -20,6 +20,20 @@ parallel = [
   "dep:rayon",
 ]
 prover-fixtures = ["dep:jolt-host"]
+# The implicit-carry protocol lane: the prover commits the `Carry` column and
+# proves the carry relations the verifier checks feature-on. Mutually
+# exclusive with `zk` and `akita` (compile error on the combination).
+implicit-carry = [
+  "jolt-claims/implicit-carry",
+  "jolt-host?/implicit-carry",
+  "jolt-kernels/implicit-carry",
+  "jolt-lookup-tables/implicit-carry",
+  "jolt-program/implicit-carry",
+  "jolt-riscv/implicit-carry",
+  "jolt-verifier/implicit-carry",
+  "jolt-witness/implicit-carry",
+  "tracer?/implicit-carry",
+]
 # The packed (lattice/Akita) protocol. Like jolt-verifier, one compiled
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the packed envelope, so the Dory (elliptic-curve) path `src/dory` is

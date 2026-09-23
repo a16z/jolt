@@ -67,6 +67,12 @@ impl<F: JoltField> CarryClaimReduction<F> {
             shift_cycle,
         }
     }
+
+    /// The two upstream cycle points in relation order: product
+    /// virtualization, shift.
+    pub fn cycle_points(&self) -> [&[F]; 2] {
+        [&self.product_cycle, &self.shift_cycle]
+    }
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {

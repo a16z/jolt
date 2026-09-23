@@ -11,6 +11,8 @@ use jolt_program::{
     execution::{JoltProgram, RamAccess, TraceOutput, TraceRow, TraceSource},
     preprocess::JoltProgramPreprocessing,
 };
+#[cfg(feature = "implicit-carry")]
+use jolt_riscv::JoltCycle;
 use jolt_riscv::{
     CapturedState, CircuitFlags, Flags, JoltInstruction, JoltTraceRow, LoadState, NonMemoryState,
     StoreState,
@@ -418,12 +420,16 @@ impl<T: TraceSource> TraceBackend<T> {
             label: JOLT_VM_LABEL,
             reason: format!("bytecode PC {pc} does not fit the compact trace row"),
         })?;
-        JoltTraceRow::from_components(state, &instruction_row, pc).map_err(|error| {
-            WitnessError::InvalidWitnessData {
-                label: JOLT_VM_LABEL,
-                reason: error.to_string(),
-            }
-        })
+        let compact =
+            JoltTraceRow::from_components(state, &instruction_row, pc).map_err(|error| {
+                WitnessError::InvalidWitnessData {
+                    label: JOLT_VM_LABEL,
+                    reason: error.to_string(),
+                }
+            })?;
+        #[cfg(feature = "implicit-carry")]
+        let compact = compact.with_carry(row.carry());
+        Ok(compact)
     }
 }
 

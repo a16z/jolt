@@ -110,6 +110,8 @@ where
             reason: "stage 7 produced no hamming-weight openings",
         })?;
     let inc_opening_point = stage6b.output_points.inc_opening_point();
+    #[cfg(feature = "implicit-carry")]
+    let carry_opening_point = stage6b.output_points.carry_opening_point();
     let precommitted_finals = precommitted_final_openings(
         precommitted,
         &stage7.output_points,
@@ -142,6 +144,8 @@ where
         &opening_point,
         hamming_opening_point.as_slice(),
         inc_opening_point,
+        #[cfg(feature = "implicit-carry")]
+        carry_opening_point,
         &precommitted_finals,
         Some((&stage6b.output_values, &stage7.output_values)),
     )?;

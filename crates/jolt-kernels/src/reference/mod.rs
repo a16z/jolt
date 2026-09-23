@@ -29,6 +29,8 @@ pub mod advice_claim_reduction;
 pub mod booleanity;
 pub mod bytecode_claim_reduction;
 pub mod bytecode_read_raf;
+#[cfg(feature = "implicit-carry")]
+pub mod carry_claim_reduction;
 pub mod commitment;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
@@ -119,6 +121,8 @@ where
             ram_ra_virtualization: Box::new(ReferenceBackend),
             instruction_ra_virtualization: Box::new(ReferenceBackend),
             inc_claim_reduction: Box::new(ReferenceBackend),
+            #[cfg(feature = "implicit-carry")]
+            carry_claim_reduction: Box::new(ReferenceBackend),
             trusted_advice_cycle: Box::new(ReferenceBackend),
             untrusted_advice_cycle: Box::new(ReferenceBackend),
             bytecode_reduction_cycle: Box::new(ReferenceBackend),

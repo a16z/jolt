@@ -130,6 +130,14 @@ pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
     names[V_FLAG_IS_COMPRESSED] = "OpFlags_IsCompressed";
     names[V_FLAG_IS_FIRST_IN_SEQUENCE] = "OpFlags_IsFirstInSequence";
     names[V_FLAG_IS_LAST_IN_SEQUENCE] = "OpFlags_IsLastInSequence";
+    #[cfg(feature = "implicit-carry")]
+    {
+        names[V_FLAG_USES_CARRY] = "OpFlags_UsesCarry";
+        names[V_FLAG_PRODUCES_CARRY] = "OpFlags_ProducesCarry";
+        names[V_CARRY_USED] = "CarryUsed";
+        names[V_NEXT_CARRY] = "NextCarry";
+        names[V_CARRY] = "Carry";
+    }
     names[V_BRANCH] = "Branch";
     names[V_NEXT_IS_NOOP] = "NextIsNoop";
     names
@@ -155,9 +163,15 @@ pub const RV64_CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
     "NextUnexpPCUpdateOtherwise",
     "NextPCEqPCPlusOneIfInline",
     "MustStartSequenceFromBeginning",
+    #[cfg(feature = "implicit-carry")]
+    "LookupSplitsIntoOutputAndNextCarry",
+    #[cfg(feature = "implicit-carry")]
+    "NextCarryZeroIfNotProducesCarry",
     "Product",
     "ShouldBranch",
     "ShouldJump",
+    #[cfg(feature = "implicit-carry")]
+    "CarryUsed",
 ];
 
 pub const fn const_column() -> usize {

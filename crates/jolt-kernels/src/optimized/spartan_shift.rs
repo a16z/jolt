@@ -1,9 +1,9 @@
 //! The optimized Spartan shift (stage 3) kernel.
 //!
 //! Byte-parity contract: identical round polynomials and output claims to the
-//! reference kernel (`reference/spartan_shift.rs`), which binds seven dense
-//! `T`-sized tables (two `eq+1` tables plus the five PC/flag columns) every
-//! round.
+//! reference kernel (`reference/spartan_shift.rs`), which binds every dense
+//! `T`-sized table (two `eq+1` tables plus the five PC/flag columns, and the
+//! committed `Carry` column under `implicit-carry`) every round.
 //!
 //! Uses the prefix-suffix decomposition from eprint 2025/611, Appendix A:
 //!
@@ -15,20 +15,22 @@
 //!   per round instead of seven T-sized tables. Suffix-summing commutes with
 //!   prefix partial evaluation, so every `P·Q` round polynomial equals the
 //!   dense summand's exactly.
-//! - **Value fusion in Q**: the outer term's four columns enter linearly, so
-//!   they are γ-combined into one scalar per cycle
-//!   (`upc + γ·pc + γ²·is_virtual + γ³·is_first`) during the Q build; the
-//!   product term's `γ⁴·(1 − is_noop)` folds into its Q the same way.
-//! - **Phase-2 regeneration**: once the prefix is bound, the five columns are
+//! - **Value fusion in Q**: the outer term's columns enter linearly, so they
+//!   are γ-combined into one scalar per cycle
+//!   (`upc + γ·pc + γ²·is_virtual + γ³·is_first`, plus `γ⁵·carry` under
+//!   `implicit-carry`) during the Q build; the product term's
+//!   `γ⁴·(1 − is_noop)` folds into its Q the same way.
+//! - **Phase-2 regeneration**: once the prefix is bound, the columns are
 //!   folded by `eq(r_prefix)` straight from the raw trace values into
 //!   `2^(remaining)`-sized tables, and each `eq+1` table is its suffix pair
 //!   recombined with the bound-prefix evaluations
 //!   (`P_0(r_prefix)·S_0[j] + P_1(r_prefix)·S_1[j]`) — the exact partial
 //!   binds of the dense tables, recomputed instead of carried.
 //! - **Raw `u64` trace values with small-scalar deferred-reduction
-//!   accumulation** (u32-split `fmadd_u64`) for the phase-2 PC folds, and
+//!   accumulation** (u32-split `fmadd_u64`) for the phase-2 word folds, and
 //!   ring-accumulator `fmadd` for the field-by-field `Q` products.
 
+use jolt_claims::protocols::jolt::relations::spartan::Shift;
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanShiftPublic};
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPlusOnePrefixSuffix, EqPolynomial, Polynomial, UnivariatePoly};
@@ -39,13 +41,15 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage3::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
+#[cfg(feature = "implicit-carry")]
+use jolt_witness::witnesses::Carry;
 use jolt_witness::witnesses::{InstructionFlag, OpFlag, Pc, UnexpandedPc};
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::support::{
-    bind_pairs, fmadd_u64_split, gamma_powers_array, pin_derived_term, BundleStore, RoundChallenges,
+    bind_pairs, fmadd_u64_split, gamma_powers, pin_derived_term, BundleStore, RoundChallenges,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -53,7 +57,8 @@ use crate::{
 
 /// Per-cycle shift columns as native small scalars: the two PCs plus the
 /// three flags the summand references (all at cycle `j`, unshifted — the
-/// shift lives in the `eq+1` factors).
+/// shift lives in the `eq+1` factors), and the committed `Carry` column
+/// under `implicit-carry`.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 struct SpartanShiftRow {
     #[opening(UnexpandedPC)]
@@ -66,6 +71,10 @@ struct SpartanShiftRow {
     is_first_in_sequence: OpFlag,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
     is_noop: InstructionFlag,
+    /// The shifted output of the outer `NextCarry` term.
+    #[cfg(feature = "implicit-carry")]
+    #[opening(committed = Carry)]
+    carry: Carry,
 }
 
 pub struct OptimizedSpartanShift;
@@ -96,7 +105,20 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let rows = BundleStore::<SpartanShiftRow>::resolve(witness, cycles)?;
         let access = rows.access();
 
-        let gamma_powers: [F; 5] = gamma_powers_array(inputs.challenges.gamma);
+        // One power per shift claim, in the relation's claim order
+        // (`Shift::unbatched_relation` owns that order).
+        let gamma_powers = gamma_powers(
+            inputs.challenges.gamma,
+            Shift::unbatched_relation().claims.len(),
+        );
+        let [gamma_1, gamma_2, gamma_3, gamma_4] = [
+            gamma_powers[1],
+            gamma_powers[2],
+            gamma_powers[3],
+            gamma_powers[4],
+        ];
+        #[cfg(feature = "implicit-carry")]
+        let gamma_5 = gamma_powers[5];
 
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);
@@ -129,13 +151,17 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
                     {
                         let x_lo = block_index * BLOCK + i;
                         let row = access.row(base + x_lo)?;
-                        let mut v = F::from_u64(row.unexpanded_pc.0)
-                            + gamma_powers[1] * F::from_u64(row.pc.0);
+                        let mut v =
+                            F::from_u64(row.unexpanded_pc.0) + gamma_1 * F::from_u64(row.pc.0);
                         if row.is_virtual.0 {
-                            v += gamma_powers[2];
+                            v += gamma_2;
                         }
                         if row.is_first_in_sequence.0 {
-                            v += gamma_powers[3];
+                            v += gamma_3;
+                        }
+                        #[cfg(feature = "implicit-carry")]
+                        {
+                            v += gamma_5 * F::from_u64(row.carry.0);
                         }
                         outer_fold[0].fmadd(v, suffix[0]);
                         outer_fold[1].fmadd(v, suffix[1]);
@@ -151,8 +177,8 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
                 {
                     q[0] = outer_fold[0].reduce();
                     q[1] = outer_fold[1].reduce();
-                    q[2] = gamma_powers[4] * product_fold[0];
-                    q[3] = gamma_powers[4] * product_fold[1];
+                    q[2] = gamma_4 * product_fold[0];
+                    q[3] = gamma_4 * product_fold[1];
                 }
                 Ok(())
             };
@@ -194,23 +220,40 @@ enum Phase<F> {
     /// First half of the rounds: the four `(P, Q)` pairs over the prefix
     /// variables (outer 0/1, product 0/1 — product Qs carry the γ⁴ scale).
     PrefixSuffix { pairs: [(Vec<F>, Vec<F>); 4] },
-    /// Remaining rounds: the two `eq+1` tables and the five columns, dense.
-    Dense {
-        eq_plus_one_outer: Vec<F>,
-        eq_plus_one_product: Vec<F>,
-        unexpanded_pc: Vec<F>,
-        pc: Vec<F>,
-        is_virtual: Vec<F>,
-        is_first_in_sequence: Vec<F>,
-        is_noop: Vec<F>,
-    },
+    /// Remaining rounds: the two `eq+1` tables and the columns, dense.
+    Dense(DenseTables<F>),
+}
+
+/// The dense-phase tables, bound in lockstep every remaining round.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct DenseTables<F> {
+    eq_plus_one_outer: Vec<F>,
+    eq_plus_one_product: Vec<F>,
+    unexpanded_pc: Vec<F>,
+    pc: Vec<F>,
+    is_virtual: Vec<F>,
+    is_first_in_sequence: Vec<F>,
+    is_noop: Vec<F>,
+    #[cfg(feature = "implicit-carry")]
+    carry: Vec<F>,
+}
+
+/// One dense-phase cell: every column folded by `eq(r_prefix)`.
+struct ColumnFold<F> {
+    unexpanded_pc: F,
+    pc: F,
+    is_virtual: F,
+    is_first_in_sequence: F,
+    is_noop: F,
+    #[cfg(feature = "implicit-carry")]
+    carry: F,
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ShiftKernel<F: JoltField> {
     log_t: usize,
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    gamma_powers: [F; 5],
+    /// `γ^i` per shift claim, in the relation's claim order.
+    gamma_powers: Vec<F>,
     /// The two `eq+1` points (big-endian) the summand factors fix.
     r_outer: Vec<F>,
     r_product: Vec<F>,
@@ -221,9 +264,9 @@ struct ShiftKernel<F: JoltField> {
 }
 
 impl<F: JoltField> ShiftKernel<F> {
-    /// Regenerate the dense phase from the raw values: the five columns
-    /// folded by `eq(r_prefix)` (their exact partial binds) and each `eq+1`
-    /// table recombined from its suffix pair and bound-prefix evaluations.
+    /// Regenerate the dense phase from the raw values: the columns folded by
+    /// `eq(r_prefix)` (their exact partial binds) and each `eq+1` table
+    /// recombined from its suffix pair and bound-prefix evaluations.
     fn transition_to_dense(&mut self) -> Result<(), WitnessError> {
         let bound = self.challenges.bound();
         let r_prefix: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
@@ -233,16 +276,21 @@ impl<F: JoltField> ShiftKernel<F> {
         let remaining = 1usize << (self.log_t - bound);
         let access = self.rows.access();
 
-        let fold_chunk = |chunk_index: usize| -> Result<[F; 5], WitnessError> {
+        let fold_chunk = |chunk_index: usize| -> Result<ColumnFold<F>, WitnessError> {
             let base = chunk_index * chunk;
-            let mut pc_folds = [F::SmallScalarAccumulator::default(); 2];
+            let mut unexpanded_pc = F::SmallScalarAccumulator::default();
+            let mut pc = F::SmallScalarAccumulator::default();
+            #[cfg(feature = "implicit-carry")]
+            let mut carry = F::SmallScalarAccumulator::default();
             let mut flag_folds = [F::zero(); 3];
             for (offset, (&eq, &eq_shifted)) in
                 eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
             {
                 let row = access.row(base + offset)?;
-                fmadd_u64_split(&mut pc_folds[0], eq, eq_shifted, row.unexpanded_pc.0);
-                fmadd_u64_split(&mut pc_folds[1], eq, eq_shifted, row.pc.0);
+                fmadd_u64_split(&mut unexpanded_pc, eq, eq_shifted, row.unexpanded_pc.0);
+                fmadd_u64_split(&mut pc, eq, eq_shifted, row.pc.0);
+                #[cfg(feature = "implicit-carry")]
+                fmadd_u64_split(&mut carry, eq, eq_shifted, row.carry.0);
                 if row.is_virtual.0 {
                     flag_folds[0] += eq;
                 }
@@ -253,21 +301,23 @@ impl<F: JoltField> ShiftKernel<F> {
                     flag_folds[2] += eq;
                 }
             }
-            Ok([
-                pc_folds[0].reduce(),
-                pc_folds[1].reduce(),
-                flag_folds[0],
-                flag_folds[1],
-                flag_folds[2],
-            ])
+            Ok(ColumnFold {
+                unexpanded_pc: unexpanded_pc.reduce(),
+                pc: pc.reduce(),
+                is_virtual: flag_folds[0],
+                is_first_in_sequence: flag_folds[1],
+                is_noop: flag_folds[2],
+                #[cfg(feature = "implicit-carry")]
+                carry: carry.reduce(),
+            })
         };
         #[cfg(feature = "parallel")]
-        let folds: Vec<[F; 5]> = (0..remaining)
+        let folds: Vec<ColumnFold<F>> = (0..remaining)
             .into_par_iter()
             .map(fold_chunk)
             .collect::<Result<_, _>>()?;
         #[cfg(not(feature = "parallel"))]
-        let folds: Vec<[F; 5]> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
+        let folds: Vec<ColumnFold<F>> = (0..remaining).map(fold_chunk).collect::<Result<_, _>>()?;
 
         // Release retained raw values after regeneration.
         self.rows = BundleStore::Retained(Vec::new());
@@ -284,15 +334,17 @@ impl<F: JoltField> ShiftKernel<F> {
                 .collect()
         };
 
-        self.phase = Phase::Dense {
+        self.phase = Phase::Dense(DenseTables {
             eq_plus_one_outer: recombine(&self.r_outer),
             eq_plus_one_product: recombine(&self.r_product),
-            unexpanded_pc: folds.iter().map(|fold| fold[0]).collect(),
-            pc: folds.iter().map(|fold| fold[1]).collect(),
-            is_virtual: folds.iter().map(|fold| fold[2]).collect(),
-            is_first_in_sequence: folds.iter().map(|fold| fold[3]).collect(),
-            is_noop: folds.iter().map(|fold| fold[4]).collect(),
-        };
+            unexpanded_pc: folds.iter().map(|fold| fold.unexpanded_pc).collect(),
+            pc: folds.iter().map(|fold| fold.pc).collect(),
+            is_virtual: folds.iter().map(|fold| fold.is_virtual).collect(),
+            is_first_in_sequence: folds.iter().map(|fold| fold.is_first_in_sequence).collect(),
+            is_noop: folds.iter().map(|fold| fold.is_noop).collect(),
+            #[cfg(feature = "implicit-carry")]
+            carry: folds.iter().map(|fold| fold.carry).collect(),
+        });
         Ok(())
     }
 
@@ -314,23 +366,17 @@ impl<F: JoltField> ShiftKernel<F> {
                     bind_pairs(q, r);
                 }
             }
-            Phase::Dense {
-                eq_plus_one_outer,
-                eq_plus_one_product,
-                unexpanded_pc,
-                pc,
-                is_virtual,
-                is_first_in_sequence,
-                is_noop,
-            } => {
+            Phase::Dense(tables) => {
                 for table in [
-                    eq_plus_one_outer,
-                    eq_plus_one_product,
-                    unexpanded_pc,
-                    pc,
-                    is_virtual,
-                    is_first_in_sequence,
-                    is_noop,
+                    &mut tables.eq_plus_one_outer,
+                    &mut tables.eq_plus_one_product,
+                    &mut tables.unexpanded_pc,
+                    &mut tables.pc,
+                    &mut tables.is_virtual,
+                    &mut tables.is_first_in_sequence,
+                    &mut tables.is_noop,
+                    #[cfg(feature = "implicit-carry")]
+                    &mut tables.carry,
                 ] {
                     bind_pairs(table, r);
                 }
@@ -369,45 +415,44 @@ impl<F: JoltField> ProveRounds<F> for ShiftKernel<F> {
                 }
                 acc.map(F::Accumulator::reduce)
             }
-            Phase::Dense {
-                eq_plus_one_outer,
-                eq_plus_one_product,
-                unexpanded_pc,
-                pc,
-                is_virtual,
-                is_first_in_sequence,
-                is_noop,
-            } => {
+            Phase::Dense(tables) => {
                 let mut acc = [F::Accumulator::default(); 2];
                 let pair = |table: &[F], y: usize| (table[2 * y], table[2 * y + 1]);
                 let extend = |(lo, hi): (F, F)| hi + hi - lo;
-                for y in 0..eq_plus_one_outer.len() / 2 {
-                    let eq1o = pair(eq_plus_one_outer, y);
-                    let eq1p = pair(eq_plus_one_product, y);
-                    let upc = pair(unexpanded_pc, y);
-                    let pcs = pair(pc, y);
-                    let virt = pair(is_virtual, y);
-                    let first = pair(is_first_in_sequence, y);
-                    let noop = pair(is_noop, y);
-                    acc[0].fmadd(
-                        eq1o.0,
-                        upc.0
-                            + self.gamma_powers[1] * pcs.0
-                            + self.gamma_powers[2] * virt.0
-                            + self.gamma_powers[3] * first.0,
-                    );
-                    acc[0].fmadd(eq1p.0, self.gamma_powers[4] * (F::one() - noop.0));
-                    acc[1].fmadd(
-                        extend(eq1o),
-                        extend(upc)
-                            + self.gamma_powers[1] * extend(pcs)
-                            + self.gamma_powers[2] * extend(virt)
-                            + self.gamma_powers[3] * extend(first),
-                    );
-                    acc[1].fmadd(
-                        extend(eq1p),
-                        self.gamma_powers[4] * (F::one() - extend(noop)),
-                    );
+                let [gamma_1, gamma_2, gamma_3, gamma_4] = [
+                    self.gamma_powers[1],
+                    self.gamma_powers[2],
+                    self.gamma_powers[3],
+                    self.gamma_powers[4],
+                ];
+                #[cfg(feature = "implicit-carry")]
+                let gamma_5 = self.gamma_powers[5];
+                for y in 0..tables.eq_plus_one_outer.len() / 2 {
+                    let eq1o = pair(&tables.eq_plus_one_outer, y);
+                    let eq1p = pair(&tables.eq_plus_one_product, y);
+                    let upc = pair(&tables.unexpanded_pc, y);
+                    let pcs = pair(&tables.pc, y);
+                    let virt = pair(&tables.is_virtual, y);
+                    let first = pair(&tables.is_first_in_sequence, y);
+                    let noop = pair(&tables.is_noop, y);
+                    #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+                    let mut outer_zero =
+                        upc.0 + gamma_1 * pcs.0 + gamma_2 * virt.0 + gamma_3 * first.0;
+                    #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+                    let mut outer_infinity = extend(upc)
+                        + gamma_1 * extend(pcs)
+                        + gamma_2 * extend(virt)
+                        + gamma_3 * extend(first);
+                    #[cfg(feature = "implicit-carry")]
+                    {
+                        let carries = pair(&tables.carry, y);
+                        outer_zero += gamma_5 * carries.0;
+                        outer_infinity += gamma_5 * extend(carries);
+                    }
+                    acc[0].fmadd(eq1o.0, outer_zero);
+                    acc[0].fmadd(eq1p.0, gamma_4 * (F::one() - noop.0));
+                    acc[1].fmadd(extend(eq1o), outer_infinity);
+                    acc[1].fmadd(extend(eq1p), gamma_4 * (F::one() - extend(noop)));
                 }
                 acc.map(F::Accumulator::reduce)
             }
@@ -429,25 +474,19 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SpartanShiftOutputClaims<F>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let Phase::Dense {
-            unexpanded_pc,
-            pc,
-            is_virtual,
-            is_first_in_sequence,
-            is_noop,
-            ..
-        } = &self.phase
-        else {
+        let Phase::Dense(tables) = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "Spartan shift must finish in the dense phase",
             });
         };
         Ok(SpartanShiftOutputClaims {
-            unexpanded_pc: unexpanded_pc[0],
-            pc: pc[0],
-            is_virtual: is_virtual[0],
-            is_first_in_sequence: is_first_in_sequence[0],
-            is_noop: is_noop[0],
+            unexpanded_pc: tables.unexpanded_pc[0],
+            pc: tables.pc[0],
+            is_virtual: tables.is_virtual[0],
+            is_first_in_sequence: tables.is_first_in_sequence[0],
+            is_noop: tables.is_noop[0],
+            #[cfg(feature = "implicit-carry")]
+            carry: tables.carry[0],
         })
     }
 
@@ -461,19 +500,20 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let Phase::Dense {
-            eq_plus_one_outer,
-            eq_plus_one_product,
-            ..
-        } = &self.phase
-        else {
+        let Phase::Dense(tables) = &self.phase else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "Spartan shift must finish in the dense phase",
             });
         };
         for (public, got) in [
-            (SpartanShiftPublic::EqPlusOneOuter, eq_plus_one_outer[0]),
-            (SpartanShiftPublic::EqPlusOneProduct, eq_plus_one_product[0]),
+            (
+                SpartanShiftPublic::EqPlusOneOuter,
+                tables.eq_plus_one_outer[0],
+            ),
+            (
+                SpartanShiftPublic::EqPlusOneProduct,
+                tables.eq_plus_one_product[0],
+            ),
         ] {
             pin_derived_term(
                 relation,
@@ -492,6 +532,8 @@ impl<F: JoltField> SumcheckKernel<F> for ShiftKernel<F> {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+    #[cfg(feature = "implicit-carry")]
+    use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPlusOnePolynomial;
@@ -558,7 +600,18 @@ mod tests {
         let rows: Vec<TraceRow> = script
             .iter()
             .take(real_rows)
-            .map(|&instruction| TraceRow::from_instruction(instruction).unwrap())
+            .zip(1u64..)
+            .map(|(&instruction, carry)| {
+                let row = TraceRow::from_instruction(instruction).unwrap();
+                #[cfg(not(feature = "implicit-carry"))]
+                let _ = carry;
+                // A distinct nonzero incoming carry per row (straddling the
+                // u32 split of the phase-2 fold) exercises the γ⁵·carry term;
+                // the fixture's ADDI rows never produce one themselves.
+                #[cfg(feature = "implicit-carry")]
+                let row = row.with_carry((carry << 40) | carry);
+                row
+            })
             .collect();
 
         use std::sync::Arc;
@@ -620,20 +673,29 @@ mod tests {
             let is_noop = table(JoltVirtualPolynomial::InstructionFlags(
                 InstructionFlags::IsNoop,
             ));
+            #[cfg(feature = "implicit-carry")]
+            let carry: Vec<Fr> = JoltWitnessOracle::<Fr>::oracle_table(
+                backend,
+                JoltPolynomialId::Committed(JoltCommittedPolynomial::Carry),
+            )
+            .unwrap();
 
             let eq1_outer = EqPlusOnePolynomial::evals(&r_outer, None).1;
             let eq1_product = EqPlusOnePolynomial::evals(&r_product, None).1;
             let gamma_2 = gamma * gamma;
             let gamma_3 = gamma_2 * gamma;
             let gamma_4 = gamma_3 * gamma;
+            #[cfg(feature = "implicit-carry")]
+            let gamma_5 = gamma_4 * gamma;
             let input_claim: Fr = (0..1usize << log_t)
                 .map(|j| {
-                    eq1_outer[j]
-                        * (unexpanded_pc[j]
-                            + gamma * pc[j]
-                            + gamma_2 * is_virtual[j]
-                            + gamma_3 * is_first[j])
-                        + gamma_4 * eq1_product[j] * (Fr::from_u64(1) - is_noop[j])
+                    let outer = unexpanded_pc[j]
+                        + gamma * pc[j]
+                        + gamma_2 * is_virtual[j]
+                        + gamma_3 * is_first[j];
+                    #[cfg(feature = "implicit-carry")]
+                    let outer = outer + gamma_5 * carry[j];
+                    eq1_outer[j] * outer + gamma_4 * eq1_product[j] * (Fr::from_u64(1) - is_noop[j])
                 })
                 .sum();
             assert_nontrivial(input_claim);

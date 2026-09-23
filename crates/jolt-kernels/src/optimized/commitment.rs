@@ -15,7 +15,9 @@
 //!   columns.
 //!
 //! Per column the fed windows, their order, and the finish calls are exactly
-//! the reference kernel's, so commitments and hints are byte-identical.
+//! the reference kernel's, so commitments and hints are byte-identical (the
+//! carry lane feeds the same windows through the i128 batch entry point —
+//! the same scalar values, hence the same row commitments).
 //! The materializing modes (address-major order, widened grids) and advice
 //! commits delegate to the reference kernel unchanged.
 
@@ -256,6 +258,8 @@ enum ColumnCommitState<PCS: ModeStreamingCommitment> {
         kind: ColumnKind,
         partial: PCS::PartialCommitment,
     },
+    #[cfg(feature = "implicit-carry")]
+    Carry { partial: PCS::PartialCommitment },
     OneHot {
         kind: ColumnKind,
         context: PCS::OneHotStreamContext,
@@ -286,6 +290,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
         let columns = kinds
             .iter()
             .map(|&kind| {
+                #[cfg(feature = "implicit-carry")]
+                if matches!(kind, ColumnKind::Carry) {
+                    return ColumnCommitState::Carry {
+                        partial: PCS::begin(setup),
+                    };
+                }
                 if kind.is_one_hot() {
                     ColumnCommitState::OneHot {
                         kind,
@@ -312,6 +322,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
         let one_hot_k = self.one_hot_k;
         let finish_column = |column: ColumnCommitState<PCS>| match column {
             ColumnCommitState::Increment { partial, .. } => finish_streamed::<PCS>(partial, setup),
+            #[cfg(feature = "implicit-carry")]
+            ColumnCommitState::Carry { partial } => finish_streamed::<PCS>(partial, setup),
             ColumnCommitState::OneHot {
                 chunk_commitments, ..
             } => finish_streamed_one_hot::<PCS>(setup, one_hot_k, &chunk_commitments),
@@ -348,6 +360,21 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
                 PCS::feed_i128_rows_with(
                     partial,
                     |index| kind.increment(&chunk[index]),
+                    chunk.len(),
+                    row_width,
+                    setup,
+                );
+            }
+            #[cfg(feature = "implicit-carry")]
+            ColumnCommitState::Carry { partial } => {
+                // The streaming trait has no u64 batch entry point; the
+                // widened feed commits the same scalar values as the
+                // reference lane's `feed_u64`, so the row commitments agree,
+                // and Dory's i128 MSM runs on sign-partitioned u64
+                // magnitudes, so the cost matches too.
+                PCS::feed_i128_rows_with(
+                    partial,
+                    |index| i128::from(chunk[index].carry.0),
                     chunk.len(),
                     row_width,
                     setup,

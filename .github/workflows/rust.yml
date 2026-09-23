@@ -171,6 +171,9 @@ jobs:
           -p jolt-claims
           -p jolt-r1cs
           -p jolt-witness
+          -p jolt-kernels
+          -p jolt-prover
+          -p jolt-host
           -p jolt-verifier
           --all-targets
           --features implicit-carry
@@ -427,11 +430,15 @@ jobs:
           -p jolt-claims
           -p jolt-r1cs
           -p jolt-witness
+          -p jolt-kernels
+          -p jolt-prover
           -p jolt-verifier
           --features implicit-carry
-      # Feature-on fixture prover: the tamper manifest's carry targets and the
-      # jolt-verifier soundness suite only execute against carry-lane proofs
-      # when prover-fixtures and implicit-carry are enabled together.
+      # Feature-on fixture prover: the carry-chain e2e
+      # (standard_carry_chain_verifier_proof_is_accepted), the tamper
+      # manifest's carry targets and the jolt-verifier soundness suite only
+      # execute against carry-lane proofs when prover-fixtures and
+      # implicit-carry are enabled together.
       - name: Run jolt-verifier fixture tests with implicit-carry feature
         run: >
           cargo nextest run --cargo-profile ci

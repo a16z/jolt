@@ -245,6 +245,86 @@ pub(crate) fn with_ram_fixture_init<R>(
     f(&backend)
 }
 
+/// Run `f` against a trace backend of `ADDI` rows over full-range 64-bit
+/// operands (`rs1` and the sum both near 2^64 — the word magnitudes that
+/// stress the kernels' small-scalar accumulator windows), one row per entry
+/// of `carries` (that row's incoming carry), no-op padded to `2^log_t`
+/// cycles. `ADDI` never consumes a carry, so `CarryUsed` stays zero while the
+/// committed `Carry` column is live.
+#[cfg(feature = "implicit-carry")]
+pub(crate) fn with_carry_fixture<R>(
+    log_t: usize,
+    carries: &[u64],
+    f: impl FnOnce(&dyn JoltWitnessPlane<Fr>) -> R,
+) -> R {
+    assert!(carries.len() <= 1 << log_t, "fixture too long");
+    let instruction = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::ADDI,
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: None,
+            imm: 3,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
+    use std::sync::Arc;
+    let preprocessing = Arc::new(JoltProgramPreprocessing {
+        bytecode: BytecodePreprocessing::preprocess(
+            vec![instruction],
+            instruction.address as u64,
+            RV64IMAC_JOLT,
+        )
+        .unwrap(),
+        ram: RAMPreprocessing::default(),
+        memory_layout: Default::default(),
+        max_padded_trace_length: 1 << log_t,
+    });
+    let program = Arc::new(JoltProgram::default());
+    let rs1_value = u64::MAX - 8;
+    let rows: Vec<TraceRow> = carries
+        .iter()
+        .map(|&carry| {
+            TraceRow::new(
+                instruction,
+                RegisterState {
+                    rs1: Some(RegisterRead {
+                        register: 2,
+                        value: rs1_value,
+                    }),
+                    rd: Some(RegisterWrite {
+                        register: 1,
+                        pre_value: 0,
+                        post_value: rs1_value.wrapping_add(3),
+                    }),
+                    ..Default::default()
+                },
+                RamAccess::NoOp,
+            )
+            .unwrap()
+            .with_carry(carry)
+        })
+        .collect();
+    let config = JoltVmWitnessConfig::new(
+        log_t,
+        64,
+        JoltOneHotConfig {
+            log_k_chunk: 4,
+            lookups_ra_virtual_log_k_chunk: 16,
+        },
+    );
+    let inputs = JoltVmWitnessInputs::new(
+        &program,
+        &preprocessing,
+        TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
+    );
+    let backend = TraceBackend::new(config, inputs);
+    f(&backend)
+}
+
 /// Deterministic scalars for fixture points and challenges.
 pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
     let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed);

@@ -3,6 +3,8 @@
 //! The summand is
 //! `eq⁺¹(τ_low, j) · (upc + γ·pc + γ²·is_virtual + γ³·is_first_in_sequence)(j)
 //!  + γ⁴ · eq⁺¹(r_product, j) · (1 − is_noop(j))`
+//! (`implicit-carry` adds `γ⁵ · eq⁺¹(τ_low, j) · carry(j)` — the committed
+//! `Carry` column against the outer `NextCarry` claim)
 //! — the shift is carried entirely by the two `eq+1` factors (the value
 //! tables are unshifted, defined at every cycle including `T − 1`); each
 //! `eq+1` table is one multilinear whose MLE is the verifier's closed-form
@@ -12,6 +14,8 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
+#[cfg(feature = "implicit-carry")]
+use jolt_claims::protocols::jolt::geometry::spartan::carry_shift;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     is_first_in_sequence_shift, is_noop_shift, is_virtual_shift, pc_shift, unexpanded_pc_shift,
 };
@@ -42,6 +46,8 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for ReferenceBackend {
             is_virtual_shift(),
             is_first_in_sequence_shift(),
             is_noop_shift(),
+            #[cfg(feature = "implicit-carry")]
+            carry_shift(),
         ];
         let opening_tables = ids
             .into_iter()

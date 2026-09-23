@@ -3,12 +3,13 @@
 //!
 //! The uni-skip row polynomial
 //! `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)` — with `left_Y`/`right_Y`
-//! the centered-Lagrange-weighted combinations of the three left/right factor
-//! columns — is brute-forced at all five nodes of the extended centered window
-//! (domain size 3). Unlike stage 1's outer uni-skip, the in-domain values do
-//! not vanish: they equal the three stage-1 product claims, and the engine's
-//! round-sum check pins them against the folded input claim. The transmitted
-//! polynomial is `LK(τ_high, ·) × t1` (degree 6).
+//! the centered-Lagrange-weighted combinations of the left/right factor
+//! columns (three lanes; `implicit-carry` adds the `CarryUsed` lane pairing
+//! the `UsesCarry` flag with the committed `Carry` column) — is brute-forced
+//! at every node of the extended centered window. Unlike stage 1's outer
+//! uni-skip, the in-domain values do not vanish: they equal the stage-1
+//! product claims, and the engine's round-sum check pins them against the
+//! folded input claim. The transmitted polynomial is `LK(τ_high, ·) × t1`.
 //!
 //! The remainder member needs no composite treatment: every leaf of the
 //! product-remainder `Expr` is multilinear over the cycle domain (the Lagrange
@@ -23,6 +24,8 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
     write_lookup_output_to_rd_product,
 };
+#[cfg(feature = "implicit-carry")]
+use jolt_claims::protocols::jolt::geometry::spartan::{carry_product, uses_carry_product};
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
 use jolt_field::JoltField;
 use jolt_poly::lagrange::{
@@ -97,9 +100,9 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for ReferenceProductRem
     }
 }
 
-/// The shared product compute state: the eight cycle-indexed factor/wire
-/// tables and `eq(τ_low, ·)` — everything the uni-skip polynomial and the
-/// remainder member both consume.
+/// The shared product compute state: the cycle-indexed factor/wire tables
+/// (one per product-remainder output claim) and `eq(τ_low, ·)` — everything
+/// the uni-skip polynomial and the remainder member both consume.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct SpartanProductKernel<F: JoltField> {
     log_t: usize,
@@ -112,6 +115,12 @@ pub struct SpartanProductKernel<F: JoltField> {
     next_is_noop: Vec<F>,
     write_lookup_output_to_rd: Vec<F>,
     virtual_instruction: Vec<F>,
+    #[cfg(feature = "implicit-carry")]
+    uses_carry: Vec<F>,
+    /// The committed `Carry` column at the product point: the `CarryUsed`
+    /// lane's right factor.
+    #[cfg(feature = "implicit-carry")]
+    carry: Vec<F>,
 }
 
 impl<F: JoltField> SpartanProductKernel<F> {
@@ -131,6 +140,10 @@ impl<F: JoltField> SpartanProductKernel<F> {
             next_is_noop: dense_view(witness, next_is_noop_product())?,
             write_lookup_output_to_rd: dense_view(witness, write_lookup_output_to_rd_product())?,
             virtual_instruction: dense_view(witness, virtual_instruction_product())?,
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: dense_view(witness, uses_carry_product())?,
+            #[cfg(feature = "implicit-carry")]
+            carry: dense_view(witness, carry_product())?,
         })
     }
 
@@ -157,6 +170,12 @@ impl<F: JoltField> SpartanProductKernel<F> {
                 let right = weights[0] * self.right_instruction_input[j]
                     + weights[1] * self.branch_flag[j]
                     + weights[2] * (F::one() - self.next_is_noop[j]);
+                // Lane 3 = the CarryUsed row: `UsesCarry × Carry`.
+                #[cfg(feature = "implicit-carry")]
+                let (left, right) = (
+                    left + weights[3] * self.uses_carry[j],
+                    right + weights[3] * self.carry[j],
+                );
                 sum += self.eq_cycle[j] * left * right;
             }
             *value = sum;
@@ -226,6 +245,10 @@ impl<F: JoltField> SpartanProductKernel<F> {
                 virtual_instruction_product(),
                 Polynomial::new(self.virtual_instruction),
             ),
+            #[cfg(feature = "implicit-carry")]
+            (uses_carry_product(), Polynomial::new(self.uses_carry)),
+            #[cfg(feature = "implicit-carry")]
+            (carry_product(), Polynomial::new(self.carry)),
         ]);
 
         Ok(Box::new(NaiveSumcheckProver::new(

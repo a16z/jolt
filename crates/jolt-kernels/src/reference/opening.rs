@@ -87,7 +87,7 @@ fn address_major_embed<F: JoltField>(
     // disjoint per-block gathers.
     let mut embedded: Vec<F> = unsafe_allocate_zero_vec(1usize << grid.total_vars);
     match polynomial {
-        JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => {
+        _ if is_dense_trace_column(polynomial) => {
             if table.len() > cycles {
                 return Err(KernelError::TableSizeMismatch {
                     table: format!("{polynomial:?}"),
@@ -142,6 +142,17 @@ fn address_major_embed<F: JoltField>(
         }
     }
     Ok(embedded)
+}
+
+/// Whether `polynomial` is a dense trace column: one value per cycle, at the
+/// cycle block's address slot zero under the address-major order.
+const fn is_dense_trace_column(polynomial: JoltCommittedPolynomial) -> bool {
+    match polynomial {
+        JoltCommittedPolynomial::RdInc | JoltCommittedPolynomial::RamInc => true,
+        #[cfg(feature = "implicit-carry")]
+        JoltCommittedPolynomial::Carry => true,
+        _ => false,
+    }
 }
 
 /// Embed an advice polynomial's balanced matrix into the grid matrix's

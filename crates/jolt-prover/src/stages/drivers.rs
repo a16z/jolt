@@ -90,6 +90,8 @@ mod stage6b {
     use jolt_claims::protocols::jolt::JoltRelationId;
     use jolt_verifier::stages::stage6b::booleanity::Booleanity;
     use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
+    #[cfg(feature = "implicit-carry")]
+    use jolt_verifier::stages::stage6b::carry_claim_reduction::CarryClaimReduction;
     use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
         BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase,
     };

@@ -143,8 +143,11 @@ pub fn cycle_to_trace_row(
     let bytecode_pc =
         u32::try_from(pc).map_err(|_| CycleConversionError::BytecodePcTooWide { pc })?;
     let state = captured_state(cycle, &instruction)?;
-    JoltTraceRow::from_components(state, &instruction, bytecode_pc)
-        .map_err(CycleConversionError::Row)
+    let row = JoltTraceRow::from_components(state, &instruction, bytecode_pc)
+        .map_err(CycleConversionError::Row)?;
+    #[cfg(feature = "implicit-carry")]
+    let row = row.with_carry(cycle.carry());
+    Ok(row)
 }
 
 /// Materialize the full proof-facing trace once from a `Vec<Cycle>`.

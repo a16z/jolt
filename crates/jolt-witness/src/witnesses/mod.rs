@@ -25,6 +25,8 @@ use jolt_riscv::{
 use crate::WitnessError;
 use crate::JOLT_VM_LABEL;
 
+#[cfg(feature = "implicit-carry")]
+mod carry;
 mod flags;
 mod increments;
 mod lookups;
@@ -34,6 +36,8 @@ mod pc;
 mod ram;
 mod registers;
 
+#[cfg(feature = "implicit-carry")]
+pub use carry::{Carry, CarryUsed, NextCarry};
 pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
     NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
@@ -144,6 +148,12 @@ impl JoltCycle for CompactTraceCycle<'_> {
     #[inline(always)]
     fn ram_write_value(&self) -> Option<u64> {
         self.0.is_store().then(|| self.0.ram_write_value())
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    #[inline(always)]
+    fn carry(&self) -> u64 {
+        self.0.carry()
     }
 }
 

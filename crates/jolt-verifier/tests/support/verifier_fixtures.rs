@@ -274,6 +274,19 @@ pub fn fresh_standard_committed_advice_case() -> VerifierFixtureCase {
     fresh_case_from_accepted_fixture(generate_committed_advice_consumer)
 }
 
+/// Public inputs of the carry-chain guest: `(a, b, c)` chosen so every
+/// `{ADD, MUL} -> {ADDC, MULC}` pairing produces a non-zero carry.
+#[cfg(all(not(feature = "zk"), feature = "implicit-carry"))]
+pub const CARRY_CHAIN_INPUTS: (u64, u64, u64) = (u64::MAX - 5, u64::MAX / 3, 0x8000_0000_0000_0001);
+
+/// Fresh (never serialized) carry-lane proof over `examples/carry-chain`:
+/// the only fixture whose committed `Carry` column is non-zero.
+#[cfg(all(not(feature = "zk"), feature = "implicit-carry"))]
+pub fn fresh_standard_carry_chain_case() -> VerifierFixtureCase {
+    let _guard = verifier_fixture_lock();
+    fresh_case_from_accepted_fixture(generate_carry_chain)
+}
+
 #[cfg(not(feature = "zk"))]
 fn fresh_case_from_accepted_fixture(
     generate: impl FnOnce() -> GeneratedVerifierFixture,
@@ -585,6 +598,21 @@ fn generate_sha2_small() -> GeneratedVerifierFixture {
 #[cfg(not(feature = "zk"))]
 fn generate_advice_consumer() -> GeneratedVerifierFixture {
     generate_advice_consumer_with_committed_program(false)
+}
+
+#[cfg(all(not(feature = "zk"), feature = "implicit-carry"))]
+fn generate_carry_chain() -> GeneratedVerifierFixture {
+    let mut program = Program::new("carry-chain-guest");
+    program.enable_implicit_carry();
+    // The guest holds several provable functions (the mul256 benchmark
+    // variants); select the carry-chain entry explicitly.
+    program.set_func("carry_chain");
+    generate_verifier_fixture(
+        program,
+        postcard::to_stdvec(&CARRY_CHAIN_INPUTS).expect("serialize carry-chain inputs"),
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 #[cfg(not(feature = "zk"))]
