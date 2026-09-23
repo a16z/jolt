@@ -527,6 +527,13 @@ jobs:
           sha256sum Cargo.lock > "$RUNNER_TEMP/recursion-acceptance/lock.sha256"
           git rev-parse HEAD > "$RUNNER_TEMP/recursion-acceptance/source-head.txt"
           sha256sum "$(command -v jolt)" target/ci/recursion > "$RUNNER_TEMP/recursion-acceptance/host-binaries.sha256"
+      - name: Check canonical verifier output decoding
+        timeout-minutes: 15
+        run: >-
+          CARGO_BUILD_JOBS=1 cargo nextest run --locked --cargo-profile ci
+          -p recursion --bin recursion --features akita,field-inline,ntt-inline
+          --test-threads 1 --retries 0
+          -E 'test(=tests::verifier_output_accepts_canonical_compact_and_word_padded_values) | test(=tests::verifier_output_rejects_malformed_encoding_and_padding)'
       - name: Generate and retain actual Akita verifier guest
         timeout-minutes: 15
         env:
