@@ -37,6 +37,7 @@ akita = [
   "jolt-prover/akita",
   "jolt-claims/akita",
   "jolt-program/fp128-field-inline",
+  "tracer/fp128-field-inline",
 ]
 transcript-blake2b = [
   "jolt-transcript/bn254",
