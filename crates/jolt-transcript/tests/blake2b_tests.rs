@@ -20,7 +20,9 @@ fn test_blake2b_known_vector() {
 
     // Pinned wire-format check: any change to PROTOCOL_ID, the session
     // encoding, the append_bytes layout, or the challenge decoder will
-    // flip these bytes. Update only with an audit trail.
+    // flip these bytes. Update only with an audit trail. CI also runs it on
+    // wasm32-wasip1: spongefish's Blake2b512 sponge hashes its squeeze counters,
+    // so a pointer-width-dependent encoding (spongefish < 4ee5f2b2) would fail here.
     //
     // Audit trail: `from_challenge_bytes` now builds the field element from the
     // squeezed bytes via the 125-bit Montgomery-friendly decode rather than a

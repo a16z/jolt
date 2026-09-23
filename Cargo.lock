@@ -589,7 +589,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -6376,14 +6376,14 @@ checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "spongefish"
-version = "0.7.0"
-source = "git+https://github.com/arkworks-rs/spongefish?rev=d2d190b1329d35ac9577438d05aed4f17a57b9f9#d2d190b1329d35ac9577438d05aed4f17a57b9f9"
+version = "0.7.2"
+source = "git+https://github.com/0xAndoroid/spongefish?rev=4ee5f2b22a6ef628f7b6e162ab72cc285b9a850e#4ee5f2b22a6ef628f7b6e162ab72cc285b9a850e"
 dependencies = [
  "ark-ff 0.6.0",
  "ark-serialize 0.6.0",
  "blake2 0.11.0",
  "digest 0.11.3",
- "keccak 0.1.6",
+ "keccak 0.2.0",
  "p3-koala-bear",
  "rand 0.8.7",
  "sha2 0.11.0",

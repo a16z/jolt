@@ -37,6 +37,10 @@ rand = { workspace = true, features = ["std_rng"], optional = true }
 
 [dev-dependencies]
 num-traits = { workspace = true }
+
+# criterion pulls rayon by default, which refuses to compile for WASI; the
+# transcript tests run on wasm32-wasip1 in CI and only the benches need it.
+[target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
 criterion = { workspace = true }
 
 [[bench]]

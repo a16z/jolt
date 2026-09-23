@@ -286,7 +286,7 @@ blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "d2d190b1329d35ac9577438d05aed4f17a57b9f9", default-features = false }
+spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "4ee5f2b22a6ef628f7b6e162ab72cc285b9a850e", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.4.2", features = [
   "backends",
@@ -461,3 +461,11 @@ jolt-inlines-bigint = { path = "./jolt-inlines/bigint", default-features = false
 jolt-inlines-secp256k1 = { path = "./jolt-inlines/secp256k1", default-features = false }
 jolt-inlines-grumpkin = { path = "./jolt-inlines/grumpkin", default-features = false }
 jolt-inlines-p256 = { path = "./jolt-inlines/p256", default-features = false }
+
+# spongefish before 4ee5f2b2 hashed its squeeze counters at pointer width
+# (`usize::to_be_bytes`), so the Blake2b512 sponge behind `AkitaTranscript`
+# derived different Fiat-Shamir challenges on wasm32 than on 64-bit targets.
+# The Akita crates pin the pre-fix rev; Cargo refuses a `[patch]` back onto the
+# same source, so the fixed upstream commit is served from a fork mirror.
+[patch."https://github.com/arkworks-rs/spongefish"]
+spongefish = { git = "https://github.com/0xAndoroid/spongefish", rev = "4ee5f2b22a6ef628f7b6e162ab72cc285b9a850e" }
