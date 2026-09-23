@@ -1,8 +1,5 @@
-//! Optimized stage-1 Spartan outer kernels: the legacy prover's algorithms
-//! behind the reference kernels' exact wire behavior.
-//!
-//! Techniques ported from `jolt-prover-legacy`'s `zkvm/spartan/outer.rs` +
-//! `r1cs/evaluation.rs`:
+//! Optimized stage-1 Spartan outer kernels with the reference kernels' exact
+//! wire behavior:
 //!
 //! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
 //!   rows are evaluated per cycle as integers (`i64` guards, `S192`

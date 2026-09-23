@@ -2,13 +2,15 @@
 //! `jolt-crypto`.
 //!
 //! Wraps a duplex sponge over each of the three backends and re-exposes
-//! the legacy `Transcript` / `AppendToTranscript` API. Removed once
-//! jolt-prover-legacy migrates to the split-trait surface.
+//! the compatibility `Transcript` / `AppendToTranscript` API. It can be
+//! removed once all consumers migrate to the split-trait surface.
 
 #[cfg(feature = "spongefish")]
 use std::marker::PhantomData;
 
-use jolt_field::{CanonicalBytes, CanonicalEncoding, JoltField, Ring};
+#[cfg(feature = "spongefish")]
+use jolt_field::CanonicalEncoding;
+use jolt_field::{CanonicalBytes, Ring};
 #[cfg(feature = "spongefish")]
 use spongefish::{DuplexSpongeInterface, Encoding};
 
@@ -33,8 +35,10 @@ pub const MAX_LABEL_LEN: usize = 32;
 /// spongefish session value, so distinct labels carry distinct domain
 /// barriers.
 pub trait Transcript: Default + Sync + Send + 'static {
-    /// The challenge type produced by this transcript.
-    type Challenge: CanonicalEncoding;
+    /// The challenge type produced by this transcript. Concrete transcript
+    /// implementations state any decoding or canonical-encoding capability
+    /// they need; custom transcripts may return an algebra-only field type.
+    type Challenge;
 
     /// Creates a new transcript with the given domain separation label.
     ///
@@ -85,7 +89,7 @@ pub trait Transcript: Default + Sync + Send + 'static {
     #[must_use]
     fn challenge_scalar_powers(&mut self, len: usize) -> Vec<Self::Challenge>
     where
-        Self::Challenge: JoltField,
+        Self::Challenge: Ring,
     {
         let gamma = self.challenge_scalar();
         let one = Self::Challenge::from_u64(1);
@@ -114,15 +118,14 @@ pub trait AppendToTranscript {
     /// Absorbs this value into the transcript.
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
 
-    /// Byte length of the payload absorbed by [`append_to_transcript`], when
-    /// the type participates in jolt-prover-legacy's variable-length labeled appends.
+    /// Byte length of the payload absorbed by [`Self::append_to_transcript`], when
+    /// the type participates in variable-length labeled appends.
     fn transcript_payload_len(&self) -> Option<u64> {
         None
     }
 }
 
-/// Big-endian field element absorption (matches jolt-prover-legacy's EVM-compatible
-/// byte order).
+/// Big-endian field element absorption used by the deployed proof format.
 impl<F: CanonicalBytes> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
         let mut buf = vec![0u8; F::NUM_BYTES];
@@ -149,7 +152,7 @@ where
     transcript.append(payload);
 }
 
-/// 32-byte zero-padded label word (matches jolt-prover-legacy's `raw_append_label`).
+/// 32-byte zero-padded label word used by the deployed proof format.
 pub struct Label(pub &'static [u8]);
 
 impl AppendToTranscript for Label {
@@ -167,7 +170,7 @@ impl AppendToTranscript for Label {
 }
 
 /// Packed label (24 bytes) + count (8-byte big-endian) in one 32-byte word
-/// (matches jolt-prover-legacy's `raw_append_label_with_len`).
+/// used by the deployed proof format.
 pub struct LabelWithCount(pub &'static [u8], pub u64);
 
 impl AppendToTranscript for LabelWithCount {
@@ -185,8 +188,7 @@ impl AppendToTranscript for LabelWithCount {
     }
 }
 
-/// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value (matches
-/// jolt-prover-legacy's `raw_append_u64`).
+/// EVM-compatible left-padded u64: 24 zero bytes + 8-byte BE value.
 pub struct U64Word(pub u64);
 
 impl AppendToTranscript for U64Word {
@@ -292,7 +294,7 @@ where
         // see `prover.rs:53-55`) deliberately makes 128-bit challenges a
         // compile error on Poseidon-backed states. The two surfaces
         // disagree on purpose: the legacy facade preserves the legacy
-        // jolt-prover-legacy challenge width for in-flight consumers (jolt-sumcheck,
+        // deployed challenge width for in-flight consumers (jolt-sumcheck,
         // jolt-openings, jolt-crypto). Once those migrate to the split-trait
         // surface this facade goes away and the inconsistency with it.
         let mut buf = [0u8; 16];

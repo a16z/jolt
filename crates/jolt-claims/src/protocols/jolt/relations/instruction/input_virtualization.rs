@@ -3,18 +3,22 @@
 use jolt_riscv::InstructionFlags;
 use serde::{Deserialize, Serialize};
 
+use crate::protocols::jolt::geometry::instruction::INPUT_VIRTUALIZATION_DEGREE;
+#[cfg(test)]
 use crate::protocols::jolt::geometry::instruction::{
     imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
-    rs1_value, rs2_value, unexpanded_pc, INPUT_VIRTUALIZATION_DEGREE,
+    rs1_value, rs2_value, unexpanded_pc,
 };
+#[cfg(test)]
 use crate::protocols::jolt::geometry::spartan::{
     left_instruction_input_product, right_instruction_input_product,
 };
 use crate::protocols::jolt::{
-    InstructionInputChallenge, InstructionInputPublic, JoltExpr, JoltRelationId, TraceDimensions,
+    InstructionInputChallenge, InstructionInputPublic, JoltExpr, JoltRelationId,
+    JoltVirtualPolynomial, TraceDimensions, UnbatchedClaim, UnbatchedClaimExpr, UnbatchedRelation,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::Ring;
 
 /// Produced instruction-input virtualization openings (the left/right operand
@@ -73,6 +77,42 @@ pub struct InputVirtualization {
     shape: TraceDimensions,
 }
 
+impl InputVirtualization {
+    pub fn unbatched_relation() -> UnbatchedRelation {
+        let v = UnbatchedClaimExpr::polynomial;
+        UnbatchedRelation {
+            output_relation: JoltRelationId::InstructionInputVirtualization,
+            gamma: InstructionInputChallenge::Gamma.into(),
+            claims: vec![
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanProductVirtualization,
+                    input: v(JoltVirtualPolynomial::RightInstructionInput),
+                    output: v(JoltVirtualPolynomial::InstructionFlags(
+                        InstructionFlags::RightOperandIsRs2Value,
+                    )) * v(JoltVirtualPolynomial::Rs2Value)
+                        + v(JoltVirtualPolynomial::InstructionFlags(
+                            InstructionFlags::RightOperandIsImm,
+                        )) * v(JoltVirtualPolynomial::Imm),
+                    output_weight: InstructionInputPublic::EqProduct.into(),
+                    offset: false,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanProductVirtualization,
+                    input: v(JoltVirtualPolynomial::LeftInstructionInput),
+                    output: v(JoltVirtualPolynomial::InstructionFlags(
+                        InstructionFlags::LeftOperandIsRs1Value,
+                    )) * v(JoltVirtualPolynomial::Rs1Value)
+                        + v(JoltVirtualPolynomial::InstructionFlags(
+                            InstructionFlags::LeftOperandIsPC,
+                        )) * v(JoltVirtualPolynomial::UnexpandedPC),
+                    output_weight: InstructionInputPublic::EqProduct.into(),
+                    offset: false,
+                },
+            ],
+        }
+    }
+}
+
 impl SymbolicSumcheck for InputVirtualization {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
@@ -100,26 +140,11 @@ impl SymbolicSumcheck for InputVirtualization {
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        opening(right_instruction_input_product())
-            + challenge(InstructionInputChallenge::Gamma)
-                * opening(left_instruction_input_product())
+        Self::unbatched_relation().folded_input()
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        derived(InstructionInputPublic::EqProduct)
-            * opening(right_operand_is_rs2())
-            * opening(rs2_value())
-            + derived(InstructionInputPublic::EqProduct)
-                * opening(right_operand_is_imm())
-                * opening(imm())
-            + derived(InstructionInputPublic::EqProduct)
-                * challenge(InstructionInputChallenge::Gamma)
-                * opening(left_operand_is_rs1())
-                * opening(rs1_value())
-            + derived(InstructionInputPublic::EqProduct)
-                * challenge(InstructionInputChallenge::Gamma)
-                * opening(left_operand_is_pc())
-                * opening(unexpanded_pc())
+        Self::unbatched_relation().folded_output()
     }
 }
 

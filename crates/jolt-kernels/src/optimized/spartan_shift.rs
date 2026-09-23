@@ -5,8 +5,7 @@
 //! `T`-sized tables (two `eq+1` tables plus the five PC/flag columns) every
 //! round.
 //!
-//! Techniques ported from `jolt-prover-legacy/src/zkvm/spartan/shift.rs`
-//! (`ShiftSumcheckProver`, eprint 2025/611 Appendix A):
+//! Uses the prefix-suffix decomposition from eprint 2025/611, Appendix A:
 //!
 //! - **`eq+1` prefix–suffix decomposition** for the first half of the rounds:
 //!   `eq+1(r, (y_hi, y_lo)) = P_0(y_lo)·S_0(y_hi) + P_1(y_lo)·S_1(y_hi)`

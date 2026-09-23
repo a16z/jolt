@@ -17,9 +17,8 @@ pub fn main() {
     let mut program = guest::compile_modinv(target_dir);
     let shared_preprocessing = guest::preprocess_shared_modinv(&mut program).unwrap();
     let prover_preprocessing = guest::preprocess_prover_modinv(shared_preprocessing.clone());
-    let verifier_setup = prover_preprocessing.generators.to_verifier_setup();
     let verifier_preprocessing =
-        guest::preprocess_verifier_modinv(shared_preprocessing, verifier_setup, None);
+        guest::verifier_preprocessing_from_prover_modinv(&prover_preprocessing);
     let prove_modinv = guest::build_prover_modinv(program, prover_preprocessing);
     let verify_modinv = guest::build_verifier_modinv(verifier_preprocessing);
 

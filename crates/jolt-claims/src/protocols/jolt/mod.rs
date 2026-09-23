@@ -1,6 +1,7 @@
 pub mod geometry;
 pub mod lattice;
 pub mod relations;
+mod unbatched;
 
 mod ids;
 
@@ -37,3 +38,4 @@ pub use ids::{
 };
 #[cfg(feature = "implicit-carry")]
 pub use ids::{CarryClaimReductionChallenge, CarryClaimReductionPublic};
+pub use unbatched::{UnbatchedClaim, UnbatchedClaimExpr, UnbatchedRelation};

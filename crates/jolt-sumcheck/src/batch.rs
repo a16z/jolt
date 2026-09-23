@@ -8,7 +8,7 @@
 //! head's output in engine form: plain positional data with no per-stage
 //! types, so this crate's provers can consume it without naming any stage.
 
-use jolt_field::JoltField;
+use jolt_field::Field;
 
 use crate::SumcheckError;
 
@@ -43,7 +43,7 @@ pub struct BatchPrelude<F> {
     pub max_degree: usize,
 }
 
-impl<F: JoltField> BatchPrelude<F> {
+impl<F: Field> BatchPrelude<F> {
     /// Combine `members` into the batch's initial running claim. The
     /// `2^(max_num_vars − rounds)` scale is each shorter member's dummy-round
     /// padding — its summand extended constantly over the batch's extra
@@ -92,7 +92,7 @@ impl<F: JoltField> BatchPrelude<F> {
     }
 }
 
-fn validate_batch_dimensions<F: JoltField>(
+fn validate_batch_dimensions<F: Field>(
     members: &[BatchMember<F>],
     max_num_vars: usize,
     max_degree: usize,
