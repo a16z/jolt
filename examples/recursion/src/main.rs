@@ -849,7 +849,21 @@ fn generate_proofs(
 fn decode_verifier_output(bytes: &[u8]) -> u32 {
     let (output, remaining) =
         postcard::take_from_bytes::<u32>(bytes).expect("decode verifier output");
-    assert!(remaining.is_empty(), "trailing verifier output bytes");
+    let canonical = postcard::to_stdvec(&output).expect("encode verifier output");
+    assert!(
+        bytes.starts_with(&canonical) && bytes.len() - remaining.len() == canonical.len(),
+        "noncanonical verifier output"
+    );
+    // The tracer lowers narrow stores to aligned 8-byte read-modify-writes.
+    let padded_len = canonical
+        .len()
+        .checked_next_multiple_of(8)
+        .expect("verifier output length overflow");
+    assert!(
+        (bytes.len() == canonical.len() || bytes.len() == padded_len)
+            && remaining.iter().all(|byte| *byte == 0),
+        "invalid verifier output padding"
+    );
     output
 }
 
@@ -1206,6 +1220,40 @@ fn main() {
             info!("  cargo run --release -- verify --example fibonacci --workdir ./output --embed");
             info!("  cargo run --release -- trace --example fibonacci --embed");
             info!("  cargo run --release -- trace --example fibonacci --embed --disk");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_verifier_output;
+
+    #[test]
+    fn verifier_output_accepts_canonical_compact_and_word_padded_values() {
+        for (value, encoded) in [
+            (0, vec![0]),
+            (1, vec![1]),
+            (128, vec![0x80, 1]),
+            (u32::MAX, vec![0xff, 0xff, 0xff, 0xff, 0x0f]),
+        ] {
+            assert_eq!(decode_verifier_output(&encoded), value);
+            let mut padded = encoded;
+            padded.resize(8, 0);
+            assert_eq!(decode_verifier_output(&padded), value);
+        }
+    }
+
+    #[test]
+    fn verifier_output_rejects_malformed_encoding_and_padding() {
+        for bytes in [
+            vec![],
+            vec![0x80],
+            vec![0x81, 0],
+            vec![1, 0],
+            vec![1, 1, 0, 0, 0, 0, 0, 0],
+            vec![0; 16],
+        ] {
+            assert!(std::panic::catch_unwind(|| decode_verifier_output(&bytes)).is_err());
         }
     }
 }
