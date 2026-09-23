@@ -31,13 +31,17 @@ use jolt_witness::{JoltWitnessOracle, JoltWitnessPlane};
 use crate::commitment::CommitmentGrid;
 use crate::{KernelError, ProofSession};
 
+/// A consuming factory for host committed-program opening tables. Backends
+/// holding these polynomials in device memory need not materialize host copies.
+pub type PrecommittedOpeningTables<'a, F> =
+    Box<dyn FnOnce() -> Result<BTreeMap<JoltCommittedPolynomial, Vec<F>>, KernelError<F>> + 'a>;
+
 /// The stage-8 joint-opening polynomial slot: materialize `polynomials` (in
 /// the given order — the final-opening batch order) embedded over `grid`.
-/// `precommitted_tables` carries the committed-program polynomials (bytecode
-/// chunks, program image) the recipe materialized from the prover-retained
-/// full program — they are preprocessing data, not witness oracles. It is
-/// consumed: each table moves into its opened polynomial rather than being
-/// copied alongside the caller's map.
+/// `precommitted_tables` materializes the committed-program polynomials (bytecode
+/// chunks, program image) from prover-retained preprocessing when invoked. A
+/// resident backend can omit that work. Host implementations consume the factory
+/// once and move its tables into the opened polynomials without cloning them.
 /// Receives the full witness plane (not just the oracle surface) so
 /// implementations can rebuild the committed columns from typed trace
 /// bundles instead of materialized `K × T` oracle grids.
@@ -47,7 +51,7 @@ pub trait JointOpeningPolynomials<F: JoltField> {
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>>;
 }
