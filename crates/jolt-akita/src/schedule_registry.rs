@@ -9,7 +9,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use akita_planner::find_adapted_schedule;
@@ -175,20 +175,17 @@ fn plan_row<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     let main_row = base.resolve_key(&AkitaScheduleLookupKey::single(key.final_group))?;
     let producer_contract = ProducerCfg::committed_source_contract()?;
-    let producer_fold_policy = honest_fold_policy_of::<ProducerCfg>();
     let producers = key
         .precommitteds
         .iter()
         .copied()
-        .map(|profile| {
-            PrecommittedProducer::try_new(profile, producer_contract, producer_fold_policy)
-        })
+        .map(|profile| PrecommittedProducer::try_new(profile, producer_contract))
         .collect::<Result<Vec<_>, _>>()?;
     let request = GroupedGenerationRequest::new(key.final_group, producers);
     let planned = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<Cfg>(),
+        Cfg::committed_source_contract()?,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
     )?;

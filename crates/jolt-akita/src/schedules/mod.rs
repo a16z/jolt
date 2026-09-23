@@ -58,7 +58,7 @@ pub mod emit {
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
+        plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key))
     }
 
     fn regen_one_hot_k16(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
