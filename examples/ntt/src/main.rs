@@ -42,9 +42,8 @@ fn main() {
         .sum::<u64>();
     let mut program = guest::compile_ntt("/tmp/jolt-guest-targets");
     let shared = guest::preprocess_shared_ntt(&mut program).unwrap();
-    let prover = guest::preprocess_prover_ntt(shared.clone());
-    let verifier =
-        guest::preprocess_verifier_ntt(shared, prover.generators.to_verifier_setup(), None);
+    let prover = guest::preprocess_prover_ntt(shared);
+    let verifier = jolt_sdk::verifier_preprocessing_from_prover(&prover);
     let prove = guest::build_prover_ntt(program, prover);
     let verify = guest::build_verifier_ntt(verifier);
     let (output, proof, io) = prove(
