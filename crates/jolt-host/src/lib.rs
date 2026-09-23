@@ -10,7 +10,11 @@ use jolt_program::{JoltProgram, ProgramError};
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
 use tracer::TracerInlineExpansionProvider;
 
-pub const DEFAULT_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+/// Guest build cache used when no target dir is given: `jolt-guest-targets`
+/// under the system temp dir (`TMPDIR`, else `/tmp`).
+pub fn default_target_dir() -> PathBuf {
+    std::env::temp_dir().join("jolt-guest-targets")
+}
 
 #[derive(Clone)]
 pub struct Program {
