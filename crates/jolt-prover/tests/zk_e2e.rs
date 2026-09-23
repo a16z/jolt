@@ -143,7 +143,7 @@ mod zk {
         inspect_trace(run.trace.trace.rows());
         let config = derive_config(&run.trace, &run.preprocessing);
         let shared = JoltSharedPreprocessing::new(run.preprocessing).expect("shared preprocessing");
-        let preprocessing = jolt_prover::dory::from_shared(shared);
+        let preprocessing = jolt_prover::dory::from_shared(shared).expect("Dory preprocessing");
         assert!(preprocessing.verifier.vc_setup.is_some());
         let program_preprocessing = preprocessing
             .program_arc()

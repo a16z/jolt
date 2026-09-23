@@ -31,8 +31,9 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use super::guest_fixtures::{prepare_guest, PreparedGuest};
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
-// Modular preprocessing has a different encoded shape from the retired prover.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0004";
+// Program digests derive from the serde encoding (`ProgramPreprocessing::digest`);
+// fixtures carrying the legacy digest layout must regenerate.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0005";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -608,7 +609,7 @@ fn generate_advice_consumer_with_committed_program(
     } else {
         let shared =
             JoltSharedPreprocessing::new(run.program_preprocessing).expect("shared preprocessing");
-        jolt_prover::dory::from_shared(shared)
+        jolt_prover::dory::from_shared(shared).expect("Dory preprocessing")
     };
     prove_prepared(
         run.program,
@@ -668,7 +669,7 @@ fn generate_verifier_fixture_with_order(
     config.trace_polynomial_order = order;
     let shared =
         JoltSharedPreprocessing::new(run.program_preprocessing).expect("shared preprocessing");
-    let preprocessing = jolt_prover::dory::from_shared(shared);
+    let preprocessing = jolt_prover::dory::from_shared(shared).expect("Dory preprocessing");
     prove_prepared(
         run.program,
         run.trace,

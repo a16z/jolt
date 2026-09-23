@@ -168,7 +168,7 @@ pub fn preprocess_program(
     let program = program_preprocessing(source, memory_config, max_trace_length)?;
     match bytecode_chunk_count {
         Some(chunk_count) => jolt_prover::dory::preprocess_committed(program, chunk_count),
-        None => JoltSharedPreprocessing::new(program).map(jolt_prover::dory::from_shared),
+        None => JoltSharedPreprocessing::new(program).and_then(jolt_prover::dory::from_shared),
     }
 }
 
