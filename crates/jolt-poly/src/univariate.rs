@@ -126,6 +126,17 @@ impl<F: Field> UnivariatePoly<F> {
         self.coefficients
     }
 
+    /// Removes trailing zero coefficients while retaining one coefficient for
+    /// a nonempty zero polynomial. An empty polynomial stays empty.
+    ///
+    /// Interpolation deliberately preserves its input width; callers that need
+    /// the shortest coefficient form can request it explicitly with this method.
+    pub fn trim_trailing_zeros(&mut self) {
+        while self.coefficients.len() > 1 && self.coefficients.last().is_some_and(|c| c.is_zero()) {
+            let _ = self.coefficients.pop();
+        }
+    }
+
     /// Evaluates the $i$-th Lagrange basis polynomial at `point` over the domain
     /// $\{0, 1, \ldots, n-1\}$:
     /// $$L_i(x) = \prod_{\substack{j=0 \\ j \neq i}}^{n-1} \frac{x - j}{i - j}$$
@@ -179,25 +190,65 @@ impl<F: Field> UnivariatePoly<F> {
     /// `[c0, c2, c3, ...]`, saving one field element in proof serialization.
     /// The linear term can be recovered given the hint value `f(0) + f(1)`.
     ///
-    /// # Panics
-    /// Panics if the polynomial has degree < 1 (no linear term to omit).
+    /// An empty polynomial stores `[0]`; a constant stores `[c0]`. Both
+    /// compressed forms have degree bound one because the hint can reconstruct
+    /// a nonzero linear term.
     pub fn compress(&self) -> crate::CompressedPoly<F> {
-        assert!(
-            self.coefficients.len() >= 2,
-            "cannot compress a polynomial of degree < 1"
-        );
-        let coeffs = [&self.coefficients[..1], &self.coefficients[2..]].concat();
-        debug_assert_eq!(coeffs.len() + 1, self.coefficients.len());
+        let Some(&constant) = self.coefficients.first() else {
+            return crate::CompressedPoly::new(vec![F::zero()]);
+        };
+        let mut coeffs = Vec::with_capacity(self.coefficients.len().saturating_sub(1).max(1));
+        coeffs.push(constant);
+        if self.coefficients.len() > 2 {
+            coeffs.extend_from_slice(&self.coefficients[2..]);
+        }
         crate::CompressedPoly::new(coeffs)
     }
 
-    /// Interpolates from evaluations at `0, 1, 2, ..., n-1` using Gaussian elimination
-    /// on the Vandermonde system. Equivalent to `interpolate_over_integers` but uses a
-    /// direct matrix solve instead of the Lagrange formula.
+    /// Interpolates from evaluations at `0, 1, 2, ..., n-1` using Newton forward
+    /// differences in O(n²) field operations. The returned coefficient count is
+    /// exactly `evals.len()`, including any trailing zero coefficients. Empty
+    /// evaluations produce the empty zero polynomial.
+    ///
+    /// # Panics
+    /// Panics if a required factorial has no inverse in the field (for example,
+    /// if the evaluation domain exceeds the field characteristic).
+    #[expect(clippy::expect_used)]
     pub fn from_evals(evals: &[F]) -> Self {
-        Self {
-            coefficients: gaussian_elimination_vandermonde(evals),
+        let n = evals.len();
+        if n == 0 {
+            return Self::zero();
         }
+
+        let mut table = evals.to_vec();
+        let mut differences = Vec::with_capacity(n);
+        for width in (1..=n).rev() {
+            differences.push(table[0]);
+            for j in 0..width - 1 {
+                table[j] = table[j + 1] - table[j];
+            }
+        }
+
+        let mut factorial = F::one();
+        for (k, difference) in differences.iter_mut().enumerate().skip(1) {
+            factorial *= F::from_u64(k as u64);
+            *difference *= factorial
+                .inverse()
+                .expect("field characteristic too small for interpolation");
+        }
+
+        let mut coefficients = vec![differences[n - 1]];
+        for k in (0..n - 1).rev() {
+            let shift = F::from_u64(k as u64);
+            let mut expanded = vec![F::zero(); coefficients.len() + 1];
+            expanded[0] = differences[k];
+            for (i, &coefficient) in coefficients.iter().enumerate() {
+                expanded[i] -= shift * coefficient;
+                expanded[i + 1] += coefficient;
+            }
+            coefficients = expanded;
+        }
+        Self { coefficients }
     }
 
     /// Interpolates from evaluations at `[0, 2, 3, ..., n-1]` with the hint `p(0) + p(1)`.
@@ -463,27 +514,6 @@ impl<F: Field> MulAssign<F> for UnivariatePoly<F> {
             *c *= rhs;
         }
     }
-}
-
-/// Gaussian elimination on a Vandermonde system for evaluations at `0, 1, ..., n-1`.
-fn gaussian_elimination_vandermonde<F: Field>(evals: &[F]) -> Vec<F> {
-    let n = evals.len();
-    let xs: Vec<F> = (0..n).map(|x| F::from_u64(x as u64)).collect();
-
-    let mut matrix: Vec<Vec<F>> = Vec::with_capacity(n);
-    for i in 0..n {
-        let mut row = Vec::with_capacity(n + 1);
-        let x = xs[i];
-        let mut power = F::one();
-        for _ in 0..n {
-            row.push(power);
-            power *= x;
-        }
-        row.push(evals[i]);
-        matrix.push(row);
-    }
-
-    gaussian_elimination_augmented(&mut matrix)
 }
 
 /// Gaussian elimination with partial pivoting on an augmented matrix `[A | b]`
