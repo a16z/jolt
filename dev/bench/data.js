@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790195126859,
+  "lastUpdate": 1790202651195,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -162250,6 +162250,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 867724,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "49aa0fa0b560079ac3960c3151f110b4ca8b0279",
+          "message": "test(fuzz): harden verifier dependency coverage (#1696)\n\n* test(fuzz): harden verifier dependency coverage\n\nSquash of feat/production-fuzz-infra: reproducible fuzz workspaces with\npersistent seed corpora, the unified scripts/fuzz.py runner with\nmanifest-declared per-target budgets, PR/daily/weekly CI tiers,\nreproduce/tmin artifact commands, structure-aware targets across field,\npoly, sumcheck, lookup-tables, tracer decode, and the jolt-verifier\nsurface (validate-inputs, proof/zk-proof tamper-must-reject with\nadvice-consumer fixtures), and the fuzz operations book chapter.\n\n* fix(fuzz): close the two review follow-ups and refresh for main\n\n- decode_differential: the mask-map catch-all now fails loudly on a\n  kind without a tracer mask entry instead of assuming the mask matches\n  (every word-decodable kind in the no-field-inline build is mapped;\n  the remaining Virtual* kinds are sequence-only).\n- Weekly coverage builds get their own target dir and cache so the\n  -C instrument-coverage artifacts stop invalidating the ASan build\n  cache every week; fuzz workspace .gitignores cover the new dir.\n- Rebase portage: ZkBatchOpening struct return in the openings fuzz\n  target, zk fixture cache names carry the -degree-bound transcript\n  suffix, fuzz lockfiles refreshed for dory-pcs 0.4.1 and\n  jolt-optimizations, shellcheck SC2209 quiet in the profile step.\n\n* fix(fuzz): skip InlineDispatch words before the decoder mask lookup\n\nPost-#1717, jolt-program's decode_instruction classifies custom-opcode\n(0x0B/0x2B) words as InlineDispatch itself instead of leaving them to\nexpansion, so the loud-panic tripwire in\nmatches_program_kind_tracer_mask fired on a kind that is deliberately\nout of scope: inline classification is a decoder-profile choice, not a\nshared ISA contract, and the target already skipped it — just too late,\nafter the mask lookup. Hoist the inline skip above the lookup on both\ndecoder sides. The tripwire still guards every future word-decodable\nkind.\n\nAdds seeds/decode_differential/instr-4-inline (word 0x0000000b),\nverified to reproduce the panic against the previous target.\n\n* test(fuzz): regenerate stale ZK proof fixtures for the rebased verifier\n\nThe three zk-*-bundle.bin fixtures were proved against the pre-rebase\nverifier; after the rebase onto main the honest-proof gate in\nzk_proof_tamper_must_reject fails with FinalOpeningVerificationFailed\nbefore any tampering runs. Regenerated with the real ZK prover on this\nbranch (JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES=1 cargo nextest run\n-p jolt-verifier --features prover-fixtures,zk --test\ngenerate_fuzz_fixture --run-ignored ignored-only); the generator\nre-verifies each bundle through the public deserialize path before\nwriting. The transparent fixtures still verify and are untouched.\n\nSeed corpus unchanged: the six seeds are mutation descriptors, not\nproof bytes. Full workspace replay passes against the new bundles.\n\n* fix(fuzz): sync generated benchmark manifest\n\n* fix(ci): update fuzz references and matrix preprocessing\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-09-23T17:29:13-04:00",
+          "tree_id": "30804aadc5821f6206d315104b3707213530cb8a",
+          "url": "https://github.com/a16z/jolt/commit/49aa0fa0b560079ac3960c3151f110b4ca8b0279"
+        },
+        "date": 1790202644802,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.9305,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 865572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7457,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 503520,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498716,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 500584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0168,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498404,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999076,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.8266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8551,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.914,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 176096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0712,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 867156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8566,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 502572,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6235,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500812,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.6813,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 500008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.3241,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 500864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 42.9769,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1877656,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.3295,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 642332,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 99.1932,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1099708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8913,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 498424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.2033,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 497816,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 20.6783,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 867400,
             "unit": "KB",
             "extra": ""
           }
