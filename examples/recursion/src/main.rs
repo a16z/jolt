@@ -12,9 +12,9 @@ use jolt_sdk::host::Program;
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
 #[cfg(feature = "akita")]
-use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-#[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
+#[cfg(feature = "akita")]
+use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 #[cfg(feature = "akita")]
 use jolt_sdk::JoltField;
 use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout};
@@ -847,7 +847,8 @@ fn generate_proofs(
 }
 
 fn decode_verifier_output(bytes: &[u8]) -> u32 {
-    let (output, remaining) = postcard::take_from_bytes::<u32>(bytes).expect("decode verifier output");
+    let (output, remaining) =
+        postcard::take_from_bytes::<u32>(bytes).expect("decode verifier output");
     assert!(remaining.is_empty(), "trailing verifier output bytes");
     output
 }
@@ -902,11 +903,13 @@ impl PreparedGuest {
         std::fs::write(
             directory.join("guest.elf"),
             program.get_elf_contents().expect("built verifier ELF"),
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             directory.join("execution.bin"),
             bincode::serde::encode_to_vec(&prepared, bincode::config::standard()).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     fn execute(directory: &Path, expected: ExpectedVerification) {
@@ -914,9 +917,21 @@ impl PreparedGuest {
         let (prepared, consumed): (Self, usize) =
             bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
         assert_eq!(consumed, bytes.len(), "trailing prepared execution bytes");
-        assert_eq!(prepared.akita, cfg!(feature = "akita"), "Akita profile mismatch");
-        assert_eq!(prepared.field_inline, cfg!(feature = "field-inline"), "field profile mismatch");
-        assert_eq!(prepared.ntt_inline, cfg!(feature = "ntt-inline"), "NTT profile mismatch");
+        assert_eq!(
+            prepared.akita,
+            cfg!(feature = "akita"),
+            "Akita profile mismatch"
+        );
+        assert_eq!(
+            prepared.field_inline,
+            cfg!(feature = "field-inline"),
+            "field profile mismatch"
+        );
+        assert_eq!(
+            prepared.ntt_inline,
+            cfg!(feature = "ntt-inline"),
+            "NTT profile mismatch"
+        );
         let memory = prepared.guest.get_memory_config(false);
         assert!(prepared.input.len() < memory.max_input_size as usize);
         let mut program = configured_recursion_program(memory);
@@ -930,8 +945,15 @@ impl PreparedGuest {
             ExpectedVerification::Reject => 0,
         };
         assert_eq!(output, expected, "unexpected guest verification result");
-        assert_eq!(program.get_elf_contents().unwrap(), elf, "retained ELF changed");
-        assert_eq!(std::fs::read(directory.join("execution.bin")).unwrap(), bytes);
+        assert_eq!(
+            program.get_elf_contents().unwrap(),
+            elf,
+            "retained ELF changed"
+        );
+        assert_eq!(
+            std::fs::read(directory.join("execution.bin")).unwrap(),
+            bytes
+        );
         info!("Retained verifier output: {output}; trace length: {rows}");
     }
 }
@@ -1080,15 +1102,29 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Some(Commands::PrepareGuest { example, workdir, output }) => {
+        Some(Commands::PrepareGuest {
+            example,
+            workdir,
+            output,
+        }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
-            verify_proofs(guest, false, workdir, &get_guest_src_dir(), RunConfig::Prepare(output.clone()));
+            verify_proofs(
+                guest,
+                false,
+                workdir,
+                &get_guest_src_dir(),
+                RunConfig::Prepare(output.clone()),
+            );
         }
         Some(Commands::ExecutePrepared { directory, expect }) => {
             PreparedGuest::execute(directory, *expect);
         }
         #[cfg(feature = "akita")]
-        Some(Commands::TamperOpening { example, workdir, output }) => {
+        Some(Commands::TamperOpening {
+            example,
+            workdir,
+            output,
+        }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
             tamper_opening(guest, workdir, output);
         }
