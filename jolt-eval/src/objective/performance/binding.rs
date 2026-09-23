@@ -1,7 +1,5 @@
-use ark_bn254::Fr;
-use jolt_prover_legacy::field::JoltField;
-use jolt_prover_legacy::poly::dense_mlpoly::DensePolynomial;
-use jolt_prover_legacy::poly::multilinear_polynomial::BindingOrder;
+use jolt_field::{Field, Fr};
+use jolt_poly::{BindingOrder, Polynomial};
 
 use crate::objective::{Objective, OptimizationObjective, PerformanceObjective};
 
@@ -10,12 +8,12 @@ pub const BIND_LOW_TO_HIGH: OptimizationObjective =
 pub const BIND_HIGH_TO_LOW: OptimizationObjective =
     OptimizationObjective::Performance(PerformanceObjective::BindHighToLow(BindHighToLowObjective));
 
-type Challenge = <Fr as JoltField>::Challenge;
+type Challenge = Fr;
 
 const NUM_VARS: usize = 20;
 
 pub struct BindSetup {
-    pub poly: DensePolynomial<Fr>,
+    pub poly: Polynomial<Fr>,
     pub challenge: Challenge,
 }
 
@@ -35,13 +33,13 @@ impl BindShared {
 
     fn make_setup(&self) -> BindSetup {
         BindSetup {
-            poly: DensePolynomial::new(self.evals.clone()),
+            poly: Polynomial::new(self.evals.clone()),
             challenge: self.challenge,
         }
     }
 }
 
-/// Benchmark `DensePolynomial::bind_parallel` with `LowToHigh` binding.
+/// Benchmark `Polynomial::bind_with_order` with `LowToHigh` binding.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BindLowToHighObjective;
 
@@ -53,7 +51,8 @@ impl Objective for BindLowToHighObjective {
     }
 
     fn description(&self) -> String {
-        "Wall-clock time of DensePolynomial::bind_parallel with LowToHigh binding (2^20 evaluations)".to_string()
+        "Wall-clock time of Polynomial::bind_with_order with LowToHigh binding (2^20 evaluations)"
+            .to_string()
     }
 
     fn setup(&self) -> BindSetup {
@@ -66,7 +65,7 @@ impl Objective for BindLowToHighObjective {
     fn run(&self, mut setup: BindSetup) {
         setup
             .poly
-            .bind_parallel(setup.challenge, BindingOrder::LowToHigh);
+            .bind_with_order(setup.challenge, BindingOrder::LowToHigh);
         std::hint::black_box(&setup.poly);
     }
 
@@ -75,7 +74,7 @@ impl Objective for BindLowToHighObjective {
     }
 }
 
-/// Benchmark `DensePolynomial::bind_parallel` with `HighToLow` binding.
+/// Benchmark `Polynomial::bind_with_order` with `HighToLow` binding.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct BindHighToLowObjective;
 
@@ -87,7 +86,8 @@ impl Objective for BindHighToLowObjective {
     }
 
     fn description(&self) -> String {
-        "Wall-clock time of DensePolynomial::bind_parallel with HighToLow binding (2^20 evaluations)".to_string()
+        "Wall-clock time of Polynomial::bind_with_order with HighToLow binding (2^20 evaluations)"
+            .to_string()
     }
 
     fn setup(&self) -> BindSetup {
@@ -100,7 +100,7 @@ impl Objective for BindHighToLowObjective {
     fn run(&self, mut setup: BindSetup) {
         setup
             .poly
-            .bind_parallel(setup.challenge, BindingOrder::HighToLow);
+            .bind_with_order(setup.challenge, BindingOrder::HighToLow);
         std::hint::black_box(&setup.poly);
     }
 

@@ -8,8 +8,8 @@
 //!   for new code.
 //! - **Source-compatible facade** ([`Transcript`], [`AppendToTranscript`],
 //!   [`Blake2bTranscript`], [`KeccakTranscript`], [`PoseidonTranscript`]) —
-//!   preserved for `jolt-sumcheck`, `jolt-openings`, and `jolt-crypto`. Will
-//!   be retired once `jolt-prover-legacy` migrates to the split-trait surface.
+//!   preserved for `jolt-sumcheck`, `jolt-openings`, and `jolt-crypto` while
+//!   those crates migrate to the split-trait surface.
 //!
 //! Three sponges feature-gated: `transcript-blake2b` (spongefish
 //! `Blake2b512`), `transcript-keccak` (spongefish `Keccak`),
@@ -98,9 +98,8 @@ pub type Blake2bTranscript<F = Fr> = SpongeTranscript<Blake2b512, F>;
 #[cfg(all(feature = "transcript-blake2b", not(feature = "bn254")))]
 pub type Blake2bTranscript<F> = SpongeTranscript<Blake2b512, F>;
 
-/// Blake2b-256 chained-digest transcript, byte-compatible with `jolt-prover-legacy`'s
-/// `Blake2bTranscript`. Required to verify proofs produced by `jolt-prover-legacy`
-/// provers; new modular protocols should use [`Blake2bTranscript`] instead.
+/// Blake2b-256 chained-digest transcript used by the deployed proof format.
+/// New protocols should use [`Blake2bTranscript`] instead.
 #[cfg(all(feature = "transcript-blake2b", feature = "bn254"))]
 pub type LegacyBlake2bTranscript<F = Fr> = DigestTranscript<Blake2b<U32>, F>;
 /// Legacy Blake2b-256 transcript for an explicitly selected field.

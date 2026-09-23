@@ -30,7 +30,7 @@ pub enum ConstraintMatrixEvalError {
 /// Entry `a[k] = [(v, α), ...]` means constraint k's A side has
 /// coefficient α at variable index v.
 ///
-/// Deserialization routes through [`RawConstraintMatrices`] and revalidates
+/// Deserialization routes through `RawConstraintMatrices` and revalidates
 /// the same invariants as [`ConstraintMatrices::new`]; malformed input is
 /// rejected before any consumer sees the struct.
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,7 +1,7 @@
 //! The prover-owned generated stage driver.
 //!
 //! [`StageProver`] is the driver trait, implemented for each stage batch
-//! struct by [`impl_stage_prover!`] — expanded from the batch's
+//! struct by `impl_stage_prover!`, expanded from the batch's
 //! derive-emitted member-list callback macro (`jolt-verifier`'s
 //! `<snake_case_struct>_members!`), so no stage's member list, order, or
 //! presence is ever restated on the prove side. One recorder-generic
@@ -42,7 +42,7 @@ use jolt_witness::JoltWitnessPlane;
 use crate::ProverError;
 
 /// The generated per-stage driver: implemented for each batch struct by
-/// [`impl_stage_prover!`], never by hand. The associated types are the
+/// `impl_stage_prover!`, never by hand. The associated types are the
 /// derive-generated aggregate projections of the batch declaration;
 /// [`Kernels`](Self::Kernels) is the typed kernel bundle — one boxed
 /// [`SumcheckKernel`] per member, `Option`-wrapped for a conditional member,
@@ -82,7 +82,7 @@ pub trait StageProver<F: JoltField>: Sized {
 
     /// The stage's absorbed opening scalars, in the stage's curated order
     /// (stage 6b's runtime point dedup reorders the returned values). The
-    /// default emitted by [`impl_stage_prover!`] returns the derive-generated
+    /// default emitted by `impl_stage_prover!` returns the derive-generated
     /// canonical order (`opening_values`); curated stages supply an override
     /// block at the macro invocation site.
     fn curate_opening_values(
@@ -92,7 +92,7 @@ pub trait StageProver<F: JoltField>: Sized {
     ) -> Result<Vec<F>, ProverError<F>>;
 }
 
-/// The per-stage kernel-source bound collector: [`impl_stage_prover!`] emits
+/// The per-stage kernel-source bound collector: `impl_stage_prover!` emits
 /// one blanket impl per stage — over any `B` carrying `PrepareKernel<F, R>`
 /// for exactly that stage's member relations — so [`StageProver::prove`]'s `B`
 /// bound stays uniform while each stage demands exactly its members' slots.

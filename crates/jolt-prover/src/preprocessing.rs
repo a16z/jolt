@@ -1,8 +1,220 @@
+use ark_serialize::{CanonicalSerialize, SerializationError};
+use common::jolt_device::MemoryLayout;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_program::preprocess::{JoltProgramPreprocessing, ProgramMetadata};
 use jolt_verifier::JoltVerifierPreprocessing;
+use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::Arc;
+
+use crate::PreprocessingError;
+
+#[derive(Clone)]
+pub struct JoltSharedPreprocessing {
+    pub program: Arc<JoltProgramPreprocessing>,
+    pub preprocessing_digest: [u8; 32],
+}
+
+impl JoltSharedPreprocessing {
+    pub fn new(program: JoltProgramPreprocessing) -> Result<Self, PreprocessingError> {
+        let preprocessing_digest = full_preprocessing_digest(&program)?;
+        Ok(Self {
+            program: Arc::new(program),
+            preprocessing_digest,
+        })
+    }
+}
+
+impl Serialize for JoltSharedPreprocessing {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.program.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for JoltSharedPreprocessing {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let program = Arc::<JoltProgramPreprocessing>::deserialize(deserializer)?;
+        let preprocessing_digest = full_preprocessing_digest(&program).map_err(Error::custom)?;
+        Ok(Self {
+            program,
+            preprocessing_digest,
+        })
+    }
+}
+
+/// Reproduces the canonical encoding used by `JoltSharedPreprocessing` before
+/// the host pipeline moved out of the legacy prover. This keeps the default
+/// program-bound Fiat-Shamir preamble unchanged across the migration.
+pub(crate) fn full_preprocessing_digest(
+    program: &JoltProgramPreprocessing,
+) -> Result<[u8; 32], PreprocessingError> {
+    const DEFAULT_BYTECODE_CHUNK_COUNT: usize = 1;
+
+    let metadata = program
+        .metadata()
+        .ok_or_else(|| PreprocessingError::InvalidProgram {
+            reason: "entry address is absent from bytecode preprocessing".to_owned(),
+        })?;
+    canonical_preprocessing_digest(|encoded| {
+        FULL_PROGRAM_TAG.serialize_compressed(&mut *encoded)?;
+        program.bytecode.serialize_compressed(&mut *encoded)?;
+        program.ram.serialize_compressed(&mut *encoded)?;
+        encode_shared_preprocessing_tail(
+            &metadata,
+            &program.memory_layout,
+            program.max_padded_trace_length,
+            DEFAULT_BYTECODE_CHUNK_COUNT,
+            encoded,
+        )
+    })
+}
+
+pub(crate) const FULL_PROGRAM_TAG: u8 = 0;
+pub(crate) const COMMITTED_PROGRAM_TAG: u8 = 1;
+
+pub(crate) fn canonical_preprocessing_digest(
+    encode: impl FnOnce(&mut Vec<u8>) -> Result<(), SerializationError>,
+) -> Result<[u8; 32], PreprocessingError> {
+    let mut encoded = Vec::new();
+    encode(&mut encoded).map_err(|error| PreprocessingError::Encoding {
+        reason: error.to_string(),
+    })?;
+    Ok(blake2b_256(&encoded))
+}
+
+pub(crate) fn encode_program_metadata(
+    metadata: &ProgramMetadata,
+    encoded: &mut Vec<u8>,
+) -> Result<(), SerializationError> {
+    metadata.entry_address.serialize_compressed(&mut *encoded)?;
+    metadata
+        .min_bytecode_address
+        .serialize_compressed(&mut *encoded)?;
+    metadata
+        .entry_bytecode_index
+        .serialize_compressed(&mut *encoded)?;
+    metadata
+        .program_image_len_words
+        .serialize_compressed(&mut *encoded)?;
+    metadata.bytecode_len.serialize_compressed(&mut *encoded)
+}
+
+pub(crate) fn encode_shared_preprocessing_tail(
+    metadata: &ProgramMetadata,
+    memory_layout: &MemoryLayout,
+    max_padded_trace_length: usize,
+    bytecode_chunk_count: usize,
+    encoded: &mut Vec<u8>,
+) -> Result<(), SerializationError> {
+    encode_program_metadata(metadata, encoded)?;
+    encode_memory_layout(memory_layout, encoded)?;
+    max_padded_trace_length.serialize_compressed(&mut *encoded)?;
+    bytecode_chunk_count.serialize_compressed(&mut *encoded)
+}
+
+fn encode_memory_layout(
+    memory_layout: &MemoryLayout,
+    encoded: &mut Vec<u8>,
+) -> Result<(), SerializationError> {
+    // MemoryLayout's canonical derive requires std; use the same field order on wasm.
+    for value in [
+        memory_layout.program_size,
+        memory_layout.max_trusted_advice_size,
+        memory_layout.trusted_advice_start,
+        memory_layout.trusted_advice_end,
+        memory_layout.max_untrusted_advice_size,
+        memory_layout.untrusted_advice_start,
+        memory_layout.untrusted_advice_end,
+        memory_layout.max_input_size,
+        memory_layout.max_output_size,
+        memory_layout.input_start,
+        memory_layout.input_end,
+        memory_layout.output_start,
+        memory_layout.output_end,
+        memory_layout.stack_size,
+        memory_layout.stack_end,
+        memory_layout.heap_size,
+        memory_layout.heap_end,
+        memory_layout.panic,
+        memory_layout.termination,
+        memory_layout.io_end,
+    ] {
+        value.serialize_compressed(&mut *encoded)?;
+    }
+    Ok(())
+}
+
+fn blake2b_256(encoded: &[u8]) -> [u8; 32] {
+    use blake2::{digest::consts::U32, Blake2b, Digest};
+
+    Blake2b::<U32>::digest(encoded).into()
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use common::jolt_device::MemoryLayout;
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_riscv::RV64IMAC_JOLT;
+
+    use super::{full_preprocessing_digest, JoltSharedPreprocessing};
+
+    #[test]
+    fn full_preprocessing_digest_is_stable() {
+        let program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+
+        assert_eq!(
+            full_preprocessing_digest(&program).unwrap(),
+            [
+                145, 121, 88, 160, 204, 106, 98, 59, 169, 97, 216, 209, 50, 77, 116, 101, 132, 24,
+                249, 19, 196, 162, 146, 128, 195, 60, 253, 174, 10, 250, 92, 68,
+            ]
+        );
+    }
+
+    #[test]
+    fn shared_preprocessing_round_trip_recomputes_the_digest() {
+        let program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let shared = JoltSharedPreprocessing::new(program).unwrap();
+        let expected_digest = shared.preprocessing_digest;
+        let mut stale = shared.clone();
+        stale.preprocessing_digest = [0xa5; 32];
+
+        let encoded = bincode::serde::encode_to_vec(&shared, bincode::config::standard()).unwrap();
+        let stale_encoded =
+            bincode::serde::encode_to_vec(&stale, bincode::config::standard()).unwrap();
+        assert_eq!(encoded, stale_encoded);
+
+        let (decoded, consumed): (JoltSharedPreprocessing, usize) =
+            bincode::serde::decode_from_slice(&stale_encoded, bincode::config::standard()).unwrap();
+        assert_eq!(consumed, stale_encoded.len());
+        assert_eq!(decoded.preprocessing_digest, expected_digest);
+        assert_eq!(decoded.program, shared.program);
+    }
+}
 
 #[cfg(feature = "akita")]
 use crate::akita::witness::DirectProgramObjects;
@@ -18,8 +230,16 @@ use crate::akita::witness::DirectProgramObjects;
 /// retained in direct bounded-dense program objects built at preprocessing
 /// time, so proving consumes them directly instead of re-deriving them.
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "akita"),
+    derive(Serialize, Deserialize),
+    serde(bound(
+        serialize = "PCS::OpeningHint: Serialize",
+        deserialize = "PCS::OpeningHint: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
-    pub full: JoltProgramPreprocessing,
+    pub full: Arc<JoltProgramPreprocessing>,
     /// One opening hint per committed bytecode chunk, in chunk order.
     #[cfg(not(feature = "akita"))]
     pub bytecode_chunk_hints: Vec<PCS::OpeningHint>,
@@ -46,7 +266,18 @@ pub struct CommittedProgramProverData<PCS: CommitmentScheme> {
 /// and, in committed-program mode, the retained full program and opening
 /// hints. Witness generation reads the full program through
 /// [`program`](Self::program).
+///
+/// Dory preprocessing is serializable. Akita preprocessing retains backend
+/// setup and witness objects and must be regenerated in the proving process.
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "akita"),
+    derive(Serialize, Deserialize),
+    serde(bound(
+        serialize = "JoltVerifierPreprocessing<PCS, VC>: Serialize, PCS::ProverSetup: Serialize, CommittedProgramProverData<PCS>: Serialize",
+        deserialize = "JoltVerifierPreprocessing<PCS, VC>: serde::de::DeserializeOwned, PCS::ProverSetup: serde::de::DeserializeOwned, CommittedProgramProverData<PCS>: serde::de::DeserializeOwned"
+    ))
+)]
 pub struct JoltProverPreprocessing<PCS, VC>
 where
     PCS: CommitmentScheme,
@@ -67,9 +298,18 @@ where
     /// folds consume: the verifier's own full view, or the prover-retained
     /// copy in committed-program mode.
     pub fn program(&self) -> Option<&JoltProgramPreprocessing> {
-        self.verifier
-            .program
-            .as_full()
-            .or_else(|| self.committed_program.as_ref().map(|data| &data.full))
+        self.verifier.program.as_full().or_else(|| {
+            self.committed_program
+                .as_ref()
+                .map(|data| data.full.as_ref())
+        })
+    }
+
+    pub fn program_arc(&self) -> Option<Arc<JoltProgramPreprocessing>> {
+        self.verifier.program.as_full_arc().or_else(|| {
+            self.committed_program
+                .as_ref()
+                .map(|data| Arc::clone(&data.full))
+        })
     }
 }
