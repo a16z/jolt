@@ -15,7 +15,7 @@
 //! `PrepareKernel` impls reclaiming the carries
 //! ([`reference::precommitted_reduction`](crate::reference::precommitted_reduction)).
 //! The scalar kinds resolve intermediate-vs-final through
-//! [`CycleReductionKernel::scalar_claim`]; the bytecode kind's chunked shape
+//! `CycleReductionKernel::scalar_claim`; the bytecode kind's chunked shape
 //! spells its resolution out in its own impl.
 //!
 //! The summand in both phases is `Σ_j value(j) · eq(j)` over tables permuted
@@ -259,7 +259,7 @@ pub struct CycleReductionKernel<F: JoltField, R> {
 }
 impl<F: JoltField, R> CycleReductionKernel<F, R> {
     /// Build a member from tables ALREADY permuted into Dory opening-round
-    /// order (see [`lsb_permutation`] / [`permute_coefficients`]).
+    /// order (see `lsb_permutation` / `permute_coefficients`).
     pub fn new(
         reduction: PrecommittedClaimReduction,
         value: Vec<F>,

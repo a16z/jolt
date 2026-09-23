@@ -194,9 +194,12 @@ impl Mmu {
             // check within RAM
             if is_write {
                 // These errors aren't necessarily correct as there's no way to distinguish between an
-                // attempt to write to the stack vs heap, but they're trying their best
+                // attempt to write to the stack vs heap, but they're trying their best.
+                // The canary is the half-open range [stack_end, stack_end + STACK_CANARY_SIZE):
+                // the linker script places it directly after the program image
+                // (`__stack_bottom == stack_end`) and the stack proper starts right after it.
                 assert!(
-                    ea <= layout.stack_end || ea > layout.stack_end + STACK_CANARY_SIZE,
+                    ea < layout.stack_end || ea >= layout.stack_end + STACK_CANARY_SIZE,
                     "Stack overflow: attempted to {verb} 0x{ea:X}, which is in the stack canary region. \
                     Increase stack_size in MemoryConfig (currently {} bytes).",
                     layout.stack_size,
@@ -1172,6 +1175,35 @@ mod test_mmu {
 
         let invalid_address = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end + 1;
         mmu.trace_store(invalid_address, 0xc50513);
+    }
+
+    /// The canary occupies `[stack_end, stack_end + STACK_CANARY_SIZE)` (the
+    /// linker script places it immediately after the program image), so the
+    /// first canary byte must be rejected.
+    #[test]
+    #[should_panic(expected = "Stack overflow")]
+    fn test_stack_overflow_first_canary_byte() {
+        let mut mmu = setup_mmu();
+
+        let stack_end = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end;
+        mmu.trace_store(stack_end, 0xc50513);
+    }
+
+    /// The lowest doubleword of the stack proper starts right after the canary
+    /// and is a legal store target.
+    #[test]
+    fn test_lowest_stack_word_is_writable() {
+        let mut mmu = setup_mmu();
+
+        let stack_end = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end;
+        mmu.store_doubleword(stack_end + STACK_CANARY_SIZE, 0x1234)
+            .unwrap();
+        assert_eq!(
+            mmu.load_doubleword(stack_end + STACK_CANARY_SIZE)
+                .unwrap()
+                .0,
+            0x1234
+        );
     }
 
     #[test]

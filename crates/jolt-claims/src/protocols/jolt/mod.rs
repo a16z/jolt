@@ -1,6 +1,7 @@
 pub mod geometry;
 pub mod lattice;
 pub mod relations;
+mod unbatched;
 
 mod ids;
 
@@ -35,3 +36,4 @@ pub use ids::{
     RegistersReadWritePublic, RegistersValEvaluationPublic, SpartanOuterPublic,
     SpartanProductVirtualizationPublic, SpartanShiftChallenge, SpartanShiftPublic,
 };
+pub use unbatched::{UnbatchedClaim, UnbatchedClaimExpr, UnbatchedRelation};

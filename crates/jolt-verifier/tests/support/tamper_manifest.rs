@@ -277,7 +277,7 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "transcript-bound; real fixture entry-address offset diverges challenges at the first stage sumcheck",
+        "entry address is transcript-bound; preamble.rs offsets the full program's entry address",
     ),
 ];
 
@@ -1296,7 +1296,8 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::InvalidRamK { .. }
         | VerifierError::InvalidMemoryLayout { .. }
         | VerifierError::InvalidPrecommittedSchedule { .. }
-        | VerifierError::InvalidCommittedProgram { .. } => Some(VerifierPhase::Preamble),
+        | VerifierError::InvalidCommittedProgram { .. }
+        | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
         VerifierError::StageClaimSumcheckFailed { stage, .. }
         | VerifierError::StageClaimOpeningMismatch { stage, .. } => {
             relation_from_stage_string(stage).map(relation_phase)

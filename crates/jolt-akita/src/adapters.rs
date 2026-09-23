@@ -1,5 +1,4 @@
 use std::{
-    env::VarError,
     fmt,
     io::Cursor,
     path::{Path, PathBuf},
@@ -14,11 +13,13 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaTranscript,
 };
-use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
+use akita_prover::{
+    CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly, ResidentCommitmentState,
+    ResidentStatePolicy, UniformProverStack,
+};
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
-    AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
@@ -170,7 +171,7 @@ pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK
 pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
 pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
 pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
-pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
+pub(crate) type AkitaBackendHint = ResidentCommitmentState<AkitaField>;
 pub(crate) type AkitaBackendProof = AkitaBackendBatchProof<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
@@ -178,7 +179,8 @@ pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
 pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField>;
-pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
+pub(crate) type BackendStack<'a> =
+    UniformProverStack<'a, AkitaField, CpuBackend, ResidentStatePolicy>;
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
 const SCHEDULE_SELECTION_BYTES: usize = 32;
@@ -1012,49 +1014,16 @@ pub fn reverse_point(point: &[AkitaField]) -> Vec<AkitaField> {
     point.iter().rev().copied().collect()
 }
 
-const COMMIT_SCRATCH_ENV: &str = "JOLT_AKITA_COMMIT_SCRATCH_BYTES_PER_WORKER";
-
-fn cpu_backend_with_scratch(value: Option<&str>) -> Result<CpuBackend, OpeningsError> {
-    let scratch = value.map_or(
-        Ok(CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER),
-        |value| {
-            value.parse::<usize>().map_err(|_| {
-                OpeningsError::InvalidSetup(format!(
-                    "{COMMIT_SCRATCH_ENV} must be a positive integer in bytes"
-                ))
-            })
-        },
-    )?;
-    CpuBackend::with_resource_limits(CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS, scratch)
-        .map_err(|error| OpeningsError::InvalidSetup(format!("{COMMIT_SCRATCH_ENV}: {error}")))
-}
-
-/// Read the per-worker scratch budget once so setup and proving use the same policy.
-/// Defaults to 8 MiB; e.g. JOLT_AKITA_COMMIT_SCRATCH_BYTES_PER_WORKER=16777216
-/// allows 16 MiB per worker without changing protocol parameters.
-pub(crate) fn cpu_backend() -> Result<&'static CpuBackend, OpeningsError> {
-    static BACKEND: OnceLock<Result<CpuBackend, OpeningsError>> = OnceLock::new();
-    BACKEND
-        .get_or_init(|| match std::env::var(COMMIT_SCRATCH_ENV) {
-            Ok(value) => cpu_backend_with_scratch(Some(&value)),
-            Err(VarError::NotPresent) => cpu_backend_with_scratch(None),
-            Err(error) => Err(OpeningsError::InvalidSetup(format!(
-                "{COMMIT_SCRATCH_ENV}: {error}"
-            ))),
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
 pub(crate) fn backend_stack<'a>(
     backend_prover_setup: &'a AkitaBackendProverSetup,
     prepared_backend_setup: &'a AkitaBackendPreparedSetup,
 ) -> Result<BackendStack<'a>, OpeningsError> {
     let _span = info_span!("jolt_akita::make_backend_stack").entered();
-    akita_prover::UniformProverStack::uniform(
-        cpu_backend()?,
+    UniformProverStack::uniform_with_state_policy(
+        &CpuBackend::DEFAULT,
         prepared_backend_setup,
         backend_prover_setup.expanded.as_ref(),
+        ResidentStatePolicy,
     )
     .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))
 }
@@ -1499,25 +1468,5 @@ mod tests {
             matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),
             "unexpected error: {err}"
         );
-    }
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod cpu_backend_tests {
-    use super::*;
-
-    #[test]
-    fn scratch_budget_configuration() {
-        assert_eq!(cpu_backend_with_scratch(None).unwrap(), CpuBackend::DEFAULT);
-        let backend = cpu_backend_with_scratch(Some("16777216")).unwrap();
-        assert_eq!(backend.commit_scratch_bytes_per_worker(), 16 << 20);
-        assert_eq!(
-            backend.max_cached_ring_switch_elements(),
-            CpuBackend::DEFAULT_MAX_CACHED_RING_SWITCH_ELEMENTS
-        );
-        for value in ["0", "", "-1", "16MiB", "18446744073709551616"] {
-            assert!(cpu_backend_with_scratch(Some(value)).is_err(), "{value}");
-        }
     }
 }

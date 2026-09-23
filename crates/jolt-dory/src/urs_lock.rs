@@ -1,8 +1,6 @@
 //! Cross-process lock serializing dory-pcs's URS disk-cache critical section.
 //!
-//! Twin of `jolt-prover-legacy/src/poly/commitment/dory/urs_lock.rs`. The two
-//! crates cannot share this helper: the legacy prover's dory module also
-//! compiles in `minimal` builds, where `jolt-dory` is not a dependency.
+//! Every Dory caller shares this lock through `jolt-dory`.
 
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;

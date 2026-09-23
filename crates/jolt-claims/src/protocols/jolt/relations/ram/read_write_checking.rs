@@ -3,14 +3,17 @@
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use crate::protocols::jolt::geometry::ram::{
     ram_inc, ram_ra, ram_read_value, ram_val, ram_write_value,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, RamReadWriteChallenge, RamReadWritePublic, ReadWriteDimensions,
+    JoltCommittedPolynomial, JoltExpr, JoltRelationId, JoltVirtualPolynomial,
+    RamReadWriteChallenge, RamReadWritePublic, ReadWriteDimensions, UnbatchedClaim,
+    UnbatchedClaimExpr, UnbatchedRelation,
 };
 use crate::SymbolicSumcheck;
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced RAM read-write openings (`val`, `ra`, committed `inc`), all sharing
 /// the single read-write opening point. Generic over the opening cell (`F` for the
@@ -59,6 +62,34 @@ pub struct ReadWriteChecking {
     shape: ReadWriteDimensions,
 }
 
+impl ReadWriteChecking {
+    pub fn unbatched_relation() -> UnbatchedRelation {
+        let v = UnbatchedClaimExpr::polynomial;
+        let c = |polynomial: JoltCommittedPolynomial| UnbatchedClaimExpr::polynomial(polynomial);
+        UnbatchedRelation {
+            output_relation: JoltRelationId::RamReadWriteChecking,
+            gamma: RamReadWriteChallenge::Gamma.into(),
+            claims: vec![
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::RamReadValue),
+                    output: v(JoltVirtualPolynomial::RamRa) * v(JoltVirtualPolynomial::RamVal),
+                    output_weight: RamReadWritePublic::EqCycle.into(),
+                    offset: false,
+                },
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::RamWriteValue),
+                    output: v(JoltVirtualPolynomial::RamRa)
+                        * (v(JoltVirtualPolynomial::RamVal) + c(JoltCommittedPolynomial::RamInc)),
+                    output_weight: RamReadWritePublic::EqCycle.into(),
+                    offset: false,
+                },
+            ],
+        }
+    }
+}
+
 impl SymbolicSumcheck for ReadWriteChecking {
     type RelationId = JoltRelationId;
     type OpeningId = crate::protocols::jolt::JoltOpeningId;
@@ -86,20 +117,11 @@ impl SymbolicSumcheck for ReadWriteChecking {
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        opening(ram_read_value())
-            + challenge(RamReadWriteChallenge::Gamma) * opening(ram_write_value())
+        Self::unbatched_relation().folded_input()
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        derived(RamReadWritePublic::EqCycle) * opening(ram_ra()) * opening(ram_val())
-            + derived(RamReadWritePublic::EqCycle)
-                * challenge(RamReadWriteChallenge::Gamma)
-                * opening(ram_ra())
-                * opening(ram_val())
-            + derived(RamReadWritePublic::EqCycle)
-                * challenge(RamReadWriteChallenge::Gamma)
-                * opening(ram_ra())
-                * opening(ram_inc())
+        Self::unbatched_relation().folded_output()
     }
 }
 

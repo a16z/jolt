@@ -13,10 +13,8 @@
 //!
 //! — `T` lookups per committed chunk instead of a `K × T` grid walk, and no
 //! grid materialization at all. The per-cycle lookup indices are reclaimed
-//! from the [`ProofSession`] when the stage-5 optimized kernel already
-//! collected them (see
-//! [`SharedInstructionRows`](super::instruction_read_raf::SharedInstructionRows)),
-//! or collected fresh otherwise.
+//! from the [`ProofSession`] through `SharedInstructionRows` when the stage-5
+//! optimized kernel already collected them, or collected fresh otherwise.
 //!
 //! Round messages use the Gruen split-eq factorization: `eq(r_cycle, ·)` is
 //! never materialized or bound as a `T`-sized table; each round computes the

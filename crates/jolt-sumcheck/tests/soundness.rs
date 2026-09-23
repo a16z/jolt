@@ -33,7 +33,7 @@ impl From<SumcheckError<F>> for OracleCheckError {
     }
 }
 
-fn new_transcript() -> Blake2bTranscript {
+fn new_transcript() -> Blake2bTranscript<F> {
     Blake2bTranscript::new(b"soundness-test")
 }
 
@@ -41,7 +41,7 @@ fn new_transcript() -> Blake2bTranscript {
 fn honest_prove(
     evals: &[F],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript,
+    transcript: &mut Blake2bTranscript<F>,
 ) -> ClearSumcheckProof<F> {
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);

@@ -6,23 +6,11 @@ dory = { max-threads = 1 }
 # ZK verifier fixture tests generate shared temp artifacts and use large stacks;
 # keep them serial to avoid host memory and fixture contention.
 zk-core-fixtures = { max-threads = 1 }
-# Each byte-diff arm retains both modular and legacy proof artifacts. Keep
-# those four processes mutually exclusive without serializing the neighboring
-# Akita end-to-end tests.
-akita-byte-diff = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'test(dory)'
 test-group = 'dory'
 
 [[profile.default.overrides]]
-filter = 'package(jolt-prover-legacy) and (test(max_advice_with_small_trace) or test(advice_opening_point_derives_from_unified_point) or test(blindfold_r1cs_satisfaction) or test(truncated_trace) or test(malicious_trace) or test(initial_pc_is_constrained_to_entry_point) or test(blindfold_protocol_e2e))'
-test-group = 'dory'
-
-[[profile.default.overrides]]
 filter = 'package(jolt-verifier) and test(zk)'
 test-group = 'zk-core-fixtures'
-
-[[profile.default.overrides]]
-filter = 'package(jolt-prover) and binary(akita_byte_diff)'
-test-group = 'akita-byte-diff'

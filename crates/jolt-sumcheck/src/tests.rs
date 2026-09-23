@@ -1431,16 +1431,17 @@ fn prove_batch_rejects_zero_max_degree() {
 
     let sum = F::from_u64(42);
     let mut member = DenseMember::with_sum(2, sum, 7);
-    let prelude = BatchPrelude::new(
-        vec![BatchMember {
+    let prelude = BatchPrelude {
+        members: vec![BatchMember {
             input_claim: sum,
             coefficient: F::from_u64(1),
             rounds: 2,
             offset: 0,
         }],
-        2,
-        0,
-    );
+        claimed_sum: sum,
+        max_num_vars: 2,
+        max_degree: 0,
+    };
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
     let mut transcript = Blake2bTranscript::new(b"zero-degree-batch");
     let mut recorder = ClearSumcheckRecorder::<F, Bn254G1>::new();

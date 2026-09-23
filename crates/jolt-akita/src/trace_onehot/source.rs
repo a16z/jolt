@@ -4,8 +4,15 @@ use std::{
 };
 
 use akita_error::AkitaError;
-use akita_prover::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
+use akita_prover::compute::CommitInnerPlan;
+use akita_prover::{
+    AvailablePolynomialTypes, BackendKindId, CommitSourceClass, CommitSourceDescriptor,
+    CommitmentSource, ExternalInnerCommitmentCapability, PolynomialRepresentation,
+    PolynomialTypeSelection, PreparedExternalInnerCommitment, RootOpeningSource, RootPolyMeta,
+    RootPolyShape,
+};
 
+use super::kernels::{trace_commitment_capability, TracePackedOneHotCommitOperation};
 use super::NO_SELECTED_ROW;
 use crate::AkitaField;
 
@@ -192,15 +199,17 @@ impl<const D: usize> RootPolyShape<AkitaField, D> for TracePackedOneHot {
     }
 }
 
-impl<const D: usize> RootCommitSource<AkitaField, D> for TracePackedOneHot {
-    type CommitView<'a>
-        = TracePackedOneHotView<'a, D>
-    where
-        Self: 'a;
-
-    fn commit_view(&self) -> Result<Self::CommitView<'_>, AkitaError> {
-        validate_dimension::<D>(self.one_hot_k)?;
-        Ok(TracePackedOneHotView { source: self })
+impl CommitmentSource<AkitaField> for TracePackedOneHot {
+    fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
+        CommitSourceDescriptor::new(
+            self.num_vars,
+            self.total_field_elems(),
+            self.total_field_elems(),
+            CommitSourceClass::OneHot {
+                chunk_size: self.one_hot_k,
+            },
+            "jolt-trace-packed-one-hot",
+        )
     }
 
     /// The packed trace stores hot positions, so every coefficient it commits is
@@ -211,6 +220,50 @@ impl<const D: usize> RootCommitSource<AkitaField, D> for TracePackedOneHot {
         _centering_threshold: u128,
     ) -> Result<(u128, u128), AkitaError> {
         Ok((0, 1))
+    }
+
+    fn available_polynomial_types(
+        &self,
+        _plan: &CommitInnerPlan,
+    ) -> Result<AvailablePolynomialTypes, AkitaError> {
+        AvailablePolynomialTypes::new(Vec::new())
+    }
+
+    fn represent_as(
+        &self,
+        _selected: PolynomialTypeSelection,
+        _plan: &CommitInnerPlan,
+    ) -> Result<PolynomialRepresentation<'_, AkitaField>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "trace-packed one-hot sources require their sparse CPU commitment operation".into(),
+        ))
+    }
+
+    fn external_inner_commitment_capability(
+        &self,
+        backend: BackendKindId,
+        _plan: &CommitInnerPlan,
+    ) -> Result<Option<ExternalInnerCommitmentCapability>, AkitaError> {
+        let capability = trace_commitment_capability()?;
+        Ok((backend == capability.backend()).then_some(capability))
+    }
+
+    fn prepare_external_inner_commitment(
+        &self,
+        selected: ExternalInnerCommitmentCapability,
+        _plan: &CommitInnerPlan,
+    ) -> Result<PreparedExternalInnerCommitment<'_, AkitaField>, AkitaError> {
+        if selected != trace_commitment_capability()? {
+            return Err(AkitaError::InvalidInput(
+                "trace-packed one-hot source selected a non-CPU commitment operation".into(),
+            ));
+        }
+        PreparedExternalInnerCommitment::new(
+            selected,
+            self,
+            &TracePackedOneHotCommitOperation,
+            None,
+        )
     }
 }
 

@@ -21,10 +21,10 @@
 
 use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::MemoryConfig;
+use jolt_host::Program;
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, JoltProgram, MemoryImage, TraceInputs,
 };
-use jolt_prover_legacy::host::Program;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracer::TracerBackend;

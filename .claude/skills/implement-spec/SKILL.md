@@ -72,8 +72,10 @@ Cycle until all checks pass (up to 5 cycles):
    - `cargo clippy --all --features host --message-format=short -q --all-targets -- -D warnings`
    - `cargo clippy --all --features host,zk --message-format=short -q --all-targets -- -D warnings`
 3. **Test**: Run evaluation criteria from the spec, plus:
-   - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host`
-   - `cargo nextest run -p jolt-prover-legacy muldiv --cargo-quiet --features host,zk`
+   - `cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --cargo-quiet`
+   - `cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet`
+   - `cargo nextest run -p jolt-prover --features prover-fixtures,zk --cargo-quiet`
+   - `cargo nextest run -p jolt-prover --features akita,prover-fixtures --cargo-quiet`
    - `cargo nextest run -p jolt-eval --cargo-quiet` — runs every invariant's seed-corpus + random-inputs tests; any named in the spec must pass.
 4. **Fix** any failures and repeat.
 

@@ -8,7 +8,9 @@
 //! head's output in engine form: plain positional data with no per-stage
 //! types, so this crate's provers can consume it without naming any stage.
 
-use jolt_field::JoltField;
+use jolt_field::Field;
+
+use crate::SumcheckError;
 
 /// One present batch member: its input claim (the member's initial running
 /// claim), its batching coefficient, its round count, and its activation
@@ -41,7 +43,7 @@ pub struct BatchPrelude<F> {
     pub max_degree: usize,
 }
 
-impl<F: JoltField> BatchPrelude<F> {
+impl<F: Field> BatchPrelude<F> {
     /// Combine `members` into the batch's initial running claim. The
     /// `2^(max_num_vars − rounds)` scale is each shorter member's dummy-round
     /// padding — its summand extended constantly over the batch's extra
@@ -53,20 +55,145 @@ impl<F: JoltField> BatchPrelude<F> {
     ///
     /// # Panics
     ///
-    /// Panics if a member has more rounds than `max_num_vars` (a wiring bug —
-    /// `max_num_vars` is defined as the members' maximum).
+    /// Panics if the batch dimensions or a member's activation window are
+    /// invalid. External callers should use [`Self::try_new`] to receive a
+    /// typed error.
+    #[expect(
+        clippy::expect_used,
+        reason = "legacy constructor retained for generated in-repo callers; external callers use try_new"
+    )]
     pub fn new(members: Vec<BatchMember<F>>, max_num_vars: usize, max_degree: usize) -> Self {
+        Self::try_new(members, max_num_vars, max_degree).expect("invalid sumcheck batch prelude")
+    }
+
+    /// Validates and constructs a batched sumcheck prelude.
+    pub fn try_new(
+        members: Vec<BatchMember<F>>,
+        max_num_vars: usize,
+        max_degree: usize,
+    ) -> Result<Self, SumcheckError<F>> {
+        validate_batch_dimensions(&members, max_num_vars, max_degree)?;
         let claimed_sum = members
             .iter()
             .map(|member| {
                 member.coefficient * member.input_claim.mul_pow_2(max_num_vars - member.rounds)
             })
             .sum();
-        Self {
+        Ok(Self {
             members,
             claimed_sum,
             max_num_vars,
             max_degree,
+        })
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), SumcheckError<F>> {
+        validate_batch_dimensions(&self.members, self.max_num_vars, self.max_degree)
+    }
+}
+
+fn validate_batch_dimensions<F: Field>(
+    members: &[BatchMember<F>],
+    max_num_vars: usize,
+    max_degree: usize,
+) -> Result<(), SumcheckError<F>> {
+    if max_degree.checked_add(1).is_none() {
+        return Err(SumcheckError::DegreeOverflow { degree: max_degree });
+    }
+    for (member, described) in members.iter().enumerate() {
+        let exponent = max_num_vars.checked_sub(described.rounds).ok_or(
+            SumcheckError::BatchMemberRoundsOutOfRange {
+                member,
+                rounds: described.rounds,
+                max_num_vars,
+            },
+        )?;
+        // `Ring::mul_pow_2` panics above 255.
+        if exponent > 255 {
+            return Err(SumcheckError::BatchPaddingExponentOutOfRange { member, exponent });
         }
+        let window_end = described.offset.checked_add(described.rounds).ok_or(
+            SumcheckError::BatchMemberWindowOverflow {
+                member,
+                offset: described.offset,
+                rounds: described.rounds,
+            },
+        )?;
+        if window_end > max_num_vars {
+            return Err(SumcheckError::BatchMemberWindowOutOfRange {
+                member,
+                offset: described.offset,
+                rounds: described.rounds,
+                max_num_vars,
+            });
+        }
+    }
+    if max_num_vars > 0 && max_degree == 0 {
+        return Err(SumcheckError::ZeroBatchDegree { max_num_vars });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use jolt_field::{Prime64Offset59, Ring};
+
+    use super::{BatchMember, BatchPrelude};
+    use crate::SumcheckError;
+
+    type F = Prime64Offset59;
+
+    fn member(rounds: usize, offset: usize) -> BatchMember<F> {
+        BatchMember {
+            input_claim: F::from_u64(1),
+            coefficient: F::from_u64(1),
+            rounds,
+            offset,
+        }
+    }
+
+    #[test]
+    fn checked_constructor_rejects_rounds_larger_than_batch() {
+        assert!(matches!(
+            BatchPrelude::try_new(vec![member(3, 0)], 2, 1),
+            Err(SumcheckError::BatchMemberRoundsOutOfRange {
+                member: 0,
+                rounds: 3,
+                max_num_vars: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn checked_constructor_rejects_window_overflow() {
+        assert!(matches!(
+            BatchPrelude::try_new(vec![member(1, usize::MAX)], 2, 1),
+            Err(SumcheckError::BatchMemberWindowOverflow {
+                member: 0,
+                offset: usize::MAX,
+                rounds: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn checked_constructor_rejects_window_outside_batch() {
+        assert!(matches!(
+            BatchPrelude::try_new(vec![member(2, 1)], 2, 1),
+            Err(SumcheckError::BatchMemberWindowOutOfRange {
+                member: 0,
+                offset: 1,
+                rounds: 2,
+                max_num_vars: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn checked_constructor_rejects_degree_overflow() {
+        assert!(matches!(
+            BatchPrelude::<F>::try_new(Vec::new(), 0, usize::MAX),
+            Err(SumcheckError::DegreeOverflow { degree: usize::MAX })
+        ));
     }
 }

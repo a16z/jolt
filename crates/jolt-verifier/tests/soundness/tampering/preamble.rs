@@ -1,16 +1,29 @@
-#![cfg_attr(
-    all(feature = "prover-fixtures", not(feature = "zk")),
-    expect(
-        clippy::panic,
-        reason = "test fixtures should fail loudly when their assumed proof shape changes"
-    )
-)]
-
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use std::sync::Arc;
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use jolt_verifier::ProgramPreprocessing;
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::{self, tamper_manifest, verifier_fixtures::standard_muldiv_case};
+
+/// A preprocessing whose entry address differs from the proven program's must
+/// reject the honest proof: the entry address is a transcript input and the
+/// initial PC constraint.
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[test]
+fn entry_address_mismatch_rejects_now() {
+    let base = standard_muldiv_case();
+    tamper_manifest::assert_verifier_fixture_tamper_rejects(
+        tamper_manifest::required_target("preprocessing.program.bytecode.entry_address"),
+        &base,
+        |case| {
+            if let ProgramPreprocessing::Full(full) = &mut case.preprocessing.program {
+                Arc::make_mut(full).bytecode.entry_address += 4;
+            }
+        },
+    );
+}
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
@@ -167,24 +180,6 @@ fn tampered_preprocessing_digest_rejects() {
         &base,
         |case| {
             case.preprocessing.preprocessing_digest[0] ^= 1;
-        },
-    );
-}
-
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-#[test]
-fn tampered_bytecode_entry_address_rejects() {
-    use jolt_verifier::preprocessing::ProgramPreprocessing;
-
-    let base = standard_muldiv_case();
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        tamper_manifest::required_target("preprocessing.program.bytecode.entry_address"),
-        &base,
-        |case| {
-            let ProgramPreprocessing::Full(full) = &mut case.preprocessing.program else {
-                panic!("muldiv fixture uses full (non-committed) program preprocessing");
-            };
-            Arc::make_mut(full).bytecode.entry_address += 4;
         },
     );
 }
