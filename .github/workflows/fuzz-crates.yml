@@ -36,12 +36,12 @@ jobs:
       group: fuzz-crates-${{ github.head_ref || github.ref }}-${{ matrix.crate }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           toolchain: ${{ env.FUZZ_TOOLCHAIN }}
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2
         with:
           tool: cargo-fuzz
       - name: Fuzz all targets
