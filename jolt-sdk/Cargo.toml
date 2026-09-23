@@ -16,8 +16,14 @@ edition = "2021"
 
 [features]
 default = ["jolt-platform/random"]
+# std guests: route Rust allocations to jolt-platform's O(1) size-class
+# arena instead of musl's malloc over ZeroOS's first-fit heap.
+guest-size-class-alloc = []
+guest-fast-mem = ["jolt-platform/fast-mem"]
+blake2-inline = ["jolt-transcript?/blake2-inline", "jolt-verifier?/blake2-inline"]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
+akita = ["jolt-prover?/akita", "jolt-verifier?/akita", "jolt-program?/fp128-field-inline", "tracer?/fp128-field-inline"]
 field-inline = [
   "jolt-prover?/field-inline",
   "jolt-verifier?/field-inline",

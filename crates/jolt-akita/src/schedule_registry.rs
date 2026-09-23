@@ -335,9 +335,8 @@ impl AdvicePrecommitLayouts {
 pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(14, 1);
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
-/// Adapt grouped rows for optional advice followed by the mandatory groups —
-/// the limb group when field-inline is enabled, then the direct
-/// committed-program objects — all in canonical precommit order.
+/// Adapt grouped rows for optional advice and FR limbs followed by mandatory
+/// direct committed-program objects, all in canonical precommit order.
 #[cfg_attr(
     feature = "field-inline",
     expect(
@@ -365,39 +364,42 @@ pub fn provision_precommitted_for_k(
         untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
         trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
     };
-    let mut mandatory = Vec::with_capacity(
-        usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
-    );
+    // The direct-program groups ride every row of a committed program. The FR
+    // limb group rides a row only when the trace opens one: a program with no
+    // field-inline instructions commits no limb group, so its rows are
+    // provisioned both with and without it.
+    let direct_program = direct_program_physical_vars
+        .iter()
+        .map(|vars| dense_precommit_profile(dense_catalog, PolynomialGroupLayout::new(*vars, 1)))
+        .collect::<Result<Vec<_>, _>>()?;
+    #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+    let mut mandatory_sets = vec![direct_program.clone()];
     #[cfg(feature = "field-inline")]
-    if let Some(field_inc_limbs) = field_inc_limbs {
-        // Below the packed trace's own arity overhead no trace exists, so
-        // there is nothing to pair the limb group with.
-        let Some(limb_physical) = field_inc_limbs.physical_num_vars(final_num_vars) else {
-            return Ok(RegisteredRows::default());
-        };
-        mandatory.push(dense_precommit_profile(
-            dense_catalog,
-            PolynomialGroupLayout::new(limb_physical, 1),
-        )?);
+    if let Some(limb_physical) =
+        field_inc_limbs.and_then(|limbs| limbs.physical_num_vars(final_num_vars))
+    {
+        let limb_profile =
+            dense_precommit_profile(dense_catalog, PolynomialGroupLayout::new(limb_physical, 1))?;
+        let mut with_limbs = vec![limb_profile];
+        with_limbs.extend(direct_program.iter().copied());
+        mandatory_sets.push(with_limbs);
     }
-    for vars in direct_program_physical_vars {
-        mandatory.push(dense_precommit_profile(
-            dense_catalog,
-            PolynomialGroupLayout::new(*vars, 1),
-        )?);
-    }
-    let mut combinations = layouts.precommit_combinations(dense_catalog)?;
-    if mandatory.is_empty() {
-        if combinations.is_empty() {
-            return Ok(RegisteredRows::default());
-        }
-    } else {
-        for combination in &mut combinations {
+    let advice_combinations = layouts.precommit_combinations(dense_catalog)?;
+    let mut combinations: Vec<Vec<GroupCommitPhaseParams>> = Vec::new();
+    for mandatory in &mandatory_sets {
+        for advice in &advice_combinations {
+            let mut combination = advice.clone();
             combination.extend(mandatory.iter().copied());
+            if !combination.is_empty() && !combinations.contains(&combination) {
+                combinations.push(combination);
+            }
         }
-        if !combinations.contains(&mandatory) {
-            combinations.push(mandatory);
+        if !mandatory.is_empty() && !combinations.contains(mandatory) {
+            combinations.push(mandatory.clone());
         }
+    }
+    if combinations.is_empty() {
+        return Ok(RegisteredRows::default());
     }
     let (min, max) = match one_hot_k {
         AKITA_ONE_HOT_K256 => K256_NUM_VARS,

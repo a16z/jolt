@@ -880,9 +880,12 @@ the field arithmetic relation: field values remain native elements of `F`.
 
 ## Memory-Sourced Loads And Limb Readout
 
-Memory-sourced loads move one word per VM row into the field-register file.
-Limb advice provides bounded integer outputs for field values; callers that
-need canonical readout must additionally check the reconstructed integer.
+Operand ingress and result egress dominate a guest's field-inline cost: the
+bridge moves one 64-bit word per row, so a two-limb operand cost two `LD`s,
+two `FIELD_LOAD_FROM_X` rows and a Horner multiply-add, and a result left
+the register file only by comparison against a host-supplied hint. Three
+instructions collapse both sides to one row per limb and remove the hint
+tape.
 
 `FIELD_LOAD_ACCUMULATE_FROM_MEMORY field_rd <- field_rd · 2^64 + mem[x_rs1 + 8·offset]`
 is, to the RV64 rows, an `LD` into a scratch x-register: it carries the `Load` circuit
