@@ -856,12 +856,18 @@ fn run_recursion_proof(
     program.build(target_dir);
     match run_config {
         RunConfig::Trace | RunConfig::TraceToFile => {
-            let trace_path = PathBuf::from(format!("/tmp/{}-recursion.trace", guest.name()));
-            let (_, io_device) = program.trace_to_file(&input_bytes, &[], &[], &trace_path);
-            if run_config == RunConfig::Trace {
-                std::fs::remove_file(&trace_path).expect("remove temporary recursion trace");
-            }
-            let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap_or(0);
+            let io_device = if run_config == RunConfig::Trace {
+                let (rows, device) = program.execute_with_output(&input_bytes, &[], &[]);
+                info!("  trace length: {rows}");
+                device
+            } else {
+                let trace_path = PathBuf::from(format!("/tmp/{}-recursion.trace", guest.name()));
+                program.trace_to_file(&input_bytes, &[], &[], &trace_path).1
+            };
+            assert!(!io_device.panic, "Recursion verifier guest panicked");
+            let rv = postcard::from_bytes::<u32>(&io_device.outputs)
+                .expect("decode recursion verifier output");
+            assert_eq!(rv, 1, "Recursion verifier rejected the proof");
             info!("  Recursion output (trace-only): {rv}");
         }
         RunConfig::Prove => {

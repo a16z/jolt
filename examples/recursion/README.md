@@ -11,7 +11,9 @@ cargo run --release -p recursion --features akita,field-inline -- \
 ```
 
 `trace` executes the verifier and reports its output; it does not prove that
-execution. Successful verification returns `Recursion output (trace-only): 1`.
+execution. It stores no trace rows and requires a non-panicking guest with
+`Recursion output (trace-only): 1`. Use `--disk` only when the trace
+artifact is needed.
 The `"verification"` cycle count excludes preprocessing and proof decoding;
 `trace length` includes the complete guest execution. This Akita path supports
 trace execution only; its outer `verify` operation is not implemented.
@@ -28,12 +30,13 @@ in input mode the caller must authenticate the entire prepared setup, including
 the expanded matrix, NTT cache, and catalog bytes. The preprocessing digest alone
 does not authenticate these detached prepared objects.
 
-For instruction-level attribution:
+For instruction-level attribution, use the explicit disk trace (the execute-only
+path does not collect the PC histogram):
 
 ```bash
 JOLT_BACKTRACE=1 JOLT_PC_PROFILE=/tmp/recursion-pc.txt \
   cargo run --release -p recursion --features akita,field-inline -- \
-  trace --example fibonacci --workdir /tmp/jolt-recursion
+  trace --disk --example fibonacci --workdir /tmp/jolt-recursion
 python3 scripts/guest_pc_profile.py report /tmp/recursion-pc.txt \
   /tmp/jolt-guest-targets/recursion-guest-verify/riscv64imac-zero-linux-musl/release/recursion-guest \
   --top 25
