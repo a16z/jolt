@@ -301,7 +301,7 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
+# Immutable fork revision: approved Blake-only epoch 6 plus recursion inline/catalog support.
 akita-algebra = { git = "https://github.com/markosg04/akita.git", rev = "cc90704d3207814a2ab591afe48a623357371613", default-features = false }
 akita-config = { git = "https://github.com/markosg04/akita.git", rev = "cc90704d3207814a2ab591afe48a623357371613", default-features = false }
 akita-error = { git = "https://github.com/markosg04/akita.git", rev = "cc90704d3207814a2ab591afe48a623357371613", default-features = false }

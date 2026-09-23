@@ -1,5 +1,9 @@
 # Selected-row catalog views for recursion
 
+Historical experiment record from the original recursion branch. Its source pins,
+proofs, and measurements do not validate the refreshed Blake-only epoch-6 stack.
+Current integration and performance require new exact-source validation.
+
 The recursion guest currently audits every row in each prepared schedule catalog,
 although a proof selects one row by digest. Add a binary verifier view containing
 the selected full rows and the original ordered list of row digests. Audit every

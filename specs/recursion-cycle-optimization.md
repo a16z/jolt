@@ -1,5 +1,9 @@
 # Recursion cycle optimization
 
+Historical experiment record from the original recursion branch. Its source pins,
+proofs, and measurements do not validate the refreshed Blake-only epoch-6 stack.
+Current integration and performance require new exact-source validation.
+
 The retained **embedded-setup** guest verifies the frozen Fibonacci proof in
 **65,788,119 verification cycles /66,843,409 total rows**, with an exact fresh-build
 repeat and output 1. The full trace is **265,455 rows below 2^26**. Compared with

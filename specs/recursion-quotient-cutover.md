@@ -1,5 +1,9 @@
 # Earlier supported quotient-free cutover
 
+Historical experiment record from the original recursion branch. Its source pins,
+proofs, and measurements do not validate the refreshed Blake-only epoch-6 stack.
+Current integration and performance require new exact-source validation.
+
 The saved Fibonacci proof selects K16 row
 `f832156f615cc006fd49345832dc40b6f45230018d33d7dae0bea9c67c6abd0c`:
 22 variables, one polynomial, no precommitted groups. Levels 0 and 1 use subring
