@@ -567,6 +567,7 @@ impl MacroBuilder {
             {
                 #imports
                 jolt::jolt_prover::dory::from_shared(shared_preprocessing)
+                    .expect("Dory prover preprocessing")
             }
         }
     }
@@ -618,6 +619,7 @@ impl MacroBuilder {
                     generators,
                     blindfold_setup,
                 )
+                .expect("Dory verifier preprocessing")
             }
         }
     }

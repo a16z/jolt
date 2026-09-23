@@ -3646,9 +3646,7 @@ name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "ark-serialize 0.5.0",
  "bincode 2.0.1",
- "blake2 0.11.0",
  "chrono",
  "clap",
  "common",
@@ -3677,6 +3675,8 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "sha3 0.12.0",
  "thiserror 2.0.20",
  "tracer",
  "tracing",
@@ -3813,6 +3813,7 @@ dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
  "bincode 2.0.1",
+ "blake2 0.11.0",
  "common",
  "jolt-akita",
  "jolt-blindfold",
