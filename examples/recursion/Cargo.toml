@@ -11,8 +11,18 @@ path = "src/main.rs"
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default, like eqpoly-field: default workspace builds must not unify
 # field-inline into the verifier stack. The recursion flow needs it.
-field-inline = ["jolt-sdk/field-inline", "dep:jolt-field", "jolt-field/field-inline-guest"]
-akita = ["jolt-sdk/akita", "dep:jolt-akita", "dep:jolt-program", "dep:jolt-witness", "dep:tracer"]
+field-inline = [
+  "jolt-sdk/field-inline",
+  "dep:jolt-field",
+  "jolt-field/field-inline-guest",
+]
+akita = [
+  "jolt-sdk/akita",
+  "dep:jolt-akita",
+  "dep:jolt-program",
+  "dep:jolt-witness",
+  "dep:tracer",
+]
 
 [package.metadata.cargo-machete]
 # Enables field-inline arithmetic in the guest field implementation.

@@ -395,7 +395,8 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> usize {
-        self.execute_with_output(inputs, untrusted_advice, trusted_advice).0
+        self.execute_with_output(inputs, untrusted_advice, trusted_advice)
+            .0
     }
 
     /// Execute without storing trace rows, retaining the row count and device

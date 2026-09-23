@@ -33,8 +33,12 @@ ignored = ["akita-transcript"]
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-pcs = { workspace = true, default-features = false, features = ["transcript-blake2b"] }
-akita-prover = { workspace = true, default-features = false, features = ["transcript-blake2b"] }
+akita-pcs = { workspace = true, default-features = false, features = [
+  "transcript-blake2b",
+] }
+akita-prover = { workspace = true, default-features = false, features = [
+  "transcript-blake2b",
+] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
