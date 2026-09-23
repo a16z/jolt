@@ -10,6 +10,8 @@ use jolt_claims::protocols::jolt::{
 };
 
 use super::*;
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldInlineWitnessOracle;
 use crate::witnesses::{
     BytecodeRaChunk, Imm, InstructionFlag, InstructionRaChunk, InstructionRafFlag,
     LeftInstructionInput, LeftLookupOperand, LookupOutput, LookupTableFlag, NextIsFirstInSequence,
@@ -265,5 +267,12 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
 
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError> {
         self.committed_polynomial_order()
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn field_inline(&self) -> Option<&dyn FieldInlineWitnessOracle<F>> {
+        self.field_inline
+            .as_ref()
+            .map(|witness| witness as &dyn FieldInlineWitnessOracle<F>)
     }
 }

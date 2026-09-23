@@ -1,6 +1,5 @@
 //! registers read-write checking symbolic sumcheck relation.
 
-use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -145,6 +144,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
 mod tests {
     use super::*;
     use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId};
+    use crate::SymbolicSumcheck;
     use jolt_field::{Fr, Ring};
 
     fn read_write_dimensions() -> ReadWriteDimensions {

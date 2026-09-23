@@ -18,12 +18,22 @@ default = ["transcript-blake2b"]
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = []
 fs-audit = []
-field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
+field-inline = [
+  "common/field-inline",
+  "jolt-claims/field-inline",
+  "jolt-lookup-tables/field-inline",
+  "jolt-program/field-inline",
+  "jolt-r1cs/field-inline",
+  "jolt-riscv/field-inline",
+  # Fixture host and prover must compile the same field instruction profile.
+  "jolt-host/field-inline",
+  "jolt-prover/field-inline",
+]
 zk = ["jolt-prover/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
 # commitment object, co-batched reduction opening. Mutually exclusive with
 # `zk` — one PIOP per compiled verifier.
-akita = ["jolt-prover/akita", "jolt-claims/akita"]
+akita = ["jolt-prover/akita", "jolt-claims/akita", "jolt-program/fp128-field-inline"]
 transcript-blake2b = [
   "jolt-transcript/bn254",
   "jolt-transcript/transcript-blake2b",

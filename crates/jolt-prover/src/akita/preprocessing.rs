@@ -5,6 +5,14 @@ use jolt_akita::{
     AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
     AkitaVerifierSetup, PrecommittedScheduleParams,
 };
+#[cfg(feature = "field-inline")]
+use jolt_akita::FieldIncLimbScheduleParams;
+#[cfg(feature = "field-inline")]
+use jolt_claims::lattice::MIN_DENSE_OBJECT_NUM_VARS;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::lattice::field_inc_limb_count;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::jolt::lattice::packing::one_hot_trace_column_capacity;
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
@@ -81,6 +89,17 @@ fn grouped_setup(
     trusted_advice: bool,
     direct_program_physical_vars: &[usize],
 ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), PreprocessingError> {
+    Ok(AkitaScheme::setup(grouped_setup_params(schedule_artifacts, program, config, untrusted_advice, trusted_advice, direct_program_physical_vars)?)?)
+}
+
+pub(crate) fn grouped_setup_params(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: &JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+    direct_program_physical_vars: &[usize],
+) -> Result<AkitaSetupParams, PreprocessingError> {
     let (shape, layout_digest, one_hot_k) =
         one_hot_trace_setup_shape(config, program.bytecode.code_size).map_err(|error| {
             PreprocessingError::InvalidConfiguration {
@@ -96,7 +115,7 @@ fn grouped_setup(
     let precommitted_count = usize::from(untrusted_physical_vars.is_some())
         + usize::from(trusted_physical_vars.is_some())
         + direct_program_physical_vars.len();
-    let precommitted_schedule = (precommitted_count > 0).then(|| {
+    let precommitted_schedule = (precommitted_count > 0 || cfg!(feature = "field-inline")).then(|| {
         PrecommittedScheduleParams::new(
             untrusted_physical_vars,
             trusted_physical_vars,
@@ -104,16 +123,20 @@ fn grouped_setup(
         )
         .with_direct_program_physical_arities(direct_program_physical_vars.to_vec())
     });
+    #[cfg(feature = "field-inline")]
+    let precommitted_schedule = precommitted_schedule
+        .map(|schedule| field_inc_limb_schedule(one_hot_k).map(|limbs| schedule.with_field_inc_limbs(limbs)))
+        .transpose()?;
     let params = AkitaSetupParams::one_hot_only_grouped(
         shape.num_vars,
         shape.num_polys,
-        shape.num_polys + precommitted_count,
+        shape.num_polys + precommitted_count + usize::from(cfg!(feature = "field-inline")),
         layout_digest,
         one_hot_k,
         precommitted_schedule,
         Arc::clone(schedule_artifacts),
     );
-    Ok(AkitaScheme::setup(params)?)
+    Ok(params)
 }
 
 pub fn preprocess_committed(
@@ -335,4 +358,17 @@ mod tests {
             ]
         );
     }
+}
+
+#[cfg(feature = "field-inline")]
+fn field_inc_limb_schedule(one_hot_k: usize) -> Result<FieldIncLimbScheduleParams, PreprocessingError> {
+    let log_k_chunk = one_hot_k.ilog2() as usize;
+    let capacity = one_hot_trace_column_capacity(log_k_chunk).map_err(|error| {
+        PreprocessingError::InvalidConfiguration { reason: error.to_string() }
+    })?;
+    Ok(FieldIncLimbScheduleParams::new(
+        log_k_chunk + capacity.ilog2() as usize,
+        MIN_DENSE_OBJECT_NUM_VARS,
+        field_inc_limb_count::<AkitaField>().next_power_of_two().ilog2() as usize,
+    ))
 }

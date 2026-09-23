@@ -1,0 +1,22 @@
+[package]
+name = "eqpoly-field-guest"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+guest = []
+field-inline = ["jolt/field-inline"]
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk" }
+
+[lib]
+test = false
+doctest = false
+bench = false
+
+[[bin]]
+name = "eqpoly-field-guest"
+path = "src/main.rs"
+test = false
+bench = false

@@ -83,27 +83,29 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
 
 /// Lagrange factor for embedding a smaller polynomial's opening into the
 /// top-left block of the unified final opening point: `1` on variables the
-/// embedded point binds, `1 - r` on the rest.
+/// embedded point binds, `1 - r` on the rest. `None` when the embedded point
+/// is not a subset of the unified point — the scale would then embed a
+/// different polynomial than the one the batch opens, so callers must fail
+/// the final opening batch instead of proceeding.
 pub fn commitment_embedding_scale<F: JoltField>(
     opening_point: &[F],
     embedded_opening_point: &[F],
-) -> F {
-    debug_assert!(
-        embedded_opening_point
-            .iter()
-            .all(|challenge| opening_point.contains(challenge)),
-        "embedded opening point must be a subset of the unified opening point"
-    );
-    opening_point
+) -> Option<F> {
+    embedded_opening_point
         .iter()
-        .map(|challenge| {
-            if embedded_opening_point.contains(challenge) {
-                F::one()
-            } else {
-                F::one() - challenge
-            }
+        .all(|challenge| opening_point.contains(challenge))
+        .then(|| {
+            opening_point
+                .iter()
+                .map(|challenge| {
+                    if embedded_opening_point.contains(challenge) {
+                        F::one()
+                    } else {
+                        F::one() - challenge
+                    }
+                })
+                .product()
         })
-        .product()
 }
 
 /// Inputs to [`final_opening_point`], gathered from earlier verification
@@ -278,7 +280,12 @@ mod tests {
 
         assert_eq!(
             commitment_embedding_scale(&opening_point, &embedded_point),
-            (Fr::from_u64(1) - Fr::from_u64(2)) * (Fr::from_u64(1) - Fr::from_u64(5))
+            Some((Fr::from_u64(1) - Fr::from_u64(2)) * (Fr::from_u64(1) - Fr::from_u64(5)))
+        );
+        assert_eq!(
+            commitment_embedding_scale(&opening_point, &[Fr::from_u64(7)]),
+            None,
+            "a point outside the unified opening point has no embedding"
         );
     }
 

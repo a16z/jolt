@@ -6,6 +6,7 @@
 use std::ops::Range;
 
 use jolt_claims::protocols::jolt::JoltDerivedId;
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
@@ -15,6 +16,7 @@ use jolt_sumcheck::SumcheckError;
 use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
+    SymbolicOf,
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::{
@@ -317,7 +319,11 @@ pub(crate) fn pin_derived_term<F: JoltField, R: ConcreteSumcheck<F>>(
     output_points: &SumcheckOutputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
     got: F,
-) -> Result<(), SumcheckKernelError<F>> {
+) -> Result<(), SumcheckKernelError<F>>
+where
+    // The pinned id (and `DerivedTableDrift`'s payload) is a `JoltDerivedId`.
+    SymbolicOf<F, R>: SymbolicSumcheck<DerivedId = JoltDerivedId>,
+{
     let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
     if got != expected {
         return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
@@ -334,7 +340,10 @@ pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
     output_points: &SumcheckOutputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
     got: F,
-) -> Result<(), SumcheckKernelError<F>> {
+) -> Result<(), SumcheckKernelError<F>>
+where
+    SymbolicOf<F, R>: SymbolicSumcheck<DerivedId = JoltDerivedId>,
+{
     match relation.derive_output_term(&id, input_points, output_points, challenges) {
         Ok(expected) if got != expected => {
             Err(SumcheckKernelError::DerivedTableDrift { id, expected, got })

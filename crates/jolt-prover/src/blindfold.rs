@@ -20,13 +20,13 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
-use jolt_claims::protocols::jolt::geometry::dimensions::{
-    OUTER_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_DOMAIN_SIZE,
-};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
+use jolt_r1cs::constraints::jolt::{
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 use jolt_verifier::proof::JoltProof;
@@ -73,11 +73,15 @@ impl<F> ZkStageWitnesses<F> {
 
 /// The BlindFold stage domains in the same order: the two uni-skips run over
 /// their centered integer domains, every batch over the Boolean hypercube —
-/// the constants the stage recipes themselves prove over.
+/// the constants the stage recipes themselves prove over. The uni-skip sizes
+/// are the COMPOSED jolt-r1cs constants (feature-aware): identical to the
+/// jolt-claims RV64-only constants FR-off, and the FR-extended row/lane
+/// domains under `field-inline` — the domains the verifier's lowering
+/// (`stages::zk::blindfold`) builds its round constraints over.
 const STAGE_DOMAINS: [SumcheckDomainSpec; 10] = [
-    SumcheckDomainSpec::centered_integer(OUTER_UNISKIP_DOMAIN_SIZE),
+    SumcheckDomainSpec::centered_integer(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE),
     SumcheckDomainSpec::BooleanHypercube,
-    SumcheckDomainSpec::centered_integer(PRODUCT_UNISKIP_DOMAIN_SIZE),
+    SumcheckDomainSpec::centered_integer(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE),
     SumcheckDomainSpec::BooleanHypercube,
     SumcheckDomainSpec::BooleanHypercube,
     SumcheckDomainSpec::BooleanHypercube,
@@ -281,4 +285,63 @@ where
     })?;
 
     Ok((protocol, transcript))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stage table's uni-skip domains are the composed jolt-r1cs
+    /// constants. FR-off they equal the jolt-claims RV64-only constants (the
+    /// table's previous source — this pins the swap as byte-neutral); FR-on
+    /// they are the FR-extended composed domains, which the RV64-only
+    /// constants no longer match.
+    #[test]
+    fn stage_domains_use_the_composed_uniskip_constants() {
+        use jolt_claims::protocols::jolt::geometry::dimensions::{
+            OUTER_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_DOMAIN_SIZE,
+        };
+
+        assert_eq!(
+            STAGE_DOMAINS.first().copied(),
+            Some(SumcheckDomainSpec::centered_integer(
+                SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE
+            )),
+        );
+        assert_eq!(
+            STAGE_DOMAINS.get(2).copied(),
+            Some(SumcheckDomainSpec::centered_integer(
+                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
+            )),
+        );
+        for (index, domain) in STAGE_DOMAINS.iter().enumerate() {
+            if index != 0 && index != 2 {
+                assert_eq!(*domain, SumcheckDomainSpec::BooleanHypercube);
+            }
+        }
+
+        #[cfg(not(feature = "field-inline"))]
+        {
+            assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_DOMAIN_SIZE);
+            assert_eq!(
+                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+                PRODUCT_UNISKIP_DOMAIN_SIZE
+            );
+        }
+        #[cfg(feature = "field-inline")]
+        {
+            use jolt_r1cs::constraints::jolt::{
+                SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_FIELD_INLINE_LANES,
+            };
+            assert_eq!(
+                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+                SPARTAN_PRODUCT_BASE_LANES + SPARTAN_PRODUCT_FIELD_INLINE_LANES
+            );
+            assert_ne!(
+                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+                PRODUCT_UNISKIP_DOMAIN_SIZE
+            );
+            assert_ne!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, OUTER_UNISKIP_DOMAIN_SIZE);
+        }
+    }
 }

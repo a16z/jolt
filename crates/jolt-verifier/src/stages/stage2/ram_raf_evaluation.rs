@@ -129,7 +129,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamRafEvaluation<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamRafEvaluation(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // The produced opening point is `[r_address(log_k) ‖ tau_low]`; the

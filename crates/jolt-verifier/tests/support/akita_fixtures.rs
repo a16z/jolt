@@ -10,15 +10,13 @@ use std::sync::OnceLock;
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
 use jolt_host::Program;
-use jolt_program::execution::OwnedTrace;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc};
 use jolt_prover::akita::{self, JoltAkitaBackend};
 use jolt_prover::ProverConfig;
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
-use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-use super::guest_fixtures::{prepare_guest, PreparedGuest};
+use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
 
@@ -116,6 +114,8 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
 }
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
+    #[cfg(not(feature = "field-inline"))]
+    {
     ProverConfig::derive_compact::<AkitaField>(
         run.trace.trace.as_slice(),
         &run.program_preprocessing.memory_layout,
@@ -124,6 +124,18 @@ fn derive_config(run: &PreparedGuest) -> ProverConfig {
         MAX_PADDED_TRACE_LENGTH,
     )
     .expect("derive Akita prover config")
+    }
+    #[cfg(feature = "field-inline")]
+    {
+    ProverConfig::derive::<AkitaField>(
+        run.trace.trace.rows(),
+        &run.program_preprocessing.memory_layout,
+        run.program_preprocessing.ram.min_bytecode_address,
+        run.program_preprocessing.ram.bytecode_words.len(),
+        MAX_PADDED_TRACE_LENGTH,
+    )
+    .expect("derive Akita prover config")
+    }
 }
 
 fn prove_prepared(
@@ -137,16 +149,7 @@ fn prove_prepared(
         .expect("full program retained by prover preprocessing");
     let public_io = run.trace.device.clone();
     let has_trusted_advice = !trusted_advice.is_empty();
-    let witness = TraceBackend::<OwnedTrace>::from_compact(
-        JoltVmWitnessConfig::new(
-            config.trace_length.ilog2() as usize,
-            config.ram_K,
-            config.one_hot_config,
-        )
-        .include_untrusted_advice(!public_io.untrusted_advice.is_empty())
-        .include_trusted_advice(has_trusted_advice),
-        JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
-    );
+    let witness = fixture_witness(&run.program, &program_preprocessing, run.trace, &config, has_trusted_advice);
     let trusted = has_trusted_advice.then(|| {
         preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
@@ -165,5 +168,155 @@ fn prove_prepared(
         public_io,
         proof,
         trusted_advice_commitment: trusted.map(|object| object.commitment),
+    }
+}
+
+/// The FR-on packed case: the eq-MLE FR guest proven by the MODULAR packed
+/// prover (the only FR-capable one) over fp128, with the transparent grouped
+/// setup carrying the FR limb arity line — the packed twin of the Dory
+/// `standard_field_inline_eqpoly_case`. Legacy-generated akita fixtures pin
+/// the FR axis disabled and cannot verify FR-on, so this is the only packed
+/// fixture the FR-on akita verifier suites run over.
+#[cfg(feature = "field-inline")]
+pub fn akita_field_inline_eqpoly_case() -> &'static AkitaFixtureCase {
+    static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
+    CASE.get_or_init(field_inline::generate_eqpoly)
+}
+
+#[cfg(feature = "field-inline")]
+mod field_inline {
+    use std::sync::Arc;
+
+    use common::jolt_device::{MemoryConfig, MemoryLayout};
+    use jolt_field::{CanonicalBytes, Ring};
+    use jolt_program::execution::{
+        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
+    };
+    use jolt_prover::akita::JoltAkitaBackend;
+    use jolt_prover::{akita, ProverConfig};
+    use jolt_host::{JoltProgramSource, Program};
+    use jolt_akita::{AkitaField, AkitaScheme, AkitaScheduleArtifacts};
+    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+    use tracer::execution_backend::TracerBackend;
+
+    use super::AkitaFixtureCase;
+
+    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+    const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+
+    /// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))` over the packed axis's
+    /// proof field, pinned as four canonical little-endian u64 limbs (the
+    /// 16-byte fp128 form fills the low two; the guest Horner-recomposes them
+    /// in whatever field it proves over).
+    fn eqpoly_inputs() -> Vec<u8> {
+        let one = AkitaField::from_u64(1);
+        let value = EQ_PAIRS.iter().fold(one, |acc, [r, x]| {
+            let r = AkitaField::from_u64(*r);
+            let x = AkitaField::from_u64(*x);
+            acc * (r * x + (one - r) * (one - x))
+        });
+        let bytes = value.to_bytes_le_vec();
+        let mut limbs = [0u64; 4];
+        for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
+            *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
+        }
+        let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
+        inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
+        inputs
+    }
+
+    fn trace_modular(
+        program: &JoltProgram,
+        memory_layout: &MemoryLayout,
+        inputs: &[u8],
+    ) -> TraceOutput<OwnedTrace> {
+        let memory_config = MemoryConfig {
+            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
+            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
+            max_input_size: memory_layout.max_input_size,
+            max_output_size: memory_layout.max_output_size,
+            stack_size: memory_layout.stack_size,
+            heap_size: memory_layout.heap_size,
+            program_size: Some(memory_layout.program_size),
+        };
+        TracerBackend::new()
+            .trace(
+                program,
+                TraceInputs {
+                    inputs: inputs.to_vec(),
+                    untrusted_advice: Vec::new(),
+                    trusted_advice: Vec::new(),
+                    memory_config,
+                    advice_tape: None,
+                },
+            )
+            .expect("modular trace")
+    }
+
+    pub(super) fn generate_eqpoly() -> AkitaFixtureCase {
+        let inputs = eqpoly_inputs();
+        let mut program = Program::new("eqpoly-field-guest");
+        program.enable_field_inline();
+        let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);
+        let jolt_program = Arc::new(program.build_jolt_program().expect("build field-inline program"));
+        let program_preprocessing = JoltProgramPreprocessing::new(
+            jolt_program.expanded_bytecode.clone(),
+            jolt_program.memory_init.clone(),
+            io_device.memory_layout.clone(),
+            jolt_program.entry_address,
+            MAX_PADDED_TRACE_LENGTH,
+            program.instruction_profile(),
+        ).expect("field-inline preprocessing");
+        let memory_layout = io_device.memory_layout.clone();
+        let trace_output = trace_modular(&jolt_program, &memory_layout, &inputs);
+        let public_io = trace_output.device.clone();
+
+        let config = ProverConfig::derive::<AkitaField>(
+            trace_output.trace.rows(),
+            &memory_layout,
+            program_preprocessing.ram.min_bytecode_address,
+            program_preprocessing.ram.bytecode_words.len(),
+            MAX_PADDED_TRACE_LENGTH,
+        )
+        .expect("derive config");
+        let log_t = config.trace_length.ilog2() as usize;
+        let prover_preprocessing = jolt_prover::akita::preprocessing::preprocess_full(
+            &AkitaScheduleArtifacts::shared_from_default_directory(), program_preprocessing, &config,
+        ).expect("field-inline packed preprocessing");
+
+        let mut rows = trace_output.trace.rows().to_vec();
+        rows.resize(config.trace_length, TraceRow::default());
+        let padded_output = TraceOutput::new(
+            OwnedTrace::new(rows),
+            trace_output.device,
+            trace_output.final_memory,
+            trace_output.advice_tape,
+        );
+        let program_preprocessing = prover_preprocessing
+            .program_arc()
+            .expect("full program preprocessing");
+        let witness = TraceBackend::new(
+            JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+            JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded_output),
+        )
+        .with_field_inline()
+        .expect("field-inline witness view");
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+            &JoltAkitaBackend::optimized(),
+            &prover_preprocessing,
+            &config,
+            None,
+            &witness,
+            &public_io,
+        )
+        .expect("packed FR prove");
+        AkitaFixtureCase {
+            preprocessing: prover_preprocessing.verifier,
+            public_io,
+            proof,
+            trusted_advice_commitment: None,
+        }
     }
 }

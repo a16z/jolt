@@ -594,11 +594,12 @@ where
         stage3 += stage3_gammas[8];
     }
 
-    let stage4 = register_eq(instruction.operands.rd, register_read_write_eq) * stage4_gammas[0]
-        + register_eq(instruction.operands.rs1, register_read_write_eq) * stage4_gammas[1]
-        + register_eq(instruction.operands.rs2, register_read_write_eq) * stage4_gammas[2];
+    let operands = instruction.integer_operands();
+    let stage4 = register_eq(operands.rd, register_read_write_eq) * stage4_gammas[0]
+        + register_eq(operands.rs1, register_read_write_eq) * stage4_gammas[1]
+        + register_eq(operands.rs2, register_read_write_eq) * stage4_gammas[2];
 
-    let mut stage5 = register_eq(instruction.operands.rd, register_val_evaluation_eq);
+    let mut stage5 = register_eq(operands.rd, register_val_evaluation_eq);
     if !circuit_flags.is_interleaved_operands() {
         stage5 += stage5_gammas[1];
     }

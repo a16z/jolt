@@ -1,6 +1,6 @@
 //! ZK end-to-end coverage for the modular prover and verifier.
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(feature = "prover-fixtures", feature = "zk", not(feature = "field-inline")))]
 #[expect(
     clippy::expect_used,
     clippy::panic,

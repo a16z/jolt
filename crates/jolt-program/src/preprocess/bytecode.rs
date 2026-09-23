@@ -3,7 +3,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use jolt_riscv::{
     CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
-    JoltInstructionRow,
+    JoltInstructionRow, RV64IMAC_JOLT,
 };
 
 #[cfg(feature = "field-inline")]
@@ -67,6 +67,23 @@ impl BytecodePreprocessing {
             #[cfg(feature = "field-inline")]
             field_inline,
         })
+    }
+
+    /// Committed bytecode currently binds only the base ISA lanes. Reject
+    /// extension profiles before their metadata is erased by commitment.
+    pub fn validate_committed_profile(&self) -> Result<(), PreprocessingError> {
+        #[cfg(feature = "field-inline")]
+        if self.field_inline.is_some() {
+            return Err(PreprocessingError::UnsupportedCommittedProfile);
+        }
+        if self
+            .bytecode
+            .iter()
+            .any(|row| !RV64IMAC_JOLT.supports_jolt(row.instruction_kind))
+        {
+            return Err(PreprocessingError::UnsupportedCommittedProfile);
+        }
+        Ok(())
     }
 
     pub fn entry_bytecode_index(&self) -> Option<usize> {
@@ -315,6 +332,8 @@ const fn noop_instruction() -> JoltInstructionRow {
 #[expect(clippy::unwrap_used)]
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
         SourceExtension, RV64IMAC_JOLT,
@@ -585,12 +604,9 @@ mod tests {
             imm: 0,
         };
 
-        let preprocessing = BytecodePreprocessing::preprocess(
-            vec![row],
-            0x8000_0000,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        )
-        .unwrap();
+        let preprocessing =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT_FIELD_INLINE)
+                .unwrap();
         let metadata = preprocessing.field_inline.as_ref().unwrap();
 
         assert_eq!(metadata.rows.len(), preprocessing.bytecode.len());
@@ -613,6 +629,32 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
+    fn committed_profile_rejects_extension_before_erasing_metadata() {
+        let base_row = instruction(0x8000_0000, None);
+        let base =
+            BytecodePreprocessing::preprocess(vec![base_row], 0x8000_0000, RV64IMAC_JOLT).unwrap();
+        assert!(base.validate_committed_profile().is_ok());
+        let mut extension = BytecodePreprocessing::preprocess(
+            vec![base_row],
+            0x8000_0000,
+            RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap();
+        assert_eq!(
+            extension.validate_committed_profile(),
+            Err(PreprocessingError::UnsupportedCommittedProfile)
+        );
+        // A caller cannot bypass the check by stripping the public metadata.
+        extension.field_inline = None;
+        extension.bytecode[1].instruction_kind = JoltInstructionKind::FIELD_MUL;
+        assert_eq!(
+            extension.validate_committed_profile(),
+            Err(PreprocessingError::UnsupportedCommittedProfile)
+        );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
     fn field_inline_metadata_rejects_out_of_bounds_field_registers() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_ADD;
@@ -623,12 +665,9 @@ mod tests {
             imm: 0,
         };
 
-        let err = BytecodePreprocessing::preprocess(
-            vec![row],
-            0x8000_0000,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        )
-        .unwrap_err();
+        let err =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT_FIELD_INLINE)
+                .unwrap_err();
 
         assert!(matches!(
             err,

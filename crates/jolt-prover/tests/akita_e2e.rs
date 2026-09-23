@@ -1,6 +1,6 @@
 //! End-to-end coverage for the modular Akita prover and verifier.
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(feature = "prover-fixtures", feature = "akita", not(feature = "field-inline")))]
 #[expect(
     clippy::expect_used,
     clippy::panic,

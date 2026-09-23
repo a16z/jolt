@@ -1,3 +1,6 @@
+#[cfg(feature = "field-inline")]
+use crate::stages::composed::ComposedClaims;
+
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
@@ -130,6 +133,15 @@ where
                 &stage5.clear()?.output_values,
             ),
         };
+    #[cfg(feature = "field-inline")]
+    let base_input_values = ComposedClaims {
+        base: base_input_values,
+        field_inline: super::field_inline::bytecode_read_raf_inputs(
+            stage1.clear()?,
+            &stage4.clear()?.output_values,
+            &stage5.clear()?.output_values,
+        )?,
+    };
     let address_input_values = Stage6aInputClaims {
         bytecode_read_raf: base_input_values,
         booleanity: BooleanityAddressPhaseInputClaims::default(),
@@ -159,6 +171,13 @@ where
 }
 
 #[cfg(test)]
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects composed claim and opening types"
+    )
+)]
 mod tests {
     use super::super::booleanity::{BooleanityAddressPhase, BooleanityAddressPhaseOutputClaims};
     use super::super::bytecode_read_raf::{
@@ -210,7 +229,8 @@ mod tests {
             bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims {
                 intermediate: fr(901),
                 val_stages: Vec::new(),
-            },
+            }
+            .into(),
             booleanity: BooleanityAddressPhaseOutputClaims {
                 intermediate: fr(902),
             },

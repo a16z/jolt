@@ -61,6 +61,28 @@ pub struct ProductRemainder {
     shape: SpartanProductDimensions,
 }
 
+impl ProductRemainder {
+    /// The ordinary lanes' left-factor expression
+    /// (`Σ_i product_weight(i) · left_i`). Exposed separately from
+    /// [`output_expression`](SymbolicSumcheck::output_expression) — which is
+    /// `tau_kernel · left · right` built from these factors — so the
+    /// field-inline composed verifier can extend each factor with the FR lanes'
+    /// contributions without restating the ordinary lane table.
+    pub fn left_factor_expression<F: Ring>(&self) -> JoltExpr<F> {
+        product_weight(0) * opening(left_instruction_input_product())
+            + product_weight(1) * opening(lookup_output_product())
+            + product_weight(2) * opening(jump_flag_product())
+    }
+
+    /// The ordinary lanes' right-factor expression; see
+    /// [`left_factor_expression`](Self::left_factor_expression).
+    pub fn right_factor_expression<F: Ring>(&self) -> JoltExpr<F> {
+        product_weight(0) * opening(right_instruction_input_product())
+            + product_weight(1) * opening(branch_flag_product())
+            + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()))
+    }
+}
+
 impl SymbolicSumcheck for ProductRemainder {
     type RelationId = JoltRelationId;
     type OpeningId = JoltOpeningId;
@@ -92,14 +114,7 @@ impl SymbolicSumcheck for ProductRemainder {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let left = product_weight(0) * opening(left_instruction_input_product())
-            + product_weight(1) * opening(lookup_output_product())
-            + product_weight(2) * opening(jump_flag_product());
-        let right = product_weight(0) * opening(right_instruction_input_product())
-            + product_weight(1) * opening(branch_flag_product())
-            + product_weight(2) * (JoltExpr::one() - opening(next_is_noop_product()));
-
-        product_tau_kernel() * left * right
+        product_tau_kernel() * self.left_factor_expression() * self.right_factor_expression()
     }
 }
 

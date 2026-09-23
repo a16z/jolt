@@ -1,16 +1,16 @@
 //! registers val-evaluation symbolic sumcheck relation.
 
-use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::registers::{
     rd_inc_val_evaluation, rd_wa_val_evaluation, registers_val_read_write,
 };
 use crate::protocols::jolt::{
-    JoltExpr, JoltRelationId, RegistersValEvaluationPublic, TraceDimensions,
+    JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId, RegistersValEvaluationPublic,
+    TraceDimensions,
 };
-use crate::SymbolicSumcheck;
-use crate::{derived, opening, InputClaims, OutputClaims};
+use crate::twist::memory_checking as twist;
+use crate::{InputClaims, NoChallenges, OutputClaims};
 
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
@@ -41,47 +41,25 @@ pub struct ValEvaluation {
     shape: TraceDimensions,
 }
 
-impl SymbolicSumcheck for ValEvaluation {
-    type RelationId = JoltRelationId;
-    type OpeningId = crate::protocols::jolt::JoltOpeningId;
-    type DerivedId = crate::protocols::jolt::JoltDerivedId;
-    type ChallengeId = crate::protocols::jolt::JoltChallengeId;
-    type Shape = TraceDimensions;
-    type Challenges<F> = crate::NoChallenges<F>;
-    type Inputs<C> = RegistersValEvaluationInputClaims<C>;
-    type Outputs<C> = RegistersValEvaluationOutputClaims<C>;
-
-    fn new(shape: TraceDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::RegistersValEvaluation
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.log_t()
-    }
-
-    fn degree(&self) -> usize {
-        3
-    }
-
-    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        opening(registers_val_read_write())
-    }
-
-    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        derived(RegistersValEvaluationPublic::LtCycle)
-            * opening(rd_inc_val_evaluation())
-            * opening(rd_wa_val_evaluation())
-    }
+twist::instantiate_val_evaluation! {
+    relation = ValEvaluation,
+    id = JoltRelationId::RegistersValEvaluation,
+    ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),
+    dimensions = TraceDimensions,
+    challenges = NoChallenges,
+    inputs = RegistersValEvaluationInputClaims,
+    outputs = RegistersValEvaluationOutputClaims,
+    registers_val = registers_val_read_write(),
+    rd_inc = rd_inc_val_evaluation(),
+    rd_wa = rd_wa_val_evaluation(),
+    lt_cycle = RegistersValEvaluationPublic::LtCycle,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocols::jolt::JoltDerivedId;
+    use crate::SymbolicSumcheck;
     use jolt_field::{Fr, Ring};
 
     fn trace_dimensions() -> TraceDimensions {

@@ -1,6 +1,5 @@
 //! Registers claim-reduction symbolic sumcheck relation.
 
-use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::registers::{
@@ -8,12 +7,11 @@ use crate::protocols::jolt::geometry::claim_reductions::registers::{
     rs2_value_reduced, rs2_value_spartan,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId,
+    JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
     RegistersClaimReductionChallenge, RegistersClaimReductionPublic, TraceDimensions,
 };
-use crate::{
-    challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck,
-};
+use crate::twist::claim_reductions as twist;
+use crate::{InputClaims, OutputClaims, SumcheckChallenges};
 
 /// Produced register claim-reduction openings (`rd` write value, `rs1`/`rs2`
 /// values reduced to the Spartan point), all sharing the single reduction opening
@@ -63,53 +61,32 @@ pub struct ClaimReduction {
     shape: TraceDimensions,
 }
 
-impl SymbolicSumcheck for ClaimReduction {
-    type RelationId = JoltRelationId;
-    type OpeningId = JoltOpeningId;
-    type DerivedId = JoltDerivedId;
-    type ChallengeId = JoltChallengeId;
-    type Shape = TraceDimensions;
-    type Challenges<F> = RegistersClaimReductionChallenges<F>;
-    type Inputs<C> = RegistersClaimReductionInputClaims<C>;
-    type Outputs<C> = RegistersClaimReductionOutputClaims<C>;
-
-    fn new(shape: TraceDimensions) -> Self {
-        Self { shape }
-    }
-
-    fn id() -> JoltRelationId {
-        JoltRelationId::RegistersClaimReduction
-    }
-
-    fn rounds(&self) -> usize {
-        self.shape.log_t()
-    }
-
-    fn degree(&self) -> usize {
-        2
-    }
-
-    fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
-
-        opening(rd_write_value_spartan())
-            + gamma.clone() * opening(rs1_value_spartan())
-            + gamma.clone().pow(2) * opening(rs2_value_spartan())
-    }
-
-    fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(RegistersClaimReductionChallenge::Gamma);
-        let eq_spartan = derived(RegistersClaimReductionPublic::EqSpartan);
-
-        eq_spartan.clone() * opening(rd_write_value_reduced())
-            + eq_spartan.clone() * gamma.clone() * opening(rs1_value_reduced())
-            + eq_spartan * gamma.pow(2) * opening(rs2_value_reduced())
-    }
+twist::instantiate_value_reduction! {
+    relation = ClaimReduction,
+    id = JoltRelationId::RegistersClaimReduction,
+    ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),
+    dimensions = TraceDimensions,
+    challenges = RegistersClaimReductionChallenges,
+    inputs = RegistersClaimReductionInputClaims,
+    outputs = RegistersClaimReductionOutputClaims,
+    consumed = [
+        rd_write_value_spartan(),
+        rs1_value_spartan(),
+        rs2_value_spartan(),
+    ],
+    reduced = [
+        rd_write_value_reduced(),
+        rs1_value_reduced(),
+        rs2_value_reduced(),
+    ],
+    gamma = RegistersClaimReductionChallenge::Gamma,
+    eq_spartan = RegistersClaimReductionPublic::EqSpartan,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SymbolicSumcheck;
     use jolt_field::{Fr, Ring};
 
     fn dimensions() -> TraceDimensions {
