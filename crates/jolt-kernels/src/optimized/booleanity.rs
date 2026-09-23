@@ -741,56 +741,148 @@ pub(crate) mod testing {
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
 
+    const LOAD: JoltInstructionRow = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::LD,
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: None,
+            imm: 3,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
+    const STORE: JoltInstructionRow = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::SD,
+        address: 0x8000_0004,
+        operands: NormalizedOperands {
+            rd: None,
+            rs1: Some(1),
+            rs2: Some(3),
+            imm: 8,
+        },
+        ..LOAD
+    };
+    const ALU: JoltInstructionRow = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::ADDI,
+        address: 0x8000_0008,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: None,
+            imm: 3,
+        },
+        ..LOAD
+    };
+
+    /// A fixture-program load of `address` (hot bytecode, register activity).
+    pub(crate) fn load_row(address: u64) -> TraceRow {
+        TraceRow::new(
+            LOAD,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 5,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 8,
+                }),
+                ..Default::default()
+            },
+            RamAccess::Read(RamRead { address, value: 8 }),
+        )
+        .unwrap()
+    }
+
+    /// A fixture-program store to `address`.
+    pub(crate) fn store_row(address: u64) -> TraceRow {
+        TraceRow::new(
+            STORE,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 1,
+                    value: 8,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 3,
+                    value: 11,
+                }),
+                ..Default::default()
+            },
+            RamAccess::Write(RamWrite {
+                address,
+                pre_value: 7,
+                post_value: 11,
+            }),
+        )
+        .unwrap()
+    }
+
+    /// A cold row: default instruction, no register or RAM activity.
+    pub(crate) fn no_op_row() -> TraceRow {
+        TraceRow::new(
+            JoltInstructionRow::default(),
+            RegisterState::default(),
+            RamAccess::NoOp,
+        )
+        .unwrap()
+    }
+
     /// Runs `f` against a trace backend whose rows exercise the one-hot
     /// sparsity structure: hot/cold bytecode cycles, hot/cold RAM cycles,
     /// varied lookup indices, plus backend-synthesized padding when
-    /// `log_t > 2`. Booleanity dimensions are probed off the backend's own
-    /// servable set so test and backend geometry cannot drift.
+    /// `log_t > 2`.
     pub(crate) fn with_booleanity_backend<R>(
         log_t: usize,
         log_k_chunk: u8,
         f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
     ) -> R {
-        let instruction_a = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::LD,
-            address: 0x8000_0000,
-            operands: NormalizedOperands {
-                rd: Some(1),
-                rs1: Some(2),
-                rs2: None,
-                imm: 3,
+        let alu = TraceRow::new(
+            ALU,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 5,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 8,
+                    post_value: 11,
+                }),
+                ..Default::default()
             },
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
-            is_compressed: false,
-        };
-        let instruction_b = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::SD,
-            address: 0x8000_0004,
-            operands: NormalizedOperands {
-                rd: None,
-                rs1: Some(1),
-                rs2: Some(3),
-                imm: 8,
-            },
-            ..instruction_a
-        };
-        let instruction_c = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::ADDI,
-            address: 0x8000_0008,
-            operands: NormalizedOperands {
-                rd: Some(1),
-                rs1: Some(2),
-                rs2: None,
-                imm: 3,
-            },
-            ..instruction_a
-        };
+            RamAccess::NoOp,
+        )
+        .unwrap();
+        let mut rows = vec![
+            load_row(0x8000_1000),
+            store_row(0x8000_1008),
+            no_op_row(),
+            alu,
+        ];
+        rows.truncate(1 << log_t);
+        with_trace_backend(log_t, log_k_chunk, rows, f)
+    }
+
+    /// Runs `f` against a trace backend over `rows` of the fixture program
+    /// (padded by the backend up to `2^log_t`). Booleanity dimensions are
+    /// probed off the backend's own servable set so test and backend
+    /// geometry cannot drift.
+    pub(crate) fn with_trace_backend<R>(
+        log_t: usize,
+        log_k_chunk: u8,
+        rows: Vec<TraceRow>,
+        f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
+    ) -> R {
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
-                vec![instruction_a, instruction_b, instruction_c],
-                instruction_a.address as u64,
+                vec![LOAD, STORE, ALU],
+                LOAD.address as u64,
                 RV64IMAC_JOLT,
             )
             .unwrap(),
@@ -799,73 +891,6 @@ pub(crate) mod testing {
             max_padded_trace_length: 4.max(1 << log_t),
         });
         let program = Arc::new(JoltProgram::default());
-        let row = |instruction: Option<JoltInstructionRow>,
-                   registers: RegisterState,
-                   ram_access: RamAccess| {
-            TraceRow::new(instruction.unwrap_or_default(), registers, ram_access).unwrap()
-        };
-        let mut rows = vec![
-            // Hot bytecode, hot RAM, register activity.
-            row(
-                Some(instruction_a),
-                RegisterState {
-                    rs1: Some(RegisterRead {
-                        register: 2,
-                        value: 5,
-                    }),
-                    rd: Some(RegisterWrite {
-                        register: 1,
-                        pre_value: 0,
-                        post_value: 8,
-                    }),
-                    ..Default::default()
-                },
-                RamAccess::Read(RamRead {
-                    address: 0x8000_1000,
-                    value: 8,
-                }),
-            ),
-            // Hot bytecode (different PC / lookup index), hot RAM (write).
-            row(
-                Some(instruction_b),
-                RegisterState {
-                    rs1: Some(RegisterRead {
-                        register: 1,
-                        value: 8,
-                    }),
-                    rs2: Some(RegisterRead {
-                        register: 3,
-                        value: 11,
-                    }),
-                    ..Default::default()
-                },
-                RamAccess::Write(RamWrite {
-                    address: 0x8000_1008,
-                    pre_value: 7,
-                    post_value: 11,
-                }),
-            ),
-            // Cold bytecode and RAM.
-            row(None, RegisterState::default(), RamAccess::NoOp),
-            // Hot bytecode, cold RAM.
-            row(
-                Some(instruction_c),
-                RegisterState {
-                    rs1: Some(RegisterRead {
-                        register: 2,
-                        value: 5,
-                    }),
-                    rd: Some(RegisterWrite {
-                        register: 1,
-                        pre_value: 8,
-                        post_value: 11,
-                    }),
-                    ..Default::default()
-                },
-                RamAccess::NoOp,
-            ),
-        ];
-        rows.truncate(1 << log_t);
 
         let config = JoltVmWitnessConfig::new(
             log_t,
