@@ -57,6 +57,12 @@ pr-seconds = 30
 daily-seconds = 600
 weekly-seconds = 1500
 
+[package.metadata.jolt-fuzz.targets.fp64_scalar_differential]
+focus = "correctness"
+pr-seconds = 30
+daily-seconds = 600
+weekly-seconds = 1500
+
 [dependencies]
 libfuzzer-sys = "0.4"
 jolt-field = { path = "..", default-features = false, features = [
@@ -119,6 +125,13 @@ bench = false
 [[bin]]
 name = "fp128_asm_differential"
 path = "fuzz_targets/fp128_asm_differential.rs"
+doc = false
+test = false
+bench = false
+
+[[bin]]
+name = "fp64_scalar_differential"
+path = "fuzz_targets/fp64_scalar_differential.rs"
 doc = false
 test = false
 bench = false
