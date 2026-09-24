@@ -125,7 +125,14 @@ mod tests {
         let product = Fr::from_u64(2);
         let should_branch = Fr::from_u64(3);
         let should_jump = Fr::from_u64(5);
-        let weights = [Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
+        #[cfg(feature = "implicit-carry")]
+        let carry_used = Fr::from_u64(17);
+        let weights = [
+            Fr::from_u64(7),
+            Fr::from_u64(11),
+            Fr::from_u64(13),
+            Fr::from_u64(19),
+        ];
         let zero = Fr::from_u64(0);
 
         let input = relation.input_expression::<Fr>().evaluate(
@@ -133,6 +140,8 @@ mod tests {
                 id if id == product_outer_opening() => product,
                 id if id == product_should_branch_outer_opening() => should_branch,
                 id if id == product_should_jump_outer_opening() => should_jump,
+                #[cfg(feature = "implicit-carry")]
+                id if id == product_carry_used_outer_opening() => carry_used,
                 _ => zero,
             },
             |_| zero,
@@ -144,10 +153,10 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            input,
-            weights[0] * product + weights[1] * should_branch + weights[2] * should_jump
-        );
+        let expected = weights[0] * product + weights[1] * should_branch + weights[2] * should_jump;
+        #[cfg(feature = "implicit-carry")]
+        let expected = expected + weights[3] * carry_used;
+        assert_eq!(input, expected);
     }
 
     /// The output claim is the single reduced uni-skip opening passed through
