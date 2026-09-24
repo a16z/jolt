@@ -2,7 +2,7 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use jolt_field::{Field, Fr};
-use jolt_poly::{EqPolynomial, Polynomial};
+use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
@@ -79,11 +79,28 @@ fn bench_eq_evals(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_univariate_interpolation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("UnivariatePoly::from_evals");
+    for num_evals in [3, 4, 8, 16] {
+        let mut rng = ChaCha20Rng::seed_from_u64(400 + num_evals as u64);
+        let evals: Vec<Fr> = (0..num_evals).map(|_| Fr::random(&mut rng)).collect();
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_evals),
+            &evals,
+            |bench, evals| {
+                bench.iter(|| UnivariatePoly::from_evals(std::hint::black_box(evals)));
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_bind,
     bench_eq_evaluations,
     bench_evaluate,
     bench_eq_evals,
+    bench_univariate_interpolation,
 );
 criterion_main!(benches);
