@@ -1244,6 +1244,8 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
         | JoltRelationId::AdviceClaimReductionCyclePhase
         | JoltRelationId::BytecodeClaimReductionCyclePhase
         | JoltRelationId::ProgramImageClaimReductionCyclePhase => VerifierPhase::Stage6,
+        #[cfg(feature = "implicit-carry")]
+        JoltRelationId::CarryClaimReduction => VerifierPhase::Stage6,
         JoltRelationId::AdviceClaimReduction
         | JoltRelationId::BytecodeClaimReduction
         | JoltRelationId::HammingWeightClaimReduction
@@ -1281,6 +1283,8 @@ fn relation_from_stage_string(stage: &str) -> Option<JoltRelationId> {
         JoltRelationId::ProgramImageClaimReduction,
         JoltRelationId::IncClaimReduction,
         JoltRelationId::HammingWeightClaimReduction,
+        #[cfg(feature = "implicit-carry")]
+        JoltRelationId::CarryClaimReduction,
     ]
     .into_iter()
     .find(|id| format!("{id:?}") == stage)
