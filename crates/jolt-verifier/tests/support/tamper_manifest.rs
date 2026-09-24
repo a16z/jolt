@@ -1,5 +1,8 @@
 use std::collections::BTreeSet;
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineRelationId;
+use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::{Fr, JoltField};
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims;
@@ -16,6 +19,7 @@ use jolt_verifier::{
     stages::stage1::outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
     stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims},
     stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
+    VerifierError,
 };
 use serde_json::Value;
 
@@ -214,16 +218,16 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         "public_io.outputs",
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "value-level output mutation should be run on real verifier fixtures and rejects at RAM output check",
+        TamperCoverage::Active,
+        "real fixture output mutation; rejected no later than the RAM output check",
     ),
     checked_standard(
         "public_io.panic",
         "public_io.panic",
         VerifierPhase::Stage2,
         MutationStrategy::FlipBool,
-        TamperCoverage::IgnoredUntilFixture,
-        "panic materializes as public memory for the RAM output check",
+        TamperCoverage::Active,
+        "panic materializes as public memory for the RAM output check; real fixture bool flip",
     ),
     checked_both(
         "public_io.memory_layout",
@@ -262,24 +266,24 @@ pub const PREAMBLE_TARGETS: &[TamperTarget] = &[
         "proof.one_hot_config",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::Deferred,
-        "one-hot configuration is transcript-bound now but substantively checked by later RA virtualization stages",
+        TamperCoverage::Active,
+        "transcript-bound and substantively checked by later RA virtualization stages; real fixture config offset",
     ),
     checked_standard(
         "proof.trace_polynomial_order",
         "proof.trace_polynomial_order",
         VerifierPhase::Stage1,
         MutationStrategy::ChangeEnumVariant,
-        TamperCoverage::IgnoredUntilFixture,
-        "layout order is transcript-bound; add a real fixture mutation before relying on it",
+        TamperCoverage::Active,
+        "transcript-bound; real fixture enum flip diverges challenges at the first stage sumcheck",
     ),
     checked_standard(
         "preprocessing.preprocessing_digest",
         "preprocessing.preprocessing_digest",
         VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "digest is transcript-bound; real fixture mutation should reject at the first stage",
+        TamperCoverage::Active,
+        "transcript-bound; real fixture digest offset diverges challenges at the first stage sumcheck",
     ),
     checked_standard(
         "preprocessing.program.bytecode.entry_address",
@@ -329,16 +333,16 @@ pub const COMMITMENT_TARGETS: &[TamperTarget] = &[
         "proof.untrusted_advice_commitment",
         VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "advice commitment coverage belongs with advice fixtures",
+        TamperCoverage::Active,
+        "advice fixture replaces the untrusted advice commitment with a valid but wrong commitment",
     ),
     checked_standard(
         "trusted_advice_commitment",
         "trusted_advice_commitment",
         VerifierPhase::Stage1,
         MutationStrategy::ReplaceProofPayload,
-        TamperCoverage::Deferred,
-        "trusted advice commitment coverage belongs with advice fixtures",
+        TamperCoverage::Active,
+        "advice fixture replaces the trusted advice commitment with a valid but wrong commitment",
     ),
     final_opening_standard(
         "proof.joint_opening_proof",
@@ -425,13 +429,14 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "prover-fixture test offsets the Spartan outer uni-skip opening claim",
     ),
-    checked_standard(
+    later_standard(
         "stage1.claims.outer",
         "claims.stage1.outer.*",
-        VerifierPhase::Stage1,
+        VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "prover-fixture test offsets every Spartan outer variable opening claim",
+        "outer output claims are consumed as stage-2 input claims (product \
+         virtualization); the PCS binds them again at final openings",
     ),
     #[cfg(feature = "field-inline")]
     checked_standard(
@@ -691,8 +696,8 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         "claims.stage4.ram_val_check.program_image",
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the staged program-image init contribution",
+        TamperCoverage::Active,
+        "committed fixture offsets the staged program-image init contribution",
     ),
     #[cfg(feature = "field-inline")]
     checked_standard(
@@ -953,16 +958,16 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         "claims.stage6a.bytecode_read_raf.val_stages",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets each staged bytecode Val-stage claim",
+        TamperCoverage::Active,
+        "committed fixture offsets each staged bytecode Val-stage claim",
     ),
     checked_standard(
         "stage6.claims.bytecode_reduction.intermediate",
         "claims.stage6b.bytecode_reduction.intermediate",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the bytecode reduction cycle-phase intermediate output claim",
+        TamperCoverage::Active,
+        "committed fixture offsets the bytecode reduction cycle-phase intermediate output claim",
     ),
     checked_standard(
         "stage6.claims.bytecode_reduction.chunks",
@@ -970,15 +975,15 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
         TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the bytecode reduction cycle-phase per-chunk output claims",
+        "cycle-phase-only committed shapes emit final chunks at stage 6, but every current committed fixture has an address phase; needs a cycle-phase-only fixture",
     ),
     checked_standard(
         "stage6.claims.program_image_reduction.program_image",
         "claims.stage6b.program_image_reduction.program_image",
         VerifierPhase::Stage6,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the program-image reduction cycle-phase output claim",
+        TamperCoverage::Active,
+        "committed fixture offsets the program-image reduction cycle-phase output claim",
     ),
 ];
 
@@ -1054,16 +1059,16 @@ pub const STAGE7_TARGETS: &[TamperTarget] = &[
         "claims.stage7.bytecode_address_phase.chunks",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets each final bytecode chunk claim",
+        TamperCoverage::Active,
+        "committed fixture offsets each final bytecode chunk claim",
     ),
     checked_standard(
         "stage7.claims.program_image_address_phase",
         "claims.stage7.program_image_address_phase.program_image",
         VerifierPhase::Stage7,
         MutationStrategy::OffsetScalar,
-        TamperCoverage::IgnoredUntilFixture,
-        "committed fixture test offsets the final program-image claim",
+        TamperCoverage::Active,
+        "committed fixture offsets the final program-image claim",
     ),
 ];
 
@@ -1299,6 +1304,188 @@ pub fn assert_zk_target_active(name: &str) {
     );
 }
 
+/// The phase where a target's rejection is documented to fire, derived from
+/// its disposition.
+pub fn expected_rejection_phase(target: TamperTarget) -> VerifierPhase {
+    match target.disposition {
+        TamperDisposition::CheckedAtStage => target.checked_at,
+        TamperDisposition::CheckedByLaterStage(phase) => phase,
+        TamperDisposition::CheckedByFinalOpenings => VerifierPhase::Stage8Openings,
+        TamperDisposition::CheckedByZk => VerifierPhase::Zk,
+    }
+}
+
+/// Which stage's batched sumcheck verifies each relation. Folds 6a/6b into
+/// `Stage6`.
+fn relation_phase(id: JoltRelationId) -> VerifierPhase {
+    match id {
+        JoltRelationId::SpartanOuter => VerifierPhase::Stage1,
+        JoltRelationId::SpartanProductVirtualization
+        | JoltRelationId::RamReadWriteChecking
+        | JoltRelationId::RamRafEvaluation
+        | JoltRelationId::RamOutputCheck
+        | JoltRelationId::InstructionClaimReduction => VerifierPhase::Stage2,
+        JoltRelationId::SpartanShift
+        | JoltRelationId::InstructionInputVirtualization
+        | JoltRelationId::RegistersClaimReduction => VerifierPhase::Stage3,
+        JoltRelationId::RamValCheck | JoltRelationId::RegistersReadWriteChecking => {
+            VerifierPhase::Stage4
+        }
+        JoltRelationId::InstructionReadRaf
+        | JoltRelationId::RamRaClaimReduction
+        | JoltRelationId::RegistersValEvaluation => VerifierPhase::Stage5,
+        JoltRelationId::BytecodeReadRaf
+        | JoltRelationId::Booleanity
+        | JoltRelationId::RamHammingBooleanity
+        | JoltRelationId::InstructionRaVirtualization
+        | JoltRelationId::RamRaVirtualization
+        | JoltRelationId::IncClaimReduction
+        | JoltRelationId::AdviceClaimReductionCyclePhase
+        | JoltRelationId::BytecodeClaimReductionCyclePhase
+        | JoltRelationId::ProgramImageClaimReductionCyclePhase => VerifierPhase::Stage6,
+        JoltRelationId::AdviceClaimReduction
+        | JoltRelationId::BytecodeClaimReduction
+        | JoltRelationId::HammingWeightClaimReduction
+        | JoltRelationId::ProgramImageClaimReduction => VerifierPhase::Stage7,
+    }
+}
+
+/// Relation-level errors use `format!("{:?}", relation_id)`.
+fn relation_phase_from_stage_string(stage: &str) -> Option<VerifierPhase> {
+    let phase = [
+        JoltRelationId::SpartanOuter,
+        JoltRelationId::SpartanProductVirtualization,
+        JoltRelationId::SpartanShift,
+        JoltRelationId::InstructionClaimReduction,
+        JoltRelationId::InstructionInputVirtualization,
+        JoltRelationId::InstructionReadRaf,
+        JoltRelationId::InstructionRaVirtualization,
+        JoltRelationId::RamReadWriteChecking,
+        JoltRelationId::RamRafEvaluation,
+        JoltRelationId::RamOutputCheck,
+        JoltRelationId::RamValCheck,
+        JoltRelationId::RamRaClaimReduction,
+        JoltRelationId::RamHammingBooleanity,
+        JoltRelationId::RamRaVirtualization,
+        JoltRelationId::RegistersClaimReduction,
+        JoltRelationId::RegistersReadWriteChecking,
+        JoltRelationId::RegistersValEvaluation,
+        JoltRelationId::BytecodeReadRaf,
+        JoltRelationId::Booleanity,
+        JoltRelationId::AdviceClaimReductionCyclePhase,
+        JoltRelationId::AdviceClaimReduction,
+        JoltRelationId::BytecodeClaimReductionCyclePhase,
+        JoltRelationId::BytecodeClaimReduction,
+        JoltRelationId::ProgramImageClaimReductionCyclePhase,
+        JoltRelationId::ProgramImageClaimReduction,
+        JoltRelationId::IncClaimReduction,
+        JoltRelationId::HammingWeightClaimReduction,
+    ]
+    .into_iter()
+    .find(|id| format!("{id:?}") == stage)
+    .map(relation_phase);
+    #[cfg(feature = "field-inline")]
+    let phase = phase.or_else(|| {
+        [
+            FieldInlineRelationId::FieldRegistersSpartanOuter,
+            FieldInlineRelationId::FieldRegistersClaimReduction,
+            FieldInlineRelationId::FieldRegistersProduct,
+            FieldInlineRelationId::FieldRegistersReadWriteChecking,
+            FieldInlineRelationId::FieldRegistersValEvaluation,
+            FieldInlineRelationId::FieldRegistersIncClaimReduction,
+        ]
+        .into_iter()
+        .find(|id| format!("{id:?}") == stage)
+        .map(|id| match id {
+            FieldInlineRelationId::FieldRegistersSpartanOuter => VerifierPhase::Stage1,
+            FieldInlineRelationId::FieldRegistersClaimReduction
+            | FieldInlineRelationId::FieldRegistersProduct => VerifierPhase::Stage2,
+            FieldInlineRelationId::FieldRegistersReadWriteChecking => VerifierPhase::Stage4,
+            FieldInlineRelationId::FieldRegistersValEvaluation => VerifierPhase::Stage5,
+            FieldInlineRelationId::FieldRegistersIncClaimReduction => VerifierPhase::Stage6,
+        })
+    });
+    phase
+}
+
+/// Maps a rejection to the verifier phase that raised it, where the error
+/// variant carries enough information. `None` means the variant is
+/// phase-agnostic (e.g. a missing claim id observed wherever it is first
+/// consumed) and the caller should skip phase attribution.
+pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> {
+    match error {
+        VerifierError::ProtocolConfigMismatch { .. }
+        | VerifierError::ExpectedClearProof { .. }
+        | VerifierError::ExpectedCommittedProof { .. }
+        | VerifierError::UnexpectedBlindFoldProof
+        | VerifierError::MissingBlindFoldProof
+        | VerifierError::UnexpectedOpeningClaims
+        | VerifierError::MissingVectorCommitmentSetup
+        | VerifierError::InvalidVectorCommitmentCapacity { .. }
+        | VerifierError::MemoryLayoutMismatch
+        | VerifierError::InputTooLarge { .. }
+        | VerifierError::OutputTooLarge { .. }
+        | VerifierError::InvalidTraceLength { .. }
+        | VerifierError::InvalidRamK { .. }
+        | VerifierError::InvalidMemoryLayout { .. }
+        | VerifierError::InvalidPrecommittedSchedule { .. }
+        | VerifierError::InvalidCommittedProgram { .. }
+        | VerifierError::MissingPreprocessingPayload { .. }
+        | VerifierError::UnsupportedInstruction { .. }
+        | VerifierError::InvalidFieldInlineBytecode { .. }
+        | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
+        VerifierError::MissingProofPayload { field } => match *field {
+            "commitments.field_inline" | "field_inc_limbs_commitment" => {
+                Some(VerifierPhase::Preamble)
+            }
+            "claims.field_inc_limbs" => Some(VerifierPhase::Stage8Openings),
+            _ => None,
+        },
+        VerifierError::StageClaimSumcheckFailed { stage, .. }
+        | VerifierError::StageClaimOpeningMismatch { stage, .. } => {
+            let phase = match stage.as_str() {
+                "Stage1Batch" => Some(VerifierPhase::Stage1),
+                "Stage2Batch" => Some(VerifierPhase::Stage2),
+                "Stage3" => Some(VerifierPhase::Stage3),
+                "Stage4" => Some(VerifierPhase::Stage4),
+                "Stage5" => Some(VerifierPhase::Stage5),
+                "Stage6a" | "Stage6b" => Some(VerifierPhase::Stage6),
+                "Stage7" => Some(VerifierPhase::Stage7),
+                _ => relation_phase_from_stage_string(stage),
+            };
+            assert!(phase.is_some(), "unrecognized verifier stage: {stage}");
+            phase
+        }
+        VerifierError::StageClaimPublicInputFailed { stage, .. } => Some(relation_phase(*stage)),
+        VerifierError::StageClaimOutputMismatch { stage } => match stage {
+            1 => Some(VerifierPhase::Stage1),
+            2 => Some(VerifierPhase::Stage2),
+            3 => Some(VerifierPhase::Stage3),
+            4 => Some(VerifierPhase::Stage4),
+            5 => Some(VerifierPhase::Stage5),
+            6 => Some(VerifierPhase::Stage6),
+            7 => Some(VerifierPhase::Stage7),
+            _ => None,
+        },
+        VerifierError::InvalidCommitmentCount { .. }
+        | VerifierError::MissingFinalOpeningCommitment { .. }
+        | VerifierError::FinalOpeningBatchFailed { .. }
+        | VerifierError::FinalOpeningVerificationFailed { .. } => {
+            Some(VerifierPhase::Stage8Openings)
+        }
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        VerifierError::FieldIncLimbRecompositionMismatch => Some(VerifierPhase::Stage8Openings),
+        VerifierError::BlindFoldConstructionFailed { .. }
+        | VerifierError::BlindFoldVerificationFailed { .. } => Some(VerifierPhase::Zk),
+        VerifierError::ProtocolAxisUnimplemented { .. }
+        | VerifierError::MissingOpeningClaim { .. }
+        | VerifierError::UnexpectedOpeningClaim { .. }
+        | VerifierError::MissingStageClaimChallenge { .. }
+        | VerifierError::MissingStageClaimDerived { .. }
+        | VerifierError::ChallengeDraw(_) => None,
+    }
+}
+
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "zk"),
@@ -1314,7 +1501,27 @@ pub fn assert_verifier_fixture_tamper_rejects(
     crate::support::assert_accepts(base.verify());
     let mut case = base.clone();
     mutate(&mut case);
-    crate::support::assert_rejects(case.verify());
+    let result = case.verify();
+    assert!(
+        result.is_err(),
+        "tampered standard proof was accepted for target {}",
+        target.name
+    );
+    // The manifest documents the LAST line of defense: rejection may fire
+    // earlier (transcript-bound values diverge challenges at the first
+    // post-absorption check) but never later than the documented phase.
+    if let Err(error) = result {
+        if let Some(observed) = observed_rejection_phase(&error) {
+            let expected = expected_rejection_phase(target);
+            assert!(
+                observed <= expected,
+                "target {} was rejected in {observed:?}, later than the manifest's \
+                 documented {expected:?} (disposition {:?}); error: {error}",
+                target.name,
+                target.disposition
+            );
+        }
+    }
 }
 
 fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {

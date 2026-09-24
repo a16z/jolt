@@ -9,19 +9,19 @@ jobs:
   deploy_gcloud:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v7.0.1
-    - uses: dtolnay/rust-toolchain@stable
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
     - id: 'auth'
-      uses: 'google-github-actions/auth@v3'
+      uses: 'google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093' # v3
       with:
         credentials_json: '${{ secrets.GCP_SA_KEY}}'
 
     - name: Set up Cloud SDK
-      uses: google-github-actions/setup-gcloud@v3
+      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
     - name: Setup mdBook
-      uses: peaceiris/actions-mdbook@v2
+      uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # v2
       with:
         mdbook-version: '0.4.10'
 
@@ -37,10 +37,10 @@ jobs:
   deploy_firebase:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - name: Setup mdBook
-        uses: peaceiris/actions-mdbook@v2
+        uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # v2
         with:
           mdbook-version: '0.4.10'
       - name: Install mdbook-katex
@@ -49,7 +49,7 @@ jobs:
 
       - run: mdbook build ./book
 
-      - uses: FirebaseExtended/action-hosting-deploy@v0
+      - uses: FirebaseExtended/action-hosting-deploy@500ac625ca2dd40cbd15f7659af953801858032a # v0
         with:
           repoToken: "${{ secrets.GITHUB_TOKEN }}"
           firebaseServiceAccount: "${{ secrets.GCP_SA_KEY }}"

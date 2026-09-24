@@ -142,6 +142,9 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
+    use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
+    use jolt_claims::OutputClaims;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
@@ -180,19 +183,12 @@ mod field_inline_round_trip {
         // stage 2's field-inline wiring consumes).
         let tau_low = product_tau_low(&out.clear_output.remainder_point(), LOG_T).unwrap();
         let field_inline_oracle = witness.field_inline().unwrap();
-        for (polynomial, value) in
-            jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
-                .into_iter()
-                .zip(
-                    jolt_claims::OutputClaims::opening_values(field_inline_outer),
-                )
+        for (polynomial, value) in FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS
+            .into_iter()
+            .zip(OutputClaims::opening_values(field_inline_outer))
         {
             let table = field_inline_oracle
-                .oracle_table(
-                    jolt_claims::protocols::field_inline::FieldInlinePolynomialId::Virtual(
-                        polynomial,
-                    ),
-                )
+                .oracle_table(FieldInlinePolynomialId::Virtual(polynomial))
                 .unwrap();
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }

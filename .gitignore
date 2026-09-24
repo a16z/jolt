@@ -79,3 +79,7 @@ transpiler/go/class_*/
 # generated docs and scripts
 docs/
 scripts/ci-local.sh
+
+# LLVM coverage artifacts
+*.profraw
+*.profdata

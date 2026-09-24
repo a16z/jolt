@@ -5,10 +5,10 @@
 //! (Polynomial, EqPolynomial, UnivariatePoly, IdentityPolynomial, RlcSource)
 //! that are used throughout the proving system.
 
-use jolt_field::{Field, Fr, Ring};
+use jolt_field::{Ext2, Field, Fr, One, Prime64Offset59, Ring, Zero};
 use jolt_poly::{
-    EqPolynomial, IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, Polynomial,
-    RlcSource, UnivariatePoly,
+    EqPolynomial, IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, OmittedConstantPoly,
+    Polynomial, RlcSource, UnivariatePoly, UnivariatePolynomial,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -84,6 +84,114 @@ fn compact_u8_bind_matches_field_bind() {
 }
 
 // UnivariatePoly interpolation
+
+fn check_equispaced_interpolation<F: Field>(coefficients: Vec<F>) {
+    let original = UnivariatePoly::new(coefficients);
+    let evals: Vec<F> = (0..original.coefficients().len())
+        .map(|x| original.evaluate(F::from_u64(x as u64)))
+        .collect();
+    let recovered = UnivariatePoly::from_evals(&evals);
+    assert_eq!(recovered.coefficients(), original.coefficients());
+    for x in 0..9 {
+        assert_eq!(
+            recovered.evaluate(F::from_u64(x)),
+            original.evaluate(F::from_u64(x))
+        );
+    }
+}
+
+#[test]
+fn equispaced_interpolation_preserves_coefficient_count() {
+    for coefficients in [
+        vec![],
+        vec![Fr::from_u64(7)],
+        vec![Fr::from_u64(7), Fr::zero(), Fr::zero()],
+        vec![
+            Fr::from_u64(7),
+            Fr::from_u64(2),
+            Fr::from_u64(3),
+            Fr::zero(),
+        ],
+    ] {
+        check_equispaced_interpolation(coefficients);
+    }
+
+    let mut low_degree = UnivariatePoly::from_evals(&[Fr::from_u64(5); 4]);
+    assert_eq!(low_degree.coefficients().len(), 4);
+    low_degree.trim_trailing_zeros();
+    assert_eq!(low_degree.coefficients(), &[Fr::from_u64(5)]);
+
+    let mut zero = UnivariatePoly::from_evals(&[Fr::zero(); 3]);
+    zero.trim_trailing_zeros();
+    assert_eq!(zero.coefficients(), &[Fr::zero()]);
+    let mut empty = UnivariatePoly::<Fr>::zero();
+    empty.trim_trailing_zeros();
+    assert!(empty.coefficients().is_empty());
+}
+
+#[test]
+fn equispaced_interpolation_over_extension_field() {
+    type Extension = Ext2<Prime64Offset59>;
+    let element = |a, b| Extension::new(Prime64Offset59::from_u64(a), Prime64Offset59::from_u64(b));
+    check_equispaced_interpolation(vec![
+        element(4, 7),
+        element(1, 2),
+        element(5, 3),
+        Extension::zero(),
+    ]);
+}
+
+#[test]
+fn compression_handles_empty_constant_and_trailing_zeros() {
+    for coefficients in [
+        vec![],
+        vec![Fr::from_u64(8)],
+        vec![Fr::from_u64(8), Fr::from_u64(2)],
+        vec![Fr::from_u64(8), Fr::from_u64(2), Fr::zero()],
+    ] {
+        let original = UnivariatePoly::new(coefficients);
+        let hint = original.evaluate(Fr::zero()) + original.evaluate(Fr::one());
+        let compressed = original.compress();
+        assert_eq!(compressed.degree(), original.degree().max(1));
+        assert!(!compressed.is_empty());
+        assert_eq!(compressed.decompress(hint).compress(), compressed);
+        for x in 0..7 {
+            let point = Fr::from_u64(x);
+            assert_eq!(
+                compressed.evaluate_with_hint(hint, point),
+                original.evaluate(point)
+            );
+        }
+    }
+}
+
+#[test]
+fn omitted_constant_payload_preserves_shape_and_evaluates() {
+    let empty = OmittedConstantPoly::<Fr>::new(vec![]);
+    assert_eq!(empty.degree(), 0);
+    assert_eq!(empty.evaluate_nonconstant_terms(Fr::one()), Fr::zero());
+    let normalized = OmittedConstantPoly::from_q_coefficients(vec![
+        Fr::from_u64(11),
+        Fr::from_u64(2),
+        Fr::from_u64(3),
+        Fr::zero(),
+    ]);
+    assert_eq!(normalized.degree(), 3);
+    assert_eq!(normalized.coefficients()[2], Fr::zero());
+    assert_eq!(normalized.nonconstant_term_sum_at_one(), Fr::from_u64(5));
+    assert_eq!(
+        normalized.evaluate_nonconstant_terms(Fr::zero()),
+        Fr::zero()
+    );
+    assert_eq!(
+        normalized.evaluate_nonconstant_terms(Fr::one()),
+        Fr::from_u64(5)
+    );
+    assert_eq!(
+        normalized.evaluate_nonconstant_terms(Fr::from_u64(2)),
+        Fr::from_u64(16)
+    );
+}
 
 /// Lagrange interpolation recovers the original polynomial at domain points.
 #[test]
