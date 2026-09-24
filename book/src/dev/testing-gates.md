@@ -27,6 +27,13 @@ enables `jolt`'s `guest-std` feature, postcard-encoded inputs that keep the
 trace under the row's padded bound (2^16 by default), and the postcard-encoded
 output computed natively in the test.
 
+## Tamper rejection phases
+
+The tamper harness asserts *where* a rejection fires: each manifest target in
+`jolt-verifier`'s tamper manifest documents the verifier phase that is its
+last line of defense, and `assert_verifier_fixture_tamper_rejects` fails if
+the observed rejection maps to a later phase than documented.
+
 ## Fiat-Shamir soundness
 
 The `fs-obligations` and `fs-attacks-smoke` jobs protect the Fiat-Shamir
