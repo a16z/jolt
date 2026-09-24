@@ -52,6 +52,11 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily until the
 /// fourth bind materializes dense.
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField, S: allocative::Allocative")
+)]
 pub(crate) enum LazyFoldedRa<F: JoltField, S> {
     /// Fewer than four binds: per-polynomial branch scale tables (the base
     /// table pre-scaled by each bound-bit pattern's eq weight), flattened
@@ -68,17 +73,6 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
 }
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
-    #[cfg(feature = "allocative")]
-    pub(crate) fn heap_bytes(&self, source_heap_bytes: impl FnOnce(&S) -> usize) -> usize {
-        use crate::backend::{nested_vec_heap_bytes, polys_heap_bytes};
-        match self {
-            Self::Lazy { tables, source, .. } => {
-                nested_vec_heap_bytes(tables) + source_heap_bytes(source)
-            }
-            Self::Dense(polys) => polys_heap_bytes(polys),
-        }
-    }
-
     /// One scale table per selector polynomial, in polynomial order.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
         debug_assert_eq!(tables.len(), source.num_polys());
@@ -154,8 +148,8 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// for the first three binds, materialize dense (and drop the source)
-    /// at the fourth, plain multilinear binds after.
+    /// until the fourth bind materializes dense (and drops the source), then
+    /// use plain multilinear binds.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
@@ -171,7 +165,13 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                         source,
                     }
                 } else {
-                    Self::Dense(materialize(&tables, &source, width * 2))
+                    let log_t = source.cycles().ilog2() as usize;
+                    let dense = Self::Dense(materialize(&tables, &source, width * 2));
+                    // Return branch tables and the final shared index handle.
+                    drop(tables);
+                    drop(source);
+                    crate::mem::purge_retained_memory(log_t);
+                    dense
                 }
             }
             Self::Dense(mut polys) => {

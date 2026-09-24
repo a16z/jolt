@@ -47,7 +47,7 @@ impl StreamingCommitment for crate::DoryScheme {
     }
 
     /// Commits one full row of the polynomial as `MSM(g1_bases[..chunk.len()], chunk)`,
-    /// matching the per-row work in [`DoryScheme::commit`](crate::DoryScheme::commit)'s
+    /// matching the per-row work in [`jolt_openings::CommitmentScheme::commit`]'s
     /// dense path. Caller must feed every row at the same chunk width.
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_feed")]
     fn feed(partial: &mut Self::PartialCommitment, chunk: &[Fr], setup: &Self::ProverSetup) {
@@ -70,7 +70,7 @@ impl StreamingCommitment for crate::DoryScheme {
     }
 
     /// Aggregates row commitments into the final tier-2 commitment, matching
-    /// [`DoryScheme::commit`](crate::DoryScheme::commit). Asserts that the
+    /// [`jolt_openings::CommitmentScheme::commit`]. Asserts that the
     /// streamed row count is a power of two (the layout `DoryScheme::commit`
     /// produces).
     #[tracing::instrument(skip_all, name = "DoryScheme::stream_finish")]

@@ -9,7 +9,8 @@ use jolt_program::execution::{
     RamWrite as ProgramRamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError,
     TraceInputs, TraceOutput, TraceRow,
 };
-use jolt_riscv::JoltInstructionRow;
+use jolt_program::preprocess::BytecodePreprocessing;
+use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
 use rayon::prelude::*;
 
 use common::jolt_device::JoltDevice;
@@ -18,6 +19,7 @@ use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
 use crate::instruction::{Cycle, RAMAccess};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
+use crate::trace_row::{cycle_to_trace_row, CycleConversionError};
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
@@ -34,16 +36,35 @@ impl TracerBackend {
             elf_path: Some(elf_path),
         }
     }
-}
 
-impl ExecutionBackend for TracerBackend {
-    type Trace = OwnedTrace;
-
-    fn trace(
+    /// Executes the program and builds proof rows directly, without first
+    /// allocating the wider execution rows.
+    pub fn trace_compact(
         &mut self,
         program: &JoltProgram,
         inputs: TraceInputs,
-    ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+        bytecode: &BytecodePreprocessing,
+    ) -> Result<TraceOutput<Arc<Vec<JoltTraceRow>>>, CompactTraceError> {
+        let execution = self.trace_execution(program, inputs)?;
+        let mut rows = collect_rows(execution.cycles, |cycle| {
+            cycle_to_trace_row(&cycle, bytecode)
+        })?;
+        while rows.last() == Some(&JoltTraceRow::default()) {
+            rows.pop();
+        }
+        Ok(TraceOutput::new(
+            Arc::new(rows),
+            execution.device,
+            Some(execution.final_memory),
+            Some(execution.advice_tape),
+        ))
+    }
+
+    fn trace_execution(
+        &self,
+        program: &JoltProgram,
+        inputs: TraceInputs,
+    ) -> Result<TraceExecution, TraceError> {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
@@ -57,22 +78,61 @@ impl ExecutionBackend for TracerBackend {
             &inputs.memory_config,
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
+        Ok(TraceExecution {
+            cycles,
+            final_memory: MemoryImage {
+                bytes: final_memory.materialized_nonzero_bytes(),
+            },
+            device,
+            advice_tape: advice_tape.into_bytes(),
+        })
+    }
+}
 
-        let rows = rows_from_cycles(cycles)?;
+#[derive(Debug, thiserror::Error)]
+pub enum CompactTraceError {
+    #[error(transparent)]
+    Trace(#[from] TraceError),
+    #[error(transparent)]
+    Row(#[from] CycleConversionError),
+}
+
+struct TraceExecution {
+    cycles: Vec<Cycle>,
+    final_memory: MemoryImage,
+    device: JoltDevice,
+    advice_tape: Vec<u8>,
+}
+
+impl ExecutionBackend for TracerBackend {
+    type Trace = OwnedTrace;
+
+    fn trace(
+        &mut self,
+        program: &JoltProgram,
+        inputs: TraceInputs,
+    ) -> Result<TraceOutput<Self::Trace>, TraceError> {
+        let execution = self.trace_execution(program, inputs)?;
+        let rows = collect_rows(execution.cycles, trace_row_from_cycle)?;
         Ok(TraceOutput::new(
             OwnedTrace::new(rows),
-            device,
-            Some(MemoryImage {
-                bytes: final_memory.materialized_nonzero_bytes(),
-            }),
-            Some(advice_tape.into_bytes()),
+            execution.device,
+            Some(execution.final_memory),
+            Some(execution.advice_tape),
         ))
     }
 }
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-fn rows_from_cycles(cycles: Vec<Cycle>) -> Result<Vec<TraceRow>, TraceError> {
+fn collect_rows<R, E>(
+    cycles: Vec<Cycle>,
+    convert: impl Fn(Cycle) -> Result<R, E> + Sync,
+) -> Result<Vec<R>, E>
+where
+    R: Default + Send,
+    E: Send + Sync,
+{
     let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
     let _span = tracing::info_span!(
         "trace_rows_from_cycles",
@@ -85,7 +145,7 @@ fn rows_from_cycles(cycles: Vec<Cycle>) -> Result<Vec<TraceRow>, TraceError> {
     )
     .entered();
     if !parallel {
-        return cycles.into_iter().map(trace_row_from_cycle).collect();
+        return cycles.into_iter().map(convert).collect();
     }
 
     // Rayon's fallible collector creates temporary shard vectors. Capturing the
@@ -93,11 +153,11 @@ fn rows_from_cycles(cycles: Vec<Cycle>) -> Result<Vec<TraceRow>, TraceError> {
     let error = OnceLock::new();
     let rows = cycles
         .into_par_iter()
-        .map(|cycle| match trace_row_from_cycle(cycle) {
+        .map(|cycle| match convert(cycle) {
             Ok(row) => row,
             Err(worker_error) => {
                 let _ = error.set(worker_error);
-                TraceRow::default()
+                R::default()
             }
         })
         .collect();
@@ -295,13 +355,18 @@ impl ChunkedExecutionBackend for TracerBackend {
 }
 
 fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
-    Ok(TraceRow {
-        instruction: jolt_instruction_row(&cycle)?,
-        registers: register_state(&cycle),
-        ram_access: cycle.ram_access().into(),
-        #[cfg(feature = "field-inline")]
-        field_inline: cycle.field_inline_trace().map(Into::into),
-    })
+    let row = TraceRow::new(
+        jolt_instruction_row(&cycle)?,
+        register_state(&cycle),
+        cycle.ram_access().into(),
+    )?;
+    #[cfg(feature = "field-inline")]
+    let row = {
+        let mut row = row;
+        row.field_inline = cycle.field_inline_trace().map(Into::into);
+        row
+    };
+    Ok(row)
 }
 
 fn jolt_instruction_row(cycle: &Cycle) -> Result<JoltInstructionRow, TraceError> {
@@ -500,11 +565,60 @@ mod chunked_tests {
 #[cfg(test)]
 #[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
+    use super::*;
+    use crate::emulator::elf_analyzer::test_elf::build_elf64;
+    use common::jolt_device::MemoryConfig;
+    use jolt_program::execution::{TraceError, TraceInputs};
+
     #[cfg(feature = "field-inline")]
     use crate::{
         emulator::{cpu::Cpu, default_terminal::DefaultTerminal},
         instruction::Instruction,
     };
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test-only assertions")]
+    fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
+        // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
+        let elf = build_elf64(&[0x0010_0093, 0x0020_8113, 0x0000_006f], &[]);
+        let program = JoltProgram::from_elf_bytes(elf.clone());
+        let inputs = TraceInputs {
+            memory_config: MemoryConfig {
+                program_size: Some(elf.len() as u64),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut backend = TracerBackend::new();
+        let output = backend.trace(&program, inputs).expect("trace succeeds");
+
+        let rows = output.trace.rows();
+        assert!(rows.len() >= 3, "two ADDIs plus the jump expansion");
+        // addi x1, x0, 1
+        let rd = rows[0].registers().rd.expect("first ADDI writes rd");
+        assert_eq!((rd.register, rd.pre_value, rd.post_value), (1, 0, 1));
+        // addi x2, x1, 2 reads the value the first ADDI wrote
+        let rs1 = rows[1].registers().rs1.expect("second ADDI reads rs1");
+        assert_eq!((rs1.register, rs1.value), (1, 1));
+        let rd = rows[1].registers().rd.expect("second ADDI writes rd");
+        assert_eq!((rd.register, rd.pre_value, rd.post_value), (2, 0, 3));
+
+        // The final memory image contains the loaded program bytes
+        let image = output.final_memory.expect("memory image present");
+        assert!(!image.bytes.is_empty());
+        assert!(!output.device.panic);
+    }
+
+    #[test]
+    fn tracer_backend_rejects_programs_without_elf_bytes() {
+        let program = JoltProgram::from_elf_bytes(Vec::new());
+        let mut backend = TracerBackend::with_elf_path(PathBuf::from("/nonexistent"));
+        assert!(matches!(
+            backend.trace(&program, TraceInputs::default()),
+            Err(TraceError::MissingElfBytes)
+        ));
+    }
     #[cfg(feature = "field-inline")]
     use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
     #[cfg(feature = "field-inline")]
@@ -535,10 +649,10 @@ mod tests {
         assert_eq!(trace.len(), 1);
 
         let row = super::trace_row_from_cycle(trace.remove(0)).unwrap();
-        assert_eq!(row.registers.rs1.unwrap().register, 5);
-        assert_eq!(row.registers.rs1.unwrap().value, 11);
-        assert!(row.registers.rs2.is_none());
-        assert!(row.registers.rd.is_none());
+        assert_eq!(row.rs1_read().unwrap().register, 5);
+        assert_eq!(row.rs1_read().unwrap().value, 11);
+        assert!(row.rs2_read().is_none());
+        assert!(row.rd_write().is_none());
         let field_trace = row.field_inline.unwrap();
         assert_eq!(field_trace.op, Some(FieldInlineOp::LoadFromX));
         assert_eq!(

@@ -8,19 +8,23 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::Arc;
 
+#[cfg(feature = "allocative")]
+use allocative::{Allocative, Key, Visitor};
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "allocative")]
+use jolt_poly::Polynomial;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
@@ -57,7 +61,7 @@ use jolt_sumcheck::RoundScheduler;
 
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
-use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+use crate::opening::{JointOpeningPolynomials, RamInitialOpeningEvaluation};
 use crate::uniskip::UniskipKernel;
 use crate::KernelError;
 
@@ -132,7 +136,8 @@ where
     pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
-    pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
+    pub spartan_product_uniskip:
+        Box<dyn UniskipKernel<F, ProductRemainder<F>, ProductUniskipInputClaims<F>>>,
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
@@ -143,7 +148,7 @@ where
     pub registers_claim_reduction: Box<dyn PrepareKernel<F, RegistersClaimReduction<F>>>,
     pub registers_read_write: Box<dyn PrepareKernel<F, RegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
-    pub advice_opening: Box<dyn AdviceOpeningEvaluation<F>>,
+    pub ram_initial_openings: Box<dyn RamInitialOpeningEvaluation<F>>,
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
@@ -181,15 +186,15 @@ where
     }
 }
 
-/// [`Allocative`](allocative::Allocative) when the `allocative` feature is
-/// on, vacuous otherwise. Everything stored in a [`ProofSession`] must be
-/// heap-measurable so the profile harness's per-stage flamegraphs can
-/// attribute the cross-stage carries — the dominant retained memory — rather
-/// than an opaque `Box<dyn Any>`.
+/// [`Allocative`] when the `allocative` feature is on, vacuous otherwise.
+/// Everything stored in a [`ProofSession`] must be heap-measurable so the
+/// profile harness's per-stage flamegraphs can attribute the cross-stage
+/// carries — the dominant retained memory — rather than an opaque
+/// `Box<dyn Any>`.
 #[cfg(feature = "allocative")]
-pub trait MaybeAllocative: allocative::Allocative {}
+pub trait MaybeAllocative: Allocative {}
 #[cfg(feature = "allocative")]
-impl<T: allocative::Allocative + ?Sized> MaybeAllocative for T {}
+impl<T: Allocative + ?Sized> MaybeAllocative for T {}
 /// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
 /// is on, vacuous otherwise.
 #[cfg(not(feature = "allocative"))]
@@ -203,7 +208,7 @@ impl<T: ?Sized> MaybeAllocative for T {}
 struct Carry {
     value: Box<dyn Any>,
     #[cfg(feature = "allocative")]
-    visit: fn(&dyn Any, &mut allocative::Visitor<'_>),
+    visit: fn(&dyn Any, &mut Visitor<'_>),
 }
 
 impl Carry {
@@ -219,53 +224,52 @@ impl Carry {
 /// Visits one carry's concrete value, keyed by its type name (the frame
 /// label in the rendered flamegraph).
 #[cfg(feature = "allocative")]
-fn visit_carry<T: Any + allocative::Allocative>(
-    value: &dyn Any,
-    visitor: &mut allocative::Visitor<'_>,
-) {
+fn visit_carry<T: Any + Allocative>(value: &dyn Any, visitor: &mut Visitor<'_>) {
     if let Some(value) = value.downcast_ref::<T>() {
-        visitor.visit_field(allocative::Key::new(std::any::type_name::<T>()), value);
+        visitor.visit_field(Key::new(std::any::type_name::<T>()), value);
     }
 }
 
-/// Allocator-reserved bytes behind a `Vec` of flat elements. Field elements
-/// carry no per-element heap (true of every production field), so parked
-/// kernels can size their tables arithmetically — no `F: Allocative` bound
-/// leaking into the generic reference impls that park them.
+/// Bytes an element table reserved, for element types that own no heap but
+/// carry no `Allocative` impl: the witness rows, selectors, opening ids, and
+/// prefix evaluations owned by jolt-claims, jolt-lookup-tables, and
+/// jolt-witness. Deriving `Allocative` across those crates to reach a handful
+/// of flat tables buys nothing the arithmetic does not.
+///
+/// Scalar tables need none of this — `F: JoltField` implies `F: Allocative`,
+/// so `Vec<F>` renders through the native impl.
 #[cfg(feature = "allocative")]
-pub(crate) fn vec_heap_bytes<T>(v: &Vec<T>) -> usize {
-    v.capacity() * size_of::<T>()
+pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor<'_>) {
+    const { assert!(!std::mem::needs_drop::<T>()) };
+    visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
 }
 
+/// [`visit_heap_free_elements`] for a table keyed by a foreign type.
+///
+/// Sized arithmetically from `capacity()`; the key's own bytes ride along
+/// with the tuple spine.
 #[cfg(feature = "allocative")]
-pub(crate) fn arc_vec_heap_bytes<T>(v: &Arc<Vec<T>>) -> usize {
-    size_of::<Vec<T>>() + v.capacity() * size_of::<T>()
-}
-
-/// [`vec_heap_bytes`] for a table-of-tables: the outer spine plus every
-/// inner reservation.
-#[cfg(feature = "allocative")]
-pub(crate) fn nested_vec_heap_bytes<T>(v: &Vec<Vec<T>>) -> usize {
-    v.capacity() * size_of::<Vec<T>>()
-        + v.iter()
-            .map(|inner| inner.capacity() * size_of::<T>())
-            .sum::<usize>()
-}
-
-/// Heap bytes behind a dense polynomial's evaluation table, by `len()` —
-/// [`Polynomial`](jolt_poly::Polynomial) exposes no capacity. Exact at the
-/// mid-stage snapshot (taken before any binding, when freshly built tables
-/// have `len == capacity`); undercounts the truncated slack of bound state.
-#[cfg(feature = "allocative")]
-pub(crate) fn poly_heap_bytes<T>(poly: &jolt_poly::Polynomial<T>) -> usize {
-    poly.len() * size_of::<T>()
-}
-
-/// [`poly_heap_bytes`] summed over a table list, plus the outer spine.
-#[cfg(feature = "allocative")]
-pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usize {
-    polys.capacity() * size_of::<jolt_poly::Polynomial<T>>()
-        + polys.iter().map(poly_heap_bytes).sum::<usize>()
+pub(crate) fn visit_keyed_polys<K, T>(
+    tables: &Vec<(K, Vec<Polynomial<T>>)>,
+    visitor: &mut Visitor<'_>,
+) {
+    visitor.visit_simple(
+        Key::new("spine"),
+        tables.capacity() * size_of::<(K, Vec<Polynomial<T>>)>(),
+    );
+    visitor.visit_simple(
+        Key::new("tables"),
+        tables
+            .iter()
+            .map(|(_, polys)| {
+                polys.capacity() * size_of::<Polynomial<T>>()
+                    + polys
+                        .iter()
+                        .map(|poly| poly.len() * size_of::<T>())
+                        .sum::<usize>()
+            })
+            .sum(),
+    );
 }
 
 /// Backend-owned state with proof lifetime, opaque to orchestration.
@@ -282,22 +286,9 @@ pub(crate) fn polys_heap_bytes<T>(polys: &Vec<jolt_poly::Polynomial<T>>) -> usiz
 #[derive(Default)]
 pub struct ProofSession {
     state: HashMap<TypeId, Carry>,
-    witness: Option<Box<dyn Any + Send + Sync>>,
 }
 
 impl ProofSession {
-    /// Retain the proof's witness plane for kernels whose state outlives
-    /// their `prepare` borrow.
-    pub fn set_witness<F: JoltField>(&mut self, witness: Arc<dyn JoltWitnessPlane<F>>) {
-        self.witness = Some(Box::new(witness));
-    }
-
-    /// The retained witness plane for `F`, when the proof was started from
-    /// an owned plane.
-    pub fn witness<F: JoltField>(&self) -> Option<&Arc<dyn JoltWitnessPlane<F>>> {
-        self.witness.as_ref()?.downcast_ref()
-    }
-
     /// The calling backend's private state, created by `init` on first
     /// access. `T` is the backend-private key: choose one type per backend
     /// family.
@@ -356,8 +347,8 @@ impl ProofSession {
 /// attribute the parked kernel tables — the dominant retained memory —
 /// keyed by their type names.
 #[cfg(feature = "allocative")]
-impl allocative::Allocative for ProofSession {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
+impl Allocative for ProofSession {
+    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         for carry in self.state.values() {
             (carry.visit)(carry.value.as_ref(), &mut visitor);

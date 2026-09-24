@@ -32,6 +32,11 @@ pub use error::ExpansionError;
 pub use grammar::{is_source_only, ExpandedInstructionSequence};
 pub use inline::{InlineExpansionBuilder, InlineOperands, InlineRegister, Value};
 
+#[doc(hidden)]
+pub mod asm_support {
+    pub use jolt_riscv::{JoltInstructionKind as Kind, SourceInstructionKind as SourceKind};
+}
+
 use allocator::{
     mcause_register, mepc_register, mstatus_register, mtval_register, reservation_d_register,
     reservation_w_register, trap_handler_register, virtual_register_for_csr,
@@ -186,10 +191,10 @@ fn final_rows_to_instructions(
 /// final bytecode semantics.
 ///
 /// Each callee returns a symbolic sequence, not concrete rows. During
-/// materialization, `emit_*` rows become final bytecode directly while
-/// `expand_*` rows are routed back through this dispatcher. That recursive
-/// route is intentional: common substeps such as narrow loads, word shifts, and
-/// virtual assertions keep one definition of their own lowering contract.
+/// materialization, target instructions become final bytecode directly while
+/// source-only instructions are routed back through this dispatcher. That
+/// recursive route lets common substeps such as narrow loads, word shifts, and
+/// virtual assertions keep one lowering contract.
 #[expect(
     clippy::wildcard_enum_match_arm,
     reason = "fail-closed: instructions without a registered expansion error out rather than silently passing through"

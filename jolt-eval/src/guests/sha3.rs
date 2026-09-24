@@ -14,6 +14,9 @@ impl GuestConfig for Sha3 {
     fn package(&self) -> &str {
         "sha3-guest"
     }
+    fn func(&self) -> Option<&str> {
+        Some("sha3")
+    }
     fn label(&self) -> String {
         format!("sha3_{}", self.0)
     }

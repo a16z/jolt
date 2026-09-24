@@ -3,7 +3,6 @@
 //! the complete [`JoltProof`].
 
 use core::any::Any;
-use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
 use allocative::FlameGraphBuilder;
@@ -48,12 +47,8 @@ use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// Per-stage heap snapshots for the profile harness: inert unless the
-/// harness opted in via `jolt_profiling::set_flamegraph_prefix`. The stage's
-/// clear-output carrier is recovered by downcast to the concrete BN254
-/// field (the only production field), so `prove` needs no `Allocative`
-/// bound on `F`; the proof session is visited shallowly (its carries are
-/// `Box<dyn Any>` — see the `ProofSession` impl in `jolt-kernels`).
+/// Write a profile-only heap snapshot. Downcasting avoids an `Allocative`
+/// bound on the generic prover field.
 #[cfg(feature = "allocative")]
 fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn Any) {
     use jolt_field::Fr;
@@ -86,14 +81,19 @@ fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn Any) {
 #[cfg(not(feature = "allocative"))]
 fn stage_flamegraph(_stage: &str, _session: &ProofSession, _output: &dyn Any) {}
 
+/// Purge allocator-retained pages after a stage drops its temporaries.
+fn stage_boundary(stage: &str, log_t: usize) {
+    let _span = tracing::info_span!("release_retained_memory", stage).entered();
+    jolt_kernels::mem::purge_retained_memory(log_t);
+}
+
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
 /// backend session, and assemble the [`JoltProof`] in the compiled proof
 /// mode — clear claims without the `zk` feature, the BlindFold tail with it.
 ///
 /// `config` is the derived proof shape (its five wire fields are copied into
-/// the proof verbatim), `witness` the owned trace-backed provider the kernels
-/// read and retain for deferred extraction, and `public_io` the Fiat-Shamir
-/// preamble's program I/O.
+/// the proof verbatim), `witness` the trace-backed provider the kernels read,
+/// and `public_io` the Fiat-Shamir preamble's program I/O.
 ///
 /// `trusted_advice` is the externally supplied (preprocessing-time)
 /// trusted-advice commitment and opening hint; pass it exactly when the guest
@@ -114,7 +114,7 @@ pub fn prove<F, PCS, VC, T, W>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
-    witness: Arc<W>,
+    witness: &W,
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
@@ -126,36 +126,36 @@ where
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F> + 'static,
+    W: JoltWitnessPlane<F>,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let mut session = backend.begin_proof();
-    let session_witness: Arc<dyn JoltWitnessPlane<F>> = witness.clone();
-    session.set_witness(session_witness);
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
         backend,
         &mut session,
         preprocessing,
         config,
         trusted_advice,
-        witness.as_ref(),
+        witness,
         public_io,
     )?;
     stage_flamegraph("stage0", &session, &());
+    let log_t = config.trace_length.ilog2() as usize;
+    stage_boundary("stage0", log_t);
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
-    let log_t = config.trace_length.ilog2() as usize;
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(
         backend,
         &mut session,
         &mode,
         log_t,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage1", &session, &stage1.clear_output);
+    stage_boundary("stage1", log_t);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -163,10 +163,11 @@ where
         config,
         public_io,
         &stage1.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage2", &session, &stage2.clear_output);
+    stage_boundary("stage2", log_t);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -174,10 +175,11 @@ where
         config,
         &stage1.clear_output,
         &stage2.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage3", &session, &stage3.clear_output);
+    stage_boundary("stage3", log_t);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -187,10 +189,11 @@ where
         preprocessing,
         &stage2.clear_output,
         &stage3.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage4", &session, &stage4.clear_output);
+    stage_boundary("stage4", log_t);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -200,10 +203,11 @@ where
         preprocessing,
         &stage2.clear_output,
         &stage4.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage5", &session, &stage5.clear_output);
+    stage_boundary("stage5", log_t);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -216,10 +220,11 @@ where
         &stage3.clear_output,
         &stage4.clear_output,
         &stage5.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage6a", &session, &stage6a.clear_output);
+    stage_boundary("stage6a", log_t);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -233,10 +238,11 @@ where
         &stage4.clear_output,
         &stage5.clear_output,
         &stage6a.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage6b", &session, &stage6b.clear_output);
+    stage_boundary("stage6b", log_t);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -246,10 +252,11 @@ where
         preprocessing,
         &stage4.clear_output,
         &stage6b.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage7", &session, &stage7.clear_output);
+    stage_boundary("stage7", log_t);
     let stage8 = prove_stage8::<F, PCS, VC, T>(
         backend,
         &mut session,
@@ -259,13 +266,14 @@ where
         &stage0.commitments,
         stage0.untrusted_advice_commitment.as_ref(),
         trusted_advice.map(|trusted| &trusted.commitment),
-        &stage0.hints,
+        stage0.hints,
         &stage6b.clear_output,
         &stage7.clear_output,
-        witness.as_ref(),
+        witness,
         &mut transcript,
     )?;
     stage_flamegraph("stage8", &session, &());
+    stage_boundary("stage8", log_t);
 
     let stages = JoltStageProofs {
         stage1_uni_skip_first_round_proof: stage1.uniskip_proof,

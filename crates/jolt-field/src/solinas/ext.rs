@@ -20,7 +20,7 @@
 )]
 
 use crate::solinas::pseudo_mersenne_modulus;
-use crate::{Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring};
+use crate::{CanonicalBytes, Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring};
 use num_traits::Zero;
 use rand_core::RngCore;
 use std::marker::PhantomData;
@@ -118,6 +118,18 @@ impl<F: Field, C: Ext2Config<F>> std::fmt::Debug for FpExt2<F, C> {
 impl<F: Field, C: Ext2Config<F>> std::fmt::Display for FpExt2<F, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({}, {})", self.coeffs[0], self.coeffs[1])
+    }
+}
+
+/// Encodes coefficients in basis order as `c0 || c1`.
+impl<F: Field + CanonicalBytes, C: Ext2Config<F>> CanonicalBytes for FpExt2<F, C> {
+    const NUM_BYTES: usize = F::NUM_BYTES * 2;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), Self::NUM_BYTES);
+        for (coefficient, bytes) in self.coeffs.iter().zip(out.chunks_exact_mut(F::NUM_BYTES)) {
+            coefficient.to_bytes_le(bytes);
+        }
     }
 }
 
@@ -267,6 +279,18 @@ impl<F: Field> std::fmt::Display for FpExt4<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let [c0, c1, c2, c3] = self.coeffs;
         write!(f, "({c0}, {c1}, {c2}, {c3})")
+    }
+}
+
+/// Encodes coefficients in basis order as `c0 || c1 || c2 || c3`.
+impl<F: PseudoMersenne> CanonicalBytes for FpExt4<F> {
+    const NUM_BYTES: usize = F::NUM_BYTES * 4;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), Self::NUM_BYTES);
+        for (coefficient, bytes) in self.coeffs.iter().zip(out.chunks_exact_mut(F::NUM_BYTES)) {
+            coefficient.to_bytes_le(bytes);
+        }
     }
 }
 
@@ -552,14 +576,17 @@ impl<F: PseudoMersenne> ExtField<F> for F {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 1);
-        coeffs[0]
+    fn from_base_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        f(0)
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        vec![*self]
+    fn base_coefficient(&self, index: usize) -> F {
+        assert_eq!(index, 0);
+        *self
     }
 
     /// Frobenius is the identity on the prime field.
@@ -583,14 +610,16 @@ impl<F: PseudoMersenne, C: Ext2Config<F>> ExtField<F> for FpExt2<F, C> {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 2);
-        Self::new(coeffs[0], coeffs[1])
+    fn from_base_fn<G>(mut f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(f(0), f(1))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 
     #[inline]
@@ -613,14 +642,16 @@ impl<F: PseudoMersenne> ExtField<F> for FpExt4<F> {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 4);
-        Self::new([coeffs[0], coeffs[1], coeffs[2], coeffs[3]])
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(std::array::from_fn(f))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 
     #[inline]
@@ -643,14 +674,16 @@ impl<F: PseudoMersenne> ExtField<F> for FpExt8<F> {
     }
 
     #[inline]
-    fn from_base_slice(coeffs: &[F]) -> Self {
-        assert_eq!(coeffs.len(), 8);
-        Self::new(std::array::from_fn(|i| coeffs[i]))
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F,
+    {
+        Self::new(std::array::from_fn(f))
     }
 
     #[inline]
-    fn to_base_vec(&self) -> Vec<F> {
-        self.coeffs.to_vec()
+    fn base_coefficient(&self, index: usize) -> F {
+        self.coeffs[index]
     }
 
     #[inline]

@@ -15,7 +15,7 @@
 //!   domain, so the per-cycle hot index is a chunk of that cycle's lookup
 //!   index / mapped PC / remapped RAM address. Both phases gather through
 //!   [`RaChunkSelector`]s over the packed stage-5 rows
-//!   ([`SharedInstructionRows`], reclaimed from the [`ProofSession`] or
+//!   (`SharedInstructionRows`, reclaimed from the [`ProofSession`] or
 //!   collected in one streaming pass) and never materialize the `K × T`
 //!   grids the naive tier's `oracle_table` walks, nor per-polynomial index
 //!   columns (legacy `RaIndices`).
@@ -30,8 +30,14 @@
 //!   `x_i(j) = eq(r_address)[hot_i(j)]` is a lookup into a `K`-sized table
 //!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
 //!   batching multiply in the round loop (legacy `SharedRaPolynomials`
-//!   pre-scaling), served by the shared [`LazyFoldedRa`] state machine —
+//!   pre-scaling), served by the shared `LazyFoldedRa` state machine:
 //!   index-encoded for the first four binds, dense at `T/16` after.
+//! - **Categorical startup products.** After address binding, values still
+//!   come from the address table (or zero on cold RAM rows). In the first
+//!   two cycle rounds, sufficiently small alphabets let us precompute the
+//!   quadratic coefficients once per category pair instead of multiplying
+//!   each cycle's gathered values. Large alphabets and small traces retain
+//!   the original deferred-product loop.
 //! - **Split-eq / Gruen round messages (cycle phase).** Only the constant
 //!   and leading coefficients of the inner quadratic are accumulated, in
 //!   deferred-reduction lanes at every level (per-row products, per-block
@@ -56,11 +62,17 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
-use jolt_claims::protocols::jolt::{
-    BooleanityPublic, JoltDerivedId, JoltOpeningId, JoltRelationId,
+use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::relations::booleanity::{
+    lattice_booleanity_output_openings, LatticeBooleanityDimensions,
 };
-use jolt_claims::{OutputClaims, Source, SymbolicSumcheck};
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::BalancedIncChunking;
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
+use jolt_claims::OutputClaims;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
@@ -74,6 +86,8 @@ use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseChallenges, BooleanityAddressPhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
+#[cfg(feature = "akita")]
+use jolt_witness::witnesses::BalancedIncColumn;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
@@ -81,7 +95,7 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{gamma_power_pairs, gamma_powers, pin_derived_term_if_derived, RoundProgress};
+use super::support::{gamma_power_pairs, pin_derived_term_if_derived, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -93,20 +107,68 @@ enum ColumnSelector {
     Instruction(RaChunkSelector),
     Bytecode(RaChunkSelector),
     Ram(RaChunkSelector),
+    #[cfg(feature = "akita")]
+    UnsignedInc(BalancedIncColumn),
 }
 
 impl ColumnSelector {
+    /// The selected row at `row`; `None` is a cold cycle. Mirrors the
+    /// trace oracle's grid materializers (`materialize_one_hot`), so
+    /// gathered indices and the reference tier's dense grids describe the
+    /// same one-hot polynomials.
+    #[inline]
+    fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
+        match self {
+            Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index())),
+            Self::Bytecode(selector) => Some(selector.chunk_usize(row.bytecode_pc())),
+            Self::Ram(selector) => row
+                .remapped_ram_address()
+                .map(|address| selector.chunk_usize(address as usize)),
+            #[cfg(feature = "akita")]
+            Self::UnsignedInc(column) => Some(row.fused_inc_row(*column)),
+        }
+    }
+}
+
+struct BooleanityColumns {
+    openings: Vec<JoltOpeningId>,
+    selectors: Vec<ColumnSelector>,
+}
+
+impl BooleanityColumns {
+    fn openings<F: JoltField>(
+        dimensions: BooleanityDimensions,
+    ) -> Result<Vec<JoltOpeningId>, KernelError<F>> {
+        #[cfg(not(feature = "akita"))]
+        {
+            Ok(dimensions
+                .layout
+                .openings(JoltRelationId::Booleanity)
+                .collect())
+        }
+        #[cfg(feature = "akita")]
+        {
+            let lattice_dimensions =
+                LatticeBooleanityDimensions::new(dimensions).map_err(|_| {
+                    KernelError::InvariantViolation {
+                        reason: "the packed shape requires a lattice-compatible chunk width",
+                    }
+                })?;
+            Ok(lattice_booleanity_output_openings(lattice_dimensions))
+        }
+    }
+
     /// The layout's chunk selectors, in canonical polynomial order, with the
-    /// witness shapes validated up front (mirroring the reference kernel's
-    /// size checks).
-    fn for_layout<F: JoltField>(
+    /// witness shapes validated up front.
+    fn new<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         dimensions: BooleanityDimensions,
-    ) -> Result<Vec<ColumnSelector>, KernelError<F>> {
+    ) -> Result<Self, KernelError<F>> {
         let log_t = dimensions.log_t;
         let log_k_chunk = dimensions.log_k_chunk;
         let layout = dimensions.layout;
-        for opening in layout.openings(JoltRelationId::Booleanity) {
+        let openings = Self::openings(dimensions)?;
+        for opening in &openings {
             let shape = witness.shape(opening.polynomial_id())?;
             if shape.log_rows != log_k_chunk + log_t {
                 return Err(KernelError::TableSizeMismatch {
@@ -116,7 +178,7 @@ impl ColumnSelector {
                 });
             }
         }
-        layout
+        let selectors = layout
             .polynomials()
             .map(|polynomial| {
                 Ok(match polynomial {
@@ -131,22 +193,31 @@ impl ColumnSelector {
                     }
                 })
             })
-            .collect()
-    }
-
-    /// The hot chunk index at `row`; `None` is a cold cycle. Mirrors the
-    /// trace oracle's grid materializers (`materialize_one_hot`), so
-    /// gathered indices and the reference tier's dense grids describe the
-    /// same one-hot polynomials.
-    #[inline]
-    fn index(&self, row: &InstructionCycleRow) -> Option<usize> {
-        match self {
-            Self::Instruction(selector) => Some(selector.chunk_u128(row.lookup_index)),
-            Self::Bytecode(selector) => row.mapped_pc().map(|pc| selector.chunk_usize(pc)),
-            Self::Ram(selector) => row
-                .remapped_ram_address()
-                .map(|address| selector.chunk_usize(address as usize)),
+            .collect::<Result<Vec<_>, KernelError<F>>>()?;
+        #[cfg(feature = "akita")]
+        let mut selectors = selectors;
+        #[cfg(feature = "akita")]
+        {
+            let chunking = BalancedIncChunking::new(log_k_chunk).map_err(|_| {
+                KernelError::InvariantViolation {
+                    reason: "the packed shape requires a lattice-compatible chunk width",
+                }
+            })?;
+            selectors.extend((0..chunking.chunk_count()).map(|index| {
+                ColumnSelector::UnsignedInc(BalancedIncColumn::Digit {
+                    width: log_k_chunk,
+                    index,
+                })
+            }));
+            selectors.push(ColumnSelector::UnsignedInc(BalancedIncColumn::Carry {
+                width: log_k_chunk,
+            }));
         }
+        debug_assert_eq!(openings.len(), selectors.len());
+        Ok(Self {
+            openings,
+            selectors,
+        })
     }
 }
 
@@ -263,11 +334,11 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
             });
         }
 
-        let selectors = ColumnSelector::for_layout(witness, dimensions)?;
+        let columns = BooleanityColumns::new(witness, dimensions)?;
         let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
         let masses = cycle_pushforward(
             &rows,
-            &selectors,
+            &columns.selectors,
             1usize << dimensions.log_k_chunk,
             &reference_cycle,
         );
@@ -286,6 +357,7 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
 /// plain multilinear; the squared term binds `B_i[k]` (same initial masses)
 /// with squared weights, because binding squares the one-hot's accumulated
 /// eq factor. The initial `A = B` makes the input claim exactly zero.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityAddressKernel<F: JoltField> {
     progress: RoundProgress,
     /// Per checked polynomial, its `γ^{2i}` batching weight, in the layout's
@@ -297,22 +369,17 @@ struct OptimizedBooleanityAddressKernel<F: JoltField> {
     eq_address: Polynomial<F>,
 }
 
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedBooleanityAddressKernel, |kernel| {
-    use crate::backend::{
-        nested_vec_heap_bytes, poly_heap_bytes, polys_heap_bytes, vec_heap_bytes,
-    };
-    vec_heap_bytes(&kernel.gamma_weights)
-        + polys_heap_bytes(&kernel.linear)
-        + nested_vec_heap_bytes(&kernel.squared)
-        + poly_heap_bytes(&kernel.eq_address)
-});
-
 impl<F: JoltField> OptimizedBooleanityAddressKernel<F> {
     fn new(rounds: usize, gamma: F, reference_address: &[F], masses: Vec<Vec<F>>) -> Self {
         let linear: Vec<Polynomial<F>> = masses.into_iter().map(Polynomial::new).collect();
         let squared: Vec<Vec<F>> = linear.iter().map(|table| table.evals().to_vec()).collect();
-        let gamma_weights = gamma_powers(gamma * gamma, linear.len());
+        let mut gamma_weights = Vec::with_capacity(linear.len());
+        let mut weight = F::one();
+        let gamma_sqr = gamma * gamma;
+        for _ in 0..linear.len() {
+            gamma_weights.push(weight);
+            weight *= gamma_sqr;
+        }
         Self {
             progress: RoundProgress::new(rounds),
             gamma_weights,
@@ -441,7 +508,6 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = Booleanity<F>>>, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
-        let layout = dimensions.layout;
         let r_address = relation.r_address();
         let reference_address = relation.reference_address();
         let reference_cycle = relation.reference_cycle();
@@ -450,31 +516,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
                 reason: "booleanity cycle-phase point lengths disagree with the dimensions",
             });
         }
-        // Fail closed on relation variants whose summand checks more
-        // openings than the base RA layout (the akita lattice cycle phase):
-        // this kernel serves exactly the layout's members.
-        let expression = relation.symbolic().output_expression::<F>();
-        let mut leaf_openings: Vec<JoltOpeningId> = expression
-            .terms
-            .iter()
-            .flat_map(|term| &term.factors)
-            .filter_map(|factor| match factor {
-                Source::Opening(id) => Some(*id),
-                _ => None,
-            })
-            .collect();
-        leaf_openings.sort_unstable();
-        leaf_openings.dedup();
-        let mut layout_openings: Vec<JoltOpeningId> =
-            layout.openings(JoltRelationId::Booleanity).collect();
-        layout_openings.sort_unstable();
-        if leaf_openings != layout_openings {
-            return Err(KernelError::Unsupported {
-                reason: "optimized booleanity cycle kernel serves the base RA layout only",
-            });
-        }
-
-        let selectors = ColumnSelector::for_layout(witness, dimensions)?;
+        let columns = BooleanityColumns::new(witness, dimensions)?;
         let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
 
         // The fixed address eq factor of the `EqAddressCycle` public; rides
@@ -488,7 +530,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
         let eq_address = eq_table(r_address);
         let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
             inputs.challenges.gamma,
-            layout.total(),
+            columns.selectors.len(),
             "booleanity batching gamma must be invertible",
         )?;
         let tables: Vec<Vec<F>> = gamma_powers
@@ -503,18 +545,26 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
                 BindingOrder::LowToHigh,
                 Some(address_scalar),
             ),
-            tables: LazyFoldedRa::new(tables, BooleanityChunks { rows, selectors }),
+            tables: LazyFoldedRa::new(
+                tables,
+                BooleanityChunks {
+                    rows,
+                    selectors: columns.selectors,
+                },
+            ),
             gamma_powers,
             gamma_powers_inv,
-            layout,
+            openings: columns.openings,
         }))
     }
 }
 
 /// Lazy-RA index source over the packed stage-5 rows: polynomial `i`'s hot
 /// chunk at cycle `j`, through the layout's selectors.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BooleanityChunks {
     rows: Arc<Vec<InstructionCycleRow>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<ColumnSelector>,
 }
 
@@ -533,6 +583,7 @@ impl ChunkIndexSource for BooleanityChunks {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
     progress: RoundProgress,
     /// Split-eq over the reference cycle, scaled by
@@ -544,25 +595,132 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     tables: LazyFoldedRa<F, BooleanityChunks>,
     gamma_powers: Vec<F>,
     gamma_powers_inv: Vec<F>,
-    layout: JoltRaPolynomialLayout,
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
+    openings: Vec<JoltOpeningId>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OptimizedBooleanityCycleKernel, |kernel| {
-    use crate::backend::{arc_vec_heap_bytes, vec_heap_bytes};
-    kernel.eq.heap_bytes()
-        + kernel.tables.heap_bytes(|source| {
-            arc_vec_heap_bytes(&source.rows) + vec_heap_bytes(&source.selectors)
-        })
-        + vec_heap_bytes(&kernel.gamma_powers)
-        + vec_heap_bytes(&kernel.gamma_powers_inv)
-});
 
 impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     fn bind(&mut self, challenge: F) {
         self.eq.bind(challenge);
         self.tables.bind(challenge);
         self.progress.advance();
+    }
+}
+
+/// After address binding, every unbound value comes from a small alphabet.
+/// Cache the two nonlinear coefficients over that alphabet, retaining the
+/// existing exact split-equality fold. The extra category is a cold RAM row;
+/// it must remain distinct from hot address zero, including after a bind.
+struct CategoricalProducts<'a, F: JoltField, S> {
+    source: &'a S,
+    width: usize,
+    radix: usize,
+    states: usize,
+    products: Vec<(Vec<F>, Vec<F>)>,
+}
+
+impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
+    fn fits_budget(width: usize, addresses: usize, cycles: usize) -> bool {
+        if width != 1 && width != 2 {
+            return false;
+        }
+        let Some(states) = addresses
+            .checked_add(1)
+            .and_then(|radix| radix.checked_pow(width as u32))
+            .filter(|states| *states <= 289)
+        else {
+            return false;
+        };
+        // Cached products, construction temporary and lazy branches fit
+        // within the existing T/16 dense allocation budget per family.
+        states * (states + 2) + width * addresses <= cycles / 16
+    }
+
+    fn new(tables: &'a [Vec<F>], width: usize, source: &'a S, rho: &[F]) -> Self {
+        let addresses = tables[0].len() / width;
+        let radix = addresses + 1;
+        let states = radix.pow(width as u32);
+        let products = tables
+            .iter()
+            .zip(rho)
+            .map(|(table, rho)| {
+                let values: Vec<F> = (0..states)
+                    .map(|mut state| {
+                        let mut value = F::zero();
+                        for branch in 0..width {
+                            let address = state % radix;
+                            state /= radix;
+                            if address < addresses {
+                                value += table[branch * addresses + address];
+                            }
+                        }
+                        value
+                    })
+                    .collect();
+                let constants = values.iter().map(|v| *v * (*v - *rho)).collect();
+                let mut squares = Vec::with_capacity(states * states);
+                for lo in &values {
+                    squares.extend(values.iter().map(|hi| (*hi - *lo).square()));
+                }
+                (constants, squares)
+            })
+            .collect();
+        Self {
+            source,
+            width,
+            radix,
+            states,
+            products,
+        }
+    }
+
+    #[inline]
+    fn state(&self, family: usize, row: usize) -> usize {
+        let first = self
+            .source
+            .index(family, row * self.width)
+            .unwrap_or(self.radix - 1);
+        if self.width == 1 {
+            first
+        } else {
+            first
+                + self.radix
+                    * self
+                        .source
+                        .index(family, row * self.width + 1)
+                        .unwrap_or(self.radix - 1)
+        }
+    }
+
+    fn lookup(&self, eq: &GruenSplitEqPolynomial<F>, claim: F) -> UnivariatePoly<F> {
+        let lanes = eq.par_fold_out_in(
+            || [F::Accumulator::default(); 2],
+            |lanes, row, _, weight| {
+                let mut constant = F::zero();
+                let mut leading = F::zero();
+                for (family, (constants, squares)) in self.products.iter().enumerate() {
+                    let lo = self.state(family, 2 * row);
+                    let hi = self.state(family, 2 * row + 1);
+                    constant += constants[lo];
+                    leading += squares[lo * self.states + hi];
+                }
+                // Share these two equality products across all families.
+                lanes[0].fmadd(weight, constant);
+                lanes[1].fmadd(weight, leading);
+            },
+            |_, weight, lanes| {
+                let mut out = [F::Accumulator::default(); 2];
+                out[0].fmadd(weight, lanes[0].reduce());
+                out[1].fmadd(weight, lanes[1].reduce());
+                out
+            },
+            |mut a, b| {
+                a[0].merge(b[0]);
+                a[1].merge(b[1]);
+                a
+            },
+        );
+        eq.gruen_poly_deg_3(lanes[0].reduce(), lanes[1].reduce(), claim)
     }
 }
 
@@ -579,6 +737,23 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
             self.bind(challenge);
+        }
+        if let LazyFoldedRa::Lazy {
+            tables,
+            width,
+            source,
+        } = &self.tables
+        {
+            if !tables.is_empty()
+                && CategoricalProducts::<F, BooleanityChunks>::fits_budget(
+                    *width,
+                    tables[0].len() / width,
+                    source.cycles(),
+                )
+            {
+                let products = CategoricalProducts::new(tables, *width, source, &self.gamma_powers);
+                return Ok(products.lookup(&self.eq, previous_claim));
+            }
         }
         let tables = &self.tables;
         let gamma_powers = &self.gamma_powers;
@@ -650,8 +825,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         // claims; resolve by id so the output struct shape stays the
         // relation's business.
         let values: BTreeMap<JoltOpeningId, F> = self
-            .layout
-            .openings(JoltRelationId::Booleanity)
+            .openings
+            .iter()
+            .copied()
             .enumerate()
             .map(|(i, id)| (id, self.tables.value(i, 0) * self.gamma_powers_inv[i]))
             .collect();
@@ -705,44 +881,148 @@ pub(crate) mod testing {
     use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
 
+    const LOAD: JoltInstructionRow = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::LD,
+        address: 0x8000_0000,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: None,
+            imm: 3,
+        },
+        virtual_sequence_remaining: None,
+        is_first_in_sequence: false,
+        is_compressed: false,
+    };
+    const STORE: JoltInstructionRow = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::SD,
+        address: 0x8000_0004,
+        operands: NormalizedOperands {
+            rd: None,
+            rs1: Some(1),
+            rs2: Some(3),
+            imm: 8,
+        },
+        ..LOAD
+    };
+    const ALU: JoltInstructionRow = JoltInstructionRow {
+        instruction_kind: JoltInstructionKind::ADDI,
+        address: 0x8000_0008,
+        operands: NormalizedOperands {
+            rd: Some(1),
+            rs1: Some(2),
+            rs2: None,
+            imm: 3,
+        },
+        ..LOAD
+    };
+
+    /// A fixture-program load of `address` (hot bytecode, register activity).
+    pub(crate) fn load_row(address: u64) -> TraceRow {
+        TraceRow::new(
+            LOAD,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 5,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 0,
+                    post_value: 8,
+                }),
+                ..Default::default()
+            },
+            RamAccess::Read(RamRead { address, value: 8 }),
+        )
+        .unwrap()
+    }
+
+    /// A fixture-program store to `address`.
+    pub(crate) fn store_row(address: u64) -> TraceRow {
+        TraceRow::new(
+            STORE,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 1,
+                    value: 8,
+                }),
+                rs2: Some(RegisterRead {
+                    register: 3,
+                    value: 11,
+                }),
+                ..Default::default()
+            },
+            RamAccess::Write(RamWrite {
+                address,
+                pre_value: 7,
+                post_value: 11,
+            }),
+        )
+        .unwrap()
+    }
+
+    /// A cold row: default instruction, no register or RAM activity.
+    pub(crate) fn no_op_row() -> TraceRow {
+        TraceRow::new(
+            JoltInstructionRow::default(),
+            RegisterState::default(),
+            RamAccess::NoOp,
+        )
+        .unwrap()
+    }
+
     /// Runs `f` against a trace backend whose rows exercise the one-hot
     /// sparsity structure: hot/cold bytecode cycles, hot/cold RAM cycles,
     /// varied lookup indices, plus backend-synthesized padding when
-    /// `log_t > 2`. Booleanity dimensions are probed off the backend's own
-    /// servable set so test and backend geometry cannot drift.
+    /// `log_t > 2`.
     pub(crate) fn with_booleanity_backend<R>(
         log_t: usize,
         log_k_chunk: u8,
         f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
     ) -> R {
-        let instruction_a = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::ADDI,
-            address: 0x8000_0000,
-            operands: NormalizedOperands {
-                rd: Some(1),
-                rs1: Some(2),
-                rs2: None,
-                imm: 3,
+        let alu = TraceRow::new(
+            ALU,
+            RegisterState {
+                rs1: Some(RegisterRead {
+                    register: 2,
+                    value: 5,
+                }),
+                rd: Some(RegisterWrite {
+                    register: 1,
+                    pre_value: 8,
+                    post_value: 11,
+                }),
+                ..Default::default()
             },
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
-            is_compressed: false,
-        };
-        let instruction_b = JoltInstructionRow {
-            address: 0x8000_0004,
-            operands: NormalizedOperands {
-                rd: Some(3),
-                rs1: Some(1),
-                rs2: None,
-                imm: 113,
-            },
-            ..instruction_a
-        };
+            RamAccess::NoOp,
+        )
+        .unwrap();
+        let mut rows = vec![
+            load_row(0x8000_1000),
+            store_row(0x8000_1008),
+            no_op_row(),
+            alu,
+        ];
+        rows.truncate(1 << log_t);
+        with_trace_backend(log_t, log_k_chunk, rows, f)
+    }
+
+    /// Runs `f` against a trace backend over `rows` of the fixture program
+    /// (padded by the backend up to `2^log_t`). Booleanity dimensions are
+    /// probed off the backend's own servable set so test and backend
+    /// geometry cannot drift.
+    pub(crate) fn with_trace_backend<R>(
+        log_t: usize,
+        log_k_chunk: u8,
+        rows: Vec<TraceRow>,
+        f: impl FnOnce(&TraceBackend<OwnedTrace>, BooleanityDimensions) -> R,
+    ) -> R {
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
             bytecode: BytecodePreprocessing::preprocess(
-                vec![instruction_a, instruction_b],
-                instruction_a.address as u64,
+                vec![LOAD, STORE, ALU],
+                LOAD.address as u64,
                 RV64IMAC_JOLT,
             )
             .unwrap(),
@@ -751,91 +1031,6 @@ pub(crate) mod testing {
             max_padded_trace_length: 4.max(1 << log_t),
         });
         let program = Arc::new(JoltProgram::default());
-        // Field mutation instead of struct literals: `TraceRow` grows a
-        // cfg-gated field under the `field-inline` feature, which a literal
-        // cannot spell portably from this crate.
-        let row = |instruction: Option<JoltInstructionRow>,
-                   registers: RegisterState,
-                   ram_access: RamAccess| {
-            let mut row = TraceRow::default();
-            if let Some(instruction) = instruction {
-                row.instruction = instruction;
-            }
-            row.registers = registers;
-            row.ram_access = ram_access;
-            row
-        };
-        let mut rows = vec![
-            // Hot bytecode, hot RAM, register activity.
-            row(
-                Some(instruction_a),
-                RegisterState {
-                    rs1: Some(RegisterRead {
-                        register: 2,
-                        value: 5,
-                    }),
-                    rd: Some(RegisterWrite {
-                        register: 1,
-                        pre_value: 0,
-                        post_value: 8,
-                    }),
-                    ..Default::default()
-                },
-                RamAccess::Read(RamRead {
-                    address: 0x8000_1000,
-                    value: 7,
-                }),
-            ),
-            // Hot bytecode (different PC / lookup index), hot RAM (write).
-            row(
-                Some(instruction_b),
-                RegisterState {
-                    rs1: Some(RegisterRead {
-                        register: 1,
-                        value: 8,
-                    }),
-                    rd: Some(RegisterWrite {
-                        register: 3,
-                        pre_value: 0,
-                        post_value: 121,
-                    }),
-                    ..Default::default()
-                },
-                RamAccess::Write(RamWrite {
-                    address: 0x8000_1008,
-                    pre_value: 7,
-                    post_value: 11,
-                }),
-            ),
-            // Cold bytecode, hot RAM.
-            row(
-                None,
-                RegisterState::default(),
-                RamAccess::Write(RamWrite {
-                    address: 0x8000_1010,
-                    pre_value: 0,
-                    post_value: 5,
-                }),
-            ),
-            // Hot bytecode, cold RAM.
-            row(
-                Some(instruction_a),
-                RegisterState {
-                    rs1: Some(RegisterRead {
-                        register: 2,
-                        value: 8,
-                    }),
-                    rd: Some(RegisterWrite {
-                        register: 1,
-                        pre_value: 8,
-                        post_value: 11,
-                    }),
-                    ..Default::default()
-                },
-                RamAccess::NoOp,
-            ),
-        ];
-        rows.truncate(1 << log_t);
 
         let config = JoltVmWitnessConfig::new(
             log_t,
@@ -943,6 +1138,17 @@ mod tests {
             .collect()
     }
 
+    fn cycle_relation(
+        dimensions: BooleanityDimensions,
+        r_address: Vec<Fr>,
+        reference_address: Vec<Fr>,
+        reference_cycle: Vec<Fr>,
+    ) -> Booleanity<Fr> {
+        #[cfg(feature = "akita")]
+        let dimensions = LatticeBooleanityDimensions::new(dimensions).unwrap();
+        Booleanity::new(dimensions, r_address, reference_address, reference_cycle)
+    }
+
     /// Brute-forces the cycle-phase input claim from the dense one-hot
     /// grids: `Σ_j eq_rr · eq_cycle(j) · Σ_i γ^{2i} (x_i(j)² − x_i(j))` with
     /// `x_i` the address-folded rows — independent of both kernels.
@@ -961,7 +1167,7 @@ mod tests {
         let gamma_sqr = gamma * gamma;
         let mut total = Fr::from_u64(0);
         let mut weight = Fr::from_u64(1);
-        for opening in dimensions.layout.openings(JoltRelationId::Booleanity) {
+        for opening in BooleanityColumns::openings::<Fr>(dimensions).unwrap() {
             let grid: Vec<Fr> = backend.oracle_table(opening.polynomial_id()).unwrap();
             for (j, eq_cycle) in eq_cycle.iter().enumerate() {
                 let x: Fr = eq_address
@@ -1050,7 +1256,7 @@ mod tests {
             let reference_address = point(700, dimensions.log_k_chunk);
             let reference_cycle = point(400, log_t);
             let gamma = Fr::from_u64(31);
-            let relation = Booleanity::new(
+            let relation = cycle_relation(
                 dimensions,
                 r_address.clone(),
                 reference_address.clone(),
@@ -1139,17 +1345,13 @@ mod tests {
 
     /// `log_t = 5` drives the shared-table state machine through
     /// materialization (four staged binds, dense at `T/16`) into a dense
-    /// ROUND MESSAGE: at `log_t = 4` the materializing bind arrives only via
-    /// `finish_rounds`, so every checked round message would come from the
-    /// `Lazy` arm.
+    /// round message. At `log_t = 4`, materialization happens only during
+    /// `finish_rounds`.
     #[test]
     fn cycle_kernel_matches_reference_through_dense_rounds() {
         cycle_parity(5, 4, false);
     }
 
-    /// `log_t = 4`: the materializing fourth bind arrives exactly at
-    /// `finish_rounds`, pinning the switch-at-the-boundary edge (output
-    /// claims extract from the just-materialized dense state).
     #[test]
     fn cycle_kernel_matches_reference_materializing_at_finish() {
         cycle_parity(4, 4, false);
@@ -1229,7 +1431,7 @@ mod tests {
 
             // 6b: the address opening prefix is the reversed 6a point.
             let r_address: Vec<Fr> = address_challenges_drawn.iter().rev().copied().collect();
-            let cycle_relation = Booleanity::new(
+            let cycle_relation = cycle_relation(
                 dimensions,
                 r_address.clone(),
                 reference_address.clone(),
@@ -1301,5 +1503,150 @@ mod tests {
                 )
                 .unwrap();
         });
+    }
+}
+
+#[cfg(test)]
+mod categorical_tests {
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Fr, JoltField};
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+    use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};
+    use crate::reference::views::eq_table;
+
+    struct Source(Vec<Vec<Option<usize>>>);
+
+    impl ChunkIndexSource for Source {
+        fn num_polys(&self) -> usize {
+            self.0.len()
+        }
+        fn cycles(&self) -> usize {
+            self.0[0].len()
+        }
+        fn index(&self, i: usize, j: usize) -> Option<usize> {
+            self.0[i][j]
+        }
+    }
+
+    fn check_categorical_cubics<F: JoltField>() {
+        for addresses in [2, 16, 256] {
+            for bind in [F::zero(), F::one(), F::from_u64(13)] {
+                // All-cold, alternating hot/cold, and fully hot families.
+                // In particular None is not address zero, and a folded pair
+                // can have only its low or only its high branch cold.
+                let source = Source(
+                    (0..3)
+                        .map(|family| {
+                            (0..32)
+                                .map(|row| {
+                                    if family == 0 || (family == 1 && row % 3 == 0) {
+                                        None
+                                    } else {
+                                        Some((row * row + 7 * row + family) % addresses)
+                                    }
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                );
+                let rho: Vec<F> = (0..3).map(|i| F::from_u64(3_u64.pow(i))).collect();
+                let tables: Vec<Vec<F>> = rho
+                    .iter()
+                    .map(|r| {
+                        (0..addresses)
+                            .map(|i| *r * F::from_u64((i * i + 3 * i + 11) as u64))
+                            .collect()
+                    })
+                    .collect();
+                let mut dense: Vec<Vec<F>> = source
+                    .0
+                    .iter()
+                    .zip(&tables)
+                    .map(|(column, table)| {
+                        column
+                            .iter()
+                            .map(|i| i.map_or(F::zero(), |i| table[i]))
+                            .collect()
+                    })
+                    .collect();
+                let mut lazy = LazyFoldedRa::new(tables, source);
+                let reference: Vec<F> = (0..5).map(|i| F::from_u64(7 + 3 * i)).collect();
+                let mut prefix = F::from_u64(19);
+                let mut eq = GruenSplitEqPolynomial::new_with_scaling(
+                    &reference,
+                    BindingOrder::LowToHigh,
+                    Some(prefix),
+                );
+                for round in 0..if addresses <= 16 { 2 } else { 1 } {
+                    let suffix = eq_table(&reference[..4 - round]);
+                    let bit = reference[4 - round];
+                    // Direct evaluations of the defining weighted cubic;
+                    // neither Gruen reconstruction nor coefficient caching.
+                    let direct: Vec<F> = (0..4)
+                        .map(|x| {
+                            let x = F::from_u64(x);
+                            let mut sum = F::zero();
+                            for (row, weight) in suffix.iter().enumerate() {
+                                for (column, r) in dense.iter().zip(&rho) {
+                                    let v = column[2 * row]
+                                        + x * (column[2 * row + 1] - column[2 * row]);
+                                    sum += *weight * v * (v - *r);
+                                }
+                            }
+                            prefix * (bit * x + (F::one() - bit) * (F::one() - x)) * sum
+                        })
+                        .collect();
+                    let LazyFoldedRa::Lazy {
+                        tables,
+                        width,
+                        source,
+                    } = &lazy
+                    else {
+                        unreachable!()
+                    };
+                    let products = CategoricalProducts::new(tables, *width, source, &rho);
+                    let polynomial = products.lookup(&eq, direct[0] + direct[1]);
+                    for (x, value) in direct.iter().enumerate() {
+                        assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
+                    }
+                    for column in &mut dense {
+                        for row in 0..column.len() / 2 {
+                            column[row] =
+                                column[2 * row] + bind * (column[2 * row + 1] - column[2 * row]);
+                        }
+                        column.truncate(column.len() / 2);
+                    }
+                    lazy.bind(bind);
+                    eq.bind(bind);
+                    prefix *= bit * bind + (F::one() - bit) * (F::one() - bind);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn categorical_booleanity_startup_budget() {
+        let fits = CategoricalProducts::<Fr, Source>::fits_budget;
+        assert!(!fits(1, 16, 1 << 12));
+        assert!(fits(1, 16, 1 << 13));
+        assert!(!fits(2, 16, 1 << 20));
+        assert!(fits(2, 16, 1 << 21));
+        assert!(fits(1, 256, 1 << 21));
+        assert!(!fits(2, 256, 1 << 25));
+        assert!(!fits(4, 16, 1 << 25));
+        assert!(!fits(1, usize::MAX, 1 << 25));
+    }
+
+    #[test]
+    fn categorical_booleanity_matches_direct_cubic_dory() {
+        check_categorical_cubics::<Fr>();
+    }
+
+    #[test]
+    #[cfg(feature = "akita")]
+    fn categorical_booleanity_matches_direct_cubic_akita() {
+        check_categorical_cubics::<Prime128OffsetA7F7>();
     }
 }

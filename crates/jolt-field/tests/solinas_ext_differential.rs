@@ -630,6 +630,34 @@ fn degree_one_reflexive_ext_matches() {
 }
 
 #[test]
+fn ext_field_coefficient_primitives_obey_contract() {
+    type F = two::Prime32Offset99;
+
+    fn check<E: ExtField<F>>() {
+        let mut calls = Vec::new();
+        let value = E::from_base_fn(|index| {
+            calls.push(index);
+            F::from_u64((index + 3) as u64)
+        });
+        let expected = (0..E::DEGREE)
+            .map(|index| F::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>();
+
+        assert_eq!(calls, (0..E::DEGREE).collect::<Vec<_>>());
+        assert_eq!(value.to_base_vec(), expected);
+        let out_of_range = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            value.base_coefficient(E::DEGREE)
+        }));
+        assert!(out_of_range.is_err());
+    }
+
+    check::<F>();
+    check::<two::Ext2<F>>();
+    check::<two::FpExt4<F>>();
+    check::<two::FpExt8<F>>();
+}
+
+#[test]
 #[should_panic(expected = "assertion")]
 fn ext2_from_base_slice_wrong_length_panics() {
     let one = <two::Prime32Offset99 as Ring>::from_u64(1);

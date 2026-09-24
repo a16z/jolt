@@ -7,6 +7,11 @@
 | Status      | implemented                    |
 | PR          | #1703                          |
 
+> **Addendum (2026-08-21):** `jolt-hyperkzg` was removed from the workspace, so the
+> closure this spec hardened is now **18 crates**, not 19, and **14** of them carry
+> `#![forbid(unsafe_code)]`, not 15. The counts and survey table below are left exactly
+> as measured on 2026-07-26 and describe the campaign as executed.
+
 ## Summary
 
 `jolt-verifier` is the protocol-defining crate and consumes untrusted proof bytes; in WASM and embedded deployments a panic is a denial of service. The workspace lints already deny `panic!`/`unwrap`/`expect`/`todo!`/`unimplemented!` and undocumented unsafe, but leave the remaining panic and UB sources unconstrained: slice indexing (`a[i]`), `unreachable!`, silently wrapping release-mode arithmetic, and `unsafe` itself. This spec adds mechanically enforced, per-crate lint discipline over the verifier's runtime crate set, and fixes or explicitly justifies every existing violation. Survey (2026-07-26, clippy 1.95, lib targets only):

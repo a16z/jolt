@@ -426,3 +426,10 @@ fn jolt_field_blanket_covers_fp128() {
     check::<two::Prime128Offset275>();
     check::<two::Prime128OffsetA7F7>();
 }
+
+#[test]
+fn fp128_canonical_constructor_is_const_usable() {
+    // SAFETY: one is below every supported prime modulus.
+    const ONE: two::Prime128OffsetA7F7 = unsafe { two::Prime128OffsetA7F7::from_canonical_u128(1) };
+    assert_eq!(ONE.to_u128_checked(), Some(1));
+}

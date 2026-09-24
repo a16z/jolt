@@ -7,6 +7,7 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::eq::EqPolynomial;
+use crate::BindingOrder;
 
 /// Minimum number of evaluations before parallelizing bind/evaluate.
 ///
@@ -19,14 +20,18 @@ const PAR_THRESHOLD: usize = 1024;
 /// Multilinear polynomial stored as evaluations over the Boolean hypercube $\{0,1\}^n$.
 ///
 /// Generic over the scalar type `T`:
-/// - When `T` is a [`Field`] type: full polynomial with in-place [`bind`](Polynomial::bind),
+/// - When `T` is a [`JoltField`] type: full polynomial with in-place [`bind`](Polynomial::bind),
 ///   [`evaluate`](Polynomial::evaluate), and arithmetic operators.
 /// - When `T` is a small type (`u8`, `bool`, `i64`, etc.): compact storage with
 ///   [`bind_to_field`](Polynomial::bind_to_field) for on-demand field promotion.
-#[expect(
-    clippy::unsafe_derive_deserialize,
-    reason = "deserialization goes through PolynomialRaw and validates the polynomial dimensions"
+#[cfg_attr(
+    feature = "parallel",
+    expect(
+        clippy::unsafe_derive_deserialize,
+        reason = "deserialization goes through PolynomialRaw and validates the polynomial dimensions"
+    )
 )]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     bound(serialize = "T: Serialize", deserialize = "T: for<'a> Deserialize<'a>"),
@@ -179,8 +184,8 @@ impl<F: JoltField> Polynomial<F> {
     #[inline]
     pub fn bind_with_order(&mut self, scalar: F, order: crate::BindingOrder) {
         match order {
-            crate::BindingOrder::HighToLow => self.bind_high_to_low(scalar),
-            crate::BindingOrder::LowToHigh => self.bind_low_to_high(scalar),
+            BindingOrder::HighToLow => self.bind_high_to_low(scalar),
+            BindingOrder::LowToHigh => self.bind_low_to_high(scalar),
         }
     }
 
@@ -262,6 +267,53 @@ impl<F: JoltField> Polynomial<F> {
         self.num_vars -= 1;
     }
 
+    /// Binds the LSB variable in place without another buffer:
+    /// `v[j] = v[2j] + r·(v[2j+1] − v[2j])`. Once the backing allocation
+    /// reaches 8x the live length it is released; the return value reports
+    /// that release so callers can purge after it.
+    ///
+    /// Each power-of-two level writes below its read window. Earlier outputs
+    /// lie below later reads, and each level splits into disjoint `dst` and
+    /// `src`.
+    #[inline]
+    pub fn bind_low_to_high_in_place(&mut self, scalar: F) -> bool {
+        assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
+        debug_assert!(self.evals.len().is_power_of_two());
+        let half = self.evals.len() / 2;
+
+        let (lo, hi) = (self.evals[0], self.evals[1]);
+        self.evals[0] = lo + scalar * (hi - lo);
+        let mut e = 2;
+        while e <= half {
+            let (head, tail) = self.evals.split_at_mut(e);
+            let dst = &mut head[e / 2..];
+            let src = &tail[..e];
+            let write = |(k, out): (usize, &mut F)| {
+                let lo = src[2 * k];
+                *out = lo + scalar * (src[2 * k + 1] - lo);
+            };
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                dst.par_iter_mut()
+                    .enumerate()
+                    .with_min_len(1 << 10)
+                    .for_each(write);
+            }
+            #[cfg(not(feature = "parallel"))]
+            dst.iter_mut().enumerate().for_each(write);
+            e *= 2;
+        }
+        self.evals.truncate(half);
+
+        self.num_vars -= 1;
+        let shrink = self.evals.capacity() >= 8 * self.evals.len().max(1);
+        if shrink {
+            self.evals.shrink_to_fit();
+        }
+        shrink
+    }
+
     /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
     ///
     /// This has the same semantics as `bind_with_order(scalar, BindingOrder::LowToHigh)`,
@@ -271,9 +323,11 @@ impl<F: JoltField> Polynomial<F> {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         let half = self.evals.len() / 2;
         scratch.clear();
-        if scratch.capacity() < half {
-            scratch.reserve(half - scratch.capacity());
-        }
+        // `reserve` is relative to `len` (0 after `clear`), so this guarantees
+        // `capacity >= half`. Reserving only `half - capacity` would no-op
+        // whenever the shortfall fits in the existing capacity, leaving the
+        // spare-capacity slice below `half` and panicking in the parallel path.
+        scratch.reserve(half);
 
         #[cfg(feature = "parallel")]
         {
@@ -310,17 +364,17 @@ impl<F: JoltField> Polynomial<F> {
     #[inline]
     pub fn sumcheck_eval_pair(&self, index: usize, order: crate::BindingOrder) -> (F, F) {
         match order {
-            crate::BindingOrder::HighToLow => {
+            BindingOrder::HighToLow => {
                 let half = self.evals.len() / 2;
                 (self.evals[index], self.evals[index + half])
             }
-            crate::BindingOrder::LowToHigh => (self.evals[2 * index], self.evals[2 * index + 1]),
+            BindingOrder::LowToHigh => (self.evals[2 * index], self.evals[2 * index + 1]),
         }
     }
 
     #[inline]
     pub fn sumcheck_round_eval(&self, index: usize, point: F) -> F {
-        let (lo, hi) = self.sumcheck_eval_pair(index, crate::BindingOrder::HighToLow);
+        let (lo, hi) = self.sumcheck_eval_pair(index, BindingOrder::HighToLow);
         lo + point * (hi - lo)
     }
 
@@ -1092,6 +1146,64 @@ mod tests {
     }
 
     #[test]
+    fn bind_low_to_high_reusing_scratch_matches_plain_bind_across_rounds() {
+        let mut rng = ChaCha20Rng::seed_from_u64(600);
+        // One scratch buffer shared across every polynomial and round,
+        // pre-seeded with junk to prove stale contents cannot leak through.
+        let mut scratch: Vec<Fr> = vec![Fr::from_u64(0xbad); 7];
+        // n = 12 crosses PAR_THRESHOLD on the first bind, then successive
+        // rounds shrink below it, covering both the parallel and serial paths.
+        for n in [1usize, 2, 5, 12] {
+            let poly = Polynomial::<Fr>::random(n, &mut rng);
+            let mut with_scratch = poly.clone();
+            let mut reference = poly;
+            for round in 0..n {
+                let challenge = Fr::random(&mut rng);
+                reference.bind_with_order(challenge, BindingOrder::LowToHigh);
+                with_scratch.bind_low_to_high_reusing_scratch(challenge, &mut scratch);
+                assert_eq!(with_scratch, reference, "n={n} round={round}");
+            }
+            assert_eq!(with_scratch.len(), 1, "n={n}");
+        }
+    }
+
+    #[test]
+    fn sumcheck_round_eval_equals_high_to_low_bound_evaluations() {
+        let mut rng = ChaCha20Rng::seed_from_u64(601);
+        let poly = Polynomial::<Fr>::random(5, &mut rng);
+        let point = Fr::random(&mut rng);
+
+        let mut bound = poly.clone();
+        bound.bind_with_order(point, BindingOrder::HighToLow);
+        for index in 0..bound.len() {
+            assert_eq!(
+                poly.sumcheck_round_eval(index, point),
+                bound.evaluations()[index],
+                "index {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn sumcheck_round_eval_with_order_equals_bound_evaluations_for_both_orders() {
+        let mut rng = ChaCha20Rng::seed_from_u64(602);
+        let poly = Polynomial::<Fr>::random(6, &mut rng);
+        let point = Fr::random(&mut rng);
+
+        for order in [BindingOrder::HighToLow, BindingOrder::LowToHigh] {
+            let mut bound = poly.clone();
+            bound.bind_with_order(point, order);
+            for index in 0..bound.len() {
+                assert_eq!(
+                    poly.sumcheck_round_eval_with_order(index, point, order),
+                    bound.evaluations()[index],
+                    "{order:?} index {index}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn low_to_high_binding_produces_correct_evaluation() {
         let mut rng = ChaCha20Rng::seed_from_u64(900);
         let n = 5;
@@ -1102,7 +1214,7 @@ mod tests {
         // with point[0], point[1], ... should yield evaluate(point).
         let mut hi_to_lo = poly.clone();
         for &r in &point {
-            hi_to_lo.bind_with_order(r, crate::BindingOrder::HighToLow);
+            hi_to_lo.bind_with_order(r, BindingOrder::HighToLow);
         }
         assert_eq!(hi_to_lo.len(), 1);
         assert_eq!(hi_to_lo.evaluations()[0], poly.evaluate(&point));
@@ -1111,7 +1223,7 @@ mod tests {
         // evaluation we must reverse the order of challenges.
         let mut lo_to_hi = poly.clone();
         for &r in point.iter().rev() {
-            lo_to_hi.bind_with_order(r, crate::BindingOrder::LowToHigh);
+            lo_to_hi.bind_with_order(r, BindingOrder::LowToHigh);
         }
         assert_eq!(lo_to_hi.len(), 1);
         assert_eq!(lo_to_hi.evaluations()[0], poly.evaluate(&point));

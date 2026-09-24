@@ -3,7 +3,7 @@
 //!
 //! Under the cycle-major order every committed column is fed from ONE fused
 //! pass over the trace: the commit consumer implements [`StreamConsumer`]
-//! over the [`CommittedColumnsWitness`] fact bundle, holds every column's
+//! over the `CommittedColumnsWitness` fact bundle, holds every column's
 //! partial commitment state (the runtime arity lives here, in the consumer),
 //! and per row window feeds dense columns through the
 //! [`StreamingCommitment::feed`] family and one-hot columns through the
@@ -27,7 +27,7 @@ use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, StreamingCommitment};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::{stream_witnesses, JoltWitnessOracle, JoltWitnessPlane, StreamConsumer};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
 
 use crate::commitment::{
     finish_streamed, finish_streamed_one_hot, CommitWitness, CommitmentGrid,
@@ -40,14 +40,14 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment,
 {
-    // The backend-neutral `commit_witness` span lives at the stage-0 call
-    // boundary (`crates/jolt-prover/src/stages/stage0.rs`), so every
+    // The backend-neutral `commit_witness` span lives at the Dory stage-0 call
+    // boundary (`crates/jolt-prover/src/dory/stages/stage0.rs`), so every
     // `CommitWitness` implementation inherits it — see the taxonomy's
     // kernel-seam contract.
     fn commit_witness(
         &self,
         _session: &mut ProofSession,
-        source: &dyn JoltWitnessPlane<F>,
+        source: &dyn RowSource,
         ids: &[JoltCommittedPolynomial],
         grid: CommitmentGrid,
         setup: &PCS::ProverSetup,
@@ -156,7 +156,7 @@ impl ColumnKind {
     pub(crate) fn hot_address(self, row: &CommittedColumnsWitness) -> Option<usize> {
         match self {
             Self::InstructionRa(selector) => Some(selector.chunk_u128(row.lookup_index.0)),
-            Self::BytecodeRa(selector) => row.bytecode_pc.0.map(|pc| selector.chunk_usize(pc)),
+            Self::BytecodeRa(selector) => Some(selector.chunk_usize(row.bytecode_pc.0)),
             Self::RamRa(selector) => row
                 .ram_address
                 .0

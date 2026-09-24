@@ -6,8 +6,6 @@
 //! address phase of bytecode read-RAF stages five `BytecodeValClaim(i)` claims;
 //! this reduction batches them with powers of `eta` and reduces the batch into
 //! openings of `BytecodeChunk(i)` over the shared precommitted schedule.
-//! Mirrors `jolt-prover-legacy`'s `zkvm/claim_reductions/bytecode.rs` and the
-//! committed-bytecode geometry of `zkvm/bytecode/chunks.rs`.
 
 use jolt_field::{JoltField, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
@@ -61,6 +59,13 @@ pub const fn committed_lane_vars() -> usize {
 /// Maximum chunk count representable by the `u8` proof serialization of
 /// `BytecodeChunk(i)`.
 pub const MAX_COMMITTED_BYTECODE_CHUNK_COUNT: usize = 256;
+
+pub const INVALID_COMMITTED_PROGRAM_IMMEDIATE: &str =
+    "committed-program immediate magnitude exceeds u64::MAX";
+
+pub const fn is_valid_committed_program_immediate(immediate: i128) -> bool {
+    immediate.unsigned_abs() <= u64::MAX as u128
+}
 
 /// Committed bytecode chunking is valid when the chunk count is a nonzero
 /// power of two no larger than [`MAX_COMMITTED_BYTECODE_CHUNK_COUNT`] that
@@ -653,6 +658,15 @@ mod tests {
             },
             JoltInstructionRow::default(),
         ]
+    }
+
+    #[test]
+    fn committed_program_immediate_boundaries_are_explicit() {
+        let limit = u64::MAX as i128;
+        assert!(is_valid_committed_program_immediate(limit));
+        assert!(is_valid_committed_program_immediate(-limit));
+        assert!(!is_valid_committed_program_immediate(1i128 << 64));
+        assert!(!is_valid_committed_program_immediate(-(1i128 << 64)));
     }
 
     #[test]

@@ -34,12 +34,6 @@ pub(crate) mod num {
         value as u64
     }
 
-    /// Widens `usize` to `u128`.
-    #[cfg(feature = "akita")]
-    pub(crate) fn u128_from_usize(value: usize) -> u128 {
-        u128::from(u64_from_usize(value))
-    }
-
     /// `value.ilog2()` as `usize`. Panics on zero, exactly as `usize::ilog2`
     /// does; callers pass validated power-of-two dimensions.
     #[expect(

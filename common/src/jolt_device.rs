@@ -44,18 +44,66 @@ impl core::fmt::Display for MemoryLayoutError {
 /// all reads from the reserved memory address space for program inputs and all writes
 /// to the reserved memory address space for program outputs.
 /// The inputs and outputs are part of the public inputs to the proof.
+///
+/// The advice fields are *not* public: they hold the prover's private inputs,
+/// populated so the emulator can service loads from the advice memory regions.
+/// The verifier never reads them (advice is bound through polynomial
+/// commitments), so both serialization impls emit them as empty to keep
+/// private bytes out of any serialized device (e.g. a host publishing
+/// `program_io` alongside a proof). Deserialization still accepts populated
+/// advice fields, so pre-existing blobs decode unchanged.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "std",
-    derive(Allocative, CanonicalSerialize, CanonicalDeserialize)
-)]
+#[cfg_attr(feature = "std", derive(Allocative, CanonicalDeserialize))]
 pub struct JoltDevice {
     pub inputs: Vec<u8>,
+    /// Private prover input; serialized as empty (see struct docs).
+    #[serde(serialize_with = "serialize_advice_stripped")]
     pub trusted_advice: Vec<u8>,
+    /// Private prover input; serialized as empty (see struct docs).
+    #[serde(serialize_with = "serialize_advice_stripped")]
     pub untrusted_advice: Vec<u8>,
     pub outputs: Vec<u8>,
     pub panic: bool,
     pub memory_layout: MemoryLayout,
+}
+
+/// Serializes an advice field as an empty byte vector, byte-compatible with
+/// the derived impl for a device whose advice is empty.
+fn serialize_advice_stripped<S: serde::Serializer>(
+    _advice: &[u8],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    Vec::<u8>::new().serialize(serializer)
+}
+
+/// Mirrors the derived impl except that the advice fields are written as
+/// empty vectors — advice bytes are private inputs and must not leave the
+/// host in a serialized device.
+#[cfg(feature = "std")]
+impl CanonicalSerialize for JoltDevice {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        let empty_advice = Vec::<u8>::new();
+        self.inputs.serialize_with_mode(&mut writer, compress)?;
+        empty_advice.serialize_with_mode(&mut writer, compress)?;
+        empty_advice.serialize_with_mode(&mut writer, compress)?;
+        self.outputs.serialize_with_mode(&mut writer, compress)?;
+        self.panic.serialize_with_mode(&mut writer, compress)?;
+        self.memory_layout
+            .serialize_with_mode(&mut writer, compress)
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        let empty_advice = Vec::<u8>::new();
+        self.inputs.serialized_size(compress)
+            + 2 * empty_advice.serialized_size(compress)
+            + self.outputs.serialized_size(compress)
+            + self.panic.serialized_size(compress)
+            + self.memory_layout.serialized_size(compress)
+    }
 }
 
 impl JoltDevice {
@@ -473,6 +521,7 @@ impl MemoryLayout {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -502,6 +551,154 @@ mod tests {
 
         assert_eq!(device.input_words_le(), vec![0x0807_0605_0403_0201, 9]);
         assert_eq!(device.output_words_le(), vec![0xbbaa]);
+    }
+
+    fn device_with_advice() -> JoltDevice {
+        let mut device = JoltDevice::new(&MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        });
+        device.inputs = vec![1, 2, 3];
+        device.trusted_advice = vec![0xde, 0xad];
+        device.untrusted_advice = vec![0xbe, 0xef, 0x42];
+        device.outputs = vec![7, 8];
+        device.panic = true;
+        device
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn canonical_serialization_strips_advice() {
+        use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+
+        let device = device_with_advice();
+        let mut public_device = device.clone();
+        public_device.trusted_advice.clear();
+        public_device.untrusted_advice.clear();
+
+        let mut bytes = Vec::new();
+        device.serialize_compressed(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), device.compressed_size());
+
+        let mut public_bytes = Vec::new();
+        public_device
+            .serialize_compressed(&mut public_bytes)
+            .unwrap();
+        assert_eq!(bytes, public_bytes);
+
+        let roundtrip = JoltDevice::deserialize_compressed(bytes.as_slice()).unwrap();
+        assert_eq!(roundtrip, public_device);
+    }
+
+    #[test]
+    fn serde_serialization_strips_advice() {
+        let device = device_with_advice();
+        let mut public_device = device.clone();
+        public_device.trusted_advice.clear();
+        public_device.untrusted_advice.clear();
+
+        let bytes = bincode::serde::encode_to_vec(&device, bincode::config::standard()).unwrap();
+        let public_bytes =
+            bincode::serde::encode_to_vec(&public_device, bincode::config::standard()).unwrap();
+        assert_eq!(bytes, public_bytes);
+
+        let (roundtrip, _): (JoltDevice, usize) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+        assert_eq!(roundtrip, public_device);
+    }
+
+    #[test]
+    fn layout_packs_io_regions_contiguously_below_ram_start() {
+        // trusted (4096) < untrusted (8192) forces the untrusted-first branch.
+        // io_region_bytes = 4096 + 8192 + 4096 + 4096 + 16 = 20496 bytes
+        //   => 2562 words => padded to 4096 words => 32768 bytes below RAM_START.
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 4096,
+            max_untrusted_advice_size: 8192,
+            max_input_size: 4096,
+            max_output_size: 4096,
+            ..Default::default()
+        });
+
+        let region_start = RAM_START_ADDRESS - 32768;
+        assert_eq!(layout.untrusted_advice_start, region_start);
+        assert_eq!(layout.untrusted_advice_end, region_start + 8192);
+        assert_eq!(layout.trusted_advice_start, region_start + 8192);
+        assert_eq!(layout.trusted_advice_end, region_start + 8192 + 4096);
+        assert_eq!(layout.input_start, layout.trusted_advice_end);
+        assert_eq!(layout.input_end, layout.input_start + 4096);
+        assert_eq!(layout.output_start, layout.input_end);
+        assert_eq!(layout.output_end, layout.output_start + 4096);
+        assert_eq!(layout.panic, layout.output_end);
+        assert_eq!(layout.termination, layout.panic + 8);
+        assert_eq!(layout.io_end, layout.termination + 8);
+        assert_eq!(layout.get_lowest_address(), region_start);
+    }
+
+    #[test]
+    fn layout_places_trusted_advice_first_when_not_smaller() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 4096,
+            max_untrusted_advice_size: 4096,
+            ..Default::default()
+        });
+        assert!(layout.trusted_advice_start < layout.untrusted_advice_start);
+        assert_eq!(layout.trusted_advice_end, layout.untrusted_advice_start);
+    }
+
+    #[test]
+    fn layout_aligns_sizes_up_to_eight_bytes_and_sizes_ram_regions() {
+        let layout = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1000),
+            max_trusted_advice_size: 0,
+            max_untrusted_advice_size: 0,
+            max_input_size: 10,
+            max_output_size: 9,
+            stack_size: 100,
+            heap_size: 12,
+        });
+        assert_eq!(layout.max_input_size, 16);
+        assert_eq!(layout.max_output_size, 16);
+        assert_eq!(layout.stack_size, 104);
+        assert_eq!(layout.heap_size, 16);
+
+        // Stack grows down from stack_start; the canary sits between the
+        // program image and the stack.
+        assert_eq!(layout.stack_end, RAM_START_ADDRESS + 1000);
+        let stack_start = layout.stack_end + STACK_CANARY_SIZE + 104;
+        assert_eq!(layout.heap_end, stack_start + 16);
+        assert_eq!(
+            layout.get_total_memory_size(),
+            layout.heap_end - RAM_START_ADDRESS
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Trusted advice size must be a power of two")]
+    fn layout_rejects_non_power_of_two_trusted_advice() {
+        let _ = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_trusted_advice_size: 24,
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Untrusted advice size must be a power of two")]
+    fn layout_rejects_non_power_of_two_untrusted_advice() {
+        let _ = MemoryLayout::new(&MemoryConfig {
+            program_size: Some(1024),
+            max_untrusted_advice_size: 40,
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "MemoryLayout requires bytecode size to be set")]
+    fn layout_requires_program_size() {
+        let _ = MemoryLayout::new(&MemoryConfig::default());
     }
 
     #[test]

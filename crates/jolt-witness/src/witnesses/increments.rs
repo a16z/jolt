@@ -1,9 +1,9 @@
 use jolt_claims::protocols::jolt::lattice::FUSED_INC_BITS;
 use jolt_field::Field;
-use jolt_program::execution::{RamAccess, TraceRow};
 use jolt_riscv::CircuitFlags;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
-use super::{row_circuit_flags, Extract, ExtractIndexed, ToField, WitnessEnv};
+use super::{Extract, ExtractIndexed, ToField, WitnessEnv};
 use crate::WitnessError;
 
 /// Signed delta written to rd this cycle; 0 when the instruction has no rd
@@ -27,9 +27,10 @@ impl Extract for RdInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.registers.rd {
-            Some(write) => write.post_value as i128 - write.pre_value as i128,
-            None => 0,
+        Ok(Self(if row.rd_index().is_some() {
+            row.rd_write_value() as i128 - row.rd_pre_value() as i128
+        } else {
+            0
         }))
     }
 }
@@ -46,9 +47,10 @@ impl Extract for RamInc {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(match row.ram_access {
-            RamAccess::Write(write) => write.post_value as i128 - write.pre_value as i128,
-            RamAccess::Read(_) | RamAccess::NoOp => 0,
+        Ok(Self(if row.is_store() {
+            row.ram_write_value() as i128 - row.ram_read_value() as i128
+        } else {
+            0
         }))
     }
 }
@@ -63,13 +65,26 @@ impl Extract for RamInc {
 pub struct FusedInc(pub i128);
 
 impl FusedInc {
-    /// The encoder bias `(K/2)·(2^64 − 1)/(K − 1)` for radix `K = 2^width`:
-    /// every centered digit of the biased zero is exactly `K/2`, so
-    /// `delta = 0` lands every digit (and the carry) on lane 0.
+    /// `(radix/2) · (2^FUSED_INC_BITS − 1)/(radix − 1)` per digit width
+    /// dividing [`FUSED_INC_BITS`] (0 elsewhere). Precomputed because the
+    /// closed form's i128 division lowers to a `__udivti3` libcall, and
+    /// [`Self::selected_row`] reads the bias per cycle per balanced column.
+    const BALANCED_BIASES: [i128; FUSED_INC_BITS + 1] = {
+        let mut table = [0i128; FUSED_INC_BITS + 1];
+        let mut width = 1;
+        while width <= FUSED_INC_BITS {
+            if FUSED_INC_BITS.is_multiple_of(width) {
+                let radix = 1i128 << width;
+                table[width] = (radix / 2) * (((1i128 << FUSED_INC_BITS) - 1) / (radix - 1));
+            }
+            width += 1;
+        }
+        table
+    };
+
     fn balanced_bias(width: usize) -> i128 {
         debug_assert!(width > 0 && FUSED_INC_BITS.is_multiple_of(width));
-        let radix = 1i128 << width;
-        (radix / 2) * (((1i128 << FUSED_INC_BITS) - 1) / (radix - 1))
+        Self::BALANCED_BIASES[width]
     }
 
     fn biased_for_balanced_digits(self, width: usize) -> i128 {
@@ -77,20 +92,16 @@ impl FusedInc {
         self.0 + Self::balanced_bias(width)
     }
 
-    /// The hot address of one lane of the balanced one-hot decomposition:
-    /// the centered radix-`2^width` digit (or the signed carry above bit 63)
-    /// encoded modulo the radix. Lane `j` decodes to `j` if `j < K/2`, else
-    /// `j − K`.
-    pub fn hot_lane(self, lane: BalancedIncLane) -> usize {
-        match lane {
-            BalancedIncLane::Digit { width, index } => {
+    /// The selected row of one centered digit or its signed carry.
+    pub fn selected_row(self, column: BalancedIncColumn) -> usize {
+        match column {
+            BalancedIncColumn::Digit { width, index } => {
                 let radix = 1i128 << width;
-                let mask = radix - 1;
-                let standard_digit =
-                    (self.biased_for_balanced_digits(width) >> (width * index)) & mask;
-                ((standard_digit + radix / 2) & mask) as usize
+                let standard =
+                    (self.biased_for_balanced_digits(width) >> (width * index)) & (radix - 1);
+                ((standard + radix / 2) & (radix - 1)) as usize
             }
-            BalancedIncLane::Carry { width } => {
+            BalancedIncColumn::Carry { width } => {
                 let radix = 1i128 << width;
                 let carry = self.biased_for_balanced_digits(width) >> FUSED_INC_BITS;
                 debug_assert!((-1..=1).contains(&carry));
@@ -112,10 +123,10 @@ impl Extract for FusedInc {
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let store = row_circuit_flags(row)?[CircuitFlags::Store];
+        let store = row.circuit_flags()[CircuitFlags::Store];
         debug_assert_eq!(
             store,
-            matches!(row.ram_access, RamAccess::Write(_)),
+            row.is_store(),
             "Store circuit flag disagrees with the cycle's RAM-write access"
         );
         let ram_delta = RamInc::extract(row, next, env)?.0;
@@ -133,35 +144,33 @@ impl Extract for FusedInc {
     }
 }
 
-/// Selects one lane of the fused increment's balanced one-hot decomposition:
-/// a centered `width`-bit digit (indexed from the least significant digit),
-/// or the signed carry above bit 63.
+/// Selects one centered radix digit or the signed carry above bit 63.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BalancedIncLane {
+pub enum BalancedIncColumn {
     Digit { width: usize, index: usize },
     Carry { width: usize },
 }
 
-/// The per-cycle hot address of one `BalancedIncDigit`/`BalancedIncCarry`
-/// column; every cycle is hot (padding rows land on lane 0 of every digit
-/// and of the carry).
+/// The row selected by one `BalancedIncDigit`/`BalancedIncCarry` column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BalancedIncHot(pub usize);
+pub struct BalancedIncRow(pub usize);
 
-impl From<BalancedIncHot> for Option<usize> {
-    fn from(hot: BalancedIncHot) -> Self {
-        Some(hot.0)
+impl From<BalancedIncRow> for Option<usize> {
+    fn from(row: BalancedIncRow) -> Self {
+        Some(row.0)
     }
 }
 
-impl ExtractIndexed<BalancedIncLane> for BalancedIncHot {
+impl ExtractIndexed<BalancedIncColumn> for BalancedIncRow {
     fn extract_indexed(
-        lane: BalancedIncLane,
+        column: BalancedIncColumn,
         row: &TraceRow,
         next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(FusedInc::extract(row, next, env)?.hot_lane(lane)))
+        Ok(Self(
+            FusedInc::extract(row, next, env)?.selected_row(column),
+        ))
     }
 }
 
@@ -203,29 +212,29 @@ mod tests {
         for (cycle, inc) in fused_trace().iter().enumerate() {
             let mut reconstructed = 0i128;
             for index in 0..DIGITS {
-                let hot = inc.hot_lane(BalancedIncLane::Digit {
+                let selected_row = inc.selected_row(BalancedIncColumn::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 });
-                assert!(hot < 1 << LOG_K_CHUNK, "cycle {cycle}");
-                reconstructed += centered(hot, radix) << (LOG_K_CHUNK * index);
+                assert!(selected_row < 1 << LOG_K_CHUNK, "cycle {cycle}");
+                reconstructed += centered(selected_row, radix) << (LOG_K_CHUNK * index);
             }
-            let carry = inc.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK });
+            let carry = inc.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK });
             reconstructed += centered(carry, radix) << FUSED_INC_BITS;
             assert_eq!(reconstructed, inc.0, "cycle {cycle}");
         }
     }
 
     #[test]
-    fn padding_cycles_encode_every_lane_at_digit_zero() {
+    fn zero_delta_uses_balanced_zero_digits_and_carry() {
         let padding = FusedInc(0);
         assert_eq!(
-            padding.hot_lane(BalancedIncLane::Carry { width: LOG_K_CHUNK }),
+            padding.selected_row(BalancedIncColumn::Carry { width: LOG_K_CHUNK }),
             0
         );
         for index in 0..DIGITS {
             assert_eq!(
-                padding.hot_lane(BalancedIncLane::Digit {
+                padding.selected_row(BalancedIncColumn::Digit {
                     width: LOG_K_CHUNK,
                     index,
                 }),

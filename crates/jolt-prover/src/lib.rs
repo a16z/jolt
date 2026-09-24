@@ -16,8 +16,8 @@
 //!   and the RLC-batched joint opening (`dory::prove`), in the compiled
 //!   proof mode (transparent, or BlindFold ZK under the `zk` feature);
 //! - `akita` — the packed pipeline over the lattice PCS: one native
-//!   `OneHotTrace` commitment group, the fused-inc/reconstruction stage
-//!   swaps, and the native same-point joint opening (`akita::prove`).
+//!   `OneHotTrace` commitment group, the fused-increment relation changes,
+//!   and one native grouped opening (`akita::prove`).
 //!
 //! Like `jolt-verifier`, one compiled prover proves exactly one protocol:
 //! the `akita` feature swaps the shared wire types to the packed envelope,
@@ -32,7 +32,7 @@
 
 // The packed protocol is transparent-only: its native openings have no
 // hiding mode and the BlindFold tail has no packed plumbing (the same
-// exclusion jolt-prover-legacy enforces).
+// exclusion enforced by the public prover configuration).
 #[cfg(all(feature = "akita", feature = "zk"))]
 compile_error!("the `akita` and `zk` features are mutually exclusive");
 
@@ -51,9 +51,15 @@ pub mod profile;
 mod recorder;
 pub mod stages;
 
+#[cfg(feature = "akita")]
+pub use akita::prove;
 pub use config::{remap_address, CommittedProgramCandidates, ProverConfig};
+#[cfg(not(feature = "akita"))]
+pub use dory::prove;
 pub use driver::{KernelSource, Proved, StageProver};
-pub use error::ProverError;
+pub use error::{PreprocessingError, ProverError};
 pub use jolt_kernels::{JoltBackend, ProofSession};
-pub use preprocessing::{CommittedProgramProverData, JoltProverPreprocessing};
+pub use preprocessing::{
+    CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
+};
 pub use recorder::{ModeRecorder, ProofMode, ProvedUniskipMode};

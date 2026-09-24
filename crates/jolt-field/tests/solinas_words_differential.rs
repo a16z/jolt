@@ -323,3 +323,12 @@ fn fp32_exposes_canonical_storage_slice_only_for_u32_fields() {
     assert_eq!(F32::canonical_u32_slice(&values), Some(&[1, 7, 42][..]));
     assert!(F64::canonical_u32_slice(&[F64::from_u64(1)]).is_none());
 }
+
+#[test]
+fn fp64_exposes_canonical_storage_slice_only_for_u64_fields() {
+    type F32 = two::Prime32Offset99;
+    type F64 = two::Prime64Offset59;
+    let values = [F64::from_u64(1), F64::from_u64(7), F64::from_u64(42)];
+    assert_eq!(F64::canonical_u64_slice(&values), Some(&[1, 7, 42][..]));
+    assert!(F32::canonical_u64_slice(&[F32::from_u64(1)]).is_none());
+}

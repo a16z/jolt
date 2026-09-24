@@ -11,6 +11,9 @@ macro_rules! debug_writeln {
     };
 }
 
+#[cfg(target_os = "none")]
+use zeroos::foundation::ops::MemoryOps;
+
 extern "C" {
     static __heap_start: u8;
     static __heap_end: u8;
@@ -33,6 +36,22 @@ pub extern "C" fn __platform_bootstrap() {
     debug_writeln!("[BOOT] __platform_bootstrap (jolt-platform)");
 
     zeroos::initialize();
+
+    // no_std guests: register the O(1) size-class allocator BEFORE kinit (the
+    // registered ops receive the heap). This is the only registration —
+    // no_std builds enable just zeroos's `memory` feature, so `initialize()`
+    // above registers no allocator and `linked_list_allocator` stays out of
+    // the guest binary. Motivation and measurements in
+    // `jolt_platform::size_class_alloc`. std/musl guests keep ZeroOS's
+    // linked-list allocator (musl's malloc manages its own arenas over
+    // mmap/brk).
+    #[cfg(target_os = "none")]
+    zeroos::foundation::register_memory(MemoryOps {
+        init: jolt_platform::size_class_alloc::init,
+        alloc: jolt_platform::size_class_alloc::alloc,
+        dealloc: jolt_platform::size_class_alloc::dealloc,
+        realloc: jolt_platform::size_class_alloc::realloc,
+    });
 
     {
         let heap_start = core::ptr::addr_of!(__heap_start) as usize;

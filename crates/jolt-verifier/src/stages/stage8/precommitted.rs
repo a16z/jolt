@@ -6,15 +6,17 @@
 //! anchors and batch members of the final PCS opening, so the resolution happens
 //! here, next to that consumer, before any stage-8 transcript operation.
 
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 use jolt_claims::protocols::jolt::geometry::claim_reductions::{
-    advice,
     bytecode::{self as bytecode_reduction},
     program_image,
 };
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::{AdviceClaimReductionLayout, JoltAdviceKind};
 use jolt_claims::protocols::jolt::{
-    AdviceClaimReductionLayout, BytecodeClaimReductionLayout, JoltAdviceKind,
-    JoltCommittedPolynomial, JoltRelationId, PrecommittedReductionLayout,
-    ProgramImageClaimReductionLayout,
+    BytecodeClaimReductionLayout, JoltCommittedPolynomial, JoltRelationId,
+    PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
 };
 use jolt_field::JoltField;
 
@@ -64,8 +66,8 @@ impl<'a, F, T> PrecommittedFinalSource<'a, F, T> {
 /// clear values off the stage-7 output claims) or the stage 6b cycle phase (points
 /// off `stage6_points`, clear values off the stage-6b output claims). In ZK every
 /// opening claim stays committed (`None`) and only points are read; in clear mode a
-/// source requires both its point and its value. The walk order — trusted advice,
-/// untrusted advice, bytecode chunks, program image — fixes stage 8's anchor order.
+/// source requires both its point and its value. Stage 8 indexes these openings by
+/// polynomial before emitting groups in canonical role order.
 pub fn precommitted_final_openings<F: JoltField>(
     schedule: &PrecommittedSchedule,
     stage7_points: &Stage7OutputPoints<F>,
@@ -74,6 +76,7 @@ pub fn precommitted_final_openings<F: JoltField>(
 ) -> Result<Vec<PrecommittedFinalOpening<F>>, VerifierError> {
     let is_clear = clear.is_some();
     let mut openings = Vec::new();
+    #[cfg(not(feature = "akita"))]
     for (kind, layout) in [
         (JoltAdviceKind::Trusted, schedule.trusted_advice.as_ref()),
         (
@@ -175,6 +178,7 @@ fn resolve_source<F: JoltField, T>(
 
 /// The stage-7 advice address-phase output *value* for `kind` (only that kind's
 /// slot is filled on the wire).
+#[cfg(not(feature = "akita"))]
 fn advice_address_value<F: JoltField>(
     claims: &Stage7OutputClaims<F>,
     kind: JoltAdviceKind,
@@ -191,6 +195,7 @@ fn advice_address_value<F: JoltField>(
 /// Resolves the final opening of an advice polynomial from whichever phase
 /// completed its reduction: this stage's address phase, or the stage 6b cycle
 /// phase when no active address rounds remain.
+#[cfg(not(feature = "akita"))]
 fn advice_final_opening<F: JoltField>(
     kind: JoltAdviceKind,
     layout: &AdviceClaimReductionLayout,

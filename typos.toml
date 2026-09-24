@@ -1,7 +1,15 @@
 [files]
 # golden_bytes.rs is hex fixture data (byte-encoding pins); hex substrings
 # trigger false positives ("ede", "ba").
-extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
+extend-exclude = [
+  "patches/*.patch",
+  "crates/jolt-field/tests/golden_bytes.rs",
+  "**/fuzz/artifacts/**",
+  "**/fuzz/corpus/**",
+  "**/fuzz/fixtures/**",
+  "**/fuzz/regressions/**",
+  "**/fuzz/seeds/**",
+]
 
 [default.extend-words]
 "groth" = "groth"
@@ -25,6 +33,8 @@ extend-exclude = ["patches/*.patch", "crates/jolt-field/tests/golden_bytes.rs"]
 # (A_tru, A_unt) in the packed (Akita) prove path docs.
 "tru" = "tru"
 "unt" = "unt"
+# Canonical Akita schedule artifact extension.
+"aks" = "aks"
 
 [type.ocaml.extend-words]
 # HOL Light tactic identifiers.

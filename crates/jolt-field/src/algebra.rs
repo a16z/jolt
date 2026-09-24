@@ -9,8 +9,11 @@
 //! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
 //! protocol stack requires of a scalar field.
 
+#[cfg(feature = "allocative")]
+use allocative::Allocative;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
+use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::iter::{Product, Sum};
@@ -296,7 +299,7 @@ pub trait CanonicalEncoding:
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
 
-    /// Decodes exactly [`NUM_BYTES`](Self::NUM_BYTES) canonical bytes;
+    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
     /// `None` on wrong length or a non-canonical value.
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
 
@@ -324,6 +327,16 @@ pub trait CanonicalEncoding:
     /// may override this capability. Wider or encoded fields return `None`.
     #[inline]
     fn canonical_u32_slice(values: &[Self]) -> Option<&[u32]> {
+        let _ = values;
+        None
+    }
+
+    /// Borrows canonical `u64` representatives without per-element conversion.
+    ///
+    /// Fields whose in-memory representation is exactly one canonical `u64`
+    /// may override this capability. Narrower or encoded fields return `None`.
+    #[inline]
+    fn canonical_u64_slice(values: &[Self]) -> Option<&[u64]> {
         let _ = values;
         None
     }
@@ -386,10 +399,26 @@ pub trait Accumulator: Default + Copy + Send + Sync {
         self.fmadd(a, Self::Element::from_u64(b));
     }
 
+    /// Fused multiply-add with a `u128` scalar: `self += a * F::from(b)`.
+    #[inline]
+    fn fmadd_u128(&mut self, a: Self::Element, b: u128) {
+        self.fmadd(a, Self::Element::from_u128(b));
+    }
+
     /// Fused multiply-add with an `i64` scalar: `self += a * F::from(b)`.
     #[inline]
     fn fmadd_i64(&mut self, a: Self::Element, b: i64) {
         self.fmadd(a, Self::Element::from_i64(b));
+    }
+
+    /// Fused multiply-add with a sign-and-magnitude `u64` scalar.
+    #[inline]
+    fn fmadd_signed_u64(&mut self, value: Self::Element, magnitude: u64, is_positive: bool) {
+        if is_positive {
+            self.fmadd_u64(value, magnitude);
+        } else {
+            self.fmadd_s256(value, &S256::new([magnitude, 0, 0, 0], false));
+        }
     }
 
     /// Fused multiply-add with a signed 256-bit scalar.
@@ -467,16 +496,42 @@ impl<R: Ring> Accumulator for NaiveAccumulator<R> {
     }
 }
 
+/// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
+/// is on, vacuous otherwise.
+///
+/// Field elements own no heap, so this costs the concrete backends nothing
+/// but buys every field-generic container the derive: `F: JoltField` implies
+/// `F: Allocative`, so `Vec<F>` and friends render through the native impls
+/// instead of hand-written byte-sizing visitors.
+#[cfg(feature = "allocative")]
+pub trait MaybeAllocative: Allocative {}
+#[cfg(feature = "allocative")]
+impl<T: Allocative + ?Sized> MaybeAllocative for T {}
+/// [`Allocative`](https://docs.rs/allocative) when the `allocative` feature
+/// is on, vacuous otherwise.
+#[cfg(not(feature = "allocative"))]
+pub trait MaybeAllocative {}
+#[cfg(not(feature = "allocative"))]
+impl<T: ?Sized> MaybeAllocative for T {}
+
 /// Everything Jolt's protocol stack requires of a scalar field: field
-/// algebra, a canonical transcript encoding, and an accumulator.
+/// algebra, a canonical transcript encoding, an accumulator, serde wire
+/// serialization (canonical-checked, via [`impl_serde_bytes!`]), and heap
+/// visitation under the `allocative` feature.
 ///
 /// Blanket-implemented — implement the component traits and this follows.
-///
-/// The bundle deliberately does NOT require `Serialize + DeserializeOwned`
-/// while the temporary `akita` bootstrap edge exists: the pre-cutover
-/// `akita-field` type is foreign and cannot be given serde impls here.
-/// Restore the serde bounds when the akita cutover removes that edge; every
-/// first-party field type already implements them (`impl_serde_bytes!`).
-pub trait JoltField: Field + CanonicalEncoding + WithAccumulator {}
+pub trait JoltField:
+    Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned + MaybeAllocative
+{
+}
 
-impl<T: Field + CanonicalEncoding + WithAccumulator> JoltField for T {}
+impl<
+        T: Field
+            + CanonicalEncoding
+            + WithAccumulator
+            + Serialize
+            + DeserializeOwned
+            + MaybeAllocative,
+    > JoltField for T
+{
+}

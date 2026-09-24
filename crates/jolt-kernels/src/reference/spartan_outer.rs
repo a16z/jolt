@@ -38,38 +38,6 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 use jolt_witness::JoltWitnessPlane;
-
-// Size arithmetic rather than a derive: a derive would demand
-// `F: Allocative` of the generic `UniskipKernel` impl below that parks this
-// kernel. Field elements are flat, so the tables size exactly; the
-// constraint templates (`matrices`) are cycle-independent and tiny, counted
-// at their spine size via `enter_self_sized`.
-#[cfg(feature = "allocative")]
-impl<F: JoltField> allocative::Allocative for SpartanOuterKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
-        use crate::backend::{nested_vec_heap_bytes, vec_heap_bytes};
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(allocative::Key::new("tau"), vec_heap_bytes(&self.tau));
-        visitor.visit_simple(
-            allocative::Key::new("input_tables"),
-            nested_vec_heap_bytes(&self.input_tables),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("az_rows"),
-            nested_vec_heap_bytes(&self.az_rows),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("bz_rows"),
-            nested_vec_heap_bytes(&self.bz_rows),
-        );
-        visitor.visit_simple(
-            allocative::Key::new("eq_table"),
-            vec_heap_bytes(&self.eq_table),
-        );
-        visitor.exit();
-    }
-}
-
 impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
     // The backend-neutral `SpartanOuterUniskip::*` spans live at the stage-1
     // call boundary (`crates/jolt-prover/src/stages/stage1.rs`), so every
@@ -90,6 +58,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _inputs: &(),
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         session
             .state::<SpartanOuterKernel<F>>()
@@ -123,9 +92,11 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemaind
 /// The shared stage-1 compute state: the 35 R1CS input tables, the
 /// per-constraint Az/Bz row-value tables, and `eq(τ_low, ·)` — everything the
 /// uni-skip polynomial and the remainder member both consume.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub struct SpartanOuterKernel<F: JoltField> {
     log_t: usize,
     tau: Vec<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
     matrices: ConstraintMatrices<F>,
     /// Cycle-indexed R1CS input tables (big-endian cycle index), in the
     /// relation's variable order.

@@ -1,5 +1,5 @@
 //! The versioned span taxonomy for the modular prover — **the normative
-//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 1).
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 3).
 //!
 //! One instrumentation layer, two renderings: the same `tracing` span stream
 //! becomes both the Perfetto-viewable chrome trace and the machine-queryable
@@ -36,7 +36,7 @@
 //! feature swaps the commitment seams wholesale: the packed prover commits
 //! one native `OneHotTrace` group in stage 0 (no `commit_witness` stream, no
 //! homomorphic stage-8 batch) and discharges it with a native same-point
-//! opening, with the reconstruction phase between stages 7 and 8 —
+//! opening after stage 7:
 //! [`AKITA_MODE_SPANS`]. Every other label is mode-neutral (the sumcheck
 //! engine's `prove_batch` differs only in its recorder, not its function).
 //!
@@ -77,9 +77,9 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-pub const TAXONOMY_VERSION: u32 = 1;
+pub const TAXONOMY_VERSION: u32 = 3;
 
-/// The whole-run root span (`crates/jolt-prover/src/prover.rs`). Named
+/// The whole-run root span emitted by the Dory and Akita provers. Named
 /// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an
 /// inner opening-proof span. Carries `trace_length`; the dark-time and
 /// peak-memory summary metrics are computed over its interval.
@@ -149,7 +149,11 @@ pub const UNISKIP_SEAM_SPANS: [&str; 4] = [
 /// Kernel-seam spans that fire only on proves whose guest consumes advice.
 /// Call-boundary spans like [`KERNEL_SEAM_SPANS`]; exempt from the smoke
 /// test's presence assertion (fibonacci has no advice).
-pub const ADVICE_SEAM_SPANS: [&str; 2] = ["commit_advice", "AdviceOpeningEvaluation::evaluate"];
+pub const ADVICE_SEAM_SPANS: [&str; 1] = ["commit_advice"];
+
+/// Stage-4 evaluation seam for advice or a committed program image. Absent
+/// when neither private initial-RAM contribution is present.
+pub const INITIAL_RAM_OPENING_SEAM_SPANS: [&str; 1] = ["RamInitialOpeningEvaluation::evaluate"];
 
 /// Kernel-seam spans that fire only with committed-program preprocessing.
 pub const COMMITTED_PROGRAM_SEAM_SPANS: [&str; 1] = ["build_committed_bytecode_chunk_coeffs"];
@@ -173,19 +177,15 @@ pub const ZK_MODE_SPANS: [&str; 2] = [
 ];
 
 /// Packed-mode (`akita` feature) seams: the `OneHotTrace` column assembly
-/// and native group commit at stage 0, the reconstruction phase at the head
-/// of the stage-8 region (span always fires; its sumcheck batch — the
-/// `Reconstruction::prove` driver span — runs only with advice or a
-/// committed program), and the native same-point stage-8 opening. The packed
-/// prover keeps `prove_uniskip_clear` (its recorders are clear; `akita` and
-/// `zk` are mutually exclusive) and fires no `commit_witness` /
+/// and native group commit at stage 0, plus the native grouped stage-8
+/// opening. The packed prover keeps `prove_uniskip_clear` (its recorders are
+/// clear; `akita` and `zk` are mutually exclusive) and fires no `commit_witness` /
 /// `stream_witnesses` / `JointOpeningPolynomials::prepare` /
 /// `HomomorphicBatch::*`.
-pub const AKITA_MODE_SPANS: [&str; 5] = [
+pub const AKITA_MODE_SPANS: [&str; 4] = [
     "assemble_one_hot_trace",
-    "CommitmentScheme::commit_batch",
-    "prove_reconstruction",
-    "CommitmentScheme::open_batch",
+    "akita_main_commit_with_precommitted",
+    "akita_main_batched_prove",
     "prove_uniskip_clear",
 ];
 
@@ -199,7 +199,7 @@ pub enum ProverMode {
     Akita,
 }
 
-/// Every v1 label that fires on all proves of the given mode: the presence
+/// Every current label that fires on all proves of the given mode: the presence
 /// set the `jolt-prover` profiling smoke test asserts against a freshly
 /// emitted trace.
 ///

@@ -51,12 +51,14 @@ mod error;
 mod prefix;
 mod schemes;
 
-pub use claims::{EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim};
+pub use claims::{VerifierOpeningClaim, ZkEvaluationClaim};
 pub use error::OpeningsError;
+pub use jolt_poly::EvaluationClaim;
 pub use prefix::{PrefixPackedClaims, PrefixPackedLayout};
 
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningScheme, CommitmentScheme, GroupCommitmentMetadata,
-    GroupSetupMetadata, HomomorphicBatch, StreamingCommitment, TransparentObjectSetup,
+    GroupOpeningClaim, GroupSetupMetadata, HomomorphicBatch, PrecommittedClaim,
+    PrecommittedOpening, PrecommittedRole, StreamingCommitment, TransparentObjectSetup,
     ZkBatchOpening, ZkBatchOpeningScheme, ZkOpeningScheme, ZkStreamingCommitment,
 };

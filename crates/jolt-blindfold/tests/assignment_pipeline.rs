@@ -10,7 +10,7 @@ mod support;
 
 use jolt_blindfold::{BlindFoldProtocol, BlindFoldWitness, ProverError};
 use jolt_claims::{constant, opening};
-use jolt_crypto::{Bn254G1, PedersenSetup, VectorCommitment};
+use jolt_crypto::{Bn254G1, JoltGroup, PedersenSetup, VectorCommitment};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec, SumcheckStatement};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use rand_chacha::ChaCha20Rng;
@@ -393,4 +393,68 @@ fn assign_witness_rejects_output_claim_blinding_count_mismatch() {
             ..
         })
     ));
+}
+
+/// The final-opening rows are opened at fixed coordinates, so the proof
+/// publishes their real-instance commitments together with the folded
+/// opening blindings. Unblinding a real row with the published folded
+/// blinding must not recover a deterministic commitment to the hidden
+/// evaluation or to its Dory blinding.
+#[test]
+fn final_opening_rows_stay_hidden_from_public_proof_data() {
+    let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AC);
+    let fixture = assignment_fixture(&mut rng);
+    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = fixture.stage_witnesses.iter().collect();
+    let assigned = fixture
+        .protocol
+        .assign_witness(
+            &STAGE_DOMAINS,
+            &stage_refs,
+            &fixture.eval_outputs,
+            &fixture.eval_blindings,
+            &mut rng,
+        )
+        .expect("witness assigns");
+
+    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_transcript);
+    let proof = jolt_blindfold::prove::<F, VC, _, _>(
+        &fixture.setup,
+        &fixture.protocol,
+        &mut prover_transcript,
+        BlindFoldWitness {
+            rows: &assigned.rows,
+            blindings: &assigned.blindings,
+            eval_outputs: &fixture.eval_outputs,
+            eval_blindings: &fixture.eval_blindings,
+        },
+        &mut rng,
+    )
+    .expect("assigned witness proves");
+
+    let g0 = fixture.setup.message_generators[0];
+    let h = fixture.setup.blinding_generator;
+    let aux_start = fixture.protocol.dimensions.witness_rows.auxiliary.start;
+    let coordinates = fixture
+        .protocol
+        .final_opening_witness_coordinates()
+        .expect("final opening coordinates")[0];
+
+    let eval_row = coordinates.evaluation.expect("evaluation row").row;
+    let real_eval_row = proof.auxiliary_row_commitments[eval_row - aux_start];
+    let folded_eval_blinding = proof.folded_eval_output_openings[0].combined_blinding;
+    assert_ne!(
+        real_eval_row - h.scalar_mul(&folded_eval_blinding),
+        g0.scalar_mul(&fixture.eval_outputs[0]),
+        "the hidden batched evaluation is recoverable as g0^y from public proof data"
+    );
+
+    let blinding_row = coordinates.blinding.expect("blinding row").row;
+    let real_blinding_row = proof.auxiliary_row_commitments[blinding_row - aux_start];
+    let folded_blinding_blinding = proof.folded_eval_blinding_openings[0].combined_blinding;
+    assert_ne!(
+        real_blinding_row - h.scalar_mul(&folded_blinding_blinding),
+        g0.scalar_mul(&fixture.eval_blindings[0]),
+        "the hidden Dory evaluation blinding is recoverable as g0^r from public proof data"
+    );
 }

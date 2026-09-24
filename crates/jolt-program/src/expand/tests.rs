@@ -112,6 +112,26 @@ fn trap_related_rd_zero_uses_instruction_expansion() -> Result<(), ExpansionErro
 }
 
 #[test]
+fn csrrs_rd_zero_rs1_zero_becomes_noop_addi() -> Result<(), ExpansionError> {
+    let mut allocator = ExpansionAllocator::new();
+    let mut row = source_row(SourceInstructionKind::CSRRS, Some(0), false);
+    row.operands.rs1 = Some(0);
+    row.operands.imm = 0x300;
+    let expanded = rows(expand_instruction(
+        &SourceInstruction::new(SourceInstructionKind::CSRRS, row),
+        &mut allocator,
+        RV64IMAC_JOLT,
+    )?);
+
+    assert_eq!(expanded.len(), 1);
+    assert_eq!(expanded[0].instruction_kind, JoltInstructionKind::ADDI);
+    assert_eq!(expanded[0].operands.rd, Some(0));
+    assert_eq!(expanded[0].operands.rs1, Some(0));
+    assert_eq!(expanded[0].operands.imm, 0);
+    Ok(())
+}
+
+#[test]
 fn inline_requires_provider() {
     let mut allocator = ExpansionAllocator::new();
     let input = instruction(SourceInstructionKind::Inline, Some(3), false);
@@ -487,14 +507,24 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
     // recursive expansion order and virtual-register reuse regressions without
     // checking a giant expanded-row fixture into the repository.
     //
-    // 16 of the 360 hashes were re-baselined when `expand_address` began wrapping
+    // 16 of the 360 hashes were re-baselined when `emit_address` began wrapping
     // its offset through `format_i_imm`: exactly the `imm = -8` cases for LH/LHU/
     // LW/LWU/SH/SW, the accesses that emit an alignment assert. Byte accesses
     // (no assert) and non-negative offsets (wrap is the identity) are unchanged.
     //
     // 18 hashes were re-baselined when LW moved to the fused
     // VirtualWindowMaskW + VirtualPextSigned extraction: all LW cases, plus
-    // LRW/SCW, which recursively embed the word-load expansion.
+    // LRW/SCW, which recursively embed the word-load expansion. A further 60
+    // (LB/LBU/LH/LHU/LWU, 12 each) were re-baselined when the remaining loads
+    // moved to their window-mask + parallel-extract sequences.
+    // A further 78 (all six loads, 12 each, plus LRW/SCW) were re-baselined
+    // when VirtualAlignAddr fused the ADDI + ANDI pair and the window masks
+    // began taking the immediate directly, and again when the fused-load
+    // virtual opcodes moved to 0x009a-0x009d after the W-shift tags took
+    // 0x0091-0x0099 (kinds serialize as tags, so renumbering shifts hashes).
+    // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
+    // narrow stores moved to the window-mask + ANDN + shift-data sequences
+    // at tags 0x009e-0x00a0.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a

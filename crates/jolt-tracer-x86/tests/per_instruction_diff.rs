@@ -105,12 +105,12 @@ const SUPPORTED: &[&str] = &[
     "VirtualXorRotW22",
     "VirtualXorRotW19",
     "VirtualXorRotW6",
+    "VirtualXorRotL1",
     "AssertEq",
     "AssertValidDiv0",
     "AssertValidUnsignedRemainder",
     "AssertMulUNoOverflow",
-    "VirtualChangeDivisor",
-    "VirtualChangeDivisorW",
+    "VirtualNegateIf",
     "VirtualAdviceLen",
     "VirtualAdviceLoad",
     // Fused RV64 word arithmetic (single-lookup W ops):
@@ -128,6 +128,14 @@ const SUPPORTED: &[&str] = &[
     // Byte-addressable Tier 0 (fused sub-word extraction):
     "WindowMaskW",
     "PextSigned",
+    "Pext",
+    "WindowMaskB",
+    "WindowMaskH",
+    "AlignAddr",
+    // Byte-addressable Tier 0 (fused narrow stores):
+    "ShiftDataB",
+    "ShiftDataH",
+    "ShiftDataW",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -309,9 +317,7 @@ fn shift_imm_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     let mut i = base_instance(rng, kind);
     i.row.operands.rs1 = Some(reg(rng));
     i.row.operands.rd = Some(rd(rng));
-    // The immediate is the W bitmask 2^32 - 2^shift (shift ∈ 0..32);
-    // shift = imm.trailing_zeros(). The expander emits no other values, and
-    // the interpreter's plain `>>` rejects shifts ≥ 32 under debug asserts.
+    // The expander emits W bitmasks 2^32 - 2^shift (shift ∈ 0..32).
     let shift = rng.gen_range(0u32..32);
     i.row.operands.imm = (((1u128 << (32 - shift)) - 1) << shift) as i128;
     i
@@ -534,19 +540,17 @@ fn assert_mulu_no_overflow(rng: &mut StdRng) -> Instance {
     i
 }
 
-fn change_divisor(rng: &mut StdRng, name: &str, wide: bool) -> Instance {
-    let mut i = alu_rr(rng, kind_by_name(name));
+fn negate_if(rng: &mut StdRng) -> Instance {
+    let mut i = alu_rr(rng, kind_by_name("VirtualNegateIf"));
     if rng.gen_ratio(1, 4) {
-        // Exercise the MIN/-1 edge.
+        // Exercise the negation branch and the i64::MIN wrapping edge.
         let rs1 = i.row.operands.rs1.unwrap();
         let rs2 = i.row.operands.rs2.unwrap();
         if rs1 != 0 && rs2 != 0 && rs1 != rs2 {
-            i.pre_regs[rs1 as usize] = if wide {
-                i64::MIN as u64
-            } else {
-                (i32::MIN as i64) as u64
-            };
-            i.pre_regs[rs2 as usize] = u64::MAX; // -1
+            i.pre_regs[rs1 as usize] = u64::MAX; // negative sign source
+            if rng.gen_ratio(1, 2) {
+                i.pre_regs[rs2 as usize] = i64::MIN as u64;
+            }
         }
     }
     i
@@ -751,12 +755,12 @@ difftests! {
     diff_xorrotw22 => |r| alu_rr(r, K::VirtualXORROTW22);
     diff_xorrotw19 => |r| alu_rr(r, K::VirtualXORROTW19);
     diff_xorrotw6 => |r| alu_rr(r, K::VirtualXORROTW6);
+    diff_xorrotl1 => |r| alu_rr(r, K::VirtualXORROTL1);
     diff_assert_eq => assert_eq_gen;
     diff_assert_valid_div0 => assert_valid_div0;
     diff_assert_valid_unsigned_remainder => assert_valid_unsigned_remainder;
     diff_assert_mulu_no_overflow => assert_mulu_no_overflow;
-    diff_change_divisor => |r| change_divisor(r, "VirtualChangeDivisor", true);
-    diff_change_divisor_w => |r| change_divisor(r, "VirtualChangeDivisorW", false);
+    diff_negate_if => negate_if;
     diff_advice_len => advice_len;
     diff_advice_load => advice_load;
     diff_addw => |r| alu_rr(r, K::ADDW);
@@ -767,10 +771,23 @@ difftests! {
     diff_shift_right_bitmask_w => |r| unary(r, kind_by_name("VirtualShiftRightBitmaskW"));
     diff_srlw => |r| shift_reg_w(r, K::VirtualSRLW);
     diff_sraw => |r| shift_reg_w(r, K::VirtualSRAW);
-    diff_srliw => |r| shift_imm_w(r, K::VirtualSRLIW);
+    diff_srliw => |r| {
+        let mut instance = shift_imm_w(r, K::VirtualSRLIW);
+        if r.gen_ratio(1, 20) {
+            instance.row.operands.imm = 0;
+        }
+        instance
+    };
     diff_sraiw => |r| shift_imm_w(r, K::VirtualSRAIW);
-    diff_window_mask_w => |r| unary(r, kind_by_name("VirtualWindowMaskW"));
+    diff_window_mask_w => |r| alu_ri(r, kind_by_name("VirtualWindowMaskW"), false);
+    diff_window_mask_b => |r| alu_ri(r, kind_by_name("VirtualWindowMaskB"), false);
+    diff_window_mask_h => |r| alu_ri(r, kind_by_name("VirtualWindowMaskH"), false);
+    diff_align_addr => |r| alu_ri(r, kind_by_name("VirtualAlignAddr"), false);
     diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
+    diff_pext => |r| alu_rr(r, kind_by_name("VirtualPext"));
+    diff_shift_data_b => |r| alu_rr(r, kind_by_name("VirtualShiftDataB"));
+    diff_shift_data_h => |r| alu_rr(r, kind_by_name("VirtualShiftDataH"));
+    diff_shift_data_w => |r| alu_rr(r, kind_by_name("VirtualShiftDataW"));
 }
 
 /// Every supported kind has a differential test above; this pins the count
@@ -779,5 +796,5 @@ difftests! {
 /// compile error, and the whole-guest gates cover its semantics.)
 #[test]
 fn supported_kinds_all_have_difftests() {
-    assert_eq!(SUPPORTED.len(), 81);
+    assert_eq!(SUPPORTED.len(), 88);
 }

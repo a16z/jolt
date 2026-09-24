@@ -18,6 +18,12 @@ impl TempId {
     }
 }
 
+impl From<TempId> for RegisterOperand {
+    fn from(temp: TempId) -> Self {
+        Self::Temp(temp)
+    }
+}
+
 /// Symbolic inline-register placeholder, resolved to the inline virtual
 /// register pool during materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,7 +195,7 @@ pub struct ExpandedInstructionSequence {
     pub(super) ops: Vec<ExpansionOp>,
 }
 
-/// Builds a symbolic expansion recipe from emit/expand/allocate/release calls.
+/// Builds a symbolic expansion recipe from instruction/allocate/release calls.
 pub(super) struct ExpansionBuilder {
     source: SourceInstructionRow,
     ops: Vec<ExpansionOp>,
@@ -217,150 +223,119 @@ impl ExpansionBuilder {
         Ok(temp)
     }
 
-    /// Append an already target-legal row to this source row's output sequence.
-    ///
-    /// Use `emit_*` when the row should appear exactly as written in finalized
-    /// bytecode. Use `expand_*` instead when the row is a source-only helper
-    /// that must be routed through the central expander first.
     pub(super) fn emit_r(
         &mut self,
-        instruction_kind: JoltInstructionKind,
-        rd: RegisterOperand,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
     ) {
-        self.emit(RowTemplate::r(instruction_kind, rd, rs1, rs2));
+        self.instruction(SourceInstructionRowTemplate::r(
+            instruction_kind.into(),
+            rd.into(),
+            rs1.into(),
+            rs2.into(),
+        ));
     }
 
     pub(super) fn emit_i(
         &mut self,
-        instruction_kind: JoltInstructionKind,
-        rd: RegisterOperand,
-        rs1: RegisterOperand,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) {
-        self.emit(RowTemplate::i(instruction_kind, rd, rs1, imm));
+        self.instruction(SourceInstructionRowTemplate::i(
+            instruction_kind.into(),
+            rd.into(),
+            rs1.into(),
+            imm,
+        ));
     }
 
     pub(super) fn emit_j(
         &mut self,
-        instruction_kind: JoltInstructionKind,
-        rd: RegisterOperand,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: impl Into<RegisterOperand>,
         imm: i128,
     ) {
-        self.emit(RowTemplate::j(instruction_kind, rd, imm));
+        self.instruction(SourceInstructionRowTemplate::j(
+            instruction_kind.into(),
+            rd.into(),
+            imm,
+        ));
     }
 
     pub(super) fn emit_u(
         &mut self,
-        instruction_kind: JoltInstructionKind,
-        rd: RegisterOperand,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: impl Into<RegisterOperand>,
         imm: i128,
     ) {
-        self.emit(RowTemplate::u(instruction_kind, rd, imm));
-    }
-
-    /// Record a source-only helper row that the provider-free materializer must
-    /// expand before appending its finalized rows to this source-row sequence.
-    ///
-    /// Recursive helper expansion always goes through `ExpansionState`, so
-    /// rd=x0 handling, recursion depth, allocator state, and metadata stamping
-    /// stay centralized.
-    pub(super) fn expand_r(
-        &mut self,
-        instruction_kind: SourceInstructionKind,
-        rd: RegisterOperand,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
-    ) {
-        self.expand(SourceInstructionRowTemplate::r(
-            instruction_kind,
-            rd,
-            rs1,
-            rs2,
-        ));
-    }
-
-    pub(super) fn expand_i(
-        &mut self,
-        instruction_kind: SourceInstructionKind,
-        rd: RegisterOperand,
-        rs1: RegisterOperand,
-        imm: i128,
-    ) {
-        self.expand(SourceInstructionRowTemplate::i(
-            instruction_kind,
-            rd,
-            rs1,
+        self.instruction(SourceInstructionRowTemplate::u(
+            instruction_kind.into(),
+            rd.into(),
             imm,
         ));
     }
 
-    pub(super) fn expand_j(
+    pub(super) fn emit_b(
         &mut self,
-        instruction_kind: SourceInstructionKind,
-        rd: RegisterOperand,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) {
-        self.expand(SourceInstructionRowTemplate::j(instruction_kind, rd, imm));
-    }
-
-    pub(super) fn expand_u(
-        &mut self,
-        instruction_kind: SourceInstructionKind,
-        rd: RegisterOperand,
-        imm: i128,
-    ) {
-        self.expand(SourceInstructionRowTemplate::u(instruction_kind, rd, imm));
-    }
-
-    pub(super) fn expand_b(
-        &mut self,
-        instruction_kind: SourceInstructionKind,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
-        imm: i128,
-    ) {
-        self.expand(SourceInstructionRowTemplate::b(
-            instruction_kind,
-            rs1,
-            rs2,
+        self.instruction(SourceInstructionRowTemplate::b(
+            instruction_kind.into(),
+            rs1.into(),
+            rs2.into(),
             imm,
         ));
     }
 
-    pub(super) fn expand_s(
+    pub(super) fn emit_s(
         &mut self,
-        instruction_kind: SourceInstructionKind,
-        rs1: RegisterOperand,
-        rs2: RegisterOperand,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rs1: impl Into<RegisterOperand>,
+        rs2: impl Into<RegisterOperand>,
         imm: i128,
     ) {
-        self.expand(SourceInstructionRowTemplate::s(
-            instruction_kind,
-            rs1,
-            rs2,
+        self.instruction(SourceInstructionRowTemplate::s(
+            instruction_kind.into(),
+            rs1.into(),
+            rs2.into(),
             imm,
         ));
+    }
+
+    pub(super) fn emit_ld(
+        &mut self,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rd: impl Into<RegisterOperand>,
+        rs1: impl Into<RegisterOperand>,
+        imm: i128,
+    ) {
+        self.emit_i(instruction_kind, rd, rs1, imm);
     }
 
     /// Emit an address-form assert (`VirtualAssert{Word,Halfword}Alignment`).
     ///
-    /// The offset is wrapped to `u64` exactly as `expand_i` callers do via
+    /// The offset is wrapped to `u64` exactly as `emit_i` callers do via
     /// [`format_i_imm`]. These asserts carry `AddOperands`, so the bytecode's
     /// `Imm` column is compared against a lookup index of `rs1 + imm` as a field
     /// element; a raw *signed* offset would leave the two disagreeing, and would
     /// make a negative effective address produce an index of `2^128 - |rs1+imm|`
     /// whose only satisfying representative sits in the fp128 alias band.
-    pub(super) fn expand_address(
+    pub(super) fn emit_address(
         &mut self,
-        instruction_kind: SourceInstructionKind,
-        rs1: RegisterOperand,
+        instruction_kind: impl Into<SourceInstructionKind>,
+        rs1: impl Into<RegisterOperand>,
         imm: i128,
     ) {
-        self.expand(SourceInstructionRowTemplate::address(
-            instruction_kind,
-            rs1,
+        self.instruction(SourceInstructionRowTemplate::address(
+            instruction_kind.into(),
+            rs1.into(),
             format_i_imm(imm),
         ));
     }
@@ -394,7 +369,18 @@ impl ExpansionBuilder {
         self.ops.push(ExpansionOp::Emit(row));
     }
 
-    pub(super) fn expand(&mut self, row: SourceInstructionRowTemplate) {
+    fn instruction(&mut self, row: SourceInstructionRowTemplate) {
+        if let Some(instruction_kind) = row.instruction_kind.jolt_kind() {
+            self.emit(RowTemplate {
+                instruction_kind,
+                operands: row.operands,
+            });
+        } else {
+            self.expand(row);
+        }
+    }
+
+    fn expand(&mut self, row: SourceInstructionRowTemplate) {
         self.ops.push(ExpansionOp::Expand(row));
     }
 }

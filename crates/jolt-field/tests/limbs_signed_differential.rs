@@ -203,6 +203,25 @@ fn signed_bigint_ops_match_bigint() {
 }
 
 #[test]
+fn signed_bigint_fmadd_trunc_matches_bigint() {
+    let mut rng = rng();
+    for _ in 0..500 {
+        let (la, sa): ([u64; 2], bool) = (rng.gen(), rng.gen());
+        let (lb, sb): ([u64; 2], bool) = (rng.gen(), rng.gen());
+        let (lc, sc): ([u64; 3], bool) = (rng.gen(), rng.gen());
+        let a = two::signed::SignedBigInt::new(la, sa);
+        let b = two::signed::SignedBigInt::new(lb, sb);
+        let mut acc = two::signed::SignedBigInt::new(lc, sc);
+        let expected = oracle_of_signed(&acc)
+            .add(&oracle_of_signed(&a).mul_to_width(&oracle_of_signed(&b), 192));
+
+        a.fmadd_trunc::<2, 3>(&b, &mut acc);
+
+        assert_signed_matches(acc, &expected);
+    }
+}
+
+#[test]
 fn signed_bigint_i128_oracle() {
     let mut rng = rng();
     for _ in 0..500 {

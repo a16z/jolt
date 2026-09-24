@@ -23,7 +23,7 @@ use jolt_verifier::{
     absorb_committed_program_commitments, absorb_transcript_commitments,
     absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
 };
-use jolt_witness::{validate_servable, JoltWitnessOracle, JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{validate_servable, JoltWitnessOracle, RowSource, WitnessBundle};
 
 use crate::config::advice_total_vars;
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
@@ -74,7 +74,7 @@ where
     PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
     T: Transcript<Challenge = F>,
-    W: JoltWitnessPlane<F>,
+    W: JoltWitnessOracle<F> + RowSource,
 {
     // Committed-program mode needs the prover-retained full program + hints;
     // require presence to agree with the verifier preprocessing's mode.
@@ -203,7 +203,7 @@ where
     .in_scope(|| {
         backend.commit.commit_witness(
             session,
-            witness as &dyn JoltWitnessPlane<F>,
+            witness as &dyn RowSource,
             &ids,
             grid,
             &preprocessing.pcs_setup,

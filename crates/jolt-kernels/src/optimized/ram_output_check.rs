@@ -5,8 +5,7 @@
 //! `K`-sized address-eq table and binds four dense tables (eq, mask, val_io,
 //! val_final) through the naive expression interpreter every round.
 //!
-//! Techniques ported from `jolt-prover-legacy/src/zkvm/ram/output_check.rs`
-//! (`OutputSumcheckProver`):
+//! Carries forward the former `OutputSumcheckProver` optimizations:
 //!
 //! - **Gruen split-eq factoring**: `eq(r_address, ·)` is held as an
 //!   `E_out ⊗ E_in` tensor plus a per-round linear factor
@@ -98,6 +97,7 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
     }
 }
 
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OutputCheckKernel<F: JoltField> {
     progress: RoundProgress,
     gruen: GruenSplitEqPolynomial<F>,
@@ -106,17 +106,6 @@ struct OutputCheckKernel<F: JoltField> {
     val_final: Polynomial<F>,
     bind_scratch: Vec<F>,
 }
-
-#[cfg(feature = "allocative")]
-crate::optimized::impl_field_allocative!(OutputCheckKernel, |kernel| {
-    use crate::backend::{poly_heap_bytes, vec_heap_bytes};
-    kernel.gruen.heap_bytes()
-        + poly_heap_bytes(&kernel.io_mask)
-        + poly_heap_bytes(&kernel.val_io)
-        + poly_heap_bytes(&kernel.val_final)
-        + vec_heap_bytes(&kernel.bind_scratch)
-});
-
 impl<F: JoltField> OutputCheckKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's `t = 0..=3` sample points,
     /// with `q(t) = Σ_y E(y) · mask(t, y) · (val_final − val_io)(t, y)`.
@@ -226,14 +215,8 @@ impl<F: JoltField> SumcheckKernel<F> for OutputCheckKernel<F> {
             (RamOutputCheckPublic::IoMask, self.io_mask.evals()[0]),
             (RamOutputCheckPublic::ValIo, self.val_io.evals()[0]),
         ] {
-            pin_derived_term(
-                relation,
-                JoltDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
-                got,
-            )?;
+            let id = JoltDerivedId::from(public);
+            pin_derived_term(relation, id, input_points, output_points, challenges, got)?;
         }
         Ok(())
     }
@@ -306,10 +289,7 @@ mod tests {
             memory_layout: device.memory_layout.clone(),
             max_padded_trace_length: 1 << log_t,
         });
-        let rows = vec![TraceRow {
-            instruction,
-            ..TraceRow::default()
-        }];
+        let rows = vec![TraceRow::from_instruction(instruction).unwrap()];
         // Post-execution DRAM bytes (outside the IO mask): nonzero
         // `val_final − val_io` there keeps the later round polynomials
         // nontrivial while the Boolean-point sum stays zero.

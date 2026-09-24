@@ -1,6 +1,6 @@
 //! E2e smoke test for the profile harness: one in-process fibonacci run
 //! must emit both telemetry artifacts, the summary must parse through the
-//! strict schema structs, and every taxonomy-v1 label that fires on all
+//! strict schema structs, and every current taxonomy label that fires on all
 //! proves must be present in the trace — so a silent span rename fails CI
 //! rather than drifting.
 //!
@@ -12,8 +12,8 @@
 //! NOT wired into CI yet: the reference backend's naive RAM kernels retain
 //! ~18 GiB regardless of trace length (`ram_K` is priced off the guest's
 //! default 32 MB heap, not the trace), which exceeds hosted-runner memory.
-//! Hook up a dedicated `rust.yml` job (guest toolchain + jolt CLI, like the
-//! legacy test jobs) once an optimized backend fits runner memory.
+//! Hook up a dedicated `rust.yml` job with the guest toolchain and jolt CLI
+//! once an optimized backend fits runner memory.
 //!
 //! Run explicitly (needs the guest toolchain, like the byte-diff harness):
 //! `cargo nextest run -p jolt-prover --features profiling -E 'binary(profiling_smoke)'`
@@ -22,7 +22,7 @@
 #![expect(clippy::unwrap_used, clippy::expect_used)]
 
 use jolt_profiling::summary::ProfileSummary;
-use jolt_profiling::taxonomy;
+use jolt_profiling::taxonomy::{self, TAXONOMY_VERSION};
 use jolt_prover::profile::{BackendKind, OutputFormat, ProfileArgs, Workload};
 use serde_json::Value;
 
@@ -77,7 +77,7 @@ fn profile_run_emits_conformant_artifacts() {
     let summary: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&summary_path).unwrap()).unwrap();
 
-    // Every always-present taxonomy-v1 label fired, for the mode this
+    // Every always-present current taxonomy label fired, for the mode this
     // prover was compiled in — the `zk` feature swaps the uni-skip and
     // stage-8 opening seams for their committed siblings, and the `akita`
     // feature swaps the commitment seams for the packed set. (The advice
@@ -100,7 +100,8 @@ fn profile_run_emits_conformant_artifacts() {
         .collect();
     assert!(
         missing.is_empty(),
-        "missing taxonomy-v1 labels: {missing:?}"
+        "missing taxonomy-v{} labels: {missing:?}",
+        TAXONOMY_VERSION
     );
 
     // Headline summary sanity: root present with a positive wall time and

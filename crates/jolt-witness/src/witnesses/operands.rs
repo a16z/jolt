@@ -3,7 +3,7 @@ use jolt_field::{
     JoltField,
 };
 use jolt_lookup_tables::LookupQuery;
-use jolt_program::execution::TraceRow;
+use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::{lookup_query, Extract, ToField, WitnessEnv};
 use crate::WitnessError;
@@ -144,6 +144,6 @@ impl Extract for Imm {
         _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        Ok(Self(row.instruction.operands.imm))
+        Ok(Self(row.imm()))
     }
 }

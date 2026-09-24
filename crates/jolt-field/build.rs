@@ -1,6 +1,6 @@
 use std::env;
 use std::error::Error;
-use std::io;
+use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -14,7 +14,7 @@ fn compile_asm(
     let _ = command.args(["-c", "-I"]).arg(asm_dir);
     let status = command.arg(source).arg("-o").arg(object).status()?;
     if !status.success() {
-        return Err(io::Error::other(format!(
+        return Err(IoError::other(format!(
             "{} failed with {status}",
             compiler.path().display()
         ))
@@ -56,7 +56,7 @@ fn require_fp64_registered_target() -> Result<(), Box<dyn Error>> {
         .arg(env::var("RUSTC")?)
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::other(format!(
+        return Err(IoError::other(format!(
             "Fp64 proof build is outside the registered matrix:\n{}",
             String::from_utf8_lossy(&output.stderr)
         ))
@@ -165,7 +165,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let out_dir = PathBuf::from(
         env::var_os("OUT_DIR")
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Cargo did not set OUT_DIR"))?,
+            .ok_or_else(|| IoError::new(ErrorKind::NotFound, "Cargo did not set OUT_DIR"))?,
     );
     let mut stems = Vec::new();
     if fp64_linkage {

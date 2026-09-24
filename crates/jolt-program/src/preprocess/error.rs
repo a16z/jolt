@@ -18,6 +18,31 @@ pub enum PreprocessingError {
         expected_sequence: u16,
         new_sequence: u16,
     },
+    #[error(
+        "bytecode inline sequence at index {bytecode_index} (address {address:#x}) is interleaved with other addresses: PC packing requires consecutive bytecode indices per address"
+    )]
+    NonContiguousInlineSequence {
+        bytecode_index: usize,
+        address: usize,
+    },
+    #[error(
+        "bytecode inline sequence at index {bytecode_index} (address {address:#x}) ends at sequence {last_sequence} without reaching its anchor at 0"
+    )]
+    UnterminatedInlineSequence {
+        bytecode_index: usize,
+        address: usize,
+        last_sequence: u16,
+    },
+    #[error(
+        "bytecode inline sequence at index {bytecode_index} (address {address:#x}) has {length} rows, exceeding the packed slot's u16 sequence length"
+    )]
+    InlineSequenceTooLong {
+        bytecode_index: usize,
+        address: usize,
+        length: usize,
+    },
+    #[error("bytecode length overflows the packed PC index (u32)")]
+    BytecodeTooLarge,
     #[cfg(feature = "field-inline")]
     #[error("invalid field-inline bytecode metadata: {0}")]
     InvalidFieldInlineMetadata(#[from] crate::field_inline::FieldInlineMetadataError),

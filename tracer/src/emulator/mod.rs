@@ -269,6 +269,18 @@ impl Emulator {
         assert_eq!(header.e_width, 64, "tracer only supports RV64 ELF inputs");
 
         if self.tohost_addr != 0 {
+            // WARNING: a `tohost` symbol is how riscv-tests ELFs are
+            // recognized; a Jolt guest built by a foreign toolchain that
+            // defines one silently loses the layout-derived memory sizing
+            // configured below.
+            #[cfg(feature = "std")]
+            if self.cpu.get_mut_mmu().jolt_device.is_some() {
+                tracing::warn!(
+                    "ELF defines a `tohost` symbol, so the tracer is entering riscv-tests mode: \
+                    emulator memory is sized to the riscv-tests test capacity instead of the \
+                    Jolt memory layout. If this is a Jolt guest, do not emit a `tohost` symbol."
+                );
+            }
             self.is_test = true;
             self.cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
         } else {
@@ -388,5 +400,75 @@ impl Emulator {
             begin_signature_addr: self.begin_signature_addr,
             end_signature_addr: self.end_signature_addr,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::elf_analyzer::test_elf::{build_elf64, TestSymbol};
+    use super::*;
+    use crate::emulator::default_terminal::DefaultTerminal;
+
+    const TOHOST_ADDR: u64 = 0x8000_3000;
+
+    fn tohost_symbols() -> Vec<TestSymbol> {
+        vec![
+            TestSymbol {
+                name: "_start",
+                value: 0x8000_0000,
+                info: 0x12,
+                size: 24,
+            },
+            TestSymbol {
+                name: "tohost",
+                value: TOHOST_ADDR,
+                info: 0x10,
+                size: 8,
+            },
+        ]
+    }
+
+    /// A guest that writes `value` to `tohost` and then spins:
+    ///     addi x5, x0, <value> ; lui/slli/srli builds x6 = 0x80003000 ;
+    ///     sd x5, 0(x6) ; j .
+    fn tohost_program(value: u32) -> Vec<u32> {
+        assert!(value < 2048);
+        vec![
+            (value << 20) | (5 << 7) | 0x13, // addi x5, x0, value
+            0x8000_3337,                     // lui  x6, 0x80003
+            0x0203_1313,                     // slli x6, x6, 32
+            0x0203_5313,                     // srli x6, x6, 32
+            0x0053_3023,                     // sd   x5, 0(x6)
+            0x0000_006f,                     // jal  x0, 0
+        ]
+    }
+
+    fn emulator_with(text: &[u32], symbols: &[TestSymbol]) -> Emulator {
+        let elf = build_elf64(text, symbols);
+        let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
+        emulator.setup_program(&elf);
+        emulator
+    }
+
+    #[test]
+    fn setup_program_loads_text_finds_symbols_and_sets_the_entry_point() {
+        let emulator = emulator_with(&tohost_program(5), &tohost_symbols());
+        assert_eq!(emulator.get_cpu().read_pc(), 0x8000_0000);
+        assert_eq!(emulator.tohost_addr, TOHOST_ADDR);
+        assert_eq!(
+            emulator.get_address_of_symbol(&"_start".to_string()),
+            Some(0x8000_0000)
+        );
+        assert_eq!(
+            emulator.get_address_of_symbol(&"nonexistent".to_string()),
+            None
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "does not seem ELF")]
+    fn setup_program_rejects_non_elf_content() {
+        let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
+        emulator.setup_program(b"definitely not an elf");
     }
 }

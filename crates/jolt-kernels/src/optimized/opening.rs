@@ -1,5 +1,5 @@
 //! The optimized joint-opening kernel: lazy grid embeddings for the stage-8
-//! batch opening, ported from the legacy prover's streaming-RLC machinery.
+//! batch opening.
 //!
 //! The reference slot materializes every opened polynomial dense over the
 //! full `2^total_vars` commitment domain — `O(polys · 2^total_vars)` field
@@ -9,24 +9,21 @@
 //! opening; `RlcSource` distributes it per constituent) and — in hiding
 //! mode — [`MultilinearPoly::evaluate`], so nothing needs the dense table.
 //! This kernel returns lazy views that answer both from compact per-cycle
-//! trace columns, the legacy techniques by name:
+//! trace columns:
 //!
-//! - **Sparse one-hot VMP** (legacy `OneHotPolynomial::vector_matrix_product`):
+//! - **Sparse one-hot VMP**:
 //!   a one-hot polynomial's fold is `result[col(idx)] += left[row(idx)]` at
 //!   the single hot grid index per cycle — `O(T)` group-free additions
 //!   instead of an `O(K · T)` dense walk over a materialized grid.
-//! - **Streaming trace columns** (legacy `StreamingRLCContext` /
-//!   `gen_from_trace`): the committed values are re-derived from one typed
-//!   witness pass ([`CommittedColumnsWitness`], the same bundle the commit
+//! - **Streaming trace columns**: the committed values are re-derived from one typed
+//!   witness pass (`CommittedColumnsWitness`, the same bundle the commit
 //!   kernel consumed) into packed per-cycle columns — `O(T)` small scalars
 //!   shared by every trace polynomial via [`Arc`], never `K × T` oracle
 //!   tables.
-//! - **Strided dense scatter** (legacy `RLCPolynomial::vector_matrix_product`,
-//!   address-major arm): a dense trace column contributes
+//! - **Strided dense scatter**: a dense trace column contributes
 //!   `result[col] += left[row] · value` at `index = t · t_stride`, covering
 //!   both coefficient orders with one placement formula.
-//! - **Precommitted block contribution** (legacy
-//!   `vmp_precommitted_contribution`): advice / committed-program tables
+//! - **Precommitted block contribution**: advice / committed-program tables
 //!   fold from their own balanced `(2^{ν_p} × 2^{σ_p})` matrix into the
 //!   grid's top-left block, `O(len)` work and space.
 //!
@@ -34,30 +31,25 @@
 //! batch opener (`combine_hints`), so no re-commit touches these views. The
 //! placement formulas are exactly the reference embeddings'
 //! (`reference::opening`); the in-module tests pin dense equality against
-//! the reference slot on a real synthetic trace, and `byte_diff` pins the
-//! full proof bytes against `jolt-prover-legacy`.
+//! the reference slot on a real synthetic trace.
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
 use std::sync::Arc;
-#[cfg(feature = "parallel")]
-use std::sync::Mutex;
 
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;
-use jolt_witness::witnesses::{LookupIndex, MappedPc, RamInc, RdInc, RemappedRamAddress};
-use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer};
+use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
+use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamConsumer};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-#[cfg(feature = "parallel")]
-use super::rows::RandomAccessRows;
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
-use crate::opening::JointOpeningPolynomials;
+use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::reference::views::dense_view;
 use crate::{KernelError, OptimizedBackend, ProofSession};
@@ -85,9 +77,10 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
         _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        let mut precommitted_tables = precommitted_tables()?;
         if grid.total_vars < grid.log_t + grid.log_k_chunk {
             return Err(KernelError::InvalidGeometry {
                 reason: format!(
@@ -121,8 +114,8 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
             .iter()
             .map(|&polynomial| {
                 if is_block_embedded(polynomial) {
-                    let table = match precommitted_tables.get(&polynomial) {
-                        Some(table) => table.clone(),
+                    let table = match precommitted_tables.remove(&polynomial) {
+                        Some(table) => table,
                         None => dense_view(witness, final_opening_id(polynomial))?,
                     };
                     let poly = BlockOpeningPoly::new(table, grid, polynomial)?;
@@ -175,7 +168,7 @@ pub(crate) struct OpeningColumns {
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
     lookup_index: Vec<u128>,
-    /// Mapped bytecode pc per cycle; [`COLD`] when the cycle reads no
+    /// Bytecode slot per cycle; total, so no
     /// bytecode row.
     bytecode_pc: Vec<u64>,
     /// Remapped RAM word address per cycle; [`COLD`] on no-access cycles.
@@ -191,8 +184,10 @@ impl OpeningColumns {
         // Slice-backed sources fill the five columns index-parallel — the
         // chunked walk serializes on staging buffers and the consume copy.
         #[cfg(feature = "parallel")]
-        if let Some(access) = RandomAccessRows::new(witness, cycles)? {
-            return Self::collect_par(&access, cycles);
+        if let Some(access) = witness.random_access() {
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, cycles);
+            }
         }
         let mut consumers = (CollectOpeningColumns {
             columns: Self {
@@ -219,7 +214,7 @@ impl OpeningColumns {
     /// every slot is written).
     #[cfg(feature = "parallel")]
     fn collect_par<F: JoltField>(
-        access: &RandomAccessRows<'_>,
+        access: &RandomAccessRows,
         cycles: usize,
     ) -> Result<Self, KernelError<F>> {
         /// The scatter grain: big enough to amortize rayon dispatch, small
@@ -230,7 +225,7 @@ impl OpeningColumns {
         let mut lookup_index: Vec<u128> = unsafe_allocate_zero_vec(cycles);
         let mut bytecode_pc: Vec<u64> = unsafe_allocate_zero_vec(cycles);
         let mut ram_address: Vec<u64> = unsafe_allocate_zero_vec(cycles);
-        let error = Mutex::new(None);
+        let error = std::sync::Mutex::new(None);
         (
             rd_inc.par_chunks_mut(CHUNK),
             ram_inc.par_chunks_mut(CHUNK),
@@ -246,11 +241,6 @@ impl OpeningColumns {
                     match access.window::<CommittedColumnsWitness>(base + offset) {
                         Ok(row) => {
                             debug_assert_ne!(
-                                row.bytecode_pc.0.map(|pc| pc as u64),
-                                Some(COLD),
-                                "a live mapped pc collides with the COLD sentinel"
-                            );
-                            debug_assert_ne!(
                                 row.ram_address.0,
                                 Some(COLD),
                                 "a live remapped RAM address collides with the COLD sentinel"
@@ -258,7 +248,7 @@ impl OpeningColumns {
                             rd[offset] = row.rd_inc.0;
                             ram[offset] = row.ram_inc.0;
                             lookup[offset] = row.lookup_index.0;
-                            pc[offset] = row.bytecode_pc.0.map_or(COLD, |pc| pc as u64);
+                            pc[offset] = row.bytecode_pc.0 as u64;
                             address[offset] = row.ram_address.0.unwrap_or(COLD);
                         }
                         Err(failure) => {
@@ -296,7 +286,7 @@ impl OpeningColumns {
             rd_inc: RdInc(self.rd_inc[cycle]),
             ram_inc: RamInc(self.ram_inc[cycle]),
             lookup_index: LookupIndex(self.lookup_index[cycle]),
-            bytecode_pc: MappedPc((bytecode_pc != COLD).then_some(bytecode_pc as usize)),
+            bytecode_pc: BytecodePc(bytecode_pc as usize),
             ram_address: RemappedRamAddress((ram_address != COLD).then_some(ram_address)),
         }
     }
@@ -313,11 +303,6 @@ impl StreamConsumer for CollectOpeningColumns {
         let columns = &mut self.columns;
         for row in chunk {
             debug_assert_ne!(
-                row.bytecode_pc.0.map(|pc| pc as u64),
-                Some(COLD),
-                "a live mapped pc collides with the COLD sentinel"
-            );
-            debug_assert_ne!(
                 row.ram_address.0,
                 Some(COLD),
                 "a live remapped RAM address collides with the COLD sentinel"
@@ -325,9 +310,7 @@ impl StreamConsumer for CollectOpeningColumns {
             columns.rd_inc.push(row.rd_inc.0);
             columns.ram_inc.push(row.ram_inc.0);
             columns.lookup_index.push(row.lookup_index.0);
-            columns
-                .bytecode_pc
-                .push(row.bytecode_pc.0.map_or(COLD, |pc| pc as u64));
+            columns.bytecode_pc.push(row.bytecode_pc.0 as u64);
             columns.ram_address.push(row.ram_address.0.unwrap_or(COLD));
         }
     }
@@ -701,7 +684,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            &precommitted_tables,
+            Box::new(|| Ok(precommitted_tables.clone())),
             grid,
         )
         .unwrap();
@@ -710,7 +693,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            &precommitted_tables,
+            Box::new(|| Ok(precommitted_tables)),
             grid,
         )
         .unwrap();

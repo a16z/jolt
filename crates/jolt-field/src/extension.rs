@@ -27,15 +27,39 @@ pub trait ExtField<F: Field>: Field {
     /// base coordinate directly (no full extension multiply).
     fn mul_base(self, x: F) -> Self;
 
+    /// Constructs from a base-coefficient generator.
+    ///
+    /// Calls `f` exactly once for each index in `0..Self::DEGREE`, in ascending
+    /// order, and uses the result as that canonical-basis coefficient.
+    fn from_base_fn<G>(f: G) -> Self
+    where
+        G: FnMut(usize) -> F;
+
+    /// Returns coefficient `index` in the canonical basis.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= Self::DEGREE`.
+    fn base_coefficient(&self, index: usize) -> F;
+
     /// Constructs from a coefficient slice `[c0, c1, ..., c_{d−1}]`.
     ///
     /// # Panics
     ///
     /// Panics if `coeffs.len() != Self::DEGREE`.
-    fn from_base_slice(coeffs: &[F]) -> Self;
+    #[inline]
+    fn from_base_slice(coeffs: &[F]) -> Self {
+        assert_eq!(coeffs.len(), Self::DEGREE);
+        Self::from_base_fn(|index| coeffs[index])
+    }
 
     /// Returns the base-field coefficients in the canonical basis.
-    fn to_base_vec(&self) -> Vec<F>;
+    #[inline]
+    fn to_base_vec(&self) -> Vec<F> {
+        (0..Self::DEGREE)
+            .map(|index| self.base_coefficient(index))
+            .collect()
+    }
 
     /// Applies `x -> x^(q^power)`, where `q = |F|`.
     fn frobenius_pow(self, power: usize) -> Self;

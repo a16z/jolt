@@ -146,7 +146,7 @@ pub trait MultilinearPoly<F: JoltField>: Send + Sync {
     /// Borrows the full evaluation table when this polynomial is backed by
     /// dense storage.
     ///
-    /// PCS backends that need the dense table (e.g. HyperKZG) use this to
+    /// PCS backends that need the dense table use this to
     /// skip materializing a copy via [`for_each_row`](Self::for_each_row).
     /// Lazy or sparse sources return `None` and take the materializing path.
     fn dense_evaluations(&self) -> Option<&[F]> {

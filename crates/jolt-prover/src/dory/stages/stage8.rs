@@ -28,6 +28,7 @@ use std::collections::BTreeMap;
 use jolt_kernels::committed_program::{
     build_committed_bytecode_chunk_coeffs, program_image_words_padded,
 };
+use jolt_kernels::opening::PrecommittedOpeningTables;
 use jolt_kernels::{CommitmentGrid, JoltBackend, KernelError, ProofSession};
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 #[cfg(not(feature = "zk"))]
@@ -73,7 +74,7 @@ pub fn prove_stage8<F, PCS, VC, T>(
     commitments: &JoltCommitments<PCS::Output>,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    hints: &[(JoltCommittedPolynomial, PCS::OpeningHint)],
+    hints: impl Into<Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
@@ -188,29 +189,32 @@ where
         });
     }
     // The committed-program polynomials are preprocessing data (not witness
-    // oracles): materialize them from the prover-retained full program.
-    let mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>> = BTreeMap::new();
-    if let Some(bytecode_layout) = &precommitted.bytecode {
-        let program = preprocessing
-            .program()
-            .ok_or(ProverError::InvariantViolation {
-                reason: "full program preprocessing is unavailable",
-            })?;
-        let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
-            &program.bytecode.bytecode,
-            bytecode_layout.chunk_count(),
-            bytecode_layout.trace_order(),
-        )?;
-        for (index, coeffs) in chunk_coeffs.into_iter().enumerate() {
-            let _ =
-                precommitted_tables.insert(JoltCommittedPolynomial::BytecodeChunk(index), coeffs);
+    // oracles). Let the backend decide whether it needs host coefficient tables.
+    let precommitted_tables: PrecommittedOpeningTables<'_, F> = Box::new(|| {
+        let mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>> = BTreeMap::new();
+        if let Some(bytecode_layout) = &precommitted.bytecode {
+            let program = preprocessing
+                .program()
+                .ok_or(KernelError::InvariantViolation {
+                    reason: "full program preprocessing is unavailable",
+                })?;
+            let chunk_coeffs = build_committed_bytecode_chunk_coeffs::<F>(
+                &program.bytecode.bytecode,
+                bytecode_layout.chunk_count(),
+                bytecode_layout.trace_order(),
+            )?;
+            for (index, coeffs) in chunk_coeffs.into_iter().enumerate() {
+                let _ = precommitted_tables
+                    .insert(JoltCommittedPolynomial::BytecodeChunk(index), coeffs);
+            }
+            let image_words = program_image_words_padded(&program.ram.bytecode_words);
+            let _ = precommitted_tables.insert(
+                JoltCommittedPolynomial::ProgramImageInit,
+                image_words.into_iter().map(F::from_u64).collect(),
+            );
         }
-        let image_words = program_image_words_padded(&program.ram.bytecode_words);
-        let _ = precommitted_tables.insert(
-            JoltCommittedPolynomial::ProgramImageInit,
-            image_words.into_iter().map(F::from_u64).collect(),
-        );
-    }
+        Ok(precommitted_tables)
+    });
     // Backend-neutral kernel-seam span at the call boundary, so every
     // `JointOpeningPolynomials` implementation inherits it — see the
     // taxonomy's kernel-seam contract.
@@ -222,20 +226,22 @@ where
     .in_scope(|| {
         backend
             .joint_opening
-            .prepare(session, witness, &order, &precommitted_tables, grid)
+            .prepare(session, witness, &order, precommitted_tables, grid)
     })?;
+    // Move stage-0 hints; cloning would retain every row commitment.
+    let mut hint_by_id: BTreeMap<JoltCommittedPolynomial, PCS::OpeningHint> =
+        hints.into().into_iter().collect();
     let ordered_hints: Vec<PCS::OpeningHint> = order
         .iter()
         .map(|polynomial| {
-            hints
-                .iter()
-                .find(|(id, _)| id == polynomial)
-                .map(|(_, hint)| hint.clone())
+            hint_by_id
+                .remove(polynomial)
                 .ok_or(ProverError::InvariantViolation {
                     reason: "missing stage-0 opening hint for a batched polynomial",
                 })
         })
         .collect::<Result<_, _>>()?;
+    drop(hint_by_id);
 
     // The transcript tails are twins of the verifier's two stage-8 arms:
     // clear absorbs the scaled claims and opens transparently

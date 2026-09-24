@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
+pub mod align_addr;
 pub mod and;
 pub mod andn;
 pub mod equal;
@@ -23,12 +24,16 @@ pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
 pub mod or;
+pub mod pext;
 pub mod pext_signed;
 pub mod pow2;
 pub mod pow2_w;
 pub mod prefixes;
 pub mod range_check;
 pub mod range_check_aligned;
+pub mod shift_data_b;
+pub mod shift_data_h;
+pub mod shift_data_w;
 pub mod shift_right_bitmask;
 pub mod shift_right_bitmask_w;
 pub mod sign_extend_word;
@@ -42,8 +47,7 @@ pub mod unsigned_less_than_equal;
 pub mod upper_word;
 pub mod valid_div0;
 pub mod valid_unsigned_remainder;
-pub mod virtual_change_divisor;
-pub mod virtual_change_divisor_w;
+pub mod virtual_negate_if;
 pub mod virtual_rev8w;
 pub mod virtual_rotr;
 pub mod virtual_rotrw;
@@ -52,7 +56,10 @@ pub mod virtual_sraw;
 pub mod virtual_srl;
 pub mod virtual_srlw;
 pub mod virtual_xor_rot;
+pub mod virtual_xor_rotl1;
 pub mod virtual_xor_rotw;
+pub mod window_mask_b;
+pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod word_alignment;
 pub mod xor;
@@ -60,6 +67,7 @@ pub mod xor;
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
+use align_addr::AlignAddrTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
@@ -68,11 +76,15 @@ use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
 use or::OrTable;
+use pext::PextTable;
 use pext_signed::PextSignedTable;
 use pow2::Pow2Table;
 use pow2_w::Pow2WTable;
 use range_check::RangeCheckTable;
 use range_check_aligned::RangeCheckAlignedTable;
+use shift_data_b::ShiftDataBTable;
+use shift_data_h::ShiftDataHTable;
+use shift_data_w::ShiftDataWTable;
 use shift_right_bitmask::ShiftRightBitmaskTable;
 use shift_right_bitmask_w::ShiftRightBitmaskWTable;
 use sign_extend_word::SignExtendWordTable;
@@ -85,8 +97,7 @@ use unsigned_less_than_equal::UnsignedLessThanEqualTable;
 use upper_word::UpperWordTable;
 use valid_div0::ValidDiv0Table;
 use valid_unsigned_remainder::ValidUnsignedRemainderTable;
-use virtual_change_divisor::VirtualChangeDivisorTable;
-use virtual_change_divisor_w::VirtualChangeDivisorWTable;
+use virtual_negate_if::VirtualNegateIfTable;
 use virtual_rev8w::VirtualRev8WTable;
 use virtual_rotr::VirtualROTRTable;
 use virtual_rotrw::VirtualROTRWTable;
@@ -95,7 +106,10 @@ use virtual_sraw::VirtualSRAWTable;
 use virtual_srl::VirtualSRLTable;
 use virtual_srlw::VirtualSRLWTable;
 use virtual_xor_rot::VirtualXORROTTable;
+use virtual_xor_rotl1::VirtualXORROTL1Table;
 use virtual_xor_rotw::VirtualXORROTWTable;
+use window_mask_b::WindowMaskBTable;
+use window_mask_h::WindowMaskHTable;
 use window_mask_w::WindowMaskWTable;
 use word_alignment::WordAlignmentTable;
 use xor::XorTable;
@@ -106,8 +120,7 @@ use xor::XorTable;
 /// declare which table they use via
 /// [`InstructionLookupTable::lookup_table`](crate::InstructionLookupTable::lookup_table).
 ///
-/// Variant indices match `jolt-prover-legacy::LookupTables` so lookup-table flags in
-/// core-produced proofs can be interpreted without an adapter.
+/// Variant indices are proof-format identifiers and must remain stable.
 #[expect(clippy::unsafe_derive_deserialize)]
 #[derive(
     Clone,
@@ -120,6 +133,7 @@ use xor::XorTable;
     Deserialize,
     strum::EnumCount,
     strum::EnumIter,
+    strum::IntoStaticStr,
 )]
 #[repr(u8)]
 pub enum LookupTableKind<const XLEN: usize> {
@@ -152,8 +166,7 @@ pub enum LookupTableKind<const XLEN: usize> {
     VirtualSRA(VirtualSRATable<XLEN>),
     VirtualROTR(VirtualROTRTable<XLEN>),
     VirtualROTRW(VirtualROTRWTable<XLEN>),
-    VirtualChangeDivisor(VirtualChangeDivisorTable<XLEN>),
-    VirtualChangeDivisorW(VirtualChangeDivisorWTable<XLEN>),
+    VirtualNegateIf(VirtualNegateIfTable<XLEN>),
     MulUNoOverflow(MulUNoOverflowTable<XLEN>),
     VirtualXORROT32(VirtualXORROTTable<XLEN, 32>),
     VirtualXORROT24(VirtualXORROTTable<XLEN, 24>),
@@ -171,6 +184,14 @@ pub enum LookupTableKind<const XLEN: usize> {
     ShiftRightBitmaskW(ShiftRightBitmaskWTable<XLEN>),
     VirtualSRLW(VirtualSRLWTable<XLEN>),
     VirtualSRAW(VirtualSRAWTable<XLEN>),
+    Pext(PextTable<XLEN>),
+    WindowMaskB(WindowMaskBTable<XLEN>),
+    WindowMaskH(WindowMaskHTable<XLEN>),
+    AlignAddr(AlignAddrTable<XLEN>),
+    ShiftDataB(ShiftDataBTable<XLEN>),
+    ShiftDataH(ShiftDataHTable<XLEN>),
+    ShiftDataW(ShiftDataWTable<XLEN>),
+    VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
 }
 
 /// Dispatches a method call to the inner table for every
@@ -209,8 +230,7 @@ macro_rules! dispatch {
             Self::VirtualSRA($t) => $expr,
             Self::VirtualROTR($t) => $expr,
             Self::VirtualROTRW($t) => $expr,
-            Self::VirtualChangeDivisor($t) => $expr,
-            Self::VirtualChangeDivisorW($t) => $expr,
+            Self::VirtualNegateIf($t) => $expr,
             Self::MulUNoOverflow($t) => $expr,
             Self::VirtualXORROT32($t) => $expr,
             Self::VirtualXORROT24($t) => $expr,
@@ -228,6 +248,14 @@ macro_rules! dispatch {
             Self::ShiftRightBitmaskW($t) => $expr,
             Self::VirtualSRLW($t) => $expr,
             Self::VirtualSRAW($t) => $expr,
+            Self::Pext($t) => $expr,
+            Self::WindowMaskB($t) => $expr,
+            Self::WindowMaskH($t) => $expr,
+            Self::AlignAddr($t) => $expr,
+            Self::ShiftDataB($t) => $expr,
+            Self::ShiftDataH($t) => $expr,
+            Self::ShiftDataW($t) => $expr,
+            Self::VirtualXORROTL1($t) => $expr,
         }
     };
 }
@@ -318,3 +346,78 @@ pub trait PrefixSuffixDecomposition<const XLEN: usize>: crate::LookupTable + Def
 
 #[cfg(test)]
 pub(crate) mod test_utils;
+
+#[cfg(test)]
+mod tests {
+    use super::LookupTableKind;
+
+    #[test]
+    fn proof_format_indices_are_stable() {
+        const EXPECTED: [&str; 55] = [
+            "RangeCheck",
+            "RangeCheckAligned",
+            "And",
+            "Andn",
+            "Or",
+            "Xor",
+            "Equal",
+            "SignedGreaterThanEqual",
+            "UnsignedGreaterThanEqual",
+            "NotEqual",
+            "SignedLessThan",
+            "UnsignedLessThan",
+            "SignMask",
+            "UpperWord",
+            "UnsignedLessThanEqual",
+            "ValidUnsignedRemainder",
+            "ValidDiv0",
+            "HalfwordAlignment",
+            "WordAlignment",
+            "LowerHalfWord",
+            "SignExtendWord",
+            "Pow2",
+            "Pow2W",
+            "ShiftRightBitmask",
+            "VirtualRev8W",
+            "VirtualSRL",
+            "VirtualSRA",
+            "VirtualROTR",
+            "VirtualROTRW",
+            "VirtualNegateIf",
+            "MulUNoOverflow",
+            "VirtualXORROT32",
+            "VirtualXORROT24",
+            "VirtualXORROT16",
+            "VirtualXORROT63",
+            "VirtualXORROTW16",
+            "VirtualXORROTW12",
+            "VirtualXORROTW8",
+            "VirtualXORROTW7",
+            "WindowMaskW",
+            "PextSigned",
+            "VirtualXORROTW22",
+            "VirtualXORROTW19",
+            "VirtualXORROTW6",
+            "ShiftRightBitmaskW",
+            "VirtualSRLW",
+            "VirtualSRAW",
+            "Pext",
+            "WindowMaskB",
+            "WindowMaskH",
+            "AlignAddr",
+            "ShiftDataB",
+            "ShiftDataH",
+            "ShiftDataW",
+            "VirtualXORROTL1",
+        ];
+
+        let actual = LookupTableKind::<64>::iter()
+            .enumerate()
+            .map(|(expected_index, table)| {
+                assert_eq!(table.index(), expected_index);
+                <&'static str>::from(table)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, EXPECTED);
+    }
+}
