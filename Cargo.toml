@@ -418,7 +418,7 @@ reth-primitives-traits = { version = "0.7", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
-secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
+secp256k1 = { version = "0.33", features = ["recovery", "rand"] }
 
 # Internal dependencies
 common = { path = "./common", default-features = false }
