@@ -362,10 +362,10 @@ fn prover_preprocessing(
     JoltProverPreprocessing {
         verifier: JoltVerifierPreprocessing::new(
             ProgramPreprocessing::Full(fixture_program_preprocessing(bytecode)),
-            [0u8; 32],
             DoryScheme::setup_verifier(2),
             None,
-        ),
+        )
+        .unwrap(),
         pcs_setup: DoryScheme::setup_prover(2),
         committed_program: None,
     }

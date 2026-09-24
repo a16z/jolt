@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ark_serialize::CanonicalSerialize;
 #[cfg(feature = "field-inline")]
 use jolt_akita::FieldIncLimbScheduleParams;
 use jolt_akita::{
@@ -23,10 +22,6 @@ use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
 
-use crate::preprocessing::{
-    canonical_preprocessing_digest, encode_program_metadata, encode_shared_preprocessing_tail,
-    full_preprocessing_digest, COMMITTED_PROGRAM_TAG,
-};
 use crate::{
     CommittedProgramProverData, JoltProverPreprocessing, PreprocessingError, ProverConfig,
 };
@@ -63,13 +58,11 @@ pub fn preprocess_full_with_advice(
         trusted_advice,
         &[],
     )?;
-    let preprocessing_digest = full_preprocessing_digest(&program)?;
     let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Full(Arc::new(program)),
-        preprocessing_digest,
         verifier_setup,
         None,
-    );
+    )?;
     Ok(JoltProverPreprocessing {
         verifier,
         pcs_setup,
@@ -207,7 +200,6 @@ pub fn preprocess_committed_with_advice(
         bytecode_chunk_count,
         trace_order,
     };
-    let preprocessing_digest = committed_program_digest(&committed_program)?;
     let (pcs_setup, verifier_setup) = grouped_setup(
         schedule_artifacts,
         &program,
@@ -218,10 +210,9 @@ pub fn preprocess_committed_with_advice(
     )?;
     let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Committed(committed_program),
-        preprocessing_digest,
         verifier_setup,
         None,
-    );
+    )?;
     Ok(JoltProverPreprocessing {
         verifier,
         pcs_setup,
@@ -230,44 +221,6 @@ pub fn preprocess_committed_with_advice(
             direct_program,
             trace_order,
         }),
-    })
-}
-
-fn committed_program_digest(
-    program: &CommittedProgramPreprocessing<AkitaScheme>,
-) -> Result<[u8; 32], PreprocessingError> {
-    let bytecode_chunk_count = program.bytecode_chunk_count;
-    let bytecode_t = program.meta.bytecode_len / bytecode_chunk_count;
-    let program_image_words = program
-        .meta
-        .program_image_len_words
-        .next_power_of_two()
-        .max(2);
-
-    canonical_preprocessing_digest(|encoded| {
-        COMMITTED_PROGRAM_TAG.serialize_compressed(&mut *encoded)?;
-        encode_program_metadata(&program.meta, encoded)?;
-
-        (bytecode_chunk_count as u64).serialize_compressed(&mut *encoded)?;
-        0usize.serialize_compressed(&mut *encoded)?;
-        0u8.serialize_compressed(&mut *encoded)?;
-        bytecode_chunk_count.serialize_compressed(&mut *encoded)?;
-        program
-            .meta
-            .bytecode_len
-            .serialize_compressed(&mut *encoded)?;
-        bytecode_t.serialize_compressed(&mut *encoded)?;
-
-        0usize.serialize_compressed(&mut *encoded)?;
-        program_image_words.serialize_compressed(&mut *encoded)?;
-
-        encode_shared_preprocessing_tail(
-            &program.meta,
-            &program.memory_layout,
-            program.max_padded_trace_length,
-            bytecode_chunk_count,
-            encoded,
-        )
     })
 }
 
@@ -342,49 +295,4 @@ fn field_inc_limb_schedule(
             .next_power_of_two()
             .ilog2() as usize,
     ))
-}
-
-#[cfg(test)]
-#[expect(clippy::unwrap_used)]
-mod tests {
-    use common::jolt_device::MemoryLayout;
-    use jolt_akita::{AkitaCommitment, AkitaScheme};
-    use jolt_claims::protocols::jolt::TracePolynomialOrder;
-    use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_riscv::RV64IMAC_JOLT;
-    use jolt_verifier::CommittedProgramPreprocessing;
-
-    use super::committed_program_digest;
-
-    #[test]
-    fn committed_preprocessing_digest_is_legacy_compatible() {
-        let full = JoltProgramPreprocessing::new(
-            Vec::new(),
-            Vec::new(),
-            MemoryLayout::default(),
-            0,
-            1 << 12,
-            RV64IMAC_JOLT,
-        )
-        .unwrap();
-        let committed = CommittedProgramPreprocessing::<AkitaScheme> {
-            meta: full.metadata().unwrap(),
-            memory_layout: full.memory_layout,
-            max_padded_trace_length: full.max_padded_trace_length,
-            direct_program_commitments: vec![
-                AkitaCommitment::default(),
-                AkitaCommitment::default(),
-            ],
-            bytecode_chunk_count: 1,
-            trace_order: TracePolynomialOrder::CycleMajor,
-        };
-
-        assert_eq!(
-            committed_program_digest(&committed).unwrap(),
-            [
-                159, 185, 113, 74, 115, 41, 98, 61, 29, 204, 60, 39, 109, 12, 34, 3, 127, 143, 106,
-                159, 252, 225, 254, 120, 94, 95, 83, 72, 249, 209, 88, 62,
-            ]
-        );
-    }
 }

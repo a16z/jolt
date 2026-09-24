@@ -91,7 +91,8 @@ mod pipeline {
         .expect("field-inline preprocessing");
         let preprocessing = jolt_prover::dory::from_shared(
             JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
-        );
+        )
+        .expect("Dory preprocessing");
         let memory_layout = &io_device.memory_layout;
         let memory_config = MemoryConfig {
             max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,

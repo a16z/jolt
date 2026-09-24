@@ -60,6 +60,8 @@ use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDe
 #[cfg(not(feature = "field-inline"))]
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
 use jolt_claims::protocols::jolt::relations;
+#[cfg(feature = "fuzzing")]
+use jolt_claims::protocols::jolt::JoltExpr;
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
     opening,
@@ -94,7 +96,7 @@ use jolt_claims::{
         RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge,
         RamValCheckPublic, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
         RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
-        SpartanShiftChallenge, SpartanShiftPublic,
+        SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic,
     },
     Expr, OutputClaims, Source, SymbolicSumcheck, Term,
 };
@@ -163,7 +165,6 @@ enum VerifierPublicId {
 
 impl From<JoltDerivedId> for VerifierPublicId {
     fn from(id: JoltDerivedId) -> Self {
-        use jolt_claims::protocols::jolt::SpartanOuterPublic;
         if let JoltDerivedId::SpartanOuter(public) = id {
             return Self::SpartanOuter(match public {
                 SpartanOuterPublic::TauKernel => JoltSpartanOuterPublic::TauKernel,
@@ -443,6 +444,53 @@ fn composite_aliases<O: Into<VerifierOpeningId>>(
         .into_iter()
         .map(|(aliased, source)| OpeningAlias::new(aliased.into(), source.into()))
         .collect()
+}
+
+/// Evaluates the BlindFold form of a Jolt claim expression with the same
+/// source values used by the clear verifier.
+///
+/// This is exposed only for differential fuzzing of the expression boundary.
+#[cfg(feature = "fuzzing")]
+#[expect(
+    clippy::unreachable,
+    reason = "mapping a Jolt expression cannot produce field-inline IDs or retain challenges"
+)]
+pub fn evaluate_mapped_expression<F, Opening, Challenge, Derived>(
+    expr: JoltExpr<F>,
+    mut opening: Opening,
+    mut challenge: Challenge,
+    mut derived: Derived,
+) -> F
+where
+    F: JoltField,
+    Opening: FnMut(&JoltOpeningId) -> F,
+    Challenge: FnMut(&JoltChallengeId) -> F,
+    Derived: FnMut(&JoltDerivedId) -> F,
+{
+    map_expr(expr).evaluate(
+        |id| match id {
+            VerifierOpeningId::Jolt(id) => opening(id),
+            VerifierOpeningId::FieldInline(_) => {
+                unreachable!("Jolt expressions do not contain field-inline openings")
+            }
+        },
+        |_| unreachable!("Jolt challenges map to BlindFold public inputs"),
+        |id| match id {
+            VerifierPublicId::Jolt(id) => derived(id),
+            VerifierPublicId::Challenge(id) => challenge(id),
+            VerifierPublicId::SpartanOuter(id) => derived(&JoltDerivedId::SpartanOuter(match id {
+                JoltSpartanOuterPublic::TauKernel => SpartanOuterPublic::TauKernel,
+                JoltSpartanOuterPublic::AzWeight(i) => SpartanOuterPublic::AzWeight(*i),
+                JoltSpartanOuterPublic::BzWeight(i) => SpartanOuterPublic::BzWeight(*i),
+                JoltSpartanOuterPublic::AzConstant => SpartanOuterPublic::AzConstant,
+                JoltSpartanOuterPublic::BzConstant => SpartanOuterPublic::BzConstant,
+            })),
+            #[cfg(feature = "field-inline")]
+            VerifierPublicId::FieldInline(_) | VerifierPublicId::FieldInlineChallenge(_) => {
+                unreachable!("Jolt expressions do not contain field-inline publics")
+            }
+        },
+    )
 }
 
 fn require_expr_sources<F: JoltField>(

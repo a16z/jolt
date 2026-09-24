@@ -111,7 +111,8 @@ mod support {
         .expect("field-inline preprocessing");
         let preprocessing = jolt_prover::dory::from_shared(
             JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
-        );
+        )
+        .expect("Dory preprocessing");
         let trace_output = trace_modular(&jolt_program, &io_device.memory_layout, inputs);
         FieldInlineGuest {
             preprocessing,

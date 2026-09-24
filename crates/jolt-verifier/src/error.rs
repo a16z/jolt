@@ -137,4 +137,7 @@ pub enum VerifierError {
     UnsupportedInstruction { kind: JoltInstructionKind },
     #[error("field-inline bytecode side table rejected: {reason}")]
     InvalidFieldInlineBytecode { reason: String },
+
+    #[error("program preprocessing digest failed: {reason}")]
+    PreprocessingDigestFailed { reason: String },
 }

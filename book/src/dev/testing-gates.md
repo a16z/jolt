@@ -1,4 +1,31 @@
-# Verifier testing gates
+# Testing gates
+
+## Guest × mode acceptance matrix
+
+`crates/jolt-prover/tests/e2e_matrix.rs` holds one table of example guests
+(muldiv, fibonacci, memory-ops, stdlib, sha2, sha3 through both its unaligned
+and aligned entry points, advice-consumer, btreemap), checks each guest's output
+against a natively computed value, and proves it with the optimized backend
+under whichever protocol the crate was compiled for: Dory clear by default,
+Dory ZK with `zk`, Akita with `akita`. The mode is part of every test name
+(`matrix::clear::sha2`, `matrix::zk::sha2`, `matrix::akita::sha2`). CI runs
+the binary in all three prover lanes, so the same guests are proven in every
+mode and a guest added to the table gains all three arms at once.
+Mode-specific checks (tampering, committed programs, forced one-hot sizes)
+stay in `zk_e2e.rs` and `akita_e2e.rs`.
+
+```bash
+cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
+```
+
+Add a guest by appending a row: the example crate name, its entry function
+when the crate has several, the `stack_size` from its `#[jolt::provable]`
+attribute when it exceeds the 4 KiB default, `std: true` when the guest crate
+enables `jolt`'s `guest-std` feature, postcard-encoded inputs that keep the
+trace under the row's padded bound (2^16 by default), and the postcard-encoded
+output computed natively in the test.
 
 ## Fiat-Shamir soundness
 

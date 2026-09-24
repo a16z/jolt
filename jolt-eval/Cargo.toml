@@ -98,16 +98,16 @@ name = "prover_time_sha2_chain"
 harness = false
 
 [[bench]]
-name = "eq_evals"
-path = "benches/callgrind/eq_evals.rs"
-harness = false
-
-[[bench]]
 name = "trace_gen_fibonacci"
 harness = false
 
 [[bench]]
 name = "trace_gen_sha2_chain"
+harness = false
+
+[[bench]]
+name = "eq_evals"
+path = "benches/callgrind/eq_evals.rs"
 harness = false
 
 [[bin]]

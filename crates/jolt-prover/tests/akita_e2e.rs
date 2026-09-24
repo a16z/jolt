@@ -1,4 +1,13 @@
-//! End-to-end coverage for the modular Akita prover and verifier.
+//! End-to-end coverage for the modular Akita prover and verifier: the
+//! mode-specific checks (tampering, forced one-hot sizes, committed programs,
+//! trace-order rejection). Plain acceptance across guests is `e2e_matrix.rs`.
+
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
+mod support;
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -11,36 +20,24 @@
     reason = "integration tests should fail loudly"
 )]
 mod akita_tests {
-    use std::sync::Arc;
-
     use common::constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE;
-    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+    use common::jolt_device::JoltDevice;
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
-    use jolt_host::{JoltProgramSource, Program};
-    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceInputs, TraceOutput};
-    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_program::execution::OwnedTrace;
     use jolt_prover::akita::preprocessing::{
         self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
     };
     use jolt_prover::akita::{self, JoltAkitaBackend};
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
-    use jolt_riscv::JoltTraceRow;
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-    use tracer::execution_backend::TracerBackend;
 
-    const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
+    use crate::support::{self, GuestCase, PreparedGuest};
 
     type Proof = JoltProof<AkitaScheme, AkitaVc>;
-
-    struct GuestRun {
-        program: Arc<JoltProgram>,
-        preprocessing: JoltProgramPreprocessing,
-        trace: TraceOutput<Arc<Vec<JoltTraceRow>>>,
-    }
 
     struct ProvedGuest {
         preprocessing: AkitaProverPreprocessing,
@@ -49,67 +46,27 @@ mod akita_tests {
         trusted_advice_commitment: Option<AkitaCommitment>,
     }
 
-    fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
-        MemoryConfig {
-            max_untrusted_advice_size: layout.max_untrusted_advice_size,
-            max_trusted_advice_size: layout.max_trusted_advice_size,
-            max_input_size: layout.max_input_size,
-            max_output_size: layout.max_output_size,
-            stack_size: layout.stack_size,
-            heap_size: layout.heap_size,
-            program_size: Some(layout.program_size),
-        }
-    }
-
     fn guest_run(
-        guest_name: &str,
+        guest_name: &'static str,
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
-    ) -> GuestRun {
-        let mut source = Program::new(guest_name);
-        let (_, sizing_trace, _, device) = source.trace(inputs, untrusted_advice, trusted_advice);
-        assert!(
-            sizing_trace.len().next_power_of_two() <= MAX_PADDED_TRACE_LENGTH,
-            "trace exceeds the fixture limit",
-        );
-        let layout = device.memory_layout;
-        let program = Arc::new(source.build_jolt_program().expect("build Jolt program"));
-        let preprocessing = JoltProgramPreprocessing::new(
-            program.expanded_bytecode.clone(),
-            program.memory_init.clone(),
-            layout.clone(),
-            program.entry_address,
-            MAX_PADDED_TRACE_LENGTH,
-            source.instruction_profile(),
-        )
-        .expect("program preprocessing");
-        let trace = TracerBackend::new()
-            .trace_compact(
-                &program,
-                TraceInputs::new(
-                    inputs.to_vec(),
-                    untrusted_advice.to_vec(),
-                    trusted_advice.to_vec(),
-                    memory_config(&layout),
-                ),
-                &preprocessing.bytecode,
-            )
-            .expect("modular trace");
-        GuestRun {
-            program,
-            preprocessing,
-            trace,
-        }
+    ) -> PreparedGuest {
+        support::prepare(&GuestCase {
+            inputs: inputs.to_vec(),
+            untrusted_advice: untrusted_advice.to_vec(),
+            trusted_advice: trusted_advice.to_vec(),
+            ..GuestCase::new(guest_name)
+        })
     }
 
-    fn derive_config(run: &GuestRun) -> ProverConfig {
+    fn derive_config(run: &PreparedGuest) -> ProverConfig {
         ProverConfig::derive_compact::<AkitaField>(
             run.trace.trace.as_slice(),
             &run.preprocessing.memory_layout,
             run.preprocessing.ram.min_bytecode_address,
             run.preprocessing.ram.bytecode_words.len(),
-            MAX_PADDED_TRACE_LENGTH,
+            run.preprocessing.max_padded_trace_length,
         )
         .expect("derive config")
     }
@@ -129,7 +86,7 @@ mod akita_tests {
     }
 
     fn prove_guest(
-        run: GuestRun,
+        run: PreparedGuest,
         config: ProverConfig,
         untrusted_advice: bool,
         trusted_advice: &[u8],
@@ -182,7 +139,7 @@ mod akita_tests {
         )
     }
 
-    fn muldiv_run() -> (GuestRun, ProverConfig) {
+    fn muldiv_run() -> (PreparedGuest, ProverConfig) {
         let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
         let run = guest_run("muldiv-guest", &inputs, &[], &[]);
         let config = derive_config(&run);

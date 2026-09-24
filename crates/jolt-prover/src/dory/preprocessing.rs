@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ark_serialize::CanonicalSerialize;
 #[cfg(feature = "zk")]
 use common::constants::MAX_BLINDFOLD_GENERATORS;
 use common::jolt_device::MemoryLayout;
@@ -26,10 +25,6 @@ use jolt_verifier::{
 
 use super::stages::stage0::TrustedAdviceCommitment;
 use crate::config::committed_log_k_chunk;
-use crate::preprocessing::{
-    canonical_preprocessing_digest, encode_program_metadata, encode_shared_preprocessing_tail,
-    COMMITTED_PROGRAM_TAG,
-};
 use crate::{
     CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
     PreprocessingError,
@@ -56,7 +51,9 @@ impl JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
     }
 }
 
-pub fn from_shared(shared: JoltSharedPreprocessing) -> DoryProverPreprocessing {
+pub fn from_shared(
+    shared: JoltSharedPreprocessing,
+) -> Result<DoryProverPreprocessing, PreprocessingError> {
     let total_vars = setup_total_vars(
         &shared.program.memory_layout,
         &[],
@@ -67,25 +64,25 @@ pub fn from_shared(shared: JoltSharedPreprocessing) -> DoryProverPreprocessing {
         &shared,
         DoryScheme::verifier_setup(&pcs_setup),
         blindfold_setup(&pcs_setup),
-    );
-    JoltProverPreprocessing {
+    )?;
+    Ok(JoltProverPreprocessing {
         verifier,
         pcs_setup,
         committed_program: None,
-    }
+    })
 }
 
 pub fn from_shared_parts(
     shared: &JoltSharedPreprocessing,
     pcs_setup: <DoryScheme as CommitmentScheme>::VerifierSetup,
     vc_setup: Option<PedersenSetup<Bn254G1>>,
-) -> DoryVerifierPreprocessing {
+) -> Result<DoryVerifierPreprocessing, PreprocessingError> {
     JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Full(Arc::clone(&shared.program)),
-        shared.preprocessing_digest,
         pcs_setup,
         vc_setup,
     )
+    .map_err(PreprocessingError::from)
 }
 
 pub fn preprocess_committed(
@@ -129,14 +126,11 @@ pub fn preprocess_committed_with_order(
         bytecode_chunk_commitments,
         program_image_commitment,
     };
-    let digest = committed_program_digest(&committed_program)?;
-    let program = ProgramPreprocessing::Committed(committed_program);
     let verifier = JoltVerifierPreprocessing::new(
-        program,
-        digest,
+        ProgramPreprocessing::Committed(committed_program),
         DoryScheme::verifier_setup(&pcs_setup),
         blindfold_setup(&pcs_setup),
-    );
+    )?;
     Ok(JoltProverPreprocessing {
         verifier,
         pcs_setup,
@@ -146,63 +140,6 @@ pub fn preprocess_committed_with_order(
             program_image_hint,
             trace_order,
         }),
-    })
-}
-
-fn committed_program_digest(
-    program: &CommittedProgramPreprocessing<DoryScheme>,
-) -> Result<[u8; 32], PreprocessingError> {
-    let bytecode_chunk_count = program.bytecode_chunk_commitments.len();
-    let bytecode_t = program.meta.bytecode_len / bytecode_chunk_count;
-    let bytecode_total_vars =
-        bytecode::precommitted_candidate(program.meta.bytecode_len, bytecode_chunk_count).map_err(
-            |error| PreprocessingError::InvalidCommittedProgram {
-                reason: error.to_string(),
-            },
-        )?;
-    let bytecode_columns =
-        1usize << CommitmentMatrixShape::balanced(bytecode_total_vars).column_vars();
-    let program_image_words = program
-        .meta
-        .program_image_len_words
-        .next_power_of_two()
-        .max(2);
-    let program_image_columns = 1usize
-        << CommitmentMatrixShape::balanced(program_image_words.ilog2() as usize).column_vars();
-    let max_log_t = program.max_padded_trace_length.next_power_of_two().ilog2() as usize;
-    let max_log_k_chunk = committed_log_k_chunk(max_log_t);
-
-    canonical_preprocessing_digest(|encoded| {
-        COMMITTED_PROGRAM_TAG.serialize_compressed(&mut *encoded)?;
-        encode_program_metadata(&program.meta, encoded)?;
-
-        (bytecode_chunk_count as u64).serialize_compressed(&mut *encoded)?;
-        for commitment in &program.bytecode_chunk_commitments {
-            commitment.0.serialize_compressed(&mut *encoded)?;
-        }
-        bytecode_columns.serialize_compressed(&mut *encoded)?;
-        max_log_k_chunk.serialize_compressed(&mut *encoded)?;
-        bytecode_chunk_count.serialize_compressed(&mut *encoded)?;
-        program
-            .meta
-            .bytecode_len
-            .serialize_compressed(&mut *encoded)?;
-        bytecode_t.serialize_compressed(&mut *encoded)?;
-
-        program
-            .program_image_commitment
-            .0
-            .serialize_compressed(&mut *encoded)?;
-        program_image_columns.serialize_compressed(&mut *encoded)?;
-        program_image_words.serialize_compressed(&mut *encoded)?;
-
-        encode_shared_preprocessing_tail(
-            &program.meta,
-            &program.memory_layout,
-            program.max_padded_trace_length,
-            bytecode_chunk_count,
-            encoded,
-        )
     })
 }
 
@@ -345,14 +282,10 @@ fn commit_program_image(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::jolt_device::MemoryLayout;
-    use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_riscv::RV64IMAC_JOLT;
-    use jolt_verifier::CommittedProgramPreprocessing;
 
-    use super::{
-        committed_program_digest, from_shared, preprocess_committed, DoryProverPreprocessing,
-    };
+    use super::{from_shared, preprocess_committed, DoryProverPreprocessing};
     use crate::JoltSharedPreprocessing;
 
     fn assert_prover_preprocessing_round_trips(preprocessing: &DoryProverPreprocessing) {
@@ -374,34 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn committed_preprocessing_digest_is_legacy_compatible() {
-        let full = JoltProgramPreprocessing::new(
-            Vec::new(),
-            Vec::new(),
-            MemoryLayout::default(),
-            0,
-            1 << 12,
-            RV64IMAC_JOLT,
-        )
-        .unwrap();
-        let committed = CommittedProgramPreprocessing::<DoryScheme> {
-            meta: full.metadata().unwrap(),
-            memory_layout: full.memory_layout,
-            max_padded_trace_length: full.max_padded_trace_length,
-            bytecode_chunk_commitments: vec![DoryCommitment::default()],
-            program_image_commitment: DoryCommitment::default(),
-        };
-
-        assert_eq!(
-            committed_program_digest(&committed).unwrap(),
-            [
-                59, 40, 197, 10, 217, 59, 24, 236, 134, 68, 40, 181, 195, 223, 5, 176, 53, 66, 211,
-                95, 29, 19, 80, 25, 95, 199, 196, 52, 42, 106, 98, 139,
-            ]
-        );
-    }
-
-    #[test]
     fn full_prover_preprocessing_round_trips() {
         let full = JoltProgramPreprocessing::new(
             Vec::new(),
@@ -412,7 +317,7 @@ mod tests {
             RV64IMAC_JOLT,
         )
         .unwrap();
-        let preprocessing = from_shared(JoltSharedPreprocessing::new(full).unwrap());
+        let preprocessing = from_shared(JoltSharedPreprocessing::new(full).unwrap()).unwrap();
         assert_prover_preprocessing_round_trips(&preprocessing);
     }
 

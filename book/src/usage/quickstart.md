@@ -78,8 +78,8 @@ use tracing::info;
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let target_dir = "/tmp/jolt-guest-targets";
-    let mut program = guest::compile_fib(target_dir);
+    let target_dir = std::env::temp_dir().join("jolt-guest-targets");
+    let mut program = guest::compile_fib(&target_dir.to_string_lossy());
 
     let shared_preprocessing = guest::preprocess_shared_fib(&mut program).unwrap();
 
