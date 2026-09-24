@@ -109,6 +109,8 @@ mod tests {
     use crate::protocols::jolt::geometry::dimensions::{
         PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
     };
+    #[cfg(feature = "implicit-carry")]
+    use crate::protocols::jolt::geometry::spartan::product_carry_used_outer_opening;
     use crate::protocols::jolt::SpartanProductVirtualizationPublic;
     use jolt_field::{Fr, Ring};
 
@@ -198,16 +200,18 @@ mod tests {
             product: Fr::from_u64(2),
             should_branch: Fr::from_u64(3),
             should_jump: Fr::from_u64(5),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: Fr::from_u64(7),
         };
 
-        assert_eq!(
-            claims.canonical_order(),
-            vec![
-                product_outer_opening(),
-                product_should_branch_outer_opening(),
-                product_should_jump_outer_opening(),
-            ],
-        );
+        let expected_order = vec![
+            product_outer_opening(),
+            product_should_branch_outer_opening(),
+            product_should_jump_outer_opening(),
+        ];
+        #[cfg(feature = "implicit-carry")]
+        let expected_order = [expected_order, vec![product_carry_used_outer_opening()]].concat();
+        assert_eq!(claims.canonical_order(), expected_order);
         assert_eq!(
             claims.resolve_input(&product_outer_opening()),
             Some(Fr::from_u64(2)),
@@ -219,6 +223,11 @@ mod tests {
         assert_eq!(
             claims.resolve_input(&product_should_jump_outer_opening()),
             Some(Fr::from_u64(5)),
+        );
+        #[cfg(feature = "implicit-carry")]
+        assert_eq!(
+            claims.resolve_input(&product_carry_used_outer_opening()),
+            Some(Fr::from_u64(7)),
         );
         assert_eq!(claims.resolve_input(&product_uniskip_opening()), None);
     }
