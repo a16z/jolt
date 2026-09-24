@@ -1,15 +1,12 @@
 //! Protocol-neutral point-geometry errors.
 //!
-//! [`JoltFormulaPointError`] ("Jolt" the zkVM, not the jolt protocol family) is
-//! shared by every protocol family's geometry, so it lives in the framework
-//! half of the crate: `protocols/jolt` re-exports it at its historical path,
-//! and `protocols/field_inline` consumes it from here — neither protocol
-//! module imports the other for it.
+//! [`PointGeometryError`] is shared by protocol families. Keeping it here lets
+//! their geometry share errors without importing one another.
 
 use thiserror::Error;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
-pub enum JoltFormulaPointError {
+pub enum PointGeometryError {
     #[error(
         "invalid read-write phase split: phase1 {phase1_num_rounds}/{log_t}, phase2 {phase2_num_rounds}/{log_k}"
     )]

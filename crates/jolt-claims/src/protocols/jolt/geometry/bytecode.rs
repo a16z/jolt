@@ -13,7 +13,7 @@ use super::super::{
     JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
-use super::dimensions::JoltFormulaPointError;
+use super::dimensions::PointGeometryError;
 use super::error::require_len;
 use super::instruction::{imm, instruction_raf_flag, lookup_table_flag, unexpanded_pc};
 use super::registers::{
@@ -457,7 +457,7 @@ where
 
 pub fn read_raf_public_values<F>(
     inputs: BytecodeReadRafEvaluationInputs<'_, F>,
-) -> Result<BytecodeReadRafPublicValues<F>, JoltFormulaPointError>
+) -> Result<BytecodeReadRafPublicValues<F>, PointGeometryError>
 where
     F: JoltField,
 {
@@ -469,7 +469,7 @@ where
 
     let expected_domain = 1usize << inputs.r_address.len();
     if inputs.bytecode.len() != expected_domain {
-        return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+        return Err(PointGeometryError::EvaluationDomainLengthMismatch {
             expected: expected_domain,
             got: inputs.bytecode.len(),
         });

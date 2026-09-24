@@ -27,7 +27,7 @@ pub use geometry::{
         CommitmentMatrixShape, JoltFormulaDimensions, JoltOneHotConfig, JoltOneHotDimensions,
         JoltReadWriteConfig, ReadWriteDimensions, TraceDimensions, TracePolynomialOrder,
     },
-    error::{JoltFormulaDimensionsError, JoltFormulaPointError},
+    error::{JoltFormulaDimensionsError, PointGeometryError},
 };
 pub use ids::{
     AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,

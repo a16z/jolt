@@ -3,7 +3,7 @@ use jolt_field::{JoltField, Ring};
 use crate::opening;
 
 use super::super::super::{JoltExpr, JoltOpeningId, JoltRelationId};
-use super::super::dimensions::JoltFormulaPointError;
+use super::super::dimensions::PointGeometryError;
 use super::super::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 use super::super::ram::ram_hamming_weight;
 
@@ -25,9 +25,9 @@ impl HammingWeightClaimReductionDimensions {
         self,
         challenges: &[F],
         r_cycle: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if challenges.len() != self.log_k_chunk {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.log_k_chunk,
                 got: challenges.len(),
             });

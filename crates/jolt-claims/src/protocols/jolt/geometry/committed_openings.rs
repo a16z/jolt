@@ -4,7 +4,7 @@ use jolt_field::JoltField;
 
 use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 use super::dimensions::TracePolynomialOrder;
-use super::error::JoltFormulaPointError;
+use super::error::PointGeometryError;
 use super::ra::JoltRaPolynomialLayout;
 
 pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommittedPolynomial> {
@@ -133,7 +133,7 @@ pub struct FinalOpeningPointInputs<'a, F: JoltField> {
 /// expects.
 pub fn final_opening_point<F: JoltField>(
     inputs: FinalOpeningPointInputs<'_, F>,
-) -> Result<Vec<F>, JoltFormulaPointError> {
+) -> Result<Vec<F>, PointGeometryError> {
     let native_main_vars = inputs.log_t + inputs.log_k_chunk;
     let mut dominant: Option<(usize, &[F])> = None;
     for (index, point) in inputs.precommitted_anchor_points.iter().enumerate() {
@@ -145,7 +145,7 @@ pub fn final_opening_point<F: JoltField>(
         if dominant_point.len() > native_main_vars {
             for (index, point) in inputs.precommitted_anchor_points.iter().enumerate() {
                 if point.len() == dominant_point.len() && *point != dominant_point {
-                    return Err(JoltFormulaPointError::IncompatibleDominantAnchors {
+                    return Err(PointGeometryError::IncompatibleDominantAnchors {
                         first,
                         second: index,
                     });
@@ -156,7 +156,7 @@ pub fn final_opening_point<F: JoltField>(
     }
 
     if inputs.hamming_weight_opening_point.len() < inputs.log_k_chunk {
-        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+        return Err(PointGeometryError::OpeningPointLengthMismatch {
             expected: inputs.log_k_chunk,
             got: inputs.hamming_weight_opening_point.len(),
         });
@@ -168,15 +168,13 @@ pub fn final_opening_point<F: JoltField>(
         TracePolynomialOrder::CycleMajor => {
             let native_cycle = &inputs.hamming_weight_opening_point[inputs.log_k_chunk..];
             if r_cycle_stage6.len() < native_cycle.len() {
-                return Err(
-                    JoltFormulaPointError::CycleChallengesShorterThanNativeCycle {
-                        expected: native_cycle.len(),
-                        got: r_cycle_stage6.len(),
-                    },
-                );
+                return Err(PointGeometryError::CycleChallengesShorterThanNativeCycle {
+                    expected: native_cycle.len(),
+                    got: r_cycle_stage6.len(),
+                });
             }
             if &r_cycle_stage6[..native_cycle.len()] != native_cycle {
-                return Err(JoltFormulaPointError::CycleMajorCyclePrefixMismatch);
+                return Err(PointGeometryError::CycleMajorCyclePrefixMismatch);
             }
             let cycle_extra = &r_cycle_stage6[native_cycle.len()..];
             Ok([cycle_extra, r_address_stage7, native_cycle].concat())
@@ -357,7 +355,7 @@ mod tests {
                 inc_claim_reduction_opening_point: &inc_point,
                 precommitted_anchor_points: &[&dominant, &conflicting],
             }),
-            Err(JoltFormulaPointError::IncompatibleDominantAnchors {
+            Err(PointGeometryError::IncompatibleDominantAnchors {
                 first: 0,
                 second: 1
             })

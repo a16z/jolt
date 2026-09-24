@@ -2,7 +2,7 @@ use thiserror::Error;
 
 // The point error is protocol-neutral (field_inline geometry raises it too), so
 // it lives in the crate's framework half; re-exported here at its historical path.
-pub use crate::formula_error::JoltFormulaPointError;
+pub use crate::formula_error::PointGeometryError;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Error)]
 pub enum JoltFormulaDimensionsError {
@@ -42,9 +42,9 @@ pub enum JoltFormulaDimensionsError {
 
 /// Require at least `expected` leading entries; callers consume the slice by
 /// prefix, so longer inputs are accepted.
-pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFormulaPointError> {
+pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), PointGeometryError> {
     if values.len() < expected {
-        return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+        return Err(PointGeometryError::ChallengeLengthMismatch {
             expected,
             got: values.len(),
         });
@@ -57,9 +57,9 @@ pub(crate) fn require_len<F>(values: &[F], expected: usize) -> Result<(), JoltFo
 pub(crate) fn require_opening_point_len<F>(
     values: &[F],
     expected: usize,
-) -> Result<(), JoltFormulaPointError> {
+) -> Result<(), PointGeometryError> {
     if values.len() < expected {
-        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+        return Err(PointGeometryError::OpeningPointLengthMismatch {
             expected,
             got: values.len(),
         });

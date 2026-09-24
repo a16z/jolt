@@ -1,6 +1,6 @@
 use jolt_field::JoltField;
 
-use crate::formula_error::JoltFormulaPointError;
+use crate::formula_error::PointGeometryError;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct FieldRegistersTraceDimensions {
@@ -21,9 +21,9 @@ impl FieldRegistersTraceDimensions {
     pub fn cycle_opening_point<F: JoltField>(
         self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if challenges.len() != self.log_t {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.log_t,
                 got: challenges.len(),
             });
@@ -79,11 +79,11 @@ impl FieldRegistersReadWriteDimensions {
     pub fn read_write_opening_point<F: JoltField>(
         self,
         challenges: &[F],
-    ) -> Result<FieldRegistersReadWriteOpeningPoint<F>, JoltFormulaPointError> {
+    ) -> Result<FieldRegistersReadWriteOpeningPoint<F>, PointGeometryError> {
         self.validate_phase_split()?;
         let expected = self.log_t + self.log_k;
         if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: challenges.len(),
             });
@@ -114,9 +114,9 @@ impl FieldRegistersReadWriteDimensions {
         })
     }
 
-    const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
+    const fn validate_phase_split(self) -> Result<(), PointGeometryError> {
         if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
-            return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+            return Err(PointGeometryError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: self.phase1_num_rounds,
                 log_t: self.log_t,
                 phase2_num_rounds: self.phase2_num_rounds,

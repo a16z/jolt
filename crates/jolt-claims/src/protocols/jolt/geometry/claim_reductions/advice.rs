@@ -7,7 +7,7 @@ use jolt_poly::EqPolynomial;
 
 use super::super::super::{JoltAdviceKind, JoltOpeningId, JoltRelationId};
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
-use super::super::error::JoltFormulaPointError;
+use super::super::error::PointGeometryError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
@@ -43,7 +43,7 @@ impl AdviceClaimReductionLayout {
         log_t: usize,
         scheduling_reference: PrecommittedSchedulingReference,
         max_advice_size_bytes: usize,
-    ) -> Result<Self, JoltFormulaPointError> {
+    ) -> Result<Self, PointGeometryError> {
         let advice_shape = CommitmentMatrixShape::advice_from_max_bytes(max_advice_size_bytes);
         let log_k_chunk = scheduling_reference.address_rounds;
         let precommitted = PrecommittedClaimReduction::new(
@@ -101,7 +101,7 @@ impl AdviceClaimReductionLayout {
         &self,
         reference_opening_point: &[F],
         challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let opening_point = self
             .precommitted
             .cycle_phase_permuted_opening_point(challenges)?;
@@ -117,7 +117,7 @@ impl AdviceClaimReductionLayout {
         &self,
         reference_opening_point: &[F],
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
@@ -131,7 +131,7 @@ impl AdviceClaimReductionLayout {
         reference_opening_point: &[F],
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
@@ -146,7 +146,7 @@ impl AdviceClaimReductionLayout {
         &self,
         reference_opening_point: &[F],
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let eq_eval = final_advice_eq_eval(reference_opening_point, opening_point)?;
         Ok(eq_eval * precommitted_skip_round_scale::<F>(&self.precommitted))
     }
@@ -161,9 +161,9 @@ impl PrecommittedReductionLayout for AdviceClaimReductionLayout {
 fn final_advice_eq_eval<F: JoltField>(
     reference_opening_point: &[F],
     opening_point: &[F],
-) -> Result<F, JoltFormulaPointError> {
+) -> Result<F, PointGeometryError> {
     if reference_opening_point.len() != opening_point.len() {
-        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+        return Err(PointGeometryError::OpeningPointLengthMismatch {
             expected: reference_opening_point.len(),
             got: opening_point.len(),
         });

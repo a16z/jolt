@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::super::FieldInlineOpFlag;
-use crate::formula_error::JoltFormulaPointError;
+use crate::formula_error::PointGeometryError;
 
 pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 10] = [
     FieldInlineOpFlag::Add,
@@ -116,7 +116,7 @@ pub enum FieldInlineBytecodeValidationError {
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum FieldInlineBytecodeReadRafError {
     #[error("{0}")]
-    Point(#[from] JoltFormulaPointError),
+    Point(#[from] PointGeometryError),
     #[error("{0}")]
     Validation(#[from] FieldInlineBytecodeValidationError),
 }
@@ -191,7 +191,7 @@ where
     let expected_domain = 1usize << inputs.r_address.len();
     if inputs.bytecode.len() != expected_domain {
         return Err(FieldInlineBytecodeReadRafError::Point(
-            JoltFormulaPointError::EvaluationDomainLengthMismatch {
+            PointGeometryError::EvaluationDomainLengthMismatch {
                 expected: expected_domain,
                 got: inputs.bytecode.len(),
             },
@@ -414,7 +414,7 @@ fn register_eq<F: JoltField>(register: Option<u8>, eq: &[F]) -> F {
 fn require_len<F>(values: &[F], expected: usize) -> Result<(), FieldInlineBytecodeReadRafError> {
     if values.len() < expected {
         return Err(FieldInlineBytecodeReadRafError::Point(
-            JoltFormulaPointError::ChallengeLengthMismatch {
+            PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: values.len(),
             },
