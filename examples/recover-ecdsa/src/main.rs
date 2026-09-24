@@ -1,6 +1,6 @@
 use guest::recover;
 use jolt_sdk::serialize_and_print_size;
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use secp256k1::{ecdsa::RecoverableSignature, Message, PublicKey, SecretKey};
 use std::time::Instant;
 use tracing::info;
 
@@ -12,13 +12,12 @@ const SECRET_KEY: [u8; 32] = [
 pub fn main() {
     tracing_subscriber::fmt::init();
 
-    let secp = Secp256k1::new();
-
-    let seckey = SecretKey::from_byte_array(SECRET_KEY).unwrap();
-    let _pubkey = PublicKey::from_secret_key(&secp, &seckey);
+    let seckey = SecretKey::from_secret_bytes(SECRET_KEY).unwrap();
+    let _pubkey = PublicKey::from_secret_key(&seckey);
     let msg_digest = *b"this must be secure hash output.";
 
-    let signature = secp.sign_ecdsa_recoverable(Message::from_digest(msg_digest), &seckey);
+    let signature =
+        RecoverableSignature::sign_ecdsa_recoverable(Message::from_digest(msg_digest), &seckey);
     let (recovery_id, sig_bytes_array) = signature.serialize_compact();
 
     let sig_bytes = [&sig_bytes_array[..], &[recovery_id as u8]].concat();
