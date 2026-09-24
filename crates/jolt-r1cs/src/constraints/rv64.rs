@@ -726,9 +726,10 @@ mod execution_witness_tests {
     const NEXT_UNEXP_PC_UPDATE_OTHERWISE: usize = 16;
     const NEXT_PC_EQ_PC_PLUS_ONE_IF_INLINE: usize = 17;
     const MUST_START_SEQUENCE_FROM_BEGINNING: usize = 18;
-    const PRODUCT_EQ_LEFT_TIMES_RIGHT: usize = 19;
-    const SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH: usize = 20;
-    const SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP: usize = 21;
+    // Product rows follow every eq row, including the implicit-carry pair.
+    const PRODUCT_EQ_LEFT_TIMES_RIGHT: usize = NUM_EQ_CONSTRAINTS;
+    const SHOULD_BRANCH_EQ_LOOKUP_TIMES_BRANCH: usize = NUM_EQ_CONSTRAINTS + 1;
+    const SHOULD_JUMP_EQ_JUMP_TIMES_NOT_NEXT_NOOP: usize = NUM_EQ_CONSTRAINTS + 2;
 
     fn check(witness: &[Fr]) -> Result<(), usize> {
         rv64_trace_constraints::<Fr>().check_witness(witness)
