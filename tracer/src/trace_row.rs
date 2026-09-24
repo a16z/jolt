@@ -253,6 +253,8 @@ mod tests {
             instruction: div,
             register_state: Default::default(),
             ram_access: Default::default(),
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
         }
         .into();
 
