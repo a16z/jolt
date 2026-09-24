@@ -3199,6 +3199,7 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "bincode 2.0.1",
  "blake2 0.11.0",
  "derive_more",
  "jolt-claims-derive",
@@ -3208,6 +3209,8 @@ dependencies = [
  "jolt-poly",
  "jolt-riscv",
  "jolt-utils",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.20",
 ]
@@ -3216,6 +3219,7 @@ dependencies = [
 name = "jolt-claims-derive"
 version = "0.1.0"
 dependencies = [
+ "prettyplease 0.3.0",
  "proc-macro2",
  "quote",
  "syn 3.0.3",
@@ -5041,6 +5045,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettyplease"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "primeorder"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5164,7 +5178,7 @@ dependencies = [
  "multimap",
  "once_cell",
  "petgraph",
- "prettyplease",
+ "prettyplease 0.2.37",
  "prost",
  "prost-types",
  "regex",
@@ -5394,7 +5408,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-sdk",
  "recover-ecdsa-guest",
- "secp256k1 0.31.1",
+ "secp256k1 0.33.1",
  "tracing",
  "tracing-subscriber",
 ]
@@ -5404,7 +5418,7 @@ name = "recover-ecdsa-guest"
 version = "0.1.0"
 dependencies = [
  "jolt-sdk",
- "secp256k1 0.31.1",
+ "secp256k1 0.33.1",
 ]
 
 [[package]]
@@ -5928,6 +5942,16 @@ dependencies = [
  "bitcoin_hashes",
  "rand 0.9.5",
  "secp256k1-sys 0.11.0",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.33.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7f404a8dab7a7a5a631e741d8699aa9c8e1d689fc26ccf897c7187565490b69"
+dependencies = [
+ "rand 0.9.5",
+ "secp256k1-sys 0.14.1",
  "serde",
 ]
 
@@ -5964,6 +5988,15 @@ name = "secp256k1-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcb913707158fadaf0d8702c2db0e857de66eb003ccfdda5924b5f5ac98efb38"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "secp256k1-sys"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6b2992d4a3cd244539a7d5d0966aadbe5ca7fb868a5d7e38c29499b9e709bbd"
 dependencies = [
  "cc",
 ]
@@ -6282,7 +6315,7 @@ dependencies = [
  "postcard",
  "rand 0.8.7",
  "reth-ethereum-primitives",
- "secp256k1 0.31.1",
+ "secp256k1 0.33.1",
  "sig-recovery-guest",
  "tracing",
  "tracing-subscriber",

@@ -374,6 +374,7 @@ pprof = { version = "0.15", features = ["prost-codec", "frame-pointer"] }
 syn = { version = "3", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.79"
+prettyplease = "0.3"
 
 # Platform-specific
 fnv = { version = "1.0.7", default-features = false }
@@ -419,7 +420,7 @@ reth-primitives-traits = { version = "0.7", features = ["rayon", "serde"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
   "serde",
 ] }
-secp256k1 = { version = "0.31", features = ["recovery", "rand"] }
+secp256k1 = { version = "0.33", features = ["recovery", "rand"] }
 
 # Internal dependencies
 common = { path = "./common", default-features = false }
