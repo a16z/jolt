@@ -16,7 +16,7 @@ use jolt_lookup_tables::LookupTableKind;
 use jolt_poly::UnivariatePoly;
 use jolt_r1cs::constraints::field_constraints::{
     field_inline_trace_constraints, NUM_VARS_PER_CYCLE, V_CONST, V_FIELD_RS1_VALUE,
-    V_IS_FIELD_STORE_TO_X, V_X_RD_WRITE_VALUE, V_X_RIGHT_LOOKUP_OPERAND,
+    V_IS_FIELD_STORE_TO_REGISTER, V_X_RD_WRITE_VALUE, V_X_RIGHT_LOOKUP_OPERAND,
 };
 use jolt_sumcheck::{
     prove_batch, BatchMember, BatchPrelude, ProveRounds, SequentialRounds, SumcheckError,
@@ -80,7 +80,7 @@ fn fresh_store_lookup_proof_rejects_synchronized_wide_bridge_values() {
         let value = Fr::from_u128(index);
         let mut bridge = vec![Fr::zero(); NUM_VARS_PER_CYCLE];
         bridge[V_CONST] = Fr::one();
-        bridge[V_IS_FIELD_STORE_TO_X] = Fr::one();
+        bridge[V_IS_FIELD_STORE_TO_REGISTER] = Fr::one();
         bridge[V_FIELD_RS1_VALUE] = value;
         bridge[V_X_RD_WRITE_VALUE] = value;
         bridge[V_X_RIGHT_LOOKUP_OPERAND] = value;

@@ -58,7 +58,7 @@ impl InstructionFormat for FormatFieldInline {
             Some(
                 FieldInlineOp::Inv
                 | FieldInlineOp::LoadAccumulateFromRegister
-                | FieldInlineOp::StoreToX,
+                | FieldInlineOp::StoreToRegister,
             ) => Self {
                 op,
                 rd: Some(rd),

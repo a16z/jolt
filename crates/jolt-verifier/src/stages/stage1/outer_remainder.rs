@@ -292,7 +292,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
                 inv: opening_point.clone(),
                 assert_eq: opening_point.clone(),
                 load_accumulate_from_register: opening_point.clone(),
-                store_to_x: opening_point.clone(),
+                store_to_register: opening_point.clone(),
                 load_imm: opening_point.clone(),
                 load_accumulate_from_memory: opening_point.clone(),
                 advice_limb: opening_point.clone(),

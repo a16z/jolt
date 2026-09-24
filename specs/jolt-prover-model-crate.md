@@ -543,7 +543,7 @@ FIELD_SUB
 FIELD_MUL
 FIELD_INV
 FIELD_ASSERT_EQ
-FIELD_STORE_TO_X
+FIELD_STORE_TO_REGISTER
 FIELD_LOAD_ACCUMULATE_FROM_MEMORY
 FIELD_ADVICE_LIMB
 ```
@@ -612,7 +612,7 @@ FIELD_LOAD_ACCUMULATE_FROM_REGISTER field[4], x10:
     FieldRdValue comes from the field register witness
     bridge row enforces FieldRdValue = 2^64 * FieldRs1Value + Rs1Value
 
-FIELD_STORE_TO_X x11, field[4]:
+FIELD_STORE_TO_REGISTER x11, field[4]:
   field trace:
     read field[4]
   ordinary trace:

@@ -72,7 +72,7 @@ const fn field_inline_handles_rd_zero(instruction_kind: SourceInstructionKind) -
             // rd encodes the destination x-register; keep rd=x0 in place rather than
             // take the virtual-register rewrite, so the field-inline metadata rejects
             // a store to x0 (which discards the write) using the original encoding.
-            | SourceInstructionKind::FIELD_STORE_TO_X
+            | SourceInstructionKind::FIELD_STORE_TO_REGISTER
     )
 }
 

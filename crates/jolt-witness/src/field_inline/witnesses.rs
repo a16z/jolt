@@ -193,7 +193,7 @@ pub(crate) const fn op(flag: FieldInlineOpFlag) -> FieldInlineOp {
         FieldInlineOpFlag::Inv => FieldInlineOp::Inv,
         FieldInlineOpFlag::AssertEq => FieldInlineOp::AssertEq,
         FieldInlineOpFlag::LoadAccumulateFromRegister => FieldInlineOp::LoadAccumulateFromRegister,
-        FieldInlineOpFlag::StoreToX => FieldInlineOp::StoreToX,
+        FieldInlineOpFlag::StoreToRegister => FieldInlineOp::StoreToRegister,
         FieldInlineOpFlag::LoadImm => FieldInlineOp::LoadImm,
         FieldInlineOpFlag::LoadAccumulateFromMemory => FieldInlineOp::LoadAccumulateFromMemory,
         FieldInlineOpFlag::AdviceLimb => FieldInlineOp::AdviceLimb,

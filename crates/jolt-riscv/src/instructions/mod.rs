@@ -37,7 +37,7 @@ pub use assert::AssertWordAlignment;
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
     FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldInv, FieldLoadAccumulateFromMemory,
-    FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul, FieldStoreToX, FieldSub,
+    FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul, FieldStoreToRegister, FieldSub,
 };
 pub use i::Add;
 pub use i::AddW;
@@ -455,7 +455,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     #[cfg(feature = "field-inline")]
     FieldLoadAccumulateFromRegister(FieldLoadAccumulateFromRegister<T>),
     #[cfg(feature = "field-inline")]
-    FieldStoreToX(FieldStoreToX<T>),
+    FieldStoreToRegister(FieldStoreToRegister<T>),
     #[cfg(feature = "field-inline")]
     FieldLoadImm(FieldLoadImm<T>),
     #[cfg(feature = "field-inline")]
@@ -683,7 +683,7 @@ impl_jolt_instructions_flags! {
     #[cfg(feature = "field-inline")]
     FieldLoadAccumulateFromRegister => FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
     #[cfg(feature = "field-inline")]
-    FieldStoreToX => FIELD_STORE_TO_X,
+    FieldStoreToRegister => FIELD_STORE_TO_REGISTER,
     #[cfg(feature = "field-inline")]
     FieldLoadImm => FIELD_LOAD_IMM,
     #[cfg(feature = "field-inline")]

@@ -10,7 +10,7 @@
 /// as canonical little-endian u64 limbs and recomposed in-field by accumulating
 /// the limbs from most significant to least significant. Returns
 /// 42, bridged out of the field-inline file as `acc − expected + 42` — provably small,
-/// so the StoreToX range restriction holds exactly when the assert did.
+/// so the StoreToRegister range restriction holds exactly when the assert did.
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
 fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     // field register map: field[0] = 1, field[1] = eq accumulator, field[2]/field[3] = (r_i, x_i),
@@ -64,7 +64,7 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
                 options(nostack, readonly),
             );
         }
-        let high = jolt::field_store_to_x!(13);
+        let high = jolt::field_store_to_register!(13);
         assert_eq!([low, high], limbs);
     }
     // Exercise inversion separately: 3 · 3⁻¹ = 1 (field register 0 holds 1).
@@ -74,9 +74,9 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     jolt::field_assert_eq!(12, 0);
 
     // acc − expected is zero by the assert above, so the bridged result is
-    // exactly 42 and the StoreToX < 2^64 range restriction holds.
+    // exactly 42 and the StoreToRegister < 2^64 range restriction holds.
     jolt::field_sub!(10, 1, 8);
     jolt::field_load_imm!(11, 42);
     jolt::field_add!(10, 10, 11);
-    jolt::field_store_to_x!(10)
+    jolt::field_store_to_register!(10)
 }

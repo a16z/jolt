@@ -89,7 +89,7 @@ Everything above the tracer is generic over `F`. The concrete work:
 - Bridge economics improve: a full-width load uses one zero initialization
   and two `FIELD_LOAD_ACCUMULATE_FROM_REGISTER` instructions, high limb first.
   Each accumulation computes `old_destination * 2^64 + limb` in the field;
-  `FIELD_STORE_TO_X`'s range-restricted semantics (< 2^64, trap
+  `FIELD_STORE_TO_REGISTER`'s range-restricted semantics (< 2^64, trap
   otherwise) and `FIELD_LOAD_IMM` are unchanged.
 - Generator budget: `MAX_BLINDFOLD_GENERATORS` is cfg-keyed today (32 without
   field-inline, 64 with it); the composed uniskip degrees do not change with

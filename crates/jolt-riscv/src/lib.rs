@@ -203,7 +203,7 @@ macro_rules! for_each_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_ACCUMULATE_FROM_REGISTER => FieldLoadAccumulateFromRegister => "field.load_accumulate_from_register",
                 #[cfg(feature = "field-inline")]
-                FIELD_STORE_TO_X => FieldStoreToX => "field.store_to_x",
+                FIELD_STORE_TO_REGISTER => FieldStoreToRegister => "field.store_to_register",
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => "field.load_imm",
                 #[cfg(feature = "field-inline")]
@@ -322,7 +322,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_ACCUMULATE_FROM_REGISTER => FieldLoadAccumulateFromRegister => (0x0105, "field.load_accumulate_from_register"),
                 #[cfg(feature = "field-inline")]
-                FIELD_STORE_TO_X => FieldStoreToX => (0x0106, "field.store_to_x"),
+                FIELD_STORE_TO_REGISTER => FieldStoreToRegister => (0x0106, "field.store_to_register"),
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => (0x0107, "field.load_imm"),
                 #[cfg(feature = "field-inline")]

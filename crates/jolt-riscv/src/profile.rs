@@ -417,8 +417,8 @@ mod tests {
             Some(crate::FieldInlineXRegisterRole::ReadRs1)
         );
 
-        let store =
-            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_STORE_TO_X).unwrap();
+        let store = crate::field_inline_operand_shape(JoltInstructionKind::FIELD_STORE_TO_REGISTER)
+            .unwrap();
         assert!(store.reads_field_rs1);
         assert!(!store.writes_field_rd);
         assert_eq!(

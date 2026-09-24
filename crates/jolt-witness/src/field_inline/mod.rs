@@ -189,7 +189,7 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
             FieldInlineOpFlag::Inv,
             FieldInlineOpFlag::AssertEq,
             FieldInlineOpFlag::LoadAccumulateFromRegister,
-            FieldInlineOpFlag::StoreToX,
+            FieldInlineOpFlag::StoreToRegister,
             FieldInlineOpFlag::LoadImm,
             FieldInlineOpFlag::LoadAccumulateFromMemory,
             FieldInlineOpFlag::AdviceLimb,
@@ -701,7 +701,7 @@ fn validate_bridge(
         }
         (
             Some(FieldInlineXRegisterRole::WriteRd),
-            Some(FieldInlineBridge::StoreToX {
+            Some(FieldInlineBridge::StoreToRegister {
                 field_register,
                 field_value,
                 x_register,
@@ -976,7 +976,7 @@ mod tests {
             },
         );
         let store = instruction(
-            JoltInstructionKind::FIELD_STORE_TO_X,
+            JoltInstructionKind::FIELD_STORE_TO_REGISTER,
             3,
             Some(10),
             Some(1),
@@ -994,12 +994,12 @@ mod tests {
                 ..RegisterState::default()
             },
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToX),
+                op: Some(FieldInlineOp::StoreToRegister),
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(35),
                 }),
-                bridge: Some(FieldInlineBridge::StoreToX {
+                bridge: Some(FieldInlineBridge::StoreToRegister {
                     field_register: 1,
                     field_value: enc(35),
                     x_register: 10,
@@ -1237,7 +1237,7 @@ mod tests {
             },
         );
         let store = instruction(
-            JoltInstructionKind::FIELD_STORE_TO_X,
+            JoltInstructionKind::FIELD_STORE_TO_REGISTER,
             1,
             Some(6),
             Some(1),
@@ -1255,12 +1255,12 @@ mod tests {
                 ..RegisterState::default()
             },
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToX),
+                op: Some(FieldInlineOp::StoreToRegister),
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(11),
                 }),
-                bridge: Some(FieldInlineBridge::StoreToX {
+                bridge: Some(FieldInlineBridge::StoreToRegister {
                     field_register: 1,
                     field_value: enc(11),
                     x_register: 6,

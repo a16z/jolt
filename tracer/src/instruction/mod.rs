@@ -68,7 +68,8 @@ use fence::FENCE;
 #[cfg(feature = "field-inline")]
 use field_inline::{
     FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
-    FIELD_LOAD_ACCUMULATE_FROM_REGISTER, FIELD_LOAD_IMM, FIELD_MUL, FIELD_STORE_TO_X, FIELD_SUB,
+    FIELD_LOAD_ACCUMULATE_FROM_REGISTER, FIELD_LOAD_IMM, FIELD_MUL, FIELD_STORE_TO_REGISTER,
+    FIELD_SUB,
 };
 use jal::JAL;
 use jalr::JALR;
@@ -627,7 +628,7 @@ macro_rules! define_rv64imac_enums {
                     Cycle::FIELD_INV(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ASSERT_EQ(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_STORE_TO_X(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_STORE_TO_REGISTER(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ADVICE_LIMB(cycle) => cycle.ram_access.trace,
@@ -972,7 +973,7 @@ fn is_field_inline_instruction(instruction: &Instruction) -> bool {
             | Instruction::FIELD_INV(_)
             | Instruction::FIELD_ASSERT_EQ(_)
             | Instruction::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(_)
-            | Instruction::FIELD_STORE_TO_X(_)
+            | Instruction::FIELD_STORE_TO_REGISTER(_)
             | Instruction::FIELD_LOAD_IMM(_)
             | Instruction::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(_)
             | Instruction::FIELD_ADVICE_LIMB(_)
@@ -1429,8 +1430,8 @@ impl Instruction {
                         FIELD_LOAD_ACCUMULATE_FROM_REGISTER::new(instr, address, true, compressed)
                             .into(),
                     ),
-                    Some(jolt_riscv::FieldInlineOp::StoreToX) => {
-                        Ok(FIELD_STORE_TO_X::new(instr, address, true, compressed).into())
+                    Some(jolt_riscv::FieldInlineOp::StoreToRegister) => {
+                        Ok(FIELD_STORE_TO_REGISTER::new(instr, address, true, compressed).into())
                     }
                     Some(jolt_riscv::FieldInlineOp::LoadImm) => {
                         Ok(FIELD_LOAD_IMM::new(instr, address, true, compressed).into())
@@ -2116,14 +2117,14 @@ mod tests {
 
         let store_cycle = trace_one(
             &mut cpu,
-            field_inline_word(FieldInlineOp::StoreToX, 10, 3, 0),
+            field_inline_word(FieldInlineOp::StoreToRegister, 10, 3, 0),
         );
         assert_eq!(store_cycle.rs1_read(), None);
         assert_eq!(store_cycle.rd_write(), Some((10, 0, 21)));
         let store_trace = store_cycle.field_inline_trace().unwrap();
         assert_eq!(
             store_trace.bridge,
-            Some(FieldInlineBridge::StoreToX {
+            Some(FieldInlineBridge::StoreToRegister {
                 field_register: 3,
                 field_value: FieldEncodedValue::from_u64(21),
                 x_register: 10,
@@ -2191,7 +2192,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    #[should_panic(expected = "FIELD_STORE_TO_X of a value wider than 64 bits")]
+    #[should_panic(expected = "FIELD_STORE_TO_REGISTER of a value wider than 64 bits")]
     fn field_inline_store_of_wide_value_traps_at_trace_time() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
         // Build 2^64 in field register 1 by repeated squaring of 2, then attempt to store it.
@@ -2201,7 +2202,7 @@ mod tests {
         }
         trace_one(
             &mut cpu,
-            field_inline_word(FieldInlineOp::StoreToX, 10, 1, 0),
+            field_inline_word(FieldInlineOp::StoreToRegister, 10, 1, 0),
         );
     }
 

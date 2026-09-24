@@ -148,7 +148,7 @@ fn flags_for_op(op: FieldInlineOp) -> FieldInlineBytecodeFlags {
         FieldInlineOp::Inv => flags.inv = true,
         FieldInlineOp::AssertEq => flags.assert_eq = true,
         FieldInlineOp::LoadAccumulateFromRegister => flags.load_accumulate_from_register = true,
-        FieldInlineOp::StoreToX => flags.store_to_x = true,
+        FieldInlineOp::StoreToRegister => flags.store_to_register = true,
         FieldInlineOp::LoadImm => flags.load_imm = true,
         FieldInlineOp::LoadAccumulateFromMemory => flags.load_accumulate_from_memory = true,
         FieldInlineOp::AdviceLimb => flags.advice_limb = true,
@@ -278,7 +278,7 @@ mod tests {
             FieldInlineOp::Inv => (register(4), register(5), None),
             FieldInlineOp::AssertEq => (None, register(6), register(7)),
             FieldInlineOp::LoadAccumulateFromRegister => (register(8), register(8), None),
-            FieldInlineOp::StoreToX => (None, register(9), None),
+            FieldInlineOp::StoreToRegister => (None, register(9), None),
             FieldInlineOp::LoadImm => (register(10), None, None),
             FieldInlineOp::LoadAccumulateFromMemory => (register(13), register(13), None),
             FieldInlineOp::AdviceLimb => (register(14), register(15), None),
@@ -286,7 +286,7 @@ mod tests {
         let bridge_x_register = matches!(
             op,
             FieldInlineOp::LoadAccumulateFromRegister
-                | FieldInlineOp::StoreToX
+                | FieldInlineOp::StoreToRegister
                 | FieldInlineOp::LoadAccumulateFromMemory
                 | FieldInlineOp::AdviceLimb
         )
@@ -311,7 +311,7 @@ mod tests {
         FieldInlineOp::Inv,
         FieldInlineOp::AssertEq,
         FieldInlineOp::LoadAccumulateFromRegister,
-        FieldInlineOp::StoreToX,
+        FieldInlineOp::StoreToRegister,
         FieldInlineOp::LoadImm,
         FieldInlineOp::LoadAccumulateFromMemory,
         FieldInlineOp::AdviceLimb,
@@ -327,7 +327,7 @@ mod tests {
             FieldInlineOp::LoadAccumulateFromRegister => {
                 FieldInlineOpFlag::LoadAccumulateFromRegister
             }
-            FieldInlineOp::StoreToX => FieldInlineOpFlag::StoreToX,
+            FieldInlineOp::StoreToRegister => FieldInlineOpFlag::StoreToRegister,
             FieldInlineOp::LoadImm => FieldInlineOpFlag::LoadImm,
             FieldInlineOp::LoadAccumulateFromMemory => FieldInlineOpFlag::LoadAccumulateFromMemory,
             FieldInlineOp::AdviceLimb => FieldInlineOpFlag::AdviceLimb,

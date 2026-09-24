@@ -38,7 +38,7 @@ jolt_instruction!(
     /// the field-inline bridge rows pin both the operand and the write to
     /// `FieldRs1Value`, so the store is satisfiable only when the field value
     /// fits in 64 bits (`jolt-r1cs` `field_constraints`).
-    FieldStoreToX,
+    FieldStoreToRegister,
     circuit flags: [Advice, WriteLookupOutputToRD],
     instruction flags: []
 );

@@ -1539,7 +1539,7 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.field_inline.inv",
             "claims.stage1.outer.outer_remainder.field_inline.assert_eq",
             "claims.stage1.outer.outer_remainder.field_inline.load_accumulate_from_register",
-            "claims.stage1.outer.outer_remainder.field_inline.store_to_x",
+            "claims.stage1.outer.outer_remainder.field_inline.store_to_register",
             "claims.stage1.outer.outer_remainder.field_inline.load_imm",
             "claims.stage1.outer.outer_remainder.field_inline.load_accumulate_from_memory",
             "claims.stage1.outer.outer_remainder.field_inline.advice_limb",

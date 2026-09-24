@@ -352,7 +352,7 @@ pub enum FieldInlineBridge {
         x_value: u64,
         field_value: FieldEncodedValue,
     },
-    StoreToX {
+    StoreToRegister {
         field_register: u8,
         field_value: FieldEncodedValue,
         x_register: u8,
@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn field_write_bridges_require_nonzero_integer_destinations() {
         for instruction_kind in [
-            Kind::FIELD_STORE_TO_X,
+            Kind::FIELD_STORE_TO_REGISTER,
             Kind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
             Kind::FIELD_ADVICE_LIMB,
         ] {

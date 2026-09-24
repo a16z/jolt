@@ -317,7 +317,7 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
     );
 
     let store = instruction(
-        JoltInstructionKind::FIELD_STORE_TO_X,
+        JoltInstructionKind::FIELD_STORE_TO_REGISTER,
         1,
         Some(6),
         Some(1),
@@ -335,12 +335,12 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
             ..RegisterState::default()
         },
         FieldInlineTraceData {
-            op: Some(FieldInlineOp::StoreToX),
+            op: Some(FieldInlineOp::StoreToRegister),
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(19),
             }),
-            bridge: Some(FieldInlineBridge::StoreToX {
+            bridge: Some(FieldInlineBridge::StoreToRegister {
                 field_register: 1,
                 field_value: enc(19),
                 x_register: 6,

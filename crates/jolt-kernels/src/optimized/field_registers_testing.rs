@@ -6,7 +6,7 @@
 //!
 //! Reads return the running field register file state and writes advance it, so the
 //! witness view's build-time replay validation holds by construction. Bridge ops
-//! (`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`/`FIELD_STORE_TO_X`) are deliberately not modeled — their
+//! (`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`/`FIELD_STORE_TO_REGISTER`) are deliberately not modeled — their
 //! payloads couple to the x-register file, and the field-inline kernel surface under
 //! test never distinguishes bridge writes from ordinary ones (the e2e's eq-MLE guest
 //! covers them at the proof level).

@@ -12,7 +12,7 @@
 //!   under `2^64 * FieldRs1Value`, where field-register checking binds
 //!   `FieldRs1Value` to the destination's old value. `FIELD_LOAD_IMM` sets
 //!   `FieldRdValue = Imm`, using the bytecode-bound immediate.
-//! - `FIELD_STORE_TO_X` writes `RdWriteValue`, which the base protocol pins
+//! - `FIELD_STORE_TO_REGISTER` writes `RdWriteValue`, which the base protocol pins
 //!   only through the lookup/load/jump flags. The instruction therefore
 //!   carries the `Advice` and `WriteLookupOutputToRD` flags and the
 //!   `RangeCheck` lookup: RV64 row 12 gives `RdWriteValue = LookupOutput`,
@@ -23,7 +23,7 @@
 //!   `FieldRs1Value = FieldRs1Value mod 2^64`, i.e. the store is satisfiable
 //!   exactly when the field value fits in 64 bits — the condition under which
 //!   the tracer executes it (wider values trap; `tracer`
-//!   `execute_store_to_x`).
+//!   `execute_store_to_register`).
 
 use crate::constraint::SparseRow;
 use jolt_field::JoltField;
@@ -48,7 +48,7 @@ pub const V_IS_FIELD_MUL: usize = 11;
 pub const V_IS_FIELD_INV: usize = 12;
 pub const V_IS_FIELD_ASSERT_EQ: usize = 13;
 pub const V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER: usize = 14;
-pub const V_IS_FIELD_STORE_TO_X: usize = 15;
+pub const V_IS_FIELD_STORE_TO_REGISTER: usize = 15;
 pub const V_IS_FIELD_LOAD_IMM: usize = 16;
 pub const V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY: usize = 17;
 pub const V_IS_FIELD_ADVICE_LIMB: usize = 18;
@@ -65,11 +65,11 @@ pub const ROW_FMUL: usize = 2;
 pub const ROW_FINV: usize = 3;
 pub const ROW_ASSERT_EQ: usize = 4;
 pub const ROW_LOAD_ACCUMULATE_FROM_REGISTER: usize = 5;
-pub const ROW_STORE_TO_X: usize = 6;
+pub const ROW_STORE_TO_REGISTER: usize = 6;
 pub const ROW_LOAD_IMM: usize = 7;
-/// `IsFieldStoreToX · (RightLookupOperand − FieldRs1Value) = 0`: the
+/// `IsFieldStoreToRegister · (RightLookupOperand − FieldRs1Value) = 0`: the
 /// range-binding half of the store bridge.
-pub const ROW_STORE_TO_X_LOOKUP: usize = 8;
+pub const ROW_STORE_TO_REGISTER_LOOKUP: usize = 8;
 /// `IsFieldLoadAccumulateFromMemory ·
 /// (FieldRdValue − 2^64·FieldRs1Value − RdWriteValue) = 0`: RV64 load rows
 /// bind the word in the scratch x-register, and field-register checking
@@ -155,7 +155,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]);
     c_rows.push(empty());
 
-    a_rows.push(row::<F>(&[(V_IS_FIELD_STORE_TO_X, 1)]));
+    a_rows.push(row::<F>(&[(V_IS_FIELD_STORE_TO_REGISTER, 1)]));
     b_rows.push(row::<F>(&[
         (V_X_RD_WRITE_VALUE, 1),
         (V_FIELD_RS1_VALUE, -1),
@@ -166,7 +166,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_FIELD_RD_VALUE, 1), (V_IMM, -1)]));
     c_rows.push(empty());
 
-    a_rows.push(row::<F>(&[(V_IS_FIELD_STORE_TO_X, 1)]));
+    a_rows.push(row::<F>(&[(V_IS_FIELD_STORE_TO_REGISTER, 1)]));
     b_rows.push(row::<F>(&[
         (V_X_RIGHT_LOOKUP_OPERAND, 1),
         (V_FIELD_RS1_VALUE, -1),
@@ -402,10 +402,10 @@ mod tests {
     /// fails the lookup row; one whose x-register write disagrees fails the
     /// store row. Neither can smuggle a non-u64 field value into x-rd.
     #[test]
-    fn store_to_x_rejects_an_unchecked_or_mismatched_write() {
+    fn store_to_register_rejects_an_unchecked_or_mismatched_write() {
         let base = witness(Fr::from_u64(5), Fr::from_u64(7), Fr::from_u64(42), &[]);
         let mut active = base.clone();
-        active[V_IS_FIELD_STORE_TO_X] = one();
+        active[V_IS_FIELD_STORE_TO_REGISTER] = one();
         field_inline_trace_constraints::<Fr>()
             .check_witness(&active)
             .expect("a range-checked store satisfies both bridge rows");
@@ -414,14 +414,14 @@ mod tests {
         unchecked[V_X_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(6);
         assert_eq!(
             field_inline_trace_constraints::<Fr>().check_witness(&unchecked),
-            Err(ROW_STORE_TO_X_LOOKUP)
+            Err(ROW_STORE_TO_REGISTER_LOOKUP)
         );
 
         let mut mismatched = active;
         mismatched[V_X_RD_WRITE_VALUE] = Fr::from_u64(6);
         assert_eq!(
             field_inline_trace_constraints::<Fr>().check_witness(&mismatched),
-            Err(ROW_STORE_TO_X)
+            Err(ROW_STORE_TO_REGISTER)
         );
     }
 
@@ -505,7 +505,7 @@ mod tests {
         witness[V_X_RD_WRITE_VALUE] = Fr::from_u64(5);
         witness[V_IMM] = Fr::from_u64(42);
 
-        for selector in [V_IS_FIELD_STORE_TO_X, V_IS_FIELD_LOAD_IMM] {
+        for selector in [V_IS_FIELD_STORE_TO_REGISTER, V_IS_FIELD_LOAD_IMM] {
             let mut active = witness.clone();
             active[selector] = one();
             field_inline_trace_constraints::<Fr>()

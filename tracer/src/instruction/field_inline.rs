@@ -124,9 +124,9 @@ field_instruction!(
     SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER
 );
 field_instruction!(
-    FIELD_STORE_TO_X,
-    FieldInlineOp::StoreToX,
-    SourceInstructionKind::FIELD_STORE_TO_X
+    FIELD_STORE_TO_REGISTER,
+    FieldInlineOp::StoreToRegister,
+    SourceInstructionKind::FIELD_STORE_TO_REGISTER
 );
 field_instruction!(
     FIELD_LOAD_IMM,
@@ -189,7 +189,7 @@ fn execute_over<F: Field + CanonicalEncoding>(
         FieldInlineOp::LoadAccumulateFromRegister => pure(
             execute_load_accumulate_from_register::<F>(op, operands, cpu),
         ),
-        FieldInlineOp::StoreToX => pure(execute_store_to_x::<F>(op, operands, cpu)),
+        FieldInlineOp::StoreToRegister => pure(execute_store_to_register::<F>(op, operands, cpu)),
         FieldInlineOp::LoadImm => pure(execute_load_imm(op, operands, cpu)),
         FieldInlineOp::LoadAccumulateFromMemory => {
             execute_load_accumulate_from_memory::<F>(op, operands, cpu)
@@ -209,7 +209,7 @@ fn execute_advice_limb<F: Field + CanonicalEncoding>(
     let quotient_register = operands.rs2.unwrap_or(0);
     let x_register = operands.rd.unwrap_or(0);
     // x0 discards the write the bridge row equates with the low limb (see
-    // `execute_store_to_x`).
+    // `execute_store_to_register`).
     assert!(
         x_register != 0,
         "FIELD_ADVICE_LIMB to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
@@ -237,7 +237,7 @@ fn execute_advice_limb<F: Field + CanonicalEncoding>(
             pre_value,
             post_value: quotient,
         }),
-        bridge: Some(FieldInlineBridge::StoreToX {
+        bridge: Some(FieldInlineBridge::StoreToRegister {
             field_register,
             field_value,
             x_register,
@@ -429,7 +429,7 @@ fn execute_load_accumulate_from_register<F: Field + CanonicalEncoding>(
     }
 }
 
-fn execute_store_to_x<F: CanonicalEncoding>(
+fn execute_store_to_register<F: CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -441,11 +441,11 @@ fn execute_store_to_x<F: CanonicalEncoding>(
     // encoding, so trap at trace time like the other guest faults.
     assert!(
         x_register != 0,
-        "FIELD_STORE_TO_X to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
+        "FIELD_STORE_TO_REGISTER to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
         cpu.read_pc(),
     );
     let field_value = cpu.field_registers.read(field_register);
-    // store-to-x is a range-bound bridge: the instruction carries the advice
+    // StoreToRegister is a range-bound bridge: the instruction carries the advice
     // lookup flags, so the constraint system pins the x-register write to
     // `RangeCheck(FieldRs1Value)`, satisfiable only when the field value already
     // fits in 64 bits (`jolt-r1cs` `field_constraints` module doc). A wider
@@ -455,7 +455,7 @@ fn execute_store_to_x<F: CanonicalEncoding>(
         .to_u64_checked()
         .unwrap_or_else(|| {
             panic!(
-                "FIELD_STORE_TO_X of a value wider than 64 bits at pc 0x{:x} (field register {}): \
+                "FIELD_STORE_TO_REGISTER of a value wider than 64 bits at pc 0x{:x} (field register {}): \
                  the store bridge only supports field values < 2^64; extract wide \
                  values through the advice pattern instead",
                 cpu.read_pc(),
@@ -469,7 +469,7 @@ fn execute_store_to_x<F: CanonicalEncoding>(
             register: field_register,
             value: field_value,
         }),
-        bridge: Some(FieldInlineBridge::StoreToX {
+        bridge: Some(FieldInlineBridge::StoreToRegister {
             field_register,
             field_value,
             x_register,

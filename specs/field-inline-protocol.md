@@ -629,7 +629,7 @@ openings produced by earlier stages:
 
 ```text
 from stage 1 / selected Spartan outer:
-  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToX/LoadImm/
+  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToRegister/LoadImm/
               LoadAccumulateFromMemory/AdviceLimb)
 
 from stage 4 / FieldRegistersReadWriteChecking:
@@ -658,7 +658,7 @@ preprocessed side table parallel to ordinary bytecode rows:
 
 ```text
 FieldInlineBytecodeRow:
-  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToX/LoadImm/
+  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToRegister/LoadImm/
                   LoadAccumulateFromMemory/AdviceLimb
   field operands: rd, rs1, rs2 as field register slots, each optional
 ```
@@ -674,7 +674,7 @@ RLCs instead of creating another bytecode relation:
 ```text
 Stage1Gamma powers:
   ordinary powers 0..(1 + NUM_CIRCUIT_FLAGS)
-  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToX/LoadImm/
+  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToRegister/LoadImm/
                   LoadAccumulateFromMemory/AdviceLimb)
 
 Stage4Gamma powers:
@@ -773,7 +773,7 @@ selectors:
   IsFieldInv
   IsFieldAssertEq
   IsFieldLoadAccumulateFromRegister
-  IsFieldStoreToX
+  IsFieldStoreToRegister
   IsFieldLoadImm
   IsFieldLoadAccumulateFromMemory
   IsFieldAdviceLimb
@@ -815,7 +815,7 @@ x-register -> field-register:
     * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
 field-register -> x-register:
-  IsFieldStoreToX * (RdWriteValue - encode_field_register(FieldRs1Value, F)) = 0
+  IsFieldStoreToRegister * (RdWriteValue - encode_field_register(FieldRs1Value, F)) = 0
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(Imm, F)) = 0
@@ -847,7 +847,7 @@ x-register -> field-register:
     * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
 field-register -> x-register:
-  IsFieldStoreToX * (RdValue - encode_field_register(FieldRs1Value, F)) = 0
+  IsFieldStoreToRegister * (RdValue - encode_field_register(FieldRs1Value, F)) = 0
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(imm, F)) = 0
@@ -869,15 +869,15 @@ the reconstructed integer is a canonical field representative.
   constant), so these limb embeddings are exact.
 - `encode_field_register(FieldRs1Value, F) := FieldRs1Value`, range-bound
   through the instruction lookup the way `VirtualAdvice` binds a
-  prover-supplied word. `FIELD_STORE_TO_X` carries the `Advice` and
+  prover-supplied word. `FIELD_STORE_TO_REGISTER` carries the `Advice` and
   `WriteLookupOutputToRD` circuit flags and the `RangeCheck` lookup table;
   its lookup operand is the rd write value (non-interleaved, so the
   committed lookup index is `RightLookupOperand` itself, bound exactly by
   instruction read-RAF). Two field-inline rows pin the bridge:
 
   ```text
-  IsFieldStoreToX * (RdWriteValue - FieldRs1Value) = 0
-  IsFieldStoreToX * (RightLookupOperand - FieldRs1Value) = 0
+  IsFieldStoreToRegister * (RdWriteValue - FieldRs1Value) = 0
+  IsFieldStoreToRegister * (RightLookupOperand - FieldRs1Value) = 0
   ```
 
   With RV64 row 12 (`RdWriteValue = LookupOutput`) and
@@ -925,11 +925,11 @@ and constrains `field_rs1 = x_rd + 2^64 · field_rs2` in the proof field. The
 bounds `x_rd`, but does not uniquely determine either output. The honest
 tracer chooses the canonical low limb and quotient; this choice is not a
 constraint. In particular, input zero also permits limb one with quotient
-`−1/2^64`. Encoding remains funct3 of `FIELD_STORE_TO_X`, funct7 `1`;
+`−1/2^64`. Encoding remains funct3 of `FIELD_STORE_TO_REGISTER`, funct7 `1`;
 `rd` is the x-register, `rs1` the field source, and `rs2` the quotient.
 
 A deterministic conversion requires `N − 1` advice limbs followed by
-`FIELD_STORE_TO_X` on the last quotient, **and** a guest integer check
+`FIELD_STORE_TO_REGISTER` on the last quotient, **and** a guest integer check
 `Σ limb_i · 2^(64 i) < p`. The instruction relations establish equality
 modulo `p`; the integer check makes the representative unique. Without it,
 zero could be represented by the limbs of `p`, violating field wrappers'
@@ -995,7 +995,7 @@ IsFieldMul
 IsFieldInv
 IsFieldAssertEq
 IsFieldLoadAccumulateFromRegister
-IsFieldStoreToX
+IsFieldStoreToRegister
 IsFieldLoadImm
 IsFieldLoadAccumulateFromMemory
 IsFieldAdviceLimb
@@ -1139,7 +1139,7 @@ pub enum FieldInlineOpFlag {
     Inv,
     AssertEq,
     LoadAccumulateFromRegister,
-    StoreToX,
+    StoreToRegister,
     LoadImm,
     LoadAccumulateFromMemory,
     AdviceLimb,
@@ -1360,7 +1360,7 @@ Each step should be reviewed before continuing to the next.
 
 5. Add conversion row semantics. **Landed** as the 64-bit identity bridge
    with the `RangeCheck`-bound store ("Conversion Rows" above;
-   `field_constraints::ROW_STORE_TO_X_LOOKUP`).
+   `field_constraints::ROW_STORE_TO_REGISTER_LOOKUP`).
    - Define `decode_x_register`, `encode_field_register`, and immediate
      encoding for the active `F`.
    - Keep 128-bit and 254-bit handling as field-instantiation encoding, not

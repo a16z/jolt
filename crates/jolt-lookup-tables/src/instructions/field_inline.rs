@@ -1,21 +1,21 @@
 //! The field-inline bridge lookup.
 //!
-//! `FIELD_STORE_TO_X` and `FIELD_ADVICE_LIMB` use a lookup:
+//! `FIELD_STORE_TO_REGISTER` and `FIELD_ADVICE_LIMB` use a lookup:
 //! the x-register write is range-bound through `RangeCheck` exactly the way
 //! `VirtualAdvice` binds a prover-supplied word. The rd write value is the
 //! non-interleaved lookup operand (the `Advice` flag frees
 //! `RightLookupOperand` from the RV64 operand rows), `RangeCheck` returns its
-//! low 64 bits into `LookupOutput`. For `FIELD_STORE_TO_X`, the field-inline bridge rows
-//! (`jolt-r1cs` `field_constraints::{ROW_STORE_TO_X, ROW_STORE_TO_X_LOOKUP}`)
+//! low 64 bits into `LookupOutput`. For `FIELD_STORE_TO_REGISTER`, the field-inline bridge rows
+//! (`jolt-r1cs` `field_constraints::{ROW_STORE_TO_REGISTER, ROW_STORE_TO_REGISTER_LOOKUP}`)
 //! pin both the operand and the write to `FieldRs1Value`, so the statement
 //! is satisfiable only when the field value already fits in 64 bits — the
 //! same condition under which the tracer executes the store.
 use crate::traits::impl_lookup_table;
 use crate::traits::LookupQuery;
-use jolt_riscv::instructions::{FieldAdviceLimb, FieldStoreToX};
+use jolt_riscv::instructions::{FieldAdviceLimb, FieldStoreToRegister};
 use jolt_riscv::JoltCycle;
 
-/// The store bridge's range-checked rd write, shared by `FieldStoreToX` and
+/// The store bridge's range-checked rd write, shared by `FieldStoreToRegister` and
 /// `FieldAdviceLimb` (whose rd write is a limb chosen by the prover).
 macro_rules! impl_range_checked_rd_write {
     ($($name:ident),+ $(,)?) => {
@@ -48,7 +48,7 @@ macro_rules! impl_range_checked_rd_write {
     };
 }
 
-impl_range_checked_rd_write!(FieldStoreToX, FieldAdviceLimb);
+impl_range_checked_rd_write!(FieldStoreToRegister, FieldAdviceLimb);
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
@@ -114,12 +114,12 @@ mod tests {
         }
     }
 
-    fn store(rd_post: u64) -> FieldStoreToX<StoreCycle> {
+    fn store(rd_post: u64) -> FieldStoreToRegister<StoreCycle> {
         let instruction = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::FIELD_STORE_TO_X,
+            instruction_kind: JoltInstructionKind::FIELD_STORE_TO_REGISTER,
             ..Default::default()
         };
-        FieldStoreToX(StoreCycle {
+        FieldStoreToRegister(StoreCycle {
             instruction,
             rd: Some((0, rd_post)),
         })
@@ -129,7 +129,7 @@ mod tests {
     /// (non-interleaved) lookup index and `RangeCheck` hands it back, so the
     /// R1CS equalities against `FieldRs1Value` hold exactly for u64 values.
     #[test]
-    fn store_to_x_is_a_range_check_of_the_rd_write() {
+    fn store_to_register_is_a_range_check_of_the_rd_write() {
         for value in [0u64, 1, 42, u64::MAX] {
             let instruction = store(value);
             let table = InstructionLookupTable::<64>::lookup_table(&instruction).unwrap();

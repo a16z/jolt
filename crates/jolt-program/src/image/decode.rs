@@ -214,7 +214,7 @@ fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError>
         Some(FieldInlineOp::LoadAccumulateFromRegister) => {
             Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER)
         }
-        Some(FieldInlineOp::StoreToX) => Ok(SourceInstructionKind::FIELD_STORE_TO_X),
+        Some(FieldInlineOp::StoreToRegister) => Ok(SourceInstructionKind::FIELD_STORE_TO_REGISTER),
         Some(FieldInlineOp::LoadImm) => Ok(SourceInstructionKind::FIELD_LOAD_IMM),
         Some(FieldInlineOp::LoadAccumulateFromMemory) => {
             Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY)
@@ -307,7 +307,7 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_INV
         | SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER
-        | SourceInstructionKind::FIELD_STORE_TO_X => format_field_unary_operands(word),
+        | SourceInstructionKind::FIELD_STORE_TO_REGISTER => format_field_unary_operands(word),
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_LOAD_IMM => format_field_load_imm_operands(word),
         #[cfg(feature = "field-inline")]

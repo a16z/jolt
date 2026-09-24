@@ -464,7 +464,7 @@ impl SpartanOuterRow {
         // FMUL, FINV, LOAD_ACCUMULATE_FROM_MEMORY]: guards zero; magnitudes zero except FINV's
         // `inv_product − 1 = −1` and the load row's `field_rd − 2^64·field_rs1 −
         // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_ACCUMULATE_FROM_REGISTER,
-        // STORE_TO_X, LOAD_IMM, STORE_TO_X_LOOKUP, ADVICE_LIMB]: guards zero;
+        // STORE_TO_REGISTER, LOAD_IMM, STORE_TO_REGISTER_LOOKUP, ADVICE_LIMB]: guards zero;
         // magnitudes `0`, `field_rd − 2^64·field_rs1 − Rs1Value = −Rs1Value`, `RdWriteValue − field_rs1
         // = RdWriteValue`, `field_rd − Imm = −Imm`, `RightLookupOperand − field_rs1 =
         // RightLookupOperand`, `field_rs1 − RdWriteValue − 2^64·field_rd =
@@ -522,7 +522,7 @@ impl SpartanOuterRow {
         values.a_second[RV64_SECOND_GROUP_LEN] = flag(FieldInlineOpFlag::AssertEq);
         values.a_second[RV64_SECOND_GROUP_LEN + 1] =
             flag(FieldInlineOpFlag::LoadAccumulateFromRegister);
-        values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::StoreToX);
+        values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::StoreToRegister);
         values.a_second[RV64_SECOND_GROUP_LEN + 3] = flag(FieldInlineOpFlag::LoadImm);
         values.b_second[RV64_SECOND_GROUP_LEN] = field_row.rs1_value - field_row.rs2_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 1] = field_row.rd_value
@@ -531,7 +531,7 @@ impl SpartanOuterRow {
         values.b_second[RV64_SECOND_GROUP_LEN + 2] =
             F::from_u64(self.rd_write_value.0) - field_row.rs1_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 3] = field_row.rd_value - F::from_i128(self.imm.0);
-        values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::StoreToX);
+        values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::StoreToRegister);
         values.b_second[RV64_SECOND_GROUP_LEN + 4] =
             F::from_u128(self.right_lookup_operand.0) - field_row.rs1_value;
         values.a_second[RV64_SECOND_GROUP_LEN + 5] = flag(FieldInlineOpFlag::AdviceLimb);

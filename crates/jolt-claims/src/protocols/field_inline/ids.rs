@@ -70,7 +70,7 @@ pub enum FieldInlineOpFlag {
     Inv,
     AssertEq,
     LoadAccumulateFromRegister,
-    StoreToX,
+    StoreToRegister,
     LoadImm,
     LoadAccumulateFromMemory,
     AdviceLimb,
