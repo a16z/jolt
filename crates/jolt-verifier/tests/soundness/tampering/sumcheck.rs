@@ -330,7 +330,7 @@ fn tampered_stage6_sumcheck_payload_reject() {}
 #[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
 fn tampered_stage7_sumcheck_payload_reject() {}
 
-/// Legacy advice fixture: FR-off only (see `tampering/mod.rs`).
+/// Legacy advice fixture: only when field-inline is disabled (see `tampering/mod.rs`).
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "zk"),

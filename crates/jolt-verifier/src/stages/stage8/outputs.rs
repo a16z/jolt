@@ -9,9 +9,9 @@ use crate::stages::ids::VerifierOpeningId;
 #[derive(Clone, Debug)]
 pub struct Stage8ClearOutput<F: JoltField, C> {
     pub opening_claims: Vec<VerifierOpeningClaim<F, C>>,
-    /// Composite ids: the batch is jolt-only under FR-off, and carries the
-    /// spliced `FieldRdInc` entry under `field-inline` (mixed final opening
-    /// ids, per the spec's stage-8 field-inline order).
+    /// Composite ids: the batch is jolt-only with field-inline disabled, and carries the
+    /// spliced `FieldRdInc` entry under `field-inline` (mixed final opening ids, per the
+    /// spec's stage-8 field-inline order).
     pub opening_ids: Vec<VerifierOpeningId>,
     pub constraint_coefficients: Vec<F>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,

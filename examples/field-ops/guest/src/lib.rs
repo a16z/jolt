@@ -1,21 +1,21 @@
 //! eq-polynomial MLE evaluation over BN254 Fr through the raw field-inline
 //! instructions: eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)), folded in
-//! the FR register file and checked against a host-provided expected value
+//! the field register file and checked against a host-provided expected value
 //! with FIELD_ASSERT_EQ.
 
 #![cfg_attr(feature = "guest", no_std)]
 
-/// Evaluates eq(r, x) over the `(r_i, x_i)` coordinate pairs in the FR
+/// Evaluates eq(r, x) over the `(r_i, x_i)` coordinate pairs in the field-inline
 /// register file and FIELD_ASSERT_EQs it against the expected value, supplied
 /// as canonical little-endian u64 limbs and recomposed in-field (Horner in
 /// radix 2^64, the radix built by repeated squaring of a LoadImm 2). Returns
-/// 42, bridged out of the FR file as `acc − expected + 42` — provably small,
+/// 42, bridged out of the field-inline file as `acc − expected + 42` — provably small,
 /// so the StoreToX range restriction holds exactly when the assert did.
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
 fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
-    // FR register map: fr0 = 1, fr1 = eq accumulator, fr2/fr3 = (r_i, x_i),
-    // fr4-fr6 = per-pair scratch, fr7 = 2^64, fr8 = recomposed expected
-    // value, fr9 = limb bridge, fr10/fr11 = result-bridge scratch.
+    // field register map: field[0] = 1, field[1] = eq accumulator, field[2]/field[3] = (r_i, x_i),
+    // field[4]-field[6] = per-pair scratch, field[7] = 2^64, field[8] = recomposed expected
+    // value, field[9] = limb bridge, field[10]/field[11] = result-bridge scratch.
     jolt::field_load_imm!(0, 1);
     jolt::field_load_imm!(1, 1);
     for [r, x] in pairs {
@@ -40,7 +40,7 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     jolt::field_mul!(7, 7, 7); // 2^64
 
     // Horner-recompose the expected value: ((l3·2^64 + l2)·2^64 + l1)·2^64 + l0.
-    // Each limb crosses the bridge as a u64; only the FR-internal partial sums
+    // Each limb crosses the bridge as a u64; only the in-field partial sums
     // exceed 64 bits.
     let [l0, l1, l2, l3] = expected_limbs;
     jolt::field_load_from_x!(8, l3);

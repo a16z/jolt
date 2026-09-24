@@ -94,10 +94,10 @@ where
         ),
     };
 
-    // Draw each relation's batching gamma in declaration order (instruction, then
-    // RAM); registers draws nothing, and neither does the `field-inline` FR
-    // value-evaluation member. The drawn challenges feed the input/output claims
-    // and populate the stage aggregate carried downstream.
+    // Draw each relation's batching gamma in declaration order (instruction, then RAM);
+    // registers draws nothing, and neither does the `field-inline` value-evaluation member.
+    // The drawn challenges feed the input/output claims and populate the stage aggregate
+    // carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

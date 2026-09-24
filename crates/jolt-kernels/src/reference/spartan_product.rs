@@ -1,21 +1,20 @@
 //! The Spartan product-virtualization (stage 2) kernels: the product uni-skip
 //! first-round polynomial and the product-remainder batch member.
 //!
-//! The uni-skip row polynomial
-//! `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)` — with `left_Y`/`right_Y`
-//! the centered-Lagrange-weighted combinations of the selected left/right
-//! factor columns (the three rv64 lanes, plus the two FR lanes under
-//! `field-inline`) — is brute-forced at every node of the extended centered
-//! window over the COMPOSED lane domain. Unlike stage 1's outer uni-skip, the
-//! in-domain values do not vanish: they equal the per-lane stage-1 claims,
-//! and the engine's round-sum check pins them against the folded input claim.
-//! The transmitted polynomial is `LK(τ_high, ·) × t1`.
+//! The uni-skip row polynomial `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)` —
+//! with `left_Y`/`right_Y` the centered-Lagrange-weighted combinations of the selected
+//! left/right factor columns (the three rv64 lanes, plus the two field-inline lanes
+//! under `field-inline`) — is brute-forced at every node of the extended centered
+//! window over the COMPOSED lane domain. Unlike stage 1's outer uni-skip, the in-domain
+//! values do not vanish: they equal the per-lane stage-1 claims, and the engine's
+//! round-sum check pins them against the folded input claim. The transmitted polynomial
+//! is `LK(τ_high, ·) × t1`.
 //!
 //! The rv64 remainder member needs no composite treatment: every leaf of the
-//! product-remainder `Expr` is multilinear over the cycle domain (the Lagrange
-//! weights are scalars — there is no stage-1-style quadratic stream
-//! coefficient), so it is a plain [`NaiveSumcheckProver`], bound `LowToHigh`.
-//! FR-on the member is the composed kernel at the bottom of this file.
+//! product-remainder `Expr` is multilinear over the cycle domain (the Lagrange weights
+//! are scalars — there is no stage-1-style quadratic stream coefficient), so it is a
+//! plain [`NaiveSumcheckProver`], bound `LowToHigh`. With field-inline enabled, the
+//! member is the composed kernel at the bottom of this file.
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
@@ -44,9 +43,9 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
-// The COMPOSED jolt-r1cs lane domain (feature-aware): identical to the
-// jolt-claims RV64-only constant FR-off, the FR-extended 5-lane domain under
-// `field-inline` — the shape the composed verifier checks.
+// The COMPOSED jolt-r1cs lane domain (feature-aware): identical to the jolt-claims
+// RV64-only constant without field-inline, the field-inline-extended 5-lane domain
+// under `field-inline` — the shape the composed verifier checks.
 #[cfg(feature = "field-inline")]
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
@@ -146,9 +145,9 @@ pub struct SpartanProductKernel<F: JoltField> {
     next_is_noop: Vec<F>,
     write_lookup_output_to_rd: Vec<F>,
     virtual_instruction: Vec<F>,
-    /// The FR lane factor columns (`FieldRs1Value`, `FieldRs2Value`,
-    /// `FieldRdValue`), cycle-indexed — the composed lanes' left/right
-    /// factors per `FieldRegistersProductLane::factor_openings`.
+    /// The field-inline lane factor columns (`FieldRs1Value`, `FieldRs2Value`,
+    /// `FieldRdValue`), cycle-indexed — the composed lanes' left/right factors per
+    /// `FieldRegistersProductLane::factor_openings`.
     #[cfg(feature = "field-inline")]
     field_rs1_value: Vec<F>,
     #[cfg(feature = "field-inline")]
@@ -194,11 +193,11 @@ impl<F: JoltField> SpartanProductKernel<F> {
         })
     }
 
-    /// The composed left/right factor values at cycle `j` under `weights`
-    /// (the centered-Lagrange weights over the composed lane domain): the
-    /// three ordinary lanes, plus (under `field-inline`) the FR lanes via the
-    /// jolt-claims composed-lane helper — the same helper the verifier's
-    /// composed checks fold with, so the lane order cannot drift.
+    /// The composed left/right factor values at cycle `j` under `weights` (the
+    /// centered-Lagrange weights over the composed lane domain): the three ordinary
+    /// lanes, plus (under `field-inline`) the field-inline lanes via the jolt-claims
+    /// composed-lane helper — the same helper the verifier's composed checks fold with,
+    /// so the lane order cannot drift.
     fn composed_lane_factors(&self, weights: &[F], j: usize) -> Result<(F, F), KernelError<F>> {
         let left = weights[0] * self.left_instruction_input[j]
             + weights[1] * self.lookup_output[j]
@@ -218,7 +217,7 @@ impl<F: JoltField> SpartanProductKernel<F> {
                 },
             )
             .ok_or(KernelError::InvariantViolation {
-                reason: "composed product weights do not cover the FR lanes",
+                reason: "composed product weights do not cover the field-inline lanes",
             })?;
             Ok((left + field_left, right + field_right))
         }
@@ -279,9 +278,9 @@ impl<F: JoltField> SpartanProductKernel<F> {
         )?;
 
         // The composed member: the rv64 symbolic expression cannot name the
-        // FR lane factors (separate id family), so the FR-on kernel
-        // materializes the two composed weighted factor forms directly (the
-        // weights are scalars, so both forms are plain multilinears).
+        // field-inline lane factors (separate id family), so the kernel with
+        // field-inline enabled materializes the two composed weighted factor forms
+        // directly (the weights are scalars, so both forms are plain multilinears).
         #[cfg(feature = "field-inline")]
         {
             let mut left_table = vec![F::zero(); cycles];
@@ -391,15 +390,14 @@ impl<F: JoltField> SpartanProductKernel<F> {
 
 /// The composed (field-inline) stage-2 product-remainder member.
 ///
-/// Proves `TauKernel · LEFT · RIGHT` over the cycle domain with the two
-/// weighted factor forms spanning the composed 5-lane selection (3 ordinary +
-/// 2 FR lanes). The rv64 symbolic expression cannot name the FR lane factors
-/// (a separate id family, per the protocol ruling), so this kernel
-/// materializes `LEFT`/`RIGHT` as dense tables — exact, because the Lagrange
-/// weights are scalars, so both forms are plain multilinears and their bound
-/// values equal the verifier's weight-folded openings (tied down per proof by
-/// [`SumcheckKernel::validate_derived_tables`] and the driver's composed
-/// expected-output fold).
+/// Proves `TauKernel · LEFT · RIGHT` over the cycle domain with the two weighted factor
+/// forms spanning the composed 5-lane selection (3 ordinary + 2 field-inline lanes).
+/// The rv64 symbolic expression cannot name the field-inline lane factors (a separate
+/// id family, per the protocol ruling), so this kernel materializes `LEFT`/`RIGHT` as
+/// dense tables — exact, because the Lagrange weights are scalars, so both forms are
+/// plain multilinears and their bound values equal the verifier's weight-folded
+/// openings (tied down per proof by [`SumcheckKernel::validate_derived_tables`] and the
+/// driver's composed expected-output fold).
 ///
 /// Column tables bind alongside the summand for extraction into the
 /// composed typed output claims.
@@ -410,7 +408,7 @@ struct ComposedProductRemainderKernel<F: JoltField> {
     left: Polynomial<F>,
     right: Polynomial<F>,
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
-    /// The FR factor tables, in `selected_product_remainder_output_openings`
+    /// The field-inline factor tables, in `selected_product_remainder_output_openings`
     /// order: `FieldRs1Value`, `FieldRs2Value`, `FieldRdValue`.
     field_inline_tables: [Polynomial<F>; 3],
     rounds_bound: usize,
@@ -556,10 +554,10 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
 
     /// Ties the materialized tables to the verifier's scalar path: the bound
     /// `TauKernel` must equal `derive_output_term(TauKernel)`, and the bound
-    /// `LEFT`/`RIGHT` factor forms must equal the verifier's Lagrange-weight
-    /// scalars folded over the bound lane columns — ordinary lanes plus the
-    /// jolt-claims composed-lane helper's FR contributions, the same fold the
-    /// composed expected-output check performs.
+    /// `LEFT`/`RIGHT` factor forms must equal the verifier's Lagrange-weight scalars
+    /// folded over the bound lane columns — ordinary lanes plus the jolt-claims
+    /// composed-lane helper's field-inline contributions, the same fold the composed
+    /// expected-output check performs.
     fn validate_derived_tables(
         &self,
         relation: &ProductRemainder<F>,
@@ -610,7 +608,7 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
             },
         )
         .ok_or(SumcheckKernelError::InvariantViolation {
-            reason: "composed product weights do not cover the FR lanes",
+            reason: "composed product weights do not cover the field-inline lanes",
         })?;
         let expected_left = weights[0] * bound(left_instruction_input_product())?
             + weights[1] * bound(lookup_output_product())?

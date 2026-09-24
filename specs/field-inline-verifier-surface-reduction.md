@@ -22,9 +22,9 @@ transcript byte, and fixture stays identical in every mode.
 ## Invariants (all machine-checked, all pre-existing)
 
 - Wire identity: both byte-diff ratchets, the recorded `.jvcf` fixtures, and
-  all e2e suites (dory FR-on/off, akita FR-on/off, zk) pass unmodified. The
-  fixtures regenerate only on a `FIXTURE_MAGIC` bump, which is itself a wire
-  change, so a refactor that needs one has violated this spec.
+  all e2e suites (dory and akita with and without field-inline, zk) pass
+  unmodified. The fixtures regenerate only on a `FIXTURE_MAGIC` bump, which
+  is itself a wire change, so a refactor that needs one has violated this spec.
 - The formula-pin tests are the independent ground truth for every derived
   formula; they are not rewritten to match the refactor.
 - Protocol separation stands: jolt-claims protocol modules stay
@@ -39,7 +39,7 @@ transcript byte, and fixture stays identical in every mode.
 
 ## Mechanisms
 
-1. **Derive the verifier relation impls from the symbolic layer.** Each FR
+1. **Derive the verifier relation impls from the symbolic layer.** Each field-inline
    relation's `ConcreteSumcheck` surface (input/output claim evaluation,
    `derive_output_term`, challenge resolution, typed claim structs' plumbing)
    is generated from the relation's `SymbolicSumcheck` definition plus the
@@ -49,18 +49,18 @@ transcript byte, and fixture stays identical in every mode.
    where a relation has genuinely non-symbolic behavior (lazy coefficient
    tables, uniskip domain handling) and each such site carries a WHY comment
    naming what could not be derived.
-2. **Table-drive the BlindFold stage shells.** The per-stage FR lowering
+2. **Table-drive the BlindFold stage shells.** The per-stage field-inline lowering
    files reduce to one interpreter over a stage-domain table: {stage, member
    list, committed-round row counts, publics sources, output-claim binding}.
    Expression lowering is already generic; the shells are the residue and
    become rows.
 3. **Compress clear seams to registration.** `stages/stageN/field_inline.rs`
-   modules are replaced by per-stage FR member registrations (one cfg'd
-   declaration naming members + absorb order) consumed by one shared
+   modules are replaced by per-stage field-inline member registrations (one
+   cfg'd declaration naming members + absorb order) consumed by one shared
    executor. The cfg'd line per stage preserves the visible divergence the
    architecture ruling requires.
-4. **Consume composed geometry instead of re-deriving it.** The FR extensions
-   in `outer_remainder` / `product_remainder` / `product_uniskip` read the
+4. **Consume composed geometry instead of re-deriving it.** The field-inline
+   extensions in `outer_remainder` / `product_remainder` / `product_uniskip` read the
    feature-aware jolt-r1cs tables (`spartan_outer_opening_columns`, lane
    tables) rather than carrying their own composition arithmetic.
 5. **Schema-drive the bytecode side-table converter.** The role mapping in
@@ -126,4 +126,4 @@ single-digit savings.
   deviation can ride the shared executor or stays bespoke (it is a recorded
   spec deviation; keeping it bespoke is acceptable).
 - Whether the uniskip first-round handling (stage 1/2) fits mechanism 1 or
-  remains hand-held (likely the latter; it predates the FR work).
+  remains hand-held (likely the latter; it predates the field-inline work).

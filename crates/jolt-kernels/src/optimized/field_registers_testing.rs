@@ -1,15 +1,15 @@
-//! FR-profile trace fixtures for the optimized field-registers kernels'
-//! parity tests: register-consistent field-inline executions behind a full
-//! `TraceBackend` witness plane with the field-inline view attached (the
-//! [`super::registers_read_write::test_support::TraceFixture`] discipline at
-//! the FR instruction family).
+//! Field-inline trace fixtures for the optimized field-registers kernels' parity tests:
+//! register-consistent field-inline executions behind a full `TraceBackend` witness
+//! plane with the field-inline view attached (the
+//! [`super::registers_read_write::test_support::TraceFixture`] discipline at the
+//! field-inline instruction family).
 //!
-//! Reads return the running FR register-file state and writes advance it, so
-//! the witness view's build-time replay validation holds by construction.
-//! Bridge ops (`FIELD_LOAD_FROM_X`/`FIELD_STORE_TO_X`) are deliberately not
-//! modeled — their payloads couple to the x-register file, and the FR kernel
-//! surface under test never distinguishes bridge writes from ordinary ones
-//! (the e2e's eq-MLE guest covers them at the proof level).
+//! Reads return the running field register file state and writes advance it, so the
+//! witness view's build-time replay validation holds by construction. Bridge ops
+//! (`FIELD_LOAD_FROM_X`/`FIELD_STORE_TO_X`) are deliberately not modeled — their
+//! payloads couple to the x-register file, and the field-inline kernel surface under
+//! test never distinguishes bridge writes from ordinary ones (the e2e's eq-MLE guest
+//! covers them at the proof level).
 
 #![expect(
     clippy::unwrap_used,
@@ -41,22 +41,23 @@ fn encode(value: Fr) -> FieldEncodedValue {
     FieldEncodedValue { bytes_le }
 }
 
-/// A register-consistent FR trace builder over the 16-slot FR register file.
-pub(crate) struct FrTraceFixture {
+/// A register-consistent field-inline trace builder over the 16-slot field register
+/// file.
+pub(crate) struct FieldRegisterTraceFixture {
     rows: Vec<TraceRow>,
     bytecode: Vec<JoltInstructionRow>,
     state: [Fr; 16],
     counter: u64,
 }
 
-/// One FR-active cycle: the instruction row with its field-inline trace data.
-fn fr_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
+/// One active field-inline cycle: the instruction row with its field-inline trace data.
+fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
     let mut row = TraceRow::from_instruction(instruction).unwrap();
     row.field_inline = Some(Arc::new(data));
     row
 }
 
-impl FrTraceFixture {
+impl FieldRegisterTraceFixture {
     pub(crate) fn new() -> Self {
         Self {
             rows: Vec::new(),
@@ -114,7 +115,7 @@ impl FrTraceFixture {
         }
     }
 
-    /// An ordinary (FR-inactive) row: an ADDI with no register traffic.
+    /// An ordinary (inactive field-inline) row: an ADDI with no register traffic.
     pub(crate) fn noop(&mut self) {
         let instruction = self.instruction(JoltInstructionKind::ADDI, Some(1), Some(0), None, 0);
         self.rows
@@ -127,7 +128,7 @@ impl FrTraceFixture {
                 imm as i128
             });
         let rd = self.write(rd, Fr::from_u64(imm));
-        self.rows.push(fr_row(
+        self.rows.push(field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(FieldInlineOp::LoadImm),
@@ -137,7 +138,7 @@ impl FrTraceFixture {
         ));
     }
 
-    /// One FR arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
+    /// One field-inline arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
     /// running state, writes a fresh pseudo-random destination value plus the
     /// op-required product payload.
     pub(crate) fn arithmetic(&mut self, op: FieldInlineOp, rd: u8, rs1: u8, rs2: u8) {
@@ -154,7 +155,7 @@ impl FrTraceFixture {
         let rs2 = self.read(rs2);
         let post = self.fresh_value();
         let rd = self.write(rd, post);
-        self.rows.push(fr_row(
+        self.rows.push(field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(op),
@@ -177,7 +178,7 @@ impl FrTraceFixture {
         );
         let rs1 = self.read(rs1);
         let rs2 = self.read(rs2);
-        self.rows.push(fr_row(
+        self.rows.push(field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(FieldInlineOp::AssertEq),
@@ -195,7 +196,7 @@ impl FrTraceFixture {
         let inv_product = encode(self.state[usize::from(rs1)] * post);
         let rs1 = self.read(rs1);
         let rd = self.write(rd, post);
-        self.rows.push(fr_row(
+        self.rows.push(field_row(
             instruction,
             FieldInlineTraceData {
                 op: Some(FieldInlineOp::Inv),
@@ -207,8 +208,8 @@ impl FrTraceFixture {
         ));
     }
 
-    /// Run `f` against an FR-profile trace backend padded to `2^log_t`
-    /// cycles, with the field-inline witness view attached.
+    /// Run `f` against a field-inline trace backend padded to `2^log_t` cycles, with
+    /// the field-inline witness view attached.
     pub(crate) fn with_plane<R>(
         self,
         log_t: usize,
@@ -254,12 +255,11 @@ impl FrTraceFixture {
     }
 }
 
-/// A structured FR workload: seed loads, add/sub/mul/inv chains, `rs1 == rs2`
-/// and `rd == rs1` aliasing, an assert-eq, repeated writes to one register,
-/// high slot indices, and interleaved FR-inactive rows. Emits at most
-/// `cycles` rows.
-pub(crate) fn structured_fr_fixture(cycles: usize) -> FrTraceFixture {
-    let mut fixture = FrTraceFixture::new();
+/// A structured field-inline workload: seed loads, add/sub/mul/inv chains, `rs1 == rs2`
+/// and `rd == rs1` aliasing, an assert-eq, repeated writes to one register, high slot
+/// indices, and interleaved inactive field-inline rows. Emits at most `cycles` rows.
+pub(crate) fn structured_field_register_fixture(cycles: usize) -> FieldRegisterTraceFixture {
+    let mut fixture = FieldRegisterTraceFixture::new();
     for step in 0..cycles {
         match step % 8 {
             0 => fixture.load_imm(3, 17 + step as u64),
@@ -275,10 +275,10 @@ pub(crate) fn structured_fr_fixture(cycles: usize) -> FrTraceFixture {
     fixture
 }
 
-/// An FR-profile fixture executing zero FR instructions — every FR column is
-/// identically zero (the uniform-shape degenerate case).
-pub(crate) fn inactive_fr_fixture(cycles: usize) -> FrTraceFixture {
-    let mut fixture = FrTraceFixture::new();
+/// A fixture with no field-inline instructions; every extension column is identically
+/// zero (the uniform-shape degenerate case).
+pub(crate) fn inactive_field_register_fixture(cycles: usize) -> FieldRegisterTraceFixture {
+    let mut fixture = FieldRegisterTraceFixture::new();
     for _ in 0..cycles {
         fixture.noop();
     }

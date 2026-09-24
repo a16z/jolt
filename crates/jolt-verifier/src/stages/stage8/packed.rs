@@ -89,9 +89,9 @@ where
     Ok(())
 }
 
-/// The commitment half of the precommitted metadata gate, shared with the FR
-/// limb seam (whose canonical plan is verifier-derived, so it hands over its
-/// digest and arity rather than a `PrefixPackedObjectPlan`).
+/// The commitment half of the precommitted metadata gate, shared with the field-inline limb
+/// seam (whose canonical plan is verifier-derived, so it hands over its digest and arity
+/// rather than a `PrefixPackedObjectPlan`).
 fn validate_precommitted_commitment_metadata<C>(
     commitment: &C,
     layout_digest: [u8; 32],
@@ -214,11 +214,10 @@ where
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    // Precommitted objects precede the OneHotTrace group in canonical role order:
-    // advice, (field-inline) the always-present FR limb group, then the direct
-    // committed-program objects. Optional objects join exactly when their direct
-    // final reductions exist; presence must agree with the proof/preprocessing
-    // commitment slots.
+    // Precommitted objects precede the OneHotTrace group in canonical role order: advice,
+    // (field-inline) the always-present field-increment limb group, then the direct
+    // committed-program objects. Optional objects join exactly when their direct final
+    // reductions exist; presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
     let one_hot_trace_shape = OneHotTraceShape {
         ra_layout: formula_dimensions.ra_layout,

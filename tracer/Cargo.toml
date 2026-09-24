@@ -38,10 +38,10 @@ field-inline = [
   "jolt-riscv/field-inline",
   "dep:jolt-field",
 ]
-# The packed (akita) configuration's FR proof field: repoints the field-inline
-# executors' `ProofField` to the fp128 akita field (and jolt-program's
+# The packed (akita) proof field: repoints the field-inline executors'
+# `ProofField` to the fp128 akita field (and jolt-program's
 # `FieldValueEncoding::ACTIVE` to the two-limb 16-byte encoding). Inert
-# without `field-inline`; enabled by the provers' `akita` features so FR
+# without `field-inline`; enabled by the provers' `akita` features so
 # execution always matches the field the packed axis proves over.
 fp128-field-inline = ["jolt-field?/solinas", "jolt-program/fp128-field-inline"]
 

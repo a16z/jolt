@@ -36,9 +36,9 @@ use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
-// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the jolt-claims
-// RV64-only constants FR-off, the FR-extended row/column composition under
-// `field-inline` — the shapes the composed verifier checks.
+// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the jolt-claims RV64-only
+// constants without field-inline, the field-inline-extended row/column composition
+// under `field-inline` — the shapes the composed verifier checks.
 use jolt_r1cs::constraints::jolt::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
@@ -127,14 +127,14 @@ pub struct SpartanOuterKernel<F: JoltField> {
     tau: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     matrices: ConstraintMatrices<F>,
-    /// The composed opening-column selection (`spartan_outer_opening_columns`),
-    /// aligned index-for-index with `input_tables`. Not contiguous under
-    /// `field-inline`: the two rv64 product-factor columns sit between the 35
-    /// inputs and the appended FR columns.
+    /// The composed opening-column selection (`spartan_outer_opening_columns`), aligned
+    /// index-for-index with `input_tables`. Not contiguous under `field-inline`: the
+    /// two rv64 product-factor columns sit between the 35 inputs and the appended
+    /// field-inline columns.
     columns: Vec<usize>,
-    /// Cycle-indexed R1CS input tables (big-endian cycle index), in the
-    /// composed opening-column order: the relation's 35 variables, then
-    /// (under `field-inline`) the 16 FR-local columns.
+    /// Cycle-indexed R1CS input tables (big-endian cycle index), in the composed
+    /// opening-column order: the relation's 35 variables, then (under `field-inline`)
+    /// the 16 field-inline columns.
     input_tables: Vec<Vec<F>>,
     /// Per-constraint-row value tables over the cycle domain:
     /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
@@ -275,9 +275,9 @@ impl<F: JoltField> SpartanOuterKernel<F> {
             .map(|&eq| eq * kernel)
             .collect::<Vec<F>>();
 
-        // The composed member: the rv64 symbolic expression cannot name the
-        // appended FR columns (separate id family), so the FR-on kernel
-        // materializes the two composed linear forms directly.
+        // The composed member: the rv64 symbolic expression cannot name the appended
+        // field-inline columns (separate id family), so the kernel with field-inline
+        // enabled materializes the two composed linear forms directly.
         #[cfg(feature = "field-inline")]
         {
             let mut az_table = vec![F::zero(); 2 * cycles];
@@ -374,12 +374,12 @@ impl<F: JoltField> SpartanOuterKernel<F> {
     }
 }
 
-/// Materialize the selected R1CS input polynomials (cycle-indexed,
-/// big-endian) in the composed opening-column order: the 35 rv64 inputs in
-/// the relation's variable order, then (under `field-inline`) the 16 FR
-/// columns in `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — matching
-/// `spartan_outer_opening_columns()` index-for-index. Fails closed when an
-/// FR-on build proves a witness without the field-inline oracle.
+/// Materialize the selected R1CS input polynomials (cycle-indexed, big-endian) in the
+/// composed opening-column order: the 35 rv64 inputs in the relation's variable order,
+/// then (under `field-inline`) the 16 field-inline columns in
+/// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — matching
+/// `spartan_outer_opening_columns()` index-for-index. Fails closed when a build with
+/// field-inline enabled proves a witness without the field-inline oracle.
 fn materialize_input_tables<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     dimensions: &SpartanOuterDimensions,
@@ -459,18 +459,17 @@ fn row_value_tables<F: JoltField>(
 
 /// The composed (field-inline) stage-1 remainder member.
 ///
-/// Proves the factored quadratic `TauKernel · Az · Bz` over the joint
-/// `(cycle ‖ stream)` domain with the `Az`/`Bz` linear forms spanning the
-/// full composed column selection (35 rv64 + 16 FR). The rv64 symbolic
-/// expression cannot name the appended FR columns (a separate id family, per
-/// the protocol ruling), so this kernel materializes the two linear forms as
-/// dense tables instead of leaf-per-column expression walking. That is
-/// exact, not an approximation: every `w_i(stream) · col_i(cycle)` factor
-/// pair is a product over disjoint variables, hence itself multilinear, so
-/// the materialized `Az`/`Bz` tables ARE the relation's linear forms and the
-/// bound `Az`/`Bz` values equal the verifier's weight-folded openings — tied
-/// down per proof by [`SumcheckKernel::validate_derived_tables`] and the
-/// driver's composed expected-output fold.
+/// Proves the factored quadratic `TauKernel · Az · Bz` over the joint `(cycle ‖
+/// stream)` domain with the `Az`/`Bz` linear forms spanning the full composed column
+/// selection (35 rv64 + 16 field-inline). The rv64 symbolic expression cannot name the
+/// appended field-inline columns (a separate id family, per the protocol ruling), so
+/// this kernel materializes the two linear forms as dense tables instead of
+/// leaf-per-column expression walking. That is exact, not an approximation: every
+/// `w_i(stream) · col_i(cycle)` factor pair is a product over disjoint variables, hence
+/// itself multilinear, so the materialized `Az`/`Bz` tables ARE the relation's linear
+/// forms and the bound `Az`/`Bz` values equal the verifier's weight-folded openings —
+/// tied down per proof by [`SumcheckKernel::validate_derived_tables`] and the driver's
+/// composed expected-output fold.
 ///
 /// Column tables bind alongside the summand for extraction into the
 /// composed typed output claims.
@@ -480,8 +479,8 @@ struct ComposedOuterRemainderKernel<F: JoltField> {
     tau_kernel: Polynomial<F>,
     az: Polynomial<F>,
     bz: Polynomial<F>,
-    /// All composed column tables (replicated over the stream LSB), in
-    /// opening order: 35 ordinary then 16 FR.
+    /// All composed column tables (replicated over the stream LSB), in opening order:
+    /// 35 ordinary then 16 field-inline.
     column_tables: Vec<Polynomial<F>>,
     /// The 35 ordinary opening ids, aligned with `column_tables[..35]`.
     ordinary_ids: Vec<JoltOpeningId>,

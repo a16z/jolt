@@ -46,8 +46,9 @@ impl JoltProgram {
 
     /// [`Self::from_elf_bytes`] under an explicit instruction profile. The
     /// profile is load-bearing beyond decode: the field-inline witness plane
-    /// fails closed on FR trace data unless the program declares an
-    /// FR-capable profile, so FR guests must be constructed through here.
+    /// fails closed on field-inline trace data unless the program declares a
+    /// profile that enables field-inline, so such guests must be constructed
+    /// through here.
     pub fn from_elf_bytes_with_profile(
         elf_bytes: Vec<u8>,
         profile: JoltInstructionProfile,

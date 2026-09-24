@@ -236,8 +236,8 @@ pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     /// kernel reads these.
     stage_points: BytecodeStagePoints<F>,
     entry_bytecode_index: usize,
-    /// The FR side table and opening points the address-phase kernel folds
-    /// over, composed in by both fronts right after the batch build
+    /// The field-inline side table and opening points the address-phase kernel folds over,
+    /// composed in by both fronts right after the batch build
     /// ([`with_field_inline_geometry`](Self::with_field_inline_geometry)). See
     /// [`field_inline::FieldInlineBytecodeReadRafGeometry`](super::field_inline::FieldInlineBytecodeReadRafGeometry).
     #[cfg(feature = "field-inline")]
@@ -262,7 +262,7 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         }
     }
 
-    /// The relation composed with the FR kernel geometry (side table + FR
+    /// The relation composed with the field-inline kernel geometry (side table + field-inline
     /// opening points).
     #[cfg(feature = "field-inline")]
     pub fn with_field_inline_geometry(
@@ -273,8 +273,8 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         self
     }
 
-    /// The composed FR kernel geometry, fail-closed when the front never
-    /// composed one.
+    /// The composed field-inline kernel geometry, fail-closed when the front never composed
+    /// one.
     #[cfg(feature = "field-inline")]
     pub fn field_inline_geometry(
         &self,
@@ -448,9 +448,9 @@ mod tests {
     }
 }
 
-// The dory-shaped composition pins (base input-claims struct, five stage
-// points); the packed composition is covered by the prover's FR stage
-// round-trips and the packed e2e suite.
+// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
+// composition is covered by the prover's field-inline stage round-trips and the packed e2e
+// suite.
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(
     clippy::unwrap_used,
@@ -538,13 +538,12 @@ mod field_inline_tests {
         powers
     }
 
-    /// The composed input claim equals the from-scratch fold: the ordinary
-    /// symbolic bind plus the FR terms at the extended stage-1/4/5 power
-    /// indices, each stage extension riding the same outer gamma power as its
-    /// ordinary stage claim (spec: `field-inline-protocol.md`, "Stage 6
-    /// Composition" — Stage1 powers gain the eight `FieldOpFlag`s, Stage4
-    /// powers gain `FieldRdWa`/`FieldRs1Ra`/`FieldRs2Ra`, Stage5 powers gain
-    /// the val-evaluation `FieldRdWa`).
+    /// The composed input claim equals the from-scratch fold: the ordinary symbolic bind plus
+    /// the field-inline terms at the extended stage-1/4/5 power indices, each stage extension
+    /// riding the same outer gamma power as its ordinary stage claim (spec:
+    /// `field-inline-protocol.md`, "Stage 6 Composition" — Stage1 powers gain the eight
+    /// `FieldOpFlag`s, Stage4 powers gain `FieldRdWa`/`FieldRs1Ra`/`FieldRs2Ra`, Stage5 powers
+    /// gain the val-evaluation `FieldRdWa`).
     #[test]
     fn composed_input_claim_matches_from_scratch_fold() {
         let relation = relation();
@@ -580,22 +579,22 @@ mod field_inline_tests {
             challenges.stage5_gamma,
             2 + LookupTableKind::<RISCV_XLEN>::COUNT + 1,
         );
-        let fr_stage1: Fr = field_inline
+        let field_inline_stage1: Fr = field_inline
             .field_op_flags
             .iter()
             .enumerate()
             .map(|(index, flag)| stage1_powers[2 + NUM_CIRCUIT_FLAGS + index] * *flag)
             .sum();
-        let fr_stage4 = stage4_powers[3] * field_inline.rd_wa_read_write
+        let field_inline_stage4 = stage4_powers[3] * field_inline.rd_wa_read_write
             + stage4_powers[4] * field_inline.rs1_ra
             + stage4_powers[5] * field_inline.rs2_ra;
-        let fr_stage5 = stage5_powers[2 + LookupTableKind::<RISCV_XLEN>::COUNT]
+        let field_inline_stage5 = stage5_powers[2 + LookupTableKind::<RISCV_XLEN>::COUNT]
             * field_inline.rd_wa_val_evaluation;
         let gamma = challenges.gamma;
         let expected = ordinary
-            + fr_stage1
-            + gamma * gamma * gamma * fr_stage4
-            + gamma * gamma * gamma * gamma * fr_stage5;
+            + field_inline_stage1
+            + gamma * gamma * gamma * field_inline_stage4
+            + gamma * gamma * gamma * gamma * field_inline_stage5;
 
         let inputs = ComposedClaims {
             base: inputs,

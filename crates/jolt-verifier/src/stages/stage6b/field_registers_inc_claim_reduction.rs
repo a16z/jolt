@@ -1,15 +1,14 @@
-//! The stage 6b `FieldRegistersIncClaimReduction` sumcheck instance — the FR
-//! increment reduction member (spec: `field-inline-protocol.md`, "Stage 6
-//! Composition").
+//! The stage 6b `FieldRegistersIncClaimReduction` sumcheck instance — the field-inline
+//! increment reduction member (spec: `field-inline-protocol.md`, "Stage 6 Composition").
 //!
-//! Reduces the two semantic `FieldRdInc` openings — from the stage-4 FR
-//! read/write checking and the stage-5 FR val evaluation, batched by the
-//! member-drawn gamma (the spec's `eta`) — to the single reduced `FieldRdInc`
-//! opening the stage-8 joint opening consumes. Its publics mirror the ordinary
-//! [`IncClaimReduction`](super::inc_claim_reduction::IncClaimReduction)
-//! derivations exactly: `EqReadWrite = Eq(this instance's bound cycle point,
-//! the stage-4 FR read/write cycle point)` and `EqValEvaluation = Eq(bound
-//! cycle point, the stage-5 FR val-evaluation cycle point)`.
+//! Reduces the two semantic `FieldRdInc` openings — from the stage-4 field-inline read/write
+//! checking and the stage-5 field-register value evaluation, batched by the member-drawn gamma
+//! (the spec's `eta`) — to the single reduced `FieldRdInc` opening the stage-8 joint opening
+//! consumes. Its publics mirror the ordinary
+//! [`IncClaimReduction`](super::inc_claim_reduction::IncClaimReduction) derivations exactly:
+//! `EqReadWrite = Eq(this instance's bound cycle point, the stage-4 field-register read/write
+//! cycle point)` and `EqValEvaluation = Eq(bound cycle point, the stage-5 field-register
+//! value-evaluation cycle point)`.
 
 use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::ClaimReduction;
 pub use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::{
@@ -46,8 +45,8 @@ impl<F: JoltField> FieldRegistersIncClaimReduction<F> {
         }
     }
 
-    /// The two upstream FR cycle points in relation order: stage-4 FR
-    /// read/write, stage-5 FR val evaluation.
+    /// The two upstream field-inline cycle points in relation order: stage-4 field-inline
+    /// read/write, stage-5 field-register value evaluation.
     pub fn cycle_points(&self) -> [&[F]; 2] {
         [&self.read_write_cycle, &self.val_evaluation_cycle]
     }
@@ -123,11 +122,10 @@ mod tests {
         )
     }
 
-    /// The FR reduction is trace-domain: `log_t` rounds, the default
-    /// (suffix-bound) instance offset — the same batch window as the ordinary
-    /// increment claim reduction — and its reduced opening point is the same
-    /// reversed point, so both members bound in the same stage-6b batch derive
-    /// identical opening points.
+    /// The field-inline reduction is trace-domain: `log_t` rounds, the default (suffix-bound)
+    /// instance offset — the same batch window as the ordinary increment claim reduction — and
+    /// its reduced opening point is the same reversed point, so both members bound in the same
+    /// stage-6b batch derive identical opening points.
     #[test]
     fn reduced_opening_point_matches_the_ordinary_inc_reduction() {
         let log_t = 4usize;

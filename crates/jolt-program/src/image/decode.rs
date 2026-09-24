@@ -582,18 +582,19 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn decodes_field_inline_source_rows_only_for_fr_on_profile() {
+    fn decodes_field_inline_source_rows_only_for_field_inline_profile() {
         let word = field_word(FieldInlineOp::Mul.funct3().into(), 1, 2, 3);
-        let fr_off = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT);
+        let decoded_base = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT);
         assert!(matches!(
-            fr_off,
+            decoded_base,
             Err(ProgramError::IllegalSourceInstruction(
                 jolt_riscv::SourceInstruction::FieldMul(_)
             ))
         ));
 
-        let fr_on = decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE);
-        let instruction = match fr_on {
+        let decoded_field_inline =
+            decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE);
+        let instruction = match decoded_field_inline {
             Ok(instruction) => instruction,
             Err(error) => panic!("field-inline decode failed: {error:?}"),
         };

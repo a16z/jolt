@@ -614,11 +614,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// Per-mode sample claims with sentinel values in the canonical append
-    /// order: base interleaves the inc member after the RA virtualizations
-    /// (and, under `field-inline`, the FR inc member after it); Akita carries
-    /// the read-raf `FusedInc` cell and the lattice booleanity digit/carry
-    /// cells instead.
+    /// Per-mode sample claims with sentinel values in the canonical append order: base
+    /// interleaves the inc member after the RA virtualizations (and, under `field-inline`, the
+    /// field-inline inc member after it); Akita carries the read-raf `FusedInc` cell and the
+    /// lattice booleanity digit/carry cells instead.
     fn sample_claims() -> (Stage6bOutputClaims<Fr>, u64) {
         #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
         let last = 10;
@@ -677,8 +676,8 @@ mod tests {
                 },
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionOutputClaims {
-                    // The FR member appends last in canonical order on
-                    // both commitment axes.
+                    // The field-inline member appends last in canonical order on both
+                    // commitment axes.
                     rd_inc: fr(last),
                 },
                 #[cfg(not(feature = "akita"))]

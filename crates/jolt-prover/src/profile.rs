@@ -134,7 +134,7 @@ pub enum Workload {
     #[value(name = "btreemap")]
     BTreeMap,
     /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
-    /// that exercises the FR columns and kernels. Fixed-size (its input does
+    /// that exercises the field-inline columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
     #[cfg(feature = "field-inline")]
     #[value(name = "field-ops")]
@@ -155,7 +155,7 @@ impl Workload {
     }
 
     /// Whether the guest uses the field-inline SDK surface (and so needs the
-    /// `field-inline` guest feature besides the FR instruction profile).
+    /// `field-inline` guest feature besides the field-inline instruction profile).
     #[cfg(feature = "field-inline")]
     const fn uses_field_inline(self) -> bool {
         matches!(self, Self::FieldOps)
@@ -207,7 +207,7 @@ impl Workload {
 /// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))`, pinned in the compiled
 /// protocol's proof field as four canonical little-endian u64 limbs (the
 /// guest Horner-recomposes them in whatever field it proves over; a 16-byte
-/// field fills the low two limbs). The same shape the FR e2e and verifier
+/// field fills the low two limbs). The same shape the field-inline e2e and verifier
 /// fixture generators feed the guest.
 #[cfg(feature = "field-inline")]
 fn eqpoly_inputs() -> Vec<u8> {

@@ -259,11 +259,11 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let num_stages = base_stages + fused_cycle_points.len();
         let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
 
-        // The FR extension's fold geometry: the side-table row values under
-        // the extended per-stage gamma powers, each leg over its own cycle
-        // binding (see the reference kernel's `FieldInlineAddressLegs`).
+        // The field-inline extension's fold geometry: the side-table row values under
+        // the extended per-stage gamma powers, each leg over its own cycle binding (see
+        // the reference kernel's `FieldInlineAddressLegs`).
         #[cfg(feature = "field-inline")]
-        let (fr_values, fr_read_write_cycle, fr_val_evaluation_cycle) = {
+        let (field_inline_values, field_read_write_cycle, field_val_evaluation_cycle) = {
             use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
             use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
 
@@ -280,7 +280,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 || geometry.val_evaluation_point.len() != FIELD_REGISTERS_LOG_K + dimensions.log_t()
             {
                 return Err(KernelError::InvariantViolation {
-                    reason: "FR opening point has the wrong variable count",
+                    reason: "field-inline opening point has the wrong variable count",
                 });
             }
             let (read_write_address, read_write_cycle) =
@@ -292,7 +292,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 jolt_verifier::stages::field_inline_bytecode::field_inline_stage_gamma_powers(
                     inputs.challenges,
                 );
-            let fr_rows = field_inline_bytecode::read_raf_stage_values(
+            let field_rows = field_inline_bytecode::read_raf_stage_values(
                 field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
                     bytecode: &table.rows,
                     field_register_read_write_point: read_write_address,
@@ -303,7 +303,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 },
             );
             let column =
-                |s: usize| Polynomial::new(fr_rows.iter().map(|row| row[s]).collect::<Vec<F>>());
+                |s: usize| Polynomial::new(field_rows.iter().map(|row| row[s]).collect::<Vec<F>>());
             (
                 [column(0), column(3), column(4)],
                 read_write_cycle.to_vec(),
@@ -315,15 +315,15 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let row_weight = |_: &InstructionCycleRow| F::one();
         #[cfg(feature = "akita")]
         let row_weight = InstructionCycleRow::fused_inc::<F>;
-        // One walk computes every pushforward: the base stages (packed: plus
-        // the fused stages) and, FR-on, the two FR cycle sub-points appended
-        // as unweighted base stages; the FR stage-1 leg shares the ordinary
-        // stage-1 pushforward (identical cycle binding).
+        // One walk computes every pushforward: the base stages (packed: plus the fused
+        // stages) and, with field-inline enabled, the two field-inline cycle sub-points
+        // appended as unweighted base stages; the field-inline stage-1 leg shares the
+        // ordinary stage-1 pushforward (identical cycle binding).
         #[cfg(feature = "field-inline")]
         let composed_points: Vec<Vec<F>> = stage_cycle_points
             .iter()
             .cloned()
-            .chain([fr_read_write_cycle, fr_val_evaluation_cycle])
+            .chain([field_read_write_cycle, field_val_evaluation_cycle])
             .collect();
         #[cfg(feature = "field-inline")]
         let walk_points: &[Vec<F>] = &composed_points;
@@ -339,20 +339,20 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             row_weight,
         );
         #[cfg(feature = "field-inline")]
-        let fr_pushforwards: [Polynomial<F>; 3] = {
+        let field_pushforwards: [Polynomial<F>; 3] = {
             let missing = || KernelError::InvariantViolation {
-                reason: "FR pushforwards missing from the shared walk",
+                reason: "field-inline pushforwards missing from the shared walk",
             };
-            // The two FR walks sit between the base and fused blocks (the
-            // walk's output order is [base..., weighted...] and the FR points
-            // ride the base list) — on the packed shape the fused
-            // pushforwards follow them, so the global tail is wrong there.
-            let fr_start = stage_cycle_points.len();
-            if pushforwards.len() < fr_start + 2 {
+            // The two field-inline walks sit between the base and fused blocks (the
+            // walk's output order is [base..., weighted...] and the field-inline points
+            // ride the base list) — on the packed shape the fused pushforwards follow
+            // them, so the global tail is wrong there.
+            let field_start = stage_cycle_points.len();
+            if pushforwards.len() < field_start + 2 {
                 return Err(missing());
             }
-            let val_evaluation = Polynomial::new(pushforwards.remove(fr_start + 1));
-            let read_write = Polynomial::new(pushforwards.remove(fr_start));
+            let val_evaluation = Polynomial::new(pushforwards.remove(field_start + 1));
+            let read_write = Polynomial::new(pushforwards.remove(field_start));
             let stage1 = Polynomial::new(pushforwards.first().cloned().ok_or_else(missing)?);
             [stage1, read_write, val_evaluation]
         };
@@ -404,19 +404,19 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             #[cfg(feature = "field-inline")]
             field_inline: FieldInlineAddressLegs {
                 weights: [gamma_powers[0], gamma_powers[3], gamma_powers[4]],
-                pushforwards: fr_pushforwards,
-                values: fr_values,
+                pushforwards: field_pushforwards,
+                values: field_inline_values,
             },
         }))
     }
 }
 
-/// The address phase's FR extension: three additional
-/// `weight · pushforward · row-table` products over the bytecode address
-/// domain, mirroring the reference kernel's legs — the stage-1 op-flag leg
-/// (over the ordinary stage-1 cycle binding), the stage-4 leg (over the FR
-/// read-write cycle sub-point), the stage-5 leg (over the FR val-evaluation
-/// cycle sub-point), at the ordinary γ⁰/γ³/γ⁴ stage weights.
+/// The address phase's field-inline extension: three additional `weight · pushforward ·
+/// row-table` products over the bytecode address domain, mirroring the reference
+/// kernel's legs — the stage-1 op-flag leg (over the ordinary stage-1 cycle binding),
+/// the stage-4 leg (over the field-register read-write cycle sub-point), the stage-5
+/// leg (over the field-register value-evaluation cycle sub-point), at the ordinary
+/// γ⁰/γ³/γ⁴ stage weights.
 #[cfg(feature = "field-inline")]
 struct FieldInlineAddressLegs<F: JoltField> {
     weights: [F; 3],
@@ -761,16 +761,15 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         let fused_inc = LazyFusedInc::new(Arc::clone(&rows));
         let ra = LazyFoldedRa::new(chunk_eqs, BytecodePcChunks { rows, selectors });
 
-        // The combined coefficient table: every non-RA factor of the summand
-        // is linear in one cycle table, so
-        //   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) + γ⁷·entry·[j = 0]
-        // with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf rides the
-        // stage-1 cycle point, SpartanShiftRaf the stage-3 one). FR-on the
-        // composed FR terms pre-fold in too: the FR stage-1 leg shares the
-        // ordinary stage-1 cycle binding (its fold merges into the stage-0
-        // weight), and the stage-4/5 legs ride the FR read-write /
-        // val-evaluation cycle sub-points at γ³/γ⁴ (the reference kernel's
-        // composed pre-fold, term for term).
+        // The combined coefficient table: every non-RA factor of the summand is linear
+        // in one cycle table, so   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) +
+        // γ⁷·entry·[j = 0] with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf
+        // rides the stage-1 cycle point, SpartanShiftRaf the stage-3 one). With
+        // field-inline enabled, the composed field-inline terms pre-fold in too: the
+        // field-inline stage-1 leg shares the ordinary stage-1 cycle binding (its fold
+        // merges into the stage-0 weight), and the stage-4/5 legs ride the
+        // field-register read-write / val-evaluation cycle sub-points at γ³/γ⁴ (the
+        // reference kernel's composed pre-fold, term for term).
         let stage_values = relation.stage_values_at_r_address()?;
         let num_stages = stage_cycle_points.len();
         let base_stages = bytecode::BYTECODE_STAGE_GAMMA_COUNTS.len();
@@ -784,7 +783,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
 
         let eq_address: Vec<F> = eq_table(r_address);
         #[cfg(feature = "field-inline")]
-        let (fr_folds, fr_read_write_cycle, fr_val_evaluation_cycle) = {
+        let (field_folds, field_read_write_cycle, field_val_evaluation_cycle) = {
             use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
             use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
 
@@ -803,10 +802,10 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                 || fold.val_evaluation_cycle.len() != dimensions.log_t()
             {
                 return Err(KernelError::InvariantViolation {
-                    reason: "FR bytecode fold points have the wrong variable counts",
+                    reason: "field-inline bytecode fold points have the wrong variable counts",
                 });
             }
-            let fr_rows = field_inline_bytecode::read_raf_stage_values(
+            let field_rows = field_inline_bytecode::read_raf_stage_values(
                 field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
                     bytecode: &fold.table.rows,
                     field_register_read_write_point: &fold.read_write_address,
@@ -816,21 +815,21 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                     stage5_gammas: &fold.gammas.stage5,
                 },
             );
-            let mut fr_folds = [F::zero(); 5];
-            for (row, eq) in fr_rows.iter().zip(&eq_address) {
-                for (fr_fold, value) in fr_folds.iter_mut().zip(row) {
-                    *fr_fold += *value * *eq;
+            let mut field_folds = [F::zero(); 5];
+            for (row, eq) in field_rows.iter().zip(&eq_address) {
+                for (field_fold, value) in field_folds.iter_mut().zip(row) {
+                    *field_fold += *value * *eq;
                 }
             }
             (
-                fr_folds,
+                field_folds,
                 fold.read_write_cycle.clone(),
                 fold.val_evaluation_cycle.clone(),
             )
         };
         #[cfg(feature = "field-inline")]
         {
-            stage_weights[0] += fr_folds[0];
+            stage_weights[0] += field_folds[0];
         }
 
         for point in stage_cycle_points {
@@ -855,18 +854,19 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                 .zip(scaled.iter())
                 .for_each(|(acc, term)| *acc += *term);
         }
-        // The FR stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴. An
-        // FR-inactive trace folds both weights to zero (its side-table rows
-        // are all zero), so the two dense eq tables are skipped exactly.
+        // The field-inline stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴. A
+        // trace without field-inline activity folds both weights to zero (its
+        // side-table rows are all zero), so the two dense eq tables are skipped
+        // exactly.
         #[cfg(feature = "field-inline")]
         for (point, weight) in [
             (
-                fr_read_write_cycle.as_slice(),
-                gamma_powers[3] * fr_folds[3],
+                field_read_write_cycle.as_slice(),
+                gamma_powers[3] * field_folds[3],
             ),
             (
-                fr_val_evaluation_cycle.as_slice(),
-                gamma_powers[4] * fr_folds[4],
+                field_val_evaluation_cycle.as_slice(),
+                gamma_powers[4] * field_folds[4],
             ),
         ] {
             if weight.is_zero() {
@@ -1206,7 +1206,7 @@ mod tests {
     use super::super::instruction_read_raf::{SharedInstructionRows, SharedInstructionRowsWeak};
     use super::*;
     #[cfg(feature = "field-inline")]
-    use crate::optimized::field_registers_testing::structured_fr_fixture;
+    use crate::optimized::field_registers_testing::structured_field_register_fixture;
     use crate::optimized::parity::{
         probe_input_claim, probe_one_hot_family, run_lockstep, synthetic_point,
     };
@@ -1220,12 +1220,13 @@ mod tests {
         with_sample_backend(|backend| run_pair_on(backend, committed_program));
     }
 
-    /// FR-on parity over a program whose side table is populated: the FR legs
-    /// of both phases carry non-zero terms, so a drift between the reference
-    /// and optimized FR folds surfaces here rather than only at the e2e.
+    /// Parity with field-inline enabled over a program whose side table is populated:
+    /// the field-inline legs of both phases carry non-zero terms, so a drift between
+    /// the reference and optimized field-inline folds surfaces here rather than only at
+    /// the e2e.
     #[cfg(feature = "field-inline")]
     fn run_pair_with_field_inline_program(f: impl FnOnce(&TraceBackend<OwnedTrace>)) {
-        structured_fr_fixture(12).with_plane(4, |backend| {
+        structured_field_register_fixture(12).with_plane(4, |backend| {
             let populated = backend
                 .program_preprocessing()
                 .bytecode
@@ -1234,7 +1235,7 @@ mod tests {
                 .is_some_and(|metadata| metadata.rows.iter().any(|row| row.active));
             assert!(
                 populated,
-                "the FR fixture must carry active side-table rows"
+                "the field-inline fixture must carry active side-table rows"
             );
             f(backend);
         });
@@ -1267,9 +1268,9 @@ mod tests {
                 register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
                 fused_inc_cycle_points: Vec::new(),
             };
-            // The production side table when the program carries one; an
-            // all-inactive, well-formed geometry for an FR-free program (the
-            // sample backend), whose FR legs vanish.
+            // The production side table when the program carries one; an all-inactive,
+            // well-formed geometry for a program without field-inline (the sample
+            // backend), whose field-inline legs vanish.
             #[cfg(feature = "field-inline")]
             let field_inline_table = match program.bytecode.field_inline.as_ref() {
                 Some(metadata) => convert_field_inline_bytecode(metadata).unwrap(),
@@ -1622,9 +1623,9 @@ mod akita_tests {
                     register_val_evaluation_point: &synthetic_point(REGISTER_ADDRESS_BITS, 29),
                     stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
                 }),
-                // All-inactive and well-formed, mirroring `run_pair`: the
-                // composed reference cycle kernel folds the FR rows (all zero)
-                // at these points, so parity with the optimized kernel holds.
+                // All-inactive and well-formed, mirroring `run_pair`: the composed
+                // reference cycle kernel folds the field-inline rows (all zero) at
+                // these points, so parity with the optimized kernel holds.
                 #[cfg(feature = "field-inline")]
                 field_inline:
                     FieldInlineBytecodeFold {

@@ -58,9 +58,9 @@ pub trait JoltWitnessOracle<F: Field> {
     /// serves.
     fn committed_order(&self) -> Result<Vec<JoltCommittedPolynomial>, WitnessError>;
 
-    /// The field-inline witness surface, when this backend serves one.
-    /// Defaults to `None` so FR proving fails closed unless a backend
-    /// explicitly attaches its field-inline view.
+    /// The field-inline witness surface, when this backend serves one. Defaults to
+    /// `None` so field-inline proving fails closed unless a backend explicitly attaches
+    /// its field-inline view.
     #[cfg(feature = "field-inline")]
     fn field_inline(&self) -> Option<&dyn FieldInlineWitnessOracle<F>> {
         None

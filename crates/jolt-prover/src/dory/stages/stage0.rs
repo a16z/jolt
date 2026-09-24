@@ -58,7 +58,7 @@ where
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub hints: Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>,
     /// The field-inline opening hints, id-disjoint from the jolt hints; the
-    /// FR joint-opening wiring consumes them in a later unit.
+    /// field-inline joint-opening wiring consumes them in a later unit.
     #[cfg(feature = "field-inline")]
     pub field_inline_hints: Vec<(FieldInlineCommittedPolynomial, PCS::OpeningHint)>,
 }
@@ -321,9 +321,9 @@ where
 }
 
 /// Commit the field-inline columns off the plane's field-inline oracle and
-/// assemble the proof's FR commitment payload. Fails closed when the plane
-/// serves no field-inline oracle: an FR-on build proves only FR-profile
-/// witnesses (a non-FR guest has no honest FR columns to commit).
+/// assemble the proof's field-inline commitment payload. Fails closed when the plane
+/// serves no field-inline oracle: a field-inline build proves only field-inline
+/// witnesses (a non-field-inline guest has no honest field-inline columns to commit).
 #[cfg(feature = "field-inline")]
 #[expect(
     clippy::type_complexity,
@@ -349,7 +349,7 @@ where
     let Some(field_inline) = witness.field_inline() else {
         return Err(ProverError::Unsupported {
             reason: "field-inline proving requires a witness plane serving the field-inline \
-                     oracle (an FR-profile guest)",
+                     oracle (a field-inline guest)",
         });
     };
     let ids = field_inline.committed_order();
@@ -493,7 +493,7 @@ mod field_inline_tests {
         }
     }
 
-    fn fr_backend(
+    fn field_inline_backend(
         bytecode: Vec<JoltInstructionRow>,
         rows: Vec<TraceRow>,
     ) -> TraceBackend<OwnedTrace> {
@@ -612,14 +612,14 @@ mod field_inline_tests {
                 },
             ),
         ];
-        fr_backend(vec![load_a, load_b, mul], rows)
+        field_inline_backend(vec![load_a, load_b, mul], rows)
     }
 
-    /// An FR-profile guest that executes zero FR instructions.
-    fn no_fr_instruction_backend() -> TraceBackend<OwnedTrace> {
+    /// A field-inline guest that executes zero field-inline instructions.
+    fn no_field_instruction_backend() -> TraceBackend<OwnedTrace> {
         let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
         let rows = vec![TraceRow::from_instruction(addi).unwrap()];
-        fr_backend(vec![addi], rows)
+        field_inline_backend(vec![addi], rows)
     }
 
     fn grid() -> CommitmentGrid {
@@ -644,11 +644,11 @@ mod field_inline_tests {
         finish_streamed::<DoryScheme>(partial, setup).0
     }
 
-    /// The prover attaches the FR payload and absorbs it through the
+    /// The prover attaches the field-inline payload and absorbs it through the
     /// verifier's own `absorb_transcript_commitments` — pinned by asserting
     /// the payload is `Some`, that both sides' absorbs agree byte-for-byte
     /// (equal challenge streams), and that stripping the payload diverges
-    /// (the FR commitment is Fiat-Shamir-bound).
+    /// (the field-inline commitment is Fiat-Shamir-bound).
     #[test]
     fn stage0_attaches_and_absorbs_the_field_inline_payload() {
         let witness = arithmetic_backend().with_field_inline().unwrap();
@@ -688,7 +688,7 @@ mod field_inline_tests {
             vec![FieldInlineCommittedPolynomial::FieldRdInc]
         );
 
-        // The FR commitment is the dense trace-domain column committed with
+        // The field-inline commitment is the dense trace-domain column committed with
         // the same placement as the jolt increment columns.
         let column = witness
             .field_inline_witness()
@@ -735,15 +735,15 @@ mod field_inline_tests {
         assert_ne!(
             prover_transcript.challenge(),
             stripped_transcript.challenge(),
-            "the FR payload must be Fiat-Shamir-bound"
+            "the field-inline payload must be Fiat-Shamir-bound"
         );
     }
 
-    /// Zero-short-circuit sanity: an FR-profile guest with no FR instructions
-    /// still serves the FR committed order and commits the all-zero column.
+    /// Zero-short-circuit sanity: a field-inline guest with no field-inline instructions
+    /// still serves the field-inline committed order and commits the all-zero column.
     #[test]
-    fn fr_guest_with_no_fr_instructions_commits_the_zero_column() {
-        let witness = no_fr_instruction_backend().with_field_inline().unwrap();
+    fn field_inline_guest_without_field_instructions_commits_the_zero_column() {
+        let witness = no_field_instruction_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let setup = DoryScheme::setup_prover(grid().total_vars);
@@ -775,7 +775,7 @@ mod field_inline_tests {
     }
 
     /// D1 fail-closed: a plane without the field-inline oracle cannot start
-    /// an FR-on proof.
+    /// a field-inline proof.
     #[test]
     fn stage0_fails_closed_without_the_field_inline_oracle() {
         let witness = arithmetic_backend();

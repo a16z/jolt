@@ -1,5 +1,5 @@
-//! Valid-fixture acceptance for the field-inline path: the modular-prover
-//! eq-MLE FR fixture must verify through the full FR-on verifier.
+//! Valid-fixture acceptance for the field-inline path: the modular-prover eq-MLE field-inline
+//! fixture must verify through the full verifier with field-inline enabled.
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support;

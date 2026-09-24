@@ -24,7 +24,7 @@ in scope:
   packed (Akita) treatment of the field-inline committed surface
   instantiating field-inline over a smaller base field (e.g. fp128)
 out of scope:
-  extension-field sumcheck soundness (base fields ONLY: FR registers hold
+  extension-field sumcheck soundness (base fields ONLY: field registers hold
     elements of the sumcheck field F itself; any base/extension split is a
     separate spec)
   any change to the Twist identities or the virtual/committed split
@@ -38,8 +38,8 @@ out of scope:
   no quotient witnesses, under every instantiation in scope.
 - The Twist memory-checking identities (`crates/jolt-claims/src/twist/`) are
   representation-agnostic; both upgrades reuse them verbatim.
-- FR RA/WA/Val remain virtual and bytecode-anchored — no packed one-hot
-  obligations arise from field-inline on any axis.
+- Field-register RA/WA/Val remain virtual and bytecode-anchored — no packed
+  one-hot obligations arise from field-inline on any axis.
 - The composition seams (per-stage `field_inline` modules, boundary whitelist
   tests, `suppress_field_operand_slots`) are commitment- and field-agnostic.
 
@@ -90,9 +90,9 @@ Everything above the tracer is generic over `F`. The concrete work:
   full-width load is one radix multiplication (single 2^64 constant) plus one
   add; `FIELD_STORE_TO_X`'s range-restricted semantics (< 2^64, trap
   otherwise) and `FIELD_LOAD_IMM` are unchanged.
-- Generator budget: `MAX_BLINDFOLD_GENERATORS` is cfg-keyed today (32 FR-off /
-  64 FR-on); the composed uniskip degrees do not change with the field, so no
-  further action.
+- Generator budget: `MAX_BLINDFOLD_GENERATORS` is cfg-keyed today (32 without
+  field-inline, 64 with it); the composed uniskip degrees do not change with
+  the field, so no further action.
 - Expectation reset (documentation, not protocol): software two-limb field
   multiplication costs tens of cycles, so the per-op native speedup drops from
   ~190x (BN254) to ~20-40x; the pinned-slot SDK matters relatively more.
@@ -112,7 +112,8 @@ slice (Axis 2) lands with or after the field switch itself.
 1. Axis 1 after #1718 merges: limb-column commit + digit rides + recomposition
    identity + stage-8 reconstruction + inc-reduction rewiring; accept/tamper
    fixtures on the packed path; remove the compile error last.
-   Review gate: FR-off akita byte-identity; packed FR fixtures accept/tamper.
+   Review gate: akita byte-identity without field-inline; packed field-inline
+   fixtures accept/tamper.
 2. Axis 2 with the field switch: tracer parameterization + encoding variant +
    bridge fixture updates; the eq-MLE guest re-fixtured under the new
    encoding.
@@ -122,15 +123,15 @@ slice (Axis 2) lands with or after the field switch itself.
 
 The fp128 switch decision came down as a ruling: the packed (akita) axis
 proves exclusively over fp128, and no BN254 akita configuration will ever
-exist. FR execution is therefore configuration-selected — the akita feature
-chain repoints the tracer's `ProofField` to `jolt_field::Prime128OffsetA7F7` and
-`FieldValueEncoding::ACTIVE` to `TWO_LIMB_128_CANONICAL` (inert while
-field-inline is off); Dory keeps BN254 Fr. FR guests are
-configuration-specific, and cross-configuration proofs reject fail-closed on
-the metadata encoding-equality gate (intended behavior; the jolt-program
-encoding-mismatch unit test rejects the foreign encoding in whichever
-configuration it compiles under, and CI runs it with `fp128-field-inline`
-both off and on).
+exist. Field-inline execution is therefore configuration-selected — the akita
+feature chain repoints the tracer's `ProofField` to
+`jolt_field::Prime128OffsetA7F7` and `FieldValueEncoding::ACTIVE` to
+`TWO_LIMB_128_CANONICAL` (inert while field-inline is off); Dory keeps BN254
+Fr. Field-inline guests are configuration-specific, and cross-configuration
+proofs reject fail-closed on the metadata encoding-equality gate (intended
+behavior; the jolt-program encoding-mismatch unit test rejects the foreign
+encoding in whichever configuration it compiles under, and CI runs it with
+`fp128-field-inline` both off and on).
 
 Everything above is implemented; the `field-inline x akita` compile error is
 removed. Axis 1 as landed, with two dispositions the design left open:
@@ -149,13 +150,14 @@ removed. Axis 1 as landed, with two dispositions the design left open:
   (Schwartz-Zippel over the reduction chain; the reconstruction member
   itself always runs).
 
-Review gates met: FR-off akita byte-identity (the legacy byte-diff ratchets),
-dory FR-on identity (the dory e2e's reference/optimized wire equality), and
-the packed accept/tamper suite (`jolt-prover/tests/akita_field_inline_e2e.rs`:
-eq-MLE re-fixtured at the 16-byte encoding via host-side fp128 evaluation,
-the FR-inactive muldiv with the object absent, and five rejected tampers).
-The packed reconstruction kernel is the naive reference tier on both
-backends; a sparse optimized kernel is the noted follow-up.
+Review gates met: akita byte-identity without field-inline (the legacy
+byte-diff ratchets), dory identity with field-inline (the dory e2e's
+reference/optimized wire equality), and the packed accept/tamper suite
+(`jolt-prover/tests/akita_field_inline_e2e.rs`: eq-MLE re-fixtured at the
+16-byte encoding via host-side fp128 evaluation, muldiv with no field
+operations and the object absent, and five rejected tampers). The packed
+reconstruction kernel is the naive reference tier on both backends; a sparse
+optimized kernel is the noted follow-up.
 
 ## Status (2026-08-27): packed axis re-landed on dense-group batching
 
@@ -182,23 +184,24 @@ unchanged. The dense-group design:
   (typed `FieldIncLimbRecompositionMismatch` reject), which the batch then
   binds to the committed columns through the selector-reduced physical
   claim. No reconstruction sumcheck member, no booleanity legs.
-- Presence is never claim-gated: on an FR-on packed build the group is
-  ALWAYS present (all-zero content is legal — dense schedules are keyed by
+- Presence is never claim-gated: on a packed build with field-inline enabled,
+  the group is ALWAYS present (all-zero content is legal — dense schedules are keyed by
   `(num_vars, num_polys)` shape, never content), enforced fail-closed both
   ways between `PrecommittedSchedule.field_inc_limbs` (always scheduled) and
   the proof's commitment/claims slots.
-- Provisioning: `PrecommittedScheduleParams` carries the FR limb arity line
-  (`jolt-akita` `FieldIncLimbScheduleParams`, law-derived data pinned to the
-  jolt-claims packing law by the registry's FR provisioning tests), and the
-  grouped schedule registry enumerates FR-present combinations only — every
-  advice subset (including advice-absent) with the setup arity's FR profile
-  as the first mandatory group (ahead of any direct committed-program
-  objects), planned under the same u64-bounded dense fold policy as advice.
+- Provisioning: `PrecommittedScheduleParams` carries the field-inline limb
+  arity line (`jolt-akita` `FieldIncLimbScheduleParams`, law-derived data
+  pinned to the jolt-claims packing law by the registry's field-inline
+  provisioning tests). The grouped schedule registry enumerates only
+  combinations that include the limb group — every advice subset (including
+  advice-absent) with the setup arity's limb profile as the first mandatory
+  group (ahead of any direct committed-program objects), planned under the
+  same u64-bounded dense fold policy as advice.
 
-Review gates met: FR-off akita and dory byte-identity (the byte-diff
-ratchets), dory FR-on fixtures unchanged, and the packed accept/tamper suite
-(`jolt-prover/tests/akita_field_inline_e2e.rs`: eq-MLE accepted on both
-kernel backends with wire equality, the FR-inactive muldiv accepted with the
-group present and all-zero, and the tamper matrix — limb-evaluation offset,
-layout-digest flip, batch-proof mutation, stripped group, spurious second
-FR-role group — all rejected).
+Review gates met: akita and dory byte-identity without field-inline (the
+byte-diff ratchets), unchanged dory fixtures with field-inline, and the packed
+accept/tamper suite (`jolt-prover/tests/akita_field_inline_e2e.rs`: eq-MLE
+accepted on both kernel backends with wire equality, muldiv with no field
+operations accepted with the group present and all-zero, and the tamper matrix
+— limb-evaluation offset, layout-digest flip, batch-proof mutation, stripped
+group, spurious second group with the field-inline role — all rejected).

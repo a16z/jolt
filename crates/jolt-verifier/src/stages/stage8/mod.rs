@@ -3,10 +3,10 @@
 
 #[cfg(all(feature = "field-inline", not(feature = "akita")))]
 pub mod field_inline;
-/// Packed-build FR seam: the limb-group resolve, the linear recomposition
-/// check against the stage-6b reduced claim, and the wire claim carrier.
-/// `packed.rs` interacts with the packed FR protocol only through this
-/// module (and the prover's packed stage-8 recipe mirrors it).
+/// Packed-build field-inline seam: the limb-group resolve, the linear recomposition check
+/// against the stage-6b reduced claim, and the wire claim carrier. `packed.rs` interacts with
+/// the packed field-inline protocol only through this module (and the prover's packed stage-8
+/// recipe mirrors it).
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 pub mod field_inline_packed;
 pub mod outputs;

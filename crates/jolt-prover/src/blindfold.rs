@@ -75,7 +75,7 @@ impl<F> ZkStageWitnesses<F> {
 /// their centered integer domains, every batch over the Boolean hypercube —
 /// the constants the stage recipes themselves prove over. The uni-skip sizes
 /// are the COMPOSED jolt-r1cs constants (feature-aware): identical to the
-/// jolt-claims RV64-only constants FR-off, and the FR-extended row/lane
+/// jolt-claims RV64-only constants without field-inline, and the field-inline-extended row/lane
 /// domains under `field-inline` — the domains the verifier's lowering
 /// (`stages::zk::blindfold`) builds its round constraints over.
 const STAGE_DOMAINS: [SumcheckDomainSpec; 10] = [
@@ -292,9 +292,9 @@ mod tests {
     use super::*;
 
     /// The stage table's uni-skip domains are the composed jolt-r1cs
-    /// constants. FR-off they equal the jolt-claims RV64-only constants (the
-    /// table's previous source — this pins the swap as byte-neutral); FR-on
-    /// they are the FR-extended composed domains, which the RV64-only
+    /// constants. Without field-inline they equal the jolt-claims RV64-only constants (the
+    /// table's previous source — this pins the swap as byte-neutral); with field-inline enabled
+    /// they are the field-inline-extended composed domains, which the RV64-only
     /// constants no longer match.
     #[test]
     fn stage_domains_use_the_composed_uniskip_constants() {

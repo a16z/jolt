@@ -1,23 +1,20 @@
 //! The stage-4 `FieldRegistersReadWriteChecking` kernel: a hand-rolled member
 //! over the joint `(field-register ‖ cycle)` domain.
 //!
-//! The summand
-//! `eq(r_prod, j) · (rd_wa·(rd_inc + val) + γ·rs1_ra·val + γ²·rs2_ra·val)(k, j)`
-//! is the jolt registers read/write kernel's structure at the FR dimensions:
-//! dense tables of size `2^(4 + log_T)` in register-major layout
-//! (`index = k·2^log_T + j`, the FR witness oracle's address-major grid),
-//! bound `LowToHigh`. The config-pinned FR phase split (phase 1 = all cycle
-//! rounds, phase 2 = the 4 address rounds) binds the cycle variables first,
-//! exactly as `FieldRegistersReadWriteDimensions::read_write_opening_point`
-//! derives the `[address ‖ cycle]` opening point. The cycle-indexed `rd_inc`
-//! and eq tables are tiled across the register dimension. The FieldInline id
-//! family cannot ride the jolt-keyed
-//! [`NaiveSumcheckProver`](crate::NaiveSumcheckProver), so the tables and the
-//! expression are hand-held (the
+//! The summand `eq(r_prod, j) · (rd_wa·(rd_inc + val) + γ·rs1_ra·val +
+//! γ²·rs2_ra·val)(k, j)` is the jolt registers read/write kernel's structure at the
+//! field-register dimensions: dense tables of size `2^(4 + log_T)` in register-major
+//! layout (`index = k·2^log_T + j`, the field-inline witness oracle's address-major
+//! grid), bound `LowToHigh`. The config-pinned field-inline phase split (phase 1 = all
+//! cycle rounds, phase 2 = the 4 address rounds) binds the cycle variables first,
+//! exactly as `FieldRegistersReadWriteDimensions::read_write_opening_point` derives the
+//! `[address ‖ cycle]` opening point. The cycle-indexed `rd_inc` and eq tables are
+//! tiled across the register dimension. The FieldInline id family cannot ride the
+//! jolt-keyed [`NaiveSumcheckProver`](crate::NaiveSumcheckProver), so the tables and
+//! the expression are hand-held (the
 //! [`field_registers_claim_reduction`](super::field_registers_claim_reduction)
-//! pattern). The reference tier stays dense — `K = 16` makes the full grids
-//! `16·T` — with the sparse ≤3-entries-per-active-cycle replay walk left to
-//! an optimized tier.
+//! pattern). The reference tier stays dense — `K = 16` makes the full grids `16·T` —
+//! with the sparse ≤3-entries-per-active-cycle replay walk left to an optimized tier.
 
 #[cfg(feature = "allocative")]
 use allocative::{Allocative, Key, Visitor};
@@ -58,20 +55,21 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>> for Refe
 
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
-        // The FR phase split is pinned by the compile-time protocol config
-        // (phase 1 = log_t, phase 2 = log_k); this kernel's binding order
-        // depends on it, so a drifted config is a bug, not a capability gap.
+        // The field-inline phase split is pinned by the compile-time protocol config
+        // (phase 1 = log_t, phase 2 = log_k); this kernel's binding order depends on
+        // it, so a drifted config is a bug, not a capability gap.
         if dimensions.phase1_num_rounds() != dimensions.log_t()
             || dimensions.phase2_num_rounds() != dimensions.log_k()
         {
             return Err(KernelError::InvariantViolation {
-                reason: "FR read-write dimensions drifted from the config-pinned phase split",
+                reason: "field-register read-write dimensions drifted from the config-pinned phase split",
             });
         }
         let r_cycle: &[F] = &inputs.points.rd_value;
         if r_cycle.len() != dimensions.log_t() {
             return Err(KernelError::InvariantViolation {
-                reason: "FR read-write upstream cycle point has the wrong variable count",
+                reason:
+                    "field-register read-write upstream cycle point has the wrong variable count",
             });
         }
 
@@ -95,7 +93,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>> for Refe
                 FieldRegistersReadWriteChallenge::Gamma,
             ))
             .ok_or(KernelError::InvariantViolation {
-                reason: "FR read-write checking is missing its gamma challenge",
+                reason: "field-register read-write checking is missing its gamma challenge",
             })?;
 
         let copies = 1usize << dimensions.log_k();
@@ -116,9 +114,9 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>> for Refe
 struct FieldRegistersReadWriteKernel<F: JoltField> {
     relation: FieldRegistersReadWriteChecking<F>,
     gamma: F,
-    /// `eq(r_prod, ·)` over the cycle domain, tiled across the FR address
-    /// dimension (big-endian, like the jolt registers read/write kernel's
-    /// `EqCycle` table).
+    /// `eq(r_prod, ·)` over the cycle domain, tiled across the field-register address
+    /// dimension (big-endian, like the jolt registers read/write kernel's `EqCycle`
+    /// table).
     eq_cycle: Polynomial<F>,
     registers_val: Polynomial<F>,
     rs1_ra: Polynomial<F>,

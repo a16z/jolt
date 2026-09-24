@@ -1,7 +1,6 @@
-//! The optimized field-registers increment claim-reduction (stage 6b)
-//! kernel: [`super::inc_claim_reduction`]'s paired-eq fusion at the FR
-//! geometry, byte-parity twin of
-//! [`crate::reference::field_registers_inc_claim_reduction`].
+//! The optimized field-registers increment claim-reduction (stage 6b) kernel:
+//! [`super::inc_claim_reduction`]'s paired-eq fusion at the field-register geometry,
+//! byte-parity twin of [`crate::reference::field_registers_inc_claim_reduction`].
 //!
 //! The two upstream eq leaves enter the summand linearly per increment, so
 //! they collapse into one combined table
@@ -56,7 +55,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
         for point in [read_write_cycle, val_evaluation_cycle] {
             if point.len() != relation.rounds() {
                 return Err(KernelError::InvariantViolation {
-                    reason: "FR increment reduction cycle point has the wrong variable count",
+                    reason: "field-register increment reduction cycle point has the wrong variable count",
                 });
             }
         }
@@ -84,7 +83,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
                 FieldRegistersIncClaimReductionChallenge::Gamma,
             ))
             .ok_or(KernelError::InvariantViolation {
-                reason: "FR increment claim reduction is missing its gamma challenge",
+                reason: "field-register increment claim reduction is missing its gamma challenge",
             })?;
 
         // W = eq(r_field_rw) + γ·eq(r_field_val).
@@ -224,8 +223,8 @@ impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent FR
-/// traces, plus the FR-inactive degenerate case (an all-zero increment
+/// Byte parity against the reference kernel on register-consistent field-inline traces,
+/// plus the degenerate case without field-inline activity (an all-zero increment
 /// column).
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
@@ -238,14 +237,20 @@ mod tests {
 
     use super::*;
     use crate::optimized::field_registers_testing::{
-        inactive_fr_fixture, structured_fr_fixture, FrTraceFixture,
+        inactive_field_register_fixture, structured_field_register_fixture,
+        FieldRegisterTraceFixture,
     };
     use crate::optimized::parity::{
         probe_input_claim, run_lockstep, run_lockstep_degenerate, synthetic_point,
     };
     use crate::ReferenceBackend;
 
-    fn run_parity(fixture: FrTraceFixture, log_t: usize, seed: u64, expect_active: bool) {
+    fn run_parity(
+        fixture: FieldRegisterTraceFixture,
+        log_t: usize,
+        seed: u64,
+        expect_active: bool,
+    ) {
         fixture.with_plane(log_t, |backend| {
             let relation = FieldRegistersIncClaimReduction::<Fr>::new(
                 FieldRegistersTraceDimensions::new(log_t),
@@ -286,7 +291,10 @@ mod tests {
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
             if expect_active {
-                assert!(claim != Fr::from_u64(0), "FR-active fixture degenerated");
+                assert!(
+                    claim != Fr::from_u64(0),
+                    "fixture with field-inline activity degenerated"
+                );
                 run_lockstep(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -294,7 +302,11 @@ mod tests {
                     &round_challenges,
                 );
             } else {
-                assert_eq!(claim, Fr::from_u64(0), "FR-inactive claim must be zero");
+                assert_eq!(
+                    claim,
+                    Fr::from_u64(0),
+                    "claim without field-inline activity must be zero"
+                );
                 run_lockstep_degenerate(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -320,16 +332,16 @@ mod tests {
 
     #[test]
     fn parity_structured_even_log_t() {
-        run_parity(structured_fr_fixture(16), 4, 301, true);
+        run_parity(structured_field_register_fixture(16), 4, 301, true);
     }
 
     #[test]
     fn parity_structured_odd_log_t() {
-        run_parity(structured_fr_fixture(8), 3, 307, true);
+        run_parity(structured_field_register_fixture(8), 3, 307, true);
     }
 
     #[test]
     fn parity_inactive_trace_is_degenerate() {
-        run_parity(inactive_fr_fixture(4), 3, 311, false);
+        run_parity(inactive_field_register_fixture(4), 3, 311, false);
     }
 }

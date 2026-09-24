@@ -298,9 +298,9 @@ fn catalogs_match_planner_regeneration() {
     std::fs::remove_dir_all(output).expect("remove temporary artifacts");
 }
 
-/// The FR limb group's provisioning pins: the carried arity line equals the
-/// jolt-claims packing law, every reachable final arity plans and resolves
-/// its FR row, and the limb group closes every advice combination.
+/// The field-inline limb group's provisioning pins: the carried arity line
+/// equals the jolt-claims packing law, every reachable final arity plans and
+/// resolves its row, and the limb group closes every advice combination.
 #[cfg(feature = "field-inline")]
 mod field_inc_limbs {
     #![expect(
@@ -338,9 +338,9 @@ mod field_inc_limbs {
                 .ilog2() as usize
     }
 
-    /// The production caller's derivation of the FR arity line, from the
-    /// jolt-claims laws: the packed trace's arity overhead over `log_T` and
-    /// the limb plan's floor/selector geometry.
+    /// The production caller's derivation of the field-inline arity line
+    /// from the jolt-claims laws: the packed trace's arity overhead over
+    /// `log_T` and the limb plan's floor/selector geometry.
     fn law_derived_params(one_hot_k: usize) -> FieldIncLimbScheduleParams {
         let limbs = field_inc_limb_count::<AkitaField>();
         FieldIncLimbScheduleParams::new(
@@ -399,17 +399,18 @@ mod field_inc_limbs {
 
     /// The prover pads packed traces to `MIN_PADDED_TRACE_LENGTH`
     /// (jolt-prover, `1 << 12` on akita builds), so the smallest reachable
-    /// FR final arity is `overhead + 12`.
+    /// field-inline final arity is `overhead + 12`.
     const PROVER_MIN_LOG_T: usize = 12;
 
-    /// Every reachable final arity of the K catalog provisions its own FR row
-    /// (production provisions the setup's single final arity) that resolves
+    /// Every reachable final arity of the K catalog provisions its own
+    /// field-inline row (production provisions the setup's single final
+    /// arity) that resolves
     /// through the frozen setup catalog. Doubles as the norm-budget check:
     /// the rows plan under the same u64-bounded dense fold policy advice
     /// uses, so a planned row means the limb words fit that budget. Arities
     /// below the prover's trace floor are unreachable and not swept (the
     /// dense catalog need not carry their limb layouts).
-    fn fr_rows_plan_and_resolve_at_every_arity<Cfg: CommitmentConfig>(
+    fn field_inline_rows_plan_and_resolve_at_every_arity<Cfg: CommitmentConfig>(
         one_hot_k: usize,
         (declared_min, ceiling): (usize, usize),
     ) {
@@ -430,23 +431,23 @@ mod field_inc_limbs {
             )
             .unwrap_or_else(|error| {
                 panic!(
-                    "K={one_hot_k} final arity {final_num_vars}: FR provisioning failed: {error}"
+                    "K={one_hot_k} final arity {final_num_vars}: field-inline provisioning failed: {error}"
                 )
             });
             assert_eq!(
                 rows.rows().len(),
                 1,
-                "K={one_hot_k} final arity {final_num_vars} must plan its FR row"
+                "K={one_hot_k} final arity {final_num_vars} must plan its field-inline row"
             );
             let key = AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                 precommitteds: vec![limb_profile(&dense, params, final_num_vars)],
             };
             let setup_catalog =
-                extend_catalog::<Cfg>(&base, &rows).expect("freeze the FR setup catalog");
+                extend_catalog::<Cfg>(&base, &rows).expect("freeze the field-inline setup catalog");
             let resolved = setup_catalog.resolve_key(&key).unwrap_or_else(|error| {
                 panic!(
-                    "K={one_hot_k} final arity {final_num_vars} must resolve its FR row: {error}"
+                    "K={one_hot_k} final arity {final_num_vars} must resolve its field-inline row: {error}"
                 )
             });
             assert_eq!(resolved.profiles().precommitteds, key.precommitteds);
@@ -454,24 +455,27 @@ mod field_inc_limbs {
     }
 
     #[test]
-    fn fr_rows_plan_and_resolve_at_every_k16_arity() {
-        fr_rows_plan_and_resolve_at_every_arity::<JoltOneHotK16>(AKITA_ONE_HOT_K16, K16_NUM_VARS);
+    fn field_inline_rows_plan_and_resolve_at_every_k16_arity() {
+        field_inline_rows_plan_and_resolve_at_every_arity::<JoltOneHotK16>(
+            AKITA_ONE_HOT_K16,
+            K16_NUM_VARS,
+        );
     }
 
     #[test]
-    fn fr_rows_plan_and_resolve_at_every_k256_arity() {
-        fr_rows_plan_and_resolve_at_every_arity::<JoltOneHotK256>(
+    fn field_inline_rows_plan_and_resolve_at_every_k256_arity() {
+        field_inline_rows_plan_and_resolve_at_every_arity::<JoltOneHotK256>(
             AKITA_ONE_HOT_K256,
             K256_NUM_VARS,
         );
     }
 
     /// With both advice kinds declared, every advice presence combination is
-    /// provisioned with the FR profile as its last group and no FR-absent row
-    /// exists: an FR-on prover commits the group on every proof, so none is
-    /// constructible.
+    /// provisioned with the field-inline limb profile as its last group. A
+    /// prover with field-inline enabled commits the limb group on every
+    /// proof, so no row without it is constructible.
     #[test]
-    fn fr_rows_append_the_limb_group_to_every_advice_combination() {
+    fn field_inline_rows_append_the_limb_group_to_every_advice_combination() {
         let dense = dense_catalog();
         let base = one_hot_catalog(AKITA_ONE_HOT_K16);
         let params = law_derived_params(AKITA_ONE_HOT_K16);
@@ -487,7 +491,7 @@ mod field_inc_limbs {
             AKITA_ONE_HOT_K16,
             final_num_vars,
         )
-        .expect("FR-composed provisioning must plan every combination");
+        .expect("provisioning with field-inline must plan every combination");
         assert_eq!(rows.rows().len(), 4);
         let limb = limb_profile(&dense, params, final_num_vars);
         for row in rows.rows() {

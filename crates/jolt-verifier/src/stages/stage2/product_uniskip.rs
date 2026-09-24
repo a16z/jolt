@@ -150,10 +150,10 @@ mod tests {
     use super::*;
     use jolt_field::{Fr, Ring};
 
-    /// The composed uni-skip input claim over the feature-aware 5-lane domain
-    /// equals the ordinary symbolic fold (lanes 0..3, weights over the SAME
-    /// composed domain) plus the FR lanes at the following indices — pinned
-    /// against a from-scratch Lagrange-weighted sum over all five lane inputs.
+    /// The composed uni-skip input claim over the feature-aware 5-lane domain equals the
+    /// ordinary symbolic fold (lanes 0..3, weights over the SAME composed domain) plus the
+    /// field-inline lanes at the following indices — pinned against a from-scratch
+    /// Lagrange-weighted sum over all five lane inputs.
     #[test]
     fn composed_input_claim_matches_five_lane_fold() {
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);

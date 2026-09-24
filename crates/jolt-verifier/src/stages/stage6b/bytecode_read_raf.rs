@@ -79,10 +79,10 @@ pub struct BytecodeReadRafCycleInputs<'a, F: JoltField> {
     pub entry_bytecode_index: usize,
     pub committed_chunk_bits: usize,
     pub table_fold: Option<BytecodeReadRafTableFoldInputs<'a, F>>,
-    /// The field-inline side-table fold inputs (the converted preprocessing
-    /// table, the FR opening sub-points, the extended gamma powers). Required
-    /// under `field-inline`: `expected_output` composes the FR public stage
-    /// values onto the ordinary ones from these.
+    /// The field-inline side-table fold inputs (the converted preprocessing table, the
+    /// field-inline opening sub-points, the extended gamma powers). Required under
+    /// `field-inline`: `expected_output` composes the field-inline public stage values onto
+    /// the ordinary ones from these.
     #[cfg(feature = "field-inline")]
     pub field_inline: FieldInlineBytecodeFold<F>,
 }
@@ -132,9 +132,9 @@ pub struct BytecodeReadRaf<F: JoltField> {
     /// `eq(r_address, row)` — the pre-cycle half of the read-raf publics.
     /// `None` in ZK, where `expected_output` never runs.
     stage_values_at_r_address: Option<[F; NUM_BYTECODE_VAL_STAGES]>,
-    /// The FR side-table fold inputs; `expected_output` evaluates the FR
-    /// public stage values from these and adds them onto the ordinary staged
-    /// publics (spec: `field-inline-protocol.md`, "Stage 6 Composition").
+    /// The field-inline side-table fold inputs; `expected_output` evaluates the field-inline
+    /// public stage values from these and adds them onto the ordinary staged publics (spec:
+    /// `field-inline-protocol.md`, "Stage 6 Composition").
     #[cfg(feature = "field-inline")]
     field_inline: FieldInlineBytecodeFold<F>,
 }
@@ -158,12 +158,11 @@ impl<F: JoltField> BytecodeReadRaf<F> {
         })
     }
 
-    /// The FR public stage-value contributions at `(r_address, r_cycle)`: the
-    /// side-table rows folded against `eq(r_address)` under the extended
-    /// stage-1/4/5 gamma powers, each stage weighted by its own cycle-eq
-    /// factor (the stage-1 cycle binding for the op flags, the stage-4/5 FR
-    /// cycle sub-points for the register access terms) — mirroring exactly how
-    /// the ordinary public row values pair with their openings.
+    /// The field-inline public stage-value contributions at `(r_address, r_cycle)`: the
+    /// side-table rows folded against `eq(r_address)` under the extended stage-1/4/5 gamma
+    /// powers, each stage weighted by its own cycle-eq factor (the stage-1 cycle binding for
+    /// the op flags, the stage-4/5 field-inline cycle sub-points for the register access
+    /// terms) — mirroring exactly how the ordinary public row values pair with their openings.
     #[cfg(feature = "field-inline")]
     fn field_inline_stage_values(&self, r_cycle: &[F]) -> Result<[F; 5], VerifierError> {
         use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
@@ -363,10 +362,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
             spartan_shift_raf: committed.spartan_shift_raf,
             entry: committed.entry,
         };
-        // The composed publics: the FR side-table stage values (already
-        // cycle-weighted per stage) add onto the ordinary staged publics, so
-        // the same `Σ γ^stage · StageValue(stage)` output fold carries both
-        // families under the existing outer gamma powers.
+        // The composed publics: the field-inline side-table stage values (already
+        // cycle-weighted per stage) add onto the ordinary staged publics, so the same `Σ
+        // γ^stage · StageValue(stage)` output fold carries both families under the existing
+        // outer gamma powers.
         #[cfg(feature = "field-inline")]
         let base_public_values = {
             let field_inline_stage_values = self.field_inline_stage_values(r_cycle)?;
@@ -460,9 +459,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
     }
 }
 
-// The dory-shaped composition pins (base input-claims struct, five stage
-// points); the packed composition is covered by the prover's FR stage
-// round-trips and the packed e2e suite.
+// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
+// composition is covered by the prover's field-inline stage round-trips and the packed e2e
+// suite.
 #[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(
     clippy::unwrap_used,
@@ -539,14 +538,13 @@ mod field_inline_tests {
         }
     }
 
-    /// The composed full-mode `expected_output` equals the from-scratch fold:
-    /// the ordinary full-program publics (evaluated through the one-shot
-    /// monolith helper — a different assembly path than the relation's
-    /// construction-time fold plus committed cycle publics) with the FR
-    /// side-table publics added stage-for-stage, folded through the same
-    /// output expression (spec: `field-inline-protocol.md`, "Stage 6
-    /// Composition" — the output stays the `BytecodeRa(i)` product, with
-    /// public stage values augmented by the side-table evaluation).
+    /// The composed full-mode `expected_output` equals the from-scratch fold: the ordinary
+    /// full-program publics (evaluated through the one-shot monolith helper — a different
+    /// assembly path than the relation's construction-time fold plus committed cycle publics)
+    /// with the field-inline side-table publics added stage-for-stage, folded through the same
+    /// output expression (spec: `field-inline-protocol.md`, "Stage 6 Composition" — the output
+    /// stays the `BytecodeRa(i)` product, with public stage values augmented by the side-table
+    /// evaluation).
     #[test]
     fn composed_expected_output_matches_from_scratch_public_fold() {
         let log_t = 2usize;
@@ -615,7 +613,7 @@ mod field_inline_tests {
             )
             .unwrap();
 
-        // From scratch: the one-shot monolith publics plus the FR side-table
+        // From scratch: the one-shot monolith publics plus the field-inline side-table
         // publics, stage-for-stage, through the shared output fold.
         let r_cycle: Vec<Fr> = sumcheck_point.iter().rev().copied().collect();
         let mut publics = bytecode::read_raf_public_values(BytecodeReadRafEvaluationInputs {
@@ -650,8 +648,8 @@ mod field_inline_tests {
             },
         )
         .unwrap();
-        // The active FR row contributes to stages 1/4/5; a vanishing
-        // contribution would make this pin vacuous.
+        // The active field-inline row contributes to stages 1/4/5; a vanishing contribution
+        // would make this pin vacuous.
         assert!(field_publics
             .stage_values
             .iter()
@@ -674,8 +672,8 @@ mod field_inline_tests {
         assert_eq!(composed, expected);
     }
 
-    /// An all-inactive FR side table contributes nothing: the composed
-    /// expected output reduces to the ordinary full-mode fold.
+    /// An all-inactive field-inline side table contributes nothing: the composed expected
+    /// output reduces to the ordinary full-mode fold.
     #[test]
     fn composed_expected_output_reduces_to_ordinary_fold_with_inactive_table() {
         let log_t = 2usize;
@@ -1001,13 +999,12 @@ impl<F: JoltField> BytecodeReadRafCycle<F> {
         }
     }
 
-    /// The FR side-table fold inputs the cycle kernel's composed summand
-    /// reads (the converted table rows, the FR opening sub-points, the
-    /// extended gamma powers). Full mode only: committed-program mode cannot
-    /// anchor the FR selectors (see
+    /// The field-inline side-table fold inputs the cycle kernel's composed summand reads (the
+    /// converted table rows, the field-inline opening sub-points, the extended gamma powers).
+    /// Full mode only: committed-program mode cannot anchor the field-inline selectors (see
     /// [`field_inline::committed_program_rejection`](crate::stages::stage6b::field_inline)),
-    /// and the stage-6 batch build already rejects it, so this arm is
-    /// fail-closed rather than reachable.
+    /// and the stage-6 batch build already rejects it, so this arm is fail-closed rather than
+    /// reachable.
     #[cfg(feature = "field-inline")]
     pub fn field_inline_fold(&self) -> Result<&FieldInlineBytecodeFold<F>, VerifierError> {
         match &self.variant {

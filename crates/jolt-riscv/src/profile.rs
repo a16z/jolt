@@ -380,7 +380,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn field_inline_profile_enables_field_rows_without_changing_fr_off() {
+    fn field_inline_profile_enables_field_rows_without_changing_base_profile() {
         assert!(!RV64IMAC_JOLT.supports_source(SourceInstructionKind::FIELD_ADD));
         assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::FIELD_ADD));
         assert!(RV64IMAC_JOLT_FIELD_INLINE.supports_source(SourceInstructionKind::FIELD_ADD));
@@ -399,16 +399,16 @@ mod tests {
     #[test]
     fn field_inline_operand_shapes_match_bridge_and_product_roles() {
         let mul = crate::field_inline_operand_shape(JoltInstructionKind::FIELD_MUL).unwrap();
-        assert!(mul.reads_fr_rs1);
-        assert!(mul.reads_fr_rs2);
-        assert!(mul.writes_fr_rd);
+        assert!(mul.reads_field_rs1);
+        assert!(mul.reads_field_rs2);
+        assert!(mul.writes_field_rd);
         assert!(mul.requires_product_payload());
         assert_eq!(mul.bridge_x_register_role, None);
 
         let load =
             crate::field_inline_operand_shape(JoltInstructionKind::FIELD_LOAD_FROM_X).unwrap();
-        assert!(!load.reads_fr_rs1);
-        assert!(load.writes_fr_rd);
+        assert!(!load.reads_field_rs1);
+        assert!(load.writes_field_rd);
         assert_eq!(
             load.bridge_x_register_role,
             Some(crate::FieldInlineXRegisterRole::ReadRs1)
@@ -416,8 +416,8 @@ mod tests {
 
         let store =
             crate::field_inline_operand_shape(JoltInstructionKind::FIELD_STORE_TO_X).unwrap();
-        assert!(store.reads_fr_rs1);
-        assert!(!store.writes_fr_rd);
+        assert!(store.reads_field_rs1);
+        assert!(!store.writes_field_rd);
         assert_eq!(
             store.bridge_x_register_role,
             Some(crate::FieldInlineXRegisterRole::WriteRd)

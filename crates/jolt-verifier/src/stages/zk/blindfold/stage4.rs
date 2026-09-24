@@ -87,10 +87,9 @@ where
             .map_err(|error| public_error(JoltRelationId::RegistersReadWriteChecking, error))?,
     )?;
 
-    // The FR read/write member and its baked publics (relation + gamma +
-    // EqCycle), at the same source-values position as before. The upstream
-    // reduced point (`r_prod`) — the FR claim reduction's stage-2 opening
-    // point — is the fixed cycle.
+    // The field-register read/write member and its baked publics (relation + gamma + EqCycle),
+    // at the same source-values position as before. The upstream reduced point (`r_prod`) —
+    // the field-inline claim reduction's stage-2 opening point — is the fixed cycle.
     #[cfg(feature = "field-inline")]
     let field_registers_claims = super::field_inline::stage4_read_write(
         values,
@@ -138,9 +137,9 @@ where
         input.checked.precommitted.program_image.is_some(),
     );
 
-    // Member declaration order (= batching-coefficient draw order): the FR
-    // read/write member sits between the registers and the RAM value-check,
-    // exactly as in `Stage4Sumchecks`.
+    // Member declaration order (= batching-coefficient draw order): the field-inline
+    // read/write member sits between the registers and the RAM value-check, exactly as in
+    // `Stage4Sumchecks`.
     let mut batch_claims = vec![relation_claim(&registers_claims)];
     #[cfg(feature = "field-inline")]
     batch_claims.push(relation_claim(&field_registers_claims));
@@ -159,10 +158,10 @@ where
     )
 }
 
-/// The stage-4 committed output row order: the staged `Val_init` advice /
-/// program-image openings first, the register read/write openings, then
-/// (under `field-inline`) the five FR read/write rows, then `ram_ra`/`ram_inc`
-/// — the clear absorb order (`Stage4OutputClaims::opening_values`) exactly.
+/// The stage-4 committed output row order: the staged `Val_init` advice / program-image
+/// openings first, the register read/write openings, then (under `field-inline`) the five
+/// field-register read/write rows, then `ram_ra`/`ram_inc` — the clear absorb order
+/// (`Stage4OutputClaims::opening_values`) exactly.
 fn stage4_output_ids<F: JoltField>(
     untrusted_advice: bool,
     trusted_advice: bool,
@@ -188,8 +187,8 @@ fn stage4_output_ids<F: JoltField>(
         }
         .canonical_order(),
     ));
-    // The five FR read/write rows, spliced after the register openings and
-    // before `ram_ra`/`ram_inc` — the clear absorb order.
+    // The five field-register read/write rows, spliced after the register openings and before
+    // `ram_ra`/`ram_inc` — the clear absorb order.
     #[cfg(feature = "field-inline")]
     output_ids.extend(super::field_inline::stage4_output_ids());
     // The advice / program-image openings are produced by the RAM value-check
@@ -222,10 +221,10 @@ mod tests {
     }
 
     /// The stage-4 committed row order is the clear curated absorb order
-    /// (`Stage4OutputClaims::opening_values`), locked entry-for-entry over
-    /// sentinel-valued claims: every lowered id resolves to the value at its
-    /// row position (FR-on: the five FR rows spliced after the registers,
-    /// before `ram_ra`/`ram_inc`).
+    /// (`Stage4OutputClaims::opening_values`), locked entry-for-entry over sentinel-valued
+    /// claims: every lowered id resolves to the value at its row position (with field-inline
+    /// enabled: the five field-inline rows spliced after the registers, before
+    /// `ram_ra`/`ram_inc`).
     #[test]
     fn stage4_output_ids_match_the_clear_absorb_order() {
         use crate::stages::stage4::outputs::Stage4OutputClaims;

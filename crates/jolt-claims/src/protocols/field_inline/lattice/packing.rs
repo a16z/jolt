@@ -1,4 +1,4 @@
-//! Canonical dense prefix packing of the FR limb-word group.
+//! Canonical dense prefix packing of the field-inline limb-word group.
 //!
 //! `FieldRdInc`'s per-cycle canonical u64 limbs form
 //! [`field_inc_limb_count`](super::geometry::field_inc_limb_count) dense
@@ -16,13 +16,13 @@ use jolt_openings::{OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
 
 use crate::lattice::min_dense_slot_capacity;
 
-/// One limb-word column of the packed FR group, by little-endian limb index.
+/// One limb-word column of the packed field-inline group, by little-endian limb index.
 /// Local to the packing plan: the columns never appear as protocol opening
 /// ids (no relation consumes them — only the stage-8 batch statement).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FieldIncLimbWord(pub usize);
 
-/// Shape of the per-proof FR limb group: the proof field's canonical limb
+/// Shape of the per-proof field-inline limb group: the proof field's canonical limb
 /// count and the trace arity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldIncLimbShape {
@@ -30,7 +30,7 @@ pub struct FieldIncLimbShape {
     pub log_t: usize,
 }
 
-/// The canonical dense layout of the FR limb group: the limb-word columns in
+/// The canonical dense layout of the field-inline limb group: the limb-word columns in
 /// little-endian limb order, prefix-packed into one physical polynomial at
 /// the shared dense schedule floor.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,14 +73,14 @@ impl FieldIncLimbPackingPlan {
     ) -> Result<PrefixPackedClaims<F>, OpeningsError> {
         if point.len() != self.packing.logical_num_vars() {
             return Err(OpeningsError::InvalidBatch(format!(
-                "FR limb point has {} variables, expected {}",
+                "field-inline limb point has {} variables, expected {}",
                 point.len(),
                 self.packing.logical_num_vars()
             )));
         }
         if limb_evaluations.len() != self.packing.ids().len() {
             return Err(OpeningsError::InvalidBatch(format!(
-                "FR limb statement has {} evaluations for {} limb columns",
+                "field-inline limb statement has {} evaluations for {} limb columns",
                 limb_evaluations.len(),
                 self.packing.ids().len()
             )));
@@ -93,7 +93,7 @@ impl FieldIncLimbPackingPlan {
     }
 }
 
-/// Role descriptor of the FR limb group in the final heterogeneous Akita
+/// Role descriptor of the field-inline limb group in the final heterogeneous Akita
 /// opening. WARNING: the order and transcript label are wire-shape-affecting
 /// (canonical batch position after `TrustedAdvice(1)` and before the final
 /// trace group, grouped schedule-row keying, transcript domain separation)
@@ -187,7 +187,7 @@ mod tests {
         assert!(plan.packed_claims(point, vec![Fr::from_u64(1); 3]).is_err());
     }
 
-    /// The batch position and transcript label are frozen wire shape: the FR
+    /// The batch position and transcript label are frozen wire shape: the field-inline
     /// group follows the advice roles (0, 1) and precedes the final trace
     /// group, which is always last.
     #[cfg(feature = "akita")]

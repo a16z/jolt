@@ -28,11 +28,11 @@ pub struct FixedBackend<F> {
     field_inline: Option<FixedFieldInline<F>>,
 }
 
-/// Stored field-inline columns behind the [`FixedBackend`]: the composed
-/// spartan kernels' synthetic parity tests load arbitrary FR column values
-/// here. Serves the oracle's table surface plus the DEFAULT sparse
-/// spartan-row derivation; the register replay rows are not modeled (this is
-/// a spartan-only fixture — the register kernels' fixtures are trace-backed).
+/// Stored field-inline columns behind the [`FixedBackend`]: the composed spartan
+/// kernels' synthetic parity tests load arbitrary field-inline column values here.
+/// Serves the oracle's table surface plus the DEFAULT sparse spartan-row derivation;
+/// the register replay rows are not modeled (this is a spartan-only fixture — the
+/// register kernels' fixtures are trace-backed).
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, Default)]
 pub struct FixedFieldInline<F> {

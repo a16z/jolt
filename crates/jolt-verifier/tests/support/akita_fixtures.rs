@@ -177,12 +177,12 @@ fn prove_prepared(
     }
 }
 
-/// The FR-on packed case: the eq-MLE FR guest proven by the MODULAR packed
-/// prover (the only FR-capable one) over fp128, with the transparent grouped
-/// setup carrying the FR limb arity line — the packed twin of the Dory
-/// `standard_field_inline_eqpoly_case`. Legacy-generated akita fixtures pin
-/// the FR axis disabled and cannot verify FR-on, so this is the only packed
-/// fixture the FR-on akita verifier suites run over.
+/// The packed field-inline case: the eq-MLE field-inline guest proven by the MODULAR packed
+/// prover (the only field-inline-capable one) over fp128, with the transparent grouped setup
+/// carrying the field-increment limb arity line — the packed twin of the Dory
+/// `standard_field_inline_eqpoly_case`. Legacy-generated akita fixtures pin the field-inline
+/// axis disabled and cannot verify with field-inline enabled, so this is the only packed
+/// fixture the akita verifier suites with field-inline enabled run over.
 #[cfg(feature = "field-inline")]
 pub fn akita_field_inline_eqpoly_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
@@ -325,7 +325,7 @@ mod field_inline {
             &witness,
             &public_io,
         )
-        .expect("packed FR prove");
+        .expect("packed field-inline prove");
         AkitaFixtureCase {
             preprocessing: prover_preprocessing.verifier,
             public_io,

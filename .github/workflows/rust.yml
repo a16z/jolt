@@ -154,7 +154,7 @@ jobs:
           --features field-inline
           --
           -D warnings
-      # The profile harness under field-inline: the FR-profile guest path and
+      # The profile harness under field-inline: the field-inline guest path and
       # the `field-ops` workload, in both flamegraph modes and both
       # protocols.
       - name: cargo clippy -p jolt-prover --features profiling,field-inline
@@ -164,7 +164,7 @@ jobs:
       - name: cargo clippy -p jolt-prover --features akita,profiling,field-inline
         run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,field-inline
       # The field-inline fixture-driven suites: the modular prover proves the
-      # FR guests end-to-end (jolt-prover e2e in both proof modes, and the
+      # field-inline guests end-to-end (jolt-prover e2e in both proof modes, and the
       # jolt-verifier tamper suite over modular-prover fixtures).
       - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline
@@ -172,7 +172,7 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
       - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
         run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
-      # The packed field-inline combination: the FR limb group rides the
+      # The packed field-inline combination: the field-inline limb group rides the
       # dense-group heterogeneous batch beside advice.
       - name: cargo clippy -p jolt-verifier --features field-inline,akita
         run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
@@ -430,8 +430,8 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # The FR e2e acceptance: eq-MLE and degenerate (FR-inactive) muldiv
-      # accepts plus the FR wire tampers, in both proof modes, all proven by
+      # The field-inline e2e acceptance: eq-MLE and degenerate (field-inactive) muldiv
+      # accepts plus the field-inline wire tampers, in both proof modes, all proven by
       # the modular prover and verified through the full verifier entry.
       - name: Run jolt-prover field-inline e2e (clear)
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline
@@ -472,24 +472,24 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # The packed FR acceptance: eq-MLE over fp128 and the FR-inactive
+      # The packed field-inline acceptance: eq-MLE over fp128 and the field-inactive
       # muldiv (the limb group present with all-zero content) accept, plus
-      # the packed FR wire tampers, all proven by the modular packed prover
+      # the packed field-inline wire tampers, all proven by the modular packed prover
       # over both kernel backends with wire equality.
       - name: Run jolt-prover packed field-inline e2e
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
       # The combined-feature verifier unit suite (no fixtures).
       - name: Run jolt-verifier with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features field-inline,akita
-      # The combined-feature kernels unit suite: the composed FR-on packed
-      # kernels (akita parity tests with the FR geometry attached) run only
+      # The combined-feature kernels unit suite: the composed packed field-inline
+      # kernels (akita parity tests with the field-inline geometry attached) run only
       # under this pair.
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
-      # The packed FR provisioning pins (the FR limb arity line against the
-      # packing law), and the verifier's packed FR fixture suite (the modular
+      # The packed field-inline provisioning pins (the field-inline limb arity line against the
+      # packing law), and the verifier's packed field-inline fixture suite (the modular
       # packed prover's eq-MLE proof; legacy-generated akita fixtures pin the
-      # FR axis disabled and are FR-off only).
+      # field-inline axis disabled).
       - name: Run jolt-akita with field-inline
         run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
@@ -526,7 +526,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       # The fixture-driven field-inline suites: valid-fixture acceptance
-      # (completeness/field_inline.rs) and the typed FR clear-claim tamper
+      # (completeness/field_inline.rs) and the typed field-inline clear-claim tamper
       # sweep (tampering/field_inline.rs), backed by fixtures the modular
       # prover generates at test time.
       - name: Run jolt-verifier field-inline fixture and tamper suites
@@ -901,7 +901,7 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils --cargo-quiet
       - name: Run tracer tests with field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline --cargo-quiet
-      # The packed chain's two-limb FR value encoding on the tracer side.
+      # The packed chain's two-limb field value encoding on the tracer side.
       - name: Run tracer tests with field-inline,fp128-field-inline
         run: cargo nextest run --cargo-profile ci -p tracer --features test-utils,field-inline,fp128-field-inline --cargo-quiet
 

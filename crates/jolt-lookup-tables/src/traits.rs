@@ -137,7 +137,8 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
-// The store bridge and limb advice use `RangeCheck`; the other FR ops have no lookup.
+// The store bridge and limb advice use `RangeCheck`; other field-inline ops
+// have no lookup.
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,

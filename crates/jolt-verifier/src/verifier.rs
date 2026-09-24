@@ -402,12 +402,11 @@ where
         });
     }
 
-    // This build proves exactly one instruction profile. A full program
-    // carrying an instruction the build has no constraints for (an FR bridge
-    // row on an FR-off verifier, whose rd write no RV64 row pins) rejects here
-    // rather than verifying against the base rows alone. Committed programs
-    // carry no rows to scan; FR-on, the side-table requirement below rejects
-    // them.
+    // This build proves exactly one instruction profile. A full program carrying an
+    // instruction the build has no constraints for (a field-inline bridge row on a verifier
+    // without field-inline, whose rd write no RV64 row pins) rejects here rather than
+    // verifying against the base rows alone. Committed programs carry no rows to scan; with
+    // field-inline enabled, the side-table requirement below rejects them.
     if let Some(full) = program.as_full() {
         if let Some(row) = full
             .bytecode
@@ -420,10 +419,10 @@ where
             });
         }
     }
-    // The FR-on verifier anchors the FR access selectors through the bytecode
-    // side table (stage 6); preprocessing without it — a classic-profile
-    // program or committed-program mode — cannot back a proof, so reject
-    // before any stage runs.
+    // The verifier with field-inline enabled anchors the field-register access selectors
+    // through the bytecode side table (stage 6); preprocessing without it — a classic-profile
+    // program or committed-program mode — cannot back a proof, so reject before any stage
+    // runs.
     #[cfg(feature = "field-inline")]
     crate::stages::field_inline_bytecode::validate_field_inline_bytecode(program)?;
 
@@ -544,12 +543,12 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    // An FR-on build proves every guest under the composed protocol, so the
-    // field-inline committed payload is unconditionally required (absence means
-    // a producer without FR semantics — reject before any stage logic). On the
-    // packed axis the FR limb-group slot is equally unconditional: presence is
-    // never claim-gated (an all-zero group still commits), and the stage-8
-    // resolve re-checks it against the schedule.
+    // A build with field-inline enabled proves every guest under the composed protocol, so the
+    // field-inline committed payload is unconditionally required (absence means a producer
+    // without field-inline semantics — reject before any stage logic). On the packed axis the
+    // field-increment limb-group slot is equally unconditional: presence is never claim-gated
+    // (an all-zero group still commits), and the stage-8 resolve re-checks it against the
+    // schedule.
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     if proof.commitments.field_inline.is_none() {
         return Err(VerifierError::MissingProofPayload {
@@ -749,10 +748,9 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     );
 }
 
-/// Absorbs the packed commitment objects in canonical object order:
-/// `OneHotTrace`, untrusted advice, trusted advice, the FR limb group
-/// (field-inline builds), then direct bytecode chunks and program image.
-/// Shared verbatim by the packed prover's stage 0.
+/// Absorbs the packed commitment objects in canonical object order: `OneHotTrace`, untrusted
+/// advice, trusted advice, the field-increment limb group (field-inline builds), then direct
+/// bytecode chunks and program image. Shared verbatim by the packed prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_packed_commitments<C, T>(
     one_hot_trace: &C,
@@ -1522,10 +1520,10 @@ mod tests {
         ));
     }
 
-    /// The FR-on BlindFold generator budget must fit the largest committed
-    /// round of the composed protocol: the Spartan outer uni-skip first round
-    /// (degree `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient
-    /// more), or `commit_round` fails closed at proving time.
+    /// The field-inline BlindFold generator budget must fit the largest committed round of the
+    /// composed protocol: the Spartan outer uni-skip first round (degree
+    /// `SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE`, one coefficient more), or `commit_round`
+    /// fails closed at proving time.
     #[cfg(feature = "field-inline")]
     #[test]
     fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
@@ -1972,9 +1970,9 @@ mod tests {
         ));
         #[cfg(not(feature = "zk"))]
         let vc_setup = None;
-        // Preprocess under the build's own instruction profile: the FR-on
-        // verifier requires the field-inline side table, which only an
-        // FR-profile preprocess derives (all-inactive for this empty program).
+        // Preprocess under the build's own instruction profile: the verifier with field-inline
+        // enabled requires the field-inline side table, which only a field-inline-profile
+        // preprocess derives (all-inactive for this empty program).
         let bytecode = BytecodePreprocessing::preprocess(
             Vec::new(),
             RAM_START_ADDRESS,

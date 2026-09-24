@@ -222,24 +222,24 @@ impl FieldInlineBytecodeRow {
         };
         // The field destination rides the `rs2` slot when the `rd` slot names
         // a scratch x-register (the memory-sourced loads).
-        let (fr_rd_slot, fr_rd_name) = if shape.fr_rd_in_rs2_slot {
+        let (field_rd_slot, field_rd_name) = if shape.field_rd_in_rs2_slot {
             (row.operands.rs2, "rs2")
         } else {
             (row.operands.rd, "rd")
         };
-        let rd = if shape.writes_fr_rd {
-            Some(field_register(fr_rd_slot, fr_rd_name)?)
+        let rd = if shape.writes_field_rd {
+            Some(field_register(field_rd_slot, field_rd_name)?)
         } else {
             None
         };
-        let rs1 = if shape.fr_rs1_is_fr_rd {
+        let rs1 = if shape.field_rs1_is_field_rd {
             rd
-        } else if shape.reads_fr_rs1 {
+        } else if shape.reads_field_rs1 {
             Some(field_register(row.operands.rs1, "rs1")?)
         } else {
             None
         };
-        let rs2 = if shape.reads_fr_rs2 {
+        let rs2 = if shape.reads_field_rs2 {
             Some(field_register(row.operands.rs2, "rs2")?)
         } else {
             None
@@ -308,9 +308,9 @@ impl FieldInlineBytecodeRow {
             }
         }
         let expected = jolt_riscv::field_inline_operand_shape_for_op(op);
-        if expected.reads_fr_rs1 != self.rs1.is_some()
-            || expected.reads_fr_rs2 != self.rs2.is_some()
-            || expected.writes_fr_rd != self.rd.is_some()
+        if expected.reads_field_rs1 != self.rs1.is_some()
+            || expected.reads_field_rs2 != self.rs2.is_some()
+            || expected.writes_field_rd != self.rd.is_some()
             || expected.bridge_x_register_role.is_some() != self.bridge_x_register.is_some()
             || expected.has_immediate != self.immediate.is_some()
         {

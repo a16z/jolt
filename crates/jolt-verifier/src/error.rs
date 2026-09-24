@@ -118,7 +118,7 @@ pub enum VerifierError {
     FinalOpeningBatchFailed { reason: String },
 
     #[error(
-        "the FR limb evaluations do not recompose the stage-6b reduced FieldRdInc claim: the \
+        "the field-increment limb evaluations do not recompose the stage-6b reduced FieldRdInc claim: the \
          committed limb columns disagree with the proven increment stream"
     )]
     #[cfg(all(feature = "akita", feature = "field-inline"))]

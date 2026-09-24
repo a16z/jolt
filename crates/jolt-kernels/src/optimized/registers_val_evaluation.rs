@@ -48,10 +48,10 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The write-address column: hot indices plus the address eq table until the
-/// first bind, a dense bound vector afterwards. The `K × T` grid never exists.
-/// Shared with the FR val-evaluation kernel, whose write column has the same
-/// lazy-fold shape at the FR address width.
+/// The write-address column: hot indices plus the address eq table until the first
+/// bind, a dense bound vector afterwards. The `K × T` grid never exists. Shared with
+/// the field-register value-evaluation kernel, whose write column has the same
+/// lazy-fold shape at the field-register address width.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) enum WaState<F: JoltField> {
     Indices {

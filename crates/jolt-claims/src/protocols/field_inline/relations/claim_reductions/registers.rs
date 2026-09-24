@@ -49,7 +49,7 @@ pub struct FieldRegistersClaimReductionInputClaims<C> {
     pub rs2_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the FR claim-reduction sumcheck.
+/// Fiat-Shamir challenge drawn by the field-register claim-reduction sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[protocol(field_inline)]

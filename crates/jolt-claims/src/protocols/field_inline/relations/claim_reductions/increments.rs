@@ -29,7 +29,8 @@ pub struct FieldRegistersIncClaimReductionOutputClaims<C> {
 }
 
 /// The two semantic `FieldRdInc` openings consumed by the reduction, wired from
-/// the stage-4 FR read/write checking and the stage-5 FR val evaluation.
+/// the stage-4 field-register read/write checking and the stage-5
+/// field-register value evaluation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 #[protocol(field_inline)]
 pub struct FieldRegistersIncClaimReductionInputClaims<C> {
@@ -39,7 +40,7 @@ pub struct FieldRegistersIncClaimReductionInputClaims<C> {
     pub rd_inc_val_evaluation: C,
 }
 
-/// Fiat-Shamir challenge drawn by the FR increment claim-reduction sumcheck
+/// Fiat-Shamir challenge drawn by the field-register increment claim-reduction sumcheck
 /// (the challenge the protocol spec names `eta`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]

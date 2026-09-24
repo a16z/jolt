@@ -16,9 +16,9 @@ use crate::protocols::field_inline::{
 use crate::twist::memory_checking as twist;
 use crate::{InputClaims, NoChallenges, OutputClaims, SumcheckChallenges};
 
-/// Produced field-register read-write openings, all sharing the single FR
-/// read-write opening point. Generic over the opening cell (`F` for the
-/// serialized wire value, `Vec<F>` for the derived opening point). Field
+/// Produced field-register read-write openings, all sharing one opening point.
+/// Generic over the opening cell (`F` for the serialized wire value, `Vec<F>`
+/// for the derived opening point). Field
 /// declaration order is the canonical Fiat-Shamir order and mirrors
 /// `geometry::registers::read_write_checking_output_openings()`.
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
@@ -42,7 +42,7 @@ pub struct FieldRegistersReadWriteOutputClaims<C> {
     pub rd_inc: C,
 }
 
-/// Consumed field-register openings reduced by the FR read-write checking
+/// Consumed field-register openings reduced by the field-register read-write checking
 /// sumcheck, wired from the upstream field-register claim reduction (stage 2).
 /// Generic over the cell.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
@@ -56,7 +56,7 @@ pub struct FieldRegistersReadWriteInputClaims<C> {
     pub rs2_value: C,
 }
 
-/// Fiat-Shamir challenge drawn by the FR read/write-checking sumcheck.
+/// Fiat-Shamir challenge drawn by the field-register read/write-checking sumcheck.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, SumcheckChallenges)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[protocol(field_inline)]
@@ -111,8 +111,8 @@ pub struct FieldRegistersValEvaluationOutputClaims<C> {
     pub rd_wa: C,
 }
 
-/// Consumed field-register value-evaluation opening, wired from the upstream FR
-/// read-write checking.
+/// Consumed field-register value-evaluation opening, wired from the upstream
+/// field-register read-write checking.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 #[protocol(field_inline)]
 pub struct FieldRegistersValEvaluationInputClaims<C> {

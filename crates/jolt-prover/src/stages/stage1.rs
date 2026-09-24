@@ -72,9 +72,9 @@ where
 
     let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
         .in_scope(|| backend.spartan_outer_uniskip.first_round_poly(session, &[]))?;
-    // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the
-    // jolt-claims RV64-only constants FR-off, the FR-extended row domain under
-    // `field-inline` — the shape the verifier's stage-1 uni-skip checks.
+    // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the jolt-claims RV64-only
+    // constants Without field-inline, the field-inline-extended row domain under `field-inline` —
+    // the shape the verifier's stage-1 uni-skip checks.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),
@@ -131,9 +131,9 @@ where
     })
 }
 
-/// FR-on clear round-trips of the stage-1 recipe against the verifier's own
+/// Clear round-trips with field-inline enabled of the stage-1 recipe against the verifier's own
 /// public constituents — `stage1::verify`'s clear body step for step (the
-/// tau draw, `uniskip::verify_clear`, the batch relations, the FR seam's
+/// tau draw, `uniskip::verify_clear`, the batch relations, the field-inline seam's
 /// attach, `verify_clear`, and the two-part opening absorb), on a twin
 /// transcript. The full `stage1::verify` entrypoint needs an assembled
 /// `JoltProof`, whose joint-opening slot has no test constructor, so this is
@@ -153,14 +153,16 @@ mod field_inline_round_trip {
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{addi_only_backend, fr_arithmetic_backend, LOG_T};
+    use crate::stages::field_inline_fixtures::{
+        addi_only_backend, field_arithmetic_backend, LOG_T,
+    };
 
     fn round_trip(trace_backend: TraceBackend<OwnedTrace>) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
-        let mut prover_transcript = Blake2bTranscript::new(b"stage1-fr");
+        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline");
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -173,9 +175,9 @@ mod field_inline_round_trip {
 
         let field_inline_outer = &out.claims.outer.outer_remainder.field_inline;
 
-        // The appendage values are honest evaluations: each FR cycle-domain
+        // The appendage values are honest evaluations: each field-inline cycle-domain
         // column's MLE at the stage-1 cycle binding (`tau_low`, the point
-        // stage 2's FR wiring consumes).
+        // stage 2's field-inline wiring consumes).
         let tau_low = product_tau_low(&out.clear_output.remainder_point(), LOG_T).unwrap();
         let field_inline_oracle = witness.field_inline().unwrap();
         for (polynomial, value) in
@@ -196,7 +198,7 @@ mod field_inline_round_trip {
         }
 
         // The verifier twin.
-        let mut transcript = Blake2bTranscript::new(b"stage1-fr");
+        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
         let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
         let uniskip_challenge = uniskip::verify_clear(
             &out.uniskip_proof,
@@ -237,23 +239,23 @@ mod field_inline_round_trip {
         assert_eq!(transcript.state(), prover_transcript.state());
     }
 
-    /// The ADDI-only FR-profile trace: every FR column is zero, so this pins
-    /// the composed protocol on an FR-enabled guest that executes no FR
+    /// The ADDI-only field-inline trace: every field-inline column is zero, so this pins
+    /// the composed protocol on a field-inline guest that executes no field-inline
     /// instruction.
     #[test]
     fn addi_only_stage1_round_trips_the_composed_verifier() {
         round_trip(addi_only_backend());
     }
 
-    /// Actual FR rows via decoded FR instruction words (two field loads and a
+    /// Actual field-inline rows via decoded field-inline instruction words (two field loads and a
     /// multiply).
     #[test]
-    fn fr_arithmetic_stage1_round_trips_the_composed_verifier() {
-        round_trip(fr_arithmetic_backend());
+    fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
+        round_trip(field_arithmetic_backend());
     }
 }
 
-/// FR-on ZK: the committed stage-1 shell and the verifier replay. Mirrors
+/// ZK with field-inline enabled: the committed stage-1 shell and the verifier replay. Mirrors
 /// `blindfold.rs`'s hard transcript check at stage scope — the replay runs
 /// `stage1::verify`'s zk body over its public constituents (the tau draw,
 /// `uniskip::verify_zk`, the batch `verify_zk`) and must land on the
@@ -274,18 +276,18 @@ mod field_inline_zk {
     use jolt_verifier::CheckedInputs;
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{fr_arithmetic_backend, ENTRY, LOG_T};
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, ENTRY, LOG_T};
 
     const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
 
     #[test]
     fn committed_stage1_shell_carries_the_composed_rows_and_replays() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
-        let mut prover_transcript = Blake2bTranscript::new(b"stage1-fr-zk");
+        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -297,7 +299,7 @@ mod field_inline_zk {
         .unwrap();
 
         // The committed shell carries the composed 51 output-claim values
-        // (35 member openings + 16 FR appendage), row-committed in
+        // (35 member openings + 16 field-inline appendage), row-committed in
         // capacity-sized chunks — the shape the verifier's
         // `composed_output_claim_count` check derives.
         let total: usize = out
@@ -349,7 +351,7 @@ mod field_inline_zk {
                 field_inc_limbs: Some(FieldIncLimbsScheduled),
             },
         };
-        let mut transcript = Blake2bTranscript::new(b"stage1-fr-zk");
+        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
         let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
         let uniskip_step = uniskip::verify_zk(
             &checked,
@@ -377,7 +379,7 @@ mod field_inline_zk {
 mod tests {
     use super::*;
 
-    /// FR-off, the composed jolt-r1cs outer uni-skip constants equal the
+    /// Without field-inline, the composed jolt-r1cs outer uni-skip constants equal the
     /// jolt-claims RV64-only constants this recipe previously passed — the
     /// swap is byte-neutral.
     #[cfg(not(feature = "field-inline"))]
@@ -394,11 +396,11 @@ mod tests {
         );
     }
 
-    /// FR-on, the composed outer domain carries the appended FR rows — the
-    /// spec's 15-point domain and its degree-42 first round.
+    /// With field-inline enabled, the composed outer domain carries the appended field-inline rows
+    /// — the spec's 15-point domain and its degree-42 first round.
     #[cfg(feature = "field-inline")]
     #[test]
-    fn outer_uniskip_constants_are_the_composed_fr_domains() {
+    fn outer_uniskip_constants_are_the_composed_field_domains() {
         assert_eq!(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, 15);
         assert_eq!(SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, 42);
     }

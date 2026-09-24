@@ -138,10 +138,9 @@ mod stage6a;
 mod stage6b;
 mod stage7;
 
-/// The lowering's opening-id type: the composite [`VerifierOpeningId`], so
-/// hidden witness rows from either protocol family (jolt, field-inline) live
-/// in one claim-source namespace. FR-off constructs only `Jolt`-wrapped ids,
-/// so the layout is unchanged.
+/// The lowering's opening-id type: the composite [`VerifierOpeningId`], so hidden witness rows
+/// from either protocol family (jolt, field-inline) live in one claim-source namespace. Builds
+/// without field-inline construct only `Jolt`-wrapped ids, so the layout is unchanged.
 use crate::stages::ids::VerifierOpeningId;
 
 type Builder<F, C> = BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId>;
@@ -767,10 +766,10 @@ where
         })?;
     let (spartan_outer_raf, spartan_shift_raf, entry) =
         if input.checked.precommitted.bytecode.is_some() {
-            // The FR extension anchors the field access selectors through the
-            // public side table, which committed-program mode cannot supply;
-            // the stage-6b batch build already rejected this combination, so
-            // this arm is FR-off only.
+            // The field-inline extension anchors the field access selectors through the public
+            // side table, which committed-program mode cannot supply; the stage-6b batch build
+            // already rejected this combination, so this arm is reachable only when
+            // field-inline is disabled.
             #[cfg(feature = "field-inline")]
             return Err(crate::stages::stage6b::field_inline::committed_program_rejection());
             #[cfg(not(feature = "field-inline"))]
@@ -837,11 +836,10 @@ where
                     stage5_gammas: &stage_gamma_powers[4],
                 })
                 .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
-            // The composed publics: the FR side-table stage values (already
-            // cycle-weighted per stage) add onto the ordinary staged publics
-            // BEFORE they bake, so the same `StageValue(i)` publics the
-            // symbolic output expression references carry both families —
-            // exactly the clear composed relation's public composition.
+            // The composed publics: the field-inline side-table stage values (already
+            // cycle-weighted per stage) add onto the ordinary staged publics BEFORE they bake,
+            // so the same `StageValue(i)` publics the symbolic output expression references
+            // carry both families — exactly the clear composed relation's public composition.
             #[cfg(feature = "field-inline")]
             field_inline::extend_bytecode_stage_values(
                 &mut v.stage_values,
@@ -1398,8 +1396,8 @@ mod field_inline_relation_parity {
         SumcheckOutputClaims, SumcheckOutputPoints,
     };
     use jolt_claims::protocols::field_inline::{
-        FieldInlineChallengeId as FrChallengeId, FieldInlineDerivedId as FrDerivedId,
-        FieldInlineOpeningId, FieldRegistersTraceDimensions,
+        FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
+        FieldRegistersTraceDimensions,
     };
     use jolt_claims::{InputClaims, SumcheckChallenges};
     use jolt_field::{Fr, Ring};
@@ -1425,12 +1423,12 @@ mod field_inline_relation_parity {
         S: ConcreteSumcheck<Fr>,
         S::Symbolic: SymbolicSumcheck<
             OpeningId = FieldInlineOpeningId,
-            DerivedId = FrDerivedId,
-            ChallengeId = FrChallengeId,
+            DerivedId = FieldInlineDerivedId,
+            ChallengeId = FieldInlineChallengeId,
         >,
         SumcheckInputClaims<Fr, S>: InputClaims<Fr, FieldInlineOpeningId>,
         SumcheckOutputClaims<Fr, S>: OutputClaims<Fr, FieldInlineOpeningId>,
-        ConcreteSumcheckChallenges<Fr, S>: SumcheckChallenges<Fr, FrChallengeId>,
+        ConcreteSumcheckChallenges<Fr, S>: SumcheckChallenges<Fr, FieldInlineChallengeId>,
     {
         let output_points: SumcheckOutputPoints<Fr, S> = relation
             .derive_opening_points(sumcheck_point, input_points)

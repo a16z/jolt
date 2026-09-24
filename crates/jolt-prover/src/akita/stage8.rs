@@ -49,7 +49,7 @@ where
         .map_err(batch_failed::<F>)
 }
 
-/// The stage-8 wire artifacts: the joint opening proof and (FR builds) the
+/// The stage-8 wire artifacts: the joint opening proof and (field-inline builds) the
 /// limb-group claims the proof carries beside it.
 pub struct Stage8Artifacts<PCS>
 where
@@ -116,7 +116,7 @@ where
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
         .transpose()?;
 
-    // Canonical public batch order: advice, (field-inline) the FR limb group,
+    // Canonical public batch order: advice, (field-inline) the field-inline limb group,
     // then the direct committed-program objects, then OneHotTrace.
     let mut precommitted = Vec::with_capacity(
         2 + usize::from(cfg!(feature = "field-inline")) + program.map_or(0, |p| p.objects.len()),

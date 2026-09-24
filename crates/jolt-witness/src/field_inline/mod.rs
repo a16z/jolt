@@ -55,9 +55,9 @@ pub trait FieldInlineRegisterReadWriteRows<F: JoltField> {
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
 }
 
-/// One FR-active cycle's composed spartan-outer column values — the 16
-/// appended R1CS columns in `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order:
-/// the five value columns, then the eleven op-flag columns in
+/// One active field-inline cycle's composed spartan-outer column values — the 16
+/// appended R1CS columns in `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order: the five
+/// value columns, then the eleven op-flag columns in
 /// [`FieldInlineOpFlag`](jolt_claims::protocols::field_inline::FieldInlineOpFlag)
 /// declaration order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -94,11 +94,10 @@ impl<F: Copy> FieldInlineSpartanRow<F> {
     }
 }
 
-/// The object-safe field-inline witness surface a prover reads off the
-/// witness plane: shapes and dense tables over the field-inline id
-/// vocabulary, the committed-order tail, and (via the supertrait) the
-/// register replay rows the read-write kernels fold. Deliberately minimal —
-/// later units extend it as the FR kernels land.
+/// The object-safe field-inline witness surface a prover reads off the witness plane:
+/// shapes and dense tables over the field-inline id vocabulary, the committed-order
+/// tail, and (via the supertrait) the register replay rows the read-write kernels fold.
+/// Deliberately minimal — later units extend it as the field-inline kernels land.
 pub trait FieldInlineWitnessOracle<F: JoltField>:
     FieldInlineRegisterReadWriteRows<F> + Send + Sync
 {
@@ -111,14 +110,13 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
     /// The proof-payload order of the field-inline committed polynomials.
     fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial>;
 
-    /// The composed spartan-outer FR column values, sparse over the cycle
-    /// domain: `(cycle, row)` pairs sorted strictly increasing by cycle,
-    /// covering at least every cycle where any of the 16 FR columns is
-    /// non-zero (extra all-zero rows are harmless — the columns' values are
-    /// what the composed kernels fold). The default derives the rows from the
-    /// dense `oracle_table`s so fixture oracles stay valid; the trace-backed
-    /// oracle overrides it with a direct sparse walk that never materializes
-    /// the 13 dense tables.
+    /// The composed spartan-outer field-inline column values, sparse over the cycle
+    /// domain: `(cycle, row)` pairs sorted strictly increasing by cycle, covering at
+    /// least every cycle where any of the 16 field-inline columns is non-zero (extra
+    /// all-zero rows are harmless — the columns' values are what the composed kernels
+    /// fold). The default derives the rows from the dense `oracle_table`s so fixture
+    /// oracles stay valid; the trace-backed oracle overrides it with a direct sparse
+    /// walk that never materializes the 13 dense tables.
     fn field_inline_spartan_rows(
         &self,
     ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
@@ -132,7 +130,8 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
         if tables.iter().any(|table| table.len() != cycles) {
             return Err(WitnessError::InvalidDimensions {
                 label: FIELD_INLINE_LABEL,
-                reason: "FR spartan column tables disagree on the cycle domain".to_owned(),
+                reason: "field-inline spartan column tables disagree on the cycle domain"
+                    .to_owned(),
             });
         }
         let mut rows = Vec::new();
@@ -281,7 +280,7 @@ impl TraceBackedFieldInlineWitness {
                 {
                     return Err(invalid_row(
                         index,
-                        "field-inline trace data exists for an FR-disabled program",
+                        "field-inline trace data exists for a program without field-inline",
                     ));
                 }
             }
@@ -297,7 +296,7 @@ impl TraceBackedFieldInlineWitness {
             .as_ref()
             .ok_or_else(|| WitnessError::InvalidWitnessData {
                 label: FIELD_INLINE_LABEL,
-                reason: "FR-enabled program is missing field-inline bytecode metadata".to_owned(),
+                reason: "field-inline program is missing bytecode metadata".to_owned(),
             })?;
         metadata
             .validate(self.preprocessing.bytecode.bytecode.len())
@@ -321,7 +320,7 @@ impl TraceBackedFieldInlineWitness {
             .as_ref()
             .ok_or_else(|| WitnessError::InvalidWitnessData {
                 label: FIELD_INLINE_LABEL,
-                reason: "FR-enabled program is missing field-inline bytecode metadata".to_owned(),
+                reason: "field-inline program is missing bytecode metadata".to_owned(),
             })?;
 
         match (shape, row.field_inline.as_deref()) {
@@ -596,19 +595,19 @@ fn validate_trace_data(
     let operands = row.instruction().operands;
     // The memory-sourced loads keep their field destination in the `rs2`
     // slot and read it back as `rs1` on the Horner step.
-    let fr_rd = if shape.fr_rd_in_rs2_slot {
+    let field_rd = if shape.field_rd_in_rs2_slot {
         operands.rs2
     } else {
         operands.rd
     };
-    let fr_rs1 = if shape.fr_rs1_is_fr_rd {
-        fr_rd
+    let field_rs1 = if shape.field_rs1_is_field_rd {
+        field_rd
     } else {
         operands.rs1
     };
-    validate_read(index, "rs1", data.rs1, fr_rs1, shape.reads_fr_rs1)?;
-    validate_read(index, "rs2", data.rs2, operands.rs2, shape.reads_fr_rs2)?;
-    validate_write(index, data.rd, fr_rd, shape.writes_fr_rd)?;
+    validate_read(index, "rs1", data.rs1, field_rs1, shape.reads_field_rs1)?;
+    validate_read(index, "rs2", data.rs2, operands.rs2, shape.reads_field_rs2)?;
+    validate_write(index, data.rd, field_rd, shape.writes_field_rd)?;
 
     if data.product.is_some() != shape.requires_product_payload() {
         return Err(invalid_row(
@@ -1036,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn fr_off_provider_is_absent_without_field_data() {
+    fn field_inline_disabled_provider_is_absent_without_field_data() {
         let bytecode = vec![instruction(
             JoltInstructionKind::ADDI,
             0,
@@ -1067,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    fn fr_off_rejects_field_inline_trace_payload() {
+    fn field_inline_disabled_rejects_field_inline_trace_payload() {
         let bytecode = vec![instruction(
             JoltInstructionKind::ADDI,
             0,

@@ -84,8 +84,8 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
     /// The full bytecode rows backing the full-program table fold
     /// (`None` in ZK and committed-program modes).
     pub bytecode_table_rows: Option<&'a [JoltInstructionRow]>,
-    /// The converted field-inline bytecode side table (required: the FR-on
-    /// verifier rejects preprocessing without it before assembling parts).
+    /// The converted field-inline bytecode side table (required: the verifier with
+    /// field-inline enabled rejects preprocessing without it before assembling parts).
     #[cfg(feature = "field-inline")]
     pub field_inline_bytecode: FieldInlineBytecodeTable,
     pub carried: &'a Stage6aCarriedChallenges<F>,
@@ -113,9 +113,9 @@ pub struct Stage6bDraws<F> {
     /// Base only: the packed batch has no inc claim-reduction member.
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
-    /// The FR increment-reduction gamma (the spec's `eta`), member-drawn in
-    /// declaration order: after the ordinary inc gamma, before the optional
-    /// committed-bytecode eta.
+    /// The field-register increment-reduction gamma (the spec's `eta`), member-drawn in
+    /// declaration order: after the ordinary inc gamma, before the optional committed-bytecode
+    /// eta.
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_gamma: F,
     /// The bytecode claim-reduction eta, drawn exactly when the bytecode
@@ -351,9 +351,9 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         )?;
         let registers_read_write_cycle = stage_points.register_read_write_cycle().to_vec();
         let registers_val_evaluation_cycle = stage_points.register_val_evaluation_cycle().to_vec();
-        // The FR opening sub-points: the stage-4/5 FR opening points split
-        // past the FR address prefix. The cycle legs feed both the bytecode
-        // FR public fold and the FR increment reduction's Eq publics.
+        // The field-inline opening sub-points: the stage-4/5 field-inline opening points split
+        // past the field-register address prefix. The cycle legs feed both the bytecode
+        // field-inline public fold and the field-register increment reduction's Eq publics.
         #[cfg(feature = "field-inline")]
         let field_inline_legs = super::field_inline::bytecode_fold_and_cycles(
             field_inline_bytecode,
@@ -587,11 +587,10 @@ mod tests {
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use jolt_field::Fr;
 
-    /// Pins the post-6a draw schedule to member declaration order: the
-    /// instruction-RA gamma, (base) the inc gamma, under `field-inline` the FR
-    /// inc gamma (the spec's `eta` draw slot: after the ordinary inc gamma,
-    /// before the optional committed-bytecode eta), then the committed
-    /// bytecode eta exactly when the bytecode layout is committed.
+    /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
+    /// (base) the inc gamma, under `field-inline` the field-inline inc gamma (the spec's `eta`
+    /// draw slot: after the ordinary inc gamma, before the optional committed-bytecode eta),
+    /// then the committed bytecode eta exactly when the bytecode layout is committed.
     #[test]
     fn stage6b_draws_follow_member_declaration_order() {
         for committed_bytecode in [false, true] {

@@ -174,7 +174,7 @@ where
         ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
-    // Draws the registers gamma, under `field-inline` the FR read-write gamma,
+    // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
     // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
     // separator (replayed by the relation's `draw_challenges` override).
     let challenges = sumchecks.draw_challenges(transcript)?;
@@ -225,13 +225,13 @@ where
     })
 }
 
-/// FR-on clear round-trips of the stage-4 recipe against the verifier's own
+/// Clear round-trips with field-inline enabled of the stage-4 recipe against the verifier's own
 /// public constituents — `stage4::verify`'s clear body step for step (the
-/// `Val_init` decomposition, the three-member batch with the FR read-write
-/// member, the generated absorb splicing the five FR openings) on a twin
+/// `Val_init` decomposition, the three-member batch with the field-register read-write
+/// member, the generated absorb splicing the five field-inline openings) on a twin
 /// transcript positioned by the stage-1..3 replays. The 32-byte
 /// transcript-state equality pins the absorb order end to end. A second test
-/// drives the FR read-write kernel directly and ties every extracted opening
+/// drives the field-register read-write kernel directly and ties every extracted opening
 /// to a direct MLE evaluation of the witness oracle's tables at the bound
 /// point.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
@@ -255,7 +255,7 @@ mod field_inline_round_trip {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        fr_arithmetic_backend, fr_arithmetic_preprocessing, test_checked_inputs,
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
         test_prover_config, test_public_io, twins, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
@@ -263,17 +263,17 @@ mod field_inline_round_trip {
     use crate::stages::stage3::prove_stage3;
 
     #[test]
-    fn fr_arithmetic_stage4_round_trips_the_composed_verifier() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+    fn field_arithmetic_stage4_round_trips_the_composed_verifier() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
-        let preprocessing = fr_arithmetic_preprocessing();
+        let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage4-fr");
+        let mut prover_transcript = Blake2bTranscript::new(b"stage4-field-inline");
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -321,7 +321,7 @@ mod field_inline_round_trip {
 
         // The verifier twin (stage4::verify's clear body, shared as the
         // stage-5+ twins' replay), positioned by the upstream replays.
-        let mut transcript = Blake2bTranscript::new(b"stage4-fr");
+        let mut transcript = Blake2bTranscript::new(b"stage4-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
@@ -352,14 +352,14 @@ mod field_inline_round_trip {
             .sum()
     }
 
-    /// The FR read-write kernel on the honest FR replay: every round message
+    /// The field-register read-write kernel on the honest field-inline replay: every round message
     /// passes the engine's running-claim check starting from the relation's
     /// own input claim, and the extracted openings equal direct MLE
     /// evaluations of the witness oracle's tables at the derived
     /// `[address ‖ cycle]` opening point.
     #[test]
-    fn fr_read_write_kernel_outputs_match_direct_mle() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+    fn field_register_read_write_kernel_outputs_match_direct_mle() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let oracle = witness.field_inline().unwrap();
@@ -475,8 +475,8 @@ mod field_inline_round_trip {
     }
 }
 
-/// FR-on ZK: the stage-4 committed shell carries the curated row count — the
-/// 5 ordinary register openings, the 5 spliced FR read-write openings, and
+/// ZK with field-inline enabled: the stage-4 committed shell carries the curated row count — the
+/// 5 ordinary register openings, the 5 spliced field-register read-write openings, and
 /// the 2 RAM value-check openings (no advice / program-image rows at the
 /// fixture's scale).
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
@@ -490,7 +490,7 @@ mod field_inline_zk {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        fr_arithmetic_backend, fr_arithmetic_preprocessing, test_checked_inputs,
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
         test_prover_config, test_public_io, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
@@ -501,7 +501,7 @@ mod field_inline_zk {
 
     #[test]
     fn committed_stage4_shell_carries_the_curated_rows() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
@@ -509,9 +509,9 @@ mod field_inline_zk {
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
-        let preprocessing = fr_arithmetic_preprocessing();
+        let preprocessing = field_arithmetic_preprocessing();
 
-        let mut transcript = Blake2bTranscript::new(b"stage4-fr-zk");
+        let mut transcript = Blake2bTranscript::new(b"stage4-field-inline-zk");
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,

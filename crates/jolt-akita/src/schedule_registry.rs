@@ -36,8 +36,8 @@ pub struct PrecommittedScheduleParams {
     #[serde(default)]
     direct_program_physical_arities: Vec<usize>,
     final_arity: usize,
-    /// The always-present FR limb group's arity line (field-inline proofs
-    /// only). `None` keeps provisioning identical to the base protocol.
+    /// The limb group's arity line, always present in field-inline proofs.
+    /// `None` keeps provisioning identical to the base protocol.
     #[cfg(feature = "field-inline")]
     field_inc_limbs: Option<FieldIncLimbScheduleParams>,
 }
@@ -58,10 +58,10 @@ impl PrecommittedScheduleParams {
         }
     }
 
-    /// Attach the FR limb-group arity line: the provisioned rows then carry
-    /// the setup arity's FR profile as a mandatory group after the advice
-    /// (an FR-on prover commits the group on every proof, so no FR-absent
-    /// row is reachable).
+    /// Attach the field-inline limb-group arity line: the provisioned rows
+    /// carry the setup arity's limb profile as a mandatory group after the
+    /// advice. A prover with field-inline enabled commits the group on every
+    /// proof, so a row without the limb group is unreachable.
     #[cfg(feature = "field-inline")]
     pub fn with_field_inc_limbs(mut self, field_inc_limbs: FieldIncLimbScheduleParams) -> Self {
         self.field_inc_limbs = Some(field_inc_limbs);
@@ -107,11 +107,11 @@ impl PrecommittedScheduleParams {
     }
 }
 
-/// The FR limb group's physical-arity line: `physical = max(log_T +
+/// The field-inline limb group's physical-arity line: `physical = max(log_T +
 /// selector_num_vars, min_physical_arity)` with `log_T = final_num_vars -
 /// trace_arity_overhead`. All three terms are caller-derived from the
 /// jolt-claims packing laws and carried here as serialized data (this crate
-/// is claims-free); the FR provisioning pin test holds the line to
+/// is claims-free); the field-inline provisioning pin test holds the line to
 /// `FieldIncLimbPackingPlan` across every final arity.
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,9 +136,9 @@ impl FieldIncLimbScheduleParams {
         }
     }
 
-    /// The FR limb group's physical arity at final arity `final_num_vars`,
-    /// or `None` below the packed trace's own overhead (no trace exists
-    /// there, so no FR pairing either).
+    /// The field-inline limb group's physical arity at `final_num_vars`, or
+    /// `None` below the packed trace's own overhead (no trace exists there,
+    /// so no limb-group pairing either).
     pub fn physical_num_vars(self, final_num_vars: usize) -> Option<usize> {
         let log_t = final_num_vars.checked_sub(self.trace_arity_overhead)?;
         Some(
@@ -336,13 +336,13 @@ pub const FIXTURE_TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupL
 pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
 /// Adapt grouped rows for optional advice followed by the mandatory groups —
-/// (field-inline) the FR limb group, then the direct committed-program
-/// objects — all in canonical precommit order.
+/// the limb group when field-inline is enabled, then the direct
+/// committed-program objects — all in canonical precommit order.
 #[cfg_attr(
     feature = "field-inline",
     expect(
         clippy::too_many_arguments,
-        reason = "the FR limb arity line is one more caller-derived precommit input beside the advice and program lines"
+        reason = "the field-inline limb arity line is one more caller-derived precommit input beside the advice and program lines"
     )
 )]
 pub fn provision_precommitted_for_k(

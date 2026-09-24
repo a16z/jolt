@@ -265,11 +265,11 @@ mod tests {
         (relation, input_points, output_points)
     }
 
-    /// The composed `expected_output` over the feature-aware 5-lane domain
-    /// equals the from-scratch factored form: `tau_kernel · (Σ w_i·L_i) ·
-    /// (Σ w_i·R_i)` over all five lanes (ordinary lane table, then the FR
-    /// lanes' rs1·rs2 and rs1·rd factors), with weights over the composed
-    /// domain — the `field-inline-protocol.md` "Stage 2 Composition" algebra.
+    /// The composed `expected_output` over the feature-aware 5-lane domain equals the
+    /// from-scratch factored form: `tau_kernel · (Σ w_i·L_i) · (Σ w_i·R_i)` over all five
+    /// lanes (ordinary lane table, then the field-inline lanes' rs1·rs2 and rs1·rd factors),
+    /// with weights over the composed domain — the `field-inline-protocol.md` "Stage 2
+    /// Composition" algebra.
     #[test]
     fn composed_expected_output_matches_five_lane_factored_form() {
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);

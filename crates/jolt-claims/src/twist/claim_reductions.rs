@@ -291,7 +291,7 @@ mod tests {
     }
 
     /// Two-group supplier shaped like the jolt increments reduction (RAM then
-    /// registers); the one-group FR shape is its prefix.
+    /// registers); the one-group field-inline shape is its prefix.
     struct TwoGroups;
 
     impl IncrementReductionIds for TwoGroups {

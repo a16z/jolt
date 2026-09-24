@@ -51,8 +51,8 @@ pub fn selected_product_remainder_output_openings() -> [FieldInlineOpeningId; 3]
     ]
 }
 
-/// The FR lanes' input values entering the composed product-uniskip input
-/// claim: the `FieldProduct`/`FieldInvProduct` openings from the FR
+/// The field-inline lanes' input values entering the composed product-uniskip input
+/// claim: the `FieldProduct`/`FieldInvProduct` openings from the field-inline
 /// Spartan-outer segment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldProductLaneInputs<F> {
@@ -69,8 +69,8 @@ impl<F: Ring> FieldProductLaneInputs<F> {
     }
 }
 
-/// The FR lanes' factor values entering the composed product-remainder output
-/// claim: the three FR product-remainder row openings.
+/// The field-inline lanes' factor values entering the composed product-remainder output
+/// claim: the three field-inline product-remainder row openings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldProductLaneFactors<F> {
     pub rs1_value: F,
@@ -89,7 +89,7 @@ impl<F: Ring> FieldProductLaneFactors<F> {
     }
 }
 
-/// The FR lanes' contribution to the composed product-uniskip input claim:
+/// The field-inline lanes' contribution to the composed product-uniskip input claim:
 /// `Σ_i weights[base_lanes + i] · input_i` over the selected lane order, where
 /// `weights` are the composed centered-domain Lagrange weights and the ordinary
 /// product lanes occupy indices `[0, base_lanes)`. `None` if `weights` does not
@@ -107,7 +107,7 @@ pub fn composed_uniskip_input_contribution<F: Ring>(
     Some(contribution)
 }
 
-/// The FR lanes' contributions to the composed product-remainder factors,
+/// The field-inline lanes' contributions to the composed product-remainder factors,
 /// returned as `(left, right)`: each selected lane adds its composed weight
 /// times its left/right factor value (the [`FieldRegistersProductLane::factor_openings`]
 /// order). The composed remainder output claim is then

@@ -106,9 +106,9 @@ where
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
     })?;
-    // The FR kernel geometry, composed exactly like the verifier: the
+    // The field-inline kernel geometry, composed exactly like the verifier: the
     // preprocessed side table (required fail-closed, like the stage-6b build)
-    // plus the stage-4/5 FR opening points the address kernel's FR
+    // plus the stage-4/5 field-inline opening points the address kernel's field-inline
     // stage-value legs fold over.
     #[cfg(feature = "field-inline")]
     let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_geometry(
@@ -191,13 +191,13 @@ where
     })
 }
 
-/// FR-on clear round-trips of the stage-6a recipe against the verifier's own
+/// Clear round-trips with field-inline enabled of the stage-6a recipe against the verifier's own
 /// public constituents — `stage6a::verify`'s clear body (the batch built by
-/// the promoted `build_from_parts` with the FR side table on the bytecode
-/// member, the FR appendage composition, the composed input claim with its
+/// the promoted `build_from_parts` with the field-inline side table on the bytecode
+/// member, the field-inline appendage composition, the composed input claim with its
 /// gamma-power extension) on a twin transcript positioned by the stage-1..5
-/// replays, on the FR-ACTIVE arithmetic trace: the appendage openings are
-/// nonzero, so the address kernel's FR stage-value legs are exercised for
+/// replays, on the field-active arithmetic trace: the appendage openings are
+/// nonzero, so the address kernel's field-inline stage-value legs are exercised for
 /// real (round 0's engine check pins the composed input claim to the
 /// summand).
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
@@ -212,7 +212,7 @@ mod field_inline_round_trip {
     use super::*;
     use crate::recorder::ProofMode;
     use crate::stages::field_inline_fixtures::{
-        fr_arithmetic_backend, fr_arithmetic_preprocessing, test_checked_inputs,
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
         test_prover_config, test_public_io, twins, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
@@ -222,17 +222,17 @@ mod field_inline_round_trip {
     use crate::stages::stage5::prove_stage5;
 
     #[test]
-    fn fr_arithmetic_stage6a_round_trips_the_composed_verifier() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+    fn field_arithmetic_stage6a_round_trips_the_composed_verifier() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
-        let preprocessing = fr_arithmetic_preprocessing();
+        let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage6a-fr");
+        let mut prover_transcript = Blake2bTranscript::new(b"stage6a-field-inline");
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -307,8 +307,8 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The FR-active premise: the appendage the composed input claim folds
-        // carries nonzero openings (the trace executes FR instructions), so
+        // The field-active premise: the appendage the composed input claim folds
+        // carries nonzero openings (the trace executes field-inline instructions), so
         // the round trip exercises the extension for real rather than the
         // zero-fold degenerate case.
         let appendage = stage6a_field_inline::bytecode_read_raf_inputs(
@@ -323,7 +323,7 @@ mod field_inline_round_trip {
 
         // The verifier twin (stage6a::verify's clear body), positioned by the
         // upstream replays.
-        let mut transcript = Blake2bTranscript::new(b"stage6a-fr");
+        let mut transcript = Blake2bTranscript::new(b"stage6a-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);

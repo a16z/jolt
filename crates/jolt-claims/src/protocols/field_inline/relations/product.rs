@@ -14,7 +14,7 @@ use crate::protocols::field_inline::{
 use crate::SymbolicSumcheck;
 use crate::{InputClaims, OutputClaims};
 
-/// Produced field-product openings: the three factor openings the selected FR
+/// Produced field-product openings: the three factor openings the selected field-inline
 /// lanes reference at the shared product-remainder point (`FieldRdValue` is the
 /// `FieldInvProduct` lane's right factor). Field declaration order is the
 /// canonical Fiat-Shamir order and mirrors

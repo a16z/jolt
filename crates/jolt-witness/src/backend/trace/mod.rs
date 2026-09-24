@@ -209,9 +209,9 @@ impl<T: TraceSource> TraceBackend<T> {
                 trace_rows.push(compact);
             }
         }
-        // The FR view replays the raw rows (payloads, register file, bridge
-        // facts); share the source's allocation when it offers one, copying
-        // only for sources that cannot.
+        // The field-inline view replays the raw rows (payloads, register file, bridge
+        // facts); share the source's allocation when it offers one, copying only for
+        // sources that cannot.
         #[cfg(feature = "field-inline")]
         let raw_rows = source
             .shared_rows()

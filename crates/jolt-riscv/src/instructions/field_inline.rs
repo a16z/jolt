@@ -1,22 +1,22 @@
 use crate::jolt_instruction;
 
 jolt_instruction!(
-    /// Field-inline add: `frd = fr1 + fr2`.
+    /// Field-inline add: `field_rd = field_rs1 + field_rs2`.
     FieldAdd
 );
 
 jolt_instruction!(
-    /// Field-inline subtract: `frd = fr1 - fr2`.
+    /// Field-inline subtract: `field_rd = field_rs1 - field_rs2`.
     FieldSub
 );
 
 jolt_instruction!(
-    /// Field-inline multiply: `frd = fr1 * fr2`.
+    /// Field-inline multiply: `field_rd = field_rs1 * field_rs2`.
     FieldMul
 );
 
 jolt_instruction!(
-    /// Field-inline inverse: `frd = fr1^-1`.
+    /// Field-inline inverse: `field_rd = field_rs1^-1`.
     FieldInv
 );
 
@@ -34,7 +34,7 @@ jolt_instruction!(
     /// Bridge a field-register value into an ordinary x-register. The write
     /// is range-bound through the instruction lookup like `VirtualAdvice`:
     /// the rd value is the (non-interleaved) `RangeCheck` lookup operand and
-    /// the FR bridge rows pin both the operand and the write to
+    /// the field-inline bridge rows pin both the operand and the write to
     /// `FieldRs1Value`, so the store is satisfiable only when the field value
     /// fits in 64 bits (`jolt-r1cs` `field_constraints`).
     FieldStoreToX,
@@ -50,7 +50,7 @@ jolt_instruction!(
 jolt_instruction!(
     /// Load a 64-bit word from memory into a field register: an `LD` into the
     /// scratch x-register `rd` (the ordinary load rows bind the word) whose
-    /// loaded value the FR row copies into field register `rs2`.
+    /// loaded value the field-inline row copies into field register `rs2`.
     FieldLoadWord,
     circuit flags: [Load],
     instruction flags: []
@@ -67,7 +67,7 @@ jolt_instruction!(
 
 jolt_instruction!(
     /// Supply a range-checked advice limb in x-register `rd`, with
-    /// `frs1 = rd + 2^64 · frs2` in the proof field. Canonical integer
+    /// `field_rs1 = rd + 2^64 · field_rs2` in the proof field. Canonical integer
     /// readout requires a guest range check after the final store.
     FieldAdviceLimb,
     circuit flags: [Advice, WriteLookupOutputToRD],

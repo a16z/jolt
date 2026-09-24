@@ -1,5 +1,5 @@
-//! eq-MLE field-inline example host: compiles the FR guest, traces it through
-//! the modular stack, proves with the modular prover (the only FR-capable
+//! eq-MLE field-inline example host: compiles the field-inline guest, traces it through
+//! the modular stack, proves with the modular prover (the only field-inline-capable
 //! prover), and verifies through the full `jolt_verifier::verify` entry.
 //!
 //! The whole pipeline requires `--features field-inline`; the guest body is
@@ -66,12 +66,12 @@ mod pipeline {
         pub program: Arc<JoltProgram>,
     }
 
-    /// Compile the FR guest, build profile-aware modular preprocessing,
+    /// Compile the field-inline guest, build profile-aware modular preprocessing,
     /// and re-trace through the modular tracer backend.
     pub fn compile_and_trace(inputs: &[u8]) -> TracedGuest {
         let target_dir = "/tmp/jolt-guest-targets";
         // The guest's field-inline feature flows through `compile_eval_eq_mle`,
-        // which switches the program to the FR instruction profile.
+        // which switches the program to the field-inline instruction profile.
         let mut program = guest::compile_eval_eq_mle(target_dir);
 
         let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
@@ -164,8 +164,8 @@ mod pipeline {
             ),
             JoltVmWitnessInputs::new(&program, &program_preprocessing, padded_output),
         )
-        // FR proving needs the field-inline witness view; classic-profile
-        // guests are refused rather than silently proven without FR columns.
+        // field-inline proving needs the field-inline witness view; classic-profile
+        // guests are refused rather than silently proven without field-inline columns.
         .with_field_inline()
         .expect("field-inline witness view");
         let witness = Arc::new(witness);
@@ -180,7 +180,7 @@ mod pipeline {
             witness.as_ref(),
             &public_io,
         )
-        .expect("modular FR prove");
+        .expect("modular field-inline prove");
 
         jolt::jolt_verifier::verify::<Fr, VerifierPCS, VerifierVC, VerifierTranscript>(
             &prover_preprocessing.verifier,
@@ -188,7 +188,7 @@ mod pipeline {
             &proof,
             None,
         )
-        .expect("modular FR proof must verify");
+        .expect("modular field-inline proof must verify");
 
         let (output, _) =
             jolt::postcard::take_from_bytes::<u64>(&public_io.outputs).expect("decode output");
@@ -215,7 +215,10 @@ fn main() {
 
     let output = prove_and_verify(traced);
     println!("output: {output}");
-    assert_eq!(output, 42, "the FR assert-eq path must bridge out 42");
+    assert_eq!(
+        output, 42,
+        "the field-inline assert-eq path must bridge out 42"
+    );
     println!("valid: true");
 }
 
@@ -232,15 +235,15 @@ fn main() {
 mod tests {
     use super::pipeline::{compile_and_trace, field_inline_rows, guest_inputs, PAIRS};
 
-    /// The guest's static FR instruction budget: 2 accumulator seeds, 8 per
+    /// The guest's static field-inline instruction budget: 2 accumulator seeds, 8 per
     /// coordinate pair (2 bridge loads, 3 muls, 2 subs, 1 add), 7 for the
     /// 2^64 radix (LoadImm 2 + 6 squarings), 10 for the expected-value Horner
     /// recomposition (4 bridge loads, 3 muls, 3 adds), the FIELD_ASSERT_EQ,
     /// 3 for the result value (sub, LoadImm 42, add), and the StoreToX
     /// bridge.
-    const EXPECTED_FR_CYCLES: usize = 2 + 8 * PAIRS.len() + 7 + 10 + 1 + 3 + 1;
+    const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 8 * PAIRS.len() + 7 + 10 + 1 + 3 + 1;
 
-    /// Commit-A scope: the guest builds and traces FR-active — the tracer
+    /// Commit-A scope: the guest builds and traces field-active — the tracer
     /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or an
     /// out-of-range StoreToX traps at trace time), so a completed trace
     /// already pins the eq-MLE math. The full prove/verify e2e lives in
@@ -249,10 +252,10 @@ mod tests {
     fn guest_traces_field_inline_active() {
         let traced = compile_and_trace(&guest_inputs(&PAIRS));
         let rows = traced.trace_output.trace.rows();
-        let fr_rows = field_inline_rows(rows);
-        assert_eq!(fr_rows, EXPECTED_FR_CYCLES);
+        let field_rows = field_inline_rows(rows);
+        assert_eq!(field_rows, EXPECTED_FIELD_INLINE_CYCLES);
         assert!(
-            fr_rows < rows.len(),
+            field_rows < rows.len(),
             "the trace must also carry ordinary rows"
         );
         let (output, _) =

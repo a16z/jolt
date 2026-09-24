@@ -250,7 +250,7 @@ fn execute_advice_limb<F: Field + CanonicalEncoding>(
     }
 }
 
-/// `frd = [frd · 2^64 +] mem[x_rs1 + offset]`, the word also written to the
+/// `field_rd = [field_rd · 2^64 +] mem[x_rs1 + offset]`, the word also written to the
 /// scratch x-register `rd` so the cycle is an ordinary `LD` to the RV64 rows.
 fn execute_load_word<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
@@ -359,7 +359,7 @@ fn execute_inverse<F: Field + CanonicalEncoding>(
     // guest-side API is responsible for guarding zero before emitting FIELD_INV.
     let inverse = decode_field::<F>(rs1_value).inverse().unwrap_or_else(|| {
         panic!(
-            "FIELD_INV of zero at pc 0x{:x} (fr{}): the inverse constraint is \
+            "FIELD_INV of zero at pc 0x{:x} (field register {}): the inverse constraint is \
              unsatisfiable for a zero operand; guard the guest-side inverse",
             cpu.read_pc(),
             rs1_register,
@@ -464,7 +464,7 @@ fn execute_store_to_x<F: CanonicalEncoding>(
         .to_u64_checked()
         .unwrap_or_else(|| {
             panic!(
-                "FIELD_STORE_TO_X of a value wider than 64 bits at pc 0x{:x} (fr{}): \
+                "FIELD_STORE_TO_X of a value wider than 64 bits at pc 0x{:x} (field register {}): \
                  the store bridge only supports field values < 2^64; extract wide \
                  values through the advice pattern instead",
                 cpu.read_pc(),

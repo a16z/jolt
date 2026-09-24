@@ -20,8 +20,8 @@ parallel = [
   "dep:rayon",
 ]
 prover-fixtures = ["dep:jolt-host"]
-# Field-inline (FR) protocol composition: the FR-on prover — every stage
-# proves the composed protocol, and only FR-profile guests are accepted (the
+# Field-inline protocol composition: the field-inline prover — every stage
+# proves the composed protocol, and only field-inline guests are accepted (the
 # witness plane refuses classic-profile traces). The e2e acceptance lives in
 # tests/field_inline_e2e.rs under prover-fixtures,field-inline[,zk].
 field-inline = [
@@ -30,11 +30,11 @@ field-inline = [
   "jolt-r1cs/field-inline",
   "jolt-verifier/field-inline",
   "jolt-witness/field-inline",
-  # The packed FR limb-group schedule params (inert without `akita`).
+  # The packed field-inline limb-group schedule params (inert without `akita`).
   "jolt-akita?/field-inline",
-  # Weak forwards: jolt-witness/field-inline turns on jolt-riscv's FR
+  # Weak forwards: jolt-witness/field-inline turns on jolt-riscv's field-inline
   # instruction variants, so any build that also compiles the tracer or the
-  # host fixture owner must compile them with their FR arms.
+  # host fixture owner must compile them with their field-inline arms.
   "tracer?/field-inline",
   "jolt-host?/field-inline",
 ]
@@ -49,7 +49,7 @@ akita = [
   "jolt-claims/akita",
   "jolt-field/solinas",
   "jolt-kernels/akita",
-  # The packed axis proves over fp128, so FR execution and the value encoding
+  # The packed axis proves over fp128, so field-inline execution and the value encoding
   # flip with it (inert while field-inline is off; the tracer forward is the
   # same weak edge the field-inline feature uses).
   "jolt-program/fp128-field-inline",

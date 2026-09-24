@@ -1,12 +1,11 @@
-//! The stage 5 `FieldRegistersValEvaluation` sumcheck instance — the FR Twist
-//! val-evaluation member (spec: `field-inline-protocol.md`, "Stage 5
-//! Composition").
+//! The stage 5 `FieldRegistersValEvaluation` sumcheck instance — the field-inline Twist
+//! val-evaluation member (spec: `field-inline-protocol.md`, "Stage 5 Composition").
 //!
-//! Consumes the `FieldRegistersVal` opening produced by the stage-4 FR
-//! read/write checking and opens `FieldRdInc`/`FieldRdWa` at the same FR
-//! address and this instance's cycle point, weighted by the `LtCycle` public.
-//! Mirrors the ordinary `RegistersValEvaluation`: `LtCycle = Lt(own cycle
-//! sub-point, upstream FR read/write cycle sub-point)`.
+//! Consumes the `FieldRegistersVal` opening produced by the stage-4 field-inline read/write
+//! checking and opens `FieldRdInc`/`FieldRdWa` at the same field-inline address and this
+//! instance's cycle point, weighted by the `LtCycle` public. Mirrors the ordinary
+//! `RegistersValEvaluation`: `LtCycle = Lt(own cycle sub-point, upstream field-register
+//! read/write cycle sub-point)`.
 
 use core::marker::PhantomData;
 
@@ -86,10 +85,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for FieldRegistersValEvaluation<F> {
         _challenges: &NoChallenges<F>,
     ) -> Result<F, VerifierError> {
         match project_public(id)? {
-            // Own cycle sub-point first, upstream FR read/write cycle second —
-            // literally the ordinary `RegistersValEvaluation` `LtCycle`
-            // derivation at the FR geometry (the spec's
-            // `Lt(r_field_val.cycle, r_field_rw.cycle)`).
+            // Own cycle sub-point first, upstream field-register read/write cycle second —
+            // literally the ordinary `RegistersValEvaluation` `LtCycle` derivation at the
+            // field-inline geometry (the spec's `Lt(r_field_val.cycle, r_field_rw.cycle)`).
             FieldRegistersValEvaluationPublic::LtCycle => derivations::lt_at_cycle(
                 output_points.rd_inc(),
                 input_points.registers_val(),
@@ -117,9 +115,9 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// The FR val-evaluation opening point is the upstream FR address prefix
-    /// followed by this instance's reversed cycle point, and `LtCycle`
-    /// evaluates over exactly the two cycle sub-points (own cycle, upstream FR
+    /// The field-register value-evaluation opening point is the upstream field-register
+    /// address prefix followed by this instance's reversed cycle point, and `LtCycle`
+    /// evaluates over exactly the two cycle sub-points (own cycle, upstream field-inline
     /// read/write cycle).
     #[test]
     fn opening_point_reuses_upstream_address_and_lt_cycle_uses_the_cycle_points() {

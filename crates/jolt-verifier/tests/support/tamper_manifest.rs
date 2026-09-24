@@ -440,7 +440,7 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage1,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "field-inline fixture test offsets every FR Spartan outer opening claim",
+        "field-inline fixture test offsets every field-inline Spartan outer opening claim",
     ),
 ];
 
@@ -548,7 +548,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "field-inline fixture test offsets each FR claim-reduction output (the stage-2 fold \
+        "field-inline fixture test offsets each field-inline claim-reduction output (the stage-2 fold \
          and the generated alias check consume them)",
     ),
     #[cfg(feature = "field-inline")]
@@ -558,7 +558,7 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage2,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "field-inline fixture test offsets each composed FR product opening (the remainder and generated alias check consume them)",
+        "field-inline fixture test offsets each composed field-inline product opening (the remainder and generated alias check consume them)",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
@@ -701,8 +701,8 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage4,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "field-inline fixture test offsets each FR read-write output (the stage-4 fold and \
-         the stage-5 FR val-evaluation input consume them)",
+        "field-inline fixture test offsets each field-register read-write output (the stage-4 fold and \
+         the stage-5 field-register value-evaluation input consume them)",
     ),
 ];
 
@@ -778,7 +778,7 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage5,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "field-inline fixture test offsets each FR val-evaluation output (the stage-5 fold \
+        "field-inline fixture test offsets each field-register value-evaluation output (the stage-5 fold \
          and the stage-6 FieldRdInc reduction consume them)",
     ),
 ];
@@ -1159,7 +1159,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage8Openings,
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
-        "the packed FR e2e (jolt-prover akita_field_inline_e2e) offsets a limb evaluation; \
+        "the packed field-inline e2e (jolt-prover akita_field_inline_e2e) offsets a limb evaluation; \
          the stage-8 linear recomposition check rejects it",
     ),
     #[cfg(feature = "field-inline")]
@@ -1169,7 +1169,7 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         VerifierPhase::Stage8Openings,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "the packed FR e2e flips the limb commitment's layout-digest byte, mutates the batch \
+        "the packed field-inline e2e flips the limb commitment's layout-digest byte, mutates the batch \
          proof, and strips the group; each rejects",
     ),
 ];

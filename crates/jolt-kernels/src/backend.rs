@@ -257,9 +257,9 @@ pub(crate) fn visit_heap_free_elements<T>(values: &Vec<T>, visitor: &mut Visitor
     visitor.visit_simple(Key::new("elements"), values.capacity() * size_of::<T>());
 }
 
-/// [`visit_heap_free_elements`] through an `Arc`: the shared buffer's bytes
-/// are reported by whichever holder the visitor reaches. Used by the
-/// session-shared FR register rows.
+/// [`visit_heap_free_elements`] through an `Arc`: the shared buffer's bytes are
+/// reported by whichever holder the visitor reaches. Used by the session-shared field
+/// register rows.
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
 pub(crate) fn visit_shared_heap_free_elements<T>(values: &Arc<Vec<T>>, visitor: &mut Visitor<'_>) {
     visit_heap_free_elements(values, visitor);

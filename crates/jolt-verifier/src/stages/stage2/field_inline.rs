@@ -6,9 +6,9 @@ use crate::stages::stage1::Stage1ClearOutput;
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_field::JoltField;
 
-/// The stage-2 FR batch member. The FR claim reduction shares the trace domain
-/// (`log_T` rounds) with the product remainder, so both bind the same batch
-/// suffix — the spec's `r_prod` sharing.
+/// The stage-2 field-inline batch member. The field-inline claim reduction shares the trace
+/// domain (`log_T` rounds) with the product remainder, so both bind the same batch suffix —
+/// the spec's `r_prod` sharing.
 pub fn claim_reduction_member<F: JoltField>(
     log_t: usize,
     tau_low: Vec<F>,
@@ -16,7 +16,7 @@ pub fn claim_reduction_member<F: JoltField>(
     FieldRegistersClaimReduction::new(FieldRegistersTraceDimensions::new(log_t), tau_low)
 }
 
-/// Wire the consumed FR value opening *values* from stage 1's composed outer
+/// Wire the consumed field-register value opening *values* from stage 1's composed outer
 /// sumcheck. The composed carrier requires these values structurally.
 pub fn claim_reduction_inputs<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,

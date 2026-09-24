@@ -39,14 +39,12 @@ use crate::{
     VerifierError,
 };
 
-/// Assemble the stage-4 consumed opening *values* from the upstream outputs into
-/// the generated `Stage4InputClaims` aggregate. This is the single place the
-/// stage's Outputs→Inputs dataflow is expressed: the register read-write inputs
-/// come from stage 3's registers claim-reduction, the FR read-write inputs
-/// (under `field-inline`) from stage 2's FR claim-reduction, and the RAM
-/// value-check inputs come from stage 2's RAM `val`/`val_final` plus the
-/// reconstructed `Val_init` decomposition (advice / program-image
-/// contributions).
+/// Assemble the stage-4 consumed opening *values* from the upstream outputs into the generated
+/// `Stage4InputClaims` aggregate. This is the single place the stage's Outputs→Inputs dataflow
+/// is expressed: the register read-write inputs come from stage 3's registers claim-reduction,
+/// the field-register read-write inputs (under `field-inline`) from stage 2's field-inline
+/// claim-reduction, and the RAM value-check inputs come from stage 2's RAM `val`/`val_final`
+/// plus the reconstructed `Val_init` decomposition (advice / program-image contributions).
 pub fn stage4_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
@@ -150,11 +148,10 @@ where
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
 
-    // Draw the batching gammas in declaration order: the registers gamma, under
-    // `field-inline` the FR read-write gamma (each a single `challenge_scalar`),
-    // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
-    // separator (the relation's `draw_challenges` override replays the separator
-    // at its exact transcript position).
+    // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
+    // the field-register read-write gamma (each a single `challenge_scalar`), then the RAM
+    // value-check gamma behind its `b"ram_val_check_gamma"` domain separator (the relation's
+    // `draw_challenges` override replays the separator at its exact transcript position).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

@@ -23,35 +23,33 @@ use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
 
-/// The converted field-inline bytecode side table from the verifier
-/// preprocessing — the stage-6a counterpart of the stage-6b seam's helper
-/// (both stages anchor the FR access selectors through the same
-/// public/preprocessed table; committed-program preprocessing cannot supply
-/// it and rejects here too).
+/// The converted field-inline bytecode side table from the verifier preprocessing — the
+/// stage-6a counterpart of the stage-6b seam's helper (both stages anchor the field-register
+/// access selectors through the same public/preprocessed table; committed-program
+/// preprocessing cannot supply it and rejects here too).
 pub fn preprocessed_bytecode_table<PCS: CommitmentScheme>(
     program: &ProgramPreprocessing<PCS>,
 ) -> Result<FieldInlineBytecodeTable, VerifierError> {
     convert_field_inline_bytecode(required_field_inline_bytecode(program)?)
 }
 
-/// The FR geometry the address-phase KERNEL folds over: the converted side
-/// table plus the stage-4/5 FR opening points (`FIELD_REGISTERS_LOG_K`-var
-/// address prefix ‖ cycle). Prover construction data, attached
-/// to the relation via [`compose_bytecode_geometry`]; the verifier itself
-/// never evaluates it in this stage.
+/// The field-inline geometry the address-phase KERNEL folds over: the converted side table
+/// plus the stage-4/5 field-inline opening points (`FIELD_REGISTERS_LOG_K`-var address prefix
+/// ‖ cycle). Prover construction data, attached to the relation via
+/// [`compose_bytecode_geometry`]; the verifier itself never evaluates it in this stage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafGeometry<F> {
     pub table: FieldInlineBytecodeTable,
-    /// The stage-4 FR read-write opening point.
+    /// The stage-4 field-register read-write opening point.
     pub read_write_point: Vec<F>,
-    /// The stage-5 FR val-evaluation opening point.
+    /// The stage-5 field-register value-evaluation opening point.
     pub val_evaluation_point: Vec<F>,
 }
 
-/// Wire the FR kernel geometry from the preprocessed side table and the
-/// stage-4/5 FR opening points, and compose it into the batch's bytecode
-/// read-RAF relation. Both fronts compose through this right after the batch
-/// build (fail-closed: a kernel prepared without it rejects).
+/// Wire the field-inline kernel geometry from the preprocessed side table and the stage-4/5
+/// field-inline opening points, and compose it into the batch's bytecode read-RAF relation.
+/// Both fronts compose through this right after the batch build (fail-closed: a kernel
+/// prepared without it rejects).
 pub fn compose_bytecode_geometry<F: JoltField>(
     sumchecks: Stage6aSumchecks<F>,
     table: FieldInlineBytecodeTable,
@@ -72,28 +70,28 @@ pub fn compose_bytecode_geometry<F: JoltField>(
     }
 }
 
-/// The field-inline opening values the extended address-phase input claim
-/// folds under the extended stage-1/4/5 gamma powers (spec:
-/// `field-inline-protocol.md`, "Stage 6 Composition"). The jolt symbolic input
-/// `Expr` cannot name FR openings, so these are composed into the relation
-/// (the stage-1/2 pattern) and consumed by the composed `input_claim`.
+/// The field-inline opening values the extended address-phase input claim folds under the
+/// extended stage-1/4/5 gamma powers (spec: `field-inline-protocol.md`, "Stage 6
+/// Composition"). The jolt symbolic input `Expr` cannot name field-inline openings, so these
+/// are composed into the relation (the stage-1/2 pattern) and consumed by the composed
+/// `input_claim`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FieldInlineBytecodeReadRafInputs<F> {
-    /// The `FieldOpFlag` openings from the stage-1 FR Spartan-outer carrier,
-    /// in `FIELD_INLINE_BYTECODE_STAGE1_FLAGS` order.
+    /// The `FieldOpFlag` openings from the stage-1 field-inline Spartan-outer carrier, in
+    /// `FIELD_INLINE_BYTECODE_STAGE1_FLAGS` order.
     pub field_op_flags: [F; FIELD_INLINE_BYTECODE_STAGE1_FLAGS.len()],
-    /// `FieldRdWa` / `FieldRs1Ra` / `FieldRs2Ra` from the stage-4 FR
-    /// read-write checking.
+    /// `FieldRdWa` / `FieldRs1Ra` / `FieldRs2Ra` from the stage-4 field-inline read-write
+    /// checking.
     pub rd_wa_read_write: F,
     pub rs1_ra: F,
     pub rs2_ra: F,
-    /// `FieldRdWa` from the stage-5 FR val evaluation.
+    /// `FieldRdWa` from the stage-5 field-register value evaluation.
     pub rd_wa_val_evaluation: F,
 }
 
-/// Wire the FR opening values the extended bytecode read-RAF input claim
-/// consumes from the upstream clear outputs. Fail-closed: an FR-on proof
-/// whose stage-1 carrier lacks the FR payload cannot feed the extension.
+/// Wire the field-inline opening values the extended bytecode read-RAF input claim consumes
+/// from the upstream clear outputs. Fail-closed: a field-inline proof whose stage-1 carrier
+/// lacks the field-inline payload cannot feed the extension.
 pub fn bytecode_read_raf_inputs<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     stage4: &Stage4OutputClaims<F>,

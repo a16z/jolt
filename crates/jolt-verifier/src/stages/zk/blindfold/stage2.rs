@@ -147,7 +147,7 @@ where
         eq_spartan,
     )?;
 
-    // The FR claim reduction member and its baked publics (relation + gamma +
+    // The field-inline claim reduction member and its baked publics (relation + gamma +
     // EqSpartan), at the same source-values position as before.
     #[cfg(feature = "field-inline")]
     let field_registers_reduction = super::field_inline::stage2_claim_reduction(
@@ -220,9 +220,9 @@ where
 
     let (output_ids, aliases) = stage2_output_ids_and_aliases::<PCS::Field>();
 
-    // Member declaration order (= batching-coefficient draw order): the FR
-    // claim reduction sits between the instruction reduction and RAM RAF
-    // evaluation, exactly as in `Stage2BatchSumchecks`.
+    // Member declaration order (= batching-coefficient draw order): the field-inline claim
+    // reduction sits between the instruction reduction and RAM RAF evaluation, exactly as in
+    // `Stage2BatchSumchecks`.
     let mut batch_claims = vec![
         relation_claim(&ram_read_write),
         (
@@ -252,8 +252,8 @@ where
 
 /// The stage-2 committed output row order and alias rows.
 ///
-/// FR-off: the jolt members' canonical orders with the instruction reduction's
-/// aliased ids elided (absorbed once via their product-remainder sources).
+/// With field-inline disabled: the jolt members' canonical orders with the instruction
+/// reduction's aliased ids elided (absorbed once via their product-remainder sources).
 /// Canonical output rows in member order, excluding aliased reduction claims.
 fn stage2_output_ids_and_aliases<F: JoltField>(
 ) -> (Vec<VerifierOpeningId>, Vec<OpeningAlias<VerifierOpeningId>>) {
@@ -458,8 +458,8 @@ mod tests {
             ram_output_check: RamOutputCheckOutputClaims { val_final: fr(15) },
         };
 
-        // Resolve a lowered composite id against the claim structs (the FR
-        // appendage rides beside the batch, so it has its own resolver).
+        // Resolve a lowered composite id against the claim structs (the field-inline appendage
+        // rides beside the batch, so it has its own resolver).
         #[cfg(feature = "field-inline")]
         let appendage = FieldRegistersProductOutputClaims::<Fr> {
             rs1_value: fr(201),
@@ -515,10 +515,10 @@ mod tests {
         );
     }
 
-    /// The lowered composed uni-skip input expression evaluates identically to
-    /// the clear `ProductUniskip::input_claim` composition on synthetic values
-    /// (FR-on: all five lanes; the FR inputs read from the stage-1 FR carrier
-    /// rows).
+    /// The lowered composed uni-skip input expression evaluates identically to the clear
+    /// `ProductUniskip::input_claim` composition on synthetic values (with field-inline
+    /// enabled: all five lanes; the field-inline inputs read from the stage-1 field-inline
+    /// carrier rows).
     #[cfg(feature = "field-inline")]
     #[test]
     fn lowered_uniskip_input_matches_the_clear_composed_claim() {
@@ -581,11 +581,10 @@ mod tests {
         assert_eq!(lowered, clear);
     }
 
-    /// The lowered composed remainder output expression evaluates identically
-    /// to the clear `ProductRemainder::expected_output` composition on
-    /// synthetic values (FR-on: `tau_kernel · (ord_left + fr_left) ·
-    /// (ord_right + fr_right)` with the FR factors read from the appendage
-    /// rows).
+    /// The lowered composed remainder output expression evaluates identically to the clear
+    /// `ProductRemainder::expected_output` composition on synthetic values (with field-inline
+    /// enabled: `tau_kernel · (ord_left + field_inline_left) · (ord_right +
+    /// field_inline_right)` with the field-inline factors read from the appendage rows).
     #[cfg(feature = "field-inline")]
     #[test]
     fn lowered_remainder_output_matches_the_clear_composed_claim() {

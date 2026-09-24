@@ -9,8 +9,8 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
-# Field-inline (FR) protocol composition on the packed axis: extends the
-# provisioned grouped-schedule params with the always-present FR limb-group
+# Field-inline protocol composition on the packed axis: extends the
+# provisioned grouped-schedule params with the always-present limb-group
 # profile. Selected by jolt-prover's `field-inline` feature; off keeps
 # provisioning and the serialized setup params byte-identical to base.
 field-inline = []
@@ -48,9 +48,9 @@ bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }
-# The FR provisioning pin test holds the registry's carried arity line to the
-# jolt-claims packing law across the whole swept range. No features: an akita
-# edge here would leak into workspace-wide unification and flip jolt-claims'
-# packed-mode geometry for every `--all` lane.
+# The field-inline provisioning pin test holds the registry's carried arity
+# line to the jolt-claims packing law across the whole swept range. No
+# features: an akita edge here would leak into workspace-wide unification and
+# flip jolt-claims' packed-mode geometry for every `--all` lane.
 jolt-claims = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }

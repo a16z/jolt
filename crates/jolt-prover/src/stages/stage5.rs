@@ -88,7 +88,7 @@ where
             ),
     };
     // Draws the instruction gamma, then the RAM gamma (registers draws
-    // nothing, and so does the `field-inline` FR value-evaluation member) —
+    // nothing, and so does the `field-inline` field value-evaluation member) —
     // the generated declaration-order draw.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
@@ -128,12 +128,12 @@ where
     })
 }
 
-/// FR-on clear round-trips of the stage-5 recipe against the verifier's own
+/// Clear round-trips with field-inline enabled of the stage-5 recipe against the verifier's own
 /// public constituents — `stage5::verify`'s clear body (the four-member batch
-/// with the FR val-evaluation member, which draws no instance challenge) on a
+/// with the field-register value evaluation member, which draws no instance challenge) on a
 /// twin transcript positioned by the stage-1..4 replays. The 32-byte
 /// transcript-state equality pins the absorb order end to end. A second test
-/// drives the FR val-evaluation kernel directly and ties both extracted
+/// drives the field-register value evaluation kernel directly and ties both extracted
 /// openings to direct MLE evaluations of the witness oracle's tables at the
 /// bound point.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
@@ -158,7 +158,7 @@ mod field_inline_round_trip {
     use super::*;
     use crate::recorder::ProofMode;
     use crate::stages::field_inline_fixtures::{
-        fr_arithmetic_backend, fr_arithmetic_preprocessing, test_checked_inputs,
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
         test_prover_config, test_public_io, twins, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
@@ -167,17 +167,17 @@ mod field_inline_round_trip {
     use crate::stages::stage4::prove_stage4;
 
     #[test]
-    fn fr_arithmetic_stage5_round_trips_the_composed_verifier() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+    fn field_arithmetic_stage5_round_trips_the_composed_verifier() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
-        let preprocessing = fr_arithmetic_preprocessing();
+        let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage5-fr");
+        let mut prover_transcript = Blake2bTranscript::new(b"stage5-field-inline");
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -238,7 +238,7 @@ mod field_inline_round_trip {
 
         // The verifier twin (stage5::verify's clear body), positioned by the
         // upstream replays.
-        let mut transcript = Blake2bTranscript::new(b"stage5-fr");
+        let mut transcript = Blake2bTranscript::new(b"stage5-field-inline");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
@@ -278,16 +278,16 @@ mod field_inline_round_trip {
             .sum()
     }
 
-    /// The FR val-evaluation kernel on the honest FR replay: every round
+    /// The field-register value evaluation kernel on the honest field-inline replay: every round
     /// message passes the engine's running-claim check starting from the
-    /// relation's own input claim (the `FieldRegistersVal` MLE — honest FR
+    /// relation's own input claim (the `FieldRegistersVal` MLE — honest field-inline
     /// register state makes the "value equals the sum of earlier increments"
     /// identity hold), and both extracted openings equal direct MLE
     /// evaluations of the witness oracle's tables at the derived
     /// `[address ‖ cycle]` opening point.
     #[test]
-    fn fr_val_evaluation_kernel_outputs_match_direct_mle() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+    fn field_register_val_evaluation_kernel_outputs_match_direct_mle() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let oracle = witness.field_inline().unwrap();

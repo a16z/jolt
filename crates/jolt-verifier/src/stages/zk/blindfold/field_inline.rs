@@ -1,9 +1,8 @@
-//! The BlindFold lowering's field-inline seam: every FR-specific piece of the
-//! ZK verifier's R1CS build in one place — the FR members' symbolic relations
-//! and baked publics per stage, the composed bytecode public extension, the FR
-//! output-row splices, and the FR-lane expression terms. Each blindfold stage
-//! file keeps exactly one contiguous, flagged region per interaction point,
-//! calling into here.
+//! The BlindFold lowering's field-inline seam: every field-inline-specific piece of the ZK
+//! verifier's R1CS build in one place — the field-inline members' symbolic relations and baked
+//! publics per stage, the composed bytecode public extension, the field-inline output-row
+//! splices, and the field-inline-lane expression terms. Each blindfold stage file keeps
+//! exactly one contiguous, flagged region per interaction point, calling into here.
 
 use jolt_claims::protocols::field_inline::geometry::claim_reductions as field_claim_reductions;
 use jolt_claims::protocols::field_inline::geometry::registers as field_registers_geometry;
@@ -42,8 +41,8 @@ pub(super) fn public_error(stage: FieldInlineRelationId, error: impl ToString) -
     }
 }
 
-/// The variables past the first `prefix_len` of an FR `address ++ cycle`
-/// opening point (the FR cycle sub-point).
+/// The variables past the first `prefix_len` of a field-inline `address ++ cycle` opening
+/// point (the field-inline cycle sub-point).
 pub(super) fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -60,18 +59,18 @@ pub(super) fn point_suffix<F: JoltField>(
     })
 }
 
-/// The 16 FR-local Spartan-outer rows appended after the 35 ordinary stage-1
-/// columns, in appended-column order — the clear absorb/commit order.
+/// The 16 field-inline Spartan-outer rows appended after the 35 ordinary stage-1 columns, in
+/// appended-column order — the clear absorb/commit order.
 pub(super) fn stage1_appended_opening_ids() -> impl Iterator<Item = VerifierOpeningId> {
     field_spartan_geometry::outer_output_openings()
         .into_iter()
         .map(VerifierOpeningId::from)
 }
 
-/// The stage-2 FR claim-reduction member and its baked publics: its `EqSpartan`
-/// is the same `Eq(reduced point, tau_low)` derivation as the instruction
-/// reduction (same rounds, same batch suffix, same reversed opening point —
-/// pinned in stage2's clear tests); its gamma is the drawn batch challenge.
+/// The stage-2 field-inline claim-reduction member and its baked publics: its `EqSpartan` is
+/// the same `Eq(reduced point, tau_low)` derivation as the instruction reduction (same rounds,
+/// same batch suffix, same reversed opening point — pinned in stage2's clear tests); its gamma
+/// is the drawn batch challenge.
 pub(super) fn stage2_claim_reduction<F: JoltField, C>(
     values: &mut SourceValues<F>,
     log_t: usize,
@@ -100,17 +99,17 @@ pub(super) fn stage2_claim_reduction<F: JoltField, C>(
     Ok(reduction)
 }
 
-/// The FR portion of the product member's canonical output rows.
+/// The field-inline portion of the product member's canonical output rows.
 pub(super) fn stage2_product_opening_ids() -> impl Iterator<Item = VerifierOpeningId> {
     jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings()
         .into_iter()
         .map(VerifierOpeningId::from)
 }
 
-/// The stage-4 FR read/write member and its baked publics: shape from the
-/// compile-time protocol config, gamma from the drawn batch, `EqCycle`
-/// mirroring the ordinary registers derivation — `Eq(upstream FR reduced cycle
-/// point, own cycle sub-point past the FR address prefix)`.
+/// The stage-4 field-register read/write member and its baked publics: shape from the
+/// compile-time protocol config, gamma from the drawn batch, `EqCycle` mirroring the ordinary
+/// registers derivation — `Eq(upstream field-inline reduced cycle point, own cycle sub-point
+/// past the field-register address prefix)`.
 pub(super) fn stage4_read_write<F: JoltField>(
     values: &mut SourceValues<F>,
     log_t: usize,
@@ -118,17 +117,17 @@ pub(super) fn stage4_read_write<F: JoltField>(
     fixed_cycle: &[F],
     read_write_point: &[F],
 ) -> Result<field_registers::ReadWriteChecking, VerifierError> {
-    let fr_dimensions = JOLT_VERIFIER_CONFIG
+    let field_inline_dimensions = JOLT_VERIFIER_CONFIG
         .field_inline
         .read_write_dimensions(log_t);
-    let claims = field_registers::ReadWriteChecking::new(fr_dimensions);
+    let claims = field_registers::ReadWriteChecking::new(field_inline_dimensions);
     values.public(
         FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::Gamma),
         gamma,
     )?;
     let own_cycle = point_suffix(
         read_write_point,
-        fr_dimensions.log_k(),
+        field_inline_dimensions.log_k(),
         FieldInlineRelationId::FieldRegistersReadWriteChecking,
     )?;
     values.public(
@@ -143,17 +142,17 @@ pub(super) fn stage4_read_write<F: JoltField>(
     Ok(claims)
 }
 
-/// The five FR read/write rows, spliced after the register openings and
-/// before `ram_ra`/`ram_inc` — the clear absorb order.
+/// The five field-register read/write rows, spliced after the register openings and before
+/// `ram_ra`/`ram_inc` — the clear absorb order.
 pub(super) fn stage4_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
     field_registers_geometry::read_write_checking_output_openings()
         .into_iter()
         .map(VerifierOpeningId::from)
 }
 
-/// The stage-5 FR val-evaluation member (declared last, no instance
-/// challenge) and its baked `LtCycle` public: `Lt(own cycle sub-point,
-/// upstream FR read/write cycle sub-point)` over the FR address prefix.
+/// The stage-5 field-register value-evaluation member (declared last, no instance challenge)
+/// and its baked `LtCycle` public: `Lt(own cycle sub-point, upstream field-register read/write
+/// cycle sub-point)` over the field-register address prefix.
 pub(super) fn stage5_val_evaluation<F: JoltField>(
     values: &mut SourceValues<F>,
     log_t: usize,
@@ -178,23 +177,22 @@ pub(super) fn stage5_val_evaluation<F: JoltField>(
     Ok(claims)
 }
 
-/// The two FR val-evaluation rows, after the ordinary register
-/// value-evaluation outputs — the clear absorb order (the FR member is
-/// declared last, so the generated absorb appends them at the tail).
+/// The two field-register value-evaluation rows, after the ordinary register value-evaluation
+/// outputs — the clear absorb order (the field-inline member is declared last, so the
+/// generated absorb appends them at the tail).
 pub(super) fn stage5_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
     field_registers_geometry::val_evaluation_output_openings()
         .into_iter()
         .map(VerifierOpeningId::from)
 }
 
-/// Load the preprocessed FR side table and add its composed stage-value
-/// contributions onto the ordinary staged bytecode publics BEFORE they bake,
-/// so the same `StageValue(i)` publics the symbolic output expression
-/// references carry both families — exactly the clear composed relation's
-/// public composition.
+/// Load the preprocessed field-inline side table and add its composed stage-value
+/// contributions onto the ordinary staged bytecode publics BEFORE they bake, so the same
+/// `StageValue(i)` publics the symbolic output expression references carry both families —
+/// exactly the clear composed relation's public composition.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the extension is a pure function of the bytecode bind points and the stage-4/5 FR opening points; bundling them would only rename the seam"
+    reason = "the extension is a pure function of the bytecode bind points and the stage-4/5 field-inline opening points; bundling them would only rename the seam"
 )]
 pub(super) fn extend_bytecode_stage_values<F: JoltField, PCS: CommitmentScheme>(
     stage_values: &mut [F; 5],
@@ -225,12 +223,11 @@ pub(super) fn extend_bytecode_stage_values<F: JoltField, PCS: CommitmentScheme>(
     Ok(())
 }
 
-/// The FR side-table public stage-value contributions at
-/// `(r_address, r_cycle)`: the converted rows folded under the FR-extended
-/// stage-1/4/5 gamma powers, each stage weighted by its own cycle-eq factor —
-/// the same `read_raf_public_values` evaluation (over the same point splits)
-/// the clear composed relation performs, so the composed `StageValue(i)`
-/// publics cannot drift from the clear check.
+/// The field-inline side-table public stage-value contributions at `(r_address, r_cycle)`: the
+/// converted rows folded under the field-inline-extended stage-1/4/5 gamma powers, each stage
+/// weighted by its own cycle-eq factor — the same `read_raf_public_values` evaluation (over
+/// the same point splits) the clear composed relation performs, so the composed
+/// `StageValue(i)` publics cannot drift from the clear check.
 pub(super) fn composed_bytecode_stage_values<F: JoltField>(
     table: &FieldInlineBytecodeTable,
     r_address: &[F],
@@ -276,16 +273,15 @@ pub(super) fn composed_bytecode_stage_values<F: JoltField>(
     Ok(public_values.stage_values)
 }
 
-/// The stage-6b FR increment-reduction member's symbolic relation.
+/// The stage-6b field-register increment-reduction member's symbolic relation.
 pub(super) fn stage6b_inc_relation(log_t: usize) -> field_increments::ClaimReduction {
     field_increments::ClaimReduction::new(FieldRegistersTraceDimensions::new(log_t))
 }
 
-/// The FR increment reduction's publics and challenge. It is trace-domain with
-/// the same suffix window as the ordinary increment reduction, so its reduced
-/// opening point is the SAME `inc_opening_point`; the Eq publics mirror the
-/// ordinary member's derivations over the stage-4/5 FR cycle sub-points (past
-/// the FR address prefix).
+/// The field-register increment reduction's publics and challenge. It is trace-domain with the
+/// same suffix window as the ordinary increment reduction, so its reduced opening point is the
+/// SAME `inc_opening_point`; the Eq publics mirror the ordinary member's derivations over the
+/// stage-4/5 field-inline cycle sub-points (past the field-register address prefix).
 pub(super) fn stage6b_inc_publics<F: JoltField>(
     values: &mut SourceValues<F>,
     inc_opening_point: &[F],
@@ -328,9 +324,9 @@ pub(super) fn stage6b_inc_publics<F: JoltField>(
     Ok(())
 }
 
-/// The reduced FR `FieldRdInc` row, after the ordinary increment-reduction
-/// outputs and before the optional advice cycle phases — the clear absorb
-/// order (`stage6b_opening_values`).
+/// The reduced field-inline `FieldRdInc` row, after the ordinary increment-reduction outputs
+/// and before the optional advice cycle phases — the clear absorb order
+/// (`stage6b_opening_values`).
 pub(super) fn stage6b_inc_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
     field_claim_reductions::increments::claim_reduction_output_openings()
         .into_iter()

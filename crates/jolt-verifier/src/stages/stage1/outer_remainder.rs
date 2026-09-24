@@ -156,10 +156,10 @@ pub struct OuterRemainder<F: JoltField> {
 
 impl<F: JoltField> OuterRemainder<F> {
     pub fn new(dimensions: SpartanOuterDimensions, tau: Vec<F>, uniskip_challenge: F) -> Self {
-        // Sized from the selected R1CS composition (jolt-r1cs), not from the
-        // rv64-only symbolic dimensions: under `field-inline` the composed
-        // coefficient table carries the appended FR columns, and the weight
-        // vectors must match it. FR-off the two sources agree (35 columns).
+        // Sized from the selected R1CS composition (jolt-r1cs), not from the rv64-only
+        // symbolic dimensions: under `field-inline` the composed coefficient table carries the
+        // appended field-inline columns, and the weight vectors must match it. with
+        // field-inline disabled, the two sources agree (35 columns).
         let variable_count = jolt_r1cs::constraints::jolt::spartan_outer_opening_columns().len();
         debug_assert!(variable_count >= dimensions.variables().len());
         Self {
@@ -444,15 +444,13 @@ mod tests {
         }
     }
 
-    /// Under `field-inline` the composed coefficient table carries 51 columns
-    /// while the rv64 symbolic relation still names 35 openings; the composed
-    /// clear check therefore evaluates the factored form over the full selected
-    /// opening vector. This pins both the sizing invariant that used to panic
-    /// (weight vectors follow the composed jolt-r1cs column count) and the
-    /// composed algebra: the symbolic output evaluates identically
-    /// to `JoltSpartanOuterRemainder::expected_output_claim` over all 51
-    /// openings (35 ordinary in canonical order, then the 16 appended FR-local
-    /// columns).
+    /// Under `field-inline` the composed coefficient table carries 51 columns while the rv64
+    /// symbolic relation still names 35 openings; the composed clear check therefore evaluates
+    /// the factored form over the full selected opening vector. This pins both the sizing
+    /// invariant that used to panic (weight vectors follow the composed jolt-r1cs column
+    /// count) and the composed algebra: the symbolic output evaluates identically to
+    /// `JoltSpartanOuterRemainder::expected_output_claim` over all 51 openings (35 ordinary in
+    /// canonical order, then the 16 appended field-inline columns).
     #[cfg(feature = "field-inline")]
     #[test]
     fn composed_expected_output_matches_factored_form() {

@@ -5,7 +5,7 @@
 //! `VirtualAdvice` binds a prover-supplied word. The rd write value is the
 //! non-interleaved lookup operand (the `Advice` flag frees
 //! `RightLookupOperand` from the RV64 operand rows), `RangeCheck` returns its
-//! low 64 bits into `LookupOutput`. For `FIELD_STORE_TO_X`, the FR bridge rows
+//! low 64 bits into `LookupOutput`. For `FIELD_STORE_TO_X`, the field-inline bridge rows
 //! (`jolt-r1cs` `field_constraints::{ROW_STORE_TO_X, ROW_STORE_TO_X_LOOKUP}`)
 //! pin both the operand and the write to `FieldRs1Value`, so the statement
 //! is satisfiable only when the field value already fits in 64 bits — the

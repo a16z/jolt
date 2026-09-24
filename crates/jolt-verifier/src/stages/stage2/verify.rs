@@ -54,13 +54,12 @@ enum ProductUniskipVerified<F: JoltField, C> {
     Zk(uniskip::UniskipZk<F, C>),
 }
 
-/// Assemble the stage-2 batch consumed opening *values* from the upstream clear
-/// outputs into the generated `Stage2BatchInputClaims` aggregate. Each per-relation
-/// `*_from_upstream` helper wires which upstream opening feeds which downstream
-/// input. The product-remainder input is the product uni-skip's output claim (a
-/// separate stage-2 sub-sumcheck), not an upstream stage's opening. Errors only
-/// under `field-inline`, where the FR claim-reduction inputs are required
-/// fail-closed from the stage-1 FR carrier.
+/// Assemble the stage-2 batch consumed opening *values* from the upstream clear outputs into
+/// the generated `Stage2BatchInputClaims` aggregate. Each per-relation `*_from_upstream`
+/// helper wires which upstream opening feeds which downstream input. The product-remainder
+/// input is the product uni-skip's output claim (a separate stage-2 sub-sumcheck), not an
+/// upstream stage's opening. Errors only under `field-inline`, where the field-inline
+/// claim-reduction inputs are required fail-closed from the stage-1 field-inline carrier.
 pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
@@ -157,13 +156,12 @@ where
         ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
     };
 
-    // Draw each relation's challenges in declaration order: the RAM read-write
-    // gamma, the instruction claim-reduction gamma, under `field-inline` the FR
-    // claim-reduction gamma (each a single `challenge_scalar`), then the RAM
-    // output-check address reference point (the last member's `draw_challenges`
-    // override — one raw `challenge()` per RAM address variable, landing after
-    // the gammas as the inline draw did). The drawn challenges feed the
-    // input/output claims and populate the stage aggregate carried downstream.
+    // Draw each relation's challenges in declaration order: the RAM read-write gamma, the
+    // instruction claim-reduction gamma, under `field-inline` the field-inline claim-reduction
+    // gamma (each a single `challenge_scalar`), then the RAM output-check address reference
+    // point (the last member's `draw_challenges` override — one raw `challenge()` per RAM
+    // address variable, landing after the gammas as the inline draw did). The drawn challenges
+    // feed the input/output claims and populate the stage aggregate carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     // Every member's input points are empty (each derives its output points from its

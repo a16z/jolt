@@ -1,14 +1,14 @@
-//! Stage 8's packed field-inline seam: the FR limb group's presence resolve,
-//! the linear recomposition check against the stage-6b reduced `FieldRdInc`
-//! claim, and the semantic-to-physical claim reduction that places the group
-//! in the heterogeneous batch. `packed.rs` interacts with the packed FR
-//! protocol only through this module; the prover's packed stage-8 recipe
-//! derives its identical statement through [`reduced_precommitted_claim`].
+//! Stage 8's packed field-inline seam: the field-increment limb group's presence resolve, the
+//! linear recomposition check against the stage-6b reduced `FieldRdInc` claim, and the
+//! semantic-to-physical claim reduction that places the group in the heterogeneous batch.
+//! `packed.rs` interacts with the packed field-inline protocol only through this module; the
+//! prover's packed stage-8 recipe derives its identical statement through
+//! [`reduced_precommitted_claim`].
 //!
-//! The group is ALWAYS present on an FR-on packed build (all-zero content is
-//! legal — dense schedules are keyed by shape, never content), so presence is
-//! not claim-gated: the schedule marker, the proof's commitment slot, and the
-//! proof's claims slot must all agree, fail-closed both ways.
+//! The group is ALWAYS present on a packed build with field-inline enabled (all-zero content
+//! is legal — dense schedules are keyed by shape, never content), so presence is not
+//! claim-gated: the schedule marker, the proof's commitment slot, and the proof's claims slot
+//! must all agree, fail-closed both ways.
 
 use jolt_claims::protocols::field_inline::lattice::{
     field_inc_limb_count, field_inc_limbs_precommitted_role, recompose_limbs,
@@ -29,18 +29,17 @@ fn batch_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-/// The FR limb group's schedule marker: carried by
-/// [`PrecommittedSchedule`], always present on an FR-on packed build. The
-/// group's geometry is fully derived from `log_T` and the proof field
-/// ([`limb_plan`]), so the marker carries no data of its own.
+/// The field-increment limb group's schedule marker: carried by [`PrecommittedSchedule`],
+/// always present on a packed build with field-inline enabled. The group's geometry is fully
+/// derived from `log_T` and the proof field ([`limb_plan`]), so the marker carries no data of
+/// its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldIncLimbsScheduled;
 
-/// The proof-carried FR limb-group evaluations at the stage-6b reduced
-/// `FieldRdInc` point, in little-endian limb order (fp128: two). The
-/// recomposition check and the batched opening bind them; they are absorbed
-/// into the transcript by the prefix-pack reduction before its selector
-/// draw.
+/// The proof-carried field-increment limb-group evaluations at the stage-6b reduced
+/// `FieldRdInc` point, in little-endian limb order (fp128: two). The recomposition check and
+/// the batched opening bind them; they are absorbed into the transcript by the prefix-pack
+/// reduction before its selector draw.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct FieldIncLimbClaims<F> {
@@ -57,10 +56,10 @@ pub fn limb_plan<F: JoltField>(log_t: usize) -> Result<FieldIncLimbPackingPlan, 
     .map_err(batch_failed)
 }
 
-/// Resolve the FR limb group's proof slots against the schedule marker,
-/// fail-closed both ways. Every arm except full agreement rejects: the
-/// marker is constructed on every FR-on schedule, so a missing marker means
-/// broken input validation, not a legal FR-absent proof.
+/// Resolve the field-increment limb group's proof slots against the schedule marker,
+/// fail-closed both ways. Every arm except full agreement rejects: the marker is constructed
+/// on every field-inline schedule, so a missing marker means broken input validation, not a
+/// legal proof without field-inline.
 pub fn resolve_proof_slots<'a, F, C>(
     schedule: &PrecommittedSchedule,
     commitment: Option<&'a C>,
@@ -75,10 +74,10 @@ pub fn resolve_proof_slots<'a, F, C>(
             field: "claims.field_inc_limbs",
         }),
         (None, Some(_), _) | (None, _, Some(_)) => Err(batch_failed(
-            "FR limb payload supplied without a scheduled limb group",
+            "field-increment limb payload supplied without a scheduled limb group",
         )),
         (None, None, None) => Err(batch_failed(
-            "an FR-on packed schedule must carry the FR limb group",
+            "a packed field-inline schedule must carry the field-increment limb group",
         )),
     }
 }
@@ -96,7 +95,7 @@ pub fn reduced_field_rd_inc<F: JoltField>(stage6b: &Stage6bClearOutput<F>) -> (F
     )
 }
 
-/// The FR limb group's reduced batch entry, shared verbatim by the packed
+/// The field-increment limb group's reduced batch entry, shared verbatim by the packed
 /// prover's stage 8 so both sides derive the same statement and transcript:
 ///
 /// 1. the linear recomposition check binds the proof-carried limb
@@ -105,7 +104,7 @@ pub fn reduced_field_rd_inc<F: JoltField>(stage6b: &Stage6bClearOutput<F>) -> (F
 ///    reduction — the packing reduction itself stays claim-agnostic;
 /// 2. the prefix-pack reduction absorbs the limb evaluations and the reduced
 ///    point, draws the slot selector, and yields the one physical claim the
-///    heterogeneous batch discharges under the frozen FR role.
+///    heterogeneous batch discharges under the frozen field-inline role.
 ///
 /// The check pins the weighted sum only: nothing verifies that the committed
 /// columns are the canonical u64 decomposition (the u64 envelope is the
@@ -180,7 +179,7 @@ mod tests {
     fn recomposition_binds_the_reduced_claim() {
         let plan = limb_plan::<Fr>(LOG_T).unwrap();
         let point = vec![fr(3); LOG_T];
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"fr-limb-seam-test");
+        let mut transcript = Blake2bTranscript::<Fr>::new(b"field-inline-limb-seam-test");
         let claim = reduced_precommitted_claim(
             &plan,
             &(),
@@ -203,7 +202,7 @@ mod tests {
 
         let mut tampered = limbs();
         tampered.limbs[0] += fr(1);
-        let mut transcript = Blake2bTranscript::<Fr>::new(b"fr-limb-seam-test");
+        let mut transcript = Blake2bTranscript::<Fr>::new(b"field-inline-limb-seam-test");
         assert!(matches!(
             reduced_precommitted_claim(
                 &plan,

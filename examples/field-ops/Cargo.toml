@@ -4,10 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-# The guest is FR-only (its body is raw field-inline instructions), and FR
-# proving is modular-prover-only, so the whole pipeline hangs off this
-# non-default feature: default workspace builds must not unify field-inline
-# into the modular prover stack.
+# The guest uses raw field-inline instructions and requires the modular prover.
+# The whole pipeline hangs off this non-default feature: default workspace
+# builds must not unify field-inline into the modular prover stack.
 field-inline = [
   "guest/field-inline",
   "dep:jolt-field",

@@ -1,10 +1,9 @@
-//! Stage 6b's field-inline seam: every FR-specific divergence of the stage-6b
-//! verifier in one place — the committed-program rejection, the preprocessed
-//! side-table load, the FR fold legs and cycle sub-points for the batch build,
-//! the FR increment-reduction member and its input wiring, and the curated
-//! absorb splice. `verify.rs`/`batch.rs` interact with the FR protocol only
-//! through the functions here (plus the FR carrier fields, which are proof
-//! shape).
+//! Stage 6b's field-inline seam: every field-inline-specific divergence of the stage-6b
+//! verifier in one place — the committed-program rejection, the preprocessed side-table load,
+//! the field-inline fold legs and cycle sub-points for the batch build, the field-register
+//! increment-reduction member and its input wiring, and the curated absorb splice.
+//! `verify.rs`/`batch.rs` interact with the field-inline protocol only through the functions
+//! here (plus the field-inline carrier fields, which are proof shape).
 
 use jolt_claims::protocols::field_inline::{
     FieldInlineRelationId, FieldRegistersTraceDimensions, FIELD_REGISTERS_LOG_K,
@@ -28,9 +27,9 @@ use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::stages::stage6a::outputs::Stage6aCarriedChallenges;
 use crate::VerifierError;
 
-/// The FR extension anchors the field access selectors through the
-/// public/preprocessed side table, which committed-program mode cannot
-/// supply. Shared with the BlindFold build, which hits the same wall.
+/// The field-inline extension anchors the field access selectors through the
+/// public/preprocessed side table, which committed-program mode cannot supply. Shared with the
+/// BlindFold build, which hits the same wall.
 pub(crate) fn committed_program_rejection() -> VerifierError {
     VerifierError::StageClaimPublicInputFailed {
         stage: JoltRelationId::BytecodeReadRaf,
@@ -49,27 +48,27 @@ pub(crate) fn require_full_program(committed_program: bool) -> Result<(), Verifi
     Ok(())
 }
 
-/// The converted field-inline bytecode side table from the verifier
-/// preprocessing. A hard preprocessing requirement of stage 6 (spec: "Stage 6
-/// rejects a field-inline proof if the table is missing"); committed-program
-/// preprocessing carries no full bytecode, so FR-on rejects it here too.
+/// The converted field-inline bytecode side table from the verifier preprocessing. A hard
+/// preprocessing requirement of stage 6 (spec: "Stage 6 rejects a field-inline proof if the
+/// table is missing"); committed-program preprocessing carries no full bytecode, so with
+/// field-inline enabled rejects it here too.
 pub fn preprocessed_bytecode_table<PCS: CommitmentScheme>(
     program: &ProgramPreprocessing<PCS>,
 ) -> Result<FieldInlineBytecodeTable, VerifierError> {
     convert_field_inline_bytecode(required_field_inline_bytecode(program)?)
 }
 
-/// The FR legs of the stage-6b batch build, returned by
-/// [`bytecode_fold_and_cycles`]: the bytecode side-table fold inputs, plus the
-/// stage-4/5 FR cycle sub-points (past the FR address prefix) that feed both
-/// the bytecode FR public fold and the FR increment reduction's Eq publics.
+/// The field-inline legs of the stage-6b batch build, returned by
+/// [`bytecode_fold_and_cycles`]: the bytecode side-table fold inputs, plus the stage-4/5
+/// field-inline cycle sub-points (past the field-register address prefix) that feed both the
+/// bytecode field-inline public fold and the field-register increment reduction's Eq publics.
 pub(super) struct FieldInlineBatchLegs<F> {
     pub fold: FieldInlineBytecodeFold<F>,
     pub read_write_cycle: Vec<F>,
     pub val_evaluation_cycle: Vec<F>,
 }
 
-/// Split the stage-4/5 FR opening points past the FR address prefix and
+/// Split the stage-4/5 field-inline opening points past the field-register address prefix and
 /// assemble the side-table fold legs.
 pub(super) fn bytecode_fold_and_cycles<F: JoltField>(
     table: FieldInlineBytecodeTable,
@@ -103,9 +102,9 @@ pub(super) fn bytecode_fold_and_cycles<F: JoltField>(
     })
 }
 
-/// The stage-6b FR batch member: reduces the two semantic `FieldRdInc`
-/// openings to the single reduced opening the stage-8 joint opening consumes,
-/// with Eq publics over the given stage-4/5 FR cycle sub-points.
+/// The stage-6b field-inline batch member: reduces the two semantic `FieldRdInc` openings to
+/// the single reduced opening the stage-8 joint opening consumes, with Eq publics over the
+/// given stage-4/5 field-inline cycle sub-points.
 pub(super) fn inc_claim_reduction_member<F: JoltField>(
     log_t: usize,
     read_write_cycle: Vec<F>,
@@ -118,10 +117,10 @@ pub(super) fn inc_claim_reduction_member<F: JoltField>(
     )
 }
 
-/// Wire the two consumed `FieldRdInc` opening *values* from the stage-4 FR
-/// read/write checking and the stage-5 FR val evaluation. The upstream cells
-/// are plain (non-optional) fields of the FR-on stage-4/5 claims, so presence
-/// is a compile-time fact.
+/// Wire the two consumed `FieldRdInc` opening *values* from the stage-4 field-inline
+/// read/write checking and the stage-5 field-register value evaluation. The upstream cells are
+/// plain (non-optional) fields of the field-inline stage-4/5 claims, so presence is a
+/// compile-time fact.
 pub fn inc_claim_reduction_inputs<F: JoltField>(
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,
@@ -132,7 +131,7 @@ pub fn inc_claim_reduction_inputs<F: JoltField>(
     }
 }
 
-/// Wire the two consumed `FieldRdInc` opening *points* from the stage-4/5 FR
+/// Wire the two consumed `FieldRdInc` opening *points* from the stage-4/5 field-inline
 /// members' output points. ZK-agnostic.
 pub fn inc_claim_reduction_input_points<F: JoltField>(
     stage4: &Stage4OutputPoints<F>,

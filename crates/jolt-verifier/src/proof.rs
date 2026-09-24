@@ -57,12 +57,11 @@ pub struct JoltProof<
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
-    /// The packed FR limb-group commitment (`FieldRdInc`'s u64 limb-word
-    /// columns as one dense precommitted group). Present on every FR-on
-    /// packed proof — all-zero content is legal, presence is not claim-gated.
-    /// Carried as an `Option` because producers without FR semantics (the
-    /// legacy packed converter) construct this type; their proofs fail the
-    /// protocol-config gate before the slot is read, and the stage-8 resolve
+    /// The packed field-increment limb-group commitment (`FieldRdInc`'s u64 limb-word columns
+    /// as one dense precommitted group). Present on every packed field-inline proof — all-zero
+    /// content is legal, presence is not claim-gated. Carried as an `Option` because producers
+    /// without field-inline semantics (the legacy packed converter) construct this type; their
+    /// proofs fail the protocol-config gate before the slot is read, and the stage-8 resolve
     /// rejects a missing payload fail-closed for everything else.
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub field_inc_limbs_commitment: Option<PCS::Output>,
@@ -79,10 +78,10 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    /// Assemble a proof without a field-inline payload. Producers with no FR
-    /// semantics (the legacy converters) build through here so they never
-    /// name the feature-gated slots; the modular FR-on provers attach theirs
-    /// with [`Self::with_field_inc_limbs_commitment`].
+    /// Assemble a proof without a field-inline payload. Producers with no field-inline
+    /// semantics (the legacy converters) build through here so they never name the
+    /// feature-gated slots; the modular provers with field-inline enabled attach theirs with
+    /// [`Self::with_field_inc_limbs_commitment`].
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per proof component, mirroring the wire struct"
@@ -117,8 +116,8 @@ where
         }
     }
 
-    /// Attach the packed FR limb-group commitment (every FR-on packed proof
-    /// carries one).
+    /// Attach the packed field-increment limb-group commitment (every packed field-inline
+    /// proof carries one).
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub fn with_field_inc_limbs_commitment(mut self, commitment: PCS::Output) -> Self {
         self.field_inc_limbs_commitment = Some(commitment);
@@ -167,10 +166,10 @@ where
     }
 }
 
-/// The field-register commitments of the field-inline extension. `FieldRdInc`
-/// is the extension's single committed polynomial; the FR access columns are
-/// virtual (anchored through the bytecode read-RAF path), so this nest stays
-/// one deep until the protocol commits more.
+/// The field-register commitments of the field-inline extension. `FieldRdInc` is the
+/// extension's single committed polynomial; the field-register access columns are virtual
+/// (anchored through the bytecode read-RAF path), so this nest stays one deep until the
+/// protocol commits more.
 #[cfg(feature = "field-inline")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldRegistersCommitments<C> {
@@ -192,12 +191,12 @@ pub struct JoltCommitments<C> {
     pub instruction_ra: Vec<C>,
     pub ram_ra: Vec<C>,
     pub bytecode_ra: Vec<C>,
-    /// Present on every field-inline proof (the FR-on build proves all guests
-    /// under the composed protocol). Carried as an `Option` because this type
-    /// is shared with producers that cannot supply FR commitments — the legacy
-    /// prover and the packed converter — whose proofs fail the protocol-config
-    /// gate before this field is ever read; [`validate_proof_consistency`]
-    /// rejects a missing payload fail-closed for everything else.
+    /// Present on every field-inline proof (the build with field-inline enabled proves all
+    /// guests under the composed protocol). Carried as an `Option` because this type is shared
+    /// with producers that cannot supply field-inline commitments — the legacy prover and the
+    /// packed converter — whose proofs fail the protocol-config gate before this field is ever
+    /// read; [`validate_proof_consistency`] rejects a missing payload fail-closed for
+    /// everything else.
     ///
     /// [`validate_proof_consistency`]: crate::verifier::validate_proof_consistency
     #[cfg(feature = "field-inline")]
@@ -223,8 +222,8 @@ impl<C> JoltCommitments<C> {
         }
     }
 
-    /// Attach the field-inline committed payload (the modular prover's stage 0
-    /// sets this on every FR-on proof).
+    /// Attach the field-inline committed payload (the modular prover's stage 0 sets this on
+    /// every field-inline proof).
     #[cfg(feature = "field-inline")]
     pub fn with_field_inline(mut self, field_inline: FieldInlineCommitments<C>) -> Self {
         self.field_inline = Some(field_inline);
@@ -272,8 +271,8 @@ pub struct ClearProofClaims<F: JoltField> {
     pub stage6a: Stage6aOutputClaims<F>,
     pub stage6b: Stage6bOutputClaims<F>,
     pub stage7: Stage7OutputClaims<F>,
-    /// The FR limb-group evaluations at the stage-6b reduced `FieldRdInc`
-    /// point. Present on every FR-on packed proof (see
+    /// The field-increment limb-group evaluations at the stage-6b reduced `FieldRdInc` point.
+    /// Present on every packed field-inline proof (see
     /// [`JoltProof::field_inc_limbs_commitment`] for the `Option` rationale).
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub field_inc_limbs: Option<FieldIncLimbClaims<F>>,

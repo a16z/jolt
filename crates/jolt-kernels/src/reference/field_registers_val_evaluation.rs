@@ -1,14 +1,14 @@
 //! The stage-5 `FieldRegistersValEvaluation` kernel: a hand-rolled member over
 //! the cycle domain.
 //!
-//! The summand is `LT(j, r_field_rw.cycle) · rd_inc(j) · rd_wa(r_address, j)`
-//! — the jolt registers value-evaluation kernel's structure at the FR
-//! dimensions: the "field-register value at `(r_address, r_cycle)` is the sum
-//! of earlier increments" identity. The `rd_wa` table is the address-bound
-//! slice of the FR witness oracle's `(2^4 × T)` one-hot write-address grid (an
-//! opening-side fold at the upstream FR read-write address prefix), and
-//! `LtCycle` is ONE multilinear: `LtPolynomial::evaluations(r_cycle)`. The
-//! FieldInline id family cannot ride the jolt-keyed
+//! The summand is `LT(j, r_field_rw.cycle) · rd_inc(j) · rd_wa(r_address, j)` — the
+//! jolt registers value-evaluation kernel's structure at the field-register dimensions:
+//! the "field-register value at `(r_address, r_cycle)` is the sum of earlier
+//! increments" identity. The `rd_wa` table is the address-bound slice of the
+//! field-inline witness oracle's `(2^4 × T)` one-hot write-address grid (an
+//! opening-side fold at the upstream field-register read-write address prefix), and
+//! `LtCycle` is ONE multilinear: `LtPolynomial::evaluations(r_cycle)`. The FieldInline
+//! id family cannot ride the jolt-keyed
 //! [`NaiveSumcheckProver`](crate::NaiveSumcheckProver), so the tables and the
 //! expression are hand-held (the
 //! [`field_registers_claim_reduction`](super::field_registers_claim_reduction)
@@ -54,7 +54,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>> for Referenc
         let registers_val_point: &[F] = &inputs.points.registers_val;
         if registers_val_point.len() != FIELD_REGISTERS_LOG_K + log_t {
             return Err(KernelError::InvariantViolation {
-                reason: "FR value-evaluation input point has the wrong variable count",
+                reason: "field-register value-evaluation input point has the wrong variable count",
             });
         }
         let (r_address, r_cycle) = registers_val_point.split_at(FIELD_REGISTERS_LOG_K);

@@ -859,7 +859,7 @@ mod field_inline {
             witness.as_ref(),
             &public_io,
         )
-        .expect("modular FR prove");
+        .expect("modular field-inline prove");
 
         GeneratedVerifierFixture {
             preprocessing: prover_preprocessing.verifier,

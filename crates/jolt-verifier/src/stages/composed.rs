@@ -399,7 +399,7 @@ impl<B> ReadRafAddressPhase<B> {
         for (index, flag) in FIELD_INLINE_BYTECODE_STAGE1_FLAGS.into_iter().enumerate() {
             #[expect(
                 clippy::arithmetic_side_effects,
-                reason = "2 + NUM_CIRCUIT_FLAGS + index is a small constant sum over the FR flags"
+                reason = "2 + NUM_CIRCUIT_FLAGS + index is a small constant sum over the field-inline flags"
             )]
             let power = 2 + NUM_CIRCUIT_FLAGS + index;
             extension = extension
@@ -421,7 +421,7 @@ impl<B> ReadRafAddressPhase<B> {
         for (index, polynomial) in stage4_rows.into_iter().enumerate() {
             #[expect(
                 clippy::arithmetic_side_effects,
-                reason = "3 + index is a small constant sum over the three FR access rows"
+                reason = "3 + index is a small constant sum over the three field-register access rows"
             )]
             let power = 3 + index;
             stage4_extension = stage4_extension

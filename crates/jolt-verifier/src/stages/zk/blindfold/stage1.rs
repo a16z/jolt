@@ -46,16 +46,16 @@ where
         stage: JoltRelationId::SpartanOuter,
         reason: error.to_string(),
     })?;
-    // Under `field-inline` this coefficient table is the COMPOSED one (51
-    // columns): the same source the clear path's factored check consumes, so
-    // the appended FR weight publics bake automatically.
+    // Under `field-inline` this coefficient table is the COMPOSED one (51 columns): the same
+    // source the clear path's factored check consumes, so the appended field-inline weight
+    // publics bake automatically.
     for (id, value) in remainder_formula.public_coefficients() {
         values.public(VerifierPublicId::SpartanOuter(id), value)?;
     }
 
-    // The composed opening row order: the 35 ordinary openings in canonical
-    // order, then (under `field-inline`) the 16 FR-local columns in
-    // appended-column order — the clear path's absorb order exactly.
+    // The composed opening row order: the 35 ordinary openings in canonical order, then (under
+    // `field-inline`) the 16 field-inline columns in appended-column order — the clear path's
+    // absorb order exactly.
     let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
 
     #[expect(
@@ -111,10 +111,10 @@ where
     )
 }
 
-/// The composed stage-1 committed opening row order: the 35 ordinary
-/// Spartan-outer openings in canonical (`dimensions.variables()`) order,
-/// then — under `field-inline` — the 16 FR-local openings in appended-column
-/// order. This is exactly `stage1::verify`'s absorb/commit order.
+/// The composed stage-1 committed opening row order: the 35 ordinary Spartan-outer openings in
+/// canonical (`dimensions.variables()`) order, then — under `field-inline` — the 16
+/// field-inline openings in appended-column order. This is exactly `stage1::verify`'s
+/// absorb/commit order.
 pub(super) fn stage1_spartan_outer_opening_ids(
     dimensions: &SpartanOuterDimensions,
 ) -> Vec<VerifierOpeningId> {
@@ -166,10 +166,9 @@ mod tests {
         }
     }
 
-    /// The composed opening row order is the clear absorb order: the 35
-    /// ordinary openings in canonical order, then (FR-on) the 16 FR-local
-    /// openings in appended-column order, matching the composed jolt-r1cs
-    /// column count.
+    /// The composed opening row order is the clear absorb order: the 35 ordinary openings in
+    /// canonical order, then (with field-inline enabled) the 16 field-inline openings in
+    /// appended-column order, matching the composed jolt-r1cs column count.
     #[test]
     fn stage1_opening_ids_follow_the_composed_column_order() {
         let dimensions = SpartanOuterDimensions::rv64(3);
@@ -200,10 +199,10 @@ mod tests {
         }
     }
 
-    /// The lowered composed output expression evaluates bit-identically to the
-    /// composed factored form `JoltSpartanOuterRemainder::expected_output_claim`
-    /// over the full selected opening vector — the same equation the clear
-    /// stage-1 path checks (FR-on: 51 openings; FR-off: the rv64 35).
+    /// The lowered composed output expression evaluates bit-identically to the composed
+    /// factored form `JoltSpartanOuterRemainder::expected_output_claim` over the full selected
+    /// opening vector — the same equation the clear stage-1 path checks (with field-inline
+    /// enabled: 51 openings; with field-inline disabled: the rv64 35).
     #[test]
     fn lowered_output_expr_matches_the_composed_factored_form() {
         let log_t = 3usize;

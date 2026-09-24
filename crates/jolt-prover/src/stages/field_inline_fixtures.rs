@@ -1,4 +1,4 @@
-//! Shared FR-profile trace fixtures for the stage-recipe round-trip tests.
+//! Shared field-inline trace fixtures for the stage-recipe round-trip tests.
 //!
 //! Hand-crafted rows that are semantically consistent instruction executions
 //! (the same discipline as `jolt_witness::testing::with_sample_backend`), so
@@ -6,10 +6,10 @@
 //! self-checks hold — including the stage-4 register-file and RAM value
 //! checks (consistent register reads, and the termination store the witness
 //! plane's device-derived final RAM state demands). Two profiles: an
-//! ADDI-only trace (an FR-profile guest executing zero FR instructions —
-//! every FR column is zero), and an FR arithmetic trace (two field loads and
-//! a multiply, the stage-0 fixture's rows) whose decoded FR instruction
-//! words populate the FR columns.
+//! ADDI-only trace (a field-inline guest executing zero field-inline instructions —
+//! every field-inline column is zero), and a field arithmetic trace (two field loads and
+//! a multiply, the stage-0 fixture's rows) whose decoded field-inline instruction
+//! words populate the field-inline columns.
 
 #![expect(
     clippy::unwrap_used,
@@ -46,7 +46,7 @@ use crate::{JoltProverPreprocessing, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
 // 3, not 2: the last physical cycle must be a noop (constraint 21's
-// ShouldJump convention), so the FR fixture's six real rows need padding
+// ShouldJump convention), so the field-inline fixture's six real rows need padding
 // room behind them.
 pub(crate) const LOG_T: usize = 3;
 // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
@@ -72,7 +72,7 @@ fn instruction(
 
 /// The fixture programs' preprocessing, shared verbatim between the witness
 /// backend and the prover-preprocessing carrier so both fronts see the same
-/// bytecode facts (PC mapping, FR side-table metadata).
+/// bytecode facts (PC mapping, field-inline side-table metadata).
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 fn fixture_program_preprocessing(
     bytecode: Vec<JoltInstructionRow>,
@@ -86,7 +86,7 @@ fn fixture_program_preprocessing(
     })
 }
 
-pub(crate) fn fr_backend(
+pub(crate) fn field_inline_backend(
     bytecode: Vec<JoltInstructionRow>,
     rows: Vec<TraceRow>,
 ) -> TraceBackend<OwnedTrace> {
@@ -206,9 +206,9 @@ fn termination_store_rows(offset: usize) -> [TraceRow; 2] {
     ]
 }
 
-/// An FR-profile guest executing only ordinary instructions (an ADDI with
+/// A field-inline guest executing only ordinary instructions (an ADDI with
 /// consistent register semantics, the termination store, then the terminal
-/// JAL): the rv64 eq rows are satisfied while every FR column is zero.
+/// JAL): the rv64 eq rows are satisfied while every field-inline column is zero.
 fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
     let [one, store] = termination_store_rows(1);
@@ -250,14 +250,14 @@ fn addi_only_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
 
 pub(crate) fn addi_only_backend() -> TraceBackend<OwnedTrace> {
     let (bytecode, rows) = addi_only_program();
-    fr_backend(bytecode, rows)
+    field_inline_backend(bytecode, rows)
 }
 
 /// Two field loads and a multiply: `FieldRdInc = [13, 17, 221, 0]`,
-/// `13 · 17 = 221` — every FR eq row and both FR product lanes are satisfied
+/// `13 · 17 = 221` — every field-inline eq row and both field-inline product lanes are satisfied
 /// (the product columns are extractor-derived), and the x-register file is
 /// untouched.
-fn fr_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
+fn field_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     let load_a = instruction(
         JoltInstructionKind::FIELD_LOAD_IMM,
         0,
@@ -347,9 +347,9 @@ fn fr_arithmetic_program() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
     )
 }
 
-pub(crate) fn fr_arithmetic_backend() -> TraceBackend<OwnedTrace> {
-    let (bytecode, rows) = fr_arithmetic_program();
-    fr_backend(bytecode, rows)
+pub(crate) fn field_arithmetic_backend() -> TraceBackend<OwnedTrace> {
+    let (bytecode, rows) = field_arithmetic_program();
+    field_inline_backend(bytecode, rows)
 }
 
 /// The prover-preprocessing carrier the stage-4+ recipes take, over the
@@ -371,9 +371,9 @@ fn prover_preprocessing(
     }
 }
 
-pub(crate) fn fr_arithmetic_preprocessing() -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>
-{
-    prover_preprocessing(fr_arithmetic_program().0)
+pub(crate) fn field_arithmetic_preprocessing(
+) -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
+    prover_preprocessing(field_arithmetic_program().0)
 }
 
 pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>> {
@@ -381,7 +381,7 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
 }
 
 /// The stage-4+ recipes' checked-inputs carrier for the fixture traces,
-/// mirroring what shape validation derives for an FR-on proof at this scale
+/// mirroring what shape validation derives for a field-inline proof at this scale
 /// (no advice, no precommitted objects, full program).
 pub(crate) fn test_checked_inputs() -> CheckedInputs {
     CheckedInputs {
@@ -668,7 +668,7 @@ pub(crate) mod twins {
         sumchecks.append_output_claims(transcript, &stage2.claims.batch_outputs);
     }
 
-    /// Stage 3's twin (`stage3::verify`'s clear body — the stage has no FR
+    /// Stage 3's twin (`stage3::verify`'s clear body — the stage has no field-inline
     /// member): positions the transcript at the stage-4 boundary.
     pub(crate) fn replay_stage3<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,

@@ -5,9 +5,9 @@
     reason = "completeness fixtures should fail loudly when a valid proof is rejected"
 )]
 
-// The legacy-generated akita fixtures pin the FR axis disabled, which the
-// FR-on verifier rejects at the protocol-config gate, so FR-on the suite runs
-// over the modular packed FR fixture instead.
+// The legacy-generated akita fixtures pin the field-inline axis disabled, which the verifier
+// with field-inline enabled rejects at the protocol-config gate, so with field-inline enabled,
+// the suite runs over the modular packed field-inline fixture instead.
 #[cfg(feature = "field-inline")]
 use crate::support::akita_fixtures::akita_field_inline_eqpoly_case;
 #[cfg(not(feature = "field-inline"))]
@@ -40,5 +40,5 @@ fn akita_committed_muldiv_fixture_verifies() {
 fn akita_field_inline_eqpoly_fixture_verifies() {
     akita_field_inline_eqpoly_case()
         .verify()
-        .expect("packed FR eq-MLE case verifies");
+        .expect("packed field-inline eq-MLE case verifies");
 }

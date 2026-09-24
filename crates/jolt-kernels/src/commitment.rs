@@ -128,7 +128,7 @@ pub struct WitnessCommitment<PCS: CommitmentScheme> {
     pub hint: PCS::OpeningHint,
 }
 
-/// One committed field-inline witness polynomial — the FR sibling of
+/// One committed field-inline witness polynomial, corresponding to
 /// [`WitnessCommitment`], keeping the two id namespaces disjoint.
 #[cfg(feature = "field-inline")]
 pub struct FieldInlineWitnessCommitment<PCS: CommitmentScheme> {
@@ -161,10 +161,10 @@ where
         setup: &PCS::ProverSetup,
     ) -> Result<Vec<WitnessCommitment<PCS>>, KernelError<F>>;
 
-    /// Commit the field-inline committed columns in the same embedding grid
-    /// as the main witness, sourced from the plane's field-inline oracle.
-    /// Fails closed when the plane serves none: an FR-on build proves only
-    /// FR-profile witnesses.
+    /// Commit the field-inline committed columns in the same embedding grid as the main
+    /// witness, sourced from the plane's field-inline oracle. Fails closed when the
+    /// plane serves none: a build with field-inline enabled proves only field-inline
+    /// witnesses.
     #[cfg(feature = "field-inline")]
     fn commit_field_inline_witness(
         &self,

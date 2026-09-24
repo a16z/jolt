@@ -574,7 +574,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn fr_off_preprocessing_rejects_field_inline_rows() {
+    fn base_preprocessing_rejects_field_inline_rows() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_MUL;
         row.operands = NormalizedOperands {
@@ -594,7 +594,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn fr_on_preprocessing_builds_clean_metadata_for_field_rows() {
+    fn field_inline_preprocessing_builds_clean_metadata_for_field_rows() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_MUL;
         row.operands = NormalizedOperands {

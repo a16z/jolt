@@ -1,12 +1,11 @@
 //! Field-inline bytecode side-table plumbing shared by stages 6a and 6b.
 //!
 //! The verifier preprocessing carries the field-inline bytecode facts as
-//! `jolt_program::field_inline::FieldInlineBytecodeMetadata` (op + FR operand
-//! slots per row, the S7 program-boundary shape); the bytecode read-RAF
-//! formulas consume the jolt-claims geometry shape
-//! ([`FieldInlineBytecodeRow`]: per-op flags + operands). This module owns the
-//! required-presence check, the conversion between the two shapes, and the
-//! FR-extended per-stage gamma power expansion the stage-6 folds share.
+//! `jolt_program::field_inline::FieldInlineBytecodeMetadata` (op + field-inline operand slots
+//! per row, the S7 program-boundary shape); the bytecode read-RAF formulas consume the
+//! jolt-claims geometry shape ([`FieldInlineBytecodeRow`]: per-op flags + operands). This
+//! module owns the required-presence check, the conversion between the two shapes, and the
+//! field-inline-extended per-stage gamma power expansion the stage-6 folds share.
 
 #[cfg(test)]
 use jolt_riscv::JoltInstructionRow;
@@ -39,10 +38,10 @@ pub struct FieldInlineBytecodeTable {
     pub field_register_log_k: usize,
 }
 
-/// The field-inline bytecode side table from the verifier preprocessing,
-/// required fail-closed: an FR-on verifier without the metadata (committed
-/// program mode, or a full program preprocessed without FR support) cannot
-/// anchor the FR access selectors to the bytecode and must reject.
+/// The field-inline bytecode side table from the verifier preprocessing, required fail-closed:
+/// a verifier with field-inline enabled without the metadata (committed program mode, or a
+/// full program preprocessed without field-inline support) cannot anchor the field-register
+/// access selectors to the bytecode and must reject.
 pub fn required_field_inline_bytecode<PCS: CommitmentScheme>(
     program: &ProgramPreprocessing<PCS>,
 ) -> Result<&FieldInlineBytecodeMetadata, VerifierError> {
@@ -54,14 +53,13 @@ pub fn required_field_inline_bytecode<PCS: CommitmentScheme>(
         })
 }
 
-/// Re-derive the side table from the padded ordinary bytecode under the
-/// verifier's instruction profile and require the preprocessing's copy to
-/// match it exactly. The side table is a function of the bytecode (one owner:
-/// `FieldInlineBytecodeMetadata::from_bytecode`), so a preprocessing whose
-/// stored table disagrees with its own bytecode — a stale artifact, a
-/// mis-profiled preprocess, or a tampered file — would let the FR access
-/// selectors anchor to rows the ordinary bytecode does not encode. Runs once
-/// per verification at input validation.
+/// Re-derive the side table from the padded ordinary bytecode under the verifier's instruction
+/// profile and require the preprocessing's copy to match it exactly. The side table is a
+/// function of the bytecode (one owner: `FieldInlineBytecodeMetadata::from_bytecode`), so a
+/// preprocessing whose stored table disagrees with its own bytecode — a stale artifact, a
+/// mis-profiled preprocess, or a tampered file — would let the field-register access selectors
+/// anchor to rows the ordinary bytecode does not encode. Runs once per verification at input
+/// validation.
 pub fn validate_field_inline_bytecode<PCS: CommitmentScheme>(
     program: &ProgramPreprocessing<PCS>,
 ) -> Result<(), VerifierError> {
@@ -169,10 +167,9 @@ fn conversion_failed(reason: impl ToString) -> VerifierError {
     }
 }
 
-/// The FR-extended per-stage gamma power vectors for the bytecode read-RAF
-/// folds. Extends the ordinary stage-1/4/5 power sequences (the same drawn
-/// scalars, more powers — no new Fiat-Shamir draws) to the field-inline
-/// counts; stages 2/3 gain no FR terms.
+/// The field-inline-extended per-stage gamma power vectors for the bytecode read-RAF folds.
+/// Extends the ordinary stage-1/4/5 power sequences (the same drawn scalars, more powers — no
+/// new Fiat-Shamir draws) to the field-inline counts; stages 2/3 gain no field-inline terms.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeStageGammas<F> {
     pub stage1: Vec<F>,
@@ -180,8 +177,8 @@ pub struct FieldInlineBytecodeStageGammas<F> {
     pub stage5: Vec<F>,
 }
 
-/// Expand the carried stage-1/4/5 scalars into the FR-extended power vectors
-/// (`[1, γ, γ², …]`, sized by the field-inline gamma counts).
+/// Expand the carried stage-1/4/5 scalars into the field-inline-extended power vectors (`[1,
+/// γ, γ², …]`, sized by the field-inline gamma counts).
 pub fn field_inline_stage_gamma_powers<F: Field>(
     challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
 ) -> FieldInlineBytecodeStageGammas<F> {
@@ -198,7 +195,7 @@ pub fn field_inline_stage_gamma_powers<F: Field>(
     }
 }
 
-/// The FR-extended stage-5 gamma count: the ordinary count plus the appended
+/// The field-inline-extended stage-5 gamma count: the ordinary count plus the appended
 /// `FieldRdWa@FieldRegistersValEvaluation` power.
 pub const fn field_inline_stage5_gamma_count() -> usize {
     2 + LookupTableKind::<RISCV_XLEN>::COUNT + FIELD_INLINE_BYTECODE_STAGE5_EXTRA_GAMMAS
@@ -214,29 +211,29 @@ fn gamma_powers<F: Field>(gamma: F, len: usize) -> Vec<F> {
     powers
 }
 
-/// The construction-time inputs of the stage-6b full-program bytecode
-/// read-RAF field-inline public fold: the converted side table, the FR
-/// register address prefixes and cycle sub-points of the stage-4/5 FR
-/// openings, and the FR-extended gamma powers. The relation evaluates the FR
-/// public stage values from these at `expected_output` time (clear only).
+/// The construction-time inputs of the stage-6b full-program bytecode read-RAF field-inline
+/// public fold: the converted side table, the field-inline register address prefixes and cycle
+/// sub-points of the stage-4/5 field-inline openings, and the field-inline-extended gamma
+/// powers. The relation evaluates the field-inline public stage values from these at
+/// `expected_output` time (clear only).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInlineBytecodeFold<F> {
     pub table: FieldInlineBytecodeTable,
-    /// The `FIELD_REGISTERS_LOG_K`-variable address prefix of the stage-4 FR
+    /// The `FIELD_REGISTERS_LOG_K`-variable address prefix of the stage-4 field-inline
     /// read-write opening point.
     pub read_write_address: Vec<F>,
-    /// The cycle suffix of the stage-4 FR read-write opening point.
+    /// The cycle suffix of the stage-4 field-register read-write opening point.
     pub read_write_cycle: Vec<F>,
-    /// The `FIELD_REGISTERS_LOG_K`-variable address prefix of the stage-5 FR
+    /// The `FIELD_REGISTERS_LOG_K`-variable address prefix of the stage-5 field-inline
     /// val-evaluation opening point.
     pub val_evaluation_address: Vec<F>,
-    /// The cycle suffix of the stage-5 FR val-evaluation opening point.
+    /// The cycle suffix of the stage-5 field-register value-evaluation opening point.
     pub val_evaluation_cycle: Vec<F>,
     pub gammas: FieldInlineBytecodeStageGammas<F>,
 }
 
-/// [`crate::stages::stage6_checked_split`] for FR opening points, attributing
-/// the failure to the field-inline relation consuming the split.
+/// [`crate::stages::stage6_checked_split`] for field-inline opening points, attributing the
+/// failure to the field-inline relation consuming the split.
 pub(crate) fn field_inline_checked_split<'a, F: Field>(
     label: &'static str,
     point: &'a [F],
@@ -349,9 +346,9 @@ mod tests {
         }
     }
 
-    /// Every op converts to exactly its geometry flag, and the FR operand
-    /// slots carry over index-for-index. The bridge x-register and immediate
-    /// are Spartan-constraint payload and drop.
+    /// Every op converts to exactly its geometry flag, and the field-inline operand slots
+    /// carry over index-for-index. The bridge x-register and immediate are Spartan-constraint
+    /// payload and drop.
     #[test]
     fn conversion_maps_each_op_to_its_flag_and_carries_operands() {
         let rows: Vec<ProgramRow> = ALL_OPS.into_iter().map(program_row).collect();
@@ -399,8 +396,8 @@ mod tests {
         ));
     }
 
-    /// The side table is a hard requirement: full-program preprocessing
-    /// without the FR metadata rejects with the precise payload name.
+    /// The side table is a hard requirement: full-program preprocessing without the
+    /// field-inline metadata rejects with the precise payload name.
     #[test]
     fn missing_side_table_is_a_verifier_error() {
         use common::jolt_device::{JoltDevice, MemoryConfig};
@@ -427,9 +424,9 @@ mod tests {
         ));
     }
 
-    /// The stored side table must equal the one derived from the bytecode:
-    /// a preprocessing whose FR rows disagree with its own instructions is
-    /// rejected at input validation.
+    /// The stored side table must equal the one derived from the bytecode: a preprocessing
+    /// whose field-inline rows disagree with its own instructions is rejected at input
+    /// validation.
     #[test]
     fn side_table_disagreeing_with_the_bytecode_is_rejected() {
         use common::constants::RAM_START_ADDRESS;
@@ -483,12 +480,12 @@ mod tests {
         ));
     }
 
-    /// The FR-extended power vectors extend the ordinary draws: each ordinary
-    /// stage power sequence is a strict prefix (same squeezed scalar, more
-    /// powers — no new Fiat-Shamir draws).
+    /// The field-inline-extended power vectors extend the ordinary draws: each ordinary stage
+    /// power sequence is a strict prefix (same squeezed scalar, more powers — no new
+    /// Fiat-Shamir draws).
     #[test]
     fn extended_gamma_powers_extend_the_ordinary_power_sequences() {
-        let mut transcript = Blake2bTranscript::new(b"fr-gamma-powers");
+        let mut transcript = Blake2bTranscript::new(b"field-inline-gamma-powers");
         let challenges = BytecodeReadRafAddressPhaseChallenges::<Fr> {
             gamma: transcript.challenge_scalar(),
             stage1_gamma: transcript.challenge_scalar(),

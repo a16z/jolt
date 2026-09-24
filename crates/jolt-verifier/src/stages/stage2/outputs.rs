@@ -31,10 +31,9 @@ pub struct Stage2OutputClaims<F: JoltField> {
 }
 
 impl<F: JoltField> Stage2OutputClaims<F> {
-    /// Construct the ordinary stage-2 claims. Producers without field-inline
-    /// semantics use this regardless of the build's feature set — the FR
-    /// payload starts absent and `stage2::verify` rejects its absence on
-    /// FR-on proofs.
+    /// Construct the ordinary stage-2 claims. Producers without field-inline semantics use
+    /// this regardless of the build's feature set — the field-inline payload starts absent and
+    /// `stage2::verify` rejects its absence on field-inline proofs.
     pub fn new(product_uniskip_output_claim: F, batch_outputs: Stage2BatchOutputClaims<F>) -> Self {
         Self {
             product_uniskip_output_claim,
@@ -44,10 +43,10 @@ impl<F: JoltField> Stage2OutputClaims<F> {
 }
 
 impl<F: JoltField> Stage2BatchOutputClaims<F> {
-    /// Construct the ordinary stage-2 batch claims. Producers without
-    /// field-inline semantics use this regardless of the build's feature set —
-    /// the FR claim-reduction slot defaults to all-zero claims, inert because
-    /// such producers' proofs never declare the FR axis.
+    /// Construct the ordinary stage-2 batch claims. Producers without field-inline semantics
+    /// use this regardless of the build's feature set — the field-inline claim-reduction slot
+    /// defaults to all-zero claims, inert because such producers' proofs never declare the
+    /// field-inline axis.
     #[cfg_attr(
         not(feature = "field-inline"),
         expect(
@@ -74,14 +73,12 @@ impl<F: JoltField> Stage2BatchOutputClaims<F> {
     }
 }
 
-/// Source-of-truth for stage 2's sumcheck batch, in Fiat-Shamir batch order
-/// (RAM read-write, product remainder, instruction claim-reduction, the
-/// field-inline FR claim-reduction when composed, RAM RAF evaluation, RAM
-/// output check). `#[derive(SumcheckBatch)]` generates the
-/// `Stage2Batch{Input,Output}{Claims,Points}<F>` and `Stage2BatchChallenges<F>`
-/// aggregates — one field per instance, in this declaration order — plus the
-/// batched-verify drivers and the absorb plumbing. The product uni-skip is a
-/// separate sub-sumcheck, not part of this batch.
+/// Source-of-truth for stage 2's sumcheck batch, in Fiat-Shamir batch order (RAM read-write,
+/// product remainder, instruction claim-reduction, the field-inline claim-reduction when
+/// composed, RAM RAF evaluation, RAM output check). `#[derive(SumcheckBatch)]` generates the
+/// `Stage2Batch{Input,Output}{Claims,Points}<F>` and `Stage2BatchChallenges<F>` aggregates —
+/// one field per instance, in this declaration order — plus the batched-verify drivers and the
+/// absorb plumbing. The product uni-skip is a separate sub-sumcheck, not part of this batch.
 ///
 /// The instruction claim-reduction declares three cross-relation opening aliases
 /// (`lookup_output`, `left`/`right_instruction_input` = the product-remainder
@@ -106,11 +103,10 @@ pub struct Stage2BatchSumchecks<F: JoltField> {
     /// regular universal backend slot.
     pub product_remainder: ProductRemainder<F>,
     pub instruction_claim_reduction: InstructionClaimReduction<F>,
-    /// The FR claim reduction shares the trace domain (`log_T` rounds) with the
-    /// product remainder, so both bind the same batch suffix — the spec's
-    /// `r_prod` sharing. Declaration position (after the instruction
-    /// claim-reduction, before RAM RAF evaluation) is the spec's batch order
-    /// and gamma draw order.
+    /// The field-inline claim reduction shares the trace domain (`log_T` rounds) with the
+    /// product remainder, so both bind the same batch suffix — the spec's `r_prod` sharing.
+    /// Declaration position (after the instruction claim-reduction, before RAM RAF evaluation)
+    /// is the spec's batch order and gamma draw order.
     #[cfg(feature = "field-inline")]
     pub field_registers_claim_reduction: FieldRegistersClaimReduction<F>,
     pub ram_raf_evaluation: RamRafEvaluation<F>,
@@ -162,17 +158,15 @@ pub struct Stage2ClearOutput<F: JoltField> {
 }
 
 /// Stage 2's ZK output, carrying the Fiat-Shamir values BlindFold sources via
-/// `input.stage2.<field>`. The batch draws are the generated
-/// [`Stage2BatchChallenges`] member structs (`challenges.ram_read_write.gamma`,
-/// `challenges.instruction_claim_reduction.gamma`, under `field-inline` the FR
-/// claim-reduction gamma, and the RAM output-check address reference point
-/// `challenges.ram_output_check.output_address`; the remaining batch relations
-/// draw nothing — `NoChallenges`). The remaining two
-/// are non-batch draws — the product uni-skip reduction challenge and its
-/// freshly-drawn `product_tau_high` scalar (a separate sub-sumcheck) — so they
-/// are not part of the per-instance aggregate. `product_tau_low` is
-/// opening-derived (stage 1's remainder sumcheck point low half), stored so
-/// downstream stage-3 relation construction can read it mode-agnostically via
+/// `input.stage2.<field>`. The batch draws are the generated [`Stage2BatchChallenges`] member
+/// structs (`challenges.ram_read_write.gamma`, `challenges.instruction_claim_reduction.gamma`,
+/// under `field-inline` the field-inline claim-reduction gamma, and the RAM output-check
+/// address reference point `challenges.ram_output_check.output_address`; the remaining batch
+/// relations draw nothing — `NoChallenges`). The remaining two are non-batch draws — the
+/// product uni-skip reduction challenge and its freshly-drawn `product_tau_high` scalar (a
+/// separate sub-sumcheck) — so they are not part of the per-instance aggregate.
+/// `product_tau_low` is opening-derived (stage 1's remainder sumcheck point low half), stored
+/// so downstream stage-3 relation construction can read it mode-agnostically via
 /// [`Stage2Output::product_tau_low`]; BlindFold independently recomputes it from
 /// `stage1.remainder_consistency`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -294,14 +288,13 @@ mod tests {
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the pre-port inline draw: the RAM
-    /// read-write gamma, the instruction claim-reduction gamma (each a single
-    /// `challenge_scalar`), under `field-inline` the FR claim-reduction gamma
-    /// (the spec's draw slot: after the instruction claim-reduction gamma,
-    /// before the RAM output address challenges), then the RAM output-check
-    /// address reference point — one raw `challenge()` per RAM address
-    /// variable, via the last member's `draw_challenges` override (the other
-    /// members draw nothing).
+    /// Pins the batch's `draw_challenges` to the pre-port inline draw: the RAM read-write
+    /// gamma, the instruction claim-reduction gamma (each a single `challenge_scalar`), under
+    /// `field-inline` the field-inline claim-reduction gamma (the spec's draw slot: after the
+    /// instruction claim-reduction gamma, before the RAM output address challenges), then the
+    /// RAM output-check address reference point — one raw `challenge()` per RAM address
+    /// variable, via the last member's `draw_challenges` override (the other members draw
+    /// nothing).
     #[test]
     fn draw_challenges_matches_inline_draw_sequence() {
         let sumchecks = sumchecks();
@@ -423,12 +416,11 @@ mod tests {
         );
     }
 
-    /// Locks the field-inline absorb to the spec's committed output
-    /// row order (`specs/field-inline-protocol.md`, "Stage 2 Composition"):
-    /// member declaration order with the FR product claims following
-    /// the base product claims and before the instruction
-    /// claim-reduction non-aliased outputs. The aliased instruction cells
-    /// carry distinct sentinels to prove the id-driven skip still applies.
+    /// Locks the field-inline absorb to the spec's committed output row order
+    /// (`specs/field-inline-protocol.md`, "Stage 2 Composition"): member declaration order
+    /// with the field-inline product claims following the base product claims and before the
+    /// instruction claim-reduction non-aliased outputs. The aliased instruction cells carry
+    /// distinct sentinels to prove the id-driven skip still applies.
     #[cfg(feature = "field-inline")]
     #[test]
     fn opening_values_follow_canonical_field_inline_order() {
@@ -444,7 +436,7 @@ mod tests {
 
         let expected = (1..=11)
             .map(fr)
-            // The FR part of the product member.
+            // The field-inline part of the product member.
             .chain([fr(201), fr(202), fr(203)])
             // The instruction claim-reduction non-aliased outputs.
             .chain([fr(12), fr(13)])
@@ -455,9 +447,9 @@ mod tests {
     }
 
     /// The generated `output_claim_count` sums the members' wire sets: 16
-    /// expression-referenced openings, minus the reduction's 3 aliases, plus the
-    /// product remainder's 2 staged openings — plus, under `field-inline`, the
-    /// product member's 3 FR openings (the FR reduction aliases them).
+    /// expression-referenced openings, minus the reduction's 3 aliases, plus the product
+    /// remainder's 2 staged openings — plus, under `field-inline`, the product member's 3
+    /// field-inline openings (the field-inline reduction aliases them).
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
@@ -600,13 +592,13 @@ mod tests {
         );
     }
 
-    /// Pins the spec's `r_prod` sharing (`specs/field-inline-protocol.md`,
-    /// "Protocol Composition And Points"): the FR claim reduction and the
-    /// product remainder are both trace-domain (`log_T` rounds, default
-    /// offsets), so they bind the same batch-point suffix and derive the same
-    /// reversed opening point. This structural agreement is what makes the
-    /// explicit stage-2 equality check between the FR claim-reduction outputs
-    /// and the FR product outputs a same-polynomial-same-point statement.
+    /// Pins the spec's `r_prod` sharing (`specs/field-inline-protocol.md`, "Protocol
+    /// Composition And Points"): the field-inline claim reduction and the product remainder
+    /// are both trace-domain (`log_T` rounds, default offsets), so they bind the same
+    /// batch-point suffix and derive the same reversed opening point. This structural
+    /// agreement is what makes the explicit stage-2 equality check between the field-inline
+    /// claim-reduction outputs and the field-inline product outputs a
+    /// same-polynomial-same-point statement.
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_registers_claim_reduction_shares_the_product_remainder_point() {

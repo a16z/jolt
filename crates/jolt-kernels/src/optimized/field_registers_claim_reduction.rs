@@ -1,22 +1,22 @@
 //! The optimized field-registers claim-reduction (stage 2) kernel,
 //! byte-parity twin of [`crate::reference::field_registers_claim_reduction`].
 //!
-//! The reference binds four dense `T`-sized tables (`eq(τ_low)` plus the
-//! three FR value columns) every round. The integer sibling's
-//! ([`super::registers_claim_reduction`]) prefix–suffix `u64` machinery does
-//! not transfer — FR values are full field elements — but the FR columns are
-//! zero off FR-active cycles, which is the stronger structure:
+//! The reference binds four dense `T`-sized tables (`eq(τ_low)` plus the three
+//! field-register value columns) every round. The integer sibling's
+//! ([`super::registers_claim_reduction`]) prefix–suffix `u64` machinery does not
+//! transfer — field-register values are full field elements — but the field-inline
+//! columns are zero off active field-inline cycles, which is the stronger structure:
 //!
 //! - **γ-combined sparse column**: the summand
 //!   `eq(τ_low, t) · (rd + γ·rs1 + γ²·rs2)(t)` is linear in ONE combined
 //!   column `V = rd + γ·rs1 + γ²·rs2` (exact by distributivity), held as
-//!   sparse `(row, value)` cells over the FR-active cycles only. Absent
+//!   sparse `(row, value)` cells over the active field-inline cycles only. Absent
 //!   cells are hard zeros (unlike the read-write kernel's step-function
 //!   `Val`), so binding a lone cell just scales it.
 //! - **Gruen split-eq rounds**: `s(t) = l(t) · q(t)` with the linear factor's
 //!   `q(1)` accumulated over the sparse cells and `q(0)` recovered from the
 //!   running claim (the sibling tier's eval-at-1 trade) — O(active + √T) per
-//!   round, and an FR-inactive trace costs only the split-eq table build.
+//!   round, and a trace without field-inline activity costs only the split-eq table build.
 //! - **Direct opening claims at extraction**: the three produced openings
 //!   come from one split-eq walk over the retained per-cycle value triples
 //!   (the sibling kernels' post-hoc extraction pattern).
@@ -43,7 +43,7 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// One FR-active cycle's combined-column cell.
+/// One active field-inline cycle's combined-column cell.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SparseCell<F> {
@@ -69,13 +69,13 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
         let log_t = relation.rounds();
         if log_t == 0 {
             return Err(KernelError::Unsupported {
-                reason: "optimized FR claim reduction requires at least one cycle round",
+                reason: "optimized field-inline claim reduction requires at least one cycle round",
             });
         }
         let tau_low: &[F] = relation.tau_low();
         if tau_low.len() != log_t {
             return Err(KernelError::InvariantViolation {
-                reason: "FR claim-reduction tau point has the wrong variable count",
+                reason: "field-inline claim-reduction tau point has the wrong variable count",
             });
         }
         let cycles = 1usize << log_t;
@@ -97,10 +97,10 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
             })?;
         let gamma_sq = gamma * gamma;
 
-        // The per-cycle `[rd, rs1, rs2]` value triples of the FR-active
+        // The per-cycle `[rd, rs1, rs2]` value triples of the active field-inline
         // cycles (the oracle's `FieldRdValue`/`FieldRs1Value`/`FieldRs2Value`
-        // extractions: write post-value, read values, zero when absent), and
-        // their γ-combination as the sparse round column.
+        // extractions: write post-value, read values, zero when absent), and their
+        // γ-combination as the sparse round column.
         let mut triples: Vec<(u32, [F; 3])> = Vec::new();
         let mut cells: Vec<SparseCell<F>> = Vec::new();
         for (row, access) in rows.iter().enumerate() {
@@ -325,8 +325,8 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent FR
-/// traces, plus the FR-inactive degenerate case (an empty sparse column).
+/// Byte parity against the reference kernel on register-consistent field-inline traces,
+/// plus the degenerate case without field-inline activity (an empty sparse column).
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -339,14 +339,20 @@ mod tests {
 
     use super::*;
     use crate::optimized::field_registers_testing::{
-        inactive_fr_fixture, structured_fr_fixture, FrTraceFixture,
+        inactive_field_register_fixture, structured_field_register_fixture,
+        FieldRegisterTraceFixture,
     };
     use crate::optimized::parity::{
         probe_input_claim, run_lockstep, run_lockstep_degenerate, synthetic_point,
     };
     use crate::ReferenceBackend;
 
-    fn run_parity(fixture: FrTraceFixture, log_t: usize, seed: u64, expect_active: bool) {
+    fn run_parity(
+        fixture: FieldRegisterTraceFixture,
+        log_t: usize,
+        seed: u64,
+        expect_active: bool,
+    ) {
         fixture.with_plane(log_t, |backend| {
             let relation = FieldRegistersClaimReduction::<Fr>::new(
                 FieldRegistersTraceDimensions::new(log_t),
@@ -388,7 +394,10 @@ mod tests {
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
             if expect_active {
-                assert!(claim != Fr::from_u64(0), "FR-active fixture degenerated");
+                assert!(
+                    claim != Fr::from_u64(0),
+                    "fixture with field-inline activity degenerated"
+                );
                 run_lockstep(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -396,7 +405,11 @@ mod tests {
                     &round_challenges,
                 );
             } else {
-                assert_eq!(claim, Fr::from_u64(0), "FR-inactive claim must be zero");
+                assert_eq!(
+                    claim,
+                    Fr::from_u64(0),
+                    "claim without field-inline activity must be zero"
+                );
                 run_lockstep_degenerate(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -422,17 +435,17 @@ mod tests {
 
     #[test]
     fn parity_structured_even_log_t() {
-        run_parity(structured_fr_fixture(16), 4, 401, true);
+        run_parity(structured_field_register_fixture(16), 4, 401, true);
     }
 
     #[test]
     fn parity_structured_odd_log_t() {
-        run_parity(structured_fr_fixture(8), 3, 409, true);
+        run_parity(structured_field_register_fixture(8), 3, 409, true);
     }
 
     #[test]
     fn parity_single_cycle_round() {
-        let mut fixture = FrTraceFixture::new();
+        let mut fixture = FieldRegisterTraceFixture::new();
         fixture.load_imm(15, 7);
         fixture.arithmetic(FieldInlineOp::Add, 0, 15, 15);
         run_parity(fixture, 1, 419, true);
@@ -440,6 +453,6 @@ mod tests {
 
     #[test]
     fn parity_inactive_trace_is_degenerate() {
-        run_parity(inactive_fr_fixture(4), 3, 421, false);
+        run_parity(inactive_field_register_fixture(4), 3, 421, false);
     }
 }

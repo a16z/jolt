@@ -2,12 +2,11 @@
 //! FieldInline-family batch member (spec: `field-inline-protocol.md`, "Stage 2
 //! Composition").
 //!
-//! Reduces the three FR Spartan-outer value openings (`FieldRdValue`,
-//! `FieldRs1Value`, `FieldRs2Value`, batched by gamma) to the shared stage-2
-//! product point `r_prod`: the relation is trace-domain (`log_T` rounds), so it
-//! binds the same batch-point suffix as the product remainder and derives the
-//! same reversed opening point — the point agreement the spec's `r_prod`
-//! sharing is built on (pinned by the batch test
+//! Reduces the three field-inline Spartan-outer value openings (`FieldRdValue`,
+//! `FieldRs1Value`, `FieldRs2Value`, batched by gamma) to the shared stage-2 product point
+//! `r_prod`: the relation is trace-domain (`log_T` rounds), so it binds the same batch-point
+//! suffix as the product remainder and derives the same reversed opening point — the point
+//! agreement the spec's `r_prod` sharing is built on (pinned by the batch test
 //! `field_registers_claim_reduction_shares_the_product_remainder_point`).
 //!
 //! Owns the reduced-claim opening-point derivation and the `EqSpartan`

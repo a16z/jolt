@@ -1,27 +1,26 @@
 //! The optimized field-registers read/write-checking (stage 4) kernel: the
-//! integer-register sparse Twist ([`super::registers_read_write`]) at the FR
-//! geometry, byte-parity twin of
+//! integer-register sparse Twist ([`super::registers_read_write`]) at the
+//! field-register geometry, byte-parity twin of
 //! [`crate::reference::field_registers_read_write_checking`].
 //!
-//! The reference kernel binds six dense `2^(4 + log_T)` register-major grids
-//! per round. This kernel computes the same round polynomials from the
-//! sparse structure of the FR access pattern — the v2-port
-//! `SparseFieldRegState` design (`specs/native-field-registers.md`, Stage 4)
-//! restated over today's relation shapes:
+//! The reference kernel binds six dense `2^(4 + log_T)` register-major grids per round.
+//! This kernel computes the same round polynomials from the sparse structure of the
+//! field-inline access pattern — the v2-port `SparseFieldRegState` design
+//! (`specs/native-field-registers.md`, Stage 4) restated over today's relation shapes:
 //!
-//! - **Sparse cycle-major entries**: ≤ 3 entries per FR-active cycle (rs2
+//! - **Sparse cycle-major entries**: ≤ 3 entries per active field-inline cycle (rs2
 //!   merges into rs1's cell, rd into either read's), built in one pass over
-//!   the FR oracle's decoded per-cycle rows against a running K = 16 register
-//!   file (the all-zero init the FR val-evaluation sumcheck enforces).
-//!   Between touches an FR register is constant, so a missing merge partner
+//!   the field-inline oracle's decoded per-cycle rows against a running K = 16 register
+//!   file (the all-zero init the field-register value-evaluation sumcheck enforces).
+//!   Between touches a field register is constant, so a missing merge partner
 //!   is inferred from its neighbor's `prev_val`/`next_val` — field-valued
 //!   here (the v2 delta vs the integer sibling's raw `u64`s). The integer
 //!   sibling's u16 coefficient LUT is deliberately not ported: its win is
-//!   peak memory at ≤ 3·T entries, and FR entries are ≤ 3·(FR-active cycles).
+//!   peak memory at ≤ 3·T entries, and field-inline entries are ≤ 3·(active field-inline cycles).
 //! - **γ-combined read coefficient**: one `ra = γ·rs1_ra + γ²·rs2_ra` column
 //!   per entry (exact by distributivity).
 //! - **Gruen split-eq factoring** for the cycle rounds, with the quadratic
-//!   endpoints accumulated over the sparse rows only — an FR-inactive trace
+//!   endpoints accumulated over the sparse rows only — a trace without field-inline activity
 //!   has zero entries and the cycle rounds cost O(√T) eq-table work plus the
 //!   dense `FieldRdInc` bind (an all-zero column).
 //! - **Rayon past a threshold**: the round accumulation and the bind shell
@@ -34,7 +33,7 @@
 //!   straight from the sparse per-cycle read indices with a 2-way split-eq
 //!   walk (the sibling's `one_hot_operand_claims` — no γ⁻¹ recovery).
 //!
-//! Like the reference kernel, only the config-pinned FR phase split (phase 1
+//! Like the reference kernel, only the config-pinned field-inline phase split (phase 1
 //! = all cycle rounds, phase 2 = the 4 address rounds) is supported.
 
 use core::cmp::Ordering;
@@ -75,11 +74,10 @@ const PARALLEL_THRESHOLD: usize = 1 << 12;
 /// Pair-aligned block target for the parallel walks.
 const BLOCK_TARGET: usize = 1 << 12;
 
-/// One non-zero cell of the conceptual `K × T` FR register matrices: the
-/// bound `Val` coefficient plus the γ-combined read and write coefficients of
-/// one touched register slice. All value fields are field elements — FR
-/// registers hold full field values, so there is no raw-scalar shortcut for
-/// the untouched-neighbor boundary values.
+/// One non-zero cell of the conceptual `K × T` field register matrices: the bound `Val`
+/// coefficient plus the γ-combined read and write coefficients of one touched register
+/// slice. All value fields are field elements — field registers hold full field values,
+/// so there is no raw-scalar shortcut for the untouched-neighbor boundary values.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct FieldSparseEntry<F> {
@@ -95,7 +93,7 @@ struct FieldSparseEntry<F> {
     wa: F,
     /// Cycle-domain row index (before binding: the cycle).
     row: usize,
-    /// FR register index.
+    /// Field register index.
     col: u8,
 }
 
@@ -246,11 +244,10 @@ fn pair_aligned_bounds<F: JoltField>(entries: &[FieldSparseEntry<F>]) -> Vec<usi
     bounds
 }
 
-/// The cycle-round quadratic inner factor `[q(0), leading coefficient]` over
-/// the sparse entries: per row pair, the eq weight is
-/// `E_out[z >> in_bits] · E_in[z & mask]` (recombined per pair — untouched
-/// pairs contribute nothing, so there is no per-`x_out` factoring win at FR
-/// densities).
+/// The cycle-round quadratic inner factor `[q(0), leading coefficient]` over the sparse
+/// entries: per row pair, the eq weight is `E_out[z >> in_bits] · E_in[z & mask]`
+/// (recombined per pair — untouched pairs contribute nothing, so there is no
+/// per-`x_out` factoring win at field-inline densities).
 fn sparse_quadratic<F: JoltField>(
     entries: &[FieldSparseEntry<F>],
     e_in: &[F],
@@ -333,18 +330,17 @@ fn bind_sparse_entries<F: JoltField>(
     merge_range(0..entries.len(), output);
 }
 
-/// The rd write slots of one proof's FR trace — `(cycle, register)` pairs of
-/// every bytecode-active FR write — parked by the stage-4 kernel for the
-/// stage-5 val-evaluation kernel (which folds the same one-hot `FieldRdWa`
-/// grid at its address prefix).
+/// The rd write slots of one proof's field-inline trace — `(cycle, register)` pairs of
+/// every bytecode-active field-inline write — parked by the stage-4 kernel for the
+/// stage-5 val-evaluation kernel (which folds the same one-hot `FieldRdWa` grid at its
+/// address prefix).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedFieldRdWrites(pub(crate) Vec<(u32, u8)>);
 
-/// The decoded FR register rows of one proof, built by the first FR kernel to
-/// need them (stage 2) and shared with stages 4 and 5 through the session —
-/// one trace-sized build per proof. `Arc`-shared so a kernel can keep the
-/// rows while it parks its own carries; stage 5, the last consumer, releases
-/// them.
+/// The decoded field register rows of one proof, built by the first field-inline kernel
+/// to need them (stage 2) and shared with stages 4 and 5 through the session — one
+/// trace-sized build per proof. `Arc`-shared so a kernel can keep the rows while it
+/// parks its own carries; stage 5, the last consumer, releases them.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedFieldRegisterRows<F: JoltField>(
     #[cfg_attr(
@@ -354,10 +350,9 @@ pub(crate) struct SharedFieldRegisterRows<F: JoltField>(
     pub(crate) Arc<Vec<FieldInlineRegisterReadWriteRow<F>>>,
 );
 
-/// The proof's FR register rows, from the session when a previous FR kernel
-/// built them for this trace arity, otherwise decoded off the oracle and
-/// parked. `release` drops the shared copy from the session (the last
-/// consumer's call).
+/// The proof's field register rows, from the session when a previous field-inline
+/// kernel built them for this trace arity, otherwise decoded off the oracle and parked.
+/// `release` drops the shared copy from the session (the last consumer's call).
 pub(crate) fn field_register_rows<F: JoltField>(
     session: &mut ProofSession,
     field_inline: &dyn FieldInlineWitnessOracle<F>,
@@ -391,9 +386,9 @@ pub(crate) fn field_register_rows<F: JoltField>(
     Ok(rows)
 }
 
-/// Sparse per-cycle FR access facts extracted from the oracle's decoded rows:
-/// the ≤3-entries-per-active-cycle matrix cells plus the raw read/write index
-/// lists (reads feed the final one-hot claims, writes feed stage 5).
+/// Sparse per-cycle field-inline access facts extracted from the oracle's decoded rows:
+/// the ≤3-entries-per-active-cycle matrix cells plus the raw read/write index lists
+/// (reads feed the final one-hot claims, writes feed stage 5).
 pub(crate) struct FieldRegisterAccesses<F: JoltField> {
     entries: Vec<FieldSparseEntry<F>>,
     rs1_reads: Vec<(u32, u8)>,
@@ -402,13 +397,12 @@ pub(crate) struct FieldRegisterAccesses<F: JoltField> {
 }
 
 impl<F: JoltField> FieldRegisterAccesses<F> {
-    /// One pass over the decoded rows against a running register file (the
-    /// all-zero initial state every FR execution shares — enforced by the
-    /// stage-5 val-evaluation identity, not merely assumed). `Val` cells use
-    /// the running value, exactly as the oracle's dense
-    /// `FieldRegistersVal` materializer replays writes; the witness view's
-    /// build-time validation pins the rows' claimed pre-values to the same
-    /// replay.
+    /// One pass over the decoded rows against a running register file (the all-zero
+    /// initial state every field-inline execution shares — enforced by the stage-5
+    /// val-evaluation identity, not merely assumed). `Val` cells use the running value,
+    /// exactly as the oracle's dense `FieldRegistersVal` materializer replays writes;
+    /// the witness view's build-time validation pins the rows' claimed pre-values to
+    /// the same replay.
     pub(crate) fn collect(
         rows: &[FieldInlineRegisterReadWriteRow<F>],
         register_count: usize,
@@ -424,7 +418,7 @@ impl<F: JoltField> FieldRegisterAccesses<F> {
             let col = usize::from(register);
             if col >= register_count {
                 return Err(KernelError::InvariantViolation {
-                    reason: "FR register index outside the field-register domain",
+                    reason: "field register index is out of bounds",
                 });
             }
             Ok(col)
@@ -517,27 +511,29 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
     > {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
-        // The FR phase split is pinned by the compile-time protocol config
-        // (phase 1 = log_t, phase 2 = log_k) — the same guard as the
-        // reference kernel: a drifted config is a bug, not a capability gap.
+        // The field-inline phase split is pinned by the compile-time protocol config
+        // (phase 1 = log_t, phase 2 = log_k) — the same guard as the reference kernel:
+        // a drifted config is a bug, not a capability gap.
         if dimensions.phase1_num_rounds() != dimensions.log_t()
             || dimensions.phase2_num_rounds() != dimensions.log_k()
         {
             return Err(KernelError::InvariantViolation {
-                reason: "FR read-write dimensions drifted from the config-pinned phase split",
+                reason: "field-register read-write dimensions drifted from the config-pinned phase split",
             });
         }
         let log_t = dimensions.log_t();
         let log_k = dimensions.log_k();
         if log_t == 0 {
             return Err(KernelError::Unsupported {
-                reason: "optimized FR read-write checking requires at least one cycle round",
+                reason:
+                    "optimized field-register read-write checking requires at least one cycle round",
             });
         }
         let r_cycle: &[F] = &inputs.points.rd_value;
         if r_cycle.len() != log_t {
             return Err(KernelError::InvariantViolation {
-                reason: "FR read-write upstream cycle point has the wrong variable count",
+                reason:
+                    "field-register read-write upstream cycle point has the wrong variable count",
             });
         }
         let cycles = 1usize << log_t;
@@ -565,7 +561,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
                 FieldRegistersReadWriteChallenge::Gamma,
             ))
             .ok_or(KernelError::InvariantViolation {
-                reason: "FR read-write checking is missing its gamma challenge",
+                reason: "field-register read-write checking is missing its gamma challenge",
             })?;
 
         let FieldRegisterAccesses {
@@ -575,7 +571,8 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
             rd_writes,
         } = FieldRegisterAccesses::collect(&rows, 1usize << log_k, gamma)?;
 
-        // Park the rd write slots for the stage-5 FR val-evaluation kernel.
+        // Park the rd write slots for the stage-5 field-register value-evaluation
+        // kernel.
         session.park(SharedFieldRdWrites(rd_writes));
 
         Ok(Box::new(FieldReadWriteKernel {
@@ -846,11 +843,11 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent FR
-/// traces: identical round polynomials at every round (cycle and address
-/// phases), equal typed output claims, and both kernels' derived-table
-/// validation — plus the FR-inactive degenerate case, where the sparse state
-/// is empty and every round polynomial is honestly zero.
+/// Byte parity against the reference kernel on register-consistent field-inline traces:
+/// identical round polynomials at every round (cycle and address phases), equal typed
+/// output claims, and both kernels' derived-table validation — plus the degenerate case
+/// without field-inline activity, where the sparse state is empty and every round
+/// polynomial is honestly zero.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -863,14 +860,20 @@ mod tests {
 
     use super::*;
     use crate::optimized::field_registers_testing::{
-        inactive_fr_fixture, structured_fr_fixture, FrTraceFixture,
+        inactive_field_register_fixture, structured_field_register_fixture,
+        FieldRegisterTraceFixture,
     };
     use crate::optimized::parity::{
         probe_input_claim, run_lockstep, run_lockstep_degenerate, synthetic_point,
     };
     use crate::ReferenceBackend;
 
-    fn run_parity(fixture: FrTraceFixture, log_t: usize, seed: u64, expect_active: bool) {
+    fn run_parity(
+        fixture: FieldRegisterTraceFixture,
+        log_t: usize,
+        seed: u64,
+        expect_active: bool,
+    ) {
         fixture.with_plane(log_t, |backend| {
             let relation = read_write_member::<Fr>(log_t);
             let r_cycle = synthetic_point(log_t, seed);
@@ -907,14 +910,17 @@ mod tests {
                 .unwrap();
             assert!(
                 session.state::<SharedFieldRdWrites>().is_some(),
-                "the optimized kernel must park the FR write slots for stage 5",
+                "the optimized kernel must park the field-register write slots for stage 5",
             );
 
             let claim = probe_input_claim(reference.as_mut());
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
             if expect_active {
-                assert!(claim != Fr::from_u64(0), "FR-active fixture degenerated");
+                assert!(
+                    claim != Fr::from_u64(0),
+                    "fixture with field-inline activity degenerated"
+                );
                 run_lockstep(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -922,7 +928,11 @@ mod tests {
                     &round_challenges,
                 );
             } else {
-                assert_eq!(claim, Fr::from_u64(0), "FR-inactive claim must be zero");
+                assert_eq!(
+                    claim,
+                    Fr::from_u64(0),
+                    "claim without field-inline activity must be zero"
+                );
                 run_lockstep_degenerate(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -948,24 +958,24 @@ mod tests {
 
     #[test]
     fn parity_structured_even_log_t() {
-        run_parity(structured_fr_fixture(16), 4, 101, true);
+        run_parity(structured_field_register_fixture(16), 4, 101, true);
     }
 
     #[test]
     fn parity_structured_odd_log_t() {
-        run_parity(structured_fr_fixture(8), 3, 103, true);
+        run_parity(structured_field_register_fixture(8), 3, 103, true);
     }
 
     #[test]
     fn parity_partially_padded_trace() {
         // Real rows in the front half only: the padding tail exercises the
         // constant-value slices the sparse boundary values reconstruct.
-        run_parity(structured_fr_fixture(9), 5, 107, true);
+        run_parity(structured_field_register_fixture(9), 5, 107, true);
     }
 
     #[test]
     fn parity_single_cycle_round() {
-        let mut fixture = FrTraceFixture::new();
+        let mut fixture = FieldRegisterTraceFixture::new();
         fixture.load_imm(2, 99);
         fixture.arithmetic(FieldInlineOp::Mul, 2, 2, 2);
         run_parity(fixture, 1, 109, true);
@@ -973,6 +983,6 @@ mod tests {
 
     #[test]
     fn parity_inactive_trace_is_degenerate_and_cheap() {
-        run_parity(inactive_fr_fixture(4), 3, 113, false);
+        run_parity(inactive_field_register_fixture(4), 3, 113, false);
     }
 }

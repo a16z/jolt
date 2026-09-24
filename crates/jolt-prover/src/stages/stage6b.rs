@@ -119,9 +119,9 @@ where
         .program
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
-    // The FR bytecode side table, required fail-closed exactly like the
+    // The field-inline bytecode side table, required fail-closed exactly like the
     // verifier's `Stage6bSumchecks::build` (committed-program preprocessing
-    // cannot supply it, and neither can a full program preprocessed without FR
+    // cannot supply it, and neither can a full program preprocessed without field-inline
     // support).
     #[cfg(feature = "field-inline")]
     let field_inline_bytecode =
@@ -216,16 +216,16 @@ where
     })
 }
 
-/// FR-on clear round-trips of the stage-6b recipe against the verifier's own
+/// Clear round-trips with field-inline enabled of the stage-6b recipe against the verifier's own
 /// public constituents — `stage6b::verify`'s clear body (the post-6a draws,
-/// the batch with the FR increment-reduction member built by the promoted
+/// the batch with the field-inline increment-reduction member built by the promoted
 /// `build_from_parts`, the curated `stage6b_opening_values` absorb with the
 /// spliced reduced `FieldRdInc`) on a twin transcript positioned by the
-/// stage-1..6a replays — on both fixture profiles: the FR-inactive ADDI
-/// trace (every FR fold zero) and the FR-ACTIVE arithmetic trace (the
-/// composed bytecode read-RAF kernels' FR stage-value legs carry real
-/// values). A further test drives the FR increment-reduction kernel directly
-/// on the FR-arithmetic replay and ties the extracted opening to a direct
+/// stage-1..6a replays — on both fixture profiles: the field-inactive ADDI
+/// trace (every field-inline fold zero) and the field-active arithmetic trace (the
+/// composed bytecode read-RAF kernels' field-inline stage-value legs carry real
+/// values). A further test drives the field-inline increment-reduction kernel directly
+/// on the field-inline-arithmetic replay and ties the extracted opening to a direct
 /// MLE evaluation.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
@@ -251,8 +251,8 @@ mod field_inline_round_trip {
     use super::*;
     use crate::stages::field_inline_fixtures::twins::FixturePreprocessing;
     use crate::stages::field_inline_fixtures::{
-        addi_only_backend, addi_only_preprocessing, fr_arithmetic_backend,
-        fr_arithmetic_preprocessing, test_checked_inputs, test_prover_config, test_public_io,
+        addi_only_backend, addi_only_preprocessing, field_arithmetic_backend,
+        field_arithmetic_preprocessing, test_checked_inputs, test_prover_config, test_public_io,
         twins, LOG_T, RAM_LOG_K,
     };
     use crate::stages::stage1::prove_stage1;
@@ -267,16 +267,16 @@ mod field_inline_round_trip {
         stage6b_round_trips(
             addi_only_backend(),
             addi_only_preprocessing(),
-            b"stage6b-fr",
+            b"stage6b-field-inline",
         );
     }
 
     #[test]
-    fn fr_arithmetic_stage6b_round_trips_the_composed_verifier() {
+    fn field_arithmetic_stage6b_round_trips_the_composed_verifier() {
         stage6b_round_trips(
-            fr_arithmetic_backend(),
-            fr_arithmetic_preprocessing(),
-            b"stage6b-fr-active",
+            field_arithmetic_backend(),
+            field_arithmetic_preprocessing(),
+            b"stage6b-field-inline-active",
         );
     }
 
@@ -535,14 +535,14 @@ mod field_inline_round_trip {
             .sum()
     }
 
-    /// The FR increment-reduction kernel on the honest FR replay: every round
+    /// The field-inline increment-reduction kernel on the honest field-inline replay: every round
     /// message passes the engine's running-claim check starting from the
     /// relation's own input claim (the two `FieldRdInc` MLEs folded by
     /// gamma), and the extracted reduced opening equals the direct MLE of the
     /// committed increment table at the reversed sumcheck point.
     #[test]
-    fn fr_inc_claim_reduction_kernel_output_matches_direct_mle() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+    fn field_register_inc_claim_reduction_kernel_output_matches_direct_mle() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let oracle = witness.field_inline().unwrap();
@@ -611,8 +611,8 @@ mod field_inline_round_trip {
     }
 }
 
-/// FR-on ZK: the stage-6b committed shell carries the curated row count — the
-/// alias-deduped cycle-point cell total, whose FR share is exactly the one
+/// ZK with field-inline enabled: the stage-6b committed shell carries the curated row count — the
+/// alias-deduped cycle-point cell total, whose field-inline share is exactly the one
 /// spliced reduced `FieldRdInc` row.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
@@ -650,7 +650,7 @@ mod field_inline_zk {
         let checked = test_checked_inputs();
         let preprocessing = addi_only_preprocessing();
 
-        let mut transcript = Blake2bTranscript::new(b"stage6b-fr-zk");
+        let mut transcript = Blake2bTranscript::new(b"stage6b-field-inline-zk");
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -744,7 +744,7 @@ mod field_inline_zk {
 
         // The committed row total is the verifier's expectation: the derived
         // output-point cell count minus the runtime booleanity-vs-bytecode
-        // aliases. The FR reduction contributes exactly one of those cells —
+        // aliases. The field-inline reduction contributes exactly one of those cells —
         // its single reduced `FieldRdInc` opening.
         let values: Vec<Fr> = out
             .committed_witness

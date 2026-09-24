@@ -65,8 +65,8 @@ use jolt_poly::lagrange::{
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 #[cfg(feature = "field-inline")]
 use jolt_r1cs::constraints::field_constraints::limb_radix;
-// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the rv64-only
-// constants FR-off, the FR-extended row/column composition under
+// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the rv64-only constants
+// without field-inline, the field-inline-extended row/column composition under
 // `field-inline` — the same sources the reference kernel folds with.
 use jolt_r1cs::constraints::jolt::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
@@ -108,9 +108,9 @@ const EXTENDED_NODE_COUNT: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 /// The rv64 prefixes of the composed stream groups
-/// (`SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` order): FR rows append behind
-/// them under `field-inline`, in [FADD, FSUB, FMUL, FINV] /
-/// [ASSERT_EQ, LOAD_FROM_X, STORE_TO_X, LOAD_IMM] order.
+/// (`SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` order): field-inline rows append behind
+/// them under `field-inline`, in [FADD, FSUB, FMUL, FINV] / [ASSERT_EQ, LOAD_FROM_X,
+/// STORE_TO_X, LOAD_IMM] order.
 const RV64_FIRST_GROUP_LEN: usize = 10;
 const RV64_SECOND_GROUP_LEN: usize = 9;
 
@@ -228,13 +228,12 @@ impl WitnessBundle for SpartanOuterRow {
     }
 }
 
-/// One cycle's integer values of the composed eq-conditional rows, split
-/// into the two uni-skip stream groups (A-side guards as `i64`, B-side
-/// magnitudes as `S192` — wide enough for the `RightLookupOperand`-bearing
-/// rows, whose values reach ±2^130, times the composed 14-node extension
-/// coefficients ≤ 2^26). Under `field-inline` the arrays span the composed
-/// groups with the FR rows at their FR-INACTIVE values; FR-active cycles use
-/// [`FieldGroupValues`] instead.
+/// One cycle's integer values of the composed eq-conditional rows, split into the two
+/// uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as `S192` — wide
+/// enough for the `RightLookupOperand`-bearing rows, whose values reach ±2^130, times
+/// the composed 14-node extension coefficients ≤ 2^26). Under `field-inline` the arrays
+/// span the composed groups including field-inline rows with inactive columns; active
+/// field-inline cycles use [`FieldGroupValues`] instead.
 struct RowGroupValues {
     a_first: [i64; DOMAIN],
     a_second: [i64; SECOND_GROUP_LEN],
@@ -242,10 +241,11 @@ struct RowGroupValues {
     b_second: [S192; SECOND_GROUP_LEN],
 }
 
-/// One FR-ACTIVE cycle's composed group values, in field form: the FR
-/// magnitudes are full field elements, so the integer pipeline cannot carry
-/// them. FR-active cycles are rare (bounded by the FR instruction count), so
-/// the field path's extra cost stays proportional to FR activity.
+/// One active field-inline cycle's composed group values, in field form: the
+/// field-inline magnitudes are full field elements, so the integer pipeline cannot
+/// carry them. Active field-inline cycles are rare (bounded by the field-inline
+/// instruction count), so the field path's extra cost stays proportional to
+/// field-inline activity.
 #[cfg(feature = "field-inline")]
 struct FieldGroupValues<F> {
     a_first: [F; DOMAIN],
@@ -315,7 +315,7 @@ fn fold_field_group<F: JoltField>(weights: &[F], guards: &[F], magnitudes: &[F])
     (az, bz)
 }
 
-/// The field images of [`extension_coefficients`] — what ties the FR-active
+/// The field images of [`extension_coefficients`] — what ties the active field-inline
 /// field path to the same Lagrange extension the integer pipeline uses.
 #[cfg(feature = "field-inline")]
 fn extension_coefficient_fields<F: JoltField>() -> [(usize, [F; DOMAIN]); EXTENDED_NODE_COUNT] {
@@ -323,17 +323,17 @@ fn extension_coefficient_fields<F: JoltField>() -> [(usize, [F; DOMAIN]); EXTEND
         .map(|(position, coefficients)| (position, coefficients.map(F::from_i64)))
 }
 
-/// The sorted sparse FR spartan rows plus a moving cursor, so cycle-ordered
-/// block walks can route FR-active cycles to the field path in O(1) per
+/// The sorted sparse field-inline spartan rows plus a moving cursor, so cycle-ordered
+/// block walks can route active field-inline cycles to the field path in O(1) per
 /// cycle. Shared with the product kernel, whose lanes walk the same rows.
 #[cfg(feature = "field-inline")]
-pub(crate) struct FrRowCursor<'a, F> {
+pub(crate) struct FieldInlineRowCursor<'a, F> {
     rows: &'a [(usize, FieldInlineSpartanRow<F>)],
     next: usize,
 }
 
 #[cfg(feature = "field-inline")]
-impl<'a, F> FrRowCursor<'a, F> {
+impl<'a, F> FieldInlineRowCursor<'a, F> {
     /// A cursor positioned at the first row with cycle ≥ `start` — each
     /// parallel block seeks independently.
     pub(crate) fn seek(rows: &'a [(usize, FieldInlineSpartanRow<F>)], start: usize) -> Self {
@@ -343,7 +343,7 @@ impl<'a, F> FrRowCursor<'a, F> {
         }
     }
 
-    /// The FR row at cycle `t`, if any; `t` must be non-decreasing across
+    /// The field-inline row at cycle `t`, if any; `t` must be non-decreasing across
     /// calls on one cursor.
     pub(crate) fn advance(&mut self, t: usize) -> Option<&'a FieldInlineSpartanRow<F>> {
         while let Some(&(cycle, ref row)) = self.rows.get(self.next) {
@@ -458,19 +458,18 @@ impl SpartanOuterRow {
         values.b_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_b_first);
         values.b_second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second);
 
-        // The FR rows at their FR-INACTIVE values (all FR columns zero) —
-        // still integers, off the shared rv64 columns the bridge rows reuse.
-        // FR-active cycles go through `field_group_values` instead; calling
-        // this on one is a routing bug the parity tests would surface as a
-        // wrong t1 value.
-        // First group [FADD, FSUB, FMUL, FINV, LOAD_WORD(+HI)]: guards zero;
-        // magnitudes zero except FINV's `inv_product − 1 = −1` and the load
-        // row's `frd − 2^64·frs1 − RdWriteValue = −RdWriteValue`.
-        // Second group [ASSERT_EQ, LOAD_FROM_X, STORE_TO_X, LOAD_IMM,
-        // STORE_TO_X_LOOKUP, ADVICE_LIMB]: guards zero; magnitudes `0`,
-        // `frd − Rs1Value = −Rs1Value`, `RdWriteValue − frs1 = RdWriteValue`,
-        // `frd − Imm = −Imm`, `RightLookupOperand − frs1 = RightLookupOperand`,
-        // `frs1 − RdWriteValue − 2^64·frd = −RdWriteValue`.
+        // The field-inline rows with all field-inline columns zero — still integers,
+        // off the shared rv64 columns the bridge rows reuse. Active field-inline cycles
+        // go through `field_group_values` instead; calling this on one is a routing bug
+        // the parity tests would surface as a wrong t1 value. First group [FADD, FSUB,
+        // FMUL, FINV, LOAD_WORD(+HI)]: guards zero; magnitudes zero except FINV's
+        // `inv_product − 1 = −1` and the load row's `field_rd − 2^64·field_rs1 −
+        // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_FROM_X,
+        // STORE_TO_X, LOAD_IMM, STORE_TO_X_LOOKUP, ADVICE_LIMB]: guards zero;
+        // magnitudes `0`, `field_rd − Rs1Value = −Rs1Value`, `RdWriteValue − field_rs1
+        // = RdWriteValue`, `field_rd − Imm = −Imm`, `RightLookupOperand − field_rs1 =
+        // RightLookupOperand`, `field_rs1 − RdWriteValue − 2^64·field_rd =
+        // −RdWriteValue`.
         #[cfg(feature = "field-inline")]
         {
             let rd_write_value = S192::from_u64(self.rd_write_value.0);
@@ -487,17 +486,16 @@ impl SpartanOuterRow {
         values
     }
 
-    /// The composed group values of one FR-ACTIVE cycle, in field form: the
-    /// rv64 guards/magnitudes promoted plus the FR rows' native field values
-    /// (`jolt-r1cs`'s `field_eq_constraint_rows` transcribed at the composed
-    /// group positions). Exact — the integer pipeline and this one compute
-    /// the same field elements, so routing a cycle either way is
-    /// wire-invisible; the integer path simply cannot represent an active
-    /// cycle's field magnitudes.
+    /// The composed group values of one active field-inline cycle, in field form: the
+    /// rv64 guards/magnitudes promoted plus the field-inline rows' native field values
+    /// (`jolt-r1cs`'s `field_eq_constraint_rows` transcribed at the composed group
+    /// positions). Exact — the integer pipeline and this one compute the same field
+    /// elements, so routing a cycle either way is wire-invisible; the integer path
+    /// simply cannot represent an active cycle's field magnitudes.
     #[cfg(feature = "field-inline")]
     fn field_group_values<F: JoltField>(
         &self,
-        fr: &FieldInlineSpartanRow<F>,
+        field_row: &FieldInlineSpartanRow<F>,
     ) -> FieldGroupValues<F> {
         let integer = self.group_values();
         let mut values = FieldGroupValues {
@@ -506,7 +504,7 @@ impl SpartanOuterRow {
             b_first: integer.b_first.map(|value| s192_to_field(&value)),
             b_second: integer.b_second.map(|value| s192_to_field(&value)),
         };
-        let flag = |flag: FieldInlineOpFlag| fr.flags[flag as usize];
+        let flag = |flag: FieldInlineOpFlag| field_row.flags[flag as usize];
         values.a_first[RV64_FIRST_GROUP_LEN] = flag(FieldInlineOpFlag::Add);
         values.a_first[RV64_FIRST_GROUP_LEN + 1] = flag(FieldInlineOpFlag::Sub);
         values.a_first[RV64_FIRST_GROUP_LEN + 2] = flag(FieldInlineOpFlag::Mul);
@@ -514,27 +512,30 @@ impl SpartanOuterRow {
         values.a_first[RV64_FIRST_GROUP_LEN + 4] =
             flag(FieldInlineOpFlag::LoadWord) + flag(FieldInlineOpFlag::LoadWordHi);
         let rd_write_value = F::from_u64(self.rd_write_value.0);
-        values.b_first[RV64_FIRST_GROUP_LEN] = fr.rs1_value + fr.rs2_value - fr.rd_value;
-        values.b_first[RV64_FIRST_GROUP_LEN + 1] = fr.rs1_value - fr.rs2_value - fr.rd_value;
-        values.b_first[RV64_FIRST_GROUP_LEN + 2] = fr.product - fr.rd_value;
-        values.b_first[RV64_FIRST_GROUP_LEN + 3] = fr.inv_product - F::one();
+        values.b_first[RV64_FIRST_GROUP_LEN] =
+            field_row.rs1_value + field_row.rs2_value - field_row.rd_value;
+        values.b_first[RV64_FIRST_GROUP_LEN + 1] =
+            field_row.rs1_value - field_row.rs2_value - field_row.rd_value;
+        values.b_first[RV64_FIRST_GROUP_LEN + 2] = field_row.product - field_row.rd_value;
+        values.b_first[RV64_FIRST_GROUP_LEN + 3] = field_row.inv_product - F::one();
         values.b_first[RV64_FIRST_GROUP_LEN + 4] =
-            fr.rd_value - limb_radix::<F>() * fr.rs1_value - rd_write_value;
+            field_row.rd_value - limb_radix::<F>() * field_row.rs1_value - rd_write_value;
         values.a_second[RV64_SECOND_GROUP_LEN] = flag(FieldInlineOpFlag::AssertEq);
         values.a_second[RV64_SECOND_GROUP_LEN + 1] = flag(FieldInlineOpFlag::LoadFromX);
         values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::StoreToX);
         values.a_second[RV64_SECOND_GROUP_LEN + 3] = flag(FieldInlineOpFlag::LoadImm);
-        values.b_second[RV64_SECOND_GROUP_LEN] = fr.rs1_value - fr.rs2_value;
-        values.b_second[RV64_SECOND_GROUP_LEN + 1] = fr.rd_value - F::from_u64(self.rs1_value.0);
+        values.b_second[RV64_SECOND_GROUP_LEN] = field_row.rs1_value - field_row.rs2_value;
+        values.b_second[RV64_SECOND_GROUP_LEN + 1] =
+            field_row.rd_value - F::from_u64(self.rs1_value.0);
         values.b_second[RV64_SECOND_GROUP_LEN + 2] =
-            F::from_u64(self.rd_write_value.0) - fr.rs1_value;
-        values.b_second[RV64_SECOND_GROUP_LEN + 3] = fr.rd_value - F::from_i128(self.imm.0);
+            F::from_u64(self.rd_write_value.0) - field_row.rs1_value;
+        values.b_second[RV64_SECOND_GROUP_LEN + 3] = field_row.rd_value - F::from_i128(self.imm.0);
         values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::StoreToX);
         values.b_second[RV64_SECOND_GROUP_LEN + 4] =
-            F::from_u128(self.right_lookup_operand.0) - fr.rs1_value;
+            F::from_u128(self.right_lookup_operand.0) - field_row.rs1_value;
         values.a_second[RV64_SECOND_GROUP_LEN + 5] = flag(FieldInlineOpFlag::AdviceLimb);
         values.b_second[RV64_SECOND_GROUP_LEN + 5] =
-            fr.rs1_value - rd_write_value - limb_radix::<F>() * fr.rd_value;
+            field_row.rs1_value - rd_write_value - limb_radix::<F>() * field_row.rd_value;
         values
     }
 }
@@ -651,12 +652,12 @@ struct SpartanOuterCarry<F: JoltField> {
     /// Typed-row store: slice-backed witnesses stay unmaterialized (the
     /// ~176 B × T row vector is the prover's peak allocation at large scale).
     rows: BundleStore<SpartanOuterRow>,
-    /// The FR-active cycles' composed column values, sparse and sorted by
-    /// cycle (the witness seam's direct walk — the 13 dense FR tables never
+    /// The active field-inline cycles' composed column values, sparse and sorted by
+    /// cycle (the witness seam's direct walk — the 13 dense field-inline tables never
     /// materialize).
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
-    fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
+    field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     /// All `2·DOMAIN − 1` node values of `t1`; in-domain nodes stay zero (a
     /// satisfying witness vanishes there), matching the reference layout.
     t1_values: Vec<F>,
@@ -667,16 +668,16 @@ struct SpartanOuterCarry<F: JoltField> {
 pub struct OptimizedOuterUniskip;
 
 impl OptimizedOuterUniskip {
-    /// The post-collection half of [`UniskipKernel::prepare`], for the
-    /// in-module parity tests (which construct rows — and FR-on, the sparse
-    /// FR rows — directly).
+    /// The post-collection half of [`UniskipKernel::prepare`], for the in-module parity
+    /// tests (which construct rows — and with field-inline enabled, the sparse
+    /// field-inline rows — directly).
     #[cfg(test)]
     fn prepare_from_rows<F: JoltField>(
         session: &mut ProofSession,
         log_t: usize,
         tau: &[F],
         rows: Vec<SpartanOuterRow>,
-        #[cfg(feature = "field-inline")] fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
+        #[cfg(feature = "field-inline")] field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     ) -> Result<(), KernelError<F>> {
         if rows.len() != 1usize << log_t {
             return Err(KernelError::InvariantViolation {
@@ -689,7 +690,7 @@ impl OptimizedOuterUniskip {
             tau,
             BundleStore::Retained(rows),
             #[cfg(feature = "field-inline")]
-            fr_rows,
+            field_rows,
         )
     }
 
@@ -699,7 +700,7 @@ impl OptimizedOuterUniskip {
         log_t: usize,
         tau: &[F],
         rows: BundleStore<SpartanOuterRow>,
-        #[cfg(feature = "field-inline")] fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
+        #[cfg(feature = "field-inline")] field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     ) -> Result<(), KernelError<F>> {
         if tau.len() != log_t + 2 {
             return Err(KernelError::InvariantViolation {
@@ -711,14 +712,14 @@ impl OptimizedOuterUniskip {
             &rows.access(),
             tau_low,
             #[cfg(feature = "field-inline")]
-            &fr_rows,
+            &field_rows,
         )?;
         session.park(SpartanOuterCarry {
             log_t,
             tau: tau.to_vec(),
             rows,
             #[cfg(feature = "field-inline")]
-            fr_rows,
+            field_rows,
             t1_values,
         });
         Ok(())
@@ -731,7 +732,7 @@ impl OptimizedOuterUniskip {
     fn extended_t1_values<F: JoltField>(
         rows: &BundleAccess<'_, SpartanOuterRow>,
         tau_low: &[F],
-        #[cfg(feature = "field-inline")] fr_rows: &[(usize, FieldInlineSpartanRow<F>)],
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
     ) -> Result<Vec<F>, WitnessError> {
         let split = tau_low.len() / 2;
         let (out_point, in_point) = tau_low.split_at(split);
@@ -750,13 +751,13 @@ impl OptimizedOuterUniskip {
             #[cfg(feature = "field-inline")]
             let mut field_sums = vec![F::zero(); EXTENDED_NODE_COUNT];
             #[cfg(feature = "field-inline")]
-            let mut fr_cursor = FrRowCursor::seek(fr_rows, x_out * pairs_per_block);
+            let mut field_cursor = FieldInlineRowCursor::seek(field_rows, x_out * pairs_per_block);
             for pair in 0..pairs_per_block {
                 let t = x_out * pairs_per_block + pair;
                 let row = rows.row(t)?;
                 #[cfg(feature = "field-inline")]
-                if let Some(fr) = fr_cursor.advance(t) {
-                    let values = row.field_group_values(fr);
+                if let Some(field_row) = field_cursor.advance(t) {
+                    let values = row.field_group_values(field_row);
                     let products = values.extended_products(&field_coefficients);
                     for (sum, (first, second)) in field_sums.iter_mut().zip(&products) {
                         *sum += e_in[2 * pair] * *first + e_in[2 * pair + 1] * *second;
@@ -802,7 +803,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
     ) -> Result<(), KernelError<F>> {
         let rows = BundleStore::resolve(witness, 1usize << log_t)?;
         #[cfg(feature = "field-inline")]
-        let fr_rows = witness
+        let field_rows = witness
             .field_inline()
             .ok_or(KernelError::Witness(WitnessError::UnavailableView {
                 label: "composed Spartan outer field-inline oracle",
@@ -814,7 +815,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
             tau,
             rows,
             #[cfg(feature = "field-inline")]
-            fr_rows,
+            field_rows,
         )
     }
 
@@ -894,7 +895,7 @@ struct OuterRemainderKernel<F: JoltField> {
     rows: BundleStore<SpartanOuterRow>,
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
-    fr_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
+    field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     opening_ids: Vec<JoltOpeningId>,
     derived: DerivedWeights<F>,
@@ -909,7 +910,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             tau,
             rows,
             #[cfg(feature = "field-inline")]
-            fr_rows,
+            field_rows,
             ..
         } = carry;
         let rounds = inputs.relation.rounds();
@@ -950,7 +951,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let access = rows.access();
         let lagrange = &lagrange_r0;
         #[cfg(feature = "field-inline")]
-        let fr_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &fr_rows;
+        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
         let block = |x_out: usize,
                      az_chunk: &mut [F],
                      bz_chunk: &mut [F]|
@@ -958,13 +959,15 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             let mut inner_zero = F::zero();
             let mut inner_infinity = F::zero();
             #[cfg(feature = "field-inline")]
-            let mut fr_cursor = FrRowCursor::seek(fr_rows_ref, x_out * in_len);
+            let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, x_out * in_len);
             for x_in in 0..in_len {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
                 #[cfg(feature = "field-inline")]
-                let (az_zero, bz_zero, az_one, bz_one) = if let Some(fr) = fr_cursor.advance(t) {
-                    let values = row.field_group_values(fr);
+                let (az_zero, bz_zero, az_one, bz_one) = if let Some(field_row) =
+                    field_cursor.advance(t)
+                {
+                    let values = row.field_group_values(field_row);
                     let (az_zero, bz_zero) = values.fold_first(lagrange);
                     let (az_one, bz_one) = values.fold_second(lagrange);
                     (az_zero, bz_zero, az_one, bz_one)
@@ -1031,16 +1034,16 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             rows,
             #[cfg(feature = "field-inline")]
             #[cfg(feature = "field-inline")]
-            fr_rows,
+            field_rows,
             opening_ids,
             derived,
         })
     }
 
-    /// Az/Bz column weights at both stream values over the composed
-    /// opening-column selection, from the same `jolt-r1cs` sources the
-    /// verifier's coefficient build uses (35 rv64 columns FR-off; the
-    /// non-contiguous 35 + 16 selection under `field-inline`).
+    /// Az/Bz column weights at both stream values over the composed opening-column
+    /// selection, from the same `jolt-r1cs` sources the verifier's coefficient build
+    /// uses (35 rv64 columns without field-inline; the non-contiguous 35 + 16 selection
+    /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
@@ -1117,14 +1120,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         claimed
     }
 
-    /// The FR opening values at the bound cycle point: one eq-weighted walk
-    /// over the sparse FR rows (columns in
-    /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order
-    /// the composed remainder relation folds).
+    /// The field-inline opening values at the bound cycle point: one eq-weighted walk
+    /// over the sparse field-inline rows (columns in
+    /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order the
+    /// composed remainder relation folds).
     #[cfg(feature = "field-inline")]
-    fn fr_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
+    fn field_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
         let mut values = vec![F::zero(); FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT];
-        for (cycle, row) in &self.fr_rows {
+        for (cycle, row) in &self.field_rows {
             let weight = weights[*cycle];
             for (value, column) in values.iter_mut().zip(row.columns()) {
                 *value += weight * column;
@@ -1318,7 +1321,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
                 field_outer_output_openings()
                     .into_iter()
                     .map(VerifierOpeningId::from)
-                    .zip(self.fr_claimed_inputs(&weights)),
+                    .zip(self.field_claimed_inputs(&weights)),
             )
             .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| {
@@ -1340,7 +1343,8 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         // state, cross-checked against the verifier's coefficient build.
         let stream = self.challenges.as_slice()[0];
         let blend = |pair: [&F; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
-        // The composed selection width (48 FR-on), not the 35 ordinary ids.
+        // The composed selection width (48 with field-inline enabled), not the 35
+        // ordinary ids.
         let variable_count = self.derived.az_weights[0].len();
         let ids = std::iter::once(SpartanOuterPublic::TauKernel)
             .chain((0..variable_count).map(SpartanOuterPublic::AzWeight))
@@ -1527,12 +1531,12 @@ mod tests {
             .collect()
     }
 
-    /// Sparse synthetic FR rows on roughly a third of the cycles, with
-    /// pseudo-random FULL-FIELD values in every FR column — flags included
-    /// (the composed matrices are linear in the flag columns, so parity must
-    /// hold pointwise on arbitrary flag values too).
+    /// Sparse synthetic field-inline rows on roughly a third of the cycles, with
+    /// pseudo-random FULL-FIELD values in every field-inline column — flags included
+    /// (the composed matrices are linear in the flag columns, so parity must hold
+    /// pointwise on arbitrary flag values too).
     #[cfg(feature = "field-inline")]
-    fn synthetic_fr_rows(log_t: usize, seed: u64) -> Vec<(usize, FieldInlineSpartanRow<Fr>)> {
+    fn synthetic_field_rows(log_t: usize, seed: u64) -> Vec<(usize, FieldInlineSpartanRow<Fr>)> {
         let mut state = seed | 1;
         let mut next = move || {
             state ^= state << 13;
@@ -1559,17 +1563,17 @@ mod tests {
             .collect()
     }
 
-    /// The dense image of the sparse FR rows for one FR column index (the
-    /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` position) — what the fixed
-    /// backend's FR view serves the reference kernel.
+    /// The dense image of the sparse field-inline rows for one field-inline column
+    /// index (the `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` position) — what the fixed
+    /// backend's field-inline view serves the reference kernel.
     #[cfg(feature = "field-inline")]
-    fn fr_column_table(
-        fr_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
+    fn field_column_table(
+        field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
         cycles: usize,
         index: usize,
     ) -> Vec<Fr> {
         let mut table = vec![Fr::from_u64(0); cycles];
-        for (cycle, row) in fr_rows {
+        for (cycle, row) in field_rows {
             table[*cycle] = row.columns()[index];
         }
         table
@@ -1578,7 +1582,7 @@ mod tests {
     fn fixed_backend_from_rows(
         log_t: usize,
         rows: &[SpartanOuterRow],
-        #[cfg(feature = "field-inline")] fr_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
     ) -> FixedBackend<Fr> {
         let mut backend = FixedBackend::new();
         for (index, variable) in SPARTAN_OUTER_R1CS_INPUTS.iter().enumerate() {
@@ -1602,7 +1606,7 @@ mod tests {
                     .insert(
                         FieldInlinePolynomialId::Virtual(*id),
                         Shape::new(log_t, PolynomialEncoding::Dense),
-                        fr_column_table(fr_rows, 1 << log_t, index),
+                        field_column_table(field_rows, 1 << log_t, index),
                     )
                     .unwrap();
             }
@@ -1617,7 +1621,7 @@ mod tests {
     /// opening selection (independent of both kernels' row-value pipelines).
     fn true_input_claim(
         rows: &[SpartanOuterRow],
-        #[cfg(feature = "field-inline")] fr_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
         tau: &[Fr],
         r0: Fr,
         log_t: usize,
@@ -1628,18 +1632,21 @@ mod tests {
         let kernel = centered_lagrange_kernel::<Fr>(DOMAIN, tau_high, r0).unwrap();
         let matrices = spartan_outer_constraints::<Fr>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
-        // Selection position → column value at cycle `t`: rv64 typed row
-        // fields for the first 35 positions, the sparse FR rows behind them.
+        // Selection position → column value at cycle `t`: rv64 typed row fields for the
+        // first 35 positions, the sparse field-inline rows behind them.
         let value = |t: usize, position: usize| -> Fr {
             if position < VARIABLE_COUNT {
                 return variable_field_value(&rows[t], position);
             }
             #[cfg(feature = "field-inline")]
             {
-                fr_rows.iter().find(|(cycle, _)| *cycle == t).map_or_else(
-                    || Fr::from_u64(0),
-                    |(_, row)| row.columns()[position - VARIABLE_COUNT],
-                )
+                field_rows
+                    .iter()
+                    .find(|(cycle, _)| *cycle == t)
+                    .map_or_else(
+                        || Fr::from_u64(0),
+                        |(_, row)| row.columns()[position - VARIABLE_COUNT],
+                    )
             }
             #[cfg(not(feature = "field-inline"))]
             unreachable!("the rv64 selection has exactly 35 columns")
@@ -1665,14 +1672,14 @@ mod tests {
         kernel * total
     }
 
-    /// One full parity case: uni-skip polynomial, every remainder round
-    /// polynomial, typed output claims, and both kernels' derived-table
-    /// validation — reference and optimized fed identical `ProverInputs`
-    /// (FR-on: the composed 48-column selection over synthetic FR rows too).
+    /// One full parity case: uni-skip polynomial, every remainder round polynomial,
+    /// typed output claims, and both kernels' derived-table validation — reference and
+    /// optimized fed identical `ProverInputs` (with field-inline enabled: the composed
+    /// 48-column selection over synthetic field-inline rows too).
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
         let rows = synthetic_rows(log_t, seed);
         #[cfg(feature = "field-inline")]
-        let fr_rows = synthetic_fr_rows(log_t, seed ^ 0xF1E1D);
+        let field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
         let tau: Vec<Fr> = (0..log_t + 2)
             .map(|i| Fr::from_u64(3 + seed + 7 * i as u64))
             .collect();
@@ -1680,7 +1687,7 @@ mod tests {
             log_t,
             &rows,
             #[cfg(feature = "field-inline")]
-            &fr_rows,
+            &field_rows,
         );
 
         let mut reference_session = ProofSession::default();
@@ -1700,7 +1707,7 @@ mod tests {
             &tau,
             rows.clone(),
             #[cfg(feature = "field-inline")]
-            fr_rows.clone(),
+            field_rows.clone(),
         )
         .unwrap();
         let optimized_uniskip =
@@ -1719,7 +1726,7 @@ mod tests {
         let input_claim = true_input_claim(
             &rows,
             #[cfg(feature = "field-inline")]
-            &fr_rows,
+            &field_rows,
             &tau,
             r0,
             log_t,
@@ -1854,14 +1861,14 @@ mod tests {
         let r0 = Fr::from_u64(9173);
         let rows: Vec<SpartanOuterRow> = backend.bundles().unwrap();
         #[cfg(feature = "field-inline")]
-        let fr_rows = JoltWitnessOracle::<Fr>::field_inline(backend)
+        let field_rows = JoltWitnessOracle::<Fr>::field_inline(backend)
             .unwrap()
             .field_inline_spartan_rows()
             .unwrap();
         let input_claim = true_input_claim(
             &rows,
             #[cfg(feature = "field-inline")]
-            &fr_rows,
+            &field_rows,
             &tau,
             r0,
             log_t,
@@ -1917,15 +1924,16 @@ mod tests {
         );
     }
 
-    /// Full trait-path parity: FR-off on the canned sample trace; FR-on over
-    /// an FR-profile fixture trace (the sample backend carries no
-    /// field-inline view), exercising the trace-backed sparse FR row seam.
+    /// Full trait-path parity: without field-inline on the canned sample trace; with
+    /// field-inline enabled over a field-inline fixture trace (the sample backend
+    /// carries no field-inline view), exercising the trace-backed sparse field-inline
+    /// row seam.
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
         #[cfg(not(feature = "field-inline"))]
         with_sample_backend(|backend| sample_case(backend, 2));
         #[cfg(feature = "field-inline")]
-        crate::optimized::field_registers_testing::structured_fr_fixture(12)
+        crate::optimized::field_registers_testing::structured_field_register_fixture(12)
             .with_plane(4, |backend| sample_case(backend, 4));
     }
 

@@ -16,7 +16,7 @@ impl FieldRegistersTraceDimensions {
         self.log_t
     }
 
-    /// The reversed cycle opening point of a trace-domain FR sumcheck, mirroring
+    /// The reversed cycle opening point of a trace-domain field-inline sumcheck, mirroring
     /// `protocols::jolt`'s `TraceDimensions::cycle_opening_point`.
     pub fn cycle_opening_point<F: JoltField>(
         self,

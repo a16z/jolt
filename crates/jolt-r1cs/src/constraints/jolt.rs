@@ -41,11 +41,11 @@ use super::rv64::V_RIGHT_LOOKUP_OPERAND;
 #[cfg(feature = "field-inline")]
 pub const FIELD_INLINE_COLUMN_BASE: usize = rv64::NUM_VARS_PER_CYCLE;
 
-/// The composed row index where the FR eq rows begin: after the rv64 rows.
+/// The composed row index where the field-inline eq rows begin: after the rv64 rows.
 #[cfg(feature = "field-inline")]
 pub const FIELD_INLINE_ROW_BASE: usize = RV64_NUM_EQ_CONSTRAINTS;
 
-/// FR-local variables that alias an RV64 column instead of appending one:
+/// Field-inline variables that alias an RV64 column instead of appending one:
 /// `Rs1Value`, `RdWriteValue`, `Imm`, and the store bridge's
 /// `RightLookupOperand`.
 #[cfg(feature = "field-inline")]
@@ -679,7 +679,7 @@ mod tests {
 
     /// Pins the `jolt-claims` composed-lane helpers against this crate's
     /// field-inline product constraint rows — the R1CS source of truth for the
-    /// two FR lanes. Per lane, the helper's left/right factor and input values
+    /// two field-inline lanes. Per lane, the helper's left/right factor and input values
     /// must reproduce the row's `A`/`B`/`C` linear forms on a witness with
     /// distinct (and deliberately non-satisfying) column values, weighted at
     /// the composed lane indices following the ordinary lanes.

@@ -135,11 +135,10 @@ pub struct PrecommittedSchedule {
     pub untrusted_advice: Option<AdviceClaimReductionLayout>,
     pub bytecode: Option<BytecodeClaimReductionLayout>,
     pub program_image: Option<ProgramImageClaimReductionLayout>,
-    /// The FR limb group's stage-8 presence source, mirroring the advice
-    /// fields' role for the packed resolve. Always `Some` on an FR-on packed
-    /// build: an FR-on prover commits the group on every proof, so absence is
-    /// never scheduled (the resolve rejects proof slots that disagree either
-    /// way).
+    /// The field-increment limb group's stage-8 presence source, mirroring the advice fields'
+    /// role for the packed resolve. Always `Some` on a packed build with field-inline enabled:
+    /// a prover with field-inline enabled commits the group on every proof, so absence is
+    /// never scheduled (the resolve rejects proof slots that disagree either way).
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub field_inc_limbs: Option<FieldIncLimbsScheduled>,
 }

@@ -1,26 +1,25 @@
 //! The optimized field-registers value-evaluation (stage 5) kernel: the
-//! integer-register kernel ([`super::registers_val_evaluation`]) at the FR
-//! geometry, byte-parity twin of
-//! [`crate::reference::field_registers_val_evaluation`].
+//! integer-register kernel ([`super::registers_val_evaluation`]) at the field-register
+//! geometry, byte-parity twin of [`crate::reference::field_registers_val_evaluation`].
 //!
 //! The reference folds the `(2^4 × T)` one-hot `FieldRdWa` grid into a dense
 //! cycle table at prepare time and binds three dense `T`-sized tables per
 //! round. This kernel keeps the sibling's technique set:
 //!
 //! - **Lazy one-hot `wa`** ([`WaState`]): round 0 serves
-//!   `wa(j) = eq(r_address)[rd_j]` straight from the per-cycle FR write slots
+//!   `wa(j) = eq(r_address)[rd_j]` straight from the per-cycle field-register write slots
 //!   and the K = 16 eq table — the grid is never materialized. The write
-//!   slots are reclaimed from the stage-4 FR kernel's session carry
+//!   slots are reclaimed from the stage-4 field-inline kernel's session carry
 //!   ([`SharedFieldRdWrites`]), avoiding a second oracle-row walk.
 //! - **Split LT** ([`SplitLt`]): `LT(j, r_cycle)` from three ~√T tables.
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying s(1).
 //! - **Deferred-reduction accumulation** of the triple products.
 //!
-//! The increment column is the FR oracle's single committed polynomial
-//! (`FieldRdInc`), materialized dense at prepare — there is no slice-backed
-//! deferral like the integer sibling's because the FR oracle serves whole
-//! tables only, and the column is all-zero exactly when the trace is
-//! FR-inactive (a cheap bind).
+//! The increment column is the field-inline oracle's single committed polynomial
+//! (`FieldRdInc`), materialized dense at prepare — there is no slice-backed deferral
+//! like the integer sibling's because the field-inline oracle serves whole tables only,
+//! and the column is all-zero exactly when the trace has no field-inline activity (a
+//! cheap bind).
 
 use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlinePolynomialId,
@@ -62,13 +61,14 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
         let log_t = relation.trace_dimensions().log_t();
         if log_t == 0 {
             return Err(KernelError::Unsupported {
-                reason: "optimized FR val-evaluation requires at least one cycle round",
+                reason:
+                    "optimized field-register value-evaluation requires at least one cycle round",
             });
         }
         let registers_val_point: &[F] = &inputs.points.registers_val;
         if registers_val_point.len() != FIELD_REGISTERS_LOG_K + log_t {
             return Err(KernelError::InvariantViolation {
-                reason: "FR value-evaluation input point has the wrong variable count",
+                reason: "field-register value-evaluation input point has the wrong variable count",
             });
         }
         let (r_address, r_cycle) = registers_val_point.split_at(FIELD_REGISTERS_LOG_K);
@@ -91,10 +91,9 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
             });
         }
 
-        // Reclaim the FR write slots the stage-4 kernel parked; collect them
-        // from the shared rows otherwise (reference-only stage 4, tests). This
-        // is the rows' last consumer, so the session copy is released either
-        // way.
+        // Reclaim the field-register write slots the stage-4 kernel parked; collect
+        // them from the shared rows otherwise (reference-only stage 4, tests). This is
+        // the rows' last consumer, so the session copy is released either way.
         let shared_rows = session.take::<SharedFieldRegisterRows<F>>();
         let writes = match session.take::<SharedFieldRdWrites>() {
             Some(SharedFieldRdWrites(writes))
@@ -120,11 +119,11 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
             let slot = rd
                 .get_mut(cycle as usize)
                 .ok_or(KernelError::InvariantViolation {
-                    reason: "FR write slot outside the cycle domain",
+                    reason: "field-inline write slot outside the cycle domain",
                 })?;
             if usize::from(register) >= (1usize << FIELD_REGISTERS_LOG_K) {
                 return Err(KernelError::InvariantViolation {
-                    reason: "FR register index outside the field-register domain",
+                    reason: "field register index is out of bounds",
                 });
             }
             *slot = Some(register);
@@ -242,9 +241,9 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
     }
 }
 
-/// Byte parity against the reference kernel on register-consistent FR
-/// traces, covering both index sources (parked by stage 4 vs collected from
-/// the oracle rows) and the FR-inactive degenerate case.
+/// Byte parity against the reference kernel on register-consistent field-inline traces,
+/// covering both index sources (parked by stage 4 vs collected from the oracle rows)
+/// and the degenerate case without field-inline activity.
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
@@ -257,7 +256,8 @@ mod tests {
 
     use super::*;
     use crate::optimized::field_registers_testing::{
-        inactive_fr_fixture, structured_fr_fixture, FrTraceFixture,
+        inactive_field_register_fixture, structured_field_register_fixture,
+        FieldRegisterTraceFixture,
     };
     use crate::optimized::parity::{
         probe_input_claim, run_lockstep, run_lockstep_degenerate, synthetic_point,
@@ -271,7 +271,7 @@ mod tests {
     }
 
     fn run_parity(
-        fixture: FrTraceFixture,
+        fixture: FieldRegisterTraceFixture,
         log_t: usize,
         seed: u64,
         expect_active: bool,
@@ -333,7 +333,10 @@ mod tests {
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
             if expect_active {
-                assert!(claim != Fr::from_u64(0), "FR-active fixture degenerated");
+                assert!(
+                    claim != Fr::from_u64(0),
+                    "fixture with field-inline activity degenerated"
+                );
                 run_lockstep(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -341,7 +344,11 @@ mod tests {
                     &round_challenges,
                 );
             } else {
-                assert_eq!(claim, Fr::from_u64(0), "FR-inactive claim must be zero");
+                assert_eq!(
+                    claim,
+                    Fr::from_u64(0),
+                    "claim without field-inline activity must be zero"
+                );
                 run_lockstep_degenerate(
                     reference.as_mut(),
                     optimized.as_mut(),
@@ -368,7 +375,7 @@ mod tests {
     #[test]
     fn parity_structured_collected_indices() {
         run_parity(
-            structured_fr_fixture(16),
+            structured_field_register_fixture(16),
             4,
             211,
             true,
@@ -378,13 +385,19 @@ mod tests {
 
     #[test]
     fn parity_structured_parked_indices() {
-        run_parity(structured_fr_fixture(8), 3, 223, true, &IndexSource::Parked);
+        run_parity(
+            structured_field_register_fixture(8),
+            3,
+            223,
+            true,
+            &IndexSource::Parked,
+        );
     }
 
     #[test]
     fn parity_stale_parked_indices_fall_back() {
         run_parity(
-            structured_fr_fixture(8),
+            structured_field_register_fixture(8),
             3,
             227,
             true,
@@ -394,6 +407,12 @@ mod tests {
 
     #[test]
     fn parity_inactive_trace_is_degenerate() {
-        run_parity(inactive_fr_fixture(4), 3, 229, false, &IndexSource::Collect);
+        run_parity(
+            inactive_field_register_fixture(4),
+            3,
+            229,
+            false,
+            &IndexSource::Collect,
+        );
     }
 }

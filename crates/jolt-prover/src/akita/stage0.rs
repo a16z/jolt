@@ -31,7 +31,7 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
-    /// The FR limb group, committed on every FR-on packed proof.
+    /// The field-inline limb group, committed on every packed field-inline proof.
     #[cfg(feature = "field-inline")]
     pub field_inc_limbs: FieldIncLimbsObject<PCS>,
 }
@@ -164,7 +164,7 @@ where
         witness,
     )?;
 
-    // Canonical public batch order: advice, (field-inline) the FR limb group,
+    // Canonical public batch order: advice, (field-inline) the field-inline limb group,
     // then the direct committed-program objects, then OneHotTrace.
     let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
         untrusted_advice

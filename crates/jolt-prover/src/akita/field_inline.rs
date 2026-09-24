@@ -1,7 +1,7 @@
-//! The packed FR prover seam: limb-word extraction from the FR oracle, the
+//! The packed field-inline prover seam: limb-word extraction from the field-inline oracle, the
 //! stage-0 dense limb-group commit, and the stage-8 heterogeneous batch
 //! entry. `stage0.rs`, `stage8.rs`, and `prover.rs` interact with the packed
-//! FR protocol only through this module (the prover half of the
+//! field-inline protocol only through this module (the prover half of the
 //! `jolt_verifier::stages::stage8::field_inline_packed` seam).
 
 use jolt_claims::protocols::field_inline::lattice::{
@@ -29,7 +29,7 @@ fn commit_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     })
 }
 
-/// The committed FR limb group: the canonical plan, the packed dense
+/// The committed field-inline limb group: the canonical plan, the packed dense
 /// limb-word polynomial (retained so stage 8 evaluates the limb claims from
 /// the committed data), the commitment the proof carries, and the opening
 /// hint the heterogeneous batch consumes.
@@ -40,7 +40,7 @@ pub struct FieldIncLimbsObject<PCS: CommitmentScheme> {
     pub hint: PCS::OpeningHint,
 }
 
-/// Stage 0's FR commit: `FieldRdInc`'s canonical u64 limbs, slot-major over
+/// Stage 0's field-inline commit: `FieldRdInc`'s canonical u64 limbs, slot-major over
 /// `(limb ‖ cycle)`, as one dense commitment object under the plan's
 /// transparent setup — the advice-object treatment. Unconditional: an
 /// identically zero `FieldRdInc` still commits (all-zero content is legal;
@@ -68,7 +68,7 @@ where
     let num_rows = 1usize << log_t;
     if rd_inc.len() != num_rows {
         return Err(commit_failed(
-            "the FR oracle's FieldRdInc table disagrees with the trace arity",
+            "the field-inline oracle's FieldRdInc table disagrees with the trace arity",
         ));
     }
 
@@ -108,15 +108,15 @@ where
     })
 }
 
-/// The FR group's reduced precommitted claim paired with the wire claims the
+/// The field-inline group's reduced precommitted claim paired with the wire claims the
 /// proof carries beside it.
 pub type FieldIncLimbBatchEntry<F, C> = (PrecommittedClaim<F, C>, FieldIncLimbClaims<F>);
 
-/// Stage 8's FR batch entry: the limb-column evaluations at the stage-6b
+/// Stage 8's field-inline batch entry: the limb-column evaluations at the stage-6b
 /// reduced `FieldRdInc` point (each read off the committed packed polynomial
 /// at its boolean slot prefix, so the claims use the exact convention the
 /// PCS proves), reduced through the shared verifier seam into the
-/// heterogeneous batch's FR precommitted claim. Returns the wire claims the
+/// heterogeneous batch's field-inline precommitted claim. Returns the wire claims the
 /// proof carries beside the reduced entry.
 pub fn stage8_batch_entry<F, PCS, T>(
     object: &FieldIncLimbsObject<PCS>,

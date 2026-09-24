@@ -3,8 +3,8 @@
 //! Twist proves a register file or RAM consistent over time with a fixed
 //! pipeline of sumcheck relations: read/write checking, value evaluation, and
 //! the value / increment claim reductions that route its openings. Every
-//! memory the protocol checks — the ordinary x-register file, the field-inline
-//! FR register file — proves the *same identities* over its own polynomial
+//! memory the protocol checks — the ordinary x-register file, the field
+//! register file — proves the *same identities* over its own polynomial
 //! family, so this module states each identity once as an expression builder
 //! generic over an id-binding trait, and each protocol module binds it to a
 //! concrete memory instance.

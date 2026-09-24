@@ -62,7 +62,7 @@ mod stage4 {
 
     // Stage 4's `no_opening_values` replacement keeps the generated
     // signature (the claims aggregate's hand-ordered `opening_values`, which
-    // splices the FR openings under `field-inline`), so the driver's default
+    // splices the field-inline openings under `field-inline`), so the driver's default
     // curation serves both feature arms unchanged.
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }

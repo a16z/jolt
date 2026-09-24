@@ -1,6 +1,6 @@
 //! Stage 2: the Spartan product uni-skip round and the batch (RAM read-write
 //! checking, product remainder, instruction claim reduction, under
-//! `field-inline` the FR claim reduction, RAM RAF evaluation, RAM output
+//! `field-inline` the field-inline claim reduction, RAM RAF evaluation, RAM output
 //! check).
 //!
 //! Pure orchestration: the challenge draws, batch head, point derivation,
@@ -105,7 +105,7 @@ where
 
     let tau_high: F = draw_spartan_product_tau_high(transcript);
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
-    // The FR lane inputs enter the composed input claim exactly as on the
+    // The field-inline lane inputs enter the composed input claim exactly as on the
     // verifier — composed through the shared seam, before `input_claim`.
     let uniskip_inputs = product_uniskip_input_values_from_stage1(stage1);
     let uniskip_input_claim =
@@ -117,7 +117,7 @@ where
                 .first_round_poly(session, &[tau_high])
         })?;
     // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the
-    // jolt-claims RV64-only constants FR-off, the FR-extended lane domain
+    // jolt-claims RV64-only constants Without field-inline, the field-inline-extended lane domain
     // under `field-inline` — the shape the verifier's stage-2 uni-skip checks.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
@@ -168,8 +168,8 @@ where
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
-    // Under `field-inline` the FR claim-reduction inputs wire from the
-    // stage-1 FR carrier (fail-closed when absent) through the same shared
+    // Under `field-inline` the field-inline claim-reduction inputs wire from the
+    // stage-1 field-inline carrier (fail-closed when absent) through the same shared
     // assembly the verifier runs.
     let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim)?;
 
@@ -207,11 +207,11 @@ where
     })
 }
 
-/// FR-on clear round-trips of the stage-2 recipe against the verifier's own
+/// Clear round-trips with field-inline enabled of the stage-2 recipe against the verifier's own
 /// public constituents — `stage2::verify`'s clear body step for step (the
 /// `τ_high` draw, the composed uni-skip via the seam attach and
-/// `uniskip::verify_clear`, the six-member batch with the FR claim-reduction
-/// member, the FR product appendage composition with its alias equality, and the
+/// `uniskip::verify_clear`, the six-member batch with the field-inline claim-reduction
+/// member, the field-inline product appendage composition with its alias equality, and the
 /// curated absorb) on a twin transcript. The full `stage2::verify` entrypoint
 /// needs an assembled `JoltProof` (no test constructor for the joint-opening
 /// slot), so this is the closest public seam; the 32-byte transcript-state
@@ -231,20 +231,20 @@ mod field_inline_round_trip {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        fr_arithmetic_backend, test_prover_config, test_public_io, LOG_T,
+        field_arithmetic_backend, test_prover_config, test_public_io, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
 
     #[test]
-    fn fr_arithmetic_stage2_round_trips_the_composed_verifier() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+    fn field_arithmetic_stage2_round_trips_the_composed_verifier() {
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage2-fr");
+        let mut prover_transcript = Blake2bTranscript::new(b"stage2-field-inline");
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -266,8 +266,8 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The FR product appendage is carried, and the spec's alias table
-        // holds on honest data: the FR claim-reduction member outputs equal
+        // The field-inline product appendage is carried, and the spec's alias table
+        // holds on honest data: the field-inline claim-reduction member outputs equal
         // the appendage values polynomial-for-polynomial.
         let appendage = out
             .claims
@@ -281,7 +281,7 @@ mod field_inline_round_trip {
         assert_eq!(reduction.rd_value, appendage.rd_value);
 
         // The verifier twin (stage2::verify's clear body).
-        let mut transcript = Blake2bTranscript::new(b"stage2-fr");
+        let mut transcript = Blake2bTranscript::new(b"stage2-field-inline");
         {
             // Stage 1's twin, to position the transcript at the stage-2
             // boundary (already round-tripped by stage 1's own tests).
@@ -427,7 +427,7 @@ mod field_inline_zk {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        fr_arithmetic_backend, test_prover_config, test_public_io, ENTRY, LOG_T,
+        field_arithmetic_backend, test_prover_config, test_public_io, ENTRY, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
 
@@ -435,7 +435,7 @@ mod field_inline_zk {
 
     #[test]
     fn committed_stage2_shell_carries_the_curated_rows_and_replays() {
-        let witness = fr_arithmetic_backend().with_field_inline().unwrap();
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
@@ -443,7 +443,7 @@ mod field_inline_zk {
         let config = test_prover_config();
         let public_io = test_public_io();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage2-fr-zk");
+        let mut prover_transcript = Blake2bTranscript::new(b"stage2-field-inline-zk");
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -465,7 +465,7 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The three FR reduction openings alias the product member's rows.
+        // The three field-inline reduction openings alias the product member's rows.
         let values: Vec<Fr> = out
             .committed_witness
             .output_claim_rows
@@ -495,7 +495,7 @@ mod field_inline_zk {
                 field_inc_limbs: Some(FieldIncLimbsScheduled),
             },
         };
-        let mut transcript = Blake2bTranscript::new(b"stage2-fr-zk");
+        let mut transcript = Blake2bTranscript::new(b"stage2-field-inline-zk");
         {
             // Stage 1's zk twin, to position the transcript.
             let tau = uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T);
@@ -577,7 +577,7 @@ mod field_inline_zk {
 mod tests {
     use super::*;
 
-    /// FR-off, the composed jolt-r1cs product uni-skip constants equal the
+    /// Without field-inline, the composed jolt-r1cs product uni-skip constants equal the
     /// jolt-claims RV64-only constants this recipe previously passed — the
     /// swap is byte-neutral.
     #[cfg(not(feature = "field-inline"))]
@@ -597,11 +597,11 @@ mod tests {
         );
     }
 
-    /// FR-on, the composed product domain carries the two FR lanes — the
-    /// spec's 5-point domain and its degree-12 first round.
+    /// With field-inline enabled, the composed product domain carries the two field-inline lanes —
+    /// the spec's 5-point domain and its degree-12 first round.
     #[cfg(feature = "field-inline")]
     #[test]
-    fn product_uniskip_constants_are_the_composed_fr_domains() {
+    fn product_uniskip_constants_are_the_composed_field_domains() {
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, 5);
         assert_eq!(SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE, 12);
     }

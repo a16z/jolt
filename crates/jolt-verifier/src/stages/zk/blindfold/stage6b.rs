@@ -77,10 +77,9 @@ where
         relation_claim(&instruction_ra_claims),
         relation_claim(&inc_claims),
     ];
-    // Member declaration order (= batching-coefficient draw order): the FR
-    // increment reduction sits after the ordinary increment reduction and
-    // before the optional advice cycle phases, exactly as in
-    // `Stage6bSumchecks`.
+    // Member declaration order (= batching-coefficient draw order): the field-inline increment
+    // reduction sits after the ordinary increment reduction and before the optional advice
+    // cycle phases, exactly as in `Stage6bSumchecks`.
     #[cfg(feature = "field-inline")]
     batch_claims.push(relation_claim(&field_registers_inc_claims));
     if let Some(claim) = trusted_claims {
@@ -127,12 +126,11 @@ where
     )
 }
 
-/// The stage-6b committed output row order and alias rows: the bytecode-RA
-/// rows with the booleanity dedup, the remaining members' canonical orders in
-/// member declaration order, and — under `field-inline` — the reduced FR
-/// `FieldRdInc` row after the ordinary increment-reduction outputs and before
-/// the optional advice cycle phases: the clear absorb order
-/// (`stage6b_opening_values`) exactly.
+/// The stage-6b committed output row order and alias rows: the bytecode-RA rows with the
+/// booleanity dedup, the remaining members' canonical orders in member declaration order, and
+/// — under `field-inline` — the reduced field-inline `FieldRdInc` row after the ordinary
+/// increment-reduction outputs and before the optional advice cycle phases: the clear absorb
+/// order (`stage6b_opening_values`) exactly.
 fn stage6b_output_ids_and_aliases<F: JoltField>(
     formula_dimensions: JoltFormulaDimensions,
     bytecode_ra_opening_points: &[Vec<F>],
@@ -179,9 +177,9 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
         .into_iter()
         .map(VerifierOpeningId::from),
     );
-    // The reduced FR `FieldRdInc` row, after the ordinary increment-reduction
-    // outputs and before the optional advice cycle phases — the clear absorb
-    // order (`stage6b_opening_values`).
+    // The reduced field-inline `FieldRdInc` row, after the ordinary increment-reduction
+    // outputs and before the optional advice cycle phases — the clear absorb order
+    // (`stage6b_opening_values`).
     #[cfg(feature = "field-inline")]
     output_ids.extend(super::field_inline::stage6b_inc_output_ids());
     if let Some(layout) = trusted_layout {
@@ -351,10 +349,10 @@ mod tests {
     }
 
     /// The stage-6b committed row order is the clear curated absorb order
-    /// (`stage6b_opening_values`), locked entry-for-entry over sentinel-valued
-    /// claims — FR-on: the reduced `FieldRdInc` row after the ordinary
-    /// increment-reduction outputs, before the (absent here) advice cycle
-    /// phases. Empty points mean no booleanity dedup fires on either side.
+    /// (`stage6b_opening_values`), locked entry-for-entry over sentinel-valued claims — with
+    /// field-inline enabled: the reduced `FieldRdInc` row after the ordinary
+    /// increment-reduction outputs, before the (absent here) advice cycle phases. Empty points
+    /// mean no booleanity dedup fires on either side.
     #[test]
     fn stage6b_output_ids_match_the_clear_absorb_order() {
         use jolt_claims::OutputClaims as _;
@@ -542,9 +540,9 @@ mod field_inline_tests {
             )
             .unwrap();
 
-        // The lowered path: the ordinary monolith publics plus the composed FR
-        // stage values (the same helper `add_stage6_publics_and_challenges`
-        // bakes), folded through the lowered cycle symbolic output expression.
+        // The lowered path: the ordinary monolith publics plus the composed field-inline stage
+        // values (the same helper `add_stage6_publics_and_challenges` bakes), folded through
+        // the lowered cycle symbolic output expression.
         let r_cycle: Vec<Fr> = sumcheck_point.iter().rev().copied().collect();
         let mut publics = bytecode::read_raf_public_values(BytecodeReadRafEvaluationInputs {
             bytecode: &bytecode,
@@ -571,7 +569,7 @@ mod field_inline_tests {
             &challenges,
         )
         .unwrap();
-        // A vanishing FR contribution would make this parity vacuous.
+        // A vanishing field-inline contribution would make this parity vacuous.
         assert!(composed.iter().any(|value| *value != fr(0)));
         for (stage_value, field_inline_value) in publics.stage_values.iter_mut().zip(composed) {
             *stage_value += field_inline_value;

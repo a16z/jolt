@@ -273,7 +273,7 @@ where
     // The witness-side twin of the composed plan splice above: the statement
     // gained a `FieldRdInc` claim after `RdInc@IncClaimReduction`, and
     // `batch_entries` emits entries 1:1 with `order`, so the polynomial and
-    // hint join at `order`'s RdInc position + 1. The column is read off the FR
+    // hint join at `order`'s RdInc position + 1. The column is read off the field-inline
     // oracle rather than through the backend's joint-opening slot (typed over
     // the base polynomial family) and opened as a lazy grid view placed
     // exactly as its stage-0 commitment fed it — never the dense

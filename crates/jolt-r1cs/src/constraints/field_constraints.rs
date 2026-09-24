@@ -76,7 +76,7 @@ pub const ROW_STORE_TO_X_LOOKUP: usize = 8;
 /// (an `LD` into the scratch x-register, so RV64 row 3 pins `RdWriteValue`
 /// to `RamReadValue`) is the field destination, folded under the
 /// accumulator the high-word form reads back as `rs1`. The plain form reads
-/// no field register, so its `FieldRs1Value` is zero (the FR read-write
+/// no field register, so its `FieldRs1Value` is zero (the field-register read-write
 /// checking pins a non-reading cycle's read value to zero) and the same row
 /// reduces to `FieldRdValue = RdWriteValue`. One row for both keeps the
 /// Spartan outer uni-skip domain at 15, the largest whose integer power

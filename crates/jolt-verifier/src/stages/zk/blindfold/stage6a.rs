@@ -109,12 +109,11 @@ where
     }
     address_phase_output_ids.push(booleanity::booleanity_address_phase_opening().into());
 
-    // The composed bytecode address-phase input claim: the ordinary symbolic
-    // gamma-folded bind plus (under `field-inline`) the FR terms at the
-    // extended stage-1/4/5 power indices — the clear composed `input_claim`
-    // override's algebra, over the stage-1 FR carrier rows and the stage-4/5
-    // FR members' rows (referencing the SAME committed rows those stages
-    // lowered).
+    // The composed bytecode address-phase input claim: the ordinary symbolic gamma-folded bind
+    // plus (under `field-inline`) the field-inline terms at the extended stage-1/4/5 power
+    // indices — the clear composed `input_claim` override's algebra, over the stage-1
+    // field-inline carrier rows and the stage-4/5 field-inline members' rows (referencing the
+    // SAME committed rows those stages lowered).
     let bytecode_claim = relation_claim(&bytecode_address_claims);
 
     add_batched_stage(
@@ -157,11 +156,11 @@ mod field_inline_tests {
         Fr::from_u64(value)
     }
 
-    /// The lowered composed input expression — the jolt symbolic bind plus the
-    /// FR gamma-power extension — evaluates identically to the clear composed
-    /// `BytecodeReadRafAddressPhase::input_claim` on synthetic values, over
-    /// the SAME committed rows the stage-1/4/5 lowerings bind (the stage-1 FR
-    /// carrier flags and the stage-4/5 FR member rows).
+    /// The lowered composed input expression — the jolt symbolic bind plus the field-inline
+    /// gamma-power extension — evaluates identically to the clear composed
+    /// `BytecodeReadRafAddressPhase::input_claim` on synthetic values, over the SAME committed
+    /// rows the stage-1/4/5 lowerings bind (the stage-1 field-inline carrier flags and the
+    /// stage-4/5 field-inline member rows).
     #[test]
     fn lowered_bytecode_input_extension_matches_the_clear_composed_claim() {
         let relation = BytecodeReadRafAddressPhase::<Fr>::new(

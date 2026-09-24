@@ -53,7 +53,7 @@ pub const FIELD_INLINE_BRIDGE_X_REGISTER: u32 = 10;
 /// A field-register operand; out-of-range literals fail at compile time
 /// instead of wrapping into the encoding of a different register.
 #[doc(hidden)]
-pub const fn fr_register(index: u32) -> u32 {
+pub const fn field_register(index: u32) -> u32 {
     assert!(
         index < FIELD_REGISTER_COUNT,
         "field-inline field register index must be below 16"
@@ -111,7 +111,7 @@ macro_rules! field_load_imm {
     ($rd:literal, $imm:literal) => {
         $crate::__field_inline_word!($crate::field_inline_i_word(
             $crate::FIELD_INLINE_LOAD_IMM_FUNCT3,
-            $crate::fr_register($rd),
+            $crate::field_register($rd),
             $crate::field_inline_imm12($imm)
         ))
     };
@@ -123,9 +123,9 @@ macro_rules! field_add {
         $crate::__field_inline_word!($crate::field_inline_r_word(
             $crate::FIELD_INLINE_R_TYPE_FUNCT7,
             $crate::FIELD_INLINE_ADD_FUNCT3,
-            $crate::fr_register($rd),
-            $crate::fr_register($rs1),
-            $crate::fr_register($rs2)
+            $crate::field_register($rd),
+            $crate::field_register($rs1),
+            $crate::field_register($rs2)
         ))
     };
 }
@@ -136,9 +136,9 @@ macro_rules! field_sub {
         $crate::__field_inline_word!($crate::field_inline_r_word(
             $crate::FIELD_INLINE_R_TYPE_FUNCT7,
             $crate::FIELD_INLINE_SUB_FUNCT3,
-            $crate::fr_register($rd),
-            $crate::fr_register($rs1),
-            $crate::fr_register($rs2)
+            $crate::field_register($rd),
+            $crate::field_register($rs1),
+            $crate::field_register($rs2)
         ))
     };
 }
@@ -149,9 +149,9 @@ macro_rules! field_mul {
         $crate::__field_inline_word!($crate::field_inline_r_word(
             $crate::FIELD_INLINE_R_TYPE_FUNCT7,
             $crate::FIELD_INLINE_MUL_FUNCT3,
-            $crate::fr_register($rd),
-            $crate::fr_register($rs1),
-            $crate::fr_register($rs2)
+            $crate::field_register($rd),
+            $crate::field_register($rs1),
+            $crate::field_register($rs2)
         ))
     };
 }
@@ -162,8 +162,8 @@ macro_rules! field_inv {
         $crate::__field_inline_word!($crate::field_inline_r_word(
             $crate::FIELD_INLINE_R_TYPE_FUNCT7,
             $crate::FIELD_INLINE_INV_FUNCT3,
-            $crate::fr_register($rd),
-            $crate::fr_register($rs1),
+            $crate::field_register($rd),
+            $crate::field_register($rs1),
             0
         ))
     };
@@ -176,8 +176,8 @@ macro_rules! field_assert_eq {
             $crate::FIELD_INLINE_R_TYPE_FUNCT7,
             $crate::FIELD_INLINE_ASSERT_EQ_FUNCT3,
             0,
-            $crate::fr_register($rs1),
-            $crate::fr_register($rs2)
+            $crate::field_register($rs1),
+            $crate::field_register($rs2)
         ))
     };
 }
@@ -196,7 +196,7 @@ macro_rules! field_load_from_x {
             const WORD: u32 = $crate::field_inline_r_word(
                 $crate::FIELD_INLINE_R_TYPE_FUNCT7,
                 $crate::FIELD_INLINE_LOAD_FROM_X_FUNCT3,
-                $crate::fr_register($rd),
+                $crate::field_register($rd),
                 $crate::FIELD_INLINE_BRIDGE_X_REGISTER,
                 0,
             );
@@ -226,7 +226,7 @@ macro_rules! field_load_from_x {
 /// system is unsatisfiable, unless the field value fits in 64 bits. Same
 /// single-asm-block rationale as [`field_load_from_x!`]: the word writes
 /// `a0`, so the output constraint must live in the block that executes it.
-/// Host-architecture builds carry no FR semantics and evaluate to zero.
+/// Host-architecture builds carry no field-inline semantics and evaluate to zero.
 #[macro_export]
 macro_rules! field_store_to_x {
     ($rs1:literal) => {{
@@ -236,7 +236,7 @@ macro_rules! field_store_to_x {
                 $crate::FIELD_INLINE_R_TYPE_FUNCT7,
                 $crate::FIELD_INLINE_STORE_TO_X_FUNCT3,
                 $crate::FIELD_INLINE_BRIDGE_X_REGISTER,
-                $crate::fr_register($rs1),
+                $crate::field_register($rs1),
                 0,
             );
             let out: u64;

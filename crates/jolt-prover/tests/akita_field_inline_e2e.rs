@@ -1,17 +1,17 @@
-//! Packed (Akita) field-inline end-to-end: FR-composed proofs over fp128
+//! Packed (Akita) field-inline end-to-end: field-inline-composed proofs over fp128
 //! against the full `jolt_verifier::verify` entry — the packed sibling of
 //! `field_inline_e2e.rs` (the akita axis proves exclusively over fp128, so
-//! the FR guests re-fixture here at the 16-byte value encoding).
+//! the field-inline guests re-fixture here at the 16-byte value encoding).
 //!
-//! Accept: the eq-MLE guest (every shipped FR instruction family, a live
-//! `FieldRdInc` column) and the FR-profile muldiv (zero FR instructions,
+//! Accept: the eq-MLE guest (every shipped field-inline instruction family, a live
+//! `FieldRdInc` column) and the field-inline muldiv (zero field-inline instructions,
 //! `FieldRdInc` identically zero, the limb group PRESENT with all-zero
 //! content — the always-present rule, pinning the all-zero dense open), each
 //! over both kernel backends with wire equality.
 //! Tamper (all must reject): a limb-evaluation offset (the stage-8 linear
 //! recomposition check), a limb-commitment layout-digest byte flip, a
 //! batch-proof mutation, the limb group stripped from the proof, and a
-//! spurious second FR-role group in the heterogeneous batch statement.
+//! spurious second field-inline-role group in the heterogeneous batch statement.
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -78,18 +78,18 @@ mod support {
         inputs
     }
 
-    pub struct FrGuest {
+    pub struct FieldInlineGuest {
         program_preprocessing: JoltProgramPreprocessing,
         pub trace_output: TraceOutput<OwnedTrace>,
         program: Arc<JoltProgram>,
     }
 
-    /// Build `guest_name` under the FR instruction profile, preprocess with
+    /// Build `guest_name` under the field-inline instruction profile, preprocess with
     /// that profile on the packed scheme, and trace through the modular
-    /// tracer backend (which executes FR ops over fp128 on this build — the
+    /// tracer backend (which executes field-inline ops over fp128 on this build — the
     /// eq-MLE guest's FIELD_ASSERT_EQ already validates the fixture inputs
     /// at trace time).
-    pub fn fr_guest(guest_name: &str, inputs: &[u8]) -> FrGuest {
+    pub fn field_inline_guest(guest_name: &str, inputs: &[u8]) -> FieldInlineGuest {
         let mut program = Program::new(guest_name);
         program.enable_field_inline();
 
@@ -109,7 +109,7 @@ mod support {
         )
         .expect("field-inline preprocessing");
         let trace_output = trace_modular(&jolt_program, &io_device.memory_layout, inputs);
-        FrGuest {
+        FieldInlineGuest {
             program_preprocessing,
             trace_output,
             program: jolt_program,
@@ -160,14 +160,14 @@ mod support {
         pub rd_inc: Vec<AkitaField>,
     }
 
-    /// Prove `guest` FR-on with the modular packed prover. The transparent
-    /// grouped setup carries the FR limb arity line, so both fronts
-    /// provision the [FieldIncLimbs] grouped rows every FR proof resolves.
-    pub fn prove_fr(
-        guest: FrGuest,
+    /// Prove `guest` with field-inline enabled using the modular packed prover. The transparent
+    /// grouped setup carries the field-inline limb arity line, so both fronts
+    /// provision the [FieldIncLimbs] grouped rows every field-inline proof resolves.
+    pub fn prove_field_inline(
+        guest: FieldInlineGuest,
         backend: JoltAkitaBackend<AkitaField, AkitaScheme>,
     ) -> ProveOutput {
-        let FrGuest {
+        let FieldInlineGuest {
             program_preprocessing,
             trace_output,
             program,
@@ -224,7 +224,7 @@ mod support {
             &witness,
             &public_io,
         )
-        .expect("packed FR prove");
+        .expect("packed field-inline prove");
         ProveOutput {
             verifier_preprocessing: prover_preprocessing.verifier,
             public_io,
@@ -319,12 +319,12 @@ mod clear {
     use super::support::{self, Proof, ProveOutput};
 
     fn prove_eqpoly(backend: JoltAkitaBackend<AkitaField, AkitaScheme>) -> ProveOutput {
-        let guest = support::fr_guest("field-ops-guest", &support::eqpoly_inputs());
+        let guest = support::field_inline_guest("field-ops-guest", &support::eqpoly_inputs());
         assert!(
             support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
-            "the eq-MLE guest must trace FR-active",
+            "the eq-MLE guest must trace field-active",
         );
-        support::prove_fr(guest, backend)
+        support::prove_field_inline(guest, backend)
     }
 
     fn clear_limb_claims(proof: &Proof) -> &FieldIncLimbClaims<AkitaField> {
@@ -334,10 +334,10 @@ mod clear {
         claims
             .field_inc_limbs
             .as_ref()
-            .expect("packed FR proofs carry the limb claims")
+            .expect("packed field-inline proofs carry the limb claims")
     }
 
-    /// Both backends' packed FR proofs must verify AND be equal wire objects.
+    /// Both backends' packed field-inline proofs must verify AND be equal wire objects.
     #[test]
     fn akita_field_inline_eqpoly_proof_is_accepted() {
         let mut proofs = Vec::new();
@@ -345,7 +345,7 @@ mod clear {
             let output = prove_eqpoly(backend());
             assert!(
                 output.proof.field_inc_limbs_commitment.is_some(),
-                "packed FR proofs must carry the limb-group commitment ({label})",
+                "packed field-inline proofs must carry the limb-group commitment ({label})",
             );
             assert_eq!(
                 clear_limb_claims(&output.proof).limbs.len(),
@@ -357,17 +357,19 @@ mod clear {
                 &output.public_io,
                 &output.proof,
             )
-            .unwrap_or_else(|error| panic!("packed FR proof must verify ({label}): {error}"));
+            .unwrap_or_else(|error| {
+                panic!("packed field-inline proof must verify ({label}): {error}")
+            });
             proofs.push(output.proof);
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized packed FR proofs must be identical wire objects",
+            "reference and optimized packed field-inline proofs must be identical wire objects",
         );
     }
 
-    /// The uniform-shape degenerate case: an FR-profile guest executing zero
-    /// FR instructions — `FieldRdInc` identically zero, every limb word zero
+    /// The uniform-shape degenerate case: a field-inline guest executing zero
+    /// field-inline instructions — `FieldRdInc` identically zero, every limb word zero
     /// — still proves and verifies with the limb group PRESENT (all-zero
     /// content is legal: dense schedules are keyed by shape, never content).
     /// This pins the all-zero dense open.
@@ -376,13 +378,13 @@ mod clear {
         let mut proofs = Vec::new();
         for (label, backend) in support::backends() {
             let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-            let guest = support::fr_guest("muldiv-guest", &inputs);
+            let guest = support::field_inline_guest("muldiv-guest", &inputs);
             assert_eq!(
                 support::field_inline_rows(guest.trace_output.trace.rows()),
                 0,
-                "the FR-profile muldiv trace must contain no FR instructions",
+                "the field-inline muldiv trace must contain no field-inline instructions",
             );
-            let output = support::prove_fr(guest, backend());
+            let output = support::prove_field_inline(guest, backend());
             assert!(output
                 .rd_inc
                 .iter()
@@ -404,17 +406,17 @@ mod clear {
                 &output.proof,
             )
             .unwrap_or_else(|error| {
-                panic!("FR-inactive packed proof must verify ({label}): {error}")
+                panic!("field-inactive packed proof must verify ({label}): {error}")
             });
             proofs.push(output.proof);
         }
         assert!(
             proofs[0] == proofs[1],
-            "reference and optimized FR-inactive packed proofs must be identical wire objects",
+            "reference and optimized field-inactive packed proofs must be identical wire objects",
         );
     }
 
-    /// The packed FR tamper matrix: one honest proof, mutations on fresh
+    /// The packed field-inline tamper matrix: one honest proof, mutations on fresh
     /// clones, every one rejected.
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
@@ -437,7 +439,7 @@ mod clear {
                 .proof
                 .field_inc_limbs_commitment
                 .as_ref()
-                .expect("packed FR proofs carry the limb-group commitment");
+                .expect("packed field-inline proofs carry the limb-group commitment");
             let digest = GroupCommitmentMetadata::layout_digest(honest);
             // The forgery path reproduces the prover's commit exactly under
             // the honest digest, so the flipped-digest commitment below
@@ -463,7 +465,7 @@ mod clear {
                     let limbs = claims
                         .field_inc_limbs
                         .as_mut()
-                        .expect("packed FR proof carries limb claims");
+                        .expect("packed field-inline proof carries limb claims");
                     *limbs.limbs.first_mut().expect("two limbs") += one;
                 }),
             ),
@@ -516,7 +518,7 @@ mod clear {
             assert!(
                 support::verify_full(&output.verifier_preprocessing, &output.public_io, &tampered)
                     .is_err(),
-                "tampered packed FR proof must be rejected: {name}",
+                "tampered packed field-inline proof must be rejected: {name}",
             );
         }
 
@@ -531,7 +533,7 @@ mod clear {
             let limbs = claims
                 .field_inc_limbs
                 .as_mut()
-                .expect("packed FR proof carries limb claims");
+                .expect("packed field-inline proof carries limb claims");
             *limbs.limbs.first_mut().expect("two limbs") += one;
         }
         assert!(matches!(
@@ -544,11 +546,11 @@ mod clear {
         ));
     }
 
-    /// A spurious second FR-role group in the heterogeneous batch statement
+    /// A spurious second field-inline-role group in the heterogeneous batch statement
     /// must be rejected by the strictly-ascending role order — the layer that
-    /// makes the verifier-assembled single FR entry canonical.
+    /// makes the verifier-assembled single field-inline entry canonical.
     #[test]
-    fn akita_field_inline_second_fr_group_is_rejected() {
+    fn akita_field_inline_duplicate_limb_group_is_rejected() {
         use jolt_claims::protocols::field_inline::lattice::field_inc_limbs_precommitted_role;
         use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
         use jolt_openings::{GroupOpeningClaim, PrecommittedClaim};
@@ -560,9 +562,9 @@ mod clear {
             .proof
             .field_inc_limbs_commitment
             .clone()
-            .expect("packed FR proofs carry the limb-group commitment");
+            .expect("packed field-inline proofs carry the limb-group commitment");
         let point = vec![AkitaField::from_u64(3); GroupCommitmentMetadata::num_vars(&commitment)];
-        let fr_claim = PrecommittedClaim::new(
+        let field_claim = PrecommittedClaim::new(
             field_inc_limbs_precommitted_role(),
             GroupOpeningClaim::new(commitment, point, vec![AkitaField::from_u64(0)]),
         );
@@ -574,20 +576,20 @@ mod clear {
             ],
             vec![AkitaField::from_u64(0)],
         );
-        let mut transcript = AkitaTranscript::new(b"spurious-fr-group");
+        let mut transcript = AkitaTranscript::new(b"spurious-field_inline-group");
         let error = <AkitaScheme as VerifierCommitmentScheme>::verify_batch(
             &output.verifier_preprocessing.pcs_setup,
-            &[fr_claim.clone(), fr_claim],
+            &[field_claim.clone(), field_claim],
             &main,
             &output.proof.joint_opening_proof,
             &mut transcript,
         )
-        .expect_err("a duplicated FR-role group must be rejected");
+        .expect_err("a duplicated field-inline-role group must be rejected");
         // The rejection must come from the canonical role-order check, not
         // from the fake statement failing later in the batch.
         assert!(
             error.to_string().contains("canonical ascending order"),
-            "duplicated FR role rejected for the wrong reason: {error}",
+            "duplicated field-inline role rejected for the wrong reason: {error}",
         );
     }
 }

@@ -88,11 +88,11 @@ pub(crate) fn run_lockstep<F: JoltField, R>(
     run_lockstep_degenerate(reference, optimized, initial_claim, challenges);
 }
 
-/// [`run_lockstep`] without the nonzero-claim guard, for fixtures whose
-/// input claim is HONESTLY zero — the FR kernels' zero-short-circuit paths
-/// are exercised by FR-inactive traces where every FR column vanishes, and
-/// parity over the (zero) round polynomials is exactly the statement under
-/// test. Use `run_lockstep` everywhere else.
+/// [`run_lockstep`] without the nonzero-claim guard, for fixtures whose input claim is
+/// HONESTLY zero — the field-inline kernels' zero-short-circuit paths are exercised by
+/// traces without field-inline activity where every field-inline column vanishes, and
+/// parity over the (zero) round polynomials is exactly the statement under test. Use
+/// `run_lockstep` everywhere else.
 pub(crate) fn run_lockstep_degenerate<F: JoltField, R>(
     reference: &mut dyn SumcheckKernel<F, Relation = R>,
     optimized: &mut dyn SumcheckKernel<F, Relation = R>,

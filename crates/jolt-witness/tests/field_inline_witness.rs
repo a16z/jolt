@@ -243,7 +243,7 @@ fn field_inline_public_provider_materializes_views() {
 }
 
 #[test]
-fn field_inline_public_provider_is_absent_for_fr_off_programs() {
+fn field_inline_public_provider_is_absent_for_programs_without_field_inline() {
     let bytecode = vec![instruction(
         JoltInstructionKind::ADDI,
         0,
@@ -371,8 +371,8 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
 
-    // Fail-closed default: an FR-profile backend without the attached view
-    // serves no field-inline oracle.
+    // Fail-closed default: a field-inline backend without the attached view serves no
+    // field-inline oracle.
     let detached = witness(&program, &preprocessing, rows.clone(), 2);
     assert!(JoltWitnessOracle::<Fr>::field_inline(&detached).is_none());
 
@@ -397,7 +397,7 @@ fn plane_accessor_serves_the_attached_field_inline_view() {
 }
 
 #[test]
-fn plane_accessor_stays_absent_for_fr_off_profile() {
+fn plane_accessor_stays_absent_for_profile_without_field_inline() {
     let bytecode = vec![instruction(
         JoltInstructionKind::ADDI,
         0,
@@ -424,7 +424,7 @@ fn plane_accessor_stays_absent_for_fr_off_profile() {
     );
 
     assert!(JoltWitnessOracle::<Fr>::field_inline(&backend).is_none());
-    // The view cannot be attached for an FR-off guest, so the accessor can
+    // The view cannot be attached for a guest without field-inline, so the accessor can
     // never become Some.
     assert!(matches!(
         backend.with_field_inline(),

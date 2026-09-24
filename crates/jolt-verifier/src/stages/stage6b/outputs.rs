@@ -93,10 +93,10 @@ pub struct Stage6bSumchecks<F: JoltField> {
     /// bytecode read-raf's fused-inc stages instead.
     #[cfg(not(feature = "akita"))]
     pub inc_claim_reduction: IncClaimReduction<F>,
-    /// The FR increment reduction. Declaration position (after the ordinary
-    /// increment reduction, before the optional advice cycle-phase members) is
-    /// the spec's stage-6 batch order and gamma draw order
-    /// (`specs/field-inline-protocol.md`, "Stage 6 Composition").
+    /// The field-register increment reduction. Declaration position (after the ordinary
+    /// increment reduction, before the optional advice cycle-phase members) is the spec's
+    /// stage-6 batch order and gamma draw order (`specs/field-inline-protocol.md`, "Stage 6
+    /// Composition").
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_claim_reduction: FieldRegistersIncClaimReduction<F>,
     /// On the prove side the precommitted reduction kernels span the 6b→7 batch
@@ -140,9 +140,8 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
         &self.inc_claim_reduction.ram_inc
     }
 
-    /// The FR increment claim-reduction opening point (the reversed cycle
-    /// point of the reduced `FieldRdInc` opening), consumed by the stage-8
-    /// joint opening.
+    /// The field-register increment claim-reduction opening point (the reversed cycle point of
+    /// the reduced `FieldRdInc` opening), consumed by the stage-8 joint opening.
     #[cfg(feature = "field-inline")]
     pub fn field_registers_inc_opening_point(&self) -> &[F] {
         &self.field_registers_inc_claim_reduction.rd_inc
@@ -235,7 +234,7 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
                 .committed_instruction_ra
                 .len()
             + 2
-            // The FR increment reduction's single reduced `FieldRdInc` cell.
+            // The field-register increment reduction's single reduced `FieldRdInc` cell.
             + usize::from(cfg!(feature = "field-inline"))
             + usize::from(self.trusted_advice.is_some())
             + usize::from(self.untrusted_advice.is_some())
@@ -247,11 +246,11 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
 }
 
 impl<F: JoltField> Stage6bOutputClaims<F> {
-    /// Construct the ordinary stage-6b claims. Producers without field-inline
-    /// semantics use this regardless of the build's feature set — the FR
-    /// increment-reduction slot defaults to an all-zero claim, inert because
-    /// such producers' proofs never declare the FR axis. Base wire shape only
-    /// (the akita converter assembles its lattice-shaped claims itself).
+    /// Construct the ordinary stage-6b claims. Producers without field-inline semantics use
+    /// this regardless of the build's feature set — the field-inline increment-reduction slot
+    /// defaults to an all-zero claim, inert because such producers' proofs never declare the
+    /// field-inline axis. Base wire shape only (the akita converter assembles its
+    /// lattice-shaped claims itself).
     #[cfg(not(feature = "akita"))]
     #[expect(
         clippy::too_many_arguments,
@@ -285,9 +284,9 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
         }
     }
 
-    /// The packed-shape twin of [`Self::new`]: the lattice batch has no
-    /// increment or advice members, and the FR increment-reduction slot again
-    /// defaults to the inert all-zero claim.
+    /// The packed-shape twin of [`Self::new`]: the lattice batch has no increment or advice
+    /// members, and the field-register increment-reduction slot again defaults to the inert
+    /// all-zero claim.
     #[cfg(feature = "akita")]
     pub fn new(
         bytecode_read_raf: LatticeBytecodeReadRafOutputClaims<F>,
@@ -342,7 +341,7 @@ pub struct Stage6bCarriedChallenges<F: JoltField> {
     pub instruction_ra_gamma: F,
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
-    /// The FR increment-reduction batching challenge (the spec's `eta`),
+    /// The field-register increment-reduction batching challenge (the spec's `eta`),
     /// member-drawn after `inc_gamma`.
     #[cfg(feature = "field-inline")]
     pub field_registers_inc_gamma: F,

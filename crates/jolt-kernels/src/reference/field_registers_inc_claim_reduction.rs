@@ -1,15 +1,15 @@
 //! The stage-6b `FieldRegistersIncClaimReduction` kernel: a hand-rolled member
 //! over the cycle domain.
 //!
-//! The summand is `(eq(r_rw, j) + γ·eq(r_val, j)) · FieldRdInc(j)` — the jolt
-//! increment claim-reduction kernel's register leg at the FR dimensions:
-//! reducing the two upstream `FieldRdInc` openings (stage-4 FR read/write,
-//! stage-5 FR val evaluation, folded by the member-drawn gamma) to the single
-//! reduced opening the stage-8 joint opening consumes. The increment table is
-//! the committed dense trace view; each eq leaf is one multilinear over its
-//! upstream FR cycle sub-point. The FieldInline id family cannot ride the
-//! jolt-keyed [`NaiveSumcheckProver`](crate::NaiveSumcheckProver), so the
-//! tables and the expression are hand-held (the
+//! The summand is `(eq(r_rw, j) + γ·eq(r_val, j)) · FieldRdInc(j)` — the jolt increment
+//! claim-reduction kernel's register leg at the field-register dimensions: reducing the
+//! two upstream `FieldRdInc` openings (stage-4 field-register read/write, stage-5
+//! field-register value evaluation, folded by the member-drawn gamma) to the single
+//! reduced opening the stage-8 joint opening consumes. The increment table is the
+//! committed dense trace view; each eq leaf is one multilinear over its upstream
+//! field-inline cycle sub-point. The FieldInline id family cannot ride the jolt-keyed
+//! [`NaiveSumcheckProver`](crate::NaiveSumcheckProver), so the tables and the
+//! expression are hand-held (the
 //! [`field_registers_claim_reduction`](super::field_registers_claim_reduction)
 //! pattern).
 
@@ -57,7 +57,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>> for Refe
         for point in [read_write_cycle, val_evaluation_cycle] {
             if point.len() != relation.rounds() {
                 return Err(KernelError::InvariantViolation {
-                    reason: "FR increment reduction cycle point has the wrong variable count",
+                    reason: "field-register increment reduction cycle point has the wrong variable count",
                 });
             }
         }
@@ -77,7 +77,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>> for Refe
                 FieldRegistersIncClaimReductionChallenge::Gamma,
             ))
             .ok_or(KernelError::InvariantViolation {
-                reason: "FR increment claim reduction is missing its gamma challenge",
+                reason: "field-register increment claim reduction is missing its gamma challenge",
             })?;
 
         Ok(Box::new(FieldRegistersIncClaimReductionKernel {
@@ -94,10 +94,10 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>> for Refe
 struct FieldRegistersIncClaimReductionKernel<F: JoltField> {
     relation: FieldRegistersIncClaimReduction<F>,
     gamma: F,
-    /// `eq(stage-4 FR read/write cycle, ·)` over the cycle domain
+    /// `eq(stage-4 field-register read/write cycle, ·)` over the cycle domain
     /// (big-endian, like the jolt increment reduction kernel's eq tables).
     eq_read_write: Polynomial<F>,
-    /// `eq(stage-5 FR val-evaluation cycle, ·)` over the cycle domain.
+    /// `eq(stage-5 field-register value-evaluation cycle, ·)` over the cycle domain.
     eq_val_evaluation: Polynomial<F>,
     rd_inc: Polynomial<F>,
     rounds_bound: usize,

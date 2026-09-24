@@ -277,11 +277,10 @@ pub(crate) fn column_kinds<F: JoltField, Id: Copy + Into<CommittedColumnId>>(
         .collect()
 }
 
-/// The shared field-inline commit pass, used by every `CommitWitness` tier:
-/// each FR column is dense over the trace domain and placed exactly like the
-/// jolt increment columns (contiguous cycle-major; address slot zero of each
-/// cycle block address-major), so the stage-8 embedding treats `FieldRdInc`
-/// like `RdInc`.
+/// The shared field-inline commit pass, used by every `CommitWitness` tier: each
+/// field-inline column is dense over the trace domain and placed exactly like the jolt
+/// increment columns (contiguous cycle-major; address slot zero of each cycle block
+/// address-major), so the stage-8 embedding treats `FieldRdInc` like `RdInc`.
 #[cfg(feature = "field-inline")]
 pub(crate) fn commit_field_inline_columns<F, PCS>(
     source: &dyn JoltWitnessPlane<F>,
@@ -560,17 +559,16 @@ mod field_inline_tests {
 
     use super::{commit_field_inline_columns, finish_streamed};
     use crate::commitment::CommitmentGrid;
-    use crate::optimized::field_registers_testing::structured_fr_fixture;
+    use crate::optimized::field_registers_testing::structured_field_register_fixture;
 
-    /// The streamed FR column commit equals the commit of the explicitly
-    /// laid-out table in both trace orders: cycle-major, the `T`-entry column
-    /// itself (no grid padding, like the jolt increment columns);
-    /// address-major, the full grid with cycle `t` at index `t · cycle_stride`
-    /// and zero elsewhere.
+    /// The streamed field-inline column commit equals the commit of the explicitly
+    /// laid-out table in both trace orders: cycle-major, the `T`-entry column itself
+    /// (no grid padding, like the jolt increment columns); address-major, the full grid
+    /// with cycle `t` at index `t · cycle_stride` and zero elsewhere.
     #[test]
     fn field_inline_commit_matches_the_dense_grid_layout() {
         let log_t = 4;
-        structured_fr_fixture(12).with_plane(log_t, |backend| {
+        structured_field_register_fixture(12).with_plane(log_t, |backend| {
             let values: Vec<Fr> = JoltWitnessOracle::<Fr>::field_inline(backend)
                 .unwrap()
                 .oracle_table(FieldInlinePolynomialId::Committed(

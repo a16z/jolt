@@ -144,9 +144,8 @@ where
         LtPolynomial::evaluate(&registers_cycle, registers_read_write_cycle),
     )?;
 
-    // The FR val-evaluation member (declared last, no instance challenge) and
-    // its baked `LtCycle` public, at the same source-values position as
-    // before.
+    // The field-register value-evaluation member (declared last, no instance challenge) and
+    // its baked `LtCycle` public, at the same source-values position as before.
     #[cfg(feature = "field-inline")]
     let field_registers_claims = super::field_inline::stage5_val_evaluation(
         values,
@@ -163,7 +162,7 @@ where
 
     let output_ids = stage5_output_ids::<PCS::Field>(instruction_output_openings);
 
-    // Member declaration order (= batching-coefficient draw order): the FR
+    // Member declaration order (= batching-coefficient draw order): the field-inline
     // val-evaluation member is declared last, exactly as in `Stage5Sumchecks`.
     #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
     let mut batch_claims = vec![
@@ -187,10 +186,10 @@ where
     )
 }
 
-/// The stage-5 committed output row order: the instruction read-RAF openings,
-/// the reduced RAM RA, the register value-evaluation openings, then (under
-/// `field-inline`) the two FR val-evaluation rows at the tail — the clear
-/// absorb order (the generated `Stage5Sumchecks` member-declaration absorb).
+/// The stage-5 committed output row order: the instruction read-RAF openings, the reduced RAM
+/// RA, the register value-evaluation openings, then (under `field-inline`) the two
+/// field-register value-evaluation rows at the tail — the clear absorb order (the generated
+/// `Stage5Sumchecks` member-declaration absorb).
 fn stage5_output_ids<F: JoltField>(
     instruction_output_openings: InstructionReadRafOutputOpenings,
 ) -> Vec<VerifierOpeningId> {
@@ -208,9 +207,9 @@ fn stage5_output_ids<F: JoltField>(
         }
         .canonical_order(),
     ));
-    // The two FR val-evaluation rows, after the ordinary register
-    // value-evaluation outputs — the clear absorb order (the FR member is
-    // declared last, so the generated absorb appends them at the tail).
+    // The two field-register value-evaluation rows, after the ordinary register
+    // value-evaluation outputs — the clear absorb order (the field-inline member is declared
+    // last, so the generated absorb appends them at the tail).
     #[cfg(feature = "field-inline")]
     output_ids.extend(super::field_inline::stage5_output_ids());
     output_ids
@@ -245,10 +244,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    /// The stage-5 committed row order is the clear absorb order (the
-    /// generated member-declaration `opening_values`), locked entry-for-entry
-    /// over sentinel-valued claims (FR-on: the two FR val-evaluation rows at
-    /// the tail).
+    /// The stage-5 committed row order is the clear absorb order (the generated
+    /// member-declaration `opening_values`), locked entry-for-entry over sentinel-valued
+    /// claims (with field-inline enabled: the two field-register value-evaluation rows at the
+    /// tail).
     #[test]
     fn stage5_output_ids_match_the_clear_absorb_order() {
         let log_t = 3usize;

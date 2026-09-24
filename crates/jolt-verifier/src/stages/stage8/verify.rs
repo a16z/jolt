@@ -462,8 +462,8 @@ fn require_commitment_layout<C>(
     commitments: &JoltCommitments<C>,
     layout: JoltRaPolynomialLayout,
 ) -> Result<(), VerifierError> {
-    // The FR commitment payload is part of the expected layout: the composed
-    // final opening cannot assemble without the `FieldRdInc` commitment.
+    // The field-inline commitment payload is part of the expected layout: the composed final
+    // opening cannot assemble without the `FieldRdInc` commitment.
     #[cfg(feature = "field-inline")]
     super::field_inline::require_commitment(commitments)?;
     #[expect(
@@ -534,8 +534,8 @@ mod tests {
         final_opening_id(polynomial).into()
     }
 
-    /// FR-off pin: the batch plan is exactly the jolt-typed final-opening
-    /// order lifted into composite ids — no extra entries, unchanged order.
+    /// Without field-inline, the batch plan is exactly the jolt-typed final-opening order
+    /// lifted into composite ids — no extra entries, unchanged order.
     #[test]
     fn base_final_opening_plan_is_the_jolt_order() {
         let expected: Vec<VerifierOpeningId> =
@@ -550,11 +550,11 @@ mod tests {
         assert_eq!(ids, expected);
     }
 
-    /// FR-on pin: the composed plan is exactly the spec's field-inline
+    /// With field-inline enabled, the composed plan is exactly the spec's field-inline
     /// final-opening order — `RamInc@Inc`, `RdInc@Inc`,
-    /// `FieldRdInc@FieldRegistersIncClaimReduction`, then the RA families and
-    /// the advice entries (`specs/field-inline-protocol.md`, "Stage 6
-    /// Composition" / the stage-8 final-opening order block).
+    /// `FieldRdInc@FieldRegistersIncClaimReduction`, then the RA families and the advice
+    /// entries (`specs/field-inline-protocol.md`, "Stage 6 Composition" / the stage-8
+    /// final-opening order block).
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_final_opening_plan_matches_the_spec_order() {
@@ -593,8 +593,8 @@ mod tests {
         ];
         assert_eq!(ids, expected);
 
-        // The spliced entry mirrors RdInc's embedding treatment: the same
-        // dense embedding helper over the FR reduction's own point.
+        // The spliced entry mirrors RdInc's embedding treatment: the same dense embedding
+        // helper over the field-inline reduction's own point.
         let spliced = entries
             .iter()
             .find(|entry| entry.id == field_rd_inc_reduced().into())
@@ -621,8 +621,8 @@ mod tests {
         );
     }
 
-    /// The splice fails closed on a missing FR commitment payload and on a
-    /// plan without its RdInc anchor.
+    /// The splice fails closed on a missing field-inline commitment payload and on a plan
+    /// without its RdInc anchor.
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_inline_splice_fails_closed() {
