@@ -1,10 +1,44 @@
 #[cfg(not(feature = "akita"))]
 use std::path::Path;
 
+use jolt_verifier::VerifierError;
+
 use crate::support::tamper_manifest::{
-    all_targets, clear_claim_leaf_paths, manifest_paths, proof_field_paths,
-    target_names_are_unique, verifier_owned_targets_without_active_coverage, TamperCoverage,
+    all_targets, clear_claim_leaf_paths, manifest_paths, observed_rejection_phase,
+    proof_field_paths, target_names_are_unique, verifier_owned_targets_without_active_coverage,
+    TamperCoverage,
 };
+use crate::support::VerifierPhase;
+
+#[test]
+fn batch_sumcheck_errors_have_rejection_phases() {
+    for (stage, phase) in [
+        ("Stage1Batch", VerifierPhase::Stage1),
+        ("Stage2Batch", VerifierPhase::Stage2),
+        ("Stage3", VerifierPhase::Stage3),
+        ("Stage4", VerifierPhase::Stage4),
+        ("Stage5", VerifierPhase::Stage5),
+        ("Stage6a", VerifierPhase::Stage6),
+        ("Stage6b", VerifierPhase::Stage6),
+        ("Stage7", VerifierPhase::Stage7),
+    ] {
+        let error = VerifierError::StageClaimSumcheckFailed {
+            stage: stage.to_string(),
+            reason: "invalid round polynomial".to_string(),
+        };
+        assert_eq!(observed_rejection_phase(&error), Some(phase), "{stage}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "unrecognized verifier stage")]
+fn unknown_stage_errors_cannot_skip_rejection_deadlines() {
+    let error = VerifierError::StageClaimSumcheckFailed {
+        stage: "UnknownStage".to_string(),
+        reason: "invalid round polynomial".to_string(),
+    };
+    let _ = observed_rejection_phase(&error);
+}
 
 #[test]
 fn tamper_manifest_target_names_are_unique() {

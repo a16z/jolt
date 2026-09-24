@@ -1240,7 +1240,7 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
     }
 }
 
-/// Stage-error strings are `format!("{:?}", relation_id)`; recover the id.
+/// Relation-level errors use `format!("{:?}", relation_id)`.
 fn relation_from_stage_string(stage: &str) -> Option<JoltRelationId> {
     [
         JoltRelationId::SpartanOuter,
@@ -1300,7 +1300,18 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
         VerifierError::StageClaimSumcheckFailed { stage, .. }
         | VerifierError::StageClaimOpeningMismatch { stage, .. } => {
-            relation_from_stage_string(stage).map(relation_phase)
+            let phase = match stage.as_str() {
+                "Stage1Batch" => Some(VerifierPhase::Stage1),
+                "Stage2Batch" => Some(VerifierPhase::Stage2),
+                "Stage3" => Some(VerifierPhase::Stage3),
+                "Stage4" => Some(VerifierPhase::Stage4),
+                "Stage5" => Some(VerifierPhase::Stage5),
+                "Stage6a" | "Stage6b" => Some(VerifierPhase::Stage6),
+                "Stage7" => Some(VerifierPhase::Stage7),
+                _ => relation_from_stage_string(stage).map(relation_phase),
+            };
+            assert!(phase.is_some(), "unrecognized verifier stage: {stage}");
+            phase
         }
         VerifierError::StageClaimPublicInputFailed { stage, .. } => Some(relation_phase(*stage)),
         VerifierError::StageClaimOutputMismatch { stage } => match stage {
