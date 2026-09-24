@@ -1,7 +1,7 @@
 //! The advice claim-reduction kernel: the cycle-phase precommitted reduction
 //! of a trusted/untrusted advice opening (stage 6b; stage 7's address phase
-//! resumes from the parked carry), plus the stage-4 advice opening evaluation
-//! it reduces.
+//! resumes from the parked carry), plus stage 4's initial-RAM opening
+//! evaluations (advice and the committed program image).
 //!
 //! The reduction member is the shared
 //! [`CycleReductionKernel`](crate::precommitted_reduction): the advice
@@ -24,31 +24,36 @@ use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
 use jolt_witness::JoltWitnessPlane;
 
 use super::views::{dense_view, eq_table};
-use crate::opening::AdviceOpeningEvaluation;
+use crate::opening::{evaluate_program_image, RamInitialOpening, RamInitialOpeningEvaluation};
 use crate::precommitted_reduction::{
     lsb_permutation, permute_challenges, permute_coefficients, CycleReductionKernel,
 };
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 
-impl<F: JoltField> AdviceOpeningEvaluation<F> for ReferenceBackend {
-    // The backend-neutral `AdviceOpeningEvaluation::evaluate` span lives at
-    // the stage-4 call boundary (`crates/jolt-prover/src/stages/stage4.rs`),
-    // so every implementation inherits it — see the taxonomy's kernel-seam
-    // contract.
+impl<F: JoltField> RamInitialOpeningEvaluation<F> for ReferenceBackend {
     fn evaluate(
         &self,
         _session: &mut ProofSession,
-        kind: JoltAdviceKind,
-        point: &[F],
-        witness: &dyn JoltWitnessOracle<F>,
-    ) -> Result<F, KernelError<F>> {
-        let table = advice_table(witness, kind, point.len())?;
-        let eq = eq_table(point);
-        Ok(table
+        openings: &[RamInitialOpening<'_, F>],
+        witness: &dyn JoltWitnessPlane<F>,
+    ) -> Result<Vec<F>, KernelError<F>> {
+        openings
             .iter()
-            .zip(&eq)
-            .map(|(value, weight)| *value * *weight)
-            .sum())
+            .map(|opening| match opening {
+                RamInitialOpening::ProgramImage { layout, point } => {
+                    Ok(evaluate_program_image(layout, point, witness))
+                }
+                RamInitialOpening::Advice { kind, point } => {
+                    let table = advice_table(witness, *kind, point.len())?;
+                    let eq = eq_table(point);
+                    Ok(table
+                        .iter()
+                        .zip(&eq)
+                        .map(|(value, weight)| *value * *weight)
+                        .sum())
+                }
+            })
+            .collect()
     }
 }
 
