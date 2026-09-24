@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 /// constant polynomial.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
-pub struct NormalizedPoly<F: Field> {
+pub struct OmittedConstantPoly<F: Field> {
     coefficients: Vec<F>,
 }
 
-impl<F: Field> NormalizedPoly<F> {
+impl<F: Field> OmittedConstantPoly<F> {
     /// Constructs from the stored nonconstant coefficients `[q1, ..., qd]`.
     pub fn new(coefficients: Vec<F>) -> Self {
         Self { coefficients }

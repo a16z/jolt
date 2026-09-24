@@ -5,6 +5,8 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use jolt_field::Field;
 use serde::{Deserialize, Serialize};
 
+use crate::CompressedPoly;
+
 /// Shared interface for univariate polynomial types.
 ///
 /// Provides the minimal common API between [`UnivariatePoly`] (full coefficient
@@ -193,16 +195,16 @@ impl<F: Field> UnivariatePoly<F> {
     /// An empty polynomial stores `[0]`; a constant stores `[c0]`. Both
     /// compressed forms have degree bound one because the hint can reconstruct
     /// a nonzero linear term.
-    pub fn compress(&self) -> crate::CompressedPoly<F> {
+    pub fn compress(&self) -> CompressedPoly<F> {
         let Some(&constant) = self.coefficients.first() else {
-            return crate::CompressedPoly::new(vec![F::zero()]);
+            return CompressedPoly::new(vec![F::zero()]);
         };
         let mut coeffs = Vec::with_capacity(self.coefficients.len().saturating_sub(1).max(1));
         coeffs.push(constant);
         if self.coefficients.len() > 2 {
             coeffs.extend_from_slice(&self.coefficients[2..]);
         }
-        crate::CompressedPoly::new(coeffs)
+        CompressedPoly::new(coeffs)
     }
 
     /// Interpolates from evaluations at `0, 1, 2, ..., n-1` using Newton forward

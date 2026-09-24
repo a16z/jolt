@@ -7,7 +7,7 @@
 
 use jolt_field::{Ext2, Field, Fr, One, Prime64Offset59, Ring, Zero};
 use jolt_poly::{
-    EqPolynomial, IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, NormalizedPoly,
+    EqPolynomial, IdentityPolynomial, MultilinearEvaluation, MultilinearPoly, OmittedConstantPoly,
     Polynomial, RlcSource, UnivariatePoly, UnivariatePolynomial,
 };
 use rand_chacha::ChaCha20Rng;
@@ -166,11 +166,11 @@ fn compression_handles_empty_constant_and_trailing_zeros() {
 }
 
 #[test]
-fn normalized_payload_preserves_shape_and_evaluates() {
-    let empty = NormalizedPoly::<Fr>::new(vec![]);
+fn omitted_constant_payload_preserves_shape_and_evaluates() {
+    let empty = OmittedConstantPoly::<Fr>::new(vec![]);
     assert_eq!(empty.degree(), 0);
     assert_eq!(empty.evaluate_nonconstant_terms(Fr::one()), Fr::zero());
-    let normalized = NormalizedPoly::from_q_coefficients(vec![
+    let normalized = OmittedConstantPoly::from_q_coefficients(vec![
         Fr::from_u64(11),
         Fr::from_u64(2),
         Fr::from_u64(3),

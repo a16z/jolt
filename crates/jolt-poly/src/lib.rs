@@ -25,7 +25,7 @@
 //! - [`IdentityPolynomial`]: Maps hypercube points to their integer index
 //! - [`UnivariatePoly`]: Coefficient-form univariate with Lagrange interpolation and compression
 //! - [`CompressedPoly`]: Compressed univariate with the linear term omitted (one field element saved per round)
-//! - [`NormalizedPoly`]: Inner univariate with the constant term omitted, retaining its stored degree bound
+//! - [`OmittedConstantPoly`]: Inner univariate with the constant term omitted, retaining its stored degree bound
 //!
 //! # Streaming and Sparse Access
 //!
@@ -69,7 +69,7 @@ pub mod lagrange;
 mod lt;
 mod mle;
 mod multilinear;
-mod normalized_univariate;
+mod omitted_constant;
 mod one_hot;
 mod point;
 mod split_eq;
@@ -89,7 +89,7 @@ pub use mle::{
     block_selector_mle_msb, range_mask_mle_msb, sparse_mle_msb, sparse_segments_mle_msb, MleError,
 };
 pub use multilinear::{MultilinearBinding, MultilinearEvaluation, MultilinearPoly, RlcSource};
-pub use normalized_univariate::NormalizedPoly;
+pub use omitted_constant::OmittedConstantPoly;
 pub use one_hot::{OneHotIndexOrder, OneHotPolynomial};
 pub use point::{Endianness, Point, HIGH_TO_LOW, LOW_TO_HIGH};
 pub use split_eq::{GruenSplitEqPolynomial, TensorEqTable};
