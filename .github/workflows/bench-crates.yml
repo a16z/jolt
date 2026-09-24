@@ -38,13 +38,13 @@ jobs:
     name: Criterion benchmarks
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Depth 2 reaches both parents of the synthetic merge commit, so the
           # base leg can check out the exact main tip this PR merges against.
           fetch-depth: 2
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
 
       - name: Resolve base and head
         id: refs
@@ -92,7 +92,7 @@ jobs:
       - name: Post benchmark comparison
         if: github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const fs = require('fs');
