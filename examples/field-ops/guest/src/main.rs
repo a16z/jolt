@@ -2,4 +2,4 @@
 #![no_main]
 
 #[allow(unused_imports)]
-use eqpoly_field_guest::*;
+use field_ops_guest::*;

@@ -155,7 +155,7 @@ jobs:
           --
           -D warnings
       # The profile harness under field-inline: the FR-profile guest path and
-      # the `eqpoly-field` workload, in both flamegraph modes and both
+      # the `field-ops` workload, in both flamegraph modes and both
       # protocols.
       - name: cargo clippy -p jolt-prover --features profiling,field-inline
         run: cargo clippy -p jolt-prover --all-targets --features profiling,field-inline
@@ -439,8 +439,8 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,zk
       # The example smoke run (no generic example lane runs feature-gated
       # examples; the ci-bench sweep excludes this one).
-      - name: Run the eqpoly-field example
-        run: cargo run --profile ci -p eqpoly-field --features field-inline
+      - name: Run the field-ops example
+        run: cargo run --profile ci -p field-ops --features field-inline
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest

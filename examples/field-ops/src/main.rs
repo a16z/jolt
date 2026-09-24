@@ -222,8 +222,8 @@ fn main() {
 #[cfg(not(feature = "field-inline"))]
 fn main() {
     eprintln!(
-        "the eqpoly-field example is field-inline-only: \
-         cargo run -p eqpoly-field --features field-inline"
+        "the field-ops example is field-inline-only: \
+         cargo run -p field-ops --features field-inline"
     );
     std::process::exit(1);
 }

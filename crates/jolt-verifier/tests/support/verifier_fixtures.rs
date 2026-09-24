@@ -794,7 +794,7 @@ mod field_inline {
 
     pub(super) fn generate_eqpoly() -> GeneratedVerifierFixture {
         let inputs = eqpoly_inputs();
-        let mut program = Program::new("eqpoly-field-guest");
+        let mut program = Program::new("field-ops-guest");
         program.enable_field_inline();
 
         let (_, _, _, io_device) = program.trace(&inputs, &[], &[]);

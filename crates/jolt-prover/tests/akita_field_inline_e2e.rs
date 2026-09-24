@@ -319,7 +319,7 @@ mod clear {
     use super::support::{self, Proof, ProveOutput};
 
     fn prove_eqpoly(backend: JoltAkitaBackend<AkitaField, AkitaScheme>) -> ProveOutput {
-        let guest = support::fr_guest("eqpoly-field-guest", &support::eqpoly_inputs());
+        let guest = support::fr_guest("field-ops-guest", &support::eqpoly_inputs());
         assert!(
             support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
             "the eq-MLE guest must trace FR-active",

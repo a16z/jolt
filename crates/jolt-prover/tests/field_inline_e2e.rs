@@ -2,7 +2,7 @@
 //! the full `jolt_verifier::verify` entry, in both proof modes.
 //!
 //! Two guests span the composed protocol's envelope: the eq-MLE guest
-//! (`eqpoly-field-guest`) exercises every shipped FR instruction family —
+//! (`field-ops-guest`) exercises every shipped FR instruction family —
 //! LoadImm, x-register and memory bridges, limb advice, add/sub/mul/inv,
 //! and FIELD_ASSERT_EQ — and
 //! the FR-profile muldiv build is the uniform-shape degenerate case (an FR-on
@@ -275,7 +275,7 @@ mod clear {
     fn prove_eqpoly(
         backend: JoltBackend<Fr, DoryScheme>,
     ) -> (VerifierPreprocessing, JoltDevice, Proof) {
-        let guest = support::fr_guest("eqpoly-field-guest", &support::eqpoly_inputs());
+        let guest = support::fr_guest("field-ops-guest", &support::eqpoly_inputs());
         assert!(
             support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
             "the eq-MLE guest must trace FR-active",
@@ -442,7 +442,7 @@ mod zk {
             // reference ZK path is pinned by the muldiv accept below (ZK
             // blindings randomize the wire, so proofs are verify-only here —
             // clear mode owns the byte-equality statement).
-            let guest = support::fr_guest("eqpoly-field-guest", &support::eqpoly_inputs());
+            let guest = support::fr_guest("field-ops-guest", &support::eqpoly_inputs());
             assert!(
                 support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
                 "the eq-MLE guest must trace FR-active",

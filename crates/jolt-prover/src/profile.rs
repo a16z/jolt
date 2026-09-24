@@ -133,12 +133,12 @@ pub enum Workload {
     Sha3Chain,
     #[value(name = "btreemap")]
     BTreeMap,
-    /// The eq-MLE field-inline guest (`examples/eqpoly-field`): the workload
+    /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
     /// that exercises the FR columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
     #[cfg(feature = "field-inline")]
-    #[value(name = "eqpoly-field")]
-    EqpolyField,
+    #[value(name = "field-ops")]
+    FieldOps,
 }
 
 impl Workload {
@@ -150,7 +150,7 @@ impl Workload {
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
             #[cfg(feature = "field-inline")]
-            Self::EqpolyField => "eqpoly-field",
+            Self::FieldOps => "field-ops",
         }
     }
 
@@ -158,7 +158,7 @@ impl Workload {
     /// `field-inline` guest feature besides the FR instruction profile).
     #[cfg(feature = "field-inline")]
     const fn uses_field_inline(self) -> bool {
-        matches!(self, Self::EqpolyField)
+        matches!(self, Self::FieldOps)
     }
 
     /// Default log2 trace length when `--scale` is omitted.
@@ -169,7 +169,7 @@ impl Workload {
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
             #[cfg(feature = "field-inline")]
-            Self::EqpolyField => 16,
+            Self::FieldOps => 16,
         }
     }
 
@@ -198,7 +198,7 @@ impl Workload {
                     .expect("serialize input")
             }
             #[cfg(feature = "field-inline")]
-            Self::EqpolyField => eqpoly_inputs(),
+            Self::FieldOps => eqpoly_inputs(),
         }
     }
 }

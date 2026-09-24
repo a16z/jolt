@@ -1,5 +1,5 @@
 [package]
-name = "eqpoly-field"
+name = "field-ops"
 version = "0.1.0"
 edition = "2021"
 
@@ -19,7 +19,7 @@ field-inline = [
 
 [dependencies]
 jolt = { package = "jolt-sdk", path = "../../jolt-sdk", features = ["host"] }
-guest = { package = "eqpoly-field-guest", path = "./guest" }
+guest = { package = "field-ops-guest", path = "./guest" }
 jolt-field = { workspace = true, optional = true }
 jolt-program = { workspace = true, optional = true }
 jolt-prover = { workspace = true, optional = true }
