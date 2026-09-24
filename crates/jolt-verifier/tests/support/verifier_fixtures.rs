@@ -377,7 +377,7 @@ impl VerifierFixtureKind {
     const fn fixture_name(self) -> &'static str {
         match self {
             #[cfg(all(feature = "field-inline", not(feature = "zk")))]
-            Self::FieldInlineEqpoly => "standard-field-inline-eqpoly-modular-v2",
+            Self::FieldInlineEqpoly => "standard-field-inline-eqpoly-modular-v3",
             #[cfg(not(feature = "zk"))]
             Self::MulDivSmall => "standard-muldiv-small",
             #[cfg(not(feature = "zk"))]

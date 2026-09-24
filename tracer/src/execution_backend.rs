@@ -644,7 +644,7 @@ mod tests {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
         cpu.write_register(5, 11);
         let instruction = Instruction::decode(
-            field_inline_word(FieldInlineOp::LoadAccumulateFromX, 2, 5, 0),
+            field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 2, 5, 0),
             0x8000_0000,
             false,
         )
@@ -659,10 +659,13 @@ mod tests {
         assert!(row.rs2_read().is_none());
         assert!(row.rd_write().is_none());
         let field_trace = row.field_inline.unwrap();
-        assert_eq!(field_trace.op, Some(FieldInlineOp::LoadAccumulateFromX));
+        assert_eq!(
+            field_trace.op,
+            Some(FieldInlineOp::LoadAccumulateFromRegister)
+        );
         assert_eq!(
             field_trace.bridge,
-            Some(FieldInlineBridge::LoadAccumulateFromX {
+            Some(FieldInlineBridge::LoadAccumulateFromRegister {
                 x_register: 5,
                 x_value: 11,
                 field_value: FieldEncodedValue::from_u64(11),

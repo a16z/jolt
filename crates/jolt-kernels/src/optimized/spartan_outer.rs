@@ -461,9 +461,9 @@ impl SpartanOuterRow {
         // off the shared rv64 columns the bridge rows reuse. Active field-inline cycles
         // go through `field_group_values` instead; calling this on one is a routing bug
         // the parity tests would surface as a wrong t1 value. First group [FADD, FSUB,
-        // FMUL, FINV, LOAD_ACCUMULATE_WORD]: guards zero; magnitudes zero except FINV's
+        // FMUL, FINV, LOAD_ACCUMULATE_FROM_MEMORY]: guards zero; magnitudes zero except FINV's
         // `inv_product − 1 = −1` and the load row's `field_rd − 2^64·field_rs1 −
-        // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_ACCUMULATE_FROM_X,
+        // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_ACCUMULATE_FROM_REGISTER,
         // STORE_TO_X, LOAD_IMM, STORE_TO_X_LOOKUP, ADVICE_LIMB]: guards zero;
         // magnitudes `0`, `field_rd − 2^64·field_rs1 − Rs1Value = −Rs1Value`, `RdWriteValue − field_rs1
         // = RdWriteValue`, `field_rd − Imm = −Imm`, `RightLookupOperand − field_rs1 =
@@ -508,7 +508,8 @@ impl SpartanOuterRow {
         values.a_first[RV64_FIRST_GROUP_LEN + 1] = flag(FieldInlineOpFlag::Sub);
         values.a_first[RV64_FIRST_GROUP_LEN + 2] = flag(FieldInlineOpFlag::Mul);
         values.a_first[RV64_FIRST_GROUP_LEN + 3] = flag(FieldInlineOpFlag::Inv);
-        values.a_first[RV64_FIRST_GROUP_LEN + 4] = flag(FieldInlineOpFlag::LoadAccumulateWord);
+        values.a_first[RV64_FIRST_GROUP_LEN + 4] =
+            flag(FieldInlineOpFlag::LoadAccumulateFromMemory);
         let rd_write_value = F::from_u64(self.rd_write_value.0);
         values.b_first[RV64_FIRST_GROUP_LEN] =
             field_row.rs1_value + field_row.rs2_value - field_row.rd_value;
@@ -519,7 +520,8 @@ impl SpartanOuterRow {
         values.b_first[RV64_FIRST_GROUP_LEN + 4] =
             field_row.rd_value - limb_radix::<F>() * field_row.rs1_value - rd_write_value;
         values.a_second[RV64_SECOND_GROUP_LEN] = flag(FieldInlineOpFlag::AssertEq);
-        values.a_second[RV64_SECOND_GROUP_LEN + 1] = flag(FieldInlineOpFlag::LoadAccumulateFromX);
+        values.a_second[RV64_SECOND_GROUP_LEN + 1] =
+            flag(FieldInlineOpFlag::LoadAccumulateFromRegister);
         values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::StoreToX);
         values.a_second[RV64_SECOND_GROUP_LEN + 3] = flag(FieldInlineOpFlag::LoadImm);
         values.b_second[RV64_SECOND_GROUP_LEN] = field_row.rs1_value - field_row.rs2_value;

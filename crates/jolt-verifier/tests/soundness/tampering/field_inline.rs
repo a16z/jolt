@@ -74,10 +74,10 @@ mod active {
                 |claims| &mut outer(claims).mul,
                 |claims| &mut outer(claims).inv,
                 |claims| &mut outer(claims).assert_eq,
-                |claims| &mut outer(claims).load_accumulate_from_x,
+                |claims| &mut outer(claims).load_accumulate_from_register,
                 |claims| &mut outer(claims).store_to_x,
                 |claims| &mut outer(claims).load_imm,
-                |claims| &mut outer(claims).load_accumulate_word,
+                |claims| &mut outer(claims).load_accumulate_from_memory,
                 |claims| &mut outer(claims).advice_limb,
             ],
         );

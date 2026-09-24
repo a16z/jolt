@@ -188,10 +188,10 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
             FieldInlineOpFlag::Mul,
             FieldInlineOpFlag::Inv,
             FieldInlineOpFlag::AssertEq,
-            FieldInlineOpFlag::LoadAccumulateFromX,
+            FieldInlineOpFlag::LoadAccumulateFromRegister,
             FieldInlineOpFlag::StoreToX,
             FieldInlineOpFlag::LoadImm,
-            FieldInlineOpFlag::LoadAccumulateWord,
+            FieldInlineOpFlag::LoadAccumulateFromMemory,
             FieldInlineOpFlag::AdviceLimb,
         ];
         let mut rows = Vec::new();
@@ -682,7 +682,7 @@ fn validate_bridge(
         )),
         (
             Some(FieldInlineXRegisterRole::ReadRs1),
-            Some(FieldInlineBridge::LoadAccumulateFromX {
+            Some(FieldInlineBridge::LoadAccumulateFromRegister {
                 x_register,
                 x_value,
                 field_value,
@@ -723,7 +723,7 @@ fn validate_bridge(
         }
         (
             Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
-            Some(FieldInlineBridge::LoadAccumulateWord {
+            Some(FieldInlineBridge::LoadAccumulateFromMemory {
                 x_base,
                 x_register,
                 word,
@@ -1201,7 +1201,7 @@ mod tests {
     #[test]
     fn bridge_rows_keep_rv64_and_field_witnesses_separate() {
         let load = instruction(
-            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X,
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
             0,
             Some(1),
             Some(5),
@@ -1218,7 +1218,7 @@ mod tests {
                 ..RegisterState::default()
             },
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadAccumulateFromX),
+                op: Some(FieldInlineOp::LoadAccumulateFromRegister),
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(0),
@@ -1228,7 +1228,7 @@ mod tests {
                     pre_value: enc(0),
                     post_value: enc(11),
                 }),
-                bridge: Some(FieldInlineBridge::LoadAccumulateFromX {
+                bridge: Some(FieldInlineBridge::LoadAccumulateFromRegister {
                     x_register: 5,
                     x_value: 11,
                     field_value: enc(11),
@@ -1296,15 +1296,15 @@ mod tests {
     fn accumulating_loads_read_and_bind_the_nonzero_destination() {
         for (kind, op) in [
             (
-                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X,
-                FieldInlineOp::LoadAccumulateFromX,
+                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
+                FieldInlineOp::LoadAccumulateFromRegister,
             ),
             (
-                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_WORD,
-                FieldInlineOp::LoadAccumulateWord,
+                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+                FieldInlineOp::LoadAccumulateFromMemory,
             ),
         ] {
-            let memory_load = op == FieldInlineOp::LoadAccumulateWord;
+            let memory_load = op == FieldInlineOp::LoadAccumulateFromMemory;
             let (seed, seed_row) = load_imm(0, 1, 3);
             let load = instruction(
                 kind,
@@ -1317,14 +1317,14 @@ mod tests {
             let mut accumulated = enc(11);
             accumulated.bytes_le[8] = 3;
             let bridge = if memory_load {
-                FieldInlineBridge::LoadAccumulateWord {
+                FieldInlineBridge::LoadAccumulateFromMemory {
                     x_base: 5,
                     x_register: 6,
                     word: 11,
                     field_value: accumulated,
                 }
             } else {
-                FieldInlineBridge::LoadAccumulateFromX {
+                FieldInlineBridge::LoadAccumulateFromRegister {
                     x_register: 5,
                     x_value: 11,
                     field_value: accumulated,

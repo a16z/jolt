@@ -14,10 +14,10 @@ pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 10] = [
     FieldInlineOpFlag::Mul,
     FieldInlineOpFlag::Inv,
     FieldInlineOpFlag::AssertEq,
-    FieldInlineOpFlag::LoadAccumulateFromX,
+    FieldInlineOpFlag::LoadAccumulateFromRegister,
     FieldInlineOpFlag::StoreToX,
     FieldInlineOpFlag::LoadImm,
-    FieldInlineOpFlag::LoadAccumulateWord,
+    FieldInlineOpFlag::LoadAccumulateFromMemory,
     FieldInlineOpFlag::AdviceLimb,
 ];
 
@@ -46,10 +46,10 @@ pub struct FieldInlineBytecodeFlags {
     pub mul: bool,
     pub inv: bool,
     pub assert_eq: bool,
-    pub load_accumulate_from_x: bool,
+    pub load_accumulate_from_register: bool,
     pub store_to_x: bool,
     pub load_imm: bool,
-    pub load_accumulate_word: bool,
+    pub load_accumulate_from_memory: bool,
     pub advice_limb: bool,
 }
 
@@ -61,10 +61,10 @@ impl FieldInlineBytecodeFlags {
             FieldInlineOpFlag::Mul => self.mul,
             FieldInlineOpFlag::Inv => self.inv,
             FieldInlineOpFlag::AssertEq => self.assert_eq,
-            FieldInlineOpFlag::LoadAccumulateFromX => self.load_accumulate_from_x,
+            FieldInlineOpFlag::LoadAccumulateFromRegister => self.load_accumulate_from_register,
             FieldInlineOpFlag::StoreToX => self.store_to_x,
             FieldInlineOpFlag::LoadImm => self.load_imm,
-            FieldInlineOpFlag::LoadAccumulateWord => self.load_accumulate_word,
+            FieldInlineOpFlag::LoadAccumulateFromMemory => self.load_accumulate_from_memory,
             FieldInlineOpFlag::AdviceLimb => self.advice_limb,
         }
     }
@@ -369,7 +369,8 @@ fn validate_operand_layout(
             operands.rd.is_none() && operands.rs1.is_some() && operands.rs2.is_none()
         }
         // The Horner step reads the accumulator it writes.
-        FieldInlineOpFlag::LoadAccumulateFromX | FieldInlineOpFlag::LoadAccumulateWord => {
+        FieldInlineOpFlag::LoadAccumulateFromRegister
+        | FieldInlineOpFlag::LoadAccumulateFromMemory => {
             operands.rd.is_some() && operands.rs1 == operands.rd && operands.rs2.is_none()
         }
     };
@@ -576,11 +577,11 @@ mod tests {
     fn accumulation_requires_reading_the_destination() {
         for flags in [
             FieldInlineBytecodeFlags {
-                load_accumulate_from_x: true,
+                load_accumulate_from_register: true,
                 ..FieldInlineBytecodeFlags::default()
             },
             FieldInlineBytecodeFlags {
-                load_accumulate_word: true,
+                load_accumulate_from_memory: true,
                 ..FieldInlineBytecodeFlags::default()
             },
         ] {

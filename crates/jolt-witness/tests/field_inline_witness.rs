@@ -280,7 +280,7 @@ fn field_inline_public_provider_is_absent_for_programs_without_field_inline() {
 #[test]
 fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
     let load = instruction(
-        JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X,
+        JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
         0,
         Some(1),
         Some(5),
@@ -297,7 +297,7 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
             ..RegisterState::default()
         },
         FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadAccumulateFromX),
+            op: Some(FieldInlineOp::LoadAccumulateFromRegister),
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(0),
@@ -307,7 +307,7 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
                 pre_value: enc(0),
                 post_value: enc(19),
             }),
-            bridge: Some(FieldInlineBridge::LoadAccumulateFromX {
+            bridge: Some(FieldInlineBridge::LoadAccumulateFromRegister {
                 x_register: 5,
                 x_value: 19,
                 field_value: enc(19),

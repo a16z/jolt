@@ -4,7 +4,9 @@
 )]
 
 #[cfg(feature = "field-inline")]
-use jolt_riscv::{field_inline_load_accumulate_word_offset, FieldInlineOp, FIELD_INLINE_OPCODE};
+use jolt_riscv::{
+    field_inline_load_accumulate_from_memory_offset, FieldInlineOp, FIELD_INLINE_OPCODE,
+};
 use jolt_riscv::{
     JoltInstructionProfile, NormalizedOperands, SourceInlineKey, SourceInstruction,
     SourceInstructionKind, SourceInstructionRow,
@@ -209,13 +211,13 @@ fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError>
         Some(FieldInlineOp::Mul) => Ok(SourceInstructionKind::FIELD_MUL),
         Some(FieldInlineOp::Inv) => Ok(SourceInstructionKind::FIELD_INV),
         Some(FieldInlineOp::AssertEq) => Ok(SourceInstructionKind::FIELD_ASSERT_EQ),
-        Some(FieldInlineOp::LoadAccumulateFromX) => {
-            Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X)
+        Some(FieldInlineOp::LoadAccumulateFromRegister) => {
+            Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER)
         }
         Some(FieldInlineOp::StoreToX) => Ok(SourceInstructionKind::FIELD_STORE_TO_X),
         Some(FieldInlineOp::LoadImm) => Ok(SourceInstructionKind::FIELD_LOAD_IMM),
-        Some(FieldInlineOp::LoadAccumulateWord) => {
-            Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_WORD)
+        Some(FieldInlineOp::LoadAccumulateFromMemory) => {
+            Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY)
         }
         Some(FieldInlineOp::AdviceLimb) => Ok(SourceInstructionKind::FIELD_ADVICE_LIMB),
         None => invalid("invalid field-inline encoding"),
@@ -304,13 +306,13 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         SourceInstructionKind::FIELD_ASSERT_EQ => format_field_binary_no_rd_operands(word),
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_INV
-        | SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X
+        | SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER
         | SourceInstructionKind::FIELD_STORE_TO_X => format_field_unary_operands(word),
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_LOAD_IMM => format_field_load_imm_operands(word),
         #[cfg(feature = "field-inline")]
-        SourceInstructionKind::FIELD_LOAD_ACCUMULATE_WORD => {
-            format_field_load_accumulate_word_operands(word)
+        SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY => {
+            format_field_load_accumulate_from_memory_operands(word)
         }
         SourceInstructionKind::Inline => format_inline_operands(word),
         SourceInstructionKind::ECALL
@@ -347,12 +349,12 @@ fn format_field_binary_no_rd_operands(word: u32) -> NormalizedOperands {
 /// offset in funct7 is the load's immediate (the tracer parses the same word
 /// the same way).
 #[cfg(feature = "field-inline")]
-fn format_field_load_accumulate_word_operands(word: u32) -> NormalizedOperands {
+fn format_field_load_accumulate_from_memory_operands(word: u32) -> NormalizedOperands {
     NormalizedOperands {
         rd: Some(rd(word)),
         rs1: Some(rs1(word)),
         rs2: Some(rs2(word)),
-        imm: i128::from(field_inline_load_accumulate_word_offset(word)),
+        imm: i128::from(field_inline_load_accumulate_from_memory_offset(word)),
     }
 }
 

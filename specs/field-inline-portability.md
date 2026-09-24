@@ -87,7 +87,7 @@ Everything above the tracer is generic over `F`. The concrete work:
   and the profile fingerprint already version this — a proof/preprocessing
   built under one encoding rejects under another fail-closed.
 - Bridge economics improve: a full-width load uses one zero initialization
-  and two `FIELD_LOAD_ACCUMULATE_FROM_X` instructions, high limb first.
+  and two `FIELD_LOAD_ACCUMULATE_FROM_REGISTER` instructions, high limb first.
   Each accumulation computes `old_destination * 2^64 + limb` in the field;
   `FIELD_STORE_TO_X`'s range-restricted semantics (< 2^64, trap
   otherwise) and `FIELD_LOAD_IMM` are unchanged.

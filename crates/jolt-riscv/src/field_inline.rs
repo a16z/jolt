@@ -16,27 +16,27 @@ pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
 pub const FIELD_INLINE_OPCODE: u8 = 0x7b;
 pub const FIELD_INLINE_R_TYPE_FUNCT7: u8 = 0;
 pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u8 = 7;
-/// Memory accumulation shares `FIELD_LOAD_ACCUMULATE_FROM_X`'s funct3. Funct7
+/// Memory accumulation shares `FIELD_LOAD_ACCUMULATE_FROM_REGISTER`'s funct3. Funct7
 /// bits 6..5 identify the family; bits 4..0 carry the word offset.
-pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT3: u8 = 5;
-pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT7_FAMILY: u8 = 0x60;
-pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK: u8 = 0x1f;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3: u8 = 5;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7_FAMILY: u8 = 0x60;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK: u8 = 0x1f;
 /// Bytes between consecutive word offsets of a memory-sourced load.
-pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_STRIDE: u32 = 8;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE: u32 = 8;
 /// The limb split shares `FIELD_STORE_TO_X`'s funct3 under funct7 1.
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT3: u8 = 6;
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT7: u8 = 1;
 
 /// The funct7 of a memory-sourced load at `offset_words` (at most 31).
-pub const fn field_inline_load_accumulate_word_funct7(offset_words: u8) -> u8 {
-    FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT7_FAMILY
-        | (offset_words & FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK)
+pub const fn field_inline_load_accumulate_from_memory_funct7(offset_words: u8) -> u8 {
+    FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7_FAMILY
+        | (offset_words & FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK)
 }
 
 /// The byte offset a memory-sourced load word adds to its base register.
-pub const fn field_inline_load_accumulate_word_offset(word: u32) -> u32 {
-    (((word >> 25) as u8) & FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK) as u32
-        * FIELD_INLINE_LOAD_ACCUMULATE_WORD_STRIDE
+pub const fn field_inline_load_accumulate_from_memory_offset(word: u32) -> u32 {
+    (((word >> 25) as u8) & FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK) as u32
+        * FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,13 +51,13 @@ pub enum FieldInlineOp {
     Inv,
     AssertEq,
     /// `field_rd = field_rd · 2^64 + x_rs1`.
-    LoadAccumulateFromX,
+    LoadAccumulateFromRegister,
     StoreToX,
     LoadImm,
     /// `field_rd = field_rd · 2^64 + mem[x_rs1 + offset]`: the loaded word
     /// also lands in scratch x-register `rd`; field register `rs2` is both
     /// read and written.
-    LoadAccumulateWord,
+    LoadAccumulateFromMemory,
     /// Supply a 64-bit advice limb `x_rd` with `field_rs1 = x_rd + 2^64 · field_rs2`.
     /// The tracer chooses the canonical low limb; the relation permits other
     /// choices. A full readout needs a guest integer check below the modulus.
@@ -72,10 +72,10 @@ impl FieldInlineOp {
             Self::Mul => 2,
             Self::Inv => 3,
             Self::AssertEq => 4,
-            Self::LoadAccumulateFromX => 5,
+            Self::LoadAccumulateFromRegister => 5,
             Self::StoreToX => 6,
             Self::LoadImm => 7,
-            Self::LoadAccumulateWord => 9,
+            Self::LoadAccumulateFromMemory => 9,
             Self::AdviceLimb => 10,
         }
     }
@@ -87,10 +87,10 @@ impl FieldInlineOp {
             Self::Mul => 2,
             Self::Inv => 3,
             Self::AssertEq => 4,
-            Self::LoadAccumulateFromX => 5,
+            Self::LoadAccumulateFromRegister => 5,
             Self::StoreToX => 6,
             Self::LoadImm => FIELD_INLINE_LOAD_IMM_FUNCT3,
-            Self::LoadAccumulateWord => FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT3,
+            Self::LoadAccumulateFromMemory => FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3,
             Self::AdviceLimb => FIELD_INLINE_ADVICE_LIMB_FUNCT3,
         }
     }
@@ -105,15 +105,17 @@ impl FieldInlineOp {
             | Self::Mul
             | Self::Inv
             | Self::AssertEq
-            | Self::LoadAccumulateFromX
+            | Self::LoadAccumulateFromRegister
             | Self::StoreToX => Some(FIELD_INLINE_R_TYPE_FUNCT7),
-            Self::LoadAccumulateWord => Some(field_inline_load_accumulate_word_funct7(0)),
+            Self::LoadAccumulateFromMemory => {
+                Some(field_inline_load_accumulate_from_memory_funct7(0))
+            }
             Self::AdviceLimb => Some(FIELD_INLINE_ADVICE_LIMB_FUNCT7),
         }
     }
 
     pub const fn is_memory_load(self) -> bool {
-        matches!(self, Self::LoadAccumulateWord)
+        matches!(self, Self::LoadAccumulateFromMemory)
     }
 
     pub const fn instruction_mask(self) -> u32 {
@@ -139,21 +141,21 @@ impl FieldInlineOp {
             2 => Some(Self::Mul),
             3 => Some(Self::Inv),
             4 => Some(Self::AssertEq),
-            5 => Some(Self::LoadAccumulateFromX),
+            5 => Some(Self::LoadAccumulateFromRegister),
             6 => Some(Self::StoreToX),
             7 => Some(Self::LoadImm),
-            9 => Some(Self::LoadAccumulateWord),
+            9 => Some(Self::LoadAccumulateFromMemory),
             10 => Some(Self::AdviceLimb),
             _ => None,
         }
     }
 
     pub const fn from_r_type_key(funct7: u8, funct3: u8) -> Option<Self> {
-        if funct3 == FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT3
-            && funct7 & !FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK
-                == FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT7_FAMILY
+        if funct3 == FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3
+            && funct7 & !FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK
+                == FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7_FAMILY
         {
-            return Some(Self::LoadAccumulateWord);
+            return Some(Self::LoadAccumulateFromMemory);
         }
         match (funct7, funct3) {
             (FIELD_INLINE_R_TYPE_FUNCT7, 0) => Some(Self::Add),
@@ -161,7 +163,7 @@ impl FieldInlineOp {
             (FIELD_INLINE_R_TYPE_FUNCT7, 2) => Some(Self::Mul),
             (FIELD_INLINE_R_TYPE_FUNCT7, 3) => Some(Self::Inv),
             (FIELD_INLINE_R_TYPE_FUNCT7, 4) => Some(Self::AssertEq),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadAccumulateFromX),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadAccumulateFromRegister),
             (FIELD_INLINE_R_TYPE_FUNCT7, 6) => Some(Self::StoreToX),
             (FIELD_INLINE_ADVICE_LIMB_FUNCT7, FIELD_INLINE_ADVICE_LIMB_FUNCT3) => {
                 Some(Self::AdviceLimb)
@@ -397,10 +399,14 @@ pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Optio
         SourceInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
         SourceInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
         SourceInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
-        SourceInstruction::FieldLoadAccumulateFromX(_) => Some(FieldInlineOp::LoadAccumulateFromX),
+        SourceInstruction::FieldLoadAccumulateFromRegister(_) => {
+            Some(FieldInlineOp::LoadAccumulateFromRegister)
+        }
         SourceInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
         SourceInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
-        SourceInstruction::FieldLoadAccumulateWord(_) => Some(FieldInlineOp::LoadAccumulateWord),
+        SourceInstruction::FieldLoadAccumulateFromMemory(_) => {
+            Some(FieldInlineOp::LoadAccumulateFromMemory)
+        }
         SourceInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
@@ -417,10 +423,14 @@ pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<Fi
         JoltInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
         JoltInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
         JoltInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
-        JoltInstruction::FieldLoadAccumulateFromX(_) => Some(FieldInlineOp::LoadAccumulateFromX),
+        JoltInstruction::FieldLoadAccumulateFromRegister(_) => {
+            Some(FieldInlineOp::LoadAccumulateFromRegister)
+        }
         JoltInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
         JoltInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
-        JoltInstruction::FieldLoadAccumulateWord(_) => Some(FieldInlineOp::LoadAccumulateWord),
+        JoltInstruction::FieldLoadAccumulateFromMemory(_) => {
+            Some(FieldInlineOp::LoadAccumulateFromMemory)
+        }
         JoltInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
@@ -467,7 +477,7 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
         },
-        FieldInlineOp::LoadAccumulateFromX => FieldInlineOperandShape {
+        FieldInlineOp::LoadAccumulateFromRegister => FieldInlineOperandShape {
             op,
             reads_field_rs1: true,
             reads_field_rs2: false,
@@ -497,7 +507,7 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
         },
-        FieldInlineOp::LoadAccumulateWord => FieldInlineOperandShape {
+        FieldInlineOp::LoadAccumulateFromMemory => FieldInlineOperandShape {
             op,
             reads_field_rs1: true,
             reads_field_rs2: false,
@@ -598,10 +608,10 @@ mod encoding_tests {
             FieldInlineOp::Mul,
             FieldInlineOp::Inv,
             FieldInlineOp::AssertEq,
-            FieldInlineOp::LoadAccumulateFromX,
+            FieldInlineOp::LoadAccumulateFromRegister,
             FieldInlineOp::StoreToX,
             FieldInlineOp::LoadImm,
-            FieldInlineOp::LoadAccumulateWord,
+            FieldInlineOp::LoadAccumulateFromMemory,
             FieldInlineOp::AdviceLimb,
         ];
         for op in OPS {
@@ -615,18 +625,18 @@ mod encoding_tests {
     }
 
     #[test]
-    fn load_accumulate_word_accepts_offsets_and_rejects_retired_loads() {
-        let op = FieldInlineOp::LoadAccumulateWord;
+    fn load_accumulate_from_memory_accepts_offsets_and_rejects_retired_loads() {
+        let op = FieldInlineOp::LoadAccumulateFromMemory;
         for offset_words in 0..32 {
             let word = r_type_word(op, 0x60 | offset_words);
             assert_eq!(FieldInlineOp::from_word(word), Some(op));
             assert_eq!(word & op.instruction_mask(), op.instruction_match());
             assert_eq!(
-                field_inline_load_accumulate_word_offset(word),
+                field_inline_load_accumulate_from_memory_offset(word),
                 u32::from(offset_words) * 8
             );
             assert_eq!(
-                field_inline_load_accumulate_word_funct7(offset_words),
+                field_inline_load_accumulate_from_memory_funct7(offset_words),
                 0x60 | offset_words
             );
             assert_eq!(

@@ -37,7 +37,7 @@ pub const FIELD_INLINE_INV_FUNCT3: u32 = 3;
 #[doc(hidden)]
 pub const FIELD_INLINE_ASSERT_EQ_FUNCT3: u32 = 4;
 #[doc(hidden)]
-pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_X_FUNCT3: u32 = 5;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3: u32 = 5;
 #[doc(hidden)]
 pub const FIELD_INLINE_STORE_TO_X_FUNCT3: u32 = 6;
 #[doc(hidden)]
@@ -46,7 +46,7 @@ pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u32 = 7;
 /// Number of field registers the field-inline extension addresses.
 pub const FIELD_REGISTER_COUNT: u32 = 16;
 /// The x-register the bridge macros move values through (`a0`), pinned by the
-/// asm operand constraints of [`field_load_accumulate_from_x!`] / [`field_store_to_x!`].
+/// asm operand constraints of [`field_load_accumulate_from_register!`] / [`field_store_to_x!`].
 #[doc(hidden)]
 pub const FIELD_INLINE_BRIDGE_X_REGISTER: u32 = 10;
 
@@ -183,7 +183,7 @@ macro_rules! field_assert_eq {
 }
 
 /// Updates field register `$rd` to `old_rd * 2^64 + value` modulo the proof field,
-/// appending one `u64` limb through the LoadAccumulateFromX bridge. Initialize
+/// appending one `u64` limb through the LoadAccumulateFromRegister bridge. Initialize
 /// `$rd` to zero with [`field_load_imm!`] before starting a new value; append
 /// limbs from most significant to least significant.
 ///
@@ -192,13 +192,13 @@ macro_rules! field_assert_eq {
 /// compiler guarantees is an operand bound in the same asm block, which pins
 /// it to `a0` here.
 #[macro_export]
-macro_rules! field_load_accumulate_from_x {
+macro_rules! field_load_accumulate_from_register {
     ($rd:literal, $value:expr) => {{
         #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
         {
             const WORD: u32 = $crate::field_inline_r_word(
                 $crate::FIELD_INLINE_R_TYPE_FUNCT7,
-                $crate::FIELD_INLINE_LOAD_ACCUMULATE_FROM_X_FUNCT3,
+                $crate::FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3,
                 $crate::field_register($rd),
                 $crate::FIELD_INLINE_BRIDGE_X_REGISTER,
                 0,
@@ -227,7 +227,7 @@ macro_rules! field_load_accumulate_from_x {
 /// Reads field register `$rs1` back as a `u64` through the StoreToX bridge.
 /// The bridge is range-bound: the traced store traps, and the constraint
 /// system is unsatisfiable, unless the field value fits in 64 bits. Same
-/// single-asm-block rationale as [`field_load_accumulate_from_x!`]: the word writes
+/// single-asm-block rationale as [`field_load_accumulate_from_register!`]: the word writes
 /// `a0`, so the output constraint must live in the block that executes it.
 /// Host-architecture builds carry no field-inline semantics and evaluate to zero.
 #[macro_export]

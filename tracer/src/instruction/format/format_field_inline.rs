@@ -5,7 +5,7 @@ use super::{
     normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
 };
 use jolt_riscv::{
-    field_inline_load_accumulate_word_offset, FieldInlineOp, FieldInlineXRegisterRole,
+    field_inline_load_accumulate_from_memory_offset, FieldInlineOp, FieldInlineXRegisterRole,
 };
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,7 +56,9 @@ impl InstructionFormat for FormatFieldInline {
                 imm: 0,
             },
             Some(
-                FieldInlineOp::Inv | FieldInlineOp::LoadAccumulateFromX | FieldInlineOp::StoreToX,
+                FieldInlineOp::Inv
+                | FieldInlineOp::LoadAccumulateFromRegister
+                | FieldInlineOp::StoreToX,
             ) => Self {
                 op,
                 rd: Some(rd),
@@ -80,12 +82,12 @@ impl InstructionFormat for FormatFieldInline {
             },
             // `rd` is the scratch x-register, `rs1` the x base, `rs2` the
             // field destination; the word offset rides funct7 as the imm.
-            Some(FieldInlineOp::LoadAccumulateWord) => Self {
+            Some(FieldInlineOp::LoadAccumulateFromMemory) => Self {
                 op,
                 rd: Some(rd),
                 rs1: Some(rs1),
                 rs2: Some(rs2),
-                imm: i128::from(field_inline_load_accumulate_word_offset(word)),
+                imm: i128::from(field_inline_load_accumulate_from_memory_offset(word)),
             },
             // `rd` is the x-register taking the low limb, `rs1` the field
             // source, `rs2` the field register taking the quotient.

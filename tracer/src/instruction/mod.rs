@@ -67,8 +67,8 @@ use ecall::ECALL;
 use fence::FENCE;
 #[cfg(feature = "field-inline")]
 use field_inline::{
-    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_ACCUMULATE_FROM_X,
-    FIELD_LOAD_ACCUMULATE_WORD, FIELD_LOAD_IMM, FIELD_MUL, FIELD_STORE_TO_X, FIELD_SUB,
+    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+    FIELD_LOAD_ACCUMULATE_FROM_REGISTER, FIELD_LOAD_IMM, FIELD_MUL, FIELD_STORE_TO_X, FIELD_SUB,
 };
 use jal::JAL;
 use jalr::JALR;
@@ -626,10 +626,10 @@ macro_rules! define_rv64imac_enums {
                     Cycle::FIELD_MUL(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_INV(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ASSERT_EQ(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_ACCUMULATE_FROM_X(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_STORE_TO_X(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_ACCUMULATE_WORD(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ADVICE_LIMB(cycle) => cycle.ram_access.trace,
                     _ => None,
                 }
@@ -971,10 +971,10 @@ fn is_field_inline_instruction(instruction: &Instruction) -> bool {
             | Instruction::FIELD_MUL(_)
             | Instruction::FIELD_INV(_)
             | Instruction::FIELD_ASSERT_EQ(_)
-            | Instruction::FIELD_LOAD_ACCUMULATE_FROM_X(_)
+            | Instruction::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(_)
             | Instruction::FIELD_STORE_TO_X(_)
             | Instruction::FIELD_LOAD_IMM(_)
-            | Instruction::FIELD_LOAD_ACCUMULATE_WORD(_)
+            | Instruction::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(_)
             | Instruction::FIELD_ADVICE_LIMB(_)
     )
 }
@@ -1425,8 +1425,9 @@ impl Instruction {
                     Some(jolt_riscv::FieldInlineOp::AssertEq) => {
                         Ok(FIELD_ASSERT_EQ::new(instr, address, true, compressed).into())
                     }
-                    Some(jolt_riscv::FieldInlineOp::LoadAccumulateFromX) => Ok(
-                        FIELD_LOAD_ACCUMULATE_FROM_X::new(instr, address, true, compressed).into(),
+                    Some(jolt_riscv::FieldInlineOp::LoadAccumulateFromRegister) => Ok(
+                        FIELD_LOAD_ACCUMULATE_FROM_REGISTER::new(instr, address, true, compressed)
+                            .into(),
                     ),
                     Some(jolt_riscv::FieldInlineOp::StoreToX) => {
                         Ok(FIELD_STORE_TO_X::new(instr, address, true, compressed).into())
@@ -1434,8 +1435,9 @@ impl Instruction {
                     Some(jolt_riscv::FieldInlineOp::LoadImm) => {
                         Ok(FIELD_LOAD_IMM::new(instr, address, true, compressed).into())
                     }
-                    Some(jolt_riscv::FieldInlineOp::LoadAccumulateWord) => Ok(
-                        FIELD_LOAD_ACCUMULATE_WORD::new(instr, address, true, compressed).into(),
+                    Some(jolt_riscv::FieldInlineOp::LoadAccumulateFromMemory) => Ok(
+                        FIELD_LOAD_ACCUMULATE_FROM_MEMORY::new(instr, address, true, compressed)
+                            .into(),
                     ),
                     Some(jolt_riscv::FieldInlineOp::AdviceLimb) => {
                         Ok(FIELD_ADVICE_LIMB::new(instr, address, true, compressed).into())
@@ -2066,15 +2068,18 @@ mod tests {
 
         let load_cycle = trace_one(
             &mut cpu,
-            field_inline_word(FieldInlineOp::LoadAccumulateFromX, 1, 5, 0),
+            field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 1, 5, 0),
         );
         assert_eq!(load_cycle.rs1_read(), Some((5, 7)));
         assert_eq!(load_cycle.rd_write(), None);
         let load_trace = load_cycle.field_inline_trace().unwrap();
-        assert_eq!(load_trace.op, Some(FieldInlineOp::LoadAccumulateFromX));
+        assert_eq!(
+            load_trace.op,
+            Some(FieldInlineOp::LoadAccumulateFromRegister)
+        );
         assert_eq!(
             load_trace.bridge,
-            Some(FieldInlineBridge::LoadAccumulateFromX {
+            Some(FieldInlineBridge::LoadAccumulateFromRegister {
                 x_register: 5,
                 x_value: 7,
                 field_value: FieldEncodedValue::from_u64(7),
@@ -2140,9 +2145,9 @@ mod tests {
                 .unwrap();
             cpu.write_register(10, DRAM_BASE as i64);
             let low_word = if memory_sourced {
-                field_inline_word(FieldInlineOp::LoadAccumulateWord, 11, 10, 1)
+                field_inline_word(FieldInlineOp::LoadAccumulateFromMemory, 11, 10, 1)
             } else {
-                field_inline_word(FieldInlineOp::LoadAccumulateFromX, 1, 5, 0)
+                field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 1, 5, 0)
             };
             let high_word = if memory_sourced {
                 low_word | (1 << 25)

@@ -20,9 +20,9 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     jolt::field_load_imm!(1, 1);
     for [r, x] in pairs {
         jolt::field_load_imm!(2, 0);
-        jolt::field_load_accumulate_from_x!(2, r);
+        jolt::field_load_accumulate_from_register!(2, r);
         jolt::field_load_imm!(3, 0);
-        jolt::field_load_accumulate_from_x!(3, x);
+        jolt::field_load_accumulate_from_register!(3, x);
         jolt::field_mul!(4, 2, 3); // r·x
         jolt::field_sub!(5, 0, 2); // 1 − r
         jolt::field_sub!(6, 0, 3); // 1 − x
@@ -37,7 +37,7 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     let [l0, l1, l2, l3] = expected_limbs;
     jolt::field_load_imm!(8, 0);
     for limb in [l3, l2, l1, l0] {
-        jolt::field_load_accumulate_from_x!(8, limb);
+        jolt::field_load_accumulate_from_register!(8, limb);
     }
 
     jolt::field_assert_eq!(1, 8);

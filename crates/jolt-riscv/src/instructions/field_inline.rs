@@ -28,7 +28,7 @@ jolt_instruction!(
 jolt_instruction!(
     /// Fold an ordinary x-register word into a field accumulator:
     /// `field_rd = field_rd · 2^64 + x_rs1`.
-    FieldLoadAccumulateFromX
+    FieldLoadAccumulateFromRegister
 );
 
 jolt_instruction!(
@@ -52,7 +52,7 @@ jolt_instruction!(
     /// Load a 64-bit word from memory and fold it in: field register
     /// `rs2` becomes `2^64 · rs2 + word`, the word again an `LD` into the
     /// scratch x-register `rd`.
-    FieldLoadAccumulateWord,
+    FieldLoadAccumulateFromMemory,
     circuit flags: [Load],
     instruction flags: []
 );

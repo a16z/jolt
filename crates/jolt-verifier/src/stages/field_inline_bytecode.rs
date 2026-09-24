@@ -147,10 +147,10 @@ fn flags_for_op(op: FieldInlineOp) -> FieldInlineBytecodeFlags {
         FieldInlineOp::Mul => flags.mul = true,
         FieldInlineOp::Inv => flags.inv = true,
         FieldInlineOp::AssertEq => flags.assert_eq = true,
-        FieldInlineOp::LoadAccumulateFromX => flags.load_accumulate_from_x = true,
+        FieldInlineOp::LoadAccumulateFromRegister => flags.load_accumulate_from_register = true,
         FieldInlineOp::StoreToX => flags.store_to_x = true,
         FieldInlineOp::LoadImm => flags.load_imm = true,
-        FieldInlineOp::LoadAccumulateWord => flags.load_accumulate_word = true,
+        FieldInlineOp::LoadAccumulateFromMemory => flags.load_accumulate_from_memory = true,
         FieldInlineOp::AdviceLimb => flags.advice_limb = true,
     }
     flags
@@ -277,17 +277,17 @@ mod tests {
             }
             FieldInlineOp::Inv => (register(4), register(5), None),
             FieldInlineOp::AssertEq => (None, register(6), register(7)),
-            FieldInlineOp::LoadAccumulateFromX => (register(8), register(8), None),
+            FieldInlineOp::LoadAccumulateFromRegister => (register(8), register(8), None),
             FieldInlineOp::StoreToX => (None, register(9), None),
             FieldInlineOp::LoadImm => (register(10), None, None),
-            FieldInlineOp::LoadAccumulateWord => (register(13), register(13), None),
+            FieldInlineOp::LoadAccumulateFromMemory => (register(13), register(13), None),
             FieldInlineOp::AdviceLimb => (register(14), register(15), None),
         };
         let bridge_x_register = matches!(
             op,
-            FieldInlineOp::LoadAccumulateFromX
+            FieldInlineOp::LoadAccumulateFromRegister
                 | FieldInlineOp::StoreToX
-                | FieldInlineOp::LoadAccumulateWord
+                | FieldInlineOp::LoadAccumulateFromMemory
                 | FieldInlineOp::AdviceLimb
         )
         .then_some(11);
@@ -310,10 +310,10 @@ mod tests {
         FieldInlineOp::Mul,
         FieldInlineOp::Inv,
         FieldInlineOp::AssertEq,
-        FieldInlineOp::LoadAccumulateFromX,
+        FieldInlineOp::LoadAccumulateFromRegister,
         FieldInlineOp::StoreToX,
         FieldInlineOp::LoadImm,
-        FieldInlineOp::LoadAccumulateWord,
+        FieldInlineOp::LoadAccumulateFromMemory,
         FieldInlineOp::AdviceLimb,
     ];
 
@@ -324,10 +324,12 @@ mod tests {
             FieldInlineOp::Mul => FieldInlineOpFlag::Mul,
             FieldInlineOp::Inv => FieldInlineOpFlag::Inv,
             FieldInlineOp::AssertEq => FieldInlineOpFlag::AssertEq,
-            FieldInlineOp::LoadAccumulateFromX => FieldInlineOpFlag::LoadAccumulateFromX,
+            FieldInlineOp::LoadAccumulateFromRegister => {
+                FieldInlineOpFlag::LoadAccumulateFromRegister
+            }
             FieldInlineOp::StoreToX => FieldInlineOpFlag::StoreToX,
             FieldInlineOp::LoadImm => FieldInlineOpFlag::LoadImm,
-            FieldInlineOp::LoadAccumulateWord => FieldInlineOpFlag::LoadAccumulateWord,
+            FieldInlineOp::LoadAccumulateFromMemory => FieldInlineOpFlag::LoadAccumulateFromMemory,
             FieldInlineOp::AdviceLimb => FieldInlineOpFlag::AdviceLimb,
         }
     }

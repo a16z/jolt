@@ -536,7 +536,7 @@ Guest exposure should be SDK-level. On guest builds, field-element helper
 methods or intrinsics emit field-inline source rows such as:
 
 ```text
-FIELD_LOAD_ACCUMULATE_FROM_X
+FIELD_LOAD_ACCUMULATE_FROM_REGISTER
 FIELD_LOAD_IMM
 FIELD_ADD
 FIELD_SUB
@@ -544,7 +544,7 @@ FIELD_MUL
 FIELD_INV
 FIELD_ASSERT_EQ
 FIELD_STORE_TO_X
-FIELD_LOAD_ACCUMULATE_WORD
+FIELD_LOAD_ACCUMULATE_FROM_MEMORY
 FIELD_ADVICE_LIMB
 ```
 
@@ -601,7 +601,7 @@ FIELD_MUL field[3], field[1], field[2]:
     FieldProduct = field[1] * field[2]
     IsFieldMul = 1
 
-FIELD_LOAD_ACCUMULATE_FROM_X field[4], x10:
+FIELD_LOAD_ACCUMULATE_FROM_REGISTER field[4], x10:
   ordinary trace:
     read x10
   field trace:

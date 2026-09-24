@@ -629,8 +629,8 @@ openings produced by earlier stages:
 
 ```text
 from stage 1 / selected Spartan outer:
-  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromX/StoreToX/LoadImm/
-              LoadAccumulateWord/AdviceLimb)
+  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToX/LoadImm/
+              LoadAccumulateFromMemory/AdviceLimb)
 
 from stage 4 / FieldRegistersReadWriteChecking:
   FieldRdWa
@@ -658,8 +658,8 @@ preprocessed side table parallel to ordinary bytecode rows:
 
 ```text
 FieldInlineBytecodeRow:
-  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromX/StoreToX/LoadImm/
-                  LoadAccumulateWord/AdviceLimb
+  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToX/LoadImm/
+                  LoadAccumulateFromMemory/AdviceLimb
   field operands: rd, rs1, rs2 as field register slots, each optional
 ```
 
@@ -674,8 +674,8 @@ RLCs instead of creating another bytecode relation:
 ```text
 Stage1Gamma powers:
   ordinary powers 0..(1 + NUM_CIRCUIT_FLAGS)
-  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromX/StoreToX/LoadImm/
-                  LoadAccumulateWord/AdviceLimb)
+  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToX/LoadImm/
+                  LoadAccumulateFromMemory/AdviceLimb)
 
 Stage4Gamma powers:
   ordinary powers: RdWa, Rs1Ra, Rs2Ra
@@ -772,10 +772,10 @@ selectors:
   IsFieldMul
   IsFieldInv
   IsFieldAssertEq
-  IsFieldLoadAccumulateFromX
+  IsFieldLoadAccumulateFromRegister
   IsFieldStoreToX
   IsFieldLoadImm
-  IsFieldLoadAccumulateWord
+  IsFieldLoadAccumulateFromMemory
   IsFieldAdviceLimb
 
 field values:
@@ -811,7 +811,7 @@ ASSERT_EQ:
   IsFieldAssertEq * (FieldRs1Value - FieldRs2Value) = 0
 
 x-register -> field-register:
-  IsFieldLoadAccumulateFromX
+  IsFieldLoadAccumulateFromRegister
     * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
 field-register -> x-register:
@@ -821,7 +821,7 @@ immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(Imm, F)) = 0
 
 memory -> field-register (see "Memory-Sourced Loads And Limb Readout"):
-  IsFieldLoadAccumulateWord
+  IsFieldLoadAccumulateFromMemory
     * (FieldRdValue - 2^64 * FieldRs1Value - RdWriteValue) = 0
 
 field-register -> limbs:
@@ -843,7 +843,7 @@ bridge instructions:
 
 ```text
 x-register -> field-register:
-  IsFieldLoadAccumulateFromX
+  IsFieldLoadAccumulateFromRegister
     * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
 field-register -> x-register:
@@ -902,7 +902,7 @@ Memory-sourced loads move one word per VM row into the field-register file.
 Limb advice provides bounded integer outputs for field values; callers that
 need canonical readout must additionally check the reconstructed integer.
 
-`FIELD_LOAD_ACCUMULATE_WORD field_rd <- field_rd · 2^64 + mem[x_rs1 + 8·offset]`
+`FIELD_LOAD_ACCUMULATE_FROM_MEMORY field_rd <- field_rd · 2^64 + mem[x_rs1 + 8·offset]`
 is, to the RV64 rows, an `LD` into a scratch x-register: it carries the `Load` circuit
 flag, so `RamAddress = Rs1Value + Imm`, `RamReadValue = RamWriteValue` and
 `RdWriteValue = RamReadValue` bind the word exactly as for `LD`, the RAM
@@ -912,7 +912,7 @@ the old destination, read back as `FieldRs1Value` (`2^64` is a constant of
 `F`). This has the same accumulation semantics as x-register ingress. The
 Spartan outer stays at 30 rows: a 16-node uni-skip domain would overflow the
 kernels' `i128` power sums. Encoding: opcode `0x7b`,
-`FIELD_LOAD_ACCUMULATE_FROM_X`'s funct3, funct7 `0x60 | offset` with bits 4..0
+`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`'s funct3, funct7 `0x60 | offset` with bits 4..0
 holding the word offset; `rd` is the scratch x-register, `rs1` the x base,
 and `rs2` the field destination. The side table uses that field destination
 as both its field `rs1` read and its write. Initialize it with
@@ -939,7 +939,7 @@ limbs. The ISA supplies bounded limb advice, not a canonical conversion API.
 The composed field-inline e2e checks exercise the memory ingress and advice
 instructions against an independently pinned integer.
 
-Stage 1 appends the two selector openings (`FieldOpFlag(LoadAccumulateWord)`,
+Stage 1 appends the two selector openings (`FieldOpFlag(LoadAccumulateFromMemory)`,
 `FieldOpFlag(AdviceLimb)`) after the eight base flags, in that order, and the
 field-inline bytecode side table's stage-1 flag set grows by the same two
 entries, for ten selectors in total.
@@ -994,10 +994,10 @@ IsFieldSub
 IsFieldMul
 IsFieldInv
 IsFieldAssertEq
-IsFieldLoadAccumulateFromX
+IsFieldLoadAccumulateFromRegister
 IsFieldStoreToX
 IsFieldLoadImm
-IsFieldLoadAccumulateWord
+IsFieldLoadAccumulateFromMemory
 IsFieldAdviceLimb
 ```
 
@@ -1138,10 +1138,10 @@ pub enum FieldInlineOpFlag {
     Mul,
     Inv,
     AssertEq,
-    LoadAccumulateFromX,
+    LoadAccumulateFromRegister,
     StoreToX,
     LoadImm,
-    LoadAccumulateWord,
+    LoadAccumulateFromMemory,
     AdviceLimb,
 }
 

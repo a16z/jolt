@@ -46,14 +46,14 @@ pub struct FieldRegistersSpartanOuterOutputClaims<C> {
     pub inv: C,
     #[opening(FieldOpFlag(FieldInlineOpFlag::AssertEq))]
     pub assert_eq: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromX))]
-    pub load_accumulate_from_x: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromRegister))]
+    pub load_accumulate_from_register: C,
     #[opening(FieldOpFlag(FieldInlineOpFlag::StoreToX))]
     pub store_to_x: C,
     #[opening(FieldOpFlag(FieldInlineOpFlag::LoadImm))]
     pub load_imm: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadAccumulateWord))]
-    pub load_accumulate_word: C,
+    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromMemory))]
+    pub load_accumulate_from_memory: C,
     #[opening(FieldOpFlag(FieldInlineOpFlag::AdviceLimb))]
     pub advice_limb: C,
 }
@@ -81,10 +81,10 @@ mod tests {
             mul: value,
             inv: value,
             assert_eq: value,
-            load_accumulate_from_x: value,
+            load_accumulate_from_register: value,
             store_to_x: value,
             load_imm: value,
-            load_accumulate_word: value,
+            load_accumulate_from_memory: value,
             advice_limb: value,
         };
         assert_eq!(outputs.canonical_order(), outer_output_openings());
