@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790281501933,
+  "lastUpdate": 1790283092991,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -165154,6 +165154,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861404,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fa9bcb3e8cc3ccff9b111f9f5d3de319d6a21100",
+          "message": "ci: better coverage, better testing, and cargo mutants\n\n* ci: better coverage, better testing, and cargo mutants\n\nSquash of tests/improve-quality-and-coverage: coverage floor gate and\nsoundness metrics, test-quality rubric and gate config, coverage /\nnightly-mutants / test-quality workflows, fixture-backed verifier\nmutation oracle, and the test batteries raising the floors (verifier\ntamper targets, transcript KAT + behavioral suites, blindfold e2e,\ntracer/emulator semantics, r1cs rv64 witnesses, field accumulator\nsemantics, akita scheme surface, claims-derive macro snapshots).\n\n* test(tracer): adapt unit tests to the post-#1717 tracer APIs\n\nThe rebase brought #1717's tracer rewrite under this PR's ~2400 lines\nof tracer tests. Adaptations, preserving each test's intent:\n\n- track_call lost its NormalizedOperands parameter and CallFrame lost\n  its operands field (frames now carry an opt-in boxed register\n  snapshot): drop the argument at call sites; build CallFrame with\n  x: None in resolve_frame tests.\n- MemoryData's pub memory map became a MemoryBacking enum: the\n  checkpoint test now destructures MemoryBacking::Sparse to keep its\n  exact absent-vs-recorded-zero assertions.\n- take_memory's contract changed: the emptied source now reports zero\n  capacity (its doc states this) instead of preserving it. The test is\n  renamed and asserts capacity+content move to the taken memory and\n  every source address turns out of bounds.\n- fill_virtual_advice was replaced by trace_inline_sequence_with_advice,\n  which patches per-execution copies of the advice rows while tracing.\n  The DIV expansion test now asserts the traced VirtualAdvice cycles\n  carry the patched pair, and the two count-mismatch panic tests use\n  advice values consistent with x1 = x2 = 0 so the mismatch tripwire\n  fires rather than a division assertion inside the sequence.\n\n* ci(coverage): re-baseline floors after the rebase onto main\n\nMeasured coverage moved with the upstream code the rebase brought in\n(#1717 tracer rewrite, #1702 FS audit jobs, #1736), not with this PR's\ntests: seven crates dipped below their 2026-07-24 pins. Re-pin those\nfloors at the 2026-08-06 post-rebase measured values minus the usual\nplatform-variance margin (measured: jolt-akita 87.9, jolt-claims 88.0,\njolt-openings 87.5, jolt-program 85.9, jolt-verifier 85.4,\njolt-verifier-derive 89.7, tracer 89.3).\n\njolt-claims' error-variant floor drops 52 -> 48 for the same reason:\nmain added ChallengeDrawError and FieldInline* variants to the\ndenominator (now 12/25 exercised) that no fixture reaches yet.\n\nFull local gate run passes: check-config, enforce (21 ok), error\nvariants, and tamper-ratio (109/111 = 98.2%).\n\n* test: remove additions that lack a distinct failure signal\n\nBar applied: a permanent test earns its place only if it adds a distinct\nfailure signal beyond existing tests, fixtures, and CI — adversarial\ninputs, an independent oracle, or a pinned consensus artifact. Removed:\n\n- Coverage-floor gate + nightly cargo-mutants CI (workflows, gate\n  scripts, floors/modules TOML): per-crate line-coverage floors are the\n  incentive that produced most of the low-value tests below; the\n  report-only mutation run has no triage owner. The tamper-phase\n  assertions in the Rust harness stay, and are now documented in\n  book/dev/testing-gates.md.\n- Derive-macro expansion snapshots (pin whatever the macro emits;\n  consumer compile time is the real oracle — error-path and\n  canonical-order tests stay).\n- Restating unit tests: Debug/Display output, accessor/metadata\n  equalities, byte-packing helpers already pinned end-to-end by the\n  digest-chain tests, prover/verifier \"agreement\" through one shared\n  impl, VecDeque FIFO behavior, test-harness self-tests, backtrace\n  formatting, writer batching plumbing.\n- Emulator tests for features Jolt guests cannot reach (S-mode CSRs,\n  interrupt delegation, sv39/sv48 paging, riscof HTIF/signature\n  harness) and macro-attribute parsing UX.\n\nKept everything adversarial or oracle-backed: verifier tamper suite +\nphase manifest, r1cs per-instruction reject tests, sumcheck/blindfold/\ndory/akita rejection paths, transcript hash-chain and wire-format pins,\nGLV bounds, split_eq/dense regression tests (incl. the scratch-capacity\nbug fix), instruction-semantics spec oracles, advice-tape/LR-SC/\ntrace-row contracts, and both production bug fixes.\n\n* test: adapt to main after merge\n\n- prettyplease 0.3 (syn 3) for jolt-claims-derive tests\n- tracer: TraceRow::registers() accessor\n- jolt-akita: shape_guard tests follow resolve_schedule_row / canonical\n  proof shape; drop per-field shape forgery test and sparse_unit test\n  (validator and sparse-unit path removed on main); one-hot owned group\n  opens via AkitaNativeBatching (open_*_from_hint removed); schedules\n  EmitSpec/GeneratedCatalogEntry field renames\n- jolt-verifier tamper manifest: drop removed *Reconstruction relations\n\n* style: nominal imports in added tests\n\nSatisfies scripts/check_style_invariants.py against main.\n\n* test(akita): drop shape_guard one-hot K dispatch test superseded on main\n\nmain moved the one-hot K dispatch out of deserialize_checked_backend_payload;\nthe unsupported-K rejection is covered by tests/pathologies.rs and\ntests/scheme_surface.rs.\n\n* test: enforce tamper phases and restore native transcript guards\n\n---------\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>",
+          "timestamp": "2026-09-24T15:47:45-04:00",
+          "tree_id": "ea327cbc1cbc29c078003242dde7e21ef626974d",
+          "url": "https://github.com/a16z/jolt/commit/fa9bcb3e8cc3ccff9b111f9f5d3de319d6a21100"
+        },
+        "date": 1790283086205,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.3714,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 867876,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7436,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 498808,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 499208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 1.0524,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498376,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.8396,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498924,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8938,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 497960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.0067,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 176980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0882,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 864624,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8488,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6339,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 499424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.5992,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 502612,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.372,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 43.4415,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1957996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.3201,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 626488,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 98.0366,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1103712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9107,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 502640,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1697,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 20.6152,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 868280,
             "unit": "KB",
             "extra": ""
           }
