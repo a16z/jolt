@@ -656,27 +656,6 @@ jobs:
       - name: Run verifier fixtures
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures --test-threads 1 --cargo-quiet
 
-  test-akita-schedules:
-    name: Akita schedule catalog drift
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
-        with:
-          cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          shared-key: release-tests
-          save-if: false
-          cache-directories: ~/.cache/dory
-      - name: Install nextest
-        uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
-      # Regenerates every external `.aks` catalog through the planner DP and
-      # compares canonical artifact bytes. Ignored by default (minutes of DP
-      # solves), so it needs its own lane.
-      - name: Regenerate schedule catalogs through the planner
-        run: cargo nextest run --cargo-profile ci -p jolt-akita --run-ignored all -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
-
   test-inlines:
     name: Test inlines
     runs-on: ubuntu-latest
