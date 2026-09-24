@@ -46,5 +46,6 @@ extend-exclude = [
 "thm" = "thm"
 
 [type.py.extend-words]
-# x86 instruction byte strings contain this immediate byte token.
+# Proof checkers contain this x86 immediate and the HOL Light theorem type.
 "ba" = "ba"
+"thm" = "thm"

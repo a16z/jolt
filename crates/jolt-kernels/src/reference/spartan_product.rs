@@ -51,12 +51,13 @@ use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
 use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+use jolt_verifier::stages::relations::SumcheckInputClaims;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
-    SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessOracle;
@@ -72,7 +73,9 @@ use crate::ProverInputs;
 use crate::SumcheckKernelError;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
+    for ReferenceBackend
+{
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
     /// the slot as the single `late_tau` entry of
     /// [`first_round_poly`](UniskipKernel::first_round_poly).
@@ -95,6 +98,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        _inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {

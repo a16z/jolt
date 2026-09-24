@@ -161,7 +161,7 @@ where
         self.untrusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
         self.bytecode_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
         self.program_image_reduction_cycle = Box::new(OptimizedPrecommittedCycle);
-        self.advice_opening = Box::new(OptimizedPrecommittedCycle);
+        self.ram_initial_openings = Box::new(OptimizedPrecommittedCycle);
         self.trusted_advice_address = Box::new(OptimizedPrecommittedAddress::new(
             "stage 6b parked no trusted-advice reduction state for the scheduled address phase",
         ));

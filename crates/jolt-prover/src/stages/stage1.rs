@@ -70,11 +70,13 @@ where
             .prepare(session, log_t, &tau, witness)
     })?;
 
-    let uniskip_poly = tracing::info_span!("SpartanOuterUniskip::first_round_poly")
-        .in_scope(|| backend.spartan_outer_uniskip.first_round_poly(session, &[]))?;
-    // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the jolt-claims RV64-only
-    // constants Without field-inline, the field-inline-extended row domain under `field-inline` —
-    // the shape the verifier's stage-1 uni-skip checks.
+    let uniskip_poly =
+        tracing::info_span!("SpartanOuterUniskip::first_round_poly").in_scope(|| {
+            backend
+                .spartan_outer_uniskip
+                .first_round_poly(session, &[], &())
+        })?;
+    // The selected jolt-r1cs shape includes the field-inline rows when enabled.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         F::zero(),

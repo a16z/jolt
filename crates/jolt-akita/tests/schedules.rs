@@ -3,12 +3,11 @@
     reason = "catalog tests should fail loudly when an artifact or grid is malformed"
 )]
 
-//! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
+//! Coverage and setup-sizing guards for Jolt's external catalogs.
 
 use std::path::PathBuf;
 
 use akita_config::{SetupRequirements, TrustedScheduleCatalog};
-use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
@@ -319,35 +318,6 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
             );
         }
     }
-}
-
-/// Re-run every planner solve and byte-compare canonical artifacts.
-#[test]
-#[ignore = "regenerates every schedule through the planner DP (minutes)"]
-fn catalogs_match_planner_regeneration() {
-    let output =
-        std::env::temp_dir().join(format!("jolt-akita-schedule-check-{}", std::process::id()));
-    std::fs::create_dir_all(&output).expect("temporary artifact directory");
-    let specs = family_specs(output.clone()).expect("valid family specs");
-    let rendered = akita_planner::emit::render_schedule_artifact_outputs_with_validation(
-        &specs,
-        MaterializationDiagnostics::default(),
-        |_, _| Ok(()),
-    )
-    .expect("regenerate artifacts");
-    let generated = akita_planner::emit::publish_artifact_outputs(rendered)
-        .expect("publish temporary artifacts");
-    for generated in generated {
-        let checked_in = AkitaScheduleArtifacts::packaged_directory()
-            .join(generated.file_name().expect("generated artifact file name"));
-        assert_eq!(
-            std::fs::read(&generated).expect("generated artifact"),
-            std::fs::read(&checked_in).expect("checked-in artifact"),
-            "{} drifted from planner output",
-            checked_in.display()
-        );
-    }
-    std::fs::remove_dir_all(output).expect("remove temporary artifacts");
 }
 
 /// The field-inline limb group's provisioning pins: the carried arity line

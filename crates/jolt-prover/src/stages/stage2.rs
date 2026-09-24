@@ -114,7 +114,7 @@ where
         tracing::info_span!("SpartanProductUniskip::first_round_poly").in_scope(|| {
             backend
                 .spartan_product_uniskip
-                .first_round_poly(session, &[tau_high])
+                .first_round_poly(session, &[tau_high], &uniskip_inputs)
         })?;
     // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the
     // jolt-claims RV64-only constants Without field-inline, the field-inline-extended lane domain

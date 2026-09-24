@@ -825,6 +825,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _inputs: &(),
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let carry =
             session
@@ -1698,6 +1699,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut reference_session,
                 &[],
+                &(),
             )
             .unwrap();
 
@@ -1716,6 +1718,7 @@ mod tests {
                 &OptimizedOuterUniskip,
                 &mut optimized_session,
                 &[],
+                &(),
             )
             .unwrap();
         assert_eq!(
@@ -1838,6 +1841,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut reference_session,
                 &[],
+                &(),
             )
             .unwrap();
 
@@ -1855,6 +1859,7 @@ mod tests {
                 &OptimizedOuterUniskip,
                 &mut optimized_session,
                 &[],
+                &(),
             )
             .unwrap();
         assert_eq!(optimized_uniskip, reference_uniskip);

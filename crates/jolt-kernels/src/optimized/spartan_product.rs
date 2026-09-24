@@ -49,6 +49,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 #[cfg(feature = "field-inline")]
 use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
@@ -337,7 +338,9 @@ impl OptimizedProductUniskip {
     }
 }
 
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
+    for OptimizedProductUniskip
+{
     #[tracing::instrument(skip_all, name = "SpartanProductUniskip::prepare")]
     fn prepare(
         &self,
@@ -369,6 +372,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUni
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        _inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -800,7 +804,10 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::{CanonicalBytes, Fr, Ring};
     use jolt_program::execution::OwnedTrace;
+    #[cfg(feature = "field-inline")]
+    use jolt_verifier::stages::composed::{ComposedClaims, FieldProductUniskipInputs};
     use jolt_verifier::stages::stage2::product_remainder::product_remainder_input_values_from_uniskip_output;
+    use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
     #[cfg(feature = "field-inline")]
@@ -991,6 +998,38 @@ mod tests {
         scale * total
     }
 
+    fn uniskip_input_claims(
+        rows: &[SpartanProductRow],
+        #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<Fr>)],
+        tau_low: &[Fr],
+    ) -> SumcheckInputClaims<Fr, ProductUniskip<Fr>> {
+        let at = |lane| {
+            let node = Fr::from_i64(DOMAIN_START + lane);
+            true_input_claim(
+                rows,
+                #[cfg(feature = "field-inline")]
+                field_rows,
+                tau_low,
+                node,
+                node,
+            )
+        };
+        let inputs = ProductUniskipInputClaims {
+            product: at(0),
+            should_branch: at(1),
+            should_jump: at(2),
+        };
+        #[cfg(feature = "field-inline")]
+        let inputs = ComposedClaims {
+            base: inputs,
+            field_inline: FieldProductUniskipInputs {
+                product: at(SPARTAN_PRODUCT_BASE_LANES as i64),
+                inv_product: at(SPARTAN_PRODUCT_BASE_LANES as i64 + 1),
+            },
+        };
+        inputs
+    }
+
     struct ParityInputs {
         log_t: usize,
         seed: u64,
@@ -1037,16 +1076,18 @@ mod tests {
             #[cfg(feature = "field-inline")]
             &field_rows,
         );
+        let uniskip_inputs = uniskip_input_claims(
+            &rows,
+            #[cfg(feature = "field-inline")]
+            &field_rows,
+            &tau_low,
+        );
 
         let mut reference_session = ProofSession::default();
         reference_session
             .park(SpartanProductKernel::<Fr>::prepare(log_t, &tau_low, &backend).unwrap());
-        let reference_uniskip =
-            <ReferenceBackend as UniskipKernel<Fr, ProductRemainder<Fr>>>::first_round_poly(
-                &ReferenceBackend,
-                &mut reference_session,
-                &[tau_high],
-            )
+        let reference_uniskip = ReferenceBackend
+            .first_round_poly(&mut reference_session, &[tau_high], &uniskip_inputs)
             .unwrap();
 
         let mut optimized_session = ProofSession::default();
@@ -1059,12 +1100,8 @@ mod tests {
             field_rows.clone(),
         )
         .unwrap();
-        let optimized_uniskip =
-            <OptimizedProductUniskip as UniskipKernel<Fr, ProductRemainder<Fr>>>::first_round_poly(
-                &OptimizedProductUniskip,
-                &mut optimized_session,
-                &[tau_high],
-            )
+        let optimized_uniskip = OptimizedProductUniskip
+            .first_round_poly(&mut optimized_session, &[tau_high], &uniskip_inputs)
             .unwrap();
         assert_eq!(
             optimized_uniskip, reference_uniskip,
@@ -1228,9 +1265,25 @@ mod tests {
                 .map(|i| Fr::from_u64(41 + 19 * i as u64))
                 .collect();
             let tau_high = Fr::from_u64(7211);
+            let rows: Vec<SpartanProductRow> = backend.bundles().unwrap();
+            #[cfg(feature = "field-inline")]
+            let field_rows = JoltWitnessOracle::<Fr>::field_inline(backend)
+                .unwrap()
+                .field_inline_spartan_rows()
+                .unwrap();
+            let uniskip_inputs = uniskip_input_claims(
+                &rows,
+                #[cfg(feature = "field-inline")]
+                &field_rows,
+                &tau_low,
+            );
 
             let mut reference_session = ProofSession::default();
-            <ReferenceBackend as UniskipKernel<Fr, ProductRemainder<Fr>>>::prepare(
+            <ReferenceBackend as UniskipKernel<
+                Fr,
+                ProductRemainder<Fr>,
+                SumcheckInputClaims<Fr, ProductUniskip<Fr>>,
+            >>::prepare(
                 &ReferenceBackend,
                 &mut reference_session,
                 log_t,
@@ -1238,16 +1291,16 @@ mod tests {
                 backend,
             )
             .unwrap();
-            let reference_uniskip =
-                <ReferenceBackend as UniskipKernel<Fr, ProductRemainder<Fr>>>::first_round_poly(
-                    &ReferenceBackend,
-                    &mut reference_session,
-                    &[tau_high],
-                )
+            let reference_uniskip = ReferenceBackend
+                .first_round_poly(&mut reference_session, &[tau_high], &uniskip_inputs)
                 .unwrap();
 
             let mut optimized_session = ProofSession::default();
-            <OptimizedProductUniskip as UniskipKernel<Fr, ProductRemainder<Fr>>>::prepare(
+            <OptimizedProductUniskip as UniskipKernel<
+                Fr,
+                ProductRemainder<Fr>,
+                SumcheckInputClaims<Fr, ProductUniskip<Fr>>,
+            >>::prepare(
                 &OptimizedProductUniskip,
                 &mut optimized_session,
                 log_t,
@@ -1255,24 +1308,12 @@ mod tests {
                 backend,
             )
             .unwrap();
-            let optimized_uniskip = <OptimizedProductUniskip as UniskipKernel<
-                Fr,
-                ProductRemainder<Fr>,
-            >>::first_round_poly(
-                &OptimizedProductUniskip,
-                &mut optimized_session,
-                &[tau_high],
-            )
-            .unwrap();
+            let optimized_uniskip = OptimizedProductUniskip
+                .first_round_poly(&mut optimized_session, &[tau_high], &uniskip_inputs)
+                .unwrap();
             assert_eq!(optimized_uniskip, reference_uniskip);
 
             let r0 = Fr::from_u64(15013);
-            let rows: Vec<SpartanProductRow> = backend.bundles().unwrap();
-            #[cfg(feature = "field-inline")]
-            let field_rows = JoltWitnessOracle::<Fr>::field_inline(backend)
-                .unwrap()
-                .field_inline_spartan_rows()
-                .unwrap();
             let input_claim = true_input_claim(
                 &rows,
                 #[cfg(feature = "field-inline")]

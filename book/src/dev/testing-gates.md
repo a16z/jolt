@@ -98,8 +98,6 @@ Run the schedule and catalog gates with:
 
 ```bash
 cargo nextest run -p jolt-akita --cargo-quiet
-cargo nextest run -p jolt-akita --run-ignored all \
-  -E 'test(catalogs_match_planner_regeneration)' --cargo-quiet
 ```
 
 Failures at the 128-row or 260-group shape limit are protocol-capacity

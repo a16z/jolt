@@ -49,7 +49,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamC
 use rayon::prelude::*;
 
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
-use crate::opening::JointOpeningPolynomials;
+use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::reference::views::dense_view;
 use crate::{KernelError, OptimizedBackend, ProofSession};
@@ -77,9 +77,10 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
         _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        mut precommitted_tables: BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        let mut precommitted_tables = precommitted_tables()?;
         if grid.total_vars < grid.log_t + grid.log_k_chunk {
             return Err(KernelError::InvalidGeometry {
                 reason: format!(
@@ -758,7 +759,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            precommitted_tables.clone(),
+            Box::new(|| Ok(precommitted_tables.clone())),
             grid,
         )
         .unwrap();
@@ -767,7 +768,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            precommitted_tables,
+            Box::new(|| Ok(precommitted_tables)),
             grid,
         )
         .unwrap();

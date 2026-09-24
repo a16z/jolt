@@ -18,12 +18,13 @@ use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "allocative")]
 use jolt_poly::Polynomial;
-use jolt_verifier::stages::relations::ConcreteSumcheck;
+use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
@@ -66,7 +67,7 @@ use jolt_sumcheck::RoundScheduler;
 
 use crate::commitment::CommitWitness;
 use crate::kernel::{ProverInputs, SumcheckKernel};
-use crate::opening::{AdviceOpeningEvaluation, JointOpeningPolynomials};
+use crate::opening::{JointOpeningPolynomials, RamInitialOpeningEvaluation};
 use crate::uniskip::UniskipKernel;
 use crate::KernelError;
 
@@ -141,7 +142,8 @@ where
     pub round_scheduler: Box<dyn BuildRoundScheduler<F>>,
     pub spartan_outer_uniskip: Box<dyn UniskipKernel<F, OuterRemainder<F>>>,
     pub spartan_outer_remainder: Box<dyn PrepareKernel<F, OuterRemainder<F>>>,
-    pub spartan_product_uniskip: Box<dyn UniskipKernel<F, ProductRemainder<F>>>,
+    pub spartan_product_uniskip:
+        Box<dyn UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>>,
     pub spartan_product_remainder: Box<dyn PrepareKernel<F, ProductRemainder<F>>>,
     pub ram_read_write: Box<dyn PrepareKernel<F, RamReadWriteChecking<F>>>,
     pub instruction_claim_reduction: Box<dyn PrepareKernel<F, InstructionClaimReduction<F>>>,
@@ -156,7 +158,7 @@ where
     #[cfg(feature = "field-inline")]
     pub field_registers_read_write: Box<dyn PrepareKernel<F, FieldRegistersReadWriteChecking<F>>>,
     pub ram_val_check: Box<dyn PrepareKernel<F, RamValCheck<F>>>,
-    pub advice_opening: Box<dyn AdviceOpeningEvaluation<F>>,
+    pub ram_initial_openings: Box<dyn RamInitialOpeningEvaluation<F>>,
     pub instruction_read_raf: Box<dyn PrepareKernel<F, InstructionReadRaf<F>>>,
     pub ram_ra_claim_reduction: Box<dyn PrepareKernel<F, RamRaClaimReduction<F>>>,
     pub registers_val_evaluation: Box<dyn PrepareKernel<F, RegistersValEvaluation<F>>>,
