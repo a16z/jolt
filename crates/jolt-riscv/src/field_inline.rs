@@ -225,62 +225,6 @@ impl Valid for FieldInlineOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
-pub enum FieldInlineXRegisterRole {
-    ReadRs1,
-    WriteRd,
-    /// A memory-sourced load: `rs1` is the address base and `rd` the scratch
-    /// register the loaded word is written to, exactly an `LD`.
-    ReadRs1WriteRd,
-}
-
-#[cfg(feature = "serialization")]
-impl CanonicalSerialize for FieldInlineXRegisterRole {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        compress: Compress,
-    ) -> Result<(), SerializationError> {
-        let tag = match self {
-            Self::ReadRs1 => 0u8,
-            Self::WriteRd => 1u8,
-            Self::ReadRs1WriteRd => 2u8,
-        };
-        tag.serialize_with_mode(&mut writer, compress)
-    }
-
-    fn serialized_size(&self, compress: Compress) -> usize {
-        0u8.serialized_size(compress)
-    }
-}
-
-#[cfg(feature = "serialization")]
-impl CanonicalDeserialize for FieldInlineXRegisterRole {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        match u8::deserialize_with_mode(&mut reader, compress, validate)? {
-            0 => Ok(Self::ReadRs1),
-            1 => Ok(Self::WriteRd),
-            2 => Ok(Self::ReadRs1WriteRd),
-            _ => Err(SerializationError::InvalidData),
-        }
-    }
-}
-
-#[cfg(feature = "serialization")]
-impl Valid for FieldInlineXRegisterRole {
-    fn check(&self) -> Result<(), SerializationError> {
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(
-    feature = "serialization",
     derive(CanonicalSerialize, serde::Serialize, serde::Deserialize)
 )]
 pub struct FieldRegister(pub u8);
@@ -338,7 +282,6 @@ pub struct FieldInlineOperandShape {
     pub reads_field_rs1: bool,
     pub reads_field_rs2: bool,
     pub writes_field_rd: bool,
-    pub bridge_x_register_role: Option<FieldInlineXRegisterRole>,
     pub has_immediate: bool,
     /// The field destination is encoded in the `rs2` operand slot (the `rd`
     /// slot names the scratch x-register of a memory-sourced load).
@@ -351,24 +294,48 @@ pub struct FieldInlineOperandShape {
 impl FieldInlineOperandShape {
     /// Retain the ordinary register operands; field operands use a separate plane.
     pub fn x_operands(self, mut operands: NormalizedOperands) -> NormalizedOperands {
-        operands.rs1 = match self.bridge_x_register_role {
-            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
+        operands.rs1 = match self.op {
+            FieldInlineOp::LoadAccumulateFromRegister | FieldInlineOp::LoadAccumulateFromMemory => {
                 operands.rs1
             }
-            _ => None,
+            FieldInlineOp::Add
+            | FieldInlineOp::Sub
+            | FieldInlineOp::Mul
+            | FieldInlineOp::Inv
+            | FieldInlineOp::AssertEq
+            | FieldInlineOp::StoreToRegister
+            | FieldInlineOp::LoadImm
+            | FieldInlineOp::AdviceLimb => None,
         };
-        operands.rd = match self.bridge_x_register_role {
-            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
-                operands.rd
-            }
-            _ => None,
+        operands.rd = match self.op {
+            FieldInlineOp::StoreToRegister
+            | FieldInlineOp::LoadAccumulateFromMemory
+            | FieldInlineOp::AdviceLimb => operands.rd,
+            FieldInlineOp::Add
+            | FieldInlineOp::Sub
+            | FieldInlineOp::Mul
+            | FieldInlineOp::Inv
+            | FieldInlineOp::AssertEq
+            | FieldInlineOp::LoadAccumulateFromRegister
+            | FieldInlineOp::LoadImm => None,
         };
         operands.rs2 = None;
         operands
     }
 
     pub const fn is_pure_field_op(self) -> bool {
-        self.bridge_x_register_role.is_none()
+        match self.op {
+            FieldInlineOp::Add
+            | FieldInlineOp::Sub
+            | FieldInlineOp::Mul
+            | FieldInlineOp::Inv
+            | FieldInlineOp::AssertEq
+            | FieldInlineOp::LoadImm => true,
+            FieldInlineOp::LoadAccumulateFromRegister
+            | FieldInlineOp::StoreToRegister
+            | FieldInlineOp::LoadAccumulateFromMemory
+            | FieldInlineOp::AdviceLimb => false,
+        }
     }
 
     pub const fn requires_product_payload(self) -> bool {
@@ -452,7 +419,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: true,
             reads_field_rs2: true,
             writes_field_rd: true,
-            bridge_x_register_role: None,
             has_immediate: false,
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
@@ -462,7 +428,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: true,
             reads_field_rs2: false,
             writes_field_rd: true,
-            bridge_x_register_role: None,
             has_immediate: false,
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
@@ -472,7 +437,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: true,
             reads_field_rs2: true,
             writes_field_rd: false,
-            bridge_x_register_role: None,
             has_immediate: false,
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
@@ -482,7 +446,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: true,
             reads_field_rs2: false,
             writes_field_rd: true,
-            bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1),
             has_immediate: false,
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: true,
@@ -492,7 +455,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: true,
             reads_field_rs2: false,
             writes_field_rd: false,
-            bridge_x_register_role: Some(FieldInlineXRegisterRole::WriteRd),
             has_immediate: false,
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
@@ -502,7 +464,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: false,
             reads_field_rs2: false,
             writes_field_rd: true,
-            bridge_x_register_role: None,
             has_immediate: true,
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
@@ -512,7 +473,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: true,
             reads_field_rs2: false,
             writes_field_rd: true,
-            bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
             has_immediate: false,
             field_rd_in_rs2_slot: true,
             field_rs1_is_field_rd: true,
@@ -522,7 +482,6 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             reads_field_rs1: true,
             reads_field_rs2: false,
             writes_field_rd: true,
-            bridge_x_register_role: Some(FieldInlineXRegisterRole::WriteRd),
             has_immediate: false,
             field_rd_in_rs2_slot: true,
             field_rs1_is_field_rd: false,

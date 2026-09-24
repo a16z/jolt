@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
 };
-use jolt_riscv::{
-    field_inline_load_accumulate_from_memory_offset, FieldInlineOp, FieldInlineXRegisterRole,
-};
+use jolt_riscv::{field_inline_load_accumulate_from_memory_offset, FieldInlineOp};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormatFieldInline {
@@ -104,16 +102,22 @@ impl InstructionFormat for FormatFieldInline {
 
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
         if matches!(
-            self.x_register_role(),
-            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd)
+            self.op,
+            Some(
+                FieldInlineOp::LoadAccumulateFromRegister | FieldInlineOp::LoadAccumulateFromMemory
+            )
         ) {
             if let Some(rs1) = self.rs1 {
                 state.rs1 = Some(normalize_register_value(cpu, rs1 as usize));
             }
         }
         if matches!(
-            self.x_register_role(),
-            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd)
+            self.op,
+            Some(
+                FieldInlineOp::StoreToRegister
+                    | FieldInlineOp::LoadAccumulateFromMemory
+                    | FieldInlineOp::AdviceLimb
+            )
         ) {
             if let Some(rd) = self.rd {
                 state.rd_pre = Some(normalize_register_value(cpu, rd as usize));
@@ -123,8 +127,12 @@ impl InstructionFormat for FormatFieldInline {
 
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
         if matches!(
-            self.x_register_role(),
-            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd)
+            self.op,
+            Some(
+                FieldInlineOp::StoreToRegister
+                    | FieldInlineOp::LoadAccumulateFromMemory
+                    | FieldInlineOp::AdviceLimb
+            )
         ) {
             if let Some(rd) = self.rd {
                 state.rd_post = Some(normalize_register_value(cpu, rd as usize));
@@ -139,13 +147,6 @@ impl InstructionFormat for FormatFieldInline {
 
     fn set_rd(&mut self, rd: u8) {
         self.rd = Some(rd);
-    }
-}
-
-impl FormatFieldInline {
-    fn x_register_role(self) -> Option<FieldInlineXRegisterRole> {
-        self.op
-            .and_then(|op| jolt_riscv::field_inline_operand_shape_for_op(op).bridge_x_register_role)
     }
 }
 

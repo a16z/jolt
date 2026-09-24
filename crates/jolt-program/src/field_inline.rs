@@ -9,8 +9,8 @@ use ark_serialize::{
     CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
 };
 use jolt_riscv::{
-    field_inline_operand_shape, FieldInlineOp, FieldInlineXRegisterRole, FieldRegister,
-    JoltInstructionRow, FIELD_REGISTER_LOG_K,
+    field_inline_operand_shape, FieldInlineOp, FieldRegister, JoltInstructionRow,
+    FIELD_REGISTER_LOG_K,
 };
 
 /// A field element in canonical little-endian bytes.
@@ -245,8 +245,10 @@ impl FieldInlineBytecodeRow {
             None
         };
         let write_register = if matches!(
-            shape.bridge_x_register_role,
-            Some(FieldInlineXRegisterRole::WriteRd | FieldInlineXRegisterRole::ReadRs1WriteRd)
+            shape.op,
+            FieldInlineOp::StoreToRegister
+                | FieldInlineOp::LoadAccumulateFromMemory
+                | FieldInlineOp::AdviceLimb
         ) {
             let register = x_register(row.operands.rd, "rd")?;
             if register == 0 {
@@ -256,12 +258,17 @@ impl FieldInlineBytecodeRow {
         } else {
             None
         };
-        let bridge_x_register = match shape.bridge_x_register_role {
-            Some(FieldInlineXRegisterRole::ReadRs1 | FieldInlineXRegisterRole::ReadRs1WriteRd) => {
+        let bridge_x_register = match shape.op {
+            FieldInlineOp::LoadAccumulateFromRegister | FieldInlineOp::LoadAccumulateFromMemory => {
                 Some(x_register(row.operands.rs1, "rs1")?)
             }
-            Some(FieldInlineXRegisterRole::WriteRd) => write_register,
-            None => None,
+            FieldInlineOp::StoreToRegister | FieldInlineOp::AdviceLimb => write_register,
+            FieldInlineOp::Add
+            | FieldInlineOp::Sub
+            | FieldInlineOp::Mul
+            | FieldInlineOp::Inv
+            | FieldInlineOp::AssertEq
+            | FieldInlineOp::LoadImm => None,
         };
         let immediate = if shape.has_immediate {
             Some(encoded_immediate(row.operands.imm)?)
@@ -311,7 +318,7 @@ impl FieldInlineBytecodeRow {
         if expected.reads_field_rs1 != self.rs1.is_some()
             || expected.reads_field_rs2 != self.rs2.is_some()
             || expected.writes_field_rd != self.rd.is_some()
-            || expected.bridge_x_register_role.is_some() != self.bridge_x_register.is_some()
+            || expected.is_pure_field_op() != self.bridge_x_register.is_none()
             || expected.has_immediate != self.immediate.is_some()
         {
             return Err(FieldInlineMetadataError::OperandShapeMismatch { index, op });

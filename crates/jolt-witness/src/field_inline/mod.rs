@@ -11,7 +11,7 @@ use jolt_program::{
     },
     preprocess::JoltProgramPreprocessing,
 };
-use jolt_riscv::{field_inline_operand_shape, FieldInlineOperandShape, FieldInlineXRegisterRole};
+use jolt_riscv::{field_inline_operand_shape, FieldInlineOp, FieldInlineOperandShape};
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -674,14 +674,27 @@ fn validate_bridge(
     shape: FieldInlineOperandShape,
     data: FieldInlineTraceData,
 ) -> Result<(), WitnessError> {
-    match (shape.bridge_x_register_role, data.bridge) {
-        (None, None) => Ok(()),
-        (None, Some(_)) => Err(invalid_row(
-            index,
-            "pure field-inline instruction carries bridge payload",
-        )),
+    match (shape.op, data.bridge) {
         (
-            Some(FieldInlineXRegisterRole::ReadRs1),
+            FieldInlineOp::Add
+            | FieldInlineOp::Sub
+            | FieldInlineOp::Mul
+            | FieldInlineOp::Inv
+            | FieldInlineOp::AssertEq
+            | FieldInlineOp::LoadImm,
+            bridge,
+        ) => {
+            if bridge.is_none() {
+                Ok(())
+            } else {
+                Err(invalid_row(
+                    index,
+                    "pure field-inline instruction carries bridge payload",
+                ))
+            }
+        }
+        (
+            FieldInlineOp::LoadAccumulateFromRegister,
             Some(FieldInlineBridge::LoadAccumulateFromRegister {
                 x_register,
                 x_value,
@@ -700,7 +713,7 @@ fn validate_bridge(
             Ok(())
         }
         (
-            Some(FieldInlineXRegisterRole::WriteRd),
+            FieldInlineOp::StoreToRegister | FieldInlineOp::AdviceLimb,
             Some(FieldInlineBridge::StoreToRegister {
                 field_register,
                 field_value,
@@ -722,7 +735,7 @@ fn validate_bridge(
             Ok(())
         }
         (
-            Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
+            FieldInlineOp::LoadAccumulateFromMemory,
             Some(FieldInlineBridge::LoadAccumulateFromMemory {
                 x_base,
                 x_register,
@@ -743,7 +756,13 @@ fn validate_bridge(
             }
             Ok(())
         }
-        (Some(_), _) => Err(invalid_row(
+        (
+            FieldInlineOp::LoadAccumulateFromRegister
+            | FieldInlineOp::StoreToRegister
+            | FieldInlineOp::LoadAccumulateFromMemory
+            | FieldInlineOp::AdviceLimb,
+            _,
+        ) => Err(invalid_row(
             index,
             "field-inline bridge instruction is missing bridge payload",
         )),

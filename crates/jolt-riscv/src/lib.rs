@@ -339,9 +339,9 @@ pub use field_inline::{
     field_inline_jolt_op, field_inline_load_accumulate_from_memory_funct7,
     field_inline_load_accumulate_from_memory_offset, field_inline_operand_shape,
     field_inline_operand_shape_for_op, field_inline_source_op, is_field_inline_jolt,
-    is_field_inline_source, FieldInlineOp, FieldInlineOperandShape, FieldInlineXRegisterRole,
-    FieldRegister, FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE, FIELD_INLINE_OPCODE,
-    FIELD_REGISTER_COUNT, FIELD_REGISTER_LOG_K,
+    is_field_inline_source, FieldInlineOp, FieldInlineOperandShape, FieldRegister,
+    FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE, FIELD_INLINE_OPCODE, FIELD_REGISTER_COUNT,
+    FIELD_REGISTER_LOG_K,
 };
 pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,
