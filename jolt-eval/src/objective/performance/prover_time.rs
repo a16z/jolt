@@ -39,13 +39,13 @@ impl<G: GuestConfig + 'static> Objective for ProverTimeObjective<G> {
         let input = self.guest.input();
 
         // Compile
-        let target_dir = "/tmp/jolt-eval-bench-targets";
+        let target_dir = std::env::temp_dir().join("jolt-eval-bench-targets");
         let mut host_program = Program::new(self.guest.package());
         if let Some(func) = self.guest.func() {
             host_program.set_func(func);
         }
         host_program.set_memory_config(mc);
-        host_program.build(target_dir);
+        host_program.build(&target_dir.to_string_lossy());
         let mut program = host_program;
         let (_lazy_trace, trace, _memory, _io) = program.trace(&input, &[], &[]);
         let max_trace_length = (trace.len() + 1).next_power_of_two();

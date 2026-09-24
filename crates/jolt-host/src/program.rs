@@ -1,5 +1,5 @@
 use crate::analyze::ProgramSummary;
-use crate::{Program, DEFAULT_TARGET_DIR};
+use crate::{default_target_dir, Program};
 use common::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
@@ -300,7 +300,7 @@ impl Program {
         reason = "a successful host build must produce a readable ELF"
     )]
     pub fn jolt_program(&mut self) -> Result<JoltProgram, ProgramError> {
-        self.build(DEFAULT_TARGET_DIR);
+        self.build(&default_target_dir().to_string_lossy());
         let elf_contents = self
             .get_elf_contents()
             .expect("ELF contents should be available after building the guest");
@@ -479,7 +479,7 @@ impl Program {
         reason = "a successful host build must produce a readable ELF"
     )]
     fn built_elf(&mut self) -> (PathBuf, Vec<u8>) {
-        self.build(DEFAULT_TARGET_DIR);
+        self.build(&default_target_dir().to_string_lossy());
         let path = self
             .elf
             .clone()

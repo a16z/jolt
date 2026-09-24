@@ -18,6 +18,7 @@ default = ["transcript-blake2b"]
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = []
 fs-audit = []
+fuzzing = []
 field-inline = ["jolt-claims/field-inline", "jolt-r1cs/field-inline"]
 # Forwarding to the dev-dependencies keeps the fixture prover feature-aligned:
 # `--features prover-fixtures,implicit-carry` must produce carry-lane proofs or
@@ -53,6 +54,8 @@ transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 [dependencies]
 allocative = { workspace = true, optional = true }
 ark-serialize.workspace = true
+bincode.workspace = true
+blake2.workspace = true
 common.workspace = true
 jolt-blindfold.workspace = true
 jolt-claims.workspace = true
@@ -73,7 +76,6 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-bincode.workspace = true
 jolt-host.workspace = true
 jolt-prover.workspace = true
 jolt-witness.workspace = true

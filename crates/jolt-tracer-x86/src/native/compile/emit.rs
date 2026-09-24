@@ -747,10 +747,14 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSrliw(_) => {
-                // Static: shift = imm.trailing_zeros() (imm is a word bitmask).
-                let shift = ((row.operands.imm as u64).trailing_zeros() % 32) as i8;
-                e.load_reg(RAX, row.operands.rs1);
-                dynasm!(e.ops ; .arch x64 ; shr eax, shift ; movsxd rax, eax);
+                let shift = (row.operands.imm as u64).trailing_zeros();
+                // x86 masks shift counts modulo 32, so fold empty word masks here.
+                if shift < 32 {
+                    e.load_reg(RAX, row.operands.rs1);
+                    dynasm!(e.ops ; .arch x64 ; shr eax, shift as i8 ; movsxd rax, eax);
+                } else {
+                    dynasm!(e.ops ; .arch x64 ; xor eax, eax);
+                }
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSraiw(_) => {

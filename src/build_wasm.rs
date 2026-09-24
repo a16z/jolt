@@ -196,7 +196,7 @@ pub fn verify_{func_name}(
 fn wasm_preprocess_source(func_names: &[String]) -> String {
     let mut code = String::from(
         r#"fn main() {
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = std::env::temp_dir().join("jolt-guest-targets");
     let out_dir = std::path::Path::new("target/wasm32-unknown-unknown/release");
     std::fs::create_dir_all(out_dir).expect("create wasm preprocessing directory");
 "#,
@@ -206,7 +206,7 @@ fn wasm_preprocess_source(func_names: &[String]) -> String {
         code.push_str(&format!(
             r#"
     {{
-        let mut program = guest::compile_{func_name}(target_dir);
+        let mut program = guest::compile_{func_name}(&target_dir.to_string_lossy());
         let shared = guest::preprocess_shared_{func_name}(&mut program)
             .unwrap_or_else(|err| panic!("shared preprocessing failed for {func_name}: {{err}}"));
         let prover = guest::preprocess_prover_{func_name}(shared);

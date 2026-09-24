@@ -835,7 +835,11 @@ pub(crate) mod test_utils {
     pub(crate) fn build_muldiv_guest() -> Vec<u8> {
         let guest = "muldiv-guest";
         let func = "muldiv";
-        let target_dir = format!("/tmp/jolt-guest-targets/{guest}-{func}");
+        let target_dir = std::env::temp_dir()
+            .join("jolt-guest-targets")
+            .join(format!("{guest}-{func}"))
+            .to_string_lossy()
+            .into_owned();
 
         let output = std::process::Command::new("jolt")
             .args([

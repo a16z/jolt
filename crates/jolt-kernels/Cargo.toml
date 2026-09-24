@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 default = ["parallel"]
-akita = ["jolt-claims/akita", "jolt-verifier/akita"]
+akita = ["jolt-claims/akita", "jolt-verifier/akita", "jolt-field/solinas"]
 # The implicit-carry protocol lane (committed `Carry` column, `NextCarry`
 # R1CS input, fourth product term, sixth shift term, carry claim reduction).
 implicit-carry = [

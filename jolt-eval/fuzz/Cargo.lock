@@ -1532,8 +1532,6 @@ dependencies = [
 name = "jolt-prover"
 version = "0.1.0"
 dependencies = [
- "ark-serialize 0.5.0",
- "blake2 0.11.0-rc.6",
  "common",
  "jolt-claims",
  "jolt-crypto",
@@ -1671,6 +1669,8 @@ name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
  "ark-serialize 0.5.0",
+ "bincode 2.0.1",
+ "blake2 0.11.0-rc.6",
  "common",
  "jolt-blindfold",
  "jolt-claims",

@@ -88,7 +88,6 @@ allocative = [
 ]
 
 [dependencies]
-ark-serialize.workspace = true
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 jolt-blindfold = { workspace = true, optional = true }
@@ -114,7 +113,6 @@ tracing.workspace = true
 # Optional: the `profiling` harness (bins cannot use dev-dependencies).
 allocative = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true }
-blake2.workspace = true
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
@@ -133,6 +131,8 @@ clap.workspace = true
 jolt-dory.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
+sha2.workspace = true
+sha3.workspace = true
 # Subscriber stack for tests; the profiling smoke test's summary usage
 # arrives via the `profiling` feature's `jolt-profiling/summary`.
 jolt-profiling = { workspace = true, default-features = false }
