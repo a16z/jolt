@@ -108,13 +108,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut files = vec![
             "fp64_add.S",
             "fp64_add_body.inc",
-            "fp64_add_linux_body.inc",
             "fp64_sub.S",
             "fp64_sub_body.inc",
-            "fp64_sub_linux_body.inc",
             "fp64_mul.S",
             "fp64_mul_body.inc",
-            "fp64_mul_linux_body.inc",
             "fp128_add.S",
             "fp128_add_body.inc",
             "fp128_load_a7f7.inc",
@@ -123,7 +120,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             "fp128_mul.S",
             "fp128_mul_body.inc",
         ];
-        if architecture == "x86_64" {
+        if architecture == "aarch64" {
+            files.extend([
+                "fp64_add_linux_body.inc",
+                "fp64_sub_linux_body.inc",
+                "fp64_mul_linux_body.inc",
+            ]);
+        } else {
             files.extend([
                 "fp64_mul_bmi2.S",
                 "fp64_mul_bmi2_body.inc",

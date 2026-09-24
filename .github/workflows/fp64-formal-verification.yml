@@ -13,8 +13,10 @@ on:
       - "proofs/hol-light/dev-fp64.sh"
       - "scripts/fp64_certified_matrix.py"
       - "scripts/check_fp64_proof_artifacts.py"
+      - "scripts/check_field_proof_final_binary.py"
       - "scripts/tests/test_fp64_certified_matrix.py"
       - "scripts/tests/test_check_fp64_proof_artifacts.py"
+      - "scripts/tests/test_check_field_proof_final_binary.py"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -30,8 +32,10 @@ on:
       - "proofs/hol-light/dev-fp64.sh"
       - "scripts/fp64_certified_matrix.py"
       - "scripts/check_fp64_proof_artifacts.py"
+      - "scripts/check_field_proof_final_binary.py"
       - "scripts/tests/test_fp64_certified_matrix.py"
       - "scripts/tests/test_check_fp64_proof_artifacts.py"
+      - "scripts/tests/test_check_field_proof_final_binary.py"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -95,7 +99,8 @@ jobs:
           python3 scripts/fp64_certified_matrix.py validate
           python3 -m unittest \
             scripts.tests.test_fp64_certified_matrix \
-            scripts.tests.test_check_fp64_proof_artifacts
+            scripts.tests.test_check_fp64_proof_artifacts \
+            scripts.tests.test_check_field_proof_final_binary
 
       - name: Confirm that unregistered inputs fail closed
         run: |
