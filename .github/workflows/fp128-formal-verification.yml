@@ -45,7 +45,7 @@ jobs:
         with:
           toolchain: ${{ env.FUZZ_TOOLCHAIN }}
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
         with:
           tool: cargo-fuzz
       - name: Compare assembly with portable arithmetic
@@ -62,7 +62,7 @@ jobs:
         with:
           toolchain: ${{ env.FUZZ_TOOLCHAIN }}
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
         with:
           tool: cargo-fuzz
       - name: Require BMI2 and ADX
