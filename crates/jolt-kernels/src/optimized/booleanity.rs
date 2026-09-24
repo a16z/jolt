@@ -32,6 +32,12 @@
 //!   batching multiply in the round loop (legacy `SharedRaPolynomials`
 //!   pre-scaling), served by the shared `LazyFoldedRa` state machine:
 //!   index-encoded for the first four binds, dense at `T/16` after.
+//! - **Categorical startup products.** After address binding, values still
+//!   come from the address table (or zero on cold RAM rows). In the first
+//!   two cycle rounds, sufficiently small alphabets let us precompute the
+//!   quadratic coefficients once per category pair instead of multiplying
+//!   each cycle's gathered values. Large alphabets and small traces retain
+//!   the original deferred-product loop.
 //! - **Split-eq / Gruen round messages (cycle phase).** Only the constant
 //!   and leading coefficients of the inner quadratic are accumulated, in
 //!   deferred-reduction lanes at every level (per-row products, per-block
@@ -601,6 +607,123 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
     }
 }
 
+/// After address binding, every unbound value comes from a small alphabet.
+/// Cache the two nonlinear coefficients over that alphabet, retaining the
+/// existing exact split-equality fold. The extra category is a cold RAM row;
+/// it must remain distinct from hot address zero, including after a bind.
+struct CategoricalProducts<'a, F: JoltField, S> {
+    source: &'a S,
+    width: usize,
+    radix: usize,
+    states: usize,
+    products: Vec<(Vec<F>, Vec<F>)>,
+}
+
+impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
+    fn fits_budget(width: usize, addresses: usize, cycles: usize) -> bool {
+        if width != 1 && width != 2 {
+            return false;
+        }
+        let Some(states) = addresses
+            .checked_add(1)
+            .and_then(|radix| radix.checked_pow(width as u32))
+            .filter(|states| *states <= 289)
+        else {
+            return false;
+        };
+        // Cached products, construction temporary and lazy branches fit
+        // within the existing T/16 dense allocation budget per family.
+        states * (states + 2) + width * addresses <= cycles / 16
+    }
+
+    fn new(tables: &'a [Vec<F>], width: usize, source: &'a S, rho: &[F]) -> Self {
+        let addresses = tables[0].len() / width;
+        let radix = addresses + 1;
+        let states = radix.pow(width as u32);
+        let products = tables
+            .iter()
+            .zip(rho)
+            .map(|(table, rho)| {
+                let values: Vec<F> = (0..states)
+                    .map(|mut state| {
+                        let mut value = F::zero();
+                        for branch in 0..width {
+                            let address = state % radix;
+                            state /= radix;
+                            if address < addresses {
+                                value += table[branch * addresses + address];
+                            }
+                        }
+                        value
+                    })
+                    .collect();
+                let constants = values.iter().map(|v| *v * (*v - *rho)).collect();
+                let mut squares = Vec::with_capacity(states * states);
+                for lo in &values {
+                    squares.extend(values.iter().map(|hi| (*hi - *lo).square()));
+                }
+                (constants, squares)
+            })
+            .collect();
+        Self {
+            source,
+            width,
+            radix,
+            states,
+            products,
+        }
+    }
+
+    #[inline]
+    fn state(&self, family: usize, row: usize) -> usize {
+        let first = self
+            .source
+            .index(family, row * self.width)
+            .unwrap_or(self.radix - 1);
+        if self.width == 1 {
+            first
+        } else {
+            first
+                + self.radix
+                    * self
+                        .source
+                        .index(family, row * self.width + 1)
+                        .unwrap_or(self.radix - 1)
+        }
+    }
+
+    fn lookup(&self, eq: &GruenSplitEqPolynomial<F>, claim: F) -> UnivariatePoly<F> {
+        let lanes = eq.par_fold_out_in(
+            || [F::Accumulator::default(); 2],
+            |lanes, row, _, weight| {
+                let mut constant = F::zero();
+                let mut leading = F::zero();
+                for (family, (constants, squares)) in self.products.iter().enumerate() {
+                    let lo = self.state(family, 2 * row);
+                    let hi = self.state(family, 2 * row + 1);
+                    constant += constants[lo];
+                    leading += squares[lo * self.states + hi];
+                }
+                // Share these two equality products across all families.
+                lanes[0].fmadd(weight, constant);
+                lanes[1].fmadd(weight, leading);
+            },
+            |_, weight, lanes| {
+                let mut out = [F::Accumulator::default(); 2];
+                out[0].fmadd(weight, lanes[0].reduce());
+                out[1].fmadd(weight, lanes[1].reduce());
+                out
+            },
+            |mut a, b| {
+                a[0].merge(b[0]);
+                a[1].merge(b[1]);
+                a
+            },
+        );
+        eq.gruen_poly_deg_3(lanes[0].reduce(), lanes[1].reduce(), claim)
+    }
+}
+
 impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
@@ -614,6 +737,23 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
             self.bind(challenge);
+        }
+        if let LazyFoldedRa::Lazy {
+            tables,
+            width,
+            source,
+        } = &self.tables
+        {
+            if !tables.is_empty()
+                && CategoricalProducts::<F, BooleanityChunks>::fits_budget(
+                    *width,
+                    tables[0].len() / width,
+                    source.cycles(),
+                )
+            {
+                let products = CategoricalProducts::new(tables, *width, source, &self.gamma_powers);
+                return Ok(products.lookup(&self.eq, previous_claim));
+            }
         }
         let tables = &self.tables;
         let gamma_powers = &self.gamma_powers;
@@ -1338,5 +1478,150 @@ mod tests {
                 )
                 .unwrap();
         });
+    }
+}
+
+#[cfg(test)]
+mod categorical_tests {
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Fr, JoltField};
+    use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
+
+    use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};
+    use crate::reference::views::eq_table;
+
+    struct Source(Vec<Vec<Option<usize>>>);
+
+    impl ChunkIndexSource for Source {
+        fn num_polys(&self) -> usize {
+            self.0.len()
+        }
+        fn cycles(&self) -> usize {
+            self.0[0].len()
+        }
+        fn index(&self, i: usize, j: usize) -> Option<usize> {
+            self.0[i][j]
+        }
+    }
+
+    fn check_categorical_cubics<F: JoltField>() {
+        for addresses in [2, 16, 256] {
+            for bind in [F::zero(), F::one(), F::from_u64(13)] {
+                // All-cold, alternating hot/cold, and fully hot families.
+                // In particular None is not address zero, and a folded pair
+                // can have only its low or only its high branch cold.
+                let source = Source(
+                    (0..3)
+                        .map(|family| {
+                            (0..32)
+                                .map(|row| {
+                                    if family == 0 || (family == 1 && row % 3 == 0) {
+                                        None
+                                    } else {
+                                        Some((row * row + 7 * row + family) % addresses)
+                                    }
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                );
+                let rho: Vec<F> = (0..3).map(|i| F::from_u64(3_u64.pow(i))).collect();
+                let tables: Vec<Vec<F>> = rho
+                    .iter()
+                    .map(|r| {
+                        (0..addresses)
+                            .map(|i| *r * F::from_u64((i * i + 3 * i + 11) as u64))
+                            .collect()
+                    })
+                    .collect();
+                let mut dense: Vec<Vec<F>> = source
+                    .0
+                    .iter()
+                    .zip(&tables)
+                    .map(|(column, table)| {
+                        column
+                            .iter()
+                            .map(|i| i.map_or(F::zero(), |i| table[i]))
+                            .collect()
+                    })
+                    .collect();
+                let mut lazy = LazyFoldedRa::new(tables, source);
+                let reference: Vec<F> = (0..5).map(|i| F::from_u64(7 + 3 * i)).collect();
+                let mut prefix = F::from_u64(19);
+                let mut eq = GruenSplitEqPolynomial::new_with_scaling(
+                    &reference,
+                    BindingOrder::LowToHigh,
+                    Some(prefix),
+                );
+                for round in 0..if addresses <= 16 { 2 } else { 1 } {
+                    let suffix = eq_table(&reference[..4 - round]);
+                    let bit = reference[4 - round];
+                    // Direct evaluations of the defining weighted cubic;
+                    // neither Gruen reconstruction nor coefficient caching.
+                    let direct: Vec<F> = (0..4)
+                        .map(|x| {
+                            let x = F::from_u64(x);
+                            let mut sum = F::zero();
+                            for (row, weight) in suffix.iter().enumerate() {
+                                for (column, r) in dense.iter().zip(&rho) {
+                                    let v = column[2 * row]
+                                        + x * (column[2 * row + 1] - column[2 * row]);
+                                    sum += *weight * v * (v - *r);
+                                }
+                            }
+                            prefix * (bit * x + (F::one() - bit) * (F::one() - x)) * sum
+                        })
+                        .collect();
+                    let LazyFoldedRa::Lazy {
+                        tables,
+                        width,
+                        source,
+                    } = &lazy
+                    else {
+                        unreachable!()
+                    };
+                    let products = CategoricalProducts::new(tables, *width, source, &rho);
+                    let polynomial = products.lookup(&eq, direct[0] + direct[1]);
+                    for (x, value) in direct.iter().enumerate() {
+                        assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
+                    }
+                    for column in &mut dense {
+                        for row in 0..column.len() / 2 {
+                            column[row] =
+                                column[2 * row] + bind * (column[2 * row + 1] - column[2 * row]);
+                        }
+                        column.truncate(column.len() / 2);
+                    }
+                    lazy.bind(bind);
+                    eq.bind(bind);
+                    prefix *= bit * bind + (F::one() - bit) * (F::one() - bind);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn categorical_booleanity_startup_budget() {
+        let fits = CategoricalProducts::<Fr, Source>::fits_budget;
+        assert!(!fits(1, 16, 1 << 12));
+        assert!(fits(1, 16, 1 << 13));
+        assert!(!fits(2, 16, 1 << 20));
+        assert!(fits(2, 16, 1 << 21));
+        assert!(fits(1, 256, 1 << 21));
+        assert!(!fits(2, 256, 1 << 25));
+        assert!(!fits(4, 16, 1 << 25));
+        assert!(!fits(1, usize::MAX, 1 << 25));
+    }
+
+    #[test]
+    fn categorical_booleanity_matches_direct_cubic_dory() {
+        check_categorical_cubics::<Fr>();
+    }
+
+    #[test]
+    #[cfg(feature = "akita")]
+    fn categorical_booleanity_matches_direct_cubic_akita() {
+        check_categorical_cubics::<Prime128OffsetA7F7>();
     }
 }
