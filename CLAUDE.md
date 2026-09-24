@@ -25,11 +25,16 @@ cargo nextest run --cargo-quiet
 cargo nextest run -p [package_name] [test_name] --cargo-quiet
 
 # Guest x mode acceptance matrix (crates/jolt-prover/tests/e2e_matrix.rs): one
-# guest table, proven under whichever protocol the crate is compiled for. CI
-# runs all three; a guest added to the table runs in every mode.
+# table per instruction profile, proven in clear, ZK, and Akita modes in CI.
+# Ordinary profile: nine guest cases.
 cargo nextest run -p jolt-prover --features prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)' --cargo-quiet
+
+# Field-inline profile: field_ops and inactive_muldiv.
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
 
 # Full prover suites and the verifier fixtures (mirror CI)
 cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --cargo-quiet

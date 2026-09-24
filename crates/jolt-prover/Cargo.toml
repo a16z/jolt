@@ -23,7 +23,7 @@ prover-fixtures = ["dep:jolt-host"]
 # Field-inline protocol composition: the field-inline prover — every stage
 # proves the composed protocol, and only field-inline guests are accepted (the
 # witness plane refuses classic-profile traces). The e2e acceptance lives in
-# tests/field_inline_e2e.rs under prover-fixtures,field-inline[,zk].
+# tests/e2e_matrix.rs under prover-fixtures,field-inline[,zk|,akita].
 field-inline = [
   "jolt-claims/field-inline",
   "jolt-kernels/field-inline",

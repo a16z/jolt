@@ -169,9 +169,8 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features profiling,allocative,field-inline
       - name: cargo clippy -p jolt-prover --features akita,profiling,field-inline
         run: cargo clippy -p jolt-prover --all-targets --features akita,profiling,field-inline
-      # The field-inline fixture-driven suites: the modular prover proves the
-      # field-inline guests end-to-end (jolt-prover e2e in both proof modes, and the
-      # jolt-verifier tamper suite over modular-prover fixtures).
+      # The field-inline matrix and specialized e2e suites, plus the
+      # jolt-verifier tamper suite over modular-prover fixtures.
       - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline
       - name: cargo clippy -p jolt-prover --features prover-fixtures,field-inline,zk
@@ -424,7 +423,7 @@ jobs:
 
   test-prover-field-inline:
     runs-on: ubuntu-latest
-    name: Test jolt-prover (field-inline e2e)
+    name: Test jolt-prover (field-inline matrix and e2e)
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -452,12 +451,12 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # The field-inline e2e acceptance: eq-MLE and degenerate (field-inactive) muldiv
-      # accepts plus the field-inline wire tampers, in both proof modes, all proven by
-      # the modular prover and verified through the full verifier entry.
-      - name: Run jolt-prover field-inline e2e (clear)
+      # e2e_matrix selects field_ops and inactive_muldiv for the field-inline
+      # profile. Run the full package to retain its specialized parity and
+      # tamper suites alongside matrix acceptance in both Dory modes.
+      - name: Run field-inline matrix and specialized suites (clear)
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline
-      - name: Run jolt-prover field-inline e2e (zk)
+      - name: Run field-inline matrix and specialized suites (zk)
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,zk
       # The example smoke run (no generic example lane runs feature-gated
       # examples; the ci-bench sweep excludes this one).
@@ -466,7 +465,7 @@ jobs:
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
-    name: Test jolt-prover (packed field-inline e2e)
+    name: Test jolt-prover (packed field-inline matrix and e2e)
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -494,11 +493,9 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # The packed field-inline acceptance: eq-MLE over fp128 and the field-inactive
-      # muldiv (the limb group present with all-zero content) accept, plus
-      # the packed field-inline wire tampers, all proven by the modular packed prover
-      # over both kernel backends with wire equality.
-      - name: Run jolt-prover packed field-inline e2e
+      # The same field_ops and inactive_muldiv matrix table runs over fp128.
+      # The full package also runs packed field-inline parity and tamper suites.
+      - name: Run packed field-inline matrix and specialized suites
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita
       # The combined-feature verifier unit suite (no fixtures).
       - name: Run jolt-verifier with field-inline,akita

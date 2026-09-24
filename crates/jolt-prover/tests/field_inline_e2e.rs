@@ -1,260 +1,16 @@
-//! Field-inline end-to-end: the modular prover's field-inline-composed proofs against
-//! the full `jolt_verifier::verify` entry, in both proof modes.
+//! Field-inline Dory backend parity and tamper rejection.
 //!
-//! Two guests span the composed protocol's envelope: the eq-MLE guest
-//! (`field-ops-guest`) exercises every shipped field-inline instruction family —
-//! LoadImm, x-register and memory bridges, limb advice, add/sub/mul/inv,
-//! and FIELD_ASSERT_EQ — and
-//! the field-inline muldiv build is the uniform-shape degenerate case (a field-inline
-//! proof over a trace with zero field-inline instructions, so every field-inline column including
-//! the committed `FieldRdInc` is identically zero). Clear-mode tampers hit
-//! the field-inline-specific wire surface — a stage-1 field-inline opening, the `FieldRdInc`
-//! commitment, a stage-2 field-inline product appendage value, and the stage-2 batch
-//! round polynomial at the field-inline claim-reduction's gamma position — and every
-//! mutation must reject.
-//!
-//! Every suite runs over BOTH kernel backends: `JoltBackend::reference` (the
-//! byte-parity oracle) and `JoltBackend::optimized` (the sparse/composed
-//! tier) — one prover, two backends, the same verifier entry, so an
-//! optimized/reference wire divergence fails here as a verification error
-//! even before the kernel-level parity tests localize it.
+//! Acceptance across protocol modes lives in `e2e_matrix.rs`. These tests use
+//! the same guest cases and preparation, and cover distinct field-inline wire
+//! properties: reference/optimized proof equality in clear mode, field commitment
+//! presence, and rejection of corrupted field openings, commitments, and sumchecks.
 
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",
     not(feature = "akita")
 ))]
-#[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
-mod support {
-    use std::sync::Arc;
-    #[cfg(feature = "zk")]
-    use std::thread::Builder;
-
-    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-    use jolt_crypto::{Bn254G1, Pedersen};
-    use jolt_dory::DoryScheme;
-    use jolt_field::{CanonicalBytes, Fr, Ring};
-    use jolt_host::{JoltProgramSource, Program};
-    use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
-    };
-    use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_prover::JoltSharedPreprocessing;
-    use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_verifier::proof::JoltProof;
-    use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
-    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-    use tracer::execution_backend::TracerBackend;
-
-    pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
-
-    pub type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
-    pub type VerifierPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
-
-    pub const EQ_PAIRS: [[u64; 2]; 4] = [
-        [u64::MAX, u64::MAX - 1],
-        [u64::MAX - 2, 2],
-        [11, 13],
-        [u64::MAX - 3, 9],
-    ];
-
-    /// eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)) — the host-side
-    /// reference the guest's FIELD_ASSERT_EQ checks against.
-    fn eq_mle(pairs: &[[u64; 2]; 4]) -> Fr {
-        let one = Fr::from_u64(1);
-        pairs.iter().fold(one, |acc, [r, x]| {
-            let r = Fr::from_u64(*r);
-            let x = Fr::from_u64(*x);
-            acc * (r * x + (one - r) * (one - x))
-        })
-    }
-
-    /// The eq-MLE guest's inputs: the coordinate pairs plus the expected
-    /// value as canonical little-endian u64 limbs (each provable-fn argument
-    /// postcard-encoded and concatenated).
-    pub fn eqpoly_inputs() -> Vec<u8> {
-        let value = eq_mle(&EQ_PAIRS);
-        let mut bytes = [0u8; 32];
-        value.to_bytes_le(&mut bytes);
-        let mut limbs = [0u64; 4];
-        for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
-            *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
-        }
-        let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
-        inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
-        inputs
-    }
-
-    pub struct FieldInlineGuest {
-        pub preprocessing: JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
-        pub trace_output: TraceOutput<OwnedTrace>,
-        pub program: Arc<JoltProgram>,
-    }
-
-    /// Build `guest_name` under the field-inline instruction profile, preprocess with
-    /// that profile (the profile carry `preprocess_with_profile` exists for),
-    /// and re-trace through the modular tracer backend.
-    pub fn field_inline_guest(guest_name: &str, inputs: &[u8]) -> FieldInlineGuest {
-        let mut program = Program::new(guest_name);
-        program.enable_field_inline();
-
-        let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
-        let jolt_program = Arc::new(
-            program
-                .build_jolt_program()
-                .expect("build field-inline guest"),
-        );
-        let program_preprocessing = JoltProgramPreprocessing::new(
-            jolt_program.expanded_bytecode.clone(),
-            jolt_program.memory_init.clone(),
-            io_device.memory_layout.clone(),
-            jolt_program.entry_address,
-            MAX_PADDED_TRACE_LENGTH,
-            program.instruction_profile(),
-        )
-        .expect("field-inline preprocessing");
-        let preprocessing = jolt_prover::dory::from_shared(
-            JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
-        )
-        .expect("Dory preprocessing");
-        let trace_output = trace_modular(&jolt_program, &io_device.memory_layout, inputs);
-        FieldInlineGuest {
-            preprocessing,
-            trace_output,
-            program: jolt_program,
-        }
-    }
-
-    fn trace_modular(
-        program: &JoltProgram,
-        memory_layout: &MemoryLayout,
-        inputs: &[u8],
-    ) -> TraceOutput<OwnedTrace> {
-        let memory_config = MemoryConfig {
-            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
-            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
-            max_input_size: memory_layout.max_input_size,
-            max_output_size: memory_layout.max_output_size,
-            stack_size: memory_layout.stack_size,
-            heap_size: memory_layout.heap_size,
-            program_size: Some(memory_layout.program_size),
-        };
-        TracerBackend::new()
-            .trace(
-                program,
-                TraceInputs {
-                    inputs: inputs.to_vec(),
-                    untrusted_advice: Vec::new(),
-                    trusted_advice: Vec::new(),
-                    memory_config,
-                    advice_tape: None,
-                },
-            )
-            .expect("modular trace")
-    }
-
-    pub fn field_inline_rows(rows: &[TraceRow]) -> usize {
-        rows.iter().filter(|row| row.field_inline.is_some()).count()
-    }
-
-    /// Prove `guest` with field-inline enabled using the modular prover (the field-inline witness
-    /// view attached — the field-inline build refuses classic-profile witnesses).
-    pub fn prove_field_inline(
-        guest: FieldInlineGuest,
-        backend: JoltBackend<Fr, DoryScheme>,
-    ) -> (VerifierPreprocessing, JoltDevice, Proof) {
-        let FieldInlineGuest {
-            preprocessing,
-            trace_output,
-            program,
-        } = guest;
-        let memory_layout = trace_output.device.memory_layout.clone();
-        let public_io = trace_output.device.clone();
-        let config = ProverConfig::derive::<Fr>(
-            trace_output.trace.rows(),
-            &memory_layout,
-            preprocessing.verifier.program.min_bytecode_address(),
-            preprocessing.verifier.program.program_image_len_words(),
-            MAX_PADDED_TRACE_LENGTH,
-        )
-        .expect("derive config");
-
-        let mut rows = trace_output.trace.rows().to_vec();
-        rows.resize(config.trace_length, TraceRow::default());
-        let padded_output = TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-            trace_output.advice_tape,
-        );
-
-        let program_preprocessing = preprocessing
-            .program_arc()
-            .expect("full program preprocessing");
-        let witness = TraceBackend::new(
-            JoltVmWitnessConfig::new(
-                config.trace_length.ilog2() as usize,
-                config.ram_K,
-                config.one_hot_config,
-            ),
-            JoltVmWitnessInputs::new(&program, &program_preprocessing, padded_output),
-        )
-        .with_field_inline()
-        .expect("field-inline witness view");
-        let witness = Arc::new(witness);
-
-        let prover_preprocessing = preprocessing;
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            witness.as_ref(),
-            &public_io,
-        )
-        .expect("modular field-inline prove");
-        (prover_preprocessing.verifier, public_io, proof)
-    }
-
-    pub fn verify_full(
-        preprocessing: &VerifierPreprocessing,
-        public_io: &JoltDevice,
-        proof: &Proof,
-    ) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            preprocessing,
-            public_io,
-            proof,
-            None,
-        )
-    }
-
-    /// A labeled kernel-backend constructor.
-    pub type BackendCase = (&'static str, fn() -> JoltBackend<Fr, DoryScheme>);
-
-    /// The two kernel backends every field-inline e2e case runs over, labeled for
-    /// assertion messages.
-    pub fn backends() -> [BackendCase; 2] {
-        [
-            ("reference", JoltBackend::reference),
-            ("optimized", JoltBackend::optimized),
-        ]
-    }
-
-    /// BlindFold verification (and the prover's replay of it) recurses over a
-    /// large folded R1CS — run on a dedicated wide stack like the
-    /// jolt-verifier ZK suites.
-    #[cfg(feature = "zk")]
-    pub fn with_zk_stack<R: Send + 'static>(body: impl FnOnce() -> R + Send + 'static) -> R {
-        Builder::new()
-            .stack_size(128 * 1024 * 1024)
-            .spawn(body)
-            .expect("spawn ZK test thread")
-            .join()
-            .expect("ZK test thread panicked")
-    }
-}
+mod support;
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -268,7 +24,6 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod clear {
-    use common::jolt_device::JoltDevice;
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
     use jolt_poly::CompressedPoly;
@@ -276,17 +31,16 @@ mod clear {
     use jolt_sumcheck::{ClearProof, SumcheckProof};
     use jolt_verifier::proof::JoltProofClaims;
 
-    use super::support::{self, Proof, VerifierPreprocessing};
+    use crate::support::field_inline::dory::{self, Proof};
+    use crate::support::field_inline::{field_ops, inactive_muldiv};
 
-    fn prove_eqpoly(
-        backend: JoltBackend<Fr, DoryScheme>,
-    ) -> (VerifierPreprocessing, JoltDevice, Proof) {
-        let guest = support::field_inline_guest("field-ops-guest", &support::eqpoly_inputs());
-        assert!(
-            support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
-            "the eq-MLE guest must trace field-active",
-        );
-        support::prove_field_inline(guest, backend)
+    type BackendCase = (&'static str, fn() -> JoltBackend<Fr, DoryScheme>);
+
+    fn backends() -> [BackendCase; 2] {
+        [
+            ("reference", JoltBackend::reference),
+            ("optimized", JoltBackend::optimized),
+        ]
     }
 
     /// Both backends' proofs must verify AND be equal wire objects — clear
@@ -294,16 +48,16 @@ mod clear {
     /// divergence anywhere in the composed pipeline shows up here as a proof
     /// inequality even when both sides individually verify.
     #[test]
-    fn field_inline_eqpoly_proof_is_accepted() {
+    fn field_inline_eqpoly_reference_matches_optimized() {
         let mut proofs = Vec::new();
-        for (label, backend) in support::backends() {
-            let (preprocessing, public_io, proof) = prove_eqpoly(backend());
+        for (label, backend) in backends() {
+            let (preprocessing, public_io, proof) = dory::prove(&field_ops(), backend());
             assert!(
                 proof.commitments.field_inline.is_some(),
                 "field-inline proofs must carry the field-inline commitment payload ({label})",
             );
             assert!(matches!(proof.claims, JoltProofClaims::Clear(_)));
-            support::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
+            dory::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
                 panic!("modular field-inline proof must verify ({label}): {error}")
             });
             proofs.push(proof);
@@ -318,19 +72,12 @@ mod clear {
     /// field-inline instructions still proves under the composed protocol, with an
     /// all-zero `FieldRdInc` commitment and zero field-inline openings.
     #[test]
-    fn field_inline_inactive_muldiv_proof_is_accepted() {
+    fn field_inline_inactive_muldiv_reference_matches_optimized() {
         let mut proofs = Vec::new();
-        for (label, backend) in support::backends() {
-            let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-            let guest = support::field_inline_guest("muldiv-guest", &inputs);
-            assert_eq!(
-                support::field_inline_rows(guest.trace_output.trace.rows()),
-                0,
-                "the field-inline muldiv trace must contain no field-inline instructions",
-            );
-            let (preprocessing, public_io, proof) = support::prove_field_inline(guest, backend());
+        for (label, backend) in backends() {
+            let (preprocessing, public_io, proof) = dory::prove(&inactive_muldiv(), backend());
             assert!(proof.commitments.field_inline.is_some());
-            support::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
+            dory::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
                 panic!("field-inactive modular proof must verify ({label}): {error}")
             });
             proofs.push(proof);
@@ -343,12 +90,12 @@ mod clear {
 
     /// Every field-inline-specific single-field tamper must reject: one proof, four
     /// mutations on fresh clones. The optimized backend proves here — its
-    /// wire bytes equal the reference's (the accept tests pin both), so one
+    /// wire bytes equal the reference's (the parity tests pin both), so one
     /// backend's tamper matrix covers both.
     #[test]
     fn field_inline_tampered_proofs_are_rejected() {
-        let (preprocessing, public_io, proof) = prove_eqpoly(JoltBackend::optimized());
-        support::verify_full(&preprocessing, &public_io, &proof)
+        let (preprocessing, public_io, proof) = dory::prove(&field_ops(), JoltBackend::optimized());
+        dory::verify_full(&preprocessing, &public_io, &proof)
             .expect("base proof must verify before tampering");
         let one = Fr::from_u64(1);
 
@@ -414,7 +161,7 @@ mod clear {
             let mut tampered = proof.clone();
             tamper(&mut tampered);
             assert!(
-                support::verify_full(&preprocessing, &public_io, &tampered).is_err(),
+                dory::verify_full(&preprocessing, &public_io, &tampered).is_err(),
                 "tampered proof must be rejected: {name}",
             );
         }
@@ -437,28 +184,19 @@ mod zk {
     use jolt_prover::JoltBackend;
     use jolt_verifier::proof::JoltProofClaims;
 
-    use super::support;
+    use crate::support;
+    use crate::support::field_inline::{dory, field_ops, inactive_muldiv};
 
-    /// ZK accept plus the field-inline tampers that exist on the ZK wire (clear claims
-    /// don't): the FieldRdInc commitment and the BlindFold payload. One
-    /// proof, mutations on clones — ZK proving is the expensive step.
+    /// The field-inline tampers on the ZK wire: the FieldRdInc commitment and
+    /// the BlindFold payload. Mutate clones of one accepted base proof.
     #[test]
-    fn zk_field_inline_eqpoly_accepts_and_tampers_reject() {
+    fn field_inline_tampered_proofs_are_rejected() {
         support::with_zk_stack(|| {
-            // The optimized backend proves the tampered matrix; the
-            // reference ZK path is pinned by the muldiv accept below (ZK
-            // blindings randomize the wire, so proofs are verify-only here —
-            // clear mode owns the byte-equality statement).
-            let guest = support::field_inline_guest("field-ops-guest", &support::eqpoly_inputs());
-            assert!(
-                support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
-                "the eq-MLE guest must trace field-active",
-            );
             let (preprocessing, public_io, proof) =
-                support::prove_field_inline(guest, JoltBackend::optimized());
+                dory::prove(&field_ops(), JoltBackend::optimized());
             assert!(matches!(proof.claims, JoltProofClaims::Zk { .. }));
             assert!(proof.commitments.field_inline.is_some());
-            support::verify_full(&preprocessing, &public_io, &proof)
+            dory::verify_full(&preprocessing, &public_io, &proof)
                 .expect("modular field-inline ZK proof must verify");
 
             let mut commitment_tampered = proof.clone();
@@ -471,7 +209,7 @@ mod zk {
             assert_ne!(field_inline.field_registers.rd_inc, replacement);
             field_inline.field_registers.rd_inc = replacement;
             assert!(
-                support::verify_full(&preprocessing, &public_io, &commitment_tampered).is_err(),
+                dory::verify_full(&preprocessing, &public_io, &commitment_tampered).is_err(),
                 "a tampered FieldRdInc commitment must be rejected in ZK mode",
             );
 
@@ -481,29 +219,21 @@ mod zk {
             };
             blindfold_proof.random_u += Fr::from_u64(1);
             assert!(
-                support::verify_full(&preprocessing, &public_io, &blindfold_tampered).is_err(),
+                dory::verify_full(&preprocessing, &public_io, &blindfold_tampered).is_err(),
                 "a tampered BlindFold proof must be rejected",
             );
         });
     }
 
+    /// The acceptance matrix uses optimized kernels; retain the reference ZK
+    /// path separately because randomized ZK proofs cannot be compared by bytes.
     #[test]
-    fn zk_field_inline_inactive_muldiv_proof_is_accepted() {
+    fn field_inline_inactive_muldiv_reference_proof_is_accepted() {
         support::with_zk_stack(|| {
-            for (label, backend) in support::backends() {
-                let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-                let guest = support::field_inline_guest("muldiv-guest", &inputs);
-                assert_eq!(
-                    support::field_inline_rows(guest.trace_output.trace.rows()),
-                    0,
-                    "the field-inline muldiv trace must contain no field-inline instructions",
-                );
-                let (preprocessing, public_io, proof) =
-                    support::prove_field_inline(guest, backend());
-                support::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
-                    panic!("field-inactive modular ZK proof must verify ({label}): {error}")
-                });
-            }
+            let (preprocessing, public_io, proof) =
+                dory::prove(&inactive_muldiv(), JoltBackend::reference());
+            dory::verify_full(&preprocessing, &public_io, &proof)
+                .expect("field-inactive reference ZK proof must verify");
         });
     }
 }

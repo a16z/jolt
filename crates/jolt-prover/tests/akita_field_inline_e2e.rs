@@ -1,13 +1,11 @@
-//! Packed (Akita) field-inline end-to-end: field-inline-composed proofs over fp128
-//! against the full `jolt_verifier::verify` entry — the packed sibling of
-//! `field_inline_e2e.rs` (the akita axis proves exclusively over fp128, so
-//! the field-inline guests re-fixture here at the 16-byte value encoding).
+//! Packed (Akita) field-inline parity and tamper tests over fp128.
 //!
-//! Accept: the eq-MLE guest (every shipped field-inline instruction family, a live
-//! `FieldRdInc` column) and the field-inline muldiv (zero field-inline instructions,
-//! `FieldRdInc` identically zero, the limb group PRESENT with all-zero
+//! Parity and limb-group invariants: the eq-MLE guest (every shipped field-inline
+//! instruction family, a live `FieldRdInc` column) and the field-inline muldiv
+//! (zero field-inline instructions, `FieldRdInc` identically zero, the limb group PRESENT with all-zero
 //! content — the always-present rule, pinning the all-zero dense open), each
-//! over both kernel backends with wire equality.
+//! over both kernel backends with wire equality. Guest acceptance across modes
+//! lives in `e2e_matrix.rs`; all suites share guest preparation.
 //! Tamper (all must reject): a limb-evaluation offset (the stage-8 linear
 //! recomposition check), a limb-commitment layout-digest byte flip, a
 //! batch-proof mutation, the limb group stripped from the proof, and a
@@ -18,287 +16,7 @@
     feature = "field-inline",
     feature = "akita"
 ))]
-#[expect(clippy::expect_used, reason = "integration tests should fail loudly")]
-mod support {
-    use std::sync::Arc;
-
-    use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-    use jolt_akita::AkitaCommitment;
-    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-    use jolt_claims::protocols::field_inline::{
-        FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
-    };
-    use jolt_field::{CanonicalBytes, Ring};
-    use jolt_host::{JoltProgramSource, Program};
-    use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
-    use jolt_program::execution::{
-        ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
-    };
-    use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
-    use jolt_prover::akita::JoltAkitaBackend;
-    use jolt_prover::{akita, ProverConfig};
-    use jolt_verifier::proof::JoltProof;
-    use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
-    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-    use tracer::execution_backend::TracerBackend;
-
-    pub const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
-
-    pub type Proof = JoltProof<AkitaScheme, AkitaVc>;
-
-    pub const EQ_PAIRS: [[u64; 2]; 4] = [
-        [u64::MAX, u64::MAX - 1],
-        [u64::MAX - 2, 2],
-        [11, 13],
-        [u64::MAX - 3, 9],
-    ];
-
-    /// eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)) over the packed
-    /// axis's proof field (fp128, p = 2^128 − 2^32 + 22537) — the host-side
-    /// reference the guest's FIELD_ASSERT_EQ checks against.
-    fn eq_mle(pairs: &[[u64; 2]; 4]) -> AkitaField {
-        let one = AkitaField::from_u64(1);
-        pairs.iter().fold(one, |acc, [r, x]| {
-            let r = AkitaField::from_u64(*r);
-            let x = AkitaField::from_u64(*x);
-            acc * (r * x + (one - r) * (one - x))
-        })
-    }
-
-    /// The eq-MLE guest's inputs. The guest is field-agnostic (it Horner-
-    /// recomposes the limbs in whatever field the build proves over), so the
-    /// pinned expected value is the fp128 evaluation: its 16-byte canonical
-    /// form fills the low two u64 limbs, the high two stay zero.
-    pub fn eqpoly_inputs() -> Vec<u8> {
-        let value = eq_mle(&EQ_PAIRS);
-        let bytes = value.to_bytes_le_vec();
-        assert_eq!(bytes.len(), <AkitaField as CanonicalBytes>::NUM_BYTES);
-        let mut limbs = [0u64; 4];
-        for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
-            *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
-        }
-        let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
-        inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
-        inputs
-    }
-
-    pub struct FieldInlineGuest {
-        program_preprocessing: JoltProgramPreprocessing,
-        pub trace_output: TraceOutput<OwnedTrace>,
-        program: Arc<JoltProgram>,
-    }
-
-    /// Build `guest_name` under the field-inline instruction profile, preprocess with
-    /// that profile on the packed scheme, and trace through the modular
-    /// tracer backend (which executes field-inline ops over fp128 on this build — the
-    /// eq-MLE guest's FIELD_ASSERT_EQ already validates the fixture inputs
-    /// at trace time).
-    pub fn field_inline_guest(guest_name: &str, inputs: &[u8]) -> FieldInlineGuest {
-        let mut program = Program::new(guest_name);
-        program.enable_field_inline();
-
-        let (_, _, _, io_device) = program.trace(inputs, &[], &[]);
-        let jolt_program = Arc::new(
-            program
-                .build_jolt_program()
-                .expect("build field-inline guest"),
-        );
-        let program_preprocessing = JoltProgramPreprocessing::new(
-            jolt_program.expanded_bytecode.clone(),
-            jolt_program.memory_init.clone(),
-            io_device.memory_layout.clone(),
-            jolt_program.entry_address,
-            MAX_PADDED_TRACE_LENGTH,
-            program.instruction_profile(),
-        )
-        .expect("field-inline preprocessing");
-        let trace_output = trace_modular(&jolt_program, &io_device.memory_layout, inputs);
-        FieldInlineGuest {
-            program_preprocessing,
-            trace_output,
-            program: jolt_program,
-        }
-    }
-
-    fn trace_modular(
-        program: &JoltProgram,
-        memory_layout: &MemoryLayout,
-        inputs: &[u8],
-    ) -> TraceOutput<OwnedTrace> {
-        let memory_config = MemoryConfig {
-            max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
-            max_trusted_advice_size: memory_layout.max_trusted_advice_size,
-            max_input_size: memory_layout.max_input_size,
-            max_output_size: memory_layout.max_output_size,
-            stack_size: memory_layout.stack_size,
-            heap_size: memory_layout.heap_size,
-            program_size: Some(memory_layout.program_size),
-        };
-        TracerBackend::new()
-            .trace(
-                program,
-                TraceInputs {
-                    inputs: inputs.to_vec(),
-                    untrusted_advice: Vec::new(),
-                    trusted_advice: Vec::new(),
-                    memory_config,
-                    advice_tape: None,
-                },
-            )
-            .expect("modular trace")
-    }
-
-    pub fn field_inline_rows(rows: &[TraceRow]) -> usize {
-        rows.iter().filter(|row| row.field_inline.is_some()).count()
-    }
-
-    /// Everything the tamper matrix needs beyond the proof: the verifier
-    /// preprocessing, the proof shape's config, and the honest per-cycle
-    /// `FieldRdInc` values (the base material for forging limb commitments
-    /// through the real commit path).
-    pub struct ProveOutput {
-        pub verifier_preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
-        pub public_io: JoltDevice,
-        pub proof: Proof,
-        pub config: ProverConfig,
-        pub rd_inc: Vec<AkitaField>,
-    }
-
-    /// Prove `guest` with field-inline enabled using the modular packed prover. The transparent
-    /// grouped setup carries the field-inline limb arity line, so both fronts
-    /// provision the [FieldIncLimbs] grouped rows every field-inline proof resolves.
-    pub fn prove_field_inline(
-        guest: FieldInlineGuest,
-        backend: JoltAkitaBackend<AkitaField, AkitaScheme>,
-    ) -> ProveOutput {
-        let FieldInlineGuest {
-            program_preprocessing,
-            trace_output,
-            program,
-        } = guest;
-        let memory_layout = trace_output.device.memory_layout.clone();
-        let public_io = trace_output.device.clone();
-        let config = ProverConfig::derive::<AkitaField>(
-            trace_output.trace.rows(),
-            &memory_layout,
-            program_preprocessing.ram.min_bytecode_address,
-            program_preprocessing.ram.bytecode_words.len(),
-            MAX_PADDED_TRACE_LENGTH,
-        )
-        .expect("derive config");
-
-        let log_t = config.trace_length.ilog2() as usize;
-        let prover_preprocessing = jolt_prover::akita::preprocessing::preprocess_full(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
-            program_preprocessing,
-            &config,
-        )
-        .expect("field-inline packed preprocessing");
-
-        let mut rows = trace_output.trace.rows().to_vec();
-        rows.resize(config.trace_length, TraceRow::default());
-        let padded_output = TraceOutput::new(
-            OwnedTrace::new(rows),
-            trace_output.device,
-            trace_output.final_memory,
-            trace_output.advice_tape,
-        );
-        let program_preprocessing = prover_preprocessing
-            .program_arc()
-            .expect("full program preprocessing");
-        let witness = TraceBackend::new(
-            JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-            JoltVmWitnessInputs::new(&program, &program_preprocessing, padded_output),
-        )
-        .with_field_inline()
-        .expect("field-inline witness view");
-        let rd_inc: Vec<AkitaField> = witness
-            .field_inline_witness()
-            .expect("field-inline oracle")
-            .oracle_table(FieldInlinePolynomialId::Committed(
-                FieldInlineCommittedPolynomial::FieldRdInc,
-            ))
-            .expect("FieldRdInc oracle table");
-
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &backend,
-            &prover_preprocessing,
-            &config,
-            None,
-            &witness,
-            &public_io,
-        )
-        .expect("packed field-inline prove");
-        ProveOutput {
-            verifier_preprocessing: prover_preprocessing.verifier,
-            public_io,
-            proof,
-            config,
-            rd_inc,
-        }
-    }
-
-    pub fn verify_full(
-        preprocessing: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
-        public_io: &JoltDevice,
-        proof: &Proof,
-    ) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
-            preprocessing,
-            public_io,
-            proof,
-            None,
-        )
-    }
-
-    /// A labeled packed kernel-backend constructor.
-    pub type BackendCase = (
-        &'static str,
-        fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
-    );
-
-    pub fn backends() -> [BackendCase; 2] {
-        [
-            ("reference", JoltAkitaBackend::reference),
-            ("optimized", JoltAkitaBackend::optimized),
-        ]
-    }
-
-    /// Commit the honest limb-word polynomial under `digest` through the real
-    /// dense commit path, returning the commitment a tamper splices into a
-    /// proof (same content, mutated identity).
-    pub fn commit_limb_words_with_digest(
-        output: &ProveOutput,
-        digest: [u8; 32],
-    ) -> AkitaCommitment {
-        use jolt_claims::protocols::field_inline::lattice::canonical_limbs;
-        use jolt_openings::TransparentObjectSetup;
-        use jolt_poly::Polynomial;
-        use jolt_verifier::stages::stage8::field_inline_packed::limb_plan;
-
-        let log_t = output.config.trace_length.ilog2() as usize;
-        let plan = limb_plan::<AkitaField>(log_t).expect("canonical limb plan");
-        let mut evaluations =
-            vec![AkitaField::from_u64(0); 1usize << plan.packing().packed_num_vars()];
-        for (cycle, value) in output.rd_inc.iter().enumerate() {
-            for (limb, word) in canonical_limbs(value).into_iter().enumerate() {
-                evaluations[(limb << log_t) | cycle] = AkitaField::from_u64(word);
-            }
-        }
-        let polynomial = Polynomial::new(evaluations);
-        let (setup, _) = <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
-            plan.packing().packed_num_vars(),
-            digest,
-        )
-        .expect("transparent limb setup");
-        let (commitment, _hint) =
-            <AkitaScheme as VerifierCommitmentScheme>::commit(&polynomial, &setup)
-                .expect("forged limb commit");
-        commitment
-    }
-}
+mod support;
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -311,25 +29,83 @@ mod support {
     reason = "integration tests should fail loudly"
 )]
 mod clear {
-    use jolt_akita::AkitaField;
-    use jolt_akita::AkitaScheme;
+    use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_claims::protocols::field_inline::{
+        FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
+    };
     use jolt_field::Ring;
-    use jolt_openings::GroupCommitmentMetadata;
+    use jolt_openings::{CommitmentScheme, GroupCommitmentMetadata};
     use jolt_prover::akita::JoltAkitaBackend;
+    use jolt_prover::ProverConfig;
     use jolt_verifier::proof::JoltProofClaims;
     use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
     use jolt_verifier::VerifierError;
+    use jolt_witness::field_inline::FieldInlineWitnessOracle;
     use serde_json::Value;
 
-    use super::support::{self, Proof, ProveOutput};
+    use crate::support::field_inline::akita::Proof;
+    use crate::support::field_inline::{akita, field_ops, inactive_muldiv};
 
-    fn prove_eqpoly(backend: JoltAkitaBackend<AkitaField, AkitaScheme>) -> ProveOutput {
-        let guest = support::field_inline_guest("field-ops-guest", &support::eqpoly_inputs());
-        assert!(
-            support::field_inline_rows(guest.trace_output.trace.rows()) > 0,
-            "the eq-MLE guest must trace field-active",
-        );
-        support::prove_field_inline(guest, backend)
+    /// A labeled packed kernel-backend constructor.
+    type BackendCase = (
+        &'static str,
+        fn() -> JoltAkitaBackend<AkitaField, AkitaScheme>,
+    );
+
+    fn backends() -> [BackendCase; 2] {
+        [
+            ("reference", JoltAkitaBackend::reference),
+            ("optimized", JoltAkitaBackend::optimized),
+        ]
+    }
+
+    struct LimbFixture {
+        log_t: usize,
+        rd_inc: Vec<AkitaField>,
+    }
+
+    fn collect_limbs(
+        config: &ProverConfig,
+        oracle: &dyn FieldInlineWitnessOracle<AkitaField>,
+    ) -> LimbFixture {
+        LimbFixture {
+            log_t: config.trace_length.ilog2() as usize,
+            rd_inc: oracle
+                .oracle_table(FieldInlinePolynomialId::Committed(
+                    FieldInlineCommittedPolynomial::FieldRdInc,
+                ))
+                .expect("FieldRdInc oracle table"),
+        }
+    }
+
+    /// Commit the honest limb-word polynomial under `digest` through the real
+    /// dense commit path, returning the commitment a tamper splices into a
+    /// proof (same content, mutated identity).
+    fn commit_limb_words_with_digest(fixture: &LimbFixture, digest: [u8; 32]) -> AkitaCommitment {
+        use jolt_claims::protocols::field_inline::lattice::canonical_limbs;
+        use jolt_openings::TransparentObjectSetup;
+        use jolt_poly::Polynomial;
+        use jolt_verifier::stages::stage8::field_inline_packed::limb_plan;
+
+        let log_t = fixture.log_t;
+        let plan = limb_plan::<AkitaField>(log_t).expect("canonical limb plan");
+        let mut evaluations =
+            vec![AkitaField::from_u64(0); 1usize << plan.packing().packed_num_vars()];
+        for (cycle, value) in fixture.rd_inc.iter().enumerate() {
+            for (limb, word) in canonical_limbs(value).into_iter().enumerate() {
+                evaluations[(limb << log_t) | cycle] = AkitaField::from_u64(word);
+            }
+        }
+        let polynomial = Polynomial::new(evaluations);
+        let (setup, _) = <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
+            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            plan.packing().packed_num_vars(),
+            digest,
+        )
+        .expect("transparent limb setup");
+        let (commitment, _hint) = <AkitaScheme as CommitmentScheme>::commit(&polynomial, &setup)
+            .expect("forged limb commit");
+        commitment
     }
 
     fn clear_limb_claims(proof: &Proof) -> &FieldIncLimbClaims<AkitaField> {
@@ -344,10 +120,10 @@ mod clear {
 
     /// Both backends' packed field-inline proofs must verify AND be equal wire objects.
     #[test]
-    fn akita_field_inline_eqpoly_proof_is_accepted() {
+    fn akita_field_inline_field_ops_backends_have_identical_proofs() {
         let mut proofs = Vec::new();
-        for (label, backend) in support::backends() {
-            let output = prove_eqpoly(backend());
+        for (label, backend) in backends() {
+            let (output, ()) = akita::prove(&field_ops(), backend(), |_, _| ());
             assert!(
                 output.proof.field_inc_limbs_commitment.is_some(),
                 "packed field-inline proofs must carry the limb-group commitment ({label})",
@@ -357,7 +133,7 @@ mod clear {
                 2,
                 "fp128 decomposes FieldRdInc into two u64 limbs ({label})",
             );
-            support::verify_full(
+            akita::verify_full(
                 &output.verifier_preprocessing,
                 &output.public_io,
                 &output.proof,
@@ -379,18 +155,11 @@ mod clear {
     /// content is legal: dense schedules are keyed by shape, never content).
     /// This pins the all-zero dense open.
     #[test]
-    fn akita_field_inline_inactive_muldiv_proof_is_accepted() {
+    fn akita_field_inline_inactive_backends_have_identical_zero_limb_proofs() {
         let mut proofs = Vec::new();
-        for (label, backend) in support::backends() {
-            let inputs = postcard::to_stdvec(&[9u32, 5u32, 3u32]).expect("serialize inputs");
-            let guest = support::field_inline_guest("muldiv-guest", &inputs);
-            assert_eq!(
-                support::field_inline_rows(guest.trace_output.trace.rows()),
-                0,
-                "the field-inline muldiv trace must contain no field-inline instructions",
-            );
-            let output = support::prove_field_inline(guest, backend());
-            assert!(output
+        for (label, backend) in backends() {
+            let (output, limbs) = akita::prove(&inactive_muldiv(), backend(), collect_limbs);
+            assert!(limbs
                 .rd_inc
                 .iter()
                 .all(|value| *value == AkitaField::from_u64(0)));
@@ -405,7 +174,7 @@ mod clear {
                     .all(|limb| *limb == AkitaField::from_u64(0)),
                 "an all-zero group opens to all-zero limb evaluations ({label})",
             );
-            support::verify_full(
+            akita::verify_full(
                 &output.verifier_preprocessing,
                 &output.public_io,
                 &output.proof,
@@ -425,8 +194,9 @@ mod clear {
     /// clones, every one rejected.
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
-        let output = prove_eqpoly(JoltAkitaBackend::optimized());
-        support::verify_full(
+        let (output, limbs) =
+            akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_limbs);
+        akita::verify_full(
             &output.verifier_preprocessing,
             &output.public_io,
             &output.proof,
@@ -450,13 +220,13 @@ mod clear {
             // the honest digest, so the flipped-digest commitment below
             // differs from the honest one only in the digest.
             assert_eq!(
-                &support::commit_limb_words_with_digest(&output, digest),
+                &commit_limb_words_with_digest(&limbs, digest),
                 honest,
                 "the test's limb commit must reproduce the prover's under the honest digest",
             );
             let mut digest = digest;
             digest[0] ^= 0x01;
-            support::commit_limb_words_with_digest(&output, digest)
+            commit_limb_words_with_digest(&limbs, digest)
         };
 
         type Tamper = (&'static str, Box<dyn Fn(&mut Proof)>);
@@ -521,7 +291,7 @@ mod clear {
             let mut tampered = output.proof.clone();
             tamper(&mut tampered);
             assert!(
-                support::verify_full(&output.verifier_preprocessing, &output.public_io, &tampered)
+                akita::verify_full(&output.verifier_preprocessing, &output.public_io, &tampered)
                     .is_err(),
                 "tampered packed field-inline proof must be rejected: {name}",
             );
@@ -542,7 +312,7 @@ mod clear {
             *limbs.limbs.first_mut().expect("two limbs") += one;
         }
         assert!(matches!(
-            support::verify_full(
+            akita::verify_full(
                 &output.verifier_preprocessing,
                 &output.public_io,
                 &offset_limb
@@ -557,12 +327,11 @@ mod clear {
     #[test]
     fn akita_field_inline_duplicate_limb_group_is_rejected() {
         use jolt_claims::protocols::field_inline::lattice::field_inc_limbs_precommitted_role;
-        use jolt_openings::CommitmentScheme as VerifierCommitmentScheme;
         use jolt_openings::{GroupOpeningClaim, PrecommittedClaim};
         use jolt_prover::akita::preprocessing::AkitaTranscript;
         use jolt_transcript::Transcript;
 
-        let output = prove_eqpoly(JoltAkitaBackend::optimized());
+        let (output, ()) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), |_, _| ());
         let commitment = output
             .proof
             .field_inc_limbs_commitment
@@ -582,7 +351,7 @@ mod clear {
             vec![AkitaField::from_u64(0)],
         );
         let mut transcript = AkitaTranscript::new(b"spurious-field_inline-group");
-        let error = <AkitaScheme as VerifierCommitmentScheme>::verify_batch(
+        let error = <AkitaScheme as CommitmentScheme>::verify_batch(
             &output.verifier_preprocessing.pcs_setup,
             &[field_claim.clone(), field_claim],
             &main,
