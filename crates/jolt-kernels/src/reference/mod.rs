@@ -109,7 +109,7 @@ where
             registers_claim_reduction: Box::new(ReferenceBackend),
             registers_read_write: Box::new(ReferenceBackend),
             ram_val_check: Box::new(ReferenceBackend),
-            advice_opening: Box::new(ReferenceBackend),
+            ram_initial_openings: Box::new(ReferenceBackend),
             instruction_read_raf: Box::new(ReferenceBackend),
             ram_ra_claim_reduction: Box::new(ReferenceBackend),
             registers_val_evaluation: Box::new(ReferenceBackend),

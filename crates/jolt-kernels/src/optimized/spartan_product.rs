@@ -41,6 +41,7 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
 #[cfg(feature = "implicit-carry")]
 use jolt_witness::witnesses::Carry;
 use jolt_witness::witnesses::{
@@ -253,7 +254,9 @@ impl OptimizedProductUniskip {
     }
 }
 
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUniskip {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, ProductUniskipInputClaims<F>>
+    for OptimizedProductUniskip
+{
     #[tracing::instrument(skip_all, name = "SpartanProductUniskip::prepare")]
     fn prepare(
         &self,
@@ -271,6 +274,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for OptimizedProductUni
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        _inputs: &ProductUniskipInputClaims<F>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -772,6 +776,20 @@ mod tests {
         scale * total
     }
 
+    fn uniskip_input_claims(
+        rows: &[SpartanProductRow],
+        tau_low: &[Fr],
+    ) -> ProductUniskipInputClaims<Fr> {
+        let at = |node| true_input_claim(rows, tau_low, node, node);
+        ProductUniskipInputClaims {
+            product: at(-Fr::from_u64(1)),
+            should_branch: at(Fr::from_u64(0)),
+            should_jump: at(Fr::from_u64(1)),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: at(Fr::from_u64(2)),
+        }
+    }
+
     fn parity_case(
         dummy_plane: &dyn JoltWitnessPlane<Fr>,
         log_t: usize,
@@ -783,16 +801,13 @@ mod tests {
             .collect();
         let tau_high = Fr::from_u64(6007 + seed);
         let backend = fixed_backend_from_rows(log_t, &rows);
+        let uniskip_inputs = uniskip_input_claims(&rows, &tau_low);
 
         let mut reference_session = ProofSession::default();
         reference_session
             .park(SpartanProductKernel::<Fr>::prepare(log_t, &tau_low, &backend).unwrap());
-        let reference_uniskip =
-            <ReferenceBackend as UniskipKernel<Fr, ProductRemainder<Fr>>>::first_round_poly(
-                &ReferenceBackend,
-                &mut reference_session,
-                &[tau_high],
-            )
+        let reference_uniskip = ReferenceBackend
+            .first_round_poly(&mut reference_session, &[tau_high], &uniskip_inputs)
             .unwrap();
 
         let mut optimized_session = ProofSession::default();
@@ -803,12 +818,8 @@ mod tests {
             rows.clone(),
         )
         .unwrap();
-        let optimized_uniskip =
-            <OptimizedProductUniskip as UniskipKernel<Fr, ProductRemainder<Fr>>>::first_round_poly(
-                &OptimizedProductUniskip,
-                &mut optimized_session,
-                &[tau_high],
-            )
+        let optimized_uniskip = OptimizedProductUniskip
+            .first_round_poly(&mut optimized_session, &[tau_high], &uniskip_inputs)
             .unwrap();
         assert_eq!(
             optimized_uniskip, reference_uniskip,
@@ -937,9 +948,15 @@ mod tests {
             .map(|i| Fr::from_u64(41 + seed + 19 * i as u64))
             .collect();
         let tau_high = Fr::from_u64(7211 + seed);
+        let rows: Vec<SpartanProductRow> = collect_rows(backend, 1 << log_t).unwrap();
+        let uniskip_inputs = uniskip_input_claims(&rows, &tau_low);
 
         let mut reference_session = ProofSession::default();
-        <ReferenceBackend as UniskipKernel<Fr, ProductRemainder<Fr>>>::prepare(
+        <ReferenceBackend as UniskipKernel<
+            Fr,
+            ProductRemainder<Fr>,
+            ProductUniskipInputClaims<Fr>,
+        >>::prepare(
             &ReferenceBackend,
             &mut reference_session,
             log_t,
@@ -947,16 +964,16 @@ mod tests {
             backend,
         )
         .unwrap();
-        let reference_uniskip =
-            <ReferenceBackend as UniskipKernel<Fr, ProductRemainder<Fr>>>::first_round_poly(
-                &ReferenceBackend,
-                &mut reference_session,
-                &[tau_high],
-            )
+        let reference_uniskip = ReferenceBackend
+            .first_round_poly(&mut reference_session, &[tau_high], &uniskip_inputs)
             .unwrap();
 
         let mut optimized_session = ProofSession::default();
-        <OptimizedProductUniskip as UniskipKernel<Fr, ProductRemainder<Fr>>>::prepare(
+        <OptimizedProductUniskip as UniskipKernel<
+            Fr,
+            ProductRemainder<Fr>,
+            ProductUniskipInputClaims<Fr>,
+        >>::prepare(
             &OptimizedProductUniskip,
             &mut optimized_session,
             log_t,
@@ -964,17 +981,12 @@ mod tests {
             backend,
         )
         .unwrap();
-        let optimized_uniskip =
-            <OptimizedProductUniskip as UniskipKernel<Fr, ProductRemainder<Fr>>>::first_round_poly(
-                &OptimizedProductUniskip,
-                &mut optimized_session,
-                &[tau_high],
-            )
+        let optimized_uniskip = OptimizedProductUniskip
+            .first_round_poly(&mut optimized_session, &[tau_high], &uniskip_inputs)
             .unwrap();
         assert_eq!(optimized_uniskip, reference_uniskip, "seed {seed}");
 
         let r0 = Fr::from_u64(15013 + seed);
-        let rows: Vec<SpartanProductRow> = collect_rows(backend, 1 << log_t).unwrap();
         let input_claim = true_input_claim(&rows, &tau_low, tau_high, r0);
         assert_eq!(
             reference_uniskip.evaluate(r0),

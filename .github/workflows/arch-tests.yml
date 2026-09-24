@@ -37,7 +37,7 @@ jobs:
           apt-get update && apt-get install -y --no-install-recommends ca-certificates curl make git nodejs
 
       - name: Checkout code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
@@ -46,7 +46,7 @@ jobs:
           git config --global --add safe.directory '*'
 
       - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v2
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
 
       - name: Install ACT4 prerequisites
         run: |

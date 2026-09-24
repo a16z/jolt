@@ -166,9 +166,16 @@ macro_rules! define_solinas_prime {
                 acc
             }
 
-            /// Create from a canonical representative in `[0, P)`.
+            /// Create from a canonical representative in `[0, P)` without
+            /// performing a runtime range check.
+            ///
+            /// # Safety
+            ///
+            /// `x` must be less than `P`. Violating this precondition breaks
+            /// the canonical-representation invariant required by field
+            /// arithmetic.
             #[inline]
-            pub fn $from_canon(x: $word) -> Self {
+            pub unsafe fn $from_canon(x: $word) -> Self {
                 debug_assert!(x < P);
                 Self(x)
             }
