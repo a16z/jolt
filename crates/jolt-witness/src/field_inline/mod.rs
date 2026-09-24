@@ -55,9 +55,9 @@ pub trait FieldInlineRegisterReadWriteRows<F: JoltField> {
     ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
 }
 
-/// One active field-inline cycle's composed spartan-outer column values — the 16
+/// One active field-inline cycle's composed spartan-outer column values — the 15
 /// appended R1CS columns in `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order: the five
-/// value columns, then the eleven op-flag columns in
+/// value columns, then the ten op-flag columns in
 /// [`FieldInlineOpFlag`](jolt_claims::protocols::field_inline::FieldInlineOpFlag)
 /// declaration order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,12 +67,12 @@ pub struct FieldInlineSpartanRow<F> {
     pub rd_value: F,
     pub product: F,
     pub inv_product: F,
-    pub flags: [F; 11],
+    pub flags: [F; 10],
 }
 
 impl<F: Copy> FieldInlineSpartanRow<F> {
-    /// The row's 16 column values in the composed opening-column order.
-    pub fn columns(&self) -> [F; 16] {
+    /// The row's 15 column values in the composed opening-column order.
+    pub fn columns(&self) -> [F; 15] {
         [
             self.rs1_value,
             self.rs2_value,
@@ -89,7 +89,6 @@ impl<F: Copy> FieldInlineSpartanRow<F> {
             self.flags[7],
             self.flags[8],
             self.flags[9],
-            self.flags[10],
         ]
     }
 }
@@ -112,11 +111,11 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
 
     /// The composed spartan-outer field-inline column values, sparse over the cycle
     /// domain: `(cycle, row)` pairs sorted strictly increasing by cycle, covering at
-    /// least every cycle where any of the 16 field-inline columns is non-zero (extra
+    /// least every cycle where any of the 15 field-inline columns is non-zero (extra
     /// all-zero rows are harmless — the columns' values are what the composed kernels
     /// fold). The default derives the rows from the dense `oracle_table`s so fixture
     /// oracles stay valid; the trace-backed oracle overrides it with a direct sparse
-    /// walk that never materializes the 13 dense tables.
+    /// walk that never materializes the 15 dense tables.
     fn field_inline_spartan_rows(
         &self,
     ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
@@ -151,7 +150,7 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
                     inv_product: values[4],
                     flags: [
                         values[5], values[6], values[7], values[8], values[9], values[10],
-                        values[11], values[12], values[13], values[14], values[15],
+                        values[11], values[12], values[13], values[14],
                     ],
                 },
             ));
@@ -174,7 +173,7 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
     }
 
     /// Direct sparse walk: exactly the rows carrying a field-inline payload,
-    /// decoded once — the 13 dense tables the trait default would
+    /// decoded once — the 15 dense tables the trait default would
     /// materialize never exist. Value-for-value equal to the default (the
     /// dense extractors read the same payload fields, and a payload row
     /// always sets its op flag, so no non-zero cycle is skipped).
@@ -183,17 +182,16 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
     ) -> Result<Vec<(usize, FieldInlineSpartanRow<F>)>, WitnessError> {
         use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
 
-        const FLAGS: [FieldInlineOpFlag; 11] = [
+        const FLAGS: [FieldInlineOpFlag; 10] = [
             FieldInlineOpFlag::Add,
             FieldInlineOpFlag::Sub,
             FieldInlineOpFlag::Mul,
             FieldInlineOpFlag::Inv,
             FieldInlineOpFlag::AssertEq,
-            FieldInlineOpFlag::LoadFromX,
+            FieldInlineOpFlag::LoadAccumulateFromX,
             FieldInlineOpFlag::StoreToX,
             FieldInlineOpFlag::LoadImm,
-            FieldInlineOpFlag::LoadWord,
-            FieldInlineOpFlag::LoadWordHi,
+            FieldInlineOpFlag::LoadAccumulateWord,
             FieldInlineOpFlag::AdviceLimb,
         ];
         let mut rows = Vec::new();
@@ -593,8 +591,8 @@ fn validate_trace_data(
         ));
     }
     let operands = row.instruction().operands;
-    // The memory-sourced loads keep their field destination in the `rs2`
-    // slot and read it back as `rs1` on the Horner step.
+    // The memory-sourced load keeps its field destination in the `rs2`
+    // slot; both ingress operations read the old destination as field `rs1`.
     let field_rd = if shape.field_rd_in_rs2_slot {
         operands.rs2
     } else {
@@ -684,7 +682,7 @@ fn validate_bridge(
         )),
         (
             Some(FieldInlineXRegisterRole::ReadRs1),
-            Some(FieldInlineBridge::LoadFromX {
+            Some(FieldInlineBridge::LoadAccumulateFromX {
                 x_register,
                 x_value,
                 field_value,
@@ -725,7 +723,7 @@ fn validate_bridge(
         }
         (
             Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
-            Some(FieldInlineBridge::LoadWord {
+            Some(FieldInlineBridge::LoadAccumulateWord {
                 x_base,
                 x_register,
                 word,
@@ -812,8 +810,8 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_program::{
         execution::{
-            JoltProgram, OwnedTrace, RamAccess, RegisterRead, RegisterState, RegisterWrite,
-            TraceOutput,
+            JoltProgram, OwnedTrace, RamAccess, RamRead, RegisterRead, RegisterState,
+            RegisterWrite, TraceOutput,
         },
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
     };
@@ -1203,7 +1201,7 @@ mod tests {
     #[test]
     fn bridge_rows_keep_rv64_and_field_witnesses_separate() {
         let load = instruction(
-            JoltInstructionKind::FIELD_LOAD_FROM_X,
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X,
             0,
             Some(1),
             Some(5),
@@ -1220,13 +1218,17 @@ mod tests {
                 ..RegisterState::default()
             },
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadFromX),
+                op: Some(FieldInlineOp::LoadAccumulateFromX),
+                rs1: Some(FieldRegisterRead {
+                    register: 1,
+                    value: enc(0),
+                }),
                 rd: Some(FieldRegisterWrite {
                     register: 1,
                     pre_value: enc(0),
                     post_value: enc(11),
                 }),
-                bridge: Some(FieldInlineBridge::LoadFromX {
+                bridge: Some(FieldInlineBridge::LoadAccumulateFromX {
                     x_register: 5,
                     x_value: 11,
                     field_value: enc(11),
@@ -1288,6 +1290,114 @@ mod tests {
             ),
             vec![fr(11), fr(0), fr(0), fr(0)]
         );
+    }
+
+    #[test]
+    fn accumulating_loads_read_and_bind_the_nonzero_destination() {
+        for (kind, op) in [
+            (
+                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X,
+                FieldInlineOp::LoadAccumulateFromX,
+            ),
+            (
+                JoltInstructionKind::FIELD_LOAD_ACCUMULATE_WORD,
+                FieldInlineOp::LoadAccumulateWord,
+            ),
+        ] {
+            let memory_load = op == FieldInlineOp::LoadAccumulateWord;
+            let (seed, seed_row) = load_imm(0, 1, 3);
+            let load = instruction(
+                kind,
+                1,
+                Some(if memory_load { 6 } else { 1 }),
+                Some(5),
+                memory_load.then_some(1),
+                0,
+            );
+            let mut accumulated = enc(11);
+            accumulated.bytes_le[8] = 3;
+            let bridge = if memory_load {
+                FieldInlineBridge::LoadAccumulateWord {
+                    x_base: 5,
+                    x_register: 6,
+                    word: 11,
+                    field_value: accumulated,
+                }
+            } else {
+                FieldInlineBridge::LoadAccumulateFromX {
+                    x_register: 5,
+                    x_value: 11,
+                    field_value: accumulated,
+                }
+            };
+            let mut load_row = TraceRow::new(
+                load,
+                RegisterState {
+                    rs1: Some(RegisterRead {
+                        register: 5,
+                        value: if memory_load { ENTRY } else { 11 },
+                    }),
+                    rd: memory_load.then_some(RegisterWrite {
+                        register: 6,
+                        pre_value: 0,
+                        post_value: 11,
+                    }),
+                    ..RegisterState::default()
+                },
+                if memory_load {
+                    RamAccess::Read(RamRead {
+                        address: ENTRY,
+                        value: 11,
+                    })
+                } else {
+                    RamAccess::NoOp
+                },
+            )
+            .unwrap();
+            load_row.field_inline = Some(
+                FieldInlineTraceData {
+                    op: Some(op),
+                    rs1: Some(FieldRegisterRead {
+                        register: 1,
+                        value: enc(3),
+                    }),
+                    rd: Some(FieldRegisterWrite {
+                        register: 1,
+                        pre_value: enc(3),
+                        post_value: accumulated,
+                    }),
+                    bridge: Some(bridge),
+                    ..FieldInlineTraceData::default()
+                }
+                .into(),
+            );
+            let bytecode = vec![seed, load];
+            let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
+            let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
+            let rows = vec![seed_row, load_row];
+            let provider = witness(&program, &preprocessing, rows.clone(), 2)
+                .field_inline_witness()
+                .unwrap();
+            let registers: Vec<FieldInlineRegisterReadWriteRow<Fr>> =
+                provider.field_inline_register_read_write_rows().unwrap();
+            assert_eq!(registers[1].rs1.unwrap().value, fr(3));
+            assert_eq!(registers[1].rd_increment, Fr::from_u128((3u128 << 64) + 8));
+
+            for read in [
+                None,
+                Some(FieldRegisterRead {
+                    register: 1,
+                    value: enc(0),
+                }),
+            ] {
+                let mut tampered = rows.clone();
+                Arc::make_mut(tampered[1].field_inline.as_mut().unwrap()).rs1 = read;
+                assert!(matches!(
+                    witness(&program, &preprocessing, tampered, 2).field_inline_witness(),
+                    Err(WitnessError::InvalidWitnessData { .. })
+                ));
+            }
+        }
     }
 
     #[test]

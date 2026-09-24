@@ -210,7 +210,12 @@ mod field_inline {
     use super::AkitaFixtureCase;
 
     const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
-    const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+    const EQ_PAIRS: [[u64; 2]; 4] = [
+        [u64::MAX, u64::MAX - 1],
+        [u64::MAX - 2, 2],
+        [11, 13],
+        [u64::MAX - 3, 9],
+    ];
 
     /// `eq(r, x) = Π_i (r_i·x_i + (1 − r_i)(1 − x_i))` over the packed axis's
     /// proof field, pinned as four canonical little-endian u64 limbs (the

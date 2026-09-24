@@ -134,7 +134,7 @@ pub struct SpartanOuterKernel<F: JoltField> {
     columns: Vec<usize>,
     /// Cycle-indexed R1CS input tables (big-endian cycle index), in the composed
     /// opening-column order: the relation's 35 variables, then (under `field-inline`)
-    /// the 16 field-inline columns.
+    /// the 15 field-inline columns.
     input_tables: Vec<Vec<F>>,
     /// Per-constraint-row value tables over the cycle domain:
     /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
@@ -376,7 +376,7 @@ impl<F: JoltField> SpartanOuterKernel<F> {
 
 /// Materialize the selected R1CS input polynomials (cycle-indexed, big-endian) in the
 /// composed opening-column order: the 35 rv64 inputs in the relation's variable order,
-/// then (under `field-inline`) the 16 field-inline columns in
+/// then (under `field-inline`) the 15 field-inline columns in
 /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — matching
 /// `spartan_outer_opening_columns()` index-for-index. Fails closed when a build with
 /// field-inline enabled proves a witness without the field-inline oracle.
@@ -461,7 +461,7 @@ fn row_value_tables<F: JoltField>(
 ///
 /// Proves the factored quadratic `TauKernel · Az · Bz` over the joint `(cycle ‖
 /// stream)` domain with the `Az`/`Bz` linear forms spanning the full composed column
-/// selection (35 rv64 + 16 field-inline). The rv64 symbolic expression cannot name the
+/// selection (35 rv64 + 15 field-inline). The rv64 symbolic expression cannot name the
 /// appended field-inline columns (a separate id family, per the protocol ruling), so
 /// this kernel materializes the two linear forms as dense tables instead of
 /// leaf-per-column expression walking. That is exact, not an approximation: every
@@ -480,7 +480,7 @@ struct ComposedOuterRemainderKernel<F: JoltField> {
     az: Polynomial<F>,
     bz: Polynomial<F>,
     /// All composed column tables (replicated over the stream LSB), in opening order:
-    /// 35 ordinary then 16 field-inline.
+    /// 35 ordinary then 15 field-inline.
     column_tables: Vec<Polynomial<F>>,
     /// The 35 ordinary opening ids, aligned with `column_tables[..35]`.
     ordinary_ids: Vec<JoltOpeningId>,

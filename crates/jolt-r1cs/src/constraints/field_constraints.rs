@@ -1,17 +1,17 @@
 //! Native field-inline R1CS variable layout and constraints.
 //!
 //! This module defines the per-cycle local constraints for field-inline
-//! instruction semantics. The bridge constraints here use a native single-field
-//! representation for ordinary values; multi-limb bridge packing should be
-//! layered on once those bridge payloads are explicit in the trace.
+//! instruction semantics. Ingress folds 64-bit limbs into a native field
+//! accumulator; egress constrains a field value or an advised limb.
 //!
 //! Bridge rows (spec `field-inline-protocol.md`, "Conversion Rows"): the
 //! x-register side of every bridge is a 64-bit RV64 column, so each row must
 //! be range-sound, not just an identity.
 //!
-//! - `FIELD_LOAD_FROM_X` reads `Rs1Value` and `FIELD_LOAD_IMM` reads the
-//!   bytecode `Imm`; both are honestly bounded inputs of the base protocol,
-//!   so `FieldRdValue = Rs1Value` / `= Imm` are exact.
+//! - `FIELD_LOAD_ACCUMULATE_FROM_X` folds the range-bound RV64 `Rs1Value`
+//!   under `2^64 * FieldRs1Value`, where field-register checking binds
+//!   `FieldRs1Value` to the destination's old value. `FIELD_LOAD_IMM` sets
+//!   `FieldRdValue = Imm`, using the bytecode-bound immediate.
 //! - `FIELD_STORE_TO_X` writes `RdWriteValue`, which the base protocol pins
 //!   only through the lookup/load/jump flags. The instruction therefore
 //!   carries the `Advice` and `WriteLookupOutputToRD` flags and the
@@ -47,41 +47,34 @@ pub const V_IS_FIELD_SUB: usize = 10;
 pub const V_IS_FIELD_MUL: usize = 11;
 pub const V_IS_FIELD_INV: usize = 12;
 pub const V_IS_FIELD_ASSERT_EQ: usize = 13;
-pub const V_IS_FIELD_LOAD_FROM_X: usize = 14;
+pub const V_IS_FIELD_LOAD_ACCUMULATE_FROM_X: usize = 14;
 pub const V_IS_FIELD_STORE_TO_X: usize = 15;
 pub const V_IS_FIELD_LOAD_IMM: usize = 16;
-pub const V_IS_FIELD_LOAD_WORD: usize = 17;
-pub const V_IS_FIELD_LOAD_WORD_HI: usize = 18;
-pub const V_IS_FIELD_ADVICE_LIMB: usize = 19;
+pub const V_IS_FIELD_LOAD_ACCUMULATE_WORD: usize = 17;
+pub const V_IS_FIELD_ADVICE_LIMB: usize = 18;
 /// The shared RV64 `RightLookupOperand` column: the store bridge's
 /// non-interleaved `RangeCheck` index (see the module doc).
-pub const V_X_RIGHT_LOOKUP_OPERAND: usize = 20;
+pub const V_X_RIGHT_LOOKUP_OPERAND: usize = 19;
 
 pub const NUM_R1CS_INPUTS: usize = NUM_VARS_PER_CYCLE - 1;
-pub const NUM_VARS_PER_CYCLE: usize = 21;
+pub const NUM_VARS_PER_CYCLE: usize = 20;
 
 pub const ROW_FADD: usize = 0;
 pub const ROW_FSUB: usize = 1;
 pub const ROW_FMUL: usize = 2;
 pub const ROW_FINV: usize = 3;
 pub const ROW_ASSERT_EQ: usize = 4;
-pub const ROW_LOAD_FROM_X: usize = 5;
+pub const ROW_LOAD_ACCUMULATE_FROM_X: usize = 5;
 pub const ROW_STORE_TO_X: usize = 6;
 pub const ROW_LOAD_IMM: usize = 7;
 /// `IsFieldStoreToX · (RightLookupOperand − FieldRs1Value) = 0`: the
 /// range-binding half of the store bridge.
 pub const ROW_STORE_TO_X_LOOKUP: usize = 8;
-/// `(IsFieldLoadWord + IsFieldLoadWordHi) ·
-/// (FieldRdValue − 2^64·FieldRs1Value − RdWriteValue) = 0`: the loaded word
-/// (an `LD` into the scratch x-register, so RV64 row 3 pins `RdWriteValue`
-/// to `RamReadValue`) is the field destination, folded under the
-/// accumulator the high-word form reads back as `rs1`. The plain form reads
-/// no field register, so its `FieldRs1Value` is zero (the field-register read-write
-/// checking pins a non-reading cycle's read value to zero) and the same row
-/// reduces to `FieldRdValue = RdWriteValue`. One row for both keeps the
-/// Spartan outer uni-skip domain at 15, the largest whose integer power
-/// sums fit the kernels' `i128` accumulators.
-pub const ROW_LOAD_WORD: usize = 9;
+/// `IsFieldLoadAccumulateWord ·
+/// (FieldRdValue − 2^64·FieldRs1Value − RdWriteValue) = 0`: RV64 load rows
+/// bind the word in the scratch x-register, and field-register checking
+/// binds `FieldRs1Value` to the destination's old value.
+pub const ROW_LOAD_ACCUMULATE_WORD: usize = 9;
 /// `IsFieldAdviceLimb · (FieldRs1Value − RdWriteValue − 2^64·FieldRdValue) = 0`:
 /// the x-register write is a 64-bit advice limb (RV64 row 12 plus the `RangeCheck`
 /// lookup bound it below 2^64, as for the store bridge) and the field
@@ -114,7 +107,7 @@ fn row<F: JoltField>(entries: &[(usize, i64)]) -> SparseRow<F> {
         .collect()
 }
 
-/// The two-limb radix: a `LoadWordHi` folds the low word under the high one.
+/// Radix for folding a 64-bit limb into a field accumulator.
 pub fn limb_radix<F: JoltField>() -> F {
     F::from_u128(1u128 << 64)
 }
@@ -154,8 +147,12 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1), (V_FIELD_RS2_VALUE, -1)]));
     c_rows.push(empty());
 
-    a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_FROM_X, 1)]));
-    b_rows.push(row::<F>(&[(V_FIELD_RD_VALUE, 1), (V_X_RS1_VALUE, -1)]));
+    a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_ACCUMULATE_FROM_X, 1)]));
+    b_rows.push(vec![
+        (V_FIELD_RD_VALUE, F::one()),
+        (V_FIELD_RS1_VALUE, -limb_radix::<F>()),
+        (V_X_RS1_VALUE, -F::one()),
+    ]);
     c_rows.push(empty());
 
     a_rows.push(row::<F>(&[(V_IS_FIELD_STORE_TO_X, 1)]));
@@ -176,10 +173,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
-    a_rows.push(row::<F>(&[
-        (V_IS_FIELD_LOAD_WORD, 1),
-        (V_IS_FIELD_LOAD_WORD_HI, 1),
-    ]));
+    a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_ACCUMULATE_WORD, 1)]));
     b_rows.push(vec![
         (V_FIELD_RD_VALUE, F::one()),
         (V_FIELD_RS1_VALUE, -limb_radix::<F>()),
@@ -229,7 +223,7 @@ pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::Constrai
 
 /// Build the full native field-inline R1CS constraint matrices.
 ///
-/// Returns 13 constraints over 21 variables per cycle:
+/// Returns 13 constraints over 20 variables per cycle:
 /// - 11 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
 pub fn field_inline_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
@@ -431,44 +425,40 @@ mod tests {
         );
     }
 
-    /// The memory-sourced loads bind the field destination to the loaded
-    /// word the RV64 load rows pinned into `RdWriteValue`, the Horner form
-    /// under the two-limb radix.
     #[test]
-    fn load_word_rows_bind_the_loaded_word() {
+    fn load_accumulate_rows_bind_the_word_and_old_destination() {
         let word = Fr::from_u64(0xdead_beef);
-        let mut load = witness(
-            Fr::from_u64(0),
-            Fr::from_u64(0),
-            word,
-            &[(V_IS_FIELD_LOAD_WORD, one())],
-        );
-        load[V_X_RD_WRITE_VALUE] = word;
-        field_inline_trace_constraints::<Fr>()
-            .check_witness(&load)
-            .expect("a load word writes the loaded word");
-        load[V_FIELD_RD_VALUE] = word + one();
-        assert_eq!(
-            field_inline_trace_constraints::<Fr>().check_witness(&load),
-            Err(ROW_LOAD_WORD)
-        );
-
-        let high = Fr::from_u64(7);
-        let mut load_hi = witness(
-            high,
-            Fr::from_u64(0),
-            high * limb_radix::<Fr>() + word,
-            &[(V_IS_FIELD_LOAD_WORD_HI, one())],
-        );
-        load_hi[V_X_RD_WRITE_VALUE] = word;
-        field_inline_trace_constraints::<Fr>()
-            .check_witness(&load_hi)
-            .expect("a high load folds the word under the radix");
-        load_hi[V_FIELD_RD_VALUE] = high + word;
-        assert_eq!(
-            field_inline_trace_constraints::<Fr>().check_witness(&load_hi),
-            Err(ROW_LOAD_WORD)
-        );
+        let constraints = field_inline_trace_constraints::<Fr>();
+        for (selector, source, row) in [
+            (
+                V_IS_FIELD_LOAD_ACCUMULATE_FROM_X,
+                V_X_RS1_VALUE,
+                ROW_LOAD_ACCUMULATE_FROM_X,
+            ),
+            (
+                V_IS_FIELD_LOAD_ACCUMULATE_WORD,
+                V_X_RD_WRITE_VALUE,
+                ROW_LOAD_ACCUMULATE_WORD,
+            ),
+        ] {
+            for high in [Fr::zero(), Fr::from_u64(7), -one()] {
+                let mut load = witness(
+                    high,
+                    Fr::zero(),
+                    high * limb_radix::<Fr>() + word,
+                    &[(selector, one())],
+                );
+                load[source] = word;
+                constraints
+                    .check_witness(&load)
+                    .expect("accumulation is valid");
+                for column in [V_FIELD_RS1_VALUE, source, V_FIELD_RD_VALUE] {
+                    let mut tampered = load.clone();
+                    tampered[column] += one();
+                    assert_eq!(constraints.check_witness(&tampered), Err(row));
+                }
+            }
+        }
     }
 
     /// Advice fixes a residue relation, not a canonical integer decomposition.
@@ -515,11 +505,7 @@ mod tests {
         witness[V_X_RD_WRITE_VALUE] = Fr::from_u64(5);
         witness[V_IMM] = Fr::from_u64(42);
 
-        for selector in [
-            V_IS_FIELD_LOAD_FROM_X,
-            V_IS_FIELD_STORE_TO_X,
-            V_IS_FIELD_LOAD_IMM,
-        ] {
+        for selector in [V_IS_FIELD_STORE_TO_X, V_IS_FIELD_LOAD_IMM] {
             let mut active = witness.clone();
             active[selector] = one();
             field_inline_trace_constraints::<Fr>()

@@ -2,7 +2,7 @@ use super::super::{
     FieldInlineOpFlag, FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
 };
 
-pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS: [FieldInlineVirtualPolynomial; 16] = [
+pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS: [FieldInlineVirtualPolynomial; 15] = [
     FieldInlineVirtualPolynomial::FieldRs1Value,
     FieldInlineVirtualPolynomial::FieldRs2Value,
     FieldInlineVirtualPolynomial::FieldRdValue,
@@ -13,11 +13,10 @@ pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS: [FieldInlineVirtualPolynomial;
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Mul),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Inv),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AssertEq),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadFromX),
+    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromX),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::StoreToX),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWord),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWordHi),
+    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadAccumulateWord),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AdviceLimb),
 ];
 
@@ -55,7 +54,7 @@ pub fn outer_output_openings() -> [FieldInlineOpeningId; FIELD_INLINE_SPARTAN_OU
             FieldInlineOpFlag::AssertEq,
         )),
         outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::LoadFromX,
+            FieldInlineOpFlag::LoadAccumulateFromX,
         )),
         outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
             FieldInlineOpFlag::StoreToX,
@@ -64,10 +63,7 @@ pub fn outer_output_openings() -> [FieldInlineOpeningId; FIELD_INLINE_SPARTAN_OU
             FieldInlineOpFlag::LoadImm,
         )),
         outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::LoadWord,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::LoadWordHi,
+            FieldInlineOpFlag::LoadAccumulateWord,
         )),
         outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
             FieldInlineOpFlag::AdviceLimb,

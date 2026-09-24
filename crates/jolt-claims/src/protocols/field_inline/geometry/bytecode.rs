@@ -8,17 +8,16 @@ use thiserror::Error;
 use super::super::FieldInlineOpFlag;
 use crate::formula_error::JoltFormulaPointError;
 
-pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 11] = [
+pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 10] = [
     FieldInlineOpFlag::Add,
     FieldInlineOpFlag::Sub,
     FieldInlineOpFlag::Mul,
     FieldInlineOpFlag::Inv,
     FieldInlineOpFlag::AssertEq,
-    FieldInlineOpFlag::LoadFromX,
+    FieldInlineOpFlag::LoadAccumulateFromX,
     FieldInlineOpFlag::StoreToX,
     FieldInlineOpFlag::LoadImm,
-    FieldInlineOpFlag::LoadWord,
-    FieldInlineOpFlag::LoadWordHi,
+    FieldInlineOpFlag::LoadAccumulateWord,
     FieldInlineOpFlag::AdviceLimb,
 ];
 
@@ -47,11 +46,10 @@ pub struct FieldInlineBytecodeFlags {
     pub mul: bool,
     pub inv: bool,
     pub assert_eq: bool,
-    pub load_from_x: bool,
+    pub load_accumulate_from_x: bool,
     pub store_to_x: bool,
     pub load_imm: bool,
-    pub load_word: bool,
-    pub load_word_hi: bool,
+    pub load_accumulate_word: bool,
     pub advice_limb: bool,
 }
 
@@ -63,11 +61,10 @@ impl FieldInlineBytecodeFlags {
             FieldInlineOpFlag::Mul => self.mul,
             FieldInlineOpFlag::Inv => self.inv,
             FieldInlineOpFlag::AssertEq => self.assert_eq,
-            FieldInlineOpFlag::LoadFromX => self.load_from_x,
+            FieldInlineOpFlag::LoadAccumulateFromX => self.load_accumulate_from_x,
             FieldInlineOpFlag::StoreToX => self.store_to_x,
             FieldInlineOpFlag::LoadImm => self.load_imm,
-            FieldInlineOpFlag::LoadWord => self.load_word,
-            FieldInlineOpFlag::LoadWordHi => self.load_word_hi,
+            FieldInlineOpFlag::LoadAccumulateWord => self.load_accumulate_word,
             FieldInlineOpFlag::AdviceLimb => self.advice_limb,
         }
     }
@@ -365,14 +362,14 @@ fn validate_operand_layout(
         FieldInlineOpFlag::AssertEq => {
             operands.rd.is_none() && operands.rs1.is_some() && operands.rs2.is_some()
         }
-        FieldInlineOpFlag::LoadFromX | FieldInlineOpFlag::LoadImm | FieldInlineOpFlag::LoadWord => {
+        FieldInlineOpFlag::LoadImm => {
             operands.rd.is_some() && operands.rs1.is_none() && operands.rs2.is_none()
         }
         FieldInlineOpFlag::StoreToX => {
             operands.rd.is_none() && operands.rs1.is_some() && operands.rs2.is_none()
         }
         // The Horner step reads the accumulator it writes.
-        FieldInlineOpFlag::LoadWordHi => {
+        FieldInlineOpFlag::LoadAccumulateFromX | FieldInlineOpFlag::LoadAccumulateWord => {
             operands.rd.is_some() && operands.rs1 == operands.rd && operands.rs2.is_none()
         }
     };
@@ -573,6 +570,40 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn accumulation_requires_reading_the_destination() {
+        for flags in [
+            FieldInlineBytecodeFlags {
+                load_accumulate_from_x: true,
+                ..FieldInlineBytecodeFlags::default()
+            },
+            FieldInlineBytecodeFlags {
+                load_accumulate_word: true,
+                ..FieldInlineBytecodeFlags::default()
+            },
+        ] {
+            for rs1 in [None, Some(2), Some(3)] {
+                let rows = [FieldInlineBytecodeRow {
+                    operands: FieldInlineBytecodeOperands {
+                        rd: Some(2),
+                        rs1,
+                        rs2: None,
+                    },
+                    flags,
+                }];
+                let result = validate_bytecode_rows(&rows, 1, 4);
+                if rs1 == Some(2) {
+                    assert_eq!(result, Ok(()));
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(FieldInlineBytecodeValidationError::InvalidOperands { .. })
+                    ));
+                }
+            }
+        }
     }
 
     #[test]

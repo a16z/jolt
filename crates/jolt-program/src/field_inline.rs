@@ -347,7 +347,7 @@ pub struct FieldRegisterWrite {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub enum FieldInlineBridge {
-    LoadFromX {
+    LoadAccumulateFromX {
         x_register: u8,
         x_value: u64,
         field_value: FieldEncodedValue,
@@ -360,7 +360,7 @@ pub enum FieldInlineBridge {
     },
     /// A memory-sourced load: the word read at `x_base + offset` was written
     /// to the scratch `x_register` and folded into the field destination.
-    LoadWord {
+    LoadAccumulateWord {
         x_base: u8,
         x_register: u8,
         word: u64,
@@ -452,8 +452,7 @@ mod tests {
     fn field_write_bridges_require_nonzero_integer_destinations() {
         for instruction_kind in [
             Kind::FIELD_STORE_TO_X,
-            Kind::FIELD_LOAD_WORD,
-            Kind::FIELD_LOAD_WORD_HI,
+            Kind::FIELD_LOAD_ACCUMULATE_WORD,
             Kind::FIELD_ADVICE_LIMB,
         ] {
             let mut row = JoltInstructionRow {

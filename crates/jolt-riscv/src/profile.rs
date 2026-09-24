@@ -406,8 +406,10 @@ mod tests {
         assert_eq!(mul.bridge_x_register_role, None);
 
         let load =
-            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_LOAD_FROM_X).unwrap();
-        assert!(!load.reads_field_rs1);
+            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X)
+                .unwrap();
+        assert!(load.reads_field_rs1);
+        assert!(load.field_rs1_is_field_rd);
         assert!(load.writes_field_rd);
         assert_eq!(
             load.bridge_x_register_role,

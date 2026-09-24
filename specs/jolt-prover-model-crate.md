@@ -536,7 +536,7 @@ Guest exposure should be SDK-level. On guest builds, field-element helper
 methods or intrinsics emit field-inline source rows such as:
 
 ```text
-FIELD_LOAD_FROM_X
+FIELD_LOAD_ACCUMULATE_FROM_X
 FIELD_LOAD_IMM
 FIELD_ADD
 FIELD_SUB
@@ -544,6 +544,8 @@ FIELD_MUL
 FIELD_INV
 FIELD_ASSERT_EQ
 FIELD_STORE_TO_X
+FIELD_LOAD_ACCUMULATE_WORD
+FIELD_ADVICE_LIMB
 ```
 
 `jolt-program` validates and expands these rows under the selected ISA/profile.
@@ -599,15 +601,16 @@ FIELD_MUL field[3], field[1], field[2]:
     FieldProduct = field[1] * field[2]
     IsFieldMul = 1
 
-FIELD_LOAD_FROM_X field[4], x10:
+FIELD_LOAD_ACCUMULATE_FROM_X field[4], x10:
   ordinary trace:
     read x10
   field trace:
-    write field[4]
+    read field[4], write field[4]
   witness:
     Rs1Value comes from the ordinary register witness
+    FieldRs1Value is the old field[4] value
     FieldRdValue comes from the field register witness
-    bridge row enforces FieldRdValue = decode_x_register(Rs1Value, F)
+    bridge row enforces FieldRdValue = 2^64 * FieldRs1Value + Rs1Value
 
 FIELD_STORE_TO_X x11, field[4]:
   field trace:
@@ -619,6 +622,11 @@ FIELD_STORE_TO_X x11, field[4]:
     RdWriteValue comes from the ordinary register witness
     bridge row enforces RdWriteValue = encode_field_register(FieldRs1Value, F)
 ```
+
+Both x-register and memory ingress accumulate `old_destination * 2^64 + limb`
+modulo the proof-field modulus. Initialize the destination to zero with `FIELD_LOAD_IMM`
+before loading a new value, then process its limbs from most significant to
+least significant.
 
 Field inline v1 is native-field only: the field used by the Jolt proof and the
 field used by field-inline arithmetic are the same field. Prover code should not

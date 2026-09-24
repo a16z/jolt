@@ -52,7 +52,12 @@ mod support {
     pub type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
     pub type VerifierPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
-    pub const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+    pub const EQ_PAIRS: [[u64; 2]; 4] = [
+        [u64::MAX, u64::MAX - 1],
+        [u64::MAX - 2, 2],
+        [11, 13],
+        [u64::MAX - 3, 9],
+    ];
 
     /// eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)) — the host-side
     /// reference the guest's FIELD_ASSERT_EQ checks against.

@@ -16,34 +16,27 @@ pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
 pub const FIELD_INLINE_OPCODE: u8 = 0x7b;
 pub const FIELD_INLINE_R_TYPE_FUNCT7: u8 = 0;
 pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u8 = 7;
-/// The memory-sourced loads share `FIELD_LOAD_FROM_X`'s funct3 and are told
-/// apart by funct7: bit 6 marks the family, bit 5 selects the high-word
-/// (Horner) form, bits 4..0 carry the word offset added to the base register.
-pub const FIELD_INLINE_LOAD_WORD_FUNCT3: u8 = 5;
-pub const FIELD_INLINE_LOAD_WORD_FUNCT7_FAMILY: u8 = 0x40;
-pub const FIELD_INLINE_LOAD_WORD_FUNCT7_HIGH: u8 = 0x20;
-pub const FIELD_INLINE_LOAD_WORD_OFFSET_MASK: u8 = 0x1f;
+/// Memory accumulation shares `FIELD_LOAD_ACCUMULATE_FROM_X`'s funct3. Funct7
+/// bits 6..5 identify the family; bits 4..0 carry the word offset.
+pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT3: u8 = 5;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT7_FAMILY: u8 = 0x60;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK: u8 = 0x1f;
 /// Bytes between consecutive word offsets of a memory-sourced load.
-pub const FIELD_INLINE_LOAD_WORD_STRIDE: u32 = 8;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_WORD_STRIDE: u32 = 8;
 /// The limb split shares `FIELD_STORE_TO_X`'s funct3 under funct7 1.
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT3: u8 = 6;
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT7: u8 = 1;
 
 /// The funct7 of a memory-sourced load at `offset_words` (at most 31).
-pub const fn field_inline_load_word_funct7(high: bool, offset_words: u8) -> u8 {
-    FIELD_INLINE_LOAD_WORD_FUNCT7_FAMILY
-        | if high {
-            FIELD_INLINE_LOAD_WORD_FUNCT7_HIGH
-        } else {
-            0
-        }
-        | (offset_words & FIELD_INLINE_LOAD_WORD_OFFSET_MASK)
+pub const fn field_inline_load_accumulate_word_funct7(offset_words: u8) -> u8 {
+    FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT7_FAMILY
+        | (offset_words & FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK)
 }
 
 /// The byte offset a memory-sourced load word adds to its base register.
-pub const fn field_inline_load_word_offset(word: u32) -> u32 {
-    (((word >> 25) as u8) & FIELD_INLINE_LOAD_WORD_OFFSET_MASK) as u32
-        * FIELD_INLINE_LOAD_WORD_STRIDE
+pub const fn field_inline_load_accumulate_word_offset(word: u32) -> u32 {
+    (((word >> 25) as u8) & FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK) as u32
+        * FIELD_INLINE_LOAD_ACCUMULATE_WORD_STRIDE
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,16 +50,14 @@ pub enum FieldInlineOp {
     Mul,
     Inv,
     AssertEq,
-    LoadFromX,
+    /// `field_rd = field_rd · 2^64 + x_rs1`.
+    LoadAccumulateFromX,
     StoreToX,
     LoadImm,
-    /// `field_rd = mem[x_rs1 + offset]`: an `LD` into the scratch x-register `rd`
-    /// whose loaded word also lands in field register `rs2`.
-    LoadWord,
-    /// `field_rd = field_rd · 2^64 + mem[x_rs1 + offset]`: the Horner step of a two-limb
-    /// operand fused with the load of its low word (same operand roles as
-    /// [`Self::LoadWord`]; field register `rs2` is both read and written).
-    LoadWordHi,
+    /// `field_rd = field_rd · 2^64 + mem[x_rs1 + offset]`: the loaded word
+    /// also lands in scratch x-register `rd`; field register `rs2` is both
+    /// read and written.
+    LoadAccumulateWord,
     /// Supply a 64-bit advice limb `x_rd` with `field_rs1 = x_rd + 2^64 · field_rs2`.
     /// The tracer chooses the canonical low limb; the relation permits other
     /// choices. A full readout needs a guest integer check below the modulus.
@@ -81,11 +72,10 @@ impl FieldInlineOp {
             Self::Mul => 2,
             Self::Inv => 3,
             Self::AssertEq => 4,
-            Self::LoadFromX => 5,
+            Self::LoadAccumulateFromX => 5,
             Self::StoreToX => 6,
             Self::LoadImm => 7,
-            Self::LoadWord => 8,
-            Self::LoadWordHi => 9,
+            Self::LoadAccumulateWord => 9,
             Self::AdviceLimb => 10,
         }
     }
@@ -97,10 +87,10 @@ impl FieldInlineOp {
             Self::Mul => 2,
             Self::Inv => 3,
             Self::AssertEq => 4,
-            Self::LoadFromX => 5,
+            Self::LoadAccumulateFromX => 5,
             Self::StoreToX => 6,
             Self::LoadImm => FIELD_INLINE_LOAD_IMM_FUNCT3,
-            Self::LoadWord | Self::LoadWordHi => FIELD_INLINE_LOAD_WORD_FUNCT3,
+            Self::LoadAccumulateWord => FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT3,
             Self::AdviceLimb => FIELD_INLINE_ADVICE_LIMB_FUNCT3,
         }
     }
@@ -115,16 +105,15 @@ impl FieldInlineOp {
             | Self::Mul
             | Self::Inv
             | Self::AssertEq
-            | Self::LoadFromX
+            | Self::LoadAccumulateFromX
             | Self::StoreToX => Some(FIELD_INLINE_R_TYPE_FUNCT7),
-            Self::LoadWord => Some(field_inline_load_word_funct7(false, 0)),
-            Self::LoadWordHi => Some(field_inline_load_word_funct7(true, 0)),
+            Self::LoadAccumulateWord => Some(field_inline_load_accumulate_word_funct7(0)),
             Self::AdviceLimb => Some(FIELD_INLINE_ADVICE_LIMB_FUNCT7),
         }
     }
 
     pub const fn is_memory_load(self) -> bool {
-        matches!(self, Self::LoadWord | Self::LoadWordHi)
+        matches!(self, Self::LoadAccumulateWord)
     }
 
     pub const fn instruction_mask(self) -> u32 {
@@ -150,25 +139,21 @@ impl FieldInlineOp {
             2 => Some(Self::Mul),
             3 => Some(Self::Inv),
             4 => Some(Self::AssertEq),
-            5 => Some(Self::LoadFromX),
+            5 => Some(Self::LoadAccumulateFromX),
             6 => Some(Self::StoreToX),
             7 => Some(Self::LoadImm),
-            8 => Some(Self::LoadWord),
-            9 => Some(Self::LoadWordHi),
+            9 => Some(Self::LoadAccumulateWord),
             10 => Some(Self::AdviceLimb),
             _ => None,
         }
     }
 
     pub const fn from_r_type_key(funct7: u8, funct3: u8) -> Option<Self> {
-        if funct3 == FIELD_INLINE_LOAD_WORD_FUNCT3
-            && funct7 & FIELD_INLINE_LOAD_WORD_FUNCT7_FAMILY != 0
+        if funct3 == FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT3
+            && funct7 & !FIELD_INLINE_LOAD_ACCUMULATE_WORD_OFFSET_MASK
+                == FIELD_INLINE_LOAD_ACCUMULATE_WORD_FUNCT7_FAMILY
         {
-            return if funct7 & FIELD_INLINE_LOAD_WORD_FUNCT7_HIGH != 0 {
-                Some(Self::LoadWordHi)
-            } else {
-                Some(Self::LoadWord)
-            };
+            return Some(Self::LoadAccumulateWord);
         }
         match (funct7, funct3) {
             (FIELD_INLINE_R_TYPE_FUNCT7, 0) => Some(Self::Add),
@@ -176,7 +161,7 @@ impl FieldInlineOp {
             (FIELD_INLINE_R_TYPE_FUNCT7, 2) => Some(Self::Mul),
             (FIELD_INLINE_R_TYPE_FUNCT7, 3) => Some(Self::Inv),
             (FIELD_INLINE_R_TYPE_FUNCT7, 4) => Some(Self::AssertEq),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadFromX),
+            (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadAccumulateFromX),
             (FIELD_INLINE_R_TYPE_FUNCT7, 6) => Some(Self::StoreToX),
             (FIELD_INLINE_ADVICE_LIMB_FUNCT7, FIELD_INLINE_ADVICE_LIMB_FUNCT3) => {
                 Some(Self::AdviceLimb)
@@ -412,11 +397,10 @@ pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Optio
         SourceInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
         SourceInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
         SourceInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
-        SourceInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
+        SourceInstruction::FieldLoadAccumulateFromX(_) => Some(FieldInlineOp::LoadAccumulateFromX),
         SourceInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
         SourceInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
-        SourceInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
-        SourceInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
+        SourceInstruction::FieldLoadAccumulateWord(_) => Some(FieldInlineOp::LoadAccumulateWord),
         SourceInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
@@ -433,11 +417,10 @@ pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<Fi
         JoltInstruction::FieldMul(_) => Some(FieldInlineOp::Mul),
         JoltInstruction::FieldInv(_) => Some(FieldInlineOp::Inv),
         JoltInstruction::FieldAssertEq(_) => Some(FieldInlineOp::AssertEq),
-        JoltInstruction::FieldLoadFromX(_) => Some(FieldInlineOp::LoadFromX),
+        JoltInstruction::FieldLoadAccumulateFromX(_) => Some(FieldInlineOp::LoadAccumulateFromX),
         JoltInstruction::FieldStoreToX(_) => Some(FieldInlineOp::StoreToX),
         JoltInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
-        JoltInstruction::FieldLoadWord(_) => Some(FieldInlineOp::LoadWord),
-        JoltInstruction::FieldLoadWordHi(_) => Some(FieldInlineOp::LoadWordHi),
+        JoltInstruction::FieldLoadAccumulateWord(_) => Some(FieldInlineOp::LoadAccumulateWord),
         JoltInstruction::FieldAdviceLimb(_) => Some(FieldInlineOp::AdviceLimb),
         _ => None,
     }
@@ -484,15 +467,15 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
         },
-        FieldInlineOp::LoadFromX => FieldInlineOperandShape {
+        FieldInlineOp::LoadAccumulateFromX => FieldInlineOperandShape {
             op,
-            reads_field_rs1: false,
+            reads_field_rs1: true,
             reads_field_rs2: false,
             writes_field_rd: true,
             bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1),
             has_immediate: false,
             field_rd_in_rs2_slot: false,
-            field_rs1_is_field_rd: false,
+            field_rs1_is_field_rd: true,
         },
         FieldInlineOp::StoreToX => FieldInlineOperandShape {
             op,
@@ -514,17 +497,7 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: false,
         },
-        FieldInlineOp::LoadWord => FieldInlineOperandShape {
-            op,
-            reads_field_rs1: false,
-            reads_field_rs2: false,
-            writes_field_rd: true,
-            bridge_x_register_role: Some(FieldInlineXRegisterRole::ReadRs1WriteRd),
-            has_immediate: false,
-            field_rd_in_rs2_slot: true,
-            field_rs1_is_field_rd: false,
-        },
-        FieldInlineOp::LoadWordHi => FieldInlineOperandShape {
+        FieldInlineOp::LoadAccumulateWord => FieldInlineOperandShape {
             op,
             reads_field_rs1: true,
             reads_field_rs2: false,
@@ -617,19 +590,19 @@ mod encoding_tests {
         );
     }
 
-    // Pins the encoding migration: for every op the new-format word must decode
-    // back to the same `FieldInlineOp`, so the decoded op stream is unchanged.
     #[test]
     fn every_op_word_decodes_back_to_the_same_op() {
-        const OPS: [FieldInlineOp; 8] = [
+        const OPS: [FieldInlineOp; 10] = [
             FieldInlineOp::Add,
             FieldInlineOp::Sub,
             FieldInlineOp::Mul,
             FieldInlineOp::Inv,
             FieldInlineOp::AssertEq,
-            FieldInlineOp::LoadFromX,
+            FieldInlineOp::LoadAccumulateFromX,
             FieldInlineOp::StoreToX,
             FieldInlineOp::LoadImm,
+            FieldInlineOp::LoadAccumulateWord,
+            FieldInlineOp::AdviceLimb,
         ];
         for op in OPS {
             let word = match op.funct7() {
@@ -639,6 +612,29 @@ mod encoding_tests {
             assert_eq!(FieldInlineOp::from_word(word), Some(op));
             assert_eq!(word & op.instruction_mask(), op.instruction_match());
         }
+    }
+
+    #[test]
+    fn load_accumulate_word_accepts_offsets_and_rejects_retired_loads() {
+        let op = FieldInlineOp::LoadAccumulateWord;
+        for offset_words in 0..32 {
+            let word = r_type_word(op, 0x60 | offset_words);
+            assert_eq!(FieldInlineOp::from_word(word), Some(op));
+            assert_eq!(word & op.instruction_mask(), op.instruction_match());
+            assert_eq!(
+                field_inline_load_accumulate_word_offset(word),
+                u32::from(offset_words) * 8
+            );
+            assert_eq!(
+                field_inline_load_accumulate_word_funct7(offset_words),
+                0x60 | offset_words
+            );
+            assert_eq!(
+                FieldInlineOp::from_word(r_type_word(op, 0x40 | offset_words)),
+                None
+            );
+        }
+        assert_eq!(FieldInlineOp::from_tag(8), None);
     }
 
     #[test]

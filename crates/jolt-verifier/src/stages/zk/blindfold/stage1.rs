@@ -46,7 +46,7 @@ where
         stage: JoltRelationId::SpartanOuter,
         reason: error.to_string(),
     })?;
-    // Under `field-inline` this coefficient table is the COMPOSED one (51 columns): the same
+    // Under `field-inline` this coefficient table is the COMPOSED one (50 columns): the same
     // source the clear path's factored check consumes, so the appended field-inline weight
     // publics bake automatically.
     for (id, value) in remainder_formula.public_coefficients() {
@@ -54,7 +54,7 @@ where
     }
 
     // The composed opening row order: the 35 ordinary openings in canonical order, then (under
-    // `field-inline`) the 16 field-inline columns in appended-column order — the clear path's
+    // `field-inline`) the 15 field-inline columns in appended-column order — the clear path's
     // absorb order exactly.
     let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
 
@@ -167,7 +167,7 @@ mod tests {
     }
 
     /// The composed opening row order is the clear absorb order: the 35 ordinary openings in
-    /// canonical order, then (with field-inline enabled) the 16 field-inline openings in
+    /// canonical order, then (with field-inline enabled) the 15 field-inline openings in
     /// appended-column order, matching the composed jolt-r1cs column count.
     #[test]
     fn stage1_opening_ids_follow_the_composed_column_order() {
@@ -179,7 +179,7 @@ mod tests {
         #[cfg(not(feature = "field-inline"))]
         assert_eq!(ids.len(), 35);
         #[cfg(feature = "field-inline")]
-        assert_eq!(ids.len(), 51);
+        assert_eq!(ids.len(), 50);
 
         let ordinary: Vec<VerifierOpeningId> = dimensions
             .variables()
@@ -202,7 +202,7 @@ mod tests {
     /// The lowered composed output expression evaluates bit-identically to the composed
     /// factored form `JoltSpartanOuterRemainder::expected_output_claim` over the full selected
     /// opening vector — the same equation the clear stage-1 path checks (with field-inline
-    /// enabled: 51 openings; with field-inline disabled: the rv64 35).
+    /// enabled: 50 openings; with field-inline disabled: the rv64 35).
     #[test]
     fn lowered_output_expr_matches_the_composed_factored_form() {
         let log_t = 3usize;

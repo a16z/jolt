@@ -69,11 +69,10 @@ pub enum FieldInlineOpFlag {
     Mul,
     Inv,
     AssertEq,
-    LoadFromX,
+    LoadAccumulateFromX,
     StoreToX,
     LoadImm,
-    LoadWord,
-    LoadWordHi,
+    LoadAccumulateWord,
     AdviceLimb,
 }
 

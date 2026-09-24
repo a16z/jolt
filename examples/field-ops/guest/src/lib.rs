@@ -7,20 +7,22 @@
 
 /// Evaluates eq(r, x) over the `(r_i, x_i)` coordinate pairs in the field-inline
 /// register file and FIELD_ASSERT_EQs it against the expected value, supplied
-/// as canonical little-endian u64 limbs and recomposed in-field (Horner in
-/// radix 2^64, the radix built by repeated squaring of a LoadImm 2). Returns
+/// as canonical little-endian u64 limbs and recomposed in-field by accumulating
+/// the limbs from most significant to least significant. Returns
 /// 42, bridged out of the field-inline file as `acc − expected + 42` — provably small,
 /// so the StoreToX range restriction holds exactly when the assert did.
 #[jolt::provable(heap_size = 32768, max_trace_length = 65536)]
 fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     // field register map: field[0] = 1, field[1] = eq accumulator, field[2]/field[3] = (r_i, x_i),
-    // field[4]-field[6] = per-pair scratch, field[7] = 2^64, field[8] = recomposed expected
-    // value, field[9] = limb bridge, field[10]/field[11] = result-bridge scratch.
+    // field[4]-field[6] = per-pair scratch, field[8] = recomposed expected value,
+    // field[10]/field[11] = result-bridge scratch.
     jolt::field_load_imm!(0, 1);
     jolt::field_load_imm!(1, 1);
     for [r, x] in pairs {
-        jolt::field_load_from_x!(2, r);
-        jolt::field_load_from_x!(3, x);
+        jolt::field_load_imm!(2, 0);
+        jolt::field_load_accumulate_from_x!(2, r);
+        jolt::field_load_imm!(3, 0);
+        jolt::field_load_accumulate_from_x!(3, x);
         jolt::field_mul!(4, 2, 3); // r·x
         jolt::field_sub!(5, 0, 2); // 1 − r
         jolt::field_sub!(6, 0, 3); // 1 − x
@@ -29,25 +31,13 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
         jolt::field_mul!(1, 1, 4); // fold it into the accumulator
     }
 
-    // 2^64 by repeated squaring of 2: LoadImm immediates are 12-bit, so the
-    // limb radix cannot be loaded directly.
-    jolt::field_load_imm!(7, 2);
-    jolt::field_mul!(7, 7, 7); // 2^2
-    jolt::field_mul!(7, 7, 7); // 2^4
-    jolt::field_mul!(7, 7, 7); // 2^8
-    jolt::field_mul!(7, 7, 7); // 2^16
-    jolt::field_mul!(7, 7, 7); // 2^32
-    jolt::field_mul!(7, 7, 7); // 2^64
-
     // Horner-recompose the expected value: ((l3·2^64 + l2)·2^64 + l1)·2^64 + l0.
     // Each limb crosses the bridge as a u64; only the in-field partial sums
     // exceed 64 bits.
     let [l0, l1, l2, l3] = expected_limbs;
-    jolt::field_load_from_x!(8, l3);
-    for limb in [l2, l1, l0] {
-        jolt::field_mul!(8, 8, 7);
-        jolt::field_load_from_x!(9, limb);
-        jolt::field_add!(8, 8, 9);
+    jolt::field_load_imm!(8, 0);
+    for limb in [l3, l2, l1, l0] {
+        jolt::field_load_accumulate_from_x!(8, limb);
     }
 
     jolt::field_assert_eq!(1, 8);
@@ -58,6 +48,7 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
     {
         let limbs = [0x1234_5678_9abc_def0u64, 9];
         let low: u64;
+        jolt::field_load_imm!(12, 0);
         // SAFETY: the two loads read this live two-word array through a0;
         // a1 is clobbered, and only field registers 12 and 13 are changed.
         unsafe {
@@ -65,7 +56,7 @@ fn eval_eq_mle(pairs: [[u64; 2]; 4], expected_limbs: [u64; 4]) -> u64 {
                 ".word {load_high}",
                 ".word {load_low}",
                 ".word {advice}",
-                load_high = const jolt::field_inline_r_word(0x41, 5, 11, 10, 12),
+                load_high = const jolt::field_inline_r_word(0x61, 5, 11, 10, 12),
                 load_low = const jolt::field_inline_r_word(0x60, 5, 11, 10, 12),
                 advice = const jolt::field_inline_r_word(1, 6, 11, 12, 13),
                 in("a0") limbs.as_ptr(),

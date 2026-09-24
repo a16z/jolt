@@ -109,8 +109,7 @@ const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 /// The rv64 prefixes of the composed stream groups
 /// (`SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` order): field-inline rows append behind
-/// them under `field-inline`, in [FADD, FSUB, FMUL, FINV] / [ASSERT_EQ, LOAD_FROM_X,
-/// STORE_TO_X, LOAD_IMM] order.
+/// them under `field-inline`; the complete order lives in those row arrays.
 const RV64_FIRST_GROUP_LEN: usize = 10;
 const RV64_SECOND_GROUP_LEN: usize = 9;
 
@@ -462,11 +461,11 @@ impl SpartanOuterRow {
         // off the shared rv64 columns the bridge rows reuse. Active field-inline cycles
         // go through `field_group_values` instead; calling this on one is a routing bug
         // the parity tests would surface as a wrong t1 value. First group [FADD, FSUB,
-        // FMUL, FINV, LOAD_WORD(+HI)]: guards zero; magnitudes zero except FINV's
+        // FMUL, FINV, LOAD_ACCUMULATE_WORD]: guards zero; magnitudes zero except FINV's
         // `inv_product − 1 = −1` and the load row's `field_rd − 2^64·field_rs1 −
-        // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_FROM_X,
+        // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_ACCUMULATE_FROM_X,
         // STORE_TO_X, LOAD_IMM, STORE_TO_X_LOOKUP, ADVICE_LIMB]: guards zero;
-        // magnitudes `0`, `field_rd − Rs1Value = −Rs1Value`, `RdWriteValue − field_rs1
+        // magnitudes `0`, `field_rd − 2^64·field_rs1 − Rs1Value = −Rs1Value`, `RdWriteValue − field_rs1
         // = RdWriteValue`, `field_rd − Imm = −Imm`, `RightLookupOperand − field_rs1 =
         // RightLookupOperand`, `field_rs1 − RdWriteValue − 2^64·field_rd =
         // −RdWriteValue`.
@@ -509,8 +508,7 @@ impl SpartanOuterRow {
         values.a_first[RV64_FIRST_GROUP_LEN + 1] = flag(FieldInlineOpFlag::Sub);
         values.a_first[RV64_FIRST_GROUP_LEN + 2] = flag(FieldInlineOpFlag::Mul);
         values.a_first[RV64_FIRST_GROUP_LEN + 3] = flag(FieldInlineOpFlag::Inv);
-        values.a_first[RV64_FIRST_GROUP_LEN + 4] =
-            flag(FieldInlineOpFlag::LoadWord) + flag(FieldInlineOpFlag::LoadWordHi);
+        values.a_first[RV64_FIRST_GROUP_LEN + 4] = flag(FieldInlineOpFlag::LoadAccumulateWord);
         let rd_write_value = F::from_u64(self.rd_write_value.0);
         values.b_first[RV64_FIRST_GROUP_LEN] =
             field_row.rs1_value + field_row.rs2_value - field_row.rd_value;
@@ -521,12 +519,13 @@ impl SpartanOuterRow {
         values.b_first[RV64_FIRST_GROUP_LEN + 4] =
             field_row.rd_value - limb_radix::<F>() * field_row.rs1_value - rd_write_value;
         values.a_second[RV64_SECOND_GROUP_LEN] = flag(FieldInlineOpFlag::AssertEq);
-        values.a_second[RV64_SECOND_GROUP_LEN + 1] = flag(FieldInlineOpFlag::LoadFromX);
+        values.a_second[RV64_SECOND_GROUP_LEN + 1] = flag(FieldInlineOpFlag::LoadAccumulateFromX);
         values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::StoreToX);
         values.a_second[RV64_SECOND_GROUP_LEN + 3] = flag(FieldInlineOpFlag::LoadImm);
         values.b_second[RV64_SECOND_GROUP_LEN] = field_row.rs1_value - field_row.rs2_value;
-        values.b_second[RV64_SECOND_GROUP_LEN + 1] =
-            field_row.rd_value - F::from_u64(self.rs1_value.0);
+        values.b_second[RV64_SECOND_GROUP_LEN + 1] = field_row.rd_value
+            - limb_radix::<F>() * field_row.rs1_value
+            - F::from_u64(self.rs1_value.0);
         values.b_second[RV64_SECOND_GROUP_LEN + 2] =
             F::from_u64(self.rd_write_value.0) - field_row.rs1_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 3] = field_row.rd_value - F::from_i128(self.imm.0);
@@ -1042,7 +1041,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
     /// Az/Bz column weights at both stream values over the composed opening-column
     /// selection, from the same `jolt-r1cs` sources the verifier's coefficient build
-    /// uses (35 rv64 columns without field-inline; the non-contiguous 35 + 16 selection
+    /// uses (35 rv64 columns without field-inline; the non-contiguous 35 + 15 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();

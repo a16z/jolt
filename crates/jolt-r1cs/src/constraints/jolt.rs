@@ -27,12 +27,13 @@ use super::field_constraints::{
     NUM_EQ_CONSTRAINTS as FIELD_NUM_EQ_CONSTRAINTS,
     NUM_PRODUCT_CONSTRAINTS as FIELD_NUM_PRODUCT_CONSTRAINTS,
     NUM_VARS_PER_CYCLE as FIELD_NUM_VARS_PER_CYCLE, ROW_ADVICE_LIMB, ROW_ASSERT_EQ, ROW_FADD,
-    ROW_FINV, ROW_FMUL, ROW_FSUB, ROW_LOAD_FROM_X, ROW_LOAD_IMM, ROW_LOAD_WORD, ROW_STORE_TO_X,
-    ROW_STORE_TO_X_LOOKUP, V_CONST, V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE,
-    V_FIELD_RS1_VALUE, V_FIELD_RS2_VALUE, V_IMM, V_IS_FIELD_ADD, V_IS_FIELD_ADVICE_LIMB,
-    V_IS_FIELD_ASSERT_EQ, V_IS_FIELD_INV, V_IS_FIELD_LOAD_FROM_X, V_IS_FIELD_LOAD_IMM,
-    V_IS_FIELD_LOAD_WORD, V_IS_FIELD_LOAD_WORD_HI, V_IS_FIELD_MUL, V_IS_FIELD_STORE_TO_X,
-    V_IS_FIELD_SUB, V_X_RD_WRITE_VALUE, V_X_RIGHT_LOOKUP_OPERAND, V_X_RS1_VALUE,
+    ROW_FINV, ROW_FMUL, ROW_FSUB, ROW_LOAD_ACCUMULATE_FROM_X, ROW_LOAD_ACCUMULATE_WORD,
+    ROW_LOAD_IMM, ROW_STORE_TO_X, ROW_STORE_TO_X_LOOKUP, V_CONST, V_FIELD_INV_PRODUCT,
+    V_FIELD_PRODUCT, V_FIELD_RD_VALUE, V_FIELD_RS1_VALUE, V_FIELD_RS2_VALUE, V_IMM, V_IS_FIELD_ADD,
+    V_IS_FIELD_ADVICE_LIMB, V_IS_FIELD_ASSERT_EQ, V_IS_FIELD_INV,
+    V_IS_FIELD_LOAD_ACCUMULATE_FROM_X, V_IS_FIELD_LOAD_ACCUMULATE_WORD, V_IS_FIELD_LOAD_IMM,
+    V_IS_FIELD_MUL, V_IS_FIELD_STORE_TO_X, V_IS_FIELD_SUB, V_X_RD_WRITE_VALUE,
+    V_X_RIGHT_LOOKUP_OPERAND, V_X_RS1_VALUE,
 };
 use super::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
 #[cfg(feature = "field-inline")]
@@ -113,7 +114,7 @@ pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_S
     RV64_NUM_EQ_CONSTRAINTS + ROW_FSUB,
     RV64_NUM_EQ_CONSTRAINTS + ROW_FMUL,
     RV64_NUM_EQ_CONSTRAINTS + ROW_FINV,
-    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_WORD,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_WORD,
 ];
 
 #[cfg(not(feature = "field-inline"))]
@@ -132,7 +133,7 @@ pub const SPARTAN_OUTER_SECOND_GROUP_ROWS: [usize; SPARTAN_OUTER_SECOND_GROUP_RO
     15,
     16,
     RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
-    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_FROM_X,
+    RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_X,
     RV64_NUM_EQ_CONSTRAINTS + ROW_STORE_TO_X,
     RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_IMM,
     FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
@@ -378,12 +379,11 @@ pub const fn field_inline_column(local_column: usize) -> Option<usize> {
         V_IS_FIELD_MUL => Some(FIELD_INLINE_COLUMN_BASE + 7),
         V_IS_FIELD_INV => Some(FIELD_INLINE_COLUMN_BASE + 8),
         V_IS_FIELD_ASSERT_EQ => Some(FIELD_INLINE_COLUMN_BASE + 9),
-        V_IS_FIELD_LOAD_FROM_X => Some(FIELD_INLINE_COLUMN_BASE + 10),
+        V_IS_FIELD_LOAD_ACCUMULATE_FROM_X => Some(FIELD_INLINE_COLUMN_BASE + 10),
         V_IS_FIELD_STORE_TO_X => Some(FIELD_INLINE_COLUMN_BASE + 11),
         V_IS_FIELD_LOAD_IMM => Some(FIELD_INLINE_COLUMN_BASE + 12),
-        V_IS_FIELD_LOAD_WORD => Some(FIELD_INLINE_COLUMN_BASE + 13),
-        V_IS_FIELD_LOAD_WORD_HI => Some(FIELD_INLINE_COLUMN_BASE + 14),
-        V_IS_FIELD_ADVICE_LIMB => Some(FIELD_INLINE_COLUMN_BASE + 15),
+        V_IS_FIELD_LOAD_ACCUMULATE_WORD => Some(FIELD_INLINE_COLUMN_BASE + 13),
+        V_IS_FIELD_ADVICE_LIMB => Some(FIELD_INLINE_COLUMN_BASE + 14),
         _ => None,
     }
 }
@@ -536,14 +536,14 @@ mod tests {
                 RV64_NUM_EQ_CONSTRAINTS + ROW_FSUB,
                 RV64_NUM_EQ_CONSTRAINTS + ROW_FMUL,
                 RV64_NUM_EQ_CONSTRAINTS + ROW_FINV,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_WORD,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_WORD,
             ]
         );
         assert_eq!(
             &SPARTAN_OUTER_SECOND_GROUP_ROWS[9..],
             &[
                 RV64_NUM_EQ_CONSTRAINTS + ROW_ASSERT_EQ,
-                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_FROM_X,
+                RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_ACCUMULATE_FROM_X,
                 RV64_NUM_EQ_CONSTRAINTS + ROW_STORE_TO_X,
                 RV64_NUM_EQ_CONSTRAINTS + ROW_LOAD_IMM,
                 FIELD_INLINE_ROW_BASE + ROW_STORE_TO_X_LOOKUP,
@@ -578,11 +578,10 @@ mod tests {
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Mul),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Inv),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AssertEq),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadFromX),
+            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromX),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::StoreToX),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWord),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadWordHi),
+            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadAccumulateWord),
             FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AdviceLimb),
         ];
         assert_eq!(FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, expected_inputs);
@@ -598,9 +597,11 @@ mod tests {
             V_IS_FIELD_MUL,
             V_IS_FIELD_INV,
             V_IS_FIELD_ASSERT_EQ,
-            V_IS_FIELD_LOAD_FROM_X,
+            V_IS_FIELD_LOAD_ACCUMULATE_FROM_X,
             V_IS_FIELD_STORE_TO_X,
             V_IS_FIELD_LOAD_IMM,
+            V_IS_FIELD_LOAD_ACCUMULATE_WORD,
+            V_IS_FIELD_ADVICE_LIMB,
         ];
         for (index, local_column) in local_columns.into_iter().enumerate() {
             assert_eq!(

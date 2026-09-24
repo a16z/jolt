@@ -67,7 +67,7 @@ const fn field_inline_handles_rd_zero(instruction_kind: SourceInstructionKind) -
             | SourceInstructionKind::FIELD_SUB
             | SourceInstructionKind::FIELD_MUL
             | SourceInstructionKind::FIELD_INV
-            | SourceInstructionKind::FIELD_LOAD_FROM_X
+            | SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X
             | SourceInstructionKind::FIELD_LOAD_IMM
             // rd encodes the destination x-register; keep rd=x0 in place rather than
             // take the virtual-register rewrite, so the field-inline metadata rejects

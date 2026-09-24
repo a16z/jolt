@@ -38,8 +38,8 @@ mod pipeline {
         })
     }
 
-    /// Canonical little-endian u64 limbs, the form the guest recomposes with
-    /// its repeated-squaring 2^64 radix.
+    /// Canonical little-endian u64 limbs, which the guest accumulates in
+    /// reverse order using the x-register ingress instruction.
     pub fn limbs(value: Fr) -> [u64; 4] {
         let mut bytes = [0u8; 32];
         value.to_bytes_le(&mut bytes);
@@ -236,13 +236,12 @@ fn main() {
 mod tests {
     use super::pipeline::{compile_and_trace, field_inline_rows, guest_inputs, PAIRS};
 
-    /// The guest's static field-inline instruction budget: 2 accumulator seeds, 8 per
-    /// coordinate pair (2 bridge loads, 3 muls, 2 subs, 1 add), 7 for the
-    /// 2^64 radix (LoadImm 2 + 6 squarings), 10 for the expected-value Horner
-    /// recomposition (4 bridge loads, 3 muls, 3 adds), the FIELD_ASSERT_EQ,
-    /// 3 for the result value (sub, LoadImm 42, add), and the StoreToX
-    /// bridge.
-    const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 8 * PAIRS.len() + 7 + 10 + 1 + 3 + 1;
+    /// The guest's static field-inline instruction budget: 2 accumulator seeds,
+    /// 10 per coordinate pair (2 resets, 2 bridge accumulations, 3 muls, 2 subs,
+    /// 1 add), 5 for the expected value (reset + 4 accumulations), the assert,
+    /// 5 for memory ingress and advice readout, 4 for inversion, and 4 for the
+    /// result value and StoreToX bridge.
+    const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 10 * PAIRS.len() + 5 + 1 + 5 + 4 + 4;
 
     /// Commit-A scope: the guest builds and traces field-active — the tracer
     /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or an

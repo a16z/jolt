@@ -36,8 +36,8 @@ pub use assert::AssertValidUnsignedRemainder;
 pub use assert::AssertWordAlignment;
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm,
-    FieldLoadWord, FieldLoadWordHi, FieldMul, FieldStoreToX, FieldSub,
+    FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldInv, FieldLoadAccumulateFromX,
+    FieldLoadAccumulateWord, FieldLoadImm, FieldMul, FieldStoreToX, FieldSub,
 };
 pub use i::Add;
 pub use i::AddW;
@@ -453,15 +453,13 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     #[cfg(feature = "field-inline")]
     FieldAssertEq(FieldAssertEq<T>),
     #[cfg(feature = "field-inline")]
-    FieldLoadFromX(FieldLoadFromX<T>),
+    FieldLoadAccumulateFromX(FieldLoadAccumulateFromX<T>),
     #[cfg(feature = "field-inline")]
     FieldStoreToX(FieldStoreToX<T>),
     #[cfg(feature = "field-inline")]
     FieldLoadImm(FieldLoadImm<T>),
     #[cfg(feature = "field-inline")]
-    FieldLoadWord(FieldLoadWord<T>),
-    #[cfg(feature = "field-inline")]
-    FieldLoadWordHi(FieldLoadWordHi<T>),
+    FieldLoadAccumulateWord(FieldLoadAccumulateWord<T>),
     #[cfg(feature = "field-inline")]
     FieldAdviceLimb(FieldAdviceLimb<T>),
 }
@@ -683,15 +681,13 @@ impl_jolt_instructions_flags! {
     #[cfg(feature = "field-inline")]
     FieldAssertEq => FIELD_ASSERT_EQ,
     #[cfg(feature = "field-inline")]
-    FieldLoadFromX => FIELD_LOAD_FROM_X,
+    FieldLoadAccumulateFromX => FIELD_LOAD_ACCUMULATE_FROM_X,
     #[cfg(feature = "field-inline")]
     FieldStoreToX => FIELD_STORE_TO_X,
     #[cfg(feature = "field-inline")]
     FieldLoadImm => FIELD_LOAD_IMM,
     #[cfg(feature = "field-inline")]
-    FieldLoadWord => FIELD_LOAD_WORD,
-    #[cfg(feature = "field-inline")]
-    FieldLoadWordHi => FIELD_LOAD_WORD_HI,
+    FieldLoadAccumulateWord => FIELD_LOAD_ACCUMULATE_WORD,
     #[cfg(feature = "field-inline")]
     FieldAdviceLimb => FIELD_ADVICE_LIMB,
 }

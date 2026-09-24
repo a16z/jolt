@@ -119,9 +119,9 @@ field_instruction!(
     SourceInstructionKind::FIELD_ASSERT_EQ
 );
 field_instruction!(
-    FIELD_LOAD_FROM_X,
-    FieldInlineOp::LoadFromX,
-    SourceInstructionKind::FIELD_LOAD_FROM_X
+    FIELD_LOAD_ACCUMULATE_FROM_X,
+    FieldInlineOp::LoadAccumulateFromX,
+    SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_X
 );
 field_instruction!(
     FIELD_STORE_TO_X,
@@ -134,14 +134,9 @@ field_instruction!(
     SourceInstructionKind::FIELD_LOAD_IMM
 );
 field_instruction!(
-    FIELD_LOAD_WORD,
-    FieldInlineOp::LoadWord,
-    SourceInstructionKind::FIELD_LOAD_WORD
-);
-field_instruction!(
-    FIELD_LOAD_WORD_HI,
-    FieldInlineOp::LoadWordHi,
-    SourceInstructionKind::FIELD_LOAD_WORD_HI
+    FIELD_LOAD_ACCUMULATE_WORD,
+    FieldInlineOp::LoadAccumulateWord,
+    SourceInstructionKind::FIELD_LOAD_ACCUMULATE_WORD
 );
 field_instruction!(
     FIELD_ADVICE_LIMB,
@@ -191,12 +186,12 @@ fn execute_over<F: Field + CanonicalEncoding>(
         }
         FieldInlineOp::Inv => pure(execute_inverse::<F>(op, operands, cpu)),
         FieldInlineOp::AssertEq => pure(execute_assert_eq::<F>(op, operands, cpu)),
-        FieldInlineOp::LoadFromX => pure(execute_load_from_x::<F>(op, operands, cpu)),
+        FieldInlineOp::LoadAccumulateFromX => {
+            pure(execute_load_accumulate_from_x::<F>(op, operands, cpu))
+        }
         FieldInlineOp::StoreToX => pure(execute_store_to_x::<F>(op, operands, cpu)),
         FieldInlineOp::LoadImm => pure(execute_load_imm(op, operands, cpu)),
-        FieldInlineOp::LoadWord | FieldInlineOp::LoadWordHi => {
-            execute_load_word::<F>(op, operands, cpu)
-        }
+        FieldInlineOp::LoadAccumulateWord => execute_load_accumulate_word::<F>(op, operands, cpu),
         FieldInlineOp::AdviceLimb => pure(execute_advice_limb::<F>(op, operands, cpu)),
     }
 }
@@ -250,9 +245,9 @@ fn execute_advice_limb<F: Field + CanonicalEncoding>(
     }
 }
 
-/// `field_rd = [field_rd · 2^64 +] mem[x_rs1 + offset]`, the word also written to the
+/// `field_rd = field_rd · 2^64 + mem[x_rs1 + offset]`, the word also written to the
 /// scratch x-register `rd` so the cycle is an ordinary `LD` to the RV64 rows.
-fn execute_load_word<F: Field + CanonicalEncoding>(
+fn execute_load_accumulate_word<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -264,7 +259,7 @@ fn execute_load_word<F: Field + CanonicalEncoding>(
     // load rows equate the rd write with the loaded word.
     assert!(
         x_register != 0,
-        "field-inline load word to x0 at pc 0x{:x}: the scratch register must be a real register",
+        "field-inline load accumulate word to x0 at pc 0x{:x}: the scratch register must be a real register",
         cpu.read_pc(),
     );
     let address = (cpu.read_register(x_base) as u64).wrapping_add(operands.imm as u64);
@@ -274,31 +269,21 @@ fn execute_load_word<F: Field + CanonicalEncoding>(
         .unwrap_or_else(|_| panic!("MMU load error at pc 0x{:x}", cpu.read_pc()));
     cpu.write_register(x_register as usize, word as i64);
     let pre_value = cpu.field_registers.read(field_register);
-    let (rs1, value) = match op {
-        FieldInlineOp::LoadWordHi => {
-            let folded =
-                decode_field::<F>(pre_value) * F::from_u128(1u128 << 64) + F::from_u64(word);
-            (
-                Some(FieldRegisterRead {
-                    register: field_register,
-                    value: pre_value,
-                }),
-                encode_field(folded),
-            )
-        }
-        _ => (None, encode_field(F::from_u64(word))),
-    };
+    let value = accumulate_word::<F>(pre_value, word);
     cpu.field_registers.write(field_register, value);
     FieldInlineCycleData {
         trace: Some(FieldInlineTraceData {
             op: Some(op),
-            rs1,
+            rs1: Some(FieldRegisterRead {
+                register: field_register,
+                value: pre_value,
+            }),
             rd: Some(FieldRegisterWrite {
                 register: field_register,
                 pre_value,
                 post_value: value,
             }),
-            bridge: Some(FieldInlineBridge::LoadWord {
+            bridge: Some(FieldInlineBridge::LoadAccumulateWord {
                 x_base,
                 x_register,
                 word,
@@ -411,7 +396,7 @@ fn execute_assert_eq<F: CanonicalEncoding>(
     }
 }
 
-fn execute_load_from_x<F: Field + CanonicalEncoding>(
+fn execute_load_accumulate_from_x<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
@@ -419,17 +404,21 @@ fn execute_load_from_x<F: Field + CanonicalEncoding>(
     let x_register = operands.rs1.unwrap_or(0);
     let rd_register = operands.rd.unwrap_or(0);
     let x_value = cpu.read_register(x_register) as u64;
-    let field_value = encode_field(F::from_u64(x_value));
     let pre_value = cpu.field_registers.read(rd_register);
+    let field_value = accumulate_word::<F>(pre_value, x_value);
     cpu.field_registers.write(rd_register, field_value);
     FieldInlineTraceData {
         op: Some(op),
+        rs1: Some(FieldRegisterRead {
+            register: rd_register,
+            value: pre_value,
+        }),
         rd: Some(FieldRegisterWrite {
             register: rd_register,
             pre_value,
             post_value: field_value,
         }),
-        bridge: Some(FieldInlineBridge::LoadFromX {
+        bridge: Some(FieldInlineBridge::LoadAccumulateFromX {
             x_register,
             x_value,
             field_value,
@@ -519,6 +508,13 @@ fn execute_load_imm(
         }),
         ..Default::default()
     }
+}
+
+fn accumulate_word<F: Field + CanonicalEncoding>(
+    previous: FieldEncodedValue,
+    word: u64,
+) -> FieldEncodedValue {
+    encode_field(decode_field::<F>(previous) * F::from_u128(1u128 << 64) + F::from_u64(word))
 }
 
 fn decode_field<F: CanonicalEncoding>(value: FieldEncodedValue) -> F {

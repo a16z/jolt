@@ -147,11 +147,10 @@ fn flags_for_op(op: FieldInlineOp) -> FieldInlineBytecodeFlags {
         FieldInlineOp::Mul => flags.mul = true,
         FieldInlineOp::Inv => flags.inv = true,
         FieldInlineOp::AssertEq => flags.assert_eq = true,
-        FieldInlineOp::LoadFromX => flags.load_from_x = true,
+        FieldInlineOp::LoadAccumulateFromX => flags.load_accumulate_from_x = true,
         FieldInlineOp::StoreToX => flags.store_to_x = true,
         FieldInlineOp::LoadImm => flags.load_imm = true,
-        FieldInlineOp::LoadWord => flags.load_word = true,
-        FieldInlineOp::LoadWordHi => flags.load_word_hi = true,
+        FieldInlineOp::LoadAccumulateWord => flags.load_accumulate_word = true,
         FieldInlineOp::AdviceLimb => flags.advice_limb = true,
     }
     flags
@@ -278,19 +277,17 @@ mod tests {
             }
             FieldInlineOp::Inv => (register(4), register(5), None),
             FieldInlineOp::AssertEq => (None, register(6), register(7)),
-            FieldInlineOp::LoadFromX => (register(8), None, None),
+            FieldInlineOp::LoadAccumulateFromX => (register(8), register(8), None),
             FieldInlineOp::StoreToX => (None, register(9), None),
             FieldInlineOp::LoadImm => (register(10), None, None),
-            FieldInlineOp::LoadWord => (register(12), None, None),
-            FieldInlineOp::LoadWordHi => (register(13), register(13), None),
+            FieldInlineOp::LoadAccumulateWord => (register(13), register(13), None),
             FieldInlineOp::AdviceLimb => (register(14), register(15), None),
         };
         let bridge_x_register = matches!(
             op,
-            FieldInlineOp::LoadFromX
+            FieldInlineOp::LoadAccumulateFromX
                 | FieldInlineOp::StoreToX
-                | FieldInlineOp::LoadWord
-                | FieldInlineOp::LoadWordHi
+                | FieldInlineOp::LoadAccumulateWord
                 | FieldInlineOp::AdviceLimb
         )
         .then_some(11);
@@ -307,17 +304,16 @@ mod tests {
         }
     }
 
-    const ALL_OPS: [FieldInlineOp; 11] = [
+    const ALL_OPS: [FieldInlineOp; 10] = [
         FieldInlineOp::Add,
         FieldInlineOp::Sub,
         FieldInlineOp::Mul,
         FieldInlineOp::Inv,
         FieldInlineOp::AssertEq,
-        FieldInlineOp::LoadFromX,
+        FieldInlineOp::LoadAccumulateFromX,
         FieldInlineOp::StoreToX,
         FieldInlineOp::LoadImm,
-        FieldInlineOp::LoadWord,
-        FieldInlineOp::LoadWordHi,
+        FieldInlineOp::LoadAccumulateWord,
         FieldInlineOp::AdviceLimb,
     ];
 
@@ -328,11 +324,10 @@ mod tests {
             FieldInlineOp::Mul => FieldInlineOpFlag::Mul,
             FieldInlineOp::Inv => FieldInlineOpFlag::Inv,
             FieldInlineOp::AssertEq => FieldInlineOpFlag::AssertEq,
-            FieldInlineOp::LoadFromX => FieldInlineOpFlag::LoadFromX,
+            FieldInlineOp::LoadAccumulateFromX => FieldInlineOpFlag::LoadAccumulateFromX,
             FieldInlineOp::StoreToX => FieldInlineOpFlag::StoreToX,
             FieldInlineOp::LoadImm => FieldInlineOpFlag::LoadImm,
-            FieldInlineOp::LoadWord => FieldInlineOpFlag::LoadWord,
-            FieldInlineOp::LoadWordHi => FieldInlineOpFlag::LoadWordHi,
+            FieldInlineOp::LoadAccumulateWord => FieldInlineOpFlag::LoadAccumulateWord,
             FieldInlineOp::AdviceLimb => FieldInlineOpFlag::AdviceLimb,
         }
     }

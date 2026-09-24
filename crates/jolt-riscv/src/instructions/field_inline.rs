@@ -26,8 +26,9 @@ jolt_instruction!(
 );
 
 jolt_instruction!(
-    /// Bridge an ordinary x-register value into a field register.
-    FieldLoadFromX
+    /// Fold an ordinary x-register word into a field accumulator:
+    /// `field_rd = field_rd · 2^64 + x_rs1`.
+    FieldLoadAccumulateFromX
 );
 
 jolt_instruction!(
@@ -48,19 +49,10 @@ jolt_instruction!(
 );
 
 jolt_instruction!(
-    /// Load a 64-bit word from memory into a field register: an `LD` into the
-    /// scratch x-register `rd` (the ordinary load rows bind the word) whose
-    /// loaded value the field-inline row copies into field register `rs2`.
-    FieldLoadWord,
-    circuit flags: [Load],
-    instruction flags: []
-);
-
-jolt_instruction!(
-    /// Load the low word of a two-limb operand and fold it in: field register
+    /// Load a 64-bit word from memory and fold it in: field register
     /// `rs2` becomes `2^64 · rs2 + word`, the word again an `LD` into the
     /// scratch x-register `rd`.
-    FieldLoadWordHi,
+    FieldLoadAccumulateWord,
     circuit flags: [Load],
     instruction flags: []
 );

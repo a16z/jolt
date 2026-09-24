@@ -47,7 +47,12 @@ mod support {
 
     pub type Proof = JoltProof<AkitaScheme, AkitaVc>;
 
-    pub const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+    pub const EQ_PAIRS: [[u64; 2]; 4] = [
+        [u64::MAX, u64::MAX - 1],
+        [u64::MAX - 2, 2],
+        [11, 13],
+        [u64::MAX - 3, 9],
+    ];
 
     /// eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)) over the packed
     /// axis's proof field (fp128, p = 2^128 − 2^32 + 22537) — the host-side

@@ -67,8 +67,8 @@ use ecall::ECALL;
 use fence::FENCE;
 #[cfg(feature = "field-inline")]
 use field_inline::{
-    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_FROM_X, FIELD_LOAD_IMM,
-    FIELD_LOAD_WORD, FIELD_LOAD_WORD_HI, FIELD_MUL, FIELD_STORE_TO_X, FIELD_SUB,
+    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_ACCUMULATE_FROM_X,
+    FIELD_LOAD_ACCUMULATE_WORD, FIELD_LOAD_IMM, FIELD_MUL, FIELD_STORE_TO_X, FIELD_SUB,
 };
 use jal::JAL;
 use jalr::JALR;
@@ -626,11 +626,10 @@ macro_rules! define_rv64imac_enums {
                     Cycle::FIELD_MUL(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_INV(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ASSERT_EQ(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_FROM_X(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_ACCUMULATE_FROM_X(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_STORE_TO_X(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_WORD(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_WORD_HI(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_LOAD_ACCUMULATE_WORD(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ADVICE_LIMB(cycle) => cycle.ram_access.trace,
                     _ => None,
                 }
@@ -972,11 +971,10 @@ fn is_field_inline_instruction(instruction: &Instruction) -> bool {
             | Instruction::FIELD_MUL(_)
             | Instruction::FIELD_INV(_)
             | Instruction::FIELD_ASSERT_EQ(_)
-            | Instruction::FIELD_LOAD_FROM_X(_)
+            | Instruction::FIELD_LOAD_ACCUMULATE_FROM_X(_)
             | Instruction::FIELD_STORE_TO_X(_)
             | Instruction::FIELD_LOAD_IMM(_)
-            | Instruction::FIELD_LOAD_WORD(_)
-            | Instruction::FIELD_LOAD_WORD_HI(_)
+            | Instruction::FIELD_LOAD_ACCUMULATE_WORD(_)
             | Instruction::FIELD_ADVICE_LIMB(_)
     )
 }
@@ -1427,21 +1425,18 @@ impl Instruction {
                     Some(jolt_riscv::FieldInlineOp::AssertEq) => {
                         Ok(FIELD_ASSERT_EQ::new(instr, address, true, compressed).into())
                     }
-                    Some(jolt_riscv::FieldInlineOp::LoadFromX) => {
-                        Ok(FIELD_LOAD_FROM_X::new(instr, address, true, compressed).into())
-                    }
+                    Some(jolt_riscv::FieldInlineOp::LoadAccumulateFromX) => Ok(
+                        FIELD_LOAD_ACCUMULATE_FROM_X::new(instr, address, true, compressed).into(),
+                    ),
                     Some(jolt_riscv::FieldInlineOp::StoreToX) => {
                         Ok(FIELD_STORE_TO_X::new(instr, address, true, compressed).into())
                     }
                     Some(jolt_riscv::FieldInlineOp::LoadImm) => {
                         Ok(FIELD_LOAD_IMM::new(instr, address, true, compressed).into())
                     }
-                    Some(jolt_riscv::FieldInlineOp::LoadWord) => {
-                        Ok(FIELD_LOAD_WORD::new(instr, address, true, compressed).into())
-                    }
-                    Some(jolt_riscv::FieldInlineOp::LoadWordHi) => {
-                        Ok(FIELD_LOAD_WORD_HI::new(instr, address, true, compressed).into())
-                    }
+                    Some(jolt_riscv::FieldInlineOp::LoadAccumulateWord) => Ok(
+                        FIELD_LOAD_ACCUMULATE_WORD::new(instr, address, true, compressed).into(),
+                    ),
                     Some(jolt_riscv::FieldInlineOp::AdviceLimb) => {
                         Ok(FIELD_ADVICE_LIMB::new(instr, address, true, compressed).into())
                     }
@@ -2029,6 +2024,8 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use crate::emulator::default_terminal::DefaultTerminal;
     #[cfg(feature = "field-inline")]
+    use crate::emulator::mmu::DRAM_BASE;
+    #[cfg(feature = "field-inline")]
     use jolt_program::field_inline::{FieldEncodedValue, FieldInlineBridge};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
@@ -2071,15 +2068,15 @@ mod tests {
 
         let load_cycle = trace_one(
             &mut cpu,
-            field_inline_word(FieldInlineOp::LoadFromX, 1, 5, 0),
+            field_inline_word(FieldInlineOp::LoadAccumulateFromX, 1, 5, 0),
         );
         assert_eq!(load_cycle.rs1_read(), Some((5, 7)));
         assert_eq!(load_cycle.rd_write(), None);
         let load_trace = load_cycle.field_inline_trace().unwrap();
-        assert_eq!(load_trace.op, Some(FieldInlineOp::LoadFromX));
+        assert_eq!(load_trace.op, Some(FieldInlineOp::LoadAccumulateFromX));
         assert_eq!(
             load_trace.bridge,
-            Some(FieldInlineBridge::LoadFromX {
+            Some(FieldInlineBridge::LoadAccumulateFromX {
                 x_register: 5,
                 x_value: 7,
                 field_value: FieldEncodedValue::from_u64(7),
@@ -2131,6 +2128,53 @@ mod tests {
             })
         );
         assert_eq!(cpu.read_register(10), 21);
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_ingress_accumulates_words_and_resets_explicitly() {
+        for memory_sourced in [false, true] {
+            let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+            cpu.get_mut_mmu().init_memory(16);
+            cpu.get_mut_mmu().store_doubleword(DRAM_BASE, 5).unwrap();
+            cpu.get_mut_mmu()
+                .store_doubleword(DRAM_BASE + 8, 3)
+                .unwrap();
+            cpu.write_register(10, DRAM_BASE as i64);
+            let low_word = if memory_sourced {
+                field_inline_word(FieldInlineOp::LoadAccumulateWord, 11, 10, 1)
+            } else {
+                field_inline_word(FieldInlineOp::LoadAccumulateFromX, 1, 5, 0)
+            };
+            let high_word = if memory_sourced {
+                low_word | (1 << 25)
+            } else {
+                low_word
+            };
+
+            trace_one(&mut cpu, field_inline_word(FieldInlineOp::LoadImm, 1, 0, 0));
+            cpu.write_register(5, 3);
+            trace_one(&mut cpu, high_word);
+            cpu.write_register(5, 5);
+            let cycle = trace_one(&mut cpu, low_word);
+            let payload = cycle.field_inline_trace().unwrap();
+            let mut expected = FieldEncodedValue::from_u64(5);
+            expected.bytes_le[8] = 3;
+            assert_eq!(payload.rs1.unwrap().register, 1);
+            assert_eq!(payload.rs1.unwrap().value, FieldEncodedValue::from_u64(3));
+            assert_eq!(
+                payload.rd.unwrap().pre_value,
+                FieldEncodedValue::from_u64(3)
+            );
+            assert_eq!(payload.rd.unwrap().post_value, expected);
+
+            trace_one(&mut cpu, field_inline_word(FieldInlineOp::LoadImm, 1, 0, 0));
+            let cycle = trace_one(&mut cpu, low_word);
+            assert_eq!(
+                cycle.field_inline_trace().unwrap().rd.unwrap().post_value,
+                FieldEncodedValue::from_u64(5)
+            );
+        }
     }
 
     #[cfg(feature = "field-inline")]

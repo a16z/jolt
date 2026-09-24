@@ -3,8 +3,8 @@
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldLoadWord,
-    FieldLoadWordHi, FieldMul, FieldSub,
+    FieldAdd, FieldAssertEq, FieldInv, FieldLoadAccumulateFromX, FieldLoadAccumulateWord,
+    FieldLoadImm, FieldMul, FieldSub,
 };
 use jolt_riscv::{JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionRowData};
 use std::fmt::Debug;
@@ -146,10 +146,9 @@ impl_field_inline_no_lookup!(
     FieldMul,
     FieldInv,
     FieldAssertEq,
-    FieldLoadFromX,
+    FieldLoadAccumulateFromX,
     FieldLoadImm,
-    FieldLoadWord,
-    FieldLoadWordHi,
+    FieldLoadAccumulateWord,
 );
 
 /// Lookup-query adapter for dynamic final Jolt instruction rows.

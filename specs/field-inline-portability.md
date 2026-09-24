@@ -86,9 +86,10 @@ Everything above the tracer is generic over `F`. The concrete work:
   beside `BN254_SCALAR_CANONICAL`; `FieldInlineBytecodeMetadata.value_encoding`
   and the profile fingerprint already version this — a proof/preprocessing
   built under one encoding rejects under another fail-closed.
-- Bridge economics improve: `FIELD_LOAD_FROM_X` covers half the field; a
-  full-width load is one radix multiplication (single 2^64 constant) plus one
-  add; `FIELD_STORE_TO_X`'s range-restricted semantics (< 2^64, trap
+- Bridge economics improve: a full-width load uses one zero initialization
+  and two `FIELD_LOAD_ACCUMULATE_FROM_X` instructions, high limb first.
+  Each accumulation computes `old_destination * 2^64 + limb` in the field;
+  `FIELD_STORE_TO_X`'s range-restricted semantics (< 2^64, trap
   otherwise) and `FIELD_LOAD_IMM` are unchanged.
 - Generator budget: `MAX_BLINDFOLD_GENERATORS` is cfg-keyed today (32 without
   field-inline, 64 with it); the composed uniskip degrees do not change with

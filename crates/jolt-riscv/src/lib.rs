@@ -201,15 +201,13 @@ macro_rules! for_each_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_ASSERT_EQ => FieldAssertEq => "field.assert_eq",
                 #[cfg(feature = "field-inline")]
-                FIELD_LOAD_FROM_X => FieldLoadFromX => "field.load_from_x",
+                FIELD_LOAD_ACCUMULATE_FROM_X => FieldLoadAccumulateFromX => "field.load_accumulate_from_x",
                 #[cfg(feature = "field-inline")]
                 FIELD_STORE_TO_X => FieldStoreToX => "field.store_to_x",
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => "field.load_imm",
                 #[cfg(feature = "field-inline")]
-                FIELD_LOAD_WORD => FieldLoadWord => "field.load_word",
-                #[cfg(feature = "field-inline")]
-                FIELD_LOAD_WORD_HI => FieldLoadWordHi => "field.load_word_hi",
+                FIELD_LOAD_ACCUMULATE_WORD => FieldLoadAccumulateWord => "field.load_accumulate_word",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADVICE_LIMB => FieldAdviceLimb => "field.advice_limb",
             ]
@@ -322,15 +320,13 @@ macro_rules! for_each_jolt_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_ASSERT_EQ => FieldAssertEq => (0x0104, "field.assert_eq"),
                 #[cfg(feature = "field-inline")]
-                FIELD_LOAD_FROM_X => FieldLoadFromX => (0x0105, "field.load_from_x"),
+                FIELD_LOAD_ACCUMULATE_FROM_X => FieldLoadAccumulateFromX => (0x0105, "field.load_accumulate_from_x"),
                 #[cfg(feature = "field-inline")]
                 FIELD_STORE_TO_X => FieldStoreToX => (0x0106, "field.store_to_x"),
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => (0x0107, "field.load_imm"),
                 #[cfg(feature = "field-inline")]
-                FIELD_LOAD_WORD => FieldLoadWord => (0x0108, "field.load_word"),
-                #[cfg(feature = "field-inline")]
-                FIELD_LOAD_WORD_HI => FieldLoadWordHi => (0x0109, "field.load_word_hi"),
+                FIELD_LOAD_ACCUMULATE_WORD => FieldLoadAccumulateWord => (0x0109, "field.load_accumulate_word"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADVICE_LIMB => FieldAdviceLimb => (0x010a, "field.advice_limb"),
             ]
@@ -340,10 +336,11 @@ macro_rules! for_each_jolt_instruction_kind {
 
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    field_inline_jolt_op, field_inline_load_word_funct7, field_inline_load_word_offset,
-    field_inline_operand_shape, field_inline_operand_shape_for_op, field_inline_source_op,
-    is_field_inline_jolt, is_field_inline_source, FieldInlineOp, FieldInlineOperandShape,
-    FieldInlineXRegisterRole, FieldRegister, FIELD_INLINE_LOAD_WORD_STRIDE, FIELD_INLINE_OPCODE,
+    field_inline_jolt_op, field_inline_load_accumulate_word_funct7,
+    field_inline_load_accumulate_word_offset, field_inline_operand_shape,
+    field_inline_operand_shape_for_op, field_inline_source_op, is_field_inline_jolt,
+    is_field_inline_source, FieldInlineOp, FieldInlineOperandShape, FieldInlineXRegisterRole,
+    FieldRegister, FIELD_INLINE_LOAD_ACCUMULATE_WORD_STRIDE, FIELD_INLINE_OPCODE,
     FIELD_REGISTER_COUNT, FIELD_REGISTER_LOG_K,
 };
 pub use flags::{

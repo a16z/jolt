@@ -377,7 +377,7 @@ impl VerifierFixtureKind {
     const fn fixture_name(self) -> &'static str {
         match self {
             #[cfg(all(feature = "field-inline", not(feature = "zk")))]
-            Self::FieldInlineEqpoly => "standard-field-inline-eqpoly-modular-v1",
+            Self::FieldInlineEqpoly => "standard-field-inline-eqpoly-modular-v2",
             #[cfg(not(feature = "zk"))]
             Self::MulDivSmall => "standard-muldiv-small",
             #[cfg(not(feature = "zk"))]
@@ -792,7 +792,12 @@ mod field_inline {
     use super::GeneratedVerifierFixture;
 
     const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
-    const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
+    const EQ_PAIRS: [[u64; 2]; 4] = [
+        [u64::MAX, u64::MAX - 1],
+        [u64::MAX - 2, 2],
+        [11, 13],
+        [u64::MAX - 3, 9],
+    ];
 
     /// eq(r, x) = prod_i (r_i·x_i + (1 − r_i)(1 − x_i)) — the reference the
     /// guest's FIELD_ASSERT_EQ checks against, passed as canonical
