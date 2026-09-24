@@ -44,7 +44,7 @@ mod clear {
     use serde_json::Value;
 
     use crate::support::field_inline::akita::Proof;
-    use crate::support::field_inline::{akita, field_ops, inactive_muldiv};
+    use crate::support::field_inline::{akita, field_ops, muldiv};
 
     /// A labeled packed kernel-backend constructor.
     type BackendCase = (
@@ -155,10 +155,10 @@ mod clear {
     /// content is legal: dense schedules are keyed by shape, never content).
     /// This pins the all-zero dense open.
     #[test]
-    fn akita_field_inline_inactive_backends_have_identical_zero_limb_proofs() {
+    fn akita_field_inline_muldiv_backends_have_identical_zero_limb_proofs() {
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
-            let (output, limbs) = akita::prove(&inactive_muldiv(), backend(), collect_limbs);
+            let (output, limbs) = akita::prove(&muldiv(), backend(), collect_limbs);
             assert!(limbs
                 .rd_inc
                 .iter()

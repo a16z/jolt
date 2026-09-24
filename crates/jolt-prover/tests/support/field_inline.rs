@@ -43,7 +43,7 @@ pub fn field_ops() -> GuestCase {
     }
 }
 
-pub fn inactive_muldiv() -> GuestCase {
+pub fn muldiv() -> GuestCase {
     GuestCase {
         inputs: postcard::to_stdvec(&[9u32, 5, 3]).expect("serialize inputs"),
         expected_output: Some(postcard::to_stdvec(&15u32).expect("serialize output")),

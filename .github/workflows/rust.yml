@@ -451,7 +451,7 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # e2e_matrix selects field_ops and inactive_muldiv for the field-inline
+      # e2e_matrix selects field_ops and muldiv for the field-inline
       # profile. Run the full package to retain its specialized parity and
       # tamper suites alongside matrix acceptance in both Dory modes.
       - name: Run field-inline matrix and specialized suites (clear)
@@ -493,7 +493,7 @@ jobs:
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
         uses: taiki-e/install-action@nextest
-      # The same field_ops and inactive_muldiv matrix table runs over fp128.
+      # The same field_ops and muldiv matrix table runs over fp128.
       # The full package also runs packed field-inline parity and tamper suites.
       - name: Run packed field-inline matrix and specialized suites
         run: cargo nextest run --cargo-profile ci -p jolt-prover --features prover-fixtures,field-inline,akita

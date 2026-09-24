@@ -32,7 +32,7 @@ mod clear {
     use jolt_verifier::proof::JoltProofClaims;
 
     use crate::support::field_inline::dory::{self, Proof};
-    use crate::support::field_inline::{field_ops, inactive_muldiv};
+    use crate::support::field_inline::{field_ops, muldiv};
 
     type BackendCase = (&'static str, fn() -> JoltBackend<Fr, DoryScheme>);
 
@@ -72,10 +72,10 @@ mod clear {
     /// field-inline instructions still proves under the composed protocol, with an
     /// all-zero `FieldRdInc` commitment and zero field-inline openings.
     #[test]
-    fn field_inline_inactive_muldiv_reference_matches_optimized() {
+    fn field_inline_muldiv_reference_matches_optimized() {
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
-            let (preprocessing, public_io, proof) = dory::prove(&inactive_muldiv(), backend());
+            let (preprocessing, public_io, proof) = dory::prove(&muldiv(), backend());
             assert!(proof.commitments.field_inline.is_some());
             dory::verify_full(&preprocessing, &public_io, &proof).unwrap_or_else(|error| {
                 panic!("field-inactive modular proof must verify ({label}): {error}")
@@ -185,7 +185,7 @@ mod zk {
     use jolt_verifier::proof::JoltProofClaims;
 
     use crate::support;
-    use crate::support::field_inline::{dory, field_ops, inactive_muldiv};
+    use crate::support::field_inline::{dory, field_ops, muldiv};
 
     /// The field-inline tampers on the ZK wire: the FieldRdInc commitment and
     /// the BlindFold payload. Mutate clones of one accepted base proof.
@@ -228,10 +228,10 @@ mod zk {
     /// The acceptance matrix uses optimized kernels; retain the reference ZK
     /// path separately because randomized ZK proofs cannot be compared by bytes.
     #[test]
-    fn field_inline_inactive_muldiv_reference_proof_is_accepted() {
+    fn field_inline_muldiv_reference_proof_is_accepted() {
         support::with_zk_stack(|| {
             let (preprocessing, public_io, proof) =
-                dory::prove(&inactive_muldiv(), JoltBackend::reference());
+                dory::prove(&muldiv(), JoltBackend::reference());
             dory::verify_full(&preprocessing, &public_io, &proof)
                 .expect("field-inactive reference ZK proof must verify");
         });

@@ -183,7 +183,7 @@ mod matrix {
         ($emit:ident) => {
             $emit! {
                 field_ops => crate::support::field_inline::field_ops();
-                inactive_muldiv => crate::support::field_inline::inactive_muldiv();
+                muldiv => crate::support::field_inline::muldiv();
             }
         };
     }
