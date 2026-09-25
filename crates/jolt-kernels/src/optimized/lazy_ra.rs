@@ -20,8 +20,10 @@
 //! Pre-scaling keeps the round-loop gathers multiplication-free — one table
 //! lookup and one addition per branch — because the eq weights are folded
 //! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
-//! instead of multiplied per cycle. Only the fourth bind materializes dense
-//! vectors, at `T/16` length, and drops the index source. Peak memory falls
+//! instead of multiplied per cycle. Normally the fourth bind materializes dense
+//! vectors, at `T/16` length, and drops the index source. Large address tables
+//! switch earlier when doubling them would cost at least as much storage as
+//! the bound cycle table. For small address tables, peak memory falls
 //! from `N·T` field elements to the index source plus `N·T/16`.
 //!
 //! Byte parity: every gathered value is the same polynomial of the same
@@ -35,6 +37,8 @@ use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+
+use super::support::bound_pair;
 
 /// Per-cycle hot indices of `N` committed one-hot selector polynomials over
 /// a shared compact backing store (typed witness rows, packed columns).
@@ -51,7 +55,7 @@ pub(crate) trait ChunkIndexSource: Send + Sync {
 }
 
 /// `N` address-folded selector columns bound `LowToHigh`, lazily until the
-/// fourth bind materializes dense.
+/// fourth bind materializes dense, or earlier for large address tables.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -68,7 +72,7 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
         width: usize,
         source: S,
     },
-    /// Four or more binds: plain dense multilinears (`T/16` at entry).
+    /// Plain dense multilinears after the storage threshold or fourth bind.
     Dense(Vec<Polynomial<F>>),
 }
 
@@ -148,8 +152,8 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// until the fourth bind materializes dense (and drops the source), then
-    /// use plain multilinear binds.
+    /// until the storage threshold or fourth bind materializes dense (and
+    /// drops the source), then use plain multilinear binds.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
@@ -157,6 +161,21 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 width,
                 source,
             } => {
+                let dense_len = source.cycles() / (2 * width);
+                if tables
+                    .iter()
+                    .any(|table| table.len() >= dense_len.div_ceil(2))
+                {
+                    // Avoid building a branch table as large as the bound cycle
+                    // table. Bind the existing gathers directly into that table.
+                    let log_t = source.cycles().ilog2() as usize;
+                    let dense = Self::Dense(materialize(&tables, &source, width, Some(challenge)));
+                    drop(tables);
+                    drop(source);
+                    crate::mem::purge_retained_memory(log_t);
+                    *self = dense;
+                    return;
+                }
                 let tables = double_branches(tables, challenge);
                 if width < 8 {
                     Self::Lazy {
@@ -166,7 +185,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     }
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
-                    let dense = Self::Dense(materialize(&tables, &source, width * 2));
+                    let dense = Self::Dense(materialize(&tables, &source, width * 2, None));
                     // Return branch tables and the final shared index handle.
                     drop(tables);
                     drop(source);
@@ -238,16 +257,24 @@ fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F
 /// footprint (`N · T / branches` field elements — the stage-6b peak at
 /// large T) against one more gather round and double the branch tables;
 /// measured on a 64-thread host, T/16 beats the original T/8 on both axes.
+/// A pending bind folds adjacent gathers directly into the output, avoiding
+/// branch-table expansion when the address domain is large.
 fn materialize<F: JoltField, S: ChunkIndexSource>(
     tables: &[Vec<F>],
     source: &S,
     branches: usize,
+    bind: Option<F>,
 ) -> Vec<Polynomial<F>> {
-    debug_assert!(source.cycles() >= branches);
-    let new_len = source.cycles() / branches;
+    let cycle_width = branches * if bind.is_some() { 2 } else { 1 };
+    debug_assert!(source.cycles() >= cycle_width);
+    let new_len = source.cycles() / cycle_width;
     let materialize_poly = |i: usize| -> Polynomial<F> {
         let table = tables[i].as_slice();
-        let eval = |j: usize| gather(table, branches, source, i, j);
+        let current = |j| gather(table, branches, source, i, j);
+        let eval = |j| match bind {
+            Some(challenge) => bound_pair(current, challenge, j),
+            None => current(j),
+        };
         #[cfg(feature = "parallel")]
         let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
         #[cfg(not(feature = "parallel"))]

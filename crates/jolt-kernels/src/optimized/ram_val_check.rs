@@ -368,8 +368,8 @@ mod tests {
 
     #[test]
     fn matches_reference_on_odd_log_t() {
-        // Five rounds: the lazy `ra` crosses its dense materialization and
-        // the split LT collapses its lo tables mid-protocol.
+        // Five rounds exercise selector materialization and the split LT
+        // collapsing its lo tables mid-protocol.
         let mut ops = mixed_ops();
         ops.extend([
             RamOp::Write { word: 7, post: 2 },
@@ -385,6 +385,13 @@ mod tests {
             ops,
             37,
         );
+    }
+
+    #[test]
+    fn matches_reference_across_selector_storage_thresholds() {
+        for (ram_k, seed) in [(16, 43), (64, 47), (128, 53)] {
+            run_parity(FixtureShape { log_t: 8, ram_k }, mixed_ops(), seed);
+        }
     }
 
     #[test]
