@@ -9,7 +9,8 @@ use jolt_riscv::JoltTraceRow as TraceRow;
 use jolt_utils::par_collect_windows;
 use std::ops::Range;
 
-use crate::{BundleSource, RowSource, WitnessBundle};
+use crate::{BundleSource, RandomAccessRows, RowSource, WitnessBundle};
+use std::sync::Arc;
 
 impl<T: TraceSource> TraceBackend<T> {
     /// Materializes one cycle-domain witness column by walking the trace
@@ -126,15 +127,23 @@ impl<T: TraceSource> TraceBackend<T> {
     }
 }
 
-impl<T: TraceSource> RowSource for TraceBackend<T> {
-    fn random_access(&self) -> Option<crate::RandomAccessRows> {
-        let cycles = checked_pow2(self.config.log_t).ok()?;
-        crate::RandomAccessRows::new(
-            std::sync::Arc::clone(&self.trace.trace),
-            cycles,
-            std::sync::Arc::clone(&self.preprocessing),
+impl<T: TraceSource> TraceBackend<T> {
+    fn bundle_rows(&self) -> Result<RandomAccessRows, WitnessError> {
+        #[cfg(feature = "field-inline")]
+        if let Some(field_inline) = &self.field_inline {
+            return Ok(field_inline.rows_source().clone());
+        }
+        RandomAccessRows::new(
+            Arc::clone(&self.trace.trace),
+            checked_pow2(self.config.log_t)?,
+            Arc::clone(&self.preprocessing),
         )
-        .ok()
+    }
+}
+
+impl<T: TraceSource> RowSource for TraceBackend<T> {
+    fn random_access(&self) -> Option<RandomAccessRows> {
+        self.bundle_rows().ok()
     }
 
     fn visit_chunks(
@@ -143,35 +152,7 @@ impl<T: TraceSource> RowSource for TraceBackend<T> {
         chunk_size: usize,
         visitor: &mut ChunkVisitor<'_>,
     ) -> Result<(), WitnessError> {
-        let total = checked_pow2(self.config.log_t)?;
-        if range.start > range.end || range.end > total {
-            return Err(WitnessError::InvalidDimensions {
-                label: JOLT_VM_LABEL,
-                reason: format!(
-                    "cycle range [{}, {}) exceeds the domain of {total} cycles",
-                    range.start, range.end
-                ),
-            });
-        }
-        let env = WitnessEnv::new(&self.preprocessing);
-        let physical = self.trace.trace.as_slice();
-        let padding = TraceRow::default();
-        let mut position = range.start;
-        while position < range.end {
-            let chunk_end = (position + chunk_size).min(range.end);
-            let next_after =
-                (chunk_end < total).then(|| physical.get(chunk_end).unwrap_or(&padding));
-            if chunk_end <= physical.len() {
-                visitor(&physical[position..chunk_end], next_after, &env)?;
-            } else {
-                let mut rows = Vec::with_capacity(chunk_end - position);
-                rows.extend_from_slice(&physical[position.min(physical.len())..]);
-                rows.resize(chunk_end - position, TraceRow::default());
-                visitor(&rows, next_after, &env)?;
-            }
-            position = chunk_end;
-        }
-        Ok(())
+        self.bundle_rows()?.visit_chunks(range, chunk_size, visitor)
     }
 }
 

@@ -117,7 +117,7 @@ pub fn with_sample_backend<R>(f: impl FnOnce(&TraceBackend<OwnedTrace>) -> R) ->
 #[expect(clippy::unwrap_used, reason = "test assertion helper")]
 pub fn assert_bundle_column_matches<B>(id: JoltPolynomialId, value: impl Fn(&B) -> Fr)
 where
-    B: WitnessBundle + Clone + Send + Sync,
+    B: WitnessBundle<PolynomialId = JoltPolynomialId> + Clone + Send + Sync,
 {
     with_sample_backend(|backend| {
         assert!(
