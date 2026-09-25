@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
 use crate::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK256};
-use crate::schedule_registry::PrecommittedScheduleParams;
+use crate::schedule_registry::GroupedScheduleParams;
 use crate::trace_onehot::TracePackedOneHot;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
@@ -337,7 +337,7 @@ pub struct AkitaSetupParams {
     /// planning. Verifier transport serializes [`AkitaVerifierSetup`]
     /// instead, which contains the finalized catalog and never replans.
     #[serde(default, rename = "advice_schedule")]
-    pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,
+    pub(crate) grouped_schedule: Option<GroupedScheduleParams>,
     /// Immutable base catalogs loaded once by application preprocessing.
     pub(crate) schedule_artifacts: Arc<AkitaScheduleArtifacts>,
 }
@@ -363,7 +363,7 @@ impl AkitaSetupParams {
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             flavor: AkitaSetupFlavor::Both,
-            precommitted_schedule: None,
+            grouped_schedule: None,
             schedule_artifacts,
         }
     }
@@ -385,7 +385,7 @@ impl AkitaSetupParams {
             default_layout_digest,
             one_hot_k,
             flavor: AkitaSetupFlavor::OneHot,
-            precommitted_schedule: None,
+            grouped_schedule: None,
             schedule_artifacts,
         }
     }
@@ -398,7 +398,7 @@ impl AkitaSetupParams {
         max_total_batch_polys: usize,
         default_layout_digest: AkitaLayoutDigest,
         one_hot_k: usize,
-        precommitted_schedule: Option<PrecommittedScheduleParams>,
+        grouped_schedule: Option<GroupedScheduleParams>,
         schedule_artifacts: Arc<AkitaScheduleArtifacts>,
     ) -> Self {
         Self {
@@ -408,7 +408,7 @@ impl AkitaSetupParams {
             default_layout_digest,
             one_hot_k,
             flavor: AkitaSetupFlavor::OneHot,
-            precommitted_schedule,
+            grouped_schedule,
             schedule_artifacts,
         }
     }
@@ -428,7 +428,7 @@ impl AkitaSetupParams {
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             flavor: AkitaSetupFlavor::Dense,
-            precommitted_schedule: None,
+            grouped_schedule: None,
             schedule_artifacts,
         }
     }

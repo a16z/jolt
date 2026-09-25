@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use jolt_akita::{
     AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
-    AkitaVerifierSetup, DensePrecommitLayout, PrecommittedScheduleParams,
+    AkitaVerifierSetup, DenseGroupLayout, GroupedScheduleParams,
 };
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
@@ -110,19 +110,19 @@ pub(crate) fn grouped_setup_params(
         usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
     );
     #[cfg(feature = "field-inline")]
-    mandatory_dense_layouts.push(DensePrecommitLayout::FullWidth {
+    mandatory_dense_layouts.push(DenseGroupLayout::FullWidth {
         num_vars: FieldIncLayout::new(config.trace_length.ilog2() as usize).num_vars(),
     });
     mandatory_dense_layouts.extend(
         direct_program_physical_vars
             .iter()
-            .map(|&num_vars| DensePrecommitLayout::Bounded { num_vars }),
+            .map(|&num_vars| DenseGroupLayout::Bounded { num_vars }),
     );
-    let precommitted_count = usize::from(untrusted_physical_vars.is_some())
+    let group_count = usize::from(untrusted_physical_vars.is_some())
         + usize::from(trusted_physical_vars.is_some())
         + mandatory_dense_layouts.len();
-    let precommitted_schedule = (precommitted_count > 0).then(|| {
-        PrecommittedScheduleParams::new(
+    let grouped_schedule = (group_count > 0).then(|| {
+        GroupedScheduleParams::new(
             untrusted_physical_vars,
             trusted_physical_vars,
             shape.num_vars,
@@ -132,10 +132,10 @@ pub(crate) fn grouped_setup_params(
     let params = AkitaSetupParams::one_hot_only_grouped(
         shape.num_vars,
         shape.num_polys,
-        shape.num_polys + precommitted_count,
+        shape.num_polys + group_count,
         layout_digest,
         one_hot_k,
-        precommitted_schedule,
+        grouped_schedule,
         Arc::clone(schedule_artifacts),
     );
     Ok(params)

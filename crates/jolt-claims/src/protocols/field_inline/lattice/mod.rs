@@ -2,9 +2,9 @@
 
 use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::Field;
-use jolt_openings::OpeningsError;
 #[cfg(feature = "akita")]
-use jolt_openings::PrecommittedRole;
+use jolt_openings::CommitmentGroupRole;
+use jolt_openings::OpeningsError;
 
 use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
@@ -50,8 +50,8 @@ impl FieldIncLayout {
 /// Places `FieldRdInc` after any untrusted and trusted advice commitments
 /// in Akita's final batched opening.
 #[cfg(feature = "akita")]
-pub const fn field_inc_precommitted_role() -> PrecommittedRole {
-    PrecommittedRole::new(2, b"field_inc", "field-inc")
+pub const fn field_inc_group_role() -> CommitmentGroupRole {
+    CommitmentGroupRole::new(2, b"field_inc", "field-inc")
 }
 
 #[cfg(test)]

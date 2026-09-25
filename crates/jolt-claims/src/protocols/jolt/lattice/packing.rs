@@ -9,7 +9,7 @@ use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::JoltField;
 use jolt_lookup_tables::XLEN;
 use jolt_openings::{
-    EvaluationClaim, OpeningsError, PrecommittedRole, PrefixPackedClaims, PrefixPackedLayout,
+    CommitmentGroupRole, EvaluationClaim, OpeningsError, PrefixPackedClaims, PrefixPackedLayout,
 };
 use jolt_poly::eq_index_msb;
 
@@ -59,7 +59,7 @@ pub struct PrecommittedPackingShape {
 /// arity of each semantic column before zero-prefix embedding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrefixPackedObjectPlan {
-    role: PrecommittedRole,
+    role: CommitmentGroupRole,
     packing: PrefixPackedLayout<JoltCommittedPolynomial>,
     logical_num_vars: BTreeMap<JoltCommittedPolynomial, usize>,
     layout_digest: [u8; 32],
@@ -220,7 +220,7 @@ pub fn advice_packing_plan(
         JoltAdviceKind::Untrusted => JoltCommittedPolynomial::UntrustedAdvice,
     };
     Ok(PrefixPackedObjectPlan::new_with_slot_capacity(
-        kind.precommitted_role(),
+        kind.group_role(),
         b"advice-dense-words-v2",
         vec![(polynomial, word_vars)],
         slot_capacity,
@@ -229,7 +229,7 @@ pub fn advice_packing_plan(
 
 impl PrefixPackedObjectPlan {
     fn new(
-        role: PrecommittedRole,
+        role: CommitmentGroupRole,
         domain: &[u8],
         columns: Vec<(JoltCommittedPolynomial, usize)>,
     ) -> Result<Self, OpeningsError> {
@@ -238,7 +238,7 @@ impl PrefixPackedObjectPlan {
     }
 
     fn new_with_slot_capacity(
-        role: PrecommittedRole,
+        role: CommitmentGroupRole,
         domain: &[u8],
         columns: Vec<(JoltCommittedPolynomial, usize)>,
         slot_capacity: usize,
@@ -279,7 +279,7 @@ impl PrefixPackedObjectPlan {
     }
 
     fn new_with_trace_order(
-        role: PrecommittedRole,
+        role: CommitmentGroupRole,
         domain: &[u8],
         columns: Vec<(JoltCommittedPolynomial, usize)>,
         trace_order: TracePolynomialOrder,
@@ -298,7 +298,7 @@ impl PrefixPackedObjectPlan {
         &self.packing
     }
 
-    pub const fn precommitted_role(&self) -> PrecommittedRole {
+    pub const fn group_role(&self) -> CommitmentGroupRole {
         self.role
     }
 
@@ -375,7 +375,7 @@ impl PrefixPackedObjectPlan {
 fn direct_program_role(
     id: JoltCommittedPolynomial,
     order: usize,
-) -> Result<PrecommittedRole, OpeningsError> {
+) -> Result<CommitmentGroupRole, OpeningsError> {
     let order = u64::try_from(order).map_err(|_| {
         OpeningsError::InvalidSetup("direct program role order exceeds u64".to_owned())
     })?;
@@ -384,14 +384,14 @@ fn direct_program_role(
             let index = u64::try_from(index).map_err(|_| {
                 OpeningsError::InvalidSetup("bytecode chunk index exceeds u64".to_owned())
             })?;
-            Ok(PrecommittedRole::new_indexed(
+            Ok(CommitmentGroupRole::new_indexed(
                 order,
                 b"bytecode_chunk",
                 "bytecode-chunk",
                 index,
             ))
         }
-        JoltCommittedPolynomial::ProgramImageInit => Ok(PrecommittedRole::new(
+        JoltCommittedPolynomial::ProgramImageInit => Ok(CommitmentGroupRole::new(
             order,
             b"program_image_init",
             "program-image-init",
@@ -595,7 +595,7 @@ mod tests {
         let plan = precommitted_packing_plan(&precommitted_shape()).unwrap();
         assert_eq!(plan.bytecode_chunks().len(), 2);
         for (index, chunk) in plan.bytecode_chunks().iter().enumerate() {
-            let role = chunk.precommitted_role();
+            let role = chunk.group_role();
             assert_eq!(
                 chunk.packing().ids(),
                 [JoltCommittedPolynomial::BytecodeChunk(index)]
@@ -614,7 +614,7 @@ mod tests {
             image.packing().ids(),
             [JoltCommittedPolynomial::ProgramImageInit]
         );
-        let role = image.precommitted_role();
+        let role = image.group_role();
         assert_eq!(role.order(), 4);
         assert_eq!(role.transcript_label(), b"program_image_init");
         assert_eq!(role.transcript_index(), None);

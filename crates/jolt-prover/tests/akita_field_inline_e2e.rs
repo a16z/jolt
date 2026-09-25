@@ -262,8 +262,8 @@ mod clear {
     /// makes the verifier-assembled single field-inline entry canonical.
     #[test]
     fn akita_field_inline_duplicate_inc_group_is_rejected() {
-        use jolt_claims::protocols::field_inline::lattice::field_inc_precommitted_role;
-        use jolt_openings::{GroupOpeningClaim, PrecommittedClaim};
+        use jolt_claims::protocols::field_inline::lattice::field_inc_group_role;
+        use jolt_openings::{GroupOpeningClaim, TaggedGroupOpeningClaim};
         use jolt_prover::akita::preprocessing::AkitaTranscript;
         use jolt_transcript::Transcript;
 
@@ -274,8 +274,8 @@ mod clear {
             .clone()
             .expect("packed field-inline proofs carry the field-increment commitment");
         let point = vec![AkitaField::from_u64(3); GroupCommitmentMetadata::num_vars(&commitment)];
-        let field_claim = PrecommittedClaim::new(
-            field_inc_precommitted_role(),
+        let field_claim = TaggedGroupOpeningClaim::new(
+            field_inc_group_role(),
             GroupOpeningClaim::new(commitment, point, vec![AkitaField::from_u64(0)]),
         );
         let main = GroupOpeningClaim::new(

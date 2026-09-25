@@ -110,7 +110,7 @@ pub trait CommitmentScheme: Commitment {
     // side-channel.
     fn prove_batch(
         _setup: &Self::ProverSetup,
-        _precommitted: Vec<PrecommittedOpening<Self::Field, Self::Output, Self::OpeningHint>>,
+        _groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         _final_group: GroupOpeningClaim<Self::Field, Self::Output>,
         _final_hint: Self::OpeningHint,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
@@ -124,7 +124,7 @@ pub trait CommitmentScheme: Commitment {
     /// at their group-local points, followed by a final commitment group.
     fn verify_batch(
         _setup: &Self::VerifierSetup,
-        _precommitted: &[PrecommittedClaim<Self::Field, Self::Output>],
+        _groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
         _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         _proof: &Self::Proof,
         _transcript: &mut impl Transcript<Challenge = Self::Field>,
@@ -747,8 +747,7 @@ where
     }
 }
 
-/// One physical commitment group's opening claim. Precommitted groups carry
-/// their own [`PrecommittedRole`]; the final trace group is always last.
+/// One physical commitment group's opening claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupOpeningClaim<F, C> {
     pub commitment: C,
@@ -766,16 +765,16 @@ impl<F, C> GroupOpeningClaim<F, C> {
     }
 }
 
-/// Protocol-supplied identity of one precommitted group.
+/// Protocol-supplied identity and batch order of one commitment group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PrecommittedRole {
+pub struct CommitmentGroupRole {
     order: u64,
     transcript_label: &'static [u8],
     diagnostic_name: &'static str,
     transcript_index: Option<u64>,
 }
 
-impl PrecommittedRole {
+impl CommitmentGroupRole {
     pub const fn new(
         order: u64,
         transcript_label: &'static [u8],
@@ -824,19 +823,19 @@ impl PrecommittedRole {
     }
 }
 
-/// One precommitted group's public opening claim, tagged with its role.
+/// One commitment group's public opening claim, tagged with its protocol role.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PrecommittedClaim<F, C> {
-    pub role: PrecommittedRole,
+pub struct TaggedGroupOpeningClaim<F, C> {
+    pub role: CommitmentGroupRole,
     pub claim: GroupOpeningClaim<F, C>,
 }
 
-/// One precommitted group's public claim paired with the prover's retained
+/// One commitment group's tagged claim paired with the prover's retained
 /// opening hint.
-pub type PrecommittedOpening<F, C, H> = (PrecommittedClaim<F, C>, H);
+pub type GroupOpeningWithHint<F, C, H> = (TaggedGroupOpeningClaim<F, C>, H);
 
-impl<F, C> PrecommittedClaim<F, C> {
-    pub fn new(role: PrecommittedRole, claim: GroupOpeningClaim<F, C>) -> Self {
+impl<F, C> TaggedGroupOpeningClaim<F, C> {
+    pub fn new(role: CommitmentGroupRole, claim: GroupOpeningClaim<F, C>) -> Self {
         Self { role, claim }
     }
 }

@@ -7,7 +7,7 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomi
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
-    CommitmentScheme, GroupSetupMetadata, PrecommittedRole, TransparentObjectSetup,
+    CommitmentGroupRole, CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::{
@@ -145,7 +145,7 @@ where
             reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
         });
     }
-    // Precommitted objects commit before the trace because their frozen
+    // Auxiliary objects commit before the trace because their frozen
     // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice::<PCS>(
@@ -166,28 +166,19 @@ where
 
     // Canonical public batch order: advice, (field-inline) the field increment polynomial,
     // then the direct committed-program objects, then OneHotTrace.
-    let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
+    let mut auxiliary_groups: Vec<(CommitmentGroupRole, &PCS::Output, &PCS::OpeningHint)> =
         untrusted_advice
             .as_ref()
-            .map(|object| {
-                (
-                    object.plan.precommitted_role(),
-                    &object.commitment,
-                    &object.hint,
-                )
-            })
+            .map(|object| (object.plan.group_role(), &object.commitment, &object.hint))
             .into_iter()
-            .chain(trusted_advice.map(|object| {
-                (
-                    object.plan.precommitted_role(),
-                    &object.commitment,
-                    &object.hint,
-                )
-            }))
+            .chain(
+                trusted_advice
+                    .map(|object| (object.plan.group_role(), &object.commitment, &object.hint)),
+            )
             .collect();
     #[cfg(feature = "field-inline")]
-    precommitted.push((
-        jolt_claims::protocols::field_inline::lattice::field_inc_precommitted_role(),
+    auxiliary_groups.push((
+        jolt_claims::protocols::field_inline::lattice::field_inc_group_role(),
         &field_inc.commitment,
         &field_inc.hint,
     ));
@@ -197,14 +188,10 @@ where
         .map(|data| &data.direct_program)
     {
         for object in &program.objects {
-            precommitted.push((
-                object.plan.precommitted_role(),
-                &object.commitment,
-                &object.hint,
-            ));
+            auxiliary_groups.push((object.plan.group_role(), &object.commitment, &object.hint));
         }
     }
-    let required_batch_polys = precommitted.len() + 1;
+    let required_batch_polys = auxiliary_groups.len() + 1;
     // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
         || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
@@ -224,7 +211,7 @@ where
                 log_k_chunk,
                 log_t,
             )?;
-            let precommitted_hints = precommitted
+            let group_hints = auxiliary_groups
                 .iter()
                 .map(|(_, _, hint)| *hint)
                 .collect::<Vec<_>>();
@@ -233,7 +220,7 @@ where
                 preprocessing.pcs_setup.default_layout_digest(),
                 plan.packing().slot_capacity(),
                 packed_trace_rows,
-                &precommitted_hints,
+                &group_hints,
             );
             let (commitment, hint) =
                 committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {

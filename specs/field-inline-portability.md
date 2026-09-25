@@ -56,15 +56,17 @@ object's role; it does not widen those objects' value bounds.
 
 The field-increment polynomial is an independent dense object, committed in
 stage 0 under a transparent setup and opened in the same heterogeneous batch
-as the advice and one-hot trace objects. Its `PrecommittedRole` has order 2
+as the advice and one-hot trace objects. Its `CommitmentGroupRole` has order 2
 and transcript label `field_inc`; the batch order is:
 
 ```text
 [UntrustedAdvice, TrustedAdvice, FieldInc, OneHotTrace]
 ```
 
-The role places a trace-derived object in the PCS batch; its presence does
-not mean that field increments are fixed during program preprocessing.
+`GroupedScheduleParams` records the object shapes needed to plan this batch.
+Its `DenseGroupLayout::FullWidth` entry selects the field-increment source
+bound. The polynomial values and commitment are created from the execution
+witness in stage 0; preprocessing only provisions the grouped schedule.
 
 `FieldIncLayout` in `crates/jolt-claims/src/protocols/field_inline/lattice/`
 owns the physical arity, layout digest, and opening-point padding. For a

@@ -15,7 +15,7 @@ use akita_types::{
 };
 use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{
-    dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+    dense_group_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
 };
 use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS, K256_PACKING_VARIABLES,
@@ -101,7 +101,7 @@ const TRUSTED_ADVICE_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(2
 const TRUSTED_ADVICE_K256_FINAL_GROUP: PolynomialGroupLayout = PolynomialGroupLayout::new(39, 1);
 
 fn trusted_advice_grouped_key(dense: &ValidatedScheduleCatalog) -> AkitaScheduleLookupKey {
-    let trusted_profile = dense_precommit_profile(dense, TRUSTED_ADVICE_GROUP)
+    let trusted_profile = dense_group_profile(dense, TRUSTED_ADVICE_GROUP)
         .expect("trusted advice standalone row must resolve");
     AkitaScheduleLookupKey {
         final_group: TRUSTED_ADVICE_K256_FINAL_GROUP,
@@ -145,7 +145,7 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let key = trusted_advice_grouped_key(&dense);
     assert!(base.resolve_key(&key).is_err());
 
-    let rows = jolt_akita::schedule_registry::provision_precommitted_for_k(
+    let rows = jolt_akita::schedule_registry::provision_groups_for_k(
         &dense,
         &full_dense_catalog(),
         &base,
@@ -179,13 +179,13 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
 fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
     let dense = dense_catalog();
     let base = one_hot_catalog(AKITA_ONE_HOT_K16);
-    let precommit = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
-        .expect("trusted advice profile");
+    let precommit =
+        dense_group_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP).expect("trusted advice profile");
     for final_num_vars in [
         RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES - 1,
         RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES,
     ] {
-        let rows = jolt_akita::schedule_registry::provision_precommitted_for_k(
+        let rows = jolt_akita::schedule_registry::provision_groups_for_k(
             &dense,
             &full_dense_catalog(),
             &base,
@@ -215,7 +215,7 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
     let dense = dense_catalog();
     let base = one_hot_catalog(AKITA_ONE_HOT_K256);
     let key = trusted_advice_grouped_key(&dense);
-    let rows = jolt_akita::schedule_registry::provision_precommitted_for_k(
+    let rows = jolt_akita::schedule_registry::provision_groups_for_k(
         &dense,
         &full_dense_catalog(),
         &base,
@@ -256,8 +256,8 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
         .rows()
         .all(|row| row.profiles().precommitteds.is_empty()));
 
-    let trusted_profile = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
-        .expect("fixture dense profile");
+    let trusted_profile =
+        dense_group_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP).expect("fixture dense profile");
     for precommitteds in [
         vec![trusted_profile],
         vec![trusted_profile, trusted_profile],
@@ -276,7 +276,7 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
 fn grouped_provisioning_rejects_out_of_family_final_arity() {
     let dense = dense_catalog();
     let base = one_hot_catalog(AKITA_ONE_HOT_K16);
-    let error = jolt_akita::schedule_registry::provision_precommitted_for_k(
+    let error = jolt_akita::schedule_registry::provision_groups_for_k(
         &dense,
         &full_dense_catalog(),
         &base,
@@ -360,11 +360,11 @@ mod field_inc {
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::{
-        dense_precommit_profile, extend_catalog, provision_precommitted_for_k,
-        FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+        dense_group_profile, extend_catalog, provision_groups_for_k, FIXTURE_K16_FINAL_NUM_VARS,
+        FIXTURE_TRUSTED_ADVICE_GROUP,
     };
     use jolt_akita::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
-    use jolt_akita::{DensePrecommitLayout, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+    use jolt_akita::{DenseGroupLayout, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
     use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
     use jolt_claims::protocols::jolt::lattice::packing::one_hot_trace_column_capacity;
 
@@ -392,13 +392,13 @@ mod field_inc {
         let reachable_min = (overhead + PROVER_MIN_LOG_T).max(declared_min);
         for final_num_vars in reachable_min..=ceiling {
             let layout = FieldIncLayout::new(final_num_vars - overhead);
-            let rows = provision_precommitted_for_k(
+            let rows = provision_groups_for_k(
                 &dense,
                 &full_dense,
                 &base,
                 None,
                 None,
-                &[DensePrecommitLayout::FullWidth { num_vars: layout.num_vars() }],
+                &[DenseGroupLayout::FullWidth { num_vars: layout.num_vars() }],
                 one_hot_k,
                 final_num_vars,
             )
@@ -414,7 +414,7 @@ mod field_inc {
             );
             let key = AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(final_num_vars, 1),
-                precommitteds: vec![dense_precommit_profile(
+                precommitteds: vec![dense_group_profile(
                     &full_dense,
                     PolynomialGroupLayout::new(layout.num_vars(), 1),
                 )
@@ -449,21 +449,21 @@ mod field_inc {
 
     #[test]
     fn full_width_replanning_is_limited_to_one_inc_and_two_advice_groups() {
-        let full = DensePrecommitLayout::FullWidth { num_vars: 30 };
+        let full = DenseGroupLayout::FullWidth { num_vars: 30 };
         let dense = dense_catalog();
         let full_dense = full_dense_catalog();
         let base = one_hot_catalog(AKITA_ONE_HOT_K256);
         for layouts in [
             vec![
-                DensePrecommitLayout::Bounded { num_vars: 14 },
-                DensePrecommitLayout::Bounded { num_vars: 15 },
-                DensePrecommitLayout::Bounded { num_vars: 16 },
+                DenseGroupLayout::Bounded { num_vars: 14 },
+                DenseGroupLayout::Bounded { num_vars: 15 },
+                DenseGroupLayout::Bounded { num_vars: 16 },
                 full,
             ],
             vec![full, full],
         ] {
             assert!(
-                provision_precommitted_for_k(
+                provision_groups_for_k(
                     &dense,
                     &full_dense,
                     &base,
@@ -487,13 +487,13 @@ mod field_inc {
         let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.1;
         let layout = FieldIncLayout::new(final_num_vars - trace_arity_overhead(AKITA_ONE_HOT_K16));
         let trusted = FIXTURE_TRUSTED_ADVICE_GROUP.num_vars();
-        let rows = provision_precommitted_for_k(
+        let rows = provision_groups_for_k(
             &dense,
             &full_dense,
             &base,
             Some(trusted + 1),
             Some(trusted),
-            &[DensePrecommitLayout::FullWidth {
+            &[DenseGroupLayout::FullWidth {
                 num_vars: layout.num_vars(),
             }],
             AKITA_ONE_HOT_K16,
@@ -501,7 +501,7 @@ mod field_inc {
         )
         .expect("provisioning with field-inline must plan every combination");
         assert_eq!(rows.rows().len(), 4);
-        let inc = dense_precommit_profile(
+        let inc = dense_group_profile(
             &full_dense,
             PolynomialGroupLayout::new(layout.num_vars(), 1),
         )
@@ -513,7 +513,7 @@ mod field_inc {
             extend_catalog::<JoltOneHotK16>(&base, &rows).expect("freeze grouped catalog");
         for num_vars in [trusted, trusted + 1] {
             let widened_advice =
-                dense_precommit_profile(&full_dense, PolynomialGroupLayout::new(num_vars, 1))
+                dense_group_profile(&full_dense, PolynomialGroupLayout::new(num_vars, 1))
                     .expect("full-width advice-shaped profile");
             assert!(catalog
                 .resolve_key(&AkitaScheduleLookupKey {

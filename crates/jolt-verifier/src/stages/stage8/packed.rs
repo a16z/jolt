@@ -1,8 +1,8 @@
 //! The Akita final opening.
 //!
 //! `OneHotTrace` prefix-packs its semantic columns into one physical
-//! polynomial. Advice and direct committed-program objects join it as
-//! precommitted Akita groups and are discharged by one joint opening.
+//! polynomial. Advice, field increments, and direct committed-program objects
+//! join it as auxiliary Akita groups and are discharged by one joint opening.
 
 use std::collections::BTreeMap;
 
@@ -15,7 +15,9 @@ use jolt_claims::protocols::jolt::lattice::strategy::{
 };
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig};
 use jolt_field::JoltField;
-use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, PrecommittedClaim};
+use jolt_openings::{
+    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
+};
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
@@ -28,7 +30,7 @@ use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetad
 use crate::stages::PrecommittedSchedule;
 use crate::VerifierError;
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::lattice::{field_inc_precommitted_role, FieldIncLayout};
+use jolt_claims::protocols::field_inline::lattice::{field_inc_group_role, FieldIncLayout};
 
 fn batch_failed(reason: impl ToString) -> VerifierError {
     VerifierError::FinalOpeningBatchFailed {
@@ -90,45 +92,45 @@ where
 }
 
 /// Validate the layout identity and shape of an independently committed object.
-fn validate_precommitted_commitment_metadata<C>(
+fn validate_group_commitment_metadata<C>(
     commitment: &C,
     layout_digest: [u8; 32],
-    packed_num_vars: usize,
+    num_vars: usize,
 ) -> Result<(), VerifierError>
 where
     C: OneHotTraceCommitmentMetadata,
 {
     if commitment.is_one_hot_backend() {
         return Err(batch_failed(
-            "precommitted prefix-packed commitments must use Akita's dense backend",
+            "auxiliary commitments must use Akita's dense backend",
         ));
     }
     if commitment.layout_digest() != layout_digest {
         return Err(batch_failed(
-            "precommitted commitment has a noncanonical layout digest",
+            "auxiliary commitment has a noncanonical layout digest",
         ));
     }
-    if commitment.num_vars() != packed_num_vars {
+    if commitment.num_vars() != num_vars {
         return Err(batch_failed(format!(
-            "precommitted commitment arity must equal canonical packed arity {packed_num_vars}"
+            "auxiliary commitment arity must equal canonical arity {num_vars}"
         )));
     }
     if commitment.poly_count() != 1 {
         return Err(batch_failed(
-            "precommitted prefix-packed objects must contain one physical polynomial",
+            "auxiliary groups must contain one physical polynomial",
         ));
     }
     Ok(())
 }
 
-fn validate_precommitted_metadata<C>(
+fn validate_packed_object_metadata<C>(
     commitment: &C,
     plan: &PrefixPackedObjectPlan,
 ) -> Result<(), VerifierError>
 where
     C: OneHotTraceCommitmentMetadata,
 {
-    validate_precommitted_commitment_metadata(
+    validate_group_commitment_metadata(
         commitment,
         plan.layout_digest(),
         plan.packing().packed_num_vars(),
@@ -189,15 +191,15 @@ fn advice_object<'a, PCS: CommitmentScheme>(
 pub fn field_inc_claim<F: JoltField, C: Clone>(
     commitment: &C,
     stage6b: &Stage6bClearOutput<F>,
-) -> Result<PrecommittedClaim<F, C>, VerifierError> {
+) -> Result<TaggedGroupOpeningClaim<F, C>, VerifierError> {
     let cycle_point = stage6b.output_points.field_registers_inc_opening_point();
     let point = FieldIncLayout::new(cycle_point.len())
         .opening_point(cycle_point)
         .map_err(|error| VerifierError::FinalOpeningBatchFailed {
             reason: error.to_string(),
         })?;
-    Ok(PrecommittedClaim::new(
-        field_inc_precommitted_role(),
+    Ok(TaggedGroupOpeningClaim::new(
+        field_inc_group_role(),
         GroupOpeningClaim::new(
             commitment.clone(),
             point,
@@ -237,7 +239,7 @@ where
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
     T: Transcript<Challenge = PCS::Field>,
 {
-    // Precommitted objects precede the OneHotTrace group in canonical role order: advice,
+    // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
     // committed-program objects. Optional objects join exactly when their direct final
     // reductions exist; presence must agree with the proof/preprocessing commitment slots.
@@ -282,13 +284,13 @@ where
     )?;
 
     let untrusted_claim = if let Some(object) = untrusted.as_ref() {
-        validate_precommitted_metadata(object.commitment, &object.plan)?;
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
         Some(reduce_object(object, &leaves, transcript)?)
     } else {
         None
     };
     let trusted_claim = if let Some(object) = trusted.as_ref() {
-        validate_precommitted_metadata(object.commitment, &object.plan)?;
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
         Some(reduce_object(object, &leaves, transcript)?)
     } else {
         None
@@ -318,15 +320,15 @@ where
 
     let capacity = 2usize
         .checked_add(plans.len())
-        .ok_or_else(|| batch_failed("precommitted group capacity overflows"))?;
-    let mut precommitted = Vec::with_capacity(capacity);
+        .ok_or_else(|| batch_failed("auxiliary group capacity overflows"))?;
+    let mut auxiliary_groups = Vec::with_capacity(capacity);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),
         (trusted.as_ref(), trusted_claim.as_ref()),
     ] {
         if let (Some(object), Some(claim)) = (object, claim) {
-            precommitted.push(PrecommittedClaim::new(
-                object.plan.precommitted_role(),
+            auxiliary_groups.push(TaggedGroupOpeningClaim::new(
+                object.plan.group_role(),
                 GroupOpeningClaim::new(
                     (*object.commitment).clone(),
                     claim.point.as_slice().to_vec(),
@@ -341,21 +343,17 @@ where
             field: "field_inc_commitment",
         })?;
         let layout = FieldIncLayout::new(formula_dimensions.trace.log_t());
-        validate_precommitted_commitment_metadata(
-            commitment,
-            layout.layout_digest(),
-            layout.num_vars(),
-        )?;
-        precommitted.push(field_inc_claim(commitment, stage6b)?);
+        validate_group_commitment_metadata(commitment, layout.layout_digest(), layout.num_vars())?;
+        auxiliary_groups.push(field_inc_claim(commitment, stage6b)?);
     }
 
     if let Some(committed) = committed {
         for (plan, commitment) in plans.into_iter().zip(&committed.direct_program_commitments) {
             let object: ResolvedObject<'_, PCS> = ResolvedObject { plan, commitment };
-            validate_precommitted_metadata(object.commitment, &object.plan)?;
+            validate_packed_object_metadata(object.commitment, &object.plan)?;
             let physical = reduce_object(&object, &leaves, transcript)?;
-            precommitted.push(PrecommittedClaim::new(
-                object.plan.precommitted_role(),
+            auxiliary_groups.push(TaggedGroupOpeningClaim::new(
+                object.plan.group_role(),
                 GroupOpeningClaim::new(
                     (*object.commitment).clone(),
                     physical.point.as_slice().to_vec(),
@@ -372,7 +370,7 @@ where
     );
     PCS::verify_batch(
         &preprocessing.pcs_setup,
-        &precommitted,
+        &auxiliary_groups,
         &main_group,
         proof,
         transcript,
