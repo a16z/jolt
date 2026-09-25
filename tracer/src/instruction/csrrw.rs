@@ -14,6 +14,8 @@
 //! The `csrw csr, rs` pseudo-instruction is `csrrw x0, csr, rs` (rd=0, discard old value).
 //! The full `csrrw rd, csr, rs` swaps rd ← old_CSR, CSR ← rs.
 
+use crate::instruction::registers::i::RegisterStateI;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -25,6 +27,7 @@ declare_riscv_instr!(
     mask   = 0x0000707f,  // Match opcode (7 bits) + funct3 (3 bits)
     match  = 0x00001073,  // opcode=1110011, funct3=001
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 

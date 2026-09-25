@@ -1,23 +1,24 @@
-use jolt_program::field_inline::{
-    FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
-};
 use jolt_riscv::FieldInlineOp;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::Cpu,
-    instruction::{format::format_field_inline::FormatFieldInline, RISCVInstruction, RISCVTrace},
+    instruction::{
+        format::format_field_inline::FormatFieldInline,
+        registers::field_inline::RegisterStateFieldInline, RAMRead, RISCVInstruction, RISCVTrace,
+    },
 };
 
-use super::{accumulate_word, FieldInlineCycleData, ProofField};
+use super::{accumulate_word, ProofField};
 
 declare_riscv_instr!(
     name   = FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
     mask   = FieldInlineOp::LoadAccumulateFromMemory.instruction_mask(),
     match  = FieldInlineOp::LoadAccumulateFromMemory.instruction_match(),
     format = FormatFieldInline,
-    ram    = FieldInlineCycleData
+    registers = RegisterStateFieldInline,
+    ram    = RAMRead
 );
 
 impl FIELD_LOAD_ACCUMULATE_FROM_MEMORY {
@@ -45,28 +46,7 @@ impl FIELD_LOAD_ACCUMULATE_FROM_MEMORY {
         let pre_value = cpu.field_registers.read(field_register);
         let value = accumulate_word::<ProofField>(pre_value, word);
         cpu.field_registers.write(field_register, value);
-        *ram_access = FieldInlineCycleData {
-            trace: Some(FieldInlineTraceData {
-                op: Some(FieldInlineOp::LoadAccumulateFromMemory),
-                rs1: Some(FieldRegisterRead {
-                    register: field_register,
-                    value: pre_value,
-                }),
-                rd: Some(FieldRegisterWrite {
-                    register: field_register,
-                    pre_value,
-                    post_value: value,
-                }),
-                bridge: Some(FieldInlineBridge::LoadAccumulateFromMemory {
-                    x_base,
-                    x_register,
-                    word,
-                    field_value: value,
-                }),
-                ..Default::default()
-            }),
-            ram_read: Some(ram_read),
-        };
+        *ram_access = ram_read;
     }
 }
 

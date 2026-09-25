@@ -1,7 +1,7 @@
 use jolt_riscv::{JoltCycle, JoltInstructionRowData};
 
 use crate::instruction::{
-    format::InstructionRegisterState, RAMAccess, RISCVCycle, RISCVInstruction,
+    registers::InstructionRegisterState, RAMAccess, RISCVCycle, RISCVInstruction,
 };
 
 impl<T: RISCVInstruction + JoltInstructionRowData> JoltCycle for RISCVCycle<T> {

@@ -338,14 +338,6 @@ impl FieldInlineOperandShape {
             | FieldInlineOp::AdviceLimb => false,
         }
     }
-
-    pub const fn requires_product_payload(self) -> bool {
-        matches!(self.op, FieldInlineOp::Mul)
-    }
-
-    pub const fn requires_inverse_product_payload(self) -> bool {
-        matches!(self.op, FieldInlineOp::Inv)
-    }
 }
 
 pub const fn is_field_inline_source(kind: crate::SourceInstructionKind) -> bool {

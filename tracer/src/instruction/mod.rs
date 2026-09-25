@@ -180,14 +180,18 @@ use self::inline::INLINE;
 use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
-use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
+use format::{InstructionFormat, NormalizedOperands};
+#[cfg(feature = "field-inline")]
+use jolt_program::field_inline::FieldInlineTraceData;
 pub use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{JoltInstructionKind, SourceInlineKey, SourceInstructionKind, RV64IMAC_JOLT};
 pub use jolt_riscv::{SourceInstruction, SourceInstructionRow};
 #[cfg(any(feature = "test-utils", test))]
 use rand::rngs::StdRng;
+use registers::{InstructionRegisterState, RegisterSnapshot};
 
 pub mod format;
+pub mod registers;
 
 pub use crate::utils::instruction_macros;
 
@@ -435,6 +439,7 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
     const MATCH: u32;
 
     type Format: InstructionFormat;
+    type RegisterState: RegisterSnapshot<Self> + PartialEq;
     type RAMAccess: Default + Into<RAMAccess> + Copy + std::fmt::Debug;
 
     fn operands(&self) -> &Self::Format;
@@ -451,11 +456,10 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
         let instruction = Self::random(rng);
         let concrete: Instruction = instruction.into();
         let source_instruction = concrete.source_instruction();
-        let register_state =
-            <<Self::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
-                rng,
-                &source_instruction.row().operands,
-            );
+        let register_state = <Self::RegisterState as InstructionRegisterState>::random(
+            rng,
+            &source_instruction.row().operands,
+        );
         RISCVCycle {
             instruction,
             register_state,
@@ -479,23 +483,27 @@ where
     RISCVCycle<Self>: Into<Cycle>,
 {
     fn trace(&self, cpu: &mut Cpu, trace: Option<&mut Vec<Cycle>>) {
-        let mut cycle: RISCVCycle<Self> = RISCVCycle {
-            instruction: *self,
-            register_state: Default::default(),
-            ram_access: Default::default(),
-        };
-        self.operands()
-            .capture_pre_execution_state(&mut cycle.register_state, cpu);
-        self.execute(cpu, &mut cycle.ram_access);
-        self.operands()
-            .capture_post_execution_state(&mut cycle.register_state, cpu);
+        let mut ram_access = Self::RAMAccess::default();
         match trace {
-            Some(trace_vec) => trace_vec.push(cycle.into()),
-            // This is the single point every emitted row passes through, so
-            // counting row-suppressed executions here makes `trace_len`
-            // row-uniform across trace and execute modes (two-pass parallel
-            // tracing cuts chunks by row count during the execute pass).
-            None => cpu.trace_len += 1,
+            Some(trace_vec) => {
+                let before = Self::RegisterState::capture_pre(self, cpu);
+                self.execute(cpu, &mut ram_access);
+                let register_state = Self::RegisterState::capture_post(self, before, cpu);
+                trace_vec.push(
+                    RISCVCycle {
+                        instruction: *self,
+                        register_state,
+                        ram_access,
+                    }
+                    .into(),
+                );
+            }
+            None => {
+                self.execute(cpu, &mut ram_access);
+                // Execute and trace modes walk the same expanded rows; only
+                // register observation is skipped when no trace is requested.
+                cpu.trace_len += 1;
+            }
         }
     }
 }
@@ -645,17 +653,12 @@ macro_rules! define_rv64imac_enums {
             #[cfg(feature = "field-inline")]
             pub fn field_inline_trace(&self) -> Option<jolt_program::field_inline::FieldInlineTraceData> {
                 match self {
-                    Cycle::FIELD_ADD(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_SUB(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_MUL(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_INV(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_ASSERT_EQ(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_ASSERT_ZERO(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_ADVICE_LIMB(cycle) => cycle.ram_access.trace,
-                    _ => None,
+                    Cycle::NoOp => None,
+                    $(
+                        $(#[$meta])*
+                        Cycle::$instr(cycle) => cycle.field_inline_trace(),
+                    )*
+                    Cycle::INLINE(cycle) => cycle.field_inline_trace(),
                 }
             }
 
@@ -2019,11 +2022,16 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RISCVCycle<T: RISCVInstruction> {
     pub instruction: T,
-    pub register_state: <T::Format as InstructionFormat>::RegisterState,
+    pub register_state: T::RegisterState,
     pub ram_access: T::RAMAccess,
 }
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_trace(&self) -> Option<FieldInlineTraceData> {
+        T::RegisterState::field_inline_trace(&self.instruction, &self.register_state)
+    }
+
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut StdRng) -> Self {
         T::random_cycle(rng)
@@ -2127,7 +2135,6 @@ mod tests {
             mul_trace.rd.unwrap().post_value,
             FieldEncodedValue::from_u64(21)
         );
-        assert_eq!(mul_trace.product, Some(FieldEncodedValue::from_u64(21)));
 
         let advice_cycle = trace_one(
             &mut cpu,
@@ -2197,6 +2204,75 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
+    fn field_inline_arithmetic_snapshots_preserve_aliased_sources() {
+        for (op, input, expected) in [
+            (FieldInlineOp::Add, 3, 6),
+            (FieldInlineOp::Sub, 3, 0),
+            (FieldInlineOp::Mul, 3, 9),
+            (FieldInlineOp::Inv, 1, 1),
+        ] {
+            let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+            let input = FieldEncodedValue::from_u64(input);
+            cpu.field_registers.write(2, input);
+            let rs2 = if op == FieldInlineOp::Inv { 0 } else { 2 };
+            let cycle = trace_one(&mut cpu, field_inline_word(op, 2, 2, rs2));
+            let state = cycle.field_inline_trace().unwrap();
+            assert_eq!(state.rs1.unwrap().value, input);
+            if op != FieldInlineOp::Inv {
+                assert_eq!(state.rs2.unwrap().value, input);
+            }
+            let write = state.rd.unwrap();
+            assert_eq!(write.pre_value, input);
+            assert_eq!(write.post_value, FieldEncodedValue::from_u64(expected));
+            assert!(matches!(cycle.ram_access(), RAMAccess::NoOp));
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_memory_base_can_alias_destination_in_both_execution_modes() {
+        for record_trace in [false, true] {
+            let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+            cpu.get_mut_mmu().init_memory(16);
+            cpu.get_mut_mmu()
+                .store_doubleword(DRAM_BASE + 8, 9)
+                .unwrap();
+            cpu.write_register(10, DRAM_BASE as i64);
+            cpu.field_registers.write(2, FieldEncodedValue::from_u64(3));
+            let word =
+                field_inline_word(FieldInlineOp::LoadAccumulateFromMemory, 10, 10, 2) | (1 << 25);
+            let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
+            let mut expected = FieldEncodedValue::from_u64(9);
+            expected.bytes_le[8] = 3;
+            if record_trace {
+                let mut trace = Vec::new();
+                instruction.trace(&mut cpu, Some(&mut trace));
+                assert_eq!(trace.len(), 1);
+                let cycle = trace[0];
+                assert_eq!(cycle.rs1_read(), Some((10, DRAM_BASE)));
+                assert_eq!(cycle.rd_write(), Some((10, DRAM_BASE, 9)));
+                match cycle.ram_access() {
+                    RAMAccess::Read(read) => {
+                        assert_eq!(read.address, DRAM_BASE + 8);
+                        assert_eq!(read.value, 9);
+                    }
+                    _ => panic!("memory ingress must record its load"),
+                }
+                let state = cycle.field_inline_trace().unwrap();
+                assert_eq!(state.rs1.unwrap().value, FieldEncodedValue::from_u64(3));
+                assert_eq!(state.rd.unwrap().pre_value, FieldEncodedValue::from_u64(3));
+                assert_eq!(state.rd.unwrap().post_value, expected);
+            } else {
+                instruction.execute(&mut cpu);
+                assert_eq!(cpu.trace_len, 1);
+            }
+            assert_eq!(cpu.read_register(10), 9);
+            assert_eq!(cpu.field_registers.read(2), expected);
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
     #[should_panic(expected = "FIELD_INV of zero")]
     fn field_inline_inverse_of_zero_traps_at_trace_time() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
@@ -2251,7 +2327,6 @@ mod tests {
         let instruction = FIELD_LOAD_IMM {
             address: 0x8000_0000,
             operands: FormatFieldInline {
-                op: Some(FieldInlineOp::LoadImm),
                 rd: Some(1),
                 rs1: None,
                 rs2: None,
@@ -2300,7 +2375,7 @@ mod tests {
         #[cfg(not(feature = "field-inline"))]
         let expected = 96;
         #[cfg(feature = "field-inline")]
-        let expected = 400;
+        let expected = 272;
         assert_eq!(
             size, expected,
             "Cycle size should be {expected} bytes, but is {size} bytes"

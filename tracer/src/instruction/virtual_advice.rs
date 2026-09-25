@@ -1,3 +1,4 @@
+use crate::instruction::registers::j::RegisterStateJ;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -28,6 +29,7 @@ impl RISCVInstruction for VirtualAdvice {
     const MATCH: u32 = 0; // Virtual
 
     type Format = FormatJ;
+    type RegisterState = RegisterStateJ;
     type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {

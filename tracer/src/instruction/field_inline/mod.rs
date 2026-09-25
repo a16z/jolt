@@ -30,36 +30,10 @@ use jolt_field::Fr;
 #[cfg(feature = "fp128-field-inline")]
 use jolt_field::Prime128OffsetA7F7;
 use jolt_field::{CanonicalEncoding, Field};
-use jolt_program::field_inline::{
-    FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
-};
-use jolt_riscv::FieldInlineOp;
-use serde::{Deserialize, Serialize};
+use jolt_program::field_inline::FieldEncodedValue;
 
-use super::{format::format_field_inline::FormatFieldInline, RAMAccess, RAMRead};
+use super::format::format_field_inline::FormatFieldInline;
 use crate::emulator::cpu::Cpu;
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct FieldInlineCycleData {
-    pub trace: Option<FieldInlineTraceData>,
-    /// The word read by a memory-sourced load; `None` for every other op.
-    pub ram_read: Option<RAMRead>,
-}
-
-impl From<FieldInlineCycleData> for RAMAccess {
-    fn from(value: FieldInlineCycleData) -> Self {
-        value.ram_read.map_or(Self::NoOp, Self::Read)
-    }
-}
-
-impl From<FieldInlineTraceData> for FieldInlineCycleData {
-    fn from(trace: FieldInlineTraceData) -> Self {
-        Self {
-            trace: Some(trace),
-            ram_read: None,
-        }
-    }
-}
 
 // The tracer and FieldValueEncoding::ACTIVE select the same proof field:
 // fp128 for Akita builds, BN254 Fr for Dory builds.
@@ -69,36 +43,17 @@ type ProofField = Fr;
 type ProofField = Prime128OffsetA7F7;
 
 fn execute_binary<F: CanonicalEncoding>(
-    op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
     f: impl FnOnce(F, F) -> F,
-) -> FieldInlineTraceData {
+) {
     let rs1_register = operands.rs1.unwrap_or(0);
     let rs2_register = operands.rs2.unwrap_or(0);
     let rd_register = operands.rd.unwrap_or(0);
     let rs1_value = cpu.field_registers.read(rs1_register);
     let rs2_value = cpu.field_registers.read(rs2_register);
-    let pre_value = cpu.field_registers.read(rd_register);
     let post_value = encode_field(f(decode_field(rs1_value), decode_field(rs2_value)));
     cpu.field_registers.write(rd_register, post_value);
-    FieldInlineTraceData {
-        op: Some(op),
-        rs1: Some(FieldRegisterRead {
-            register: rs1_register,
-            value: rs1_value,
-        }),
-        rs2: Some(FieldRegisterRead {
-            register: rs2_register,
-            value: rs2_value,
-        }),
-        rd: Some(FieldRegisterWrite {
-            register: rd_register,
-            pre_value,
-            post_value,
-        }),
-        ..Default::default()
-    }
 }
 
 fn accumulate_word<F: Field + CanonicalEncoding>(

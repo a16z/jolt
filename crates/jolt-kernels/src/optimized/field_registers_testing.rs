@@ -139,8 +139,7 @@ impl FieldRegisterTraceFixture {
     }
 
     /// One field-inline arithmetic row (`Add`/`Sub`/`Mul`): reads both operands off the
-    /// running state, writes a fresh pseudo-random destination value plus the
-    /// op-required product payload.
+    /// running state and writes a fresh pseudo-random destination value.
     pub(crate) fn arithmetic(&mut self, op: FieldInlineOp, rd: u8, rs1: u8, rs2: u8) {
         let kind = match op {
             FieldInlineOp::Add => JoltInstructionKind::FIELD_ADD,
@@ -149,8 +148,6 @@ impl FieldRegisterTraceFixture {
             _ => panic!("arithmetic fixture rows are Add/Sub/Mul only"),
         };
         let instruction = self.instruction(kind, Some(rd), Some(rs1), Some(rs2), 0);
-        let product = (op == FieldInlineOp::Mul)
-            .then(|| encode(self.state[usize::from(rs1)] * self.state[usize::from(rs2)]));
         let rs1 = self.read(rs1);
         let rs2 = self.read(rs2);
         let post = self.fresh_value();
@@ -162,7 +159,6 @@ impl FieldRegisterTraceFixture {
                 rs1: Some(rs1),
                 rs2: Some(rs2),
                 rd: Some(rd),
-                product,
                 ..FieldInlineTraceData::default()
             },
         ));
@@ -193,7 +189,6 @@ impl FieldRegisterTraceFixture {
         let instruction =
             self.instruction(JoltInstructionKind::FIELD_INV, Some(rd), Some(rs1), None, 0);
         let post = self.fresh_value();
-        let inv_product = encode(self.state[usize::from(rs1)] * post);
         let rs1 = self.read(rs1);
         let rd = self.write(rd, post);
         self.rows.push(field_row(
@@ -202,7 +197,6 @@ impl FieldRegisterTraceFixture {
                 op: Some(FieldInlineOp::Inv),
                 rs1: Some(rs1),
                 rd: Some(rd),
-                inv_product: Some(inv_product),
                 ..FieldInlineTraceData::default()
             },
         ));

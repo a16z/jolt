@@ -190,7 +190,6 @@ fn public_fixture() -> (Vec<JoltInstructionRow>, Vec<TraceRow>) {
                 pre_value: enc(0),
                 post_value: enc(221),
             }),
-            product: Some(enc(221)),
             ..FieldInlineTraceData::default()
         },
     );

@@ -381,8 +381,6 @@ pub struct FieldInlineTraceData {
     pub rs1: Option<FieldRegisterRead>,
     pub rs2: Option<FieldRegisterRead>,
     pub rd: Option<FieldRegisterWrite>,
-    pub product: Option<FieldEncodedValue>,
-    pub inv_product: Option<FieldEncodedValue>,
     pub bridge: Option<FieldInlineBridge>,
 }
 

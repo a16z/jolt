@@ -1,3 +1,4 @@
+use crate::instruction::registers::j::RegisterStateJ;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -11,6 +12,7 @@ declare_riscv_instr!(
     mask   = 0x0000_007f,
     match  = 0x0000_006f,
     format = FormatJ,
+    registers = RegisterStateJ,
     ram    = ()
 );
 

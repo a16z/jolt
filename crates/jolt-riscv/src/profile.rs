@@ -399,7 +399,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn field_inline_operand_shapes_match_bridge_and_product_roles() {
+    fn field_inline_operand_shapes_separate_field_and_integer_registers() {
         let operands = NormalizedOperands {
             rs1: Some(6),
             rs2: Some(7),
@@ -410,7 +410,6 @@ mod tests {
         assert!(mul.reads_field_rs1);
         assert!(mul.reads_field_rs2);
         assert!(mul.writes_field_rd);
-        assert!(mul.requires_product_payload());
         assert!(mul.is_pure_field_op());
         assert_eq!(mul.x_operands(operands), NormalizedOperands::default());
 

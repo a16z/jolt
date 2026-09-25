@@ -1,10 +1,7 @@
-use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{InstructionFormat, NormalizedOperands};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatVirtualRightShiftR<const MASK_WIDTH: usize = 64> {
@@ -23,82 +20,9 @@ impl<const MASK_WIDTH: usize> Default for FormatVirtualRightShiftR<MASK_WIDTH> {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RegisterStateVirtualRightShift<const MASK_WIDTH: usize = 64> {
-    pub rd: (u64, u64), // (old_value, new_value)
-    pub rs1: u64,
-    pub rs2: u64,
-}
-
-impl<const MASK_WIDTH: usize> InstructionRegisterState
-    for RegisterStateVirtualRightShift<MASK_WIDTH>
-{
-    #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
-        use rand::RngCore;
-        let rs1_value = if operands.rs1.unwrap() == 0 {
-            0
-        } else {
-            rng.next_u64()
-        };
-
-        assert!((1..=64).contains(&MASK_WIDTH));
-        let shift = rng.next_u64() % MASK_WIDTH as u64;
-
-        debug_assert_ne!(
-            operands.rs2.unwrap(),
-            0,
-            "rs2 cannot be 0 in VirtualRightShift instruction"
-        );
-        debug_assert_ne!(
-            operands.rs2, operands.rs1,
-            "rs2 cannot equal rs1 in VirtualRightShift instruction"
-        );
-
-        let rs2_value = ((1u128 << MASK_WIDTH) - (1u128 << shift)) as u64;
-
-        Self {
-            rd: (
-                match operands.rd {
-                    _ if operands.rd == operands.rs1 => rs1_value,
-                    _ if operands.rd == operands.rs2 => rs2_value,
-                    _ => rng.next_u64(),
-                },
-                rng.next_u64(),
-            ),
-            rs1: rs1_value,
-            rs2: rs2_value,
-        }
-    }
-
-    fn rs1_value(&self) -> Option<u64> {
-        Some(self.rs1)
-    }
-
-    fn rs2_value(&self) -> Option<u64> {
-        Some(self.rs2)
-    }
-
-    fn rd_values(&self) -> Option<(u64, u64)> {
-        Some(self.rd)
-    }
-}
-
 impl<const MASK_WIDTH: usize> InstructionFormat for FormatVirtualRightShiftR<MASK_WIDTH> {
-    type RegisterState = RegisterStateVirtualRightShift<MASK_WIDTH>;
-
     fn parse(_: u32) -> Self {
         unimplemented!("virtual instruction")
-    }
-
-    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu, self.rs1 as usize);
-        state.rs2 = normalize_register_value(cpu, self.rs2 as usize);
-        state.rd.0 = normalize_register_value(cpu, self.rd as usize);
-    }
-
-    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu, self.rd as usize);
     }
 
     #[cfg(any(feature = "test-utils", test))]

@@ -1,3 +1,4 @@
+use crate::instruction::registers::advice_load_i::RegisterStateAdviceLoadI;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -13,6 +14,7 @@ declare_riscv_instr!(
     mask   = 0,
     match  = 0,
     format = FormatAdviceLoadI,
+    registers = RegisterStateAdviceLoadI,
     ram    = ()
 );
 

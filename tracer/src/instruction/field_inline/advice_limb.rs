@@ -1,20 +1,20 @@
-use jolt_program::field_inline::{
-    FieldEncodedValue, FieldInlineBridge, FieldInlineTraceData, FieldRegisterRead,
-    FieldRegisterWrite,
-};
+use jolt_program::field_inline::FieldEncodedValue;
 use jolt_riscv::FieldInlineOp;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::Cpu,
-    instruction::{format::format_field_inline::FormatFieldInline, RISCVInstruction, RISCVTrace},
+    instruction::{
+        format::format_field_inline::FormatFieldInline,
+        registers::field_inline::RegisterStateFieldInline, RISCVInstruction, RISCVTrace,
+    },
 };
 
-use super::{decode_field, encode_field, FieldInlineCycleData, ProofField};
+use super::{decode_field, encode_field, ProofField};
 
 #[cfg(any(feature = "test-utils", test))]
-use crate::instruction::RISCVCycle;
+use crate::instruction::{Cycle, RISCVCycle};
 #[cfg(any(feature = "test-utils", test))]
 use rand::rngs::StdRng;
 
@@ -23,11 +23,12 @@ declare_riscv_instr!(
     mask   = FieldInlineOp::AdviceLimb.instruction_mask(),
     match  = FieldInlineOp::AdviceLimb.instruction_match(),
     format = FormatFieldInline,
-    ram    = FieldInlineCycleData,
+    registers = RegisterStateFieldInline,
+    ram    = (),
     {
         #[cfg(any(feature = "test-utils", test))]
         fn random_cycle(rng: &mut StdRng) -> RISCVCycle<Self> {
-            use crate::instruction::format::format_field_inline::RegisterStateFormatFieldInline;
+            use crate::emulator::terminal::DummyTerminal;
             use common::constants::RISCV_REGISTER_COUNT;
             use jolt_field::Field;
             use jolt_riscv::FIELD_REGISTER_COUNT;
@@ -35,59 +36,29 @@ declare_riscv_instr!(
 
             let x_register = rng.gen_range(1..RISCV_REGISTER_COUNT);
             let field_register = rng.gen_range(0..FIELD_REGISTER_COUNT);
-            let field_value = encode_field(ProofField::random(rng));
-            let mut low = [0u8; 8];
-            low.copy_from_slice(&field_value.bytes_le[..8]);
-            let x_value = u64::from_le_bytes(low);
             let quotient_register = rng.gen_range(0..FIELD_REGISTER_COUNT);
-            let pre_value = if quotient_register == field_register {
-                field_value
-            } else {
-                encode_field(ProofField::random(rng))
-            };
-            let mut quotient = FieldEncodedValue::zero();
-            quotient.bytes_le[..FieldEncodedValue::BYTE_LEN as usize - 8]
-                .copy_from_slice(&field_value.bytes_le[8..]);
             let word = Self::MATCH
                 | (u32::from(x_register) << 7)
                 | (u32::from(field_register) << 15)
                 | (u32::from(quotient_register) << 20);
-            RISCVCycle {
-                instruction: Self::new(word, rng.next_u64() & !3, false, false),
-                register_state: RegisterStateFormatFieldInline {
-                    rs1: None,
-                    rd_pre: Some(!x_value),
-                    rd_post: Some(x_value),
-                },
-                ram_access: FieldInlineTraceData {
-                    op: Some(FieldInlineOp::AdviceLimb),
-                    rs1: Some(FieldRegisterRead {
-                        register: field_register,
-                        value: field_value,
-                    }),
-                    rd: Some(FieldRegisterWrite {
-                        register: quotient_register,
-                        pre_value,
-                        post_value: quotient,
-                    }),
-                    bridge: Some(FieldInlineBridge::AdviceLimb {
-                        field_register,
-                        field_value,
-                        x_register,
-                        x_value,
-                    }),
-                    ..Default::default()
-                }
-                .into(),
+            let instruction = Self::new(word, rng.next_u64() & !3, false, false);
+            let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+            cpu.write_register(usize::from(x_register), rng.next_u64() as i64);
+            cpu.field_registers.write(field_register, encode_field(ProofField::random(rng)));
+            if quotient_register != field_register {
+                cpu.field_registers.write(quotient_register, encode_field(ProofField::random(rng)));
             }
+            let mut trace = Vec::with_capacity(1);
+            instruction.trace(&mut cpu, Some(&mut trace));
+            let Some(Cycle::FIELD_ADVICE_LIMB(cycle)) = trace.pop() else {
+                panic!("limb advice emits one cycle of its own kind");
+            };
+            cycle
         }
 
         #[cfg(any(feature = "test-utils", test))]
         fn initialize_test_cpu(cycle: &RISCVCycle<Self>, cpu: &mut Cpu) {
-            let trace = cycle
-                .ram_access
-                .trace
-                .expect("field advice fixture payload");
+            let trace = cycle.field_inline_trace().expect("field advice fixture payload");
             if let Some(write) = trace.rd {
                 cpu.field_registers.write(write.register, write.pre_value);
             }
@@ -101,7 +72,7 @@ declare_riscv_instr!(
 impl FIELD_ADVICE_LIMB {
     /// Honest advice generation chooses the canonical low limb and quotient.
     /// Constraints permit other choices; the guest validates the full readout.
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <Self as RISCVInstruction>::RAMAccess) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <Self as RISCVInstruction>::RAMAccess) {
         let field_register = self.operands.rs1.unwrap_or(0);
         let quotient_register = self.operands.rs2.unwrap_or(0);
         let x_register = self.operands.rd.unwrap_or(0);
@@ -120,28 +91,7 @@ impl FIELD_ADVICE_LIMB {
         quotient.bytes_le[..FieldEncodedValue::BYTE_LEN as usize - 8]
             .copy_from_slice(&canonical.bytes_le[8..]);
         cpu.write_register(x_register as usize, x_value as i64);
-        let pre_value = cpu.field_registers.read(quotient_register);
         cpu.field_registers.write(quotient_register, quotient);
-        *ram_access = FieldInlineTraceData {
-            op: Some(FieldInlineOp::AdviceLimb),
-            rs1: Some(FieldRegisterRead {
-                register: field_register,
-                value: field_value,
-            }),
-            rd: Some(FieldRegisterWrite {
-                register: quotient_register,
-                pre_value,
-                post_value: quotient,
-            }),
-            bridge: Some(FieldInlineBridge::AdviceLimb {
-                field_register,
-                field_value,
-                x_register,
-                x_value,
-            }),
-            ..Default::default()
-        }
-        .into();
     }
 }
 
@@ -156,7 +106,7 @@ mod tests {
 
     use super::*;
     use crate::emulator::terminal::DummyTerminal;
-    use crate::instruction::Cycle;
+    use crate::instruction::registers::InstructionRegisterState;
 
     #[test]
     fn randomized_advice_cycles_have_canonical_replayable_field_state() {
@@ -166,9 +116,9 @@ mod tests {
         for _ in 0..512 {
             let cycle = FIELD_ADVICE_LIMB::random_cycle(&mut rng);
             let operands = cycle.instruction.operands();
-            assert_eq!(operands.op, Some(FieldInlineOp::AdviceLimb));
             assert!((1..RISCV_REGISTER_COUNT).contains(&operands.rd.unwrap()));
-            let trace = cycle.ram_access.trace.unwrap();
+            let trace = cycle.field_inline_trace().unwrap();
+            assert_eq!(trace.op, Some(FieldInlineOp::AdviceLimb));
             let source = trace.rs1.unwrap();
             assert_eq!(operands.rs1, Some(source.register));
             assert!(source.register < FIELD_REGISTER_COUNT);
@@ -179,6 +129,20 @@ mod tests {
                 .iter()
                 .all(|byte| *byte == 0));
             saw_wide_source |= source_value.to_u64_checked().is_none();
+
+            let limb = cycle.register_state.rd_values().unwrap().1;
+            let quotient = trace.rd.unwrap().post_value;
+            let mut recomposed = FieldEncodedValue::zero();
+            recomposed.bytes_le[..8].copy_from_slice(&limb.to_le_bytes());
+            recomposed.bytes_le[8..]
+                .copy_from_slice(&quotient.bytes_le[..FieldEncodedValue::BYTE_LEN as usize - 8]);
+            assert_eq!(recomposed, source.value);
+            assert!(
+                quotient.bytes_le[FieldEncodedValue::BYTE_LEN as usize - 8..]
+                    .iter()
+                    .all(|byte| *byte == 0)
+            );
+
             if let Some(write) = trace.rd {
                 assert_eq!(operands.rs2, Some(write.register));
                 assert!(write.register < FIELD_REGISTER_COUNT);
@@ -191,7 +155,7 @@ mod tests {
             let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
             cpu.write_register(
                 usize::from(operands.rd.unwrap()),
-                cycle.register_state.rd_pre.unwrap() as i64,
+                cycle.register_state.rd_values().unwrap().0 as i64,
             );
             FIELD_ADVICE_LIMB::initialize_test_cpu(&cycle, &mut cpu);
             assert_eq!(cpu.field_registers.read(source.register), source.value);

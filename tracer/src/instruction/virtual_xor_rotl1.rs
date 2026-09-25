@@ -1,3 +1,4 @@
+use crate::instruction::registers::r::RegisterStateR;
 use serde::{Deserialize, Serialize};
 
 use super::{RISCVInstruction, RISCVTrace};
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatR,
+    registers = RegisterStateR,
     ram = ()
 );
 

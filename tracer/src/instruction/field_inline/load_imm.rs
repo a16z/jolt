@@ -1,29 +1,27 @@
-use jolt_program::field_inline::{FieldEncodedValue, FieldInlineTraceData, FieldRegisterWrite};
+use jolt_program::field_inline::FieldEncodedValue;
 use jolt_riscv::FieldInlineOp;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     declare_riscv_instr,
     emulator::cpu::Cpu,
-    instruction::{format::format_field_inline::FormatFieldInline, RISCVInstruction, RISCVTrace},
+    instruction::{
+        format::format_field_inline::FormatFieldInline,
+        registers::field_inline::RegisterStateFieldInline, RISCVInstruction, RISCVTrace,
+    },
 };
-
-use super::FieldInlineCycleData;
 
 declare_riscv_instr!(
     name   = FIELD_LOAD_IMM,
     mask   = FieldInlineOp::LoadImm.instruction_mask(),
     match  = FieldInlineOp::LoadImm.instruction_match(),
     format = FormatFieldInline,
-    ram    = FieldInlineCycleData
+    registers = RegisterStateFieldInline,
+    ram    = ()
 );
 
 impl FIELD_LOAD_IMM {
-    fn exec(
-        &self,
-        cpu: &mut Cpu,
-        ram_access: &mut <FIELD_LOAD_IMM as RISCVInstruction>::RAMAccess,
-    ) {
+    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_LOAD_IMM as RISCVInstruction>::RAMAccess) {
         let rd_register = self.operands.rd.unwrap_or(0);
         // Decoded FIELD_LOAD_IMM immediates are zero-extended 12-bit values (0..=4095);
         // anything else can only arrive through synthetic instruction construction and
@@ -39,18 +37,7 @@ impl FIELD_LOAD_IMM {
             },
             FieldEncodedValue::from_u64,
         );
-        let pre_value = cpu.field_registers.read(rd_register);
         cpu.field_registers.write(rd_register, value);
-        *ram_access = FieldInlineTraceData {
-            op: Some(FieldInlineOp::LoadImm),
-            rd: Some(FieldRegisterWrite {
-                register: rd_register,
-                pre_value,
-                post_value: value,
-            }),
-            ..Default::default()
-        }
-        .into();
     }
 }
 

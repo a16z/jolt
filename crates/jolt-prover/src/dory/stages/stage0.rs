@@ -607,7 +607,6 @@ mod field_inline_tests {
                         pre_value: enc(0),
                         post_value: enc(221),
                     }),
-                    product: Some(enc(221)),
                     ..FieldInlineTraceData::default()
                 },
             ),

@@ -4,26 +4,26 @@ use serde::{Deserialize, Serialize};
 use crate::{
     declare_riscv_instr,
     emulator::cpu::Cpu,
-    instruction::{format::format_field_inline::FormatFieldInline, RISCVInstruction, RISCVTrace},
+    instruction::{
+        format::format_field_inline::FormatFieldInline,
+        registers::field_inline::RegisterStateFieldInline, RISCVInstruction, RISCVTrace,
+    },
 };
 
-use super::{execute_binary, FieldInlineCycleData, ProofField};
+use super::{execute_binary, ProofField};
 
 declare_riscv_instr!(
     name   = FIELD_SUB,
     mask   = FieldInlineOp::Sub.instruction_mask(),
     match  = FieldInlineOp::Sub.instruction_match(),
     format = FormatFieldInline,
-    ram    = FieldInlineCycleData
+    registers = RegisterStateFieldInline,
+    ram    = ()
 );
 
 impl FIELD_SUB {
-    fn exec(&self, cpu: &mut Cpu, ram_access: &mut <FIELD_SUB as RISCVInstruction>::RAMAccess) {
-        *ram_access =
-            execute_binary::<ProofField>(FieldInlineOp::Sub, self.operands, cpu, |left, right| {
-                left - right
-            })
-            .into();
+    fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_SUB as RISCVInstruction>::RAMAccess) {
+        execute_binary::<ProofField>(self.operands, cpu, |left, right| left - right);
     }
 }
 

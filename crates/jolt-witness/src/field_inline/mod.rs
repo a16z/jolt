@@ -211,9 +211,7 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
                     rs1_value,
                     rs2_value,
                     rd_value,
-                    // Extractor-derived, like the dense `FieldProduct` /
-                    // `FieldInvProduct` columns — NOT the trace payloads,
-                    // which exist only on the rows whose op requires them.
+                    // Match the dense FieldProduct and FieldInvProduct extractors.
                     product: rs1_value * rs2_value,
                     inv_product: rs1_value * rd_value,
                     flags: FLAGS.map(|flag| F::from_bool(data.op == Some(witnesses::op(flag)))),
@@ -607,18 +605,6 @@ fn validate_trace_data(
     validate_read(index, "rs2", data.rs2, operands.rs2, shape.reads_field_rs2)?;
     validate_write(index, data.rd, field_rd, shape.writes_field_rd)?;
 
-    if data.product.is_some() != shape.requires_product_payload() {
-        return Err(invalid_row(
-            index,
-            "field-inline product payload presence does not match instruction",
-        ));
-    }
-    if data.inv_product.is_some() != shape.requires_inverse_product_payload() {
-        return Err(invalid_row(
-            index,
-            "field-inline inverse product payload presence does not match instruction",
-        ));
-    }
     validate_bridge(index, row, shape, data)
 }
 
@@ -990,7 +976,6 @@ mod tests {
                     pre_value: enc(0),
                     post_value: enc(35),
                 }),
-                product: Some(enc(35)),
                 ..FieldInlineTraceData::default()
             },
         );

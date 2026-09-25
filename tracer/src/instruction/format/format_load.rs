@@ -1,10 +1,7 @@
-use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{InstructionFormat, NormalizedOperands};
 
 /// Same as FormatI, but with a signed `imm`. Used for load instructions,
 /// which need to do signed field arithmetic with `imm` in R1CS constraints.
@@ -15,48 +12,7 @@ pub struct FormatLoad {
     pub imm: i64,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RegisterStateFormatLoad {
-    pub rd: (u64, u64), // (old_value, new_value)
-    pub rs1: u64,
-}
-
-impl InstructionRegisterState for RegisterStateFormatLoad {
-    #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
-        use crate::instruction::test::{DRAM_BASE, TEST_MEMORY_CAPACITY};
-        use rand::RngCore;
-        // Use a smaller range to avoid issues with boundaries
-        let max_offset = (TEST_MEMORY_CAPACITY / 2).min(0x10000);
-        debug_assert_ne!(operands.rs1.unwrap(), 0);
-
-        let rs1_value = DRAM_BASE + (rng.next_u64() % max_offset);
-
-        Self {
-            rd: (
-                if operands.rd == operands.rs1 {
-                    rs1_value
-                } else {
-                    rng.next_u64()
-                },
-                rng.next_u64(),
-            ),
-            rs1: rs1_value,
-        }
-    }
-
-    fn rs1_value(&self) -> Option<u64> {
-        Some(self.rs1)
-    }
-
-    fn rd_values(&self) -> Option<(u64, u64)> {
-        Some(self.rd)
-    }
-}
-
 impl InstructionFormat for FormatLoad {
-    type RegisterState = RegisterStateFormatLoad;
-
     fn parse(word: u32) -> Self {
         FormatLoad {
             rd: ((word >> 7) & 0x1f) as u8,   // [11:7]
@@ -70,15 +26,6 @@ impl InstructionFormat for FormatLoad {
                 // imm[10:0] = [30:20]
             ) as i32 as i64,
         }
-    }
-
-    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu, self.rs1 as usize);
-        state.rd.0 = normalize_register_value(cpu, self.rd as usize);
-    }
-
-    fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rd.1 = normalize_register_value(cpu, self.rd as usize);
     }
 
     #[cfg(any(feature = "test-utils", test))]
