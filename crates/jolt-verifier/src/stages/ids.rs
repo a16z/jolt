@@ -49,28 +49,28 @@ impl From<FieldInlineOpeningId> for VerifierOpeningId {
 }
 
 /// Downcast from the composite [`VerifierOpeningId`] to one protocol family's
-/// opening id: `None` when the composite carries the other family. The inverse
+/// opening id: returns the original id on a family mismatch. The inverse
 /// of the `From` embeddings above, letting family-typed resolvers (each batch
 /// member's claim struct speaks its own id family) participate in one
 /// composite-keyed lookup — see `relations::resolve_member_opening`.
-pub trait FromVerifierOpeningId: Sized {
-    fn from_verifier(id: VerifierOpeningId) -> Option<Self>;
-}
+impl TryFrom<VerifierOpeningId> for JoltOpeningId {
+    type Error = VerifierOpeningId;
 
-impl FromVerifierOpeningId for JoltOpeningId {
-    fn from_verifier(id: VerifierOpeningId) -> Option<Self> {
+    fn try_from(id: VerifierOpeningId) -> Result<Self, Self::Error> {
         match id {
-            VerifierOpeningId::Jolt(id) => Some(id),
-            VerifierOpeningId::FieldInline(_) => None,
+            VerifierOpeningId::Jolt(id) => Ok(id),
+            VerifierOpeningId::FieldInline(_) => Err(id),
         }
     }
 }
 
-impl FromVerifierOpeningId for FieldInlineOpeningId {
-    fn from_verifier(id: VerifierOpeningId) -> Option<Self> {
+impl TryFrom<VerifierOpeningId> for FieldInlineOpeningId {
+    type Error = VerifierOpeningId;
+
+    fn try_from(id: VerifierOpeningId) -> Result<Self, Self::Error> {
         match id {
-            VerifierOpeningId::FieldInline(id) => Some(id),
-            VerifierOpeningId::Jolt(_) => None,
+            VerifierOpeningId::FieldInline(id) => Ok(id),
+            VerifierOpeningId::Jolt(_) => Err(id),
         }
     }
 }
@@ -110,11 +110,5 @@ impl From<JoltChallengeId> for VerifierChallengeId {
 impl From<FieldInlineChallengeId> for VerifierChallengeId {
     fn from(id: FieldInlineChallengeId) -> Self {
         Self::FieldInline(id)
-    }
-}
-
-impl FromVerifierOpeningId for VerifierOpeningId {
-    fn from_verifier(id: VerifierOpeningId) -> Option<Self> {
-        Some(id)
     }
 }

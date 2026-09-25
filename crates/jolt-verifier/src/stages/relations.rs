@@ -27,7 +27,7 @@ use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_transcript::Transcript;
 
-use crate::stages::ids::{FromVerifierOpeningId, VerifierChallengeId, VerifierDerivedId};
+use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
 
 /// Re-exported for the `#[derive(SumcheckBatch)]`-generated batch-wide alias
@@ -416,9 +416,9 @@ where
     F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
-    OpeningIdOf<F, I>: FromVerifierOpeningId,
+    OpeningIdOf<F, I>: TryFrom<VerifierOpeningId>,
 {
-    let native = OpeningIdOf::<F, I>::from_verifier(*id)?;
+    let native = OpeningIdOf::<F, I>::try_from(*id).ok()?;
     claims.resolve_output(&native)
 }
 
