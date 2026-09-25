@@ -6,7 +6,7 @@ use bytemuck::{NoUninit, Zeroable};
 
 use crate::error::{CapacityLimit, MetalError};
 use crate::runtime::device::Device;
-use crate::runtime::sys;
+use crate::runtime::sys::RawBuffer;
 
 /// A shared-storage Metal buffer holding `len` values of `T`.
 ///
@@ -18,7 +18,7 @@ use crate::runtime::sys;
 /// blocks until the GPU finishes. Host views need `&mut self`, so the borrow
 /// checker rules out a host view while the GPU may touch the buffer.
 pub struct DeviceBuffer<T> {
-    pub(crate) sys: sys::Buffer,
+    pub(crate) sys: RawBuffer,
     len: usize,
     byte_len: usize,
     pub(crate) device_id: u64,
@@ -46,7 +46,7 @@ impl<T> DeviceBuffer<T> {
         Ok(byte_len)
     }
 
-    fn from_sys(device: &Device, sys: sys::Buffer, len: usize, byte_len: usize) -> Self {
+    fn from_sys(device: &Device, sys: RawBuffer, len: usize, byte_len: usize) -> Self {
         Self {
             sys,
             len,

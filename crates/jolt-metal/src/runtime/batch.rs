@@ -9,7 +9,7 @@ use crate::error::MetalError;
 use crate::runtime::buffer::DeviceBuffer;
 use crate::runtime::device::Device;
 use crate::runtime::library::Pipeline;
-use crate::runtime::sys;
+use crate::runtime::sys::{RawBuffer, RawCommandBatch};
 
 /// Metal's limit for inline argument data (`setBytes`).
 const MAX_INLINE_BYTES: usize = 4096;
@@ -23,7 +23,7 @@ pub struct Binding<'a> {
 #[derive(Clone, Copy)]
 pub(crate) enum BindingKind<'a> {
     Buffer {
-        buffer: &'a sys::Buffer,
+        buffer: &'a RawBuffer,
         element_size: usize,
         device_id: u64,
     },
@@ -74,7 +74,7 @@ impl Grid {
 /// Nothing runs until [`Batch::commit_and_wait`]. Dropping a batch discards
 /// it without running anything.
 pub struct Batch<'a> {
-    sys: sys::CommandBatch,
+    sys: RawCommandBatch,
     device_id: u64,
     /// Pipeline of every encoded dispatch, for failure attribution.
     dispatched: Vec<Arc<str>>,

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::error::MetalError;
 use crate::runtime::device::Device;
-use crate::runtime::sys;
+use crate::runtime::sys::RawPipeline;
 
 /// A Rust type with an MSL counterpart that kernel templates can be
 /// instantiated over.
@@ -171,7 +171,7 @@ pub(crate) struct PipelineInfo {
 
 /// A compiled compute kernel.
 pub struct Pipeline {
-    pub(crate) sys: sys::Pipeline,
+    pub(crate) sys: RawPipeline,
     pub(crate) name: Arc<str>,
     pub(crate) device_id: u64,
     pub(crate) info: PipelineInfo,

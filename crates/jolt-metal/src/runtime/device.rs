@@ -1,5 +1,5 @@
 use crate::error::{CapacityLimit, MetalError};
-use crate::runtime::sys;
+use crate::runtime::sys::RawDevice;
 
 /// Device limits read once when the [`Device`] is created.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub(crate) struct DeviceInfo {
 /// Requires Apple GPU family 7 or later. Buffers and pipelines remember the
 /// device that created them and are rejected by any other device.
 pub struct Device {
-    pub(crate) sys: sys::Device,
+    pub(crate) sys: RawDevice,
     name: String,
     pub(crate) registry_id: u64,
     limits: DeviceLimits,
@@ -39,7 +39,7 @@ impl Device {
     /// Returns [`MetalError::Unavailable`] on non-macOS targets, when no
     /// device exists, or when the device is below Apple GPU family 7.
     pub fn system_default() -> Result<Self, MetalError> {
-        let (sys, info) = sys::Device::system_default()?;
+        let (sys, info) = RawDevice::system_default()?;
         Ok(Self {
             sys,
             name: info.name,

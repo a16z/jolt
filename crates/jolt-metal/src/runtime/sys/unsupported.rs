@@ -1,17 +1,19 @@
 //! Non-macOS backend: no device can be constructed, so every other type is
 //! uninhabited and its methods are statically unreachable.
 
+use std::env::consts::OS;
+
 use crate::error::MetalError;
 use crate::runtime::batch::Binding;
 use crate::runtime::device::DeviceInfo;
 use crate::runtime::library::PipelineInfo;
 
-pub(crate) enum Device {}
+pub(crate) enum RawDevice {}
 
-impl Device {
+impl RawDevice {
     pub(crate) fn system_default() -> Result<(Self, DeviceInfo), MetalError> {
         Err(MetalError::Unavailable {
-            reason: format!("Metal requires macOS; this is {}", std::env::consts::OS),
+            reason: format!("Metal requires macOS; this is {OS}"),
         })
     }
 
@@ -19,51 +21,51 @@ impl Device {
         match *self {}
     }
 
-    pub(crate) fn new_zeroed_buffer(&self, _bytes: usize) -> Result<Buffer, MetalError> {
+    pub(crate) fn new_zeroed_buffer(&self, _bytes: usize) -> Result<RawBuffer, MetalError> {
         match *self {}
     }
 
-    pub(crate) fn new_buffer_with_bytes(&self, _data: &[u8]) -> Result<Buffer, MetalError> {
+    pub(crate) fn new_buffer_with_bytes(&self, _data: &[u8]) -> Result<RawBuffer, MetalError> {
         match *self {}
     }
 
-    pub(crate) fn compile(&self, _source: &str) -> Result<Library, MetalError> {
+    pub(crate) fn compile(&self, _source: &str) -> Result<RawLibrary, MetalError> {
         match *self {}
     }
 
-    pub(crate) fn command_batch(&self) -> Result<CommandBatch, MetalError> {
+    pub(crate) fn command_batch(&self) -> Result<RawCommandBatch, MetalError> {
         match *self {}
     }
 }
 
-pub(crate) enum Library {}
+pub(crate) enum RawLibrary {}
 
-impl Library {
+impl RawLibrary {
     pub(crate) fn pipeline(
         &self,
-        _device: &Device,
+        _device: &RawDevice,
         _kernel: &str,
-    ) -> Result<(Pipeline, PipelineInfo), MetalError> {
+    ) -> Result<(RawPipeline, PipelineInfo), MetalError> {
         match *self {}
     }
 }
 
-pub(crate) enum Pipeline {}
+pub(crate) enum RawPipeline {}
 
-pub(crate) enum Buffer {}
+pub(crate) enum RawBuffer {}
 
-impl Buffer {
+impl RawBuffer {
     pub(crate) fn host_bytes(&mut self, _len: usize) -> Option<&[u8]> {
         match *self {}
     }
 }
 
-pub(crate) enum CommandBatch {}
+pub(crate) enum RawCommandBatch {}
 
-impl CommandBatch {
+impl RawCommandBatch {
     pub(crate) fn dispatch(
         &mut self,
-        _pipeline: &Pipeline,
+        _pipeline: &RawPipeline,
         _bindings: &[Binding<'_>],
         _threads: usize,
         _threads_per_threadgroup: usize,

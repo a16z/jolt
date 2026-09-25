@@ -1,7 +1,5 @@
 //! Typed runtime failures and the recovery class each one permits.
 
-use std::fmt;
-
 use thiserror::Error;
 
 /// What a consumer may do after a [`MetalError`].
@@ -35,27 +33,37 @@ pub enum ErrorClass {
 /// `DeviceRemoved` (11) is documented as impossible on Apple Silicon and
 /// `Memoryless` (10) applies only to render targets; both arrive as
 /// [`CommandBufferError::Unknown`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum CommandBufferError {
     /// `MTLCommandBufferErrorInternal` (1).
+    #[error("Internal")]
     Internal,
     /// `MTLCommandBufferErrorTimeout` (2).
+    #[error("Timeout")]
     Timeout,
     /// `MTLCommandBufferErrorPageFault` (3).
+    #[error("PageFault")]
     PageFault,
     /// `MTLCommandBufferErrorAccessRevoked` (4).
+    #[error("AccessRevoked")]
     AccessRevoked,
     /// `MTLCommandBufferErrorNotPermitted` (7).
+    #[error("NotPermitted")]
     NotPermitted,
     /// `MTLCommandBufferErrorOutOfMemory` (8).
+    #[error("OutOfMemory")]
     OutOfMemory,
     /// `MTLCommandBufferErrorInvalidResource` (9).
+    #[error("InvalidResource")]
     InvalidResource,
     /// `MTLCommandBufferErrorStackOverflow` (12).
+    #[error("StackOverflow")]
     StackOverflow,
     /// Any other code, or an error outside `MTLCommandBufferErrorDomain`.
+    #[error("unknown error code {0}")]
     Unknown(isize),
     /// The command buffer reported an error status without an `NSError`.
+    #[error("error status without an NSError")]
     Unreported,
 }
 
@@ -86,16 +94,6 @@ impl CommandBufferError {
             | Self::StackOverflow
             | Self::Unknown(_)
             | Self::Unreported => ErrorClass::Fault,
-        }
-    }
-}
-
-impl fmt::Display for CommandBufferError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unknown(code) => write!(f, "unknown error code {code}"),
-            Self::Unreported => f.write_str("error status without an NSError"),
-            known => fmt::Debug::fmt(known, f),
         }
     }
 }

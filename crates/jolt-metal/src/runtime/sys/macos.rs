@@ -62,12 +62,12 @@ fn describe(error: &NSError) -> String {
     error.localizedDescription().to_string()
 }
 
-pub(crate) struct Device {
+pub(crate) struct RawDevice {
     raw: Retained<ProtocolObject<dyn MTLDevice>>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
 }
 
-impl Device {
+impl RawDevice {
     pub(crate) fn system_default() -> Result<(Self, DeviceInfo), MetalError> {
         objc("device discovery", || {
             let Some(raw) = MTLCreateSystemDefaultDevice() else {
@@ -104,21 +104,21 @@ impl Device {
         objc("currentAllocatedSize", || self.raw.currentAllocatedSize())
     }
 
-    pub(crate) fn new_zeroed_buffer(&self, bytes: usize) -> Result<Buffer, MetalError> {
+    pub(crate) fn new_zeroed_buffer(&self, bytes: usize) -> Result<RawBuffer, MetalError> {
         let length = bytes.max(MIN_ALLOCATION);
         let raw = objc("newBufferWithLength", || {
             self.raw
                 .newBufferWithLength_options(length, buffer_options())
         })?
         .ok_or(MetalError::AllocationFailed { bytes })?;
-        let buffer = Buffer::new(raw)?;
+        let buffer = RawBuffer::new(raw)?;
         // SAFETY: `contents` points to `allocated` writable bytes of a
         // shared-storage buffer that no command buffer references yet.
         unsafe { buffer.contents.write_bytes(0, buffer.allocated) };
         Ok(buffer)
     }
 
-    pub(crate) fn new_buffer_with_bytes(&self, data: &[u8]) -> Result<Buffer, MetalError> {
+    pub(crate) fn new_buffer_with_bytes(&self, data: &[u8]) -> Result<RawBuffer, MetalError> {
         if data.is_empty() {
             return self.new_zeroed_buffer(0);
         }
@@ -134,10 +134,10 @@ impl Device {
             }
         })?
         .ok_or(MetalError::AllocationFailed { bytes: data.len() })?;
-        Buffer::new(raw)
+        RawBuffer::new(raw)
     }
 
-    pub(crate) fn compile(&self, source: &str) -> Result<Library, MetalError> {
+    pub(crate) fn compile(&self, source: &str) -> Result<RawLibrary, MetalError> {
         objc("newLibraryWithSource", || {
             let options = MTLCompileOptions::new();
             options.setLanguageVersion(MTLLanguageVersion::Version3_0);
@@ -146,14 +146,14 @@ impl Device {
             options.setFastMathEnabled(false);
             self.raw
                 .newLibraryWithSource_options_error(&NSString::from_str(source), Some(&options))
-                .map(Library)
+                .map(RawLibrary)
                 .map_err(|error| MetalError::ShaderCompile {
                     log: describe(&error),
                 })
         })?
     }
 
-    pub(crate) fn command_batch(&self) -> Result<CommandBatch, MetalError> {
+    pub(crate) fn command_batch(&self) -> Result<RawCommandBatch, MetalError> {
         objc("command batch creation", || {
             let buffer = self.queue.commandBuffer().ok_or(MetalError::NilObject {
                 object: "command buffer",
@@ -163,7 +163,7 @@ impl Device {
                 .ok_or(MetalError::NilObject {
                     object: "compute command encoder",
                 })?;
-            Ok(CommandBatch {
+            Ok(RawCommandBatch {
                 buffer,
                 encoder,
                 encoding: true,
@@ -176,14 +176,14 @@ fn buffer_options() -> MTLResourceOptions {
     MTLResourceOptions::StorageModeShared | MTLResourceOptions::HazardTrackingModeTracked
 }
 
-pub(crate) struct Library(Retained<ProtocolObject<dyn MTLLibrary>>);
+pub(crate) struct RawLibrary(Retained<ProtocolObject<dyn MTLLibrary>>);
 
-impl Library {
+impl RawLibrary {
     pub(crate) fn pipeline(
         &self,
-        device: &Device,
+        device: &RawDevice,
         kernel: &str,
-    ) -> Result<(Pipeline, PipelineInfo), MetalError> {
+    ) -> Result<(RawPipeline, PipelineInfo), MetalError> {
         let failed = |reason: String| MetalError::Pipeline {
             kernel: kernel.to_owned(),
             reason,
@@ -238,14 +238,14 @@ impl Library {
                 thread_execution_width: raw.threadExecutionWidth(),
                 slots,
             };
-            Ok((Pipeline(raw), info))
+            Ok((RawPipeline(raw), info))
         })?
     }
 }
 
-pub(crate) struct Pipeline(Retained<ProtocolObject<dyn MTLComputePipelineState>>);
+pub(crate) struct RawPipeline(Retained<ProtocolObject<dyn MTLComputePipelineState>>);
 
-pub(crate) struct Buffer {
+pub(crate) struct RawBuffer {
     raw: Retained<ProtocolObject<dyn MTLBuffer>>,
     /// Cached `contents()`; stable for the buffer's lifetime (shared storage).
     contents: NonNull<u8>,
@@ -253,7 +253,7 @@ pub(crate) struct Buffer {
     allocated: usize,
 }
 
-impl Buffer {
+impl RawBuffer {
     fn new(raw: Retained<ProtocolObject<dyn MTLBuffer>>) -> Result<Self, MetalError> {
         let (contents, allocated) = objc("buffer contents", || (raw.contents(), raw.length()))?;
         Ok(Self {
@@ -281,7 +281,7 @@ impl Buffer {
     }
 }
 
-pub(crate) struct CommandBatch {
+pub(crate) struct RawCommandBatch {
     buffer: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
     encoder: Retained<ProtocolObject<dyn MTLComputeCommandEncoder>>,
     /// Whether `endEncoding` is still owed. Metal raises if an encoder is
@@ -289,12 +289,12 @@ pub(crate) struct CommandBatch {
     encoding: bool,
 }
 
-impl CommandBatch {
+impl RawCommandBatch {
     /// Encodes one 1-D dispatch. The caller has validated every binding
     /// against the pipeline's reflection and the grid against its limits.
     pub(crate) fn dispatch(
         &mut self,
-        pipeline: &Pipeline,
+        pipeline: &RawPipeline,
         bindings: &[Binding<'_>],
         threads: usize,
         threads_per_threadgroup: usize,
@@ -379,7 +379,7 @@ impl CommandBatch {
     }
 }
 
-impl Drop for CommandBatch {
+impl Drop for RawCommandBatch {
     fn drop(&mut self) {
         if self.encoding {
             // Nothing to report from a destructor: a failure here means the
