@@ -104,6 +104,13 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
 
     let empty = || Vec::new();
 
+    // Eq-conditional constraints (0-9), with arithmetic in the proof field.
+    // Form: guard · (left − right) = 0  →  A=guard, B=left−right, C=0
+
+    // 0: FieldAdd
+    //    guard = IsFieldAdd
+    //    left  = FieldRs1Value + FieldRs2Value
+    //    right = FieldRdValue
     a_rows.push(row::<F>(&[(V_IS_FIELD_ADD, 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
@@ -112,6 +119,10 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
+    // 1: FieldSub
+    //    guard = IsFieldSub
+    //    left  = FieldRs1Value − FieldRs2Value
+    //    right = FieldRdValue
     a_rows.push(row::<F>(&[(V_IS_FIELD_SUB, 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
@@ -120,18 +131,37 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]));
     c_rows.push(empty());
 
+    // 2: FieldMulDestination
+    //    guard = IsFieldMul
+    //    left  = FieldProduct
+    //    right = FieldRdValue
+    // FieldProduct = FieldRs1Value · FieldRs2Value is checked separately.
     a_rows.push(row::<F>(&[(V_IS_FIELD_MUL, 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_PRODUCT, 1), (V_FIELD_RD_VALUE, -1)]));
     c_rows.push(empty());
 
+    // 3: FieldInverseProduct
+    //    guard = IsFieldInv
+    //    left  = FieldInvProduct
+    //    right = 1
+    // FieldInvProduct = FieldRs1Value · FieldRdValue is checked separately.
     a_rows.push(row::<F>(&[(V_IS_FIELD_INV, 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_INV_PRODUCT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
+    // 4: FieldAssertEq
+    //    guard = IsFieldAssertEq
+    //    left  = FieldRs1Value
+    //    right = FieldRs2Value
     a_rows.push(row::<F>(&[(V_IS_FIELD_ASSERT_EQ, 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1), (V_FIELD_RS2_VALUE, -1)]));
     c_rows.push(empty());
 
+    // 5: FieldLoadAccumulateFromRegister
+    //    guard = IsFieldLoadAccumulateFromRegister
+    //    left  = FieldRdValue
+    //    right = 2^64 · FieldRs1Value + Rs1Value
+    // Field-register checking binds FieldRs1Value to the destination's old value.
     a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER, 1)]));
     b_rows.push(vec![
         (V_FIELD_RD_VALUE, F::one()),
@@ -140,14 +170,28 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]);
     c_rows.push(empty());
 
+    // 6: FieldAssertZero
+    //    guard = IsFieldAssertZero
+    //    left  = FieldRs1Value
+    //    right = 0
     a_rows.push(row::<F>(&[(V_IS_FIELD_ASSERT_ZERO, 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1)]));
     c_rows.push(empty());
 
+    // 7: FieldLoadImm
+    //    guard = IsFieldLoadImm
+    //    left  = FieldRdValue
+    //    right = Imm
     a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_IMM, 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RD_VALUE, 1), (V_IMM, -1)]));
     c_rows.push(empty());
 
+    // 8: FieldLoadAccumulateFromMemory
+    //    guard = IsFieldLoadAccumulateFromMemory
+    //    left  = FieldRdValue
+    //    right = 2^64 · FieldRs1Value + RdWriteValue
+    // RV64 load rows bind RdWriteValue to the loaded word; field-register
+    // checking binds FieldRs1Value to the destination's old value.
     a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY, 1)]));
     b_rows.push(vec![
         (V_FIELD_RD_VALUE, F::one()),
@@ -156,6 +200,12 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     ]);
     c_rows.push(empty());
 
+    // 9: FieldAdviceLimb
+    //    guard = IsFieldAdviceLimb
+    //    left  = FieldRs1Value
+    //    right = RdWriteValue + 2^64 · FieldRdValue
+    // FieldRdValue is a field quotient. RV64/lookup constraints range-check
+    // the limb; canonical integer readout requires checks in the guest.
     a_rows.push(row::<F>(&[(V_IS_FIELD_ADVICE_LIMB, 1)]));
     b_rows.push(vec![
         (V_FIELD_RS1_VALUE, F::one()),
