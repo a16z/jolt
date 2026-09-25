@@ -57,8 +57,6 @@ use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
-#[cfg(feature = "field-inline")]
-use crate::stages::field_inline_bytecode::FieldInlineBytecodeTable;
 use crate::stages::stage1::Stage1Output;
 use crate::stages::stage2::{Stage2BatchOutputPoints, Stage2Output};
 use crate::stages::stage3::outputs::Stage3OutputPoints;
@@ -88,10 +86,6 @@ pub struct Stage6bBuildParts<'a, F: JoltField> {
     /// The full bytecode rows backing the full-program table fold
     /// (`None` in ZK and committed-program modes).
     pub bytecode_table_rows: Option<&'a [JoltInstructionRow]>,
-    /// The converted field-inline bytecode side table (required: the verifier with
-    /// field-inline enabled rejects preprocessing without it before assembling parts).
-    #[cfg(feature = "field-inline")]
-    pub field_inline_bytecode: FieldInlineBytecodeTable,
     pub carried: &'a Stage6aCarriedChallenges<F>,
     pub eta: Option<F>,
     pub stage1_cycle_binding: Vec<F>,
@@ -220,10 +214,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             )
         };
 
-        #[cfg(feature = "field-inline")]
-        let field_inline_bytecode =
-            super::field_inline::preprocessed_bytecode_table(&preprocessing.program)?;
-
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,
             ram_log_k: crate::num::ilog2(checked.ram_K),
@@ -231,8 +221,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             precommitted: &checked.precommitted,
             entry_bytecode_index,
             bytecode_table_rows,
-            #[cfg(feature = "field-inline")]
-            field_inline_bytecode,
             carried: stage6a.challenges(),
             eta,
             stage1_cycle_binding,
@@ -261,8 +249,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             precommitted,
             entry_bytecode_index,
             bytecode_table_rows,
-            #[cfg(feature = "field-inline")]
-            field_inline_bytecode,
             carried,
             eta,
             stage1_cycle_binding,
@@ -359,12 +345,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         // past the field-register address prefix. The cycle legs feed both the bytecode
         // field-inline public fold and the field-register increment reduction's Eq publics.
         #[cfg(feature = "field-inline")]
-        let field_inline_legs = super::field_inline::bytecode_fold_and_cycles(
-            field_inline_bytecode,
-            carried,
-            stage4_points,
-            stage5_points,
-        )?;
+        let field_inline_legs =
+            super::field_inline::bytecode_fold_and_cycles(carried, stage4_points, stage5_points)?;
         #[cfg(not(feature = "akita"))]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = stage_points.stage_cycle_points;
         // The packed fused-inc consumer points appended to the shared five: the

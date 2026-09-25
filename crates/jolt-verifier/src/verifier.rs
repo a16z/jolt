@@ -407,7 +407,7 @@ where
     // instruction the build has no constraints for (a field-inline bridge row on a verifier
     // without field-inline, whose rd write no RV64 row pins) rejects here rather than
     // verifying against the base rows alone. Committed programs carry no rows to scan; with
-    // field-inline enabled, the side-table requirement below rejects them.
+    // field-inline enabled, the full-program requirement below rejects them.
     if let Some(full) = program.as_full() {
         if let Some(row) = full
             .bytecode
@@ -420,12 +420,19 @@ where
             });
         }
     }
-    // The verifier with field-inline enabled anchors the field-register access selectors
-    // through the bytecode side table (stage 6); preprocessing without it — a classic-profile
-    // program or committed-program mode — cannot back a proof, so reject before any stage
-    // runs.
     #[cfg(feature = "field-inline")]
-    crate::stages::field_inline_bytecode::validate_field_inline_bytecode(program)?;
+    {
+        let full = program
+            .as_full()
+            .ok_or_else(stage6b::field_inline::committed_program_rejection)?;
+        for row in &full.bytecode.bytecode {
+            jolt_program::field_inline::validate_field_inline_instruction(row).map_err(
+                |error| VerifierError::InvalidFieldInlineBytecode {
+                    reason: error.to_string(),
+                },
+            )?;
+        }
+    }
 
     let mut normalized_public_io = public_io.clone();
     normalized_public_io.outputs.truncate(
@@ -1214,6 +1221,7 @@ mod tests {
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
     use crate::stages::stage1::outputs::Stage1OutputClaims;
+    use crate::stages::stage1::OuterRemainderOutputClaims;
     use crate::stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims};
     #[cfg(feature = "field-inline")]
     use crate::stages::{
@@ -1381,13 +1389,19 @@ mod tests {
 
     #[test]
     fn protocol_and_payload_reject_before_preprocessing_validation() {
+        #[cfg(feature = "field-inline")]
+        use jolt_riscv::JoltInstructionKind;
         use jolt_transcript::LegacyBlake2bTranscript;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
         // Invalid metadata and layout give independent later-stage failures.
         #[cfg(feature = "field-inline")]
         if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
-            Arc::make_mut(full).bytecode.field_inline = None;
+            let bytecode = &mut Arc::make_mut(full).bytecode.bytecode;
+            if let Some(instruction) = bytecode.first_mut() {
+                instruction.instruction_kind = JoltInstructionKind::FIELD_ADD;
+                instruction.operands.rs1 = Some(u8::MAX);
+            }
         }
         let is_zk = JOLT_VERIFIER_CONFIG.zk == ZkConfig::BlindFold;
         let mut proof = proof_with_zk(is_zk, if is_zk { zk_claims() } else { clear_claims() });
@@ -1824,47 +1838,8 @@ mod tests {
     }
 
     fn empty_spartan_outer_claims() -> stage1::outputs::Stage1BatchOutputClaims<Fr> {
-        let zero = Fr::zero();
-
         stage1::outputs::Stage1BatchOutputClaims {
-            outer_remainder: stage1::OuterRemainderOutputClaims {
-                left_instruction_input: zero,
-                right_instruction_input: zero,
-                product: zero,
-                should_branch: zero,
-                pc: zero,
-                unexpanded_pc: zero,
-                imm: zero,
-                ram_address: zero,
-                rs1_value: zero,
-                rs2_value: zero,
-                rd_write_value: zero,
-                ram_read_value: zero,
-                ram_write_value: zero,
-                left_lookup_operand: zero,
-                right_lookup_operand: zero,
-                next_unexpanded_pc: zero,
-                next_pc: zero,
-                next_is_virtual: zero,
-                next_is_first_in_sequence: zero,
-                lookup_output: zero,
-                should_jump: zero,
-                add_operands: zero,
-                subtract_operands: zero,
-                multiply_operands: zero,
-                load: zero,
-                store: zero,
-                jump: zero,
-                write_lookup_output_to_rd: zero,
-                virtual_instruction: zero,
-                assert: zero,
-                do_not_update_unexpanded_pc: zero,
-                advice: zero,
-                is_compressed: zero,
-                is_first_in_sequence: zero,
-                is_last_in_sequence: zero,
-            }
-            .into(),
+            outer_remainder: OuterRemainderOutputClaims::<Fr>::default().into(),
         }
     }
 
@@ -1955,7 +1930,7 @@ mod tests {
     fn test_preprocessing_with_layout(
         memory_layout: common::jolt_device::MemoryLayout,
     ) -> JoltVerifierPreprocessing<TestPcs, Pedersen<Bn254G1>> {
-        // The build's instruction profile derives the field-inline side table when
+        // Use the build's instruction profile when
         // required, including the all-inactive table for this empty program.
         let program = JoltProgramPreprocessing::new(
             Vec::new(),

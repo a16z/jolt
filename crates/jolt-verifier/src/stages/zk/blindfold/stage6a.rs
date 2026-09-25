@@ -109,11 +109,9 @@ where
     }
     address_phase_output_ids.push(booleanity::booleanity_address_phase_opening().into());
 
-    // The composed bytecode address-phase input claim: the ordinary symbolic gamma-folded bind
-    // plus (under `field-inline`) the field-inline terms at the extended stage-1/4/5 power
-    // indices — the clear composed `input_claim` override's algebra, over the stage-1
-    // field-inline carrier rows and the stage-4/5 field-inline members' rows (referencing the
-    // SAME committed rows those stages lowered).
+    // Field op flags use the ordinary stage-1 circuit-flag fold. The composed
+    // claim adds field-register access terms at the extended stage-4/5 powers,
+    // referencing the same committed opening rows as the clear relation.
     let bytecode_claim = relation_claim(&bytecode_address_claims);
 
     add_batched_stage(
@@ -142,7 +140,6 @@ mod field_inline_tests {
         BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
     };
     use crate::stages::stage6a::field_inline::FieldInlineBytecodeReadRafInputs;
-    use jolt_claims::protocols::field_inline::geometry::spartan::outer_opening;
     use jolt_claims::protocols::field_inline::{
         FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
     };
@@ -159,8 +156,8 @@ mod field_inline_tests {
     /// The lowered composed input expression — the jolt symbolic bind plus the field-inline
     /// gamma-power extension — evaluates identically to the clear composed
     /// `BytecodeReadRafAddressPhase::input_claim` on synthetic values, over the SAME committed
-    /// rows the stage-1/4/5 lowerings bind (the stage-1 field-inline carrier flags and the
-    /// stage-4/5 field-inline member rows).
+    /// rows the stage-1/4/5 lowerings bind (common stage-1 circuit flags and the
+    /// stage-4/5 field-register member rows).
     #[test]
     fn lowered_bytecode_input_extension_matches_the_clear_composed_claim() {
         let relation = BytecodeReadRafAddressPhase::<Fr>::new(
@@ -192,7 +189,6 @@ mod field_inline_tests {
             *flag = fr(100 + index as u64);
         }
         let field_inline = FieldInlineBytecodeReadRafInputs::<Fr> {
-            field_op_flags: core::array::from_fn(|index| fr(200 + index as u64)),
             rd_wa_read_write: fr(301),
             rs1_ra: fr(302),
             rs2_ra: fr(303),
@@ -214,16 +210,6 @@ mod field_inline_tests {
 
         let lowered_expr = map_expr(relation.symbolic().input_expression::<Fr>());
         let resolve_field_inline = |id: &FieldInlineOpeningId| -> Fr {
-            use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
-
-            for (flag, value) in FIELD_INLINE_BYTECODE_STAGE1_FLAGS
-                .into_iter()
-                .zip(field_inline.field_op_flags)
-            {
-                if *id == outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(flag)) {
-                    return value;
-                }
-            }
             let read_write = |polynomial| {
                 FieldInlineOpeningId::virtual_polynomial(
                     polynomial,

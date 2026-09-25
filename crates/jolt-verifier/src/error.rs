@@ -128,7 +128,7 @@ pub enum VerifierError {
 
     #[error("bytecode carries {kind:?}, which this verifier build has no constraints for")]
     UnsupportedInstruction { kind: JoltInstructionKind },
-    #[error("field-inline bytecode side table rejected: {reason}")]
+    #[error("invalid field-inline bytecode: {reason}")]
     InvalidFieldInlineBytecode { reason: String },
 
     #[error("program preprocessing digest failed: {reason}")]

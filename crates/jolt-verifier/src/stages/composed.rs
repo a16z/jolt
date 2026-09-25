@@ -29,7 +29,6 @@ use jolt_r1cs::constraints::jolt::{
     SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
     SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
-use jolt_riscv::NUM_CIRCUIT_FLAGS;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 
@@ -381,33 +380,14 @@ where
 
 impl<B> ReadRafAddressPhase<B> {
     fn bytecode_input_extension_expr<F: Ring>() -> ComposedExpr<F> {
-        use jolt_claims::protocols::field_inline::geometry::bytecode::FIELD_INLINE_BYTECODE_STAGE1_FLAGS;
         use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
 
         let gamma_public = |challenge: BytecodeReadRafChallenge| -> ComposedExpr<F> {
             jolt_claims::challenge(JoltChallengeId::from(challenge))
         };
         let gamma = gamma_public(BytecodeReadRafChallenge::Gamma);
-        let stage1_gamma = gamma_public(BytecodeReadRafChallenge::Stage1Gamma);
         let stage4_gamma = gamma_public(BytecodeReadRafChallenge::Stage4Gamma);
         let stage5_gamma = gamma_public(BytecodeReadRafChallenge::Stage5Gamma);
-
-        // Stage-1 extension: the FieldOpFlag rows at powers
-        // `stage1_gamma^(2 + NUM_CIRCUIT_FLAGS + i)` (the ordinary stage-1 power
-        // count is `2 + NUM_CIRCUIT_FLAGS`), riding the outer γ⁰.
-        let mut extension = ComposedExpr::zero();
-        for (index, flag) in FIELD_INLINE_BYTECODE_STAGE1_FLAGS.into_iter().enumerate() {
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "2 + NUM_CIRCUIT_FLAGS + index is a small constant sum over the field-inline flags"
-            )]
-            let power = 2 + NUM_CIRCUIT_FLAGS + index;
-            extension = extension
-                + stage1_gamma.clone().pow(power)
-                    * opening(field_spartan::outer_opening(
-                        FieldInlineVirtualPolynomial::FieldOpFlag(flag),
-                    ));
-        }
 
         // Stage-4 extension: FieldRdWa/FieldRs1Ra/FieldRs2Ra at powers
         // `stage4_gamma^(3 + j)` (the ordinary stage-4 power count is 3), riding
@@ -431,7 +411,7 @@ impl<B> ReadRafAddressPhase<B> {
                         FieldInlineRelationId::FieldRegistersReadWriteChecking,
                     ));
         }
-        extension = extension + gamma.clone().pow(3) * stage4_extension;
+        let extension = gamma.clone().pow(3) * stage4_extension;
 
         // Stage-5 extension: the val-evaluation FieldRdWa at the power following
         // the ordinary stage-5 count (`2 + lookup-table count`), riding the outer
@@ -520,7 +500,7 @@ mod tests {
                     }
                 })
                 .collect();
-        assert_eq!(extension_ids.len(), 14);
+        assert_eq!(extension_ids.len(), 4);
         assert_eq!(
             bytecode_inputs
                 .canonical_order()

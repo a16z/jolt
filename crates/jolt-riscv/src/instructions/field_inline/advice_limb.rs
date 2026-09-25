@@ -6,6 +6,6 @@ jolt_instruction!(
     /// readout requires a zero assertion on the final quotient and an integer
     /// check that the reconstructed value is below the field modulus.
     FieldAdviceLimb,
-    circuit flags: [Advice, WriteLookupOutputToRD],
+    circuit flags: [FieldAdviceLimb, Advice, WriteLookupOutputToRD],
     instruction flags: []
 );

@@ -412,6 +412,7 @@ mod tests {
         assert!(mul.writes_field_rd);
         assert!(mul.is_pure_field_op());
         assert_eq!(mul.x_operands(operands), NormalizedOperands::default());
+        assert_eq!(mul.field_operands(operands), operands);
 
         let load = crate::field_inline_operand_shape(
             JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
@@ -425,6 +426,15 @@ mod tests {
             load.x_operands(operands),
             NormalizedOperands {
                 rs1: Some(6),
+                ..NormalizedOperands::default()
+            }
+        );
+
+        assert_eq!(
+            load.field_operands(operands),
+            NormalizedOperands {
+                rs1: Some(5),
+                rd: Some(5),
                 ..NormalizedOperands::default()
             }
         );
@@ -457,9 +467,26 @@ mod tests {
             }
         );
 
+        assert_eq!(
+            load_memory.field_operands(operands),
+            NormalizedOperands {
+                rs1: Some(7),
+                rd: Some(7),
+                ..NormalizedOperands::default()
+            }
+        );
+
         let advice =
             crate::field_inline_operand_shape(JoltInstructionKind::FIELD_ADVICE_LIMB).unwrap();
         assert!(!advice.is_pure_field_op());
         assert_eq!(advice.x_operands(operands), write_operands);
+        assert_eq!(
+            advice.field_operands(operands),
+            NormalizedOperands {
+                rs1: Some(6),
+                rd: Some(7),
+                ..NormalizedOperands::default()
+            }
+        );
     }
 }

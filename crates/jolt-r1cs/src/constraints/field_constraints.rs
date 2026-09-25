@@ -22,31 +22,19 @@ use jolt_field::JoltField;
 
 type ConstraintRows<F> = (Vec<SparseRow<F>>, Vec<SparseRow<F>>, Vec<SparseRow<F>>);
 
-pub const V_CONST: usize = 0;
+use super::rv64::{
+    flag_column, NUM_VARS_PER_CYCLE as RV64_NUM_VARS_PER_CYCLE, V_CONST, V_IMM, V_RD_WRITE_VALUE,
+    V_RS1_VALUE,
+};
+use jolt_riscv::CircuitFlags;
 
-pub const V_FIELD_RS1_VALUE: usize = 1;
-pub const V_FIELD_RS2_VALUE: usize = 2;
-pub const V_FIELD_RD_VALUE: usize = 3;
-pub const V_FIELD_PRODUCT: usize = 4;
-pub const V_FIELD_INV_PRODUCT: usize = 5;
-
-pub const V_X_RS1_VALUE: usize = 6;
-pub const V_X_RD_WRITE_VALUE: usize = 7;
-pub const V_IMM: usize = 8;
-
-pub const V_IS_FIELD_ADD: usize = 9;
-pub const V_IS_FIELD_SUB: usize = 10;
-pub const V_IS_FIELD_MUL: usize = 11;
-pub const V_IS_FIELD_INV: usize = 12;
-pub const V_IS_FIELD_ASSERT_EQ: usize = 13;
-pub const V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER: usize = 14;
-pub const V_IS_FIELD_ASSERT_ZERO: usize = 15;
-pub const V_IS_FIELD_LOAD_IMM: usize = 16;
-pub const V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY: usize = 17;
-pub const V_IS_FIELD_ADVICE_LIMB: usize = 18;
-
-pub const NUM_R1CS_INPUTS: usize = NUM_VARS_PER_CYCLE - 1;
-pub const NUM_VARS_PER_CYCLE: usize = 19;
+pub const V_FIELD_RS1_VALUE: usize = RV64_NUM_VARS_PER_CYCLE;
+pub const V_FIELD_RS2_VALUE: usize = V_FIELD_RS1_VALUE + 1;
+pub const V_FIELD_RD_VALUE: usize = V_FIELD_RS1_VALUE + 2;
+pub const V_FIELD_PRODUCT: usize = V_FIELD_RS1_VALUE + 3;
+pub const V_FIELD_INV_PRODUCT: usize = V_FIELD_RS1_VALUE + 4;
+pub const NUM_FIELD_COLUMNS: usize = 5;
+pub const NUM_VARS_PER_CYCLE: usize = RV64_NUM_VARS_PER_CYCLE + NUM_FIELD_COLUMNS;
 
 pub const ROW_FADD: usize = 0;
 pub const ROW_FSUB: usize = 1;
@@ -58,7 +46,7 @@ pub const ROW_ASSERT_ZERO: usize = 6;
 pub const ROW_LOAD_IMM: usize = 7;
 /// `IsFieldLoadAccumulateFromMemory ·
 /// (FieldRdValue − 2^64·FieldRs1Value − RdWriteValue) = 0`: RV64 load rows
-/// bind the word in the scratch x-register, and field-register checking
+/// bind the word in the integer destination, and field-register checking
 /// binds `FieldRs1Value` to the destination's old value.
 pub const ROW_LOAD_ACCUMULATE_FROM_MEMORY: usize = 8;
 /// `IsFieldAdviceLimb · (FieldRs1Value − RdWriteValue − 2^64·FieldRdValue) = 0`:
@@ -71,18 +59,6 @@ pub const ROW_FIELD_PRODUCT: usize = NUM_EQ_CONSTRAINTS;
 pub const ROW_FIELD_INV_PRODUCT: usize = NUM_EQ_CONSTRAINTS + 1;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 2;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS;
-
-pub const fn const_column() -> usize {
-    V_CONST
-}
-
-pub const fn input_column(input_index: usize) -> Option<usize> {
-    if input_index < NUM_R1CS_INPUTS {
-        Some(1 + input_index)
-    } else {
-        None
-    }
-}
 
 fn row<F: JoltField>(entries: &[(usize, i64)]) -> SparseRow<F> {
     entries
@@ -111,7 +87,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    guard = IsFieldAdd
     //    left  = FieldRs1Value + FieldRs2Value
     //    right = FieldRdValue
-    a_rows.push(row::<F>(&[(V_IS_FIELD_ADD, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAdd), 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
         (V_FIELD_RS2_VALUE, 1),
@@ -123,7 +99,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    guard = IsFieldSub
     //    left  = FieldRs1Value − FieldRs2Value
     //    right = FieldRdValue
-    a_rows.push(row::<F>(&[(V_IS_FIELD_SUB, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldSub), 1)]));
     b_rows.push(row::<F>(&[
         (V_FIELD_RS1_VALUE, 1),
         (V_FIELD_RS2_VALUE, -1),
@@ -136,7 +112,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    left  = FieldProduct
     //    right = FieldRdValue
     // FieldProduct = FieldRs1Value · FieldRs2Value is checked separately.
-    a_rows.push(row::<F>(&[(V_IS_FIELD_MUL, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldMul), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_PRODUCT, 1), (V_FIELD_RD_VALUE, -1)]));
     c_rows.push(empty());
 
@@ -145,7 +121,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    left  = FieldInvProduct
     //    right = 1
     // FieldInvProduct = FieldRs1Value · FieldRdValue is checked separately.
-    a_rows.push(row::<F>(&[(V_IS_FIELD_INV, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldInv), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_INV_PRODUCT, 1), (V_CONST, -1)]));
     c_rows.push(empty());
 
@@ -153,7 +129,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    guard = IsFieldAssertEq
     //    left  = FieldRs1Value
     //    right = FieldRs2Value
-    a_rows.push(row::<F>(&[(V_IS_FIELD_ASSERT_EQ, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAssertEq), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1), (V_FIELD_RS2_VALUE, -1)]));
     c_rows.push(empty());
 
@@ -162,11 +138,14 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    left  = FieldRdValue
     //    right = 2^64 · FieldRs1Value + Rs1Value
     // Field-register checking binds FieldRs1Value to the destination's old value.
-    a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER, 1)]));
+    a_rows.push(row::<F>(&[(
+        flag_column(CircuitFlags::FieldLoadAccumulateFromRegister),
+        1,
+    )]));
     b_rows.push(vec![
         (V_FIELD_RD_VALUE, F::one()),
         (V_FIELD_RS1_VALUE, -limb_radix::<F>()),
-        (V_X_RS1_VALUE, -F::one()),
+        (V_RS1_VALUE, -F::one()),
     ]);
     c_rows.push(empty());
 
@@ -174,7 +153,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    guard = IsFieldAssertZero
     //    left  = FieldRs1Value
     //    right = 0
-    a_rows.push(row::<F>(&[(V_IS_FIELD_ASSERT_ZERO, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAssertZero), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RS1_VALUE, 1)]));
     c_rows.push(empty());
 
@@ -182,7 +161,7 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    guard = IsFieldLoadImm
     //    left  = FieldRdValue
     //    right = Imm
-    a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_IMM, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldLoadImm), 1)]));
     b_rows.push(row::<F>(&[(V_FIELD_RD_VALUE, 1), (V_IMM, -1)]));
     c_rows.push(empty());
 
@@ -192,11 +171,14 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    right = 2^64 · FieldRs1Value + RdWriteValue
     // RV64 load rows bind RdWriteValue to the loaded word; field-register
     // checking binds FieldRs1Value to the destination's old value.
-    a_rows.push(row::<F>(&[(V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY, 1)]));
+    a_rows.push(row::<F>(&[(
+        flag_column(CircuitFlags::FieldLoadAccumulateFromMemory),
+        1,
+    )]));
     b_rows.push(vec![
         (V_FIELD_RD_VALUE, F::one()),
         (V_FIELD_RS1_VALUE, -limb_radix::<F>()),
-        (V_X_RD_WRITE_VALUE, -F::one()),
+        (V_RD_WRITE_VALUE, -F::one()),
     ]);
     c_rows.push(empty());
 
@@ -206,10 +188,10 @@ fn field_eq_constraint_rows<F: JoltField>() -> ConstraintRows<F> {
     //    right = RdWriteValue + 2^64 · FieldRdValue
     // FieldRdValue is a field quotient. RV64/lookup constraints range-check
     // the limb; canonical integer readout requires checks in the guest.
-    a_rows.push(row::<F>(&[(V_IS_FIELD_ADVICE_LIMB, 1)]));
+    a_rows.push(row::<F>(&[(flag_column(CircuitFlags::FieldAdviceLimb), 1)]));
     b_rows.push(vec![
         (V_FIELD_RS1_VALUE, F::one()),
-        (V_X_RD_WRITE_VALUE, -F::one()),
+        (V_RD_WRITE_VALUE, -F::one()),
         (V_FIELD_RD_VALUE, -limb_radix::<F>()),
     ]);
     c_rows.push(empty());
@@ -248,7 +230,7 @@ pub fn field_inline_spartan_outer_constraints<F: JoltField>() -> crate::Constrai
 
 /// Build the full native field-inline R1CS constraint matrices.
 ///
-/// Returns 12 constraints over 19 variables per cycle:
+/// Returns 12 constraints using the shared RV64 columns and five field columns:
 /// - 10 equality-conditional rows: `guard * (left - right) = 0`
 /// - 2 product rows for `FieldProduct` and `FieldInvProduct`
 pub fn field_inline_trace_constraints<F: JoltField>() -> crate::ConstraintMatrices<F> {
@@ -283,8 +265,8 @@ mod tests {
         witness[V_FIELD_RD_VALUE] = field_rd;
         witness[V_FIELD_PRODUCT] = field_rs1 * field_rs2;
         witness[V_FIELD_INV_PRODUCT] = field_rs1 * field_rd;
-        witness[V_X_RS1_VALUE] = field_rd;
-        witness[V_X_RD_WRITE_VALUE] = field_rs1;
+        witness[V_RS1_VALUE] = field_rd;
+        witness[V_RD_WRITE_VALUE] = field_rs1;
         witness[V_IMM] = field_rd;
         for &(index, value) in flags {
             witness[index] = value;
@@ -302,7 +284,7 @@ mod tests {
             Fr::from_u64(5),
             Fr::from_u64(7),
             Fr::from_u64(12),
-            &[(V_IS_FIELD_ADD, one())],
+            &[(flag_column(CircuitFlags::FieldAdd), one())],
         );
 
         field_inline_trace_constraints::<Fr>()
@@ -316,7 +298,7 @@ mod tests {
             Fr::from_u64(13),
             Fr::from_u64(5),
             Fr::from_u64(8),
-            &[(V_IS_FIELD_SUB, one())],
+            &[(flag_column(CircuitFlags::FieldSub), one())],
         );
 
         field_inline_trace_constraints::<Fr>()
@@ -330,7 +312,7 @@ mod tests {
             Fr::from_u64(5),
             Fr::from_u64(7),
             Fr::from_u64(35),
-            &[(V_IS_FIELD_MUL, one())],
+            &[(flag_column(CircuitFlags::FieldMul), one())],
         );
 
         field_inline_trace_constraints::<Fr>()
@@ -344,7 +326,7 @@ mod tests {
             Fr::from_u64(5),
             Fr::from_u64(7),
             Fr::from_u64(36),
-            &[(V_IS_FIELD_MUL, one())],
+            &[(flag_column(CircuitFlags::FieldMul), one())],
         );
 
         assert_eq!(
@@ -383,7 +365,7 @@ mod tests {
             field_rs1,
             Fr::from_u64(9),
             field_rd,
-            &[(V_IS_FIELD_INV, one())],
+            &[(flag_column(CircuitFlags::FieldInv), one())],
         );
 
         field_inline_trace_constraints::<Fr>()
@@ -397,7 +379,7 @@ mod tests {
             Fr::from_u64(5),
             Fr::from_u64(9),
             Fr::from_u64(8),
-            &[(V_IS_FIELD_INV, one())],
+            &[(flag_column(CircuitFlags::FieldInv), one())],
         );
 
         assert_eq!(
@@ -412,7 +394,7 @@ mod tests {
             Fr::from_u64(11),
             Fr::from_u64(11),
             Fr::from_u64(4),
-            &[(V_IS_FIELD_ASSERT_EQ, one())],
+            &[(flag_column(CircuitFlags::FieldAssertEq), one())],
         );
 
         field_inline_trace_constraints::<Fr>()
@@ -428,7 +410,7 @@ mod tests {
             constraints
                 .check_witness(&row)
                 .expect("an inactive zero assertion leaves the value unconstrained");
-            row[V_IS_FIELD_ASSERT_ZERO] = one();
+            row[flag_column(CircuitFlags::FieldAssertZero)] = one();
             assert_eq!(
                 constraints.check_witness(&row),
                 if value.is_zero() {
@@ -446,13 +428,13 @@ mod tests {
         let constraints = field_inline_trace_constraints::<Fr>();
         for (selector, source, row) in [
             (
-                V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
-                V_X_RS1_VALUE,
+                flag_column(CircuitFlags::FieldLoadAccumulateFromRegister),
+                V_RS1_VALUE,
                 ROW_LOAD_ACCUMULATE_FROM_REGISTER,
             ),
             (
-                V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
-                V_X_RD_WRITE_VALUE,
+                flag_column(CircuitFlags::FieldLoadAccumulateFromMemory),
+                V_RD_WRITE_VALUE,
                 ROW_LOAD_ACCUMULATE_FROM_MEMORY,
             ),
         ] {
@@ -485,9 +467,9 @@ mod tests {
             low + quotient * limb_radix::<Fr>(),
             Fr::from_u64(0),
             quotient,
-            &[(V_IS_FIELD_ADVICE_LIMB, one())],
+            &[(flag_column(CircuitFlags::FieldAdviceLimb), one())],
         );
-        split[V_X_RD_WRITE_VALUE] = low;
+        split[V_RD_WRITE_VALUE] = low;
         field_inline_trace_constraints::<Fr>()
             .check_witness(&split)
             .expect("a split writes the low limb and keeps the quotient");
@@ -505,9 +487,9 @@ mod tests {
             Fr::from_u64(0),
             Fr::from_u64(0),
             quotient,
-            &[(V_IS_FIELD_ADVICE_LIMB, one())],
+            &[(flag_column(CircuitFlags::FieldAdviceLimb), one())],
         );
-        row[V_X_RD_WRITE_VALUE] = one();
+        row[V_RD_WRITE_VALUE] = one();
         field_inline_trace_constraints::<Fr>()
             .check_witness(&row)
             .expect("canonicality belongs to the complete guest readout");
@@ -515,7 +497,7 @@ mod tests {
             quotient,
             Fr::zero(),
             Fr::zero(),
-            &[(V_IS_FIELD_ASSERT_ZERO, one())],
+            &[(flag_column(CircuitFlags::FieldAssertZero), one())],
         );
         assert_eq!(
             field_inline_trace_constraints::<Fr>().check_witness(&residual),
@@ -529,22 +511,11 @@ mod tests {
             Fr::from_u64(5),
             Fr::from_u64(7),
             Fr::from_u64(42),
-            &[(V_IS_FIELD_LOAD_IMM, one())],
+            &[(flag_column(CircuitFlags::FieldLoadImm), one())],
         );
         let constraints = field_inline_trace_constraints::<Fr>();
         constraints.check_witness(&row).expect("matching immediate");
         row[V_IMM] += one();
         assert_eq!(constraints.check_witness(&row), Err(ROW_LOAD_IMM));
-    }
-
-    #[test]
-    fn input_columns_follow_const_then_inputs_layout() {
-        assert_eq!(const_column(), V_CONST);
-        assert_eq!(input_column(0), Some(V_FIELD_RS1_VALUE));
-        assert_eq!(
-            input_column(NUM_R1CS_INPUTS - 1),
-            Some(V_IS_FIELD_ADVICE_LIMB)
-        );
-        assert_eq!(input_column(NUM_R1CS_INPUTS), None);
     }
 }

@@ -108,16 +108,10 @@ where
         stage4_points: &stage4.output_points,
         stage5_points: &stage5.output_points,
     })?;
-    // The field-inline kernel geometry, composed exactly like the verifier: the
-    // preprocessed side table (required fail-closed, like the stage-6b build)
-    // plus the stage-4/5 field-inline opening points the address kernel's field-inline
-    // stage-value legs fold over.
+    // The field-register access terms use their own upstream opening points.
     #[cfg(feature = "field-inline")]
     let sumchecks = jolt_verifier::stages::stage6a::field_inline::compose_bytecode_geometry(
         sumchecks,
-        jolt_verifier::stages::stage6a::field_inline::preprocessed_bytecode_table(
-            &preprocessing.verifier.program,
-        )?,
         &stage4.output_points,
         &stage5.output_points,
     );
@@ -154,10 +148,9 @@ where
     let bytecode_input_values = ComposedClaims {
         base: bytecode_input_values,
         field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
-            stage1,
             &stage4.output_values,
             &stage5.output_values,
-        )?,
+        ),
     };
     let inputs = Stage6aInputClaims {
         bytecode_read_raf: bytecode_input_values,
@@ -195,7 +188,7 @@ where
 
 /// Clear round-trips with field-inline enabled of the stage-6a recipe against the verifier's own
 /// public constituents — `stage6a::verify`'s clear body (the batch built by
-/// the promoted `build_from_parts` with the field-inline side table on the bytecode
+/// the promoted `build_from_parts` with the field-register access geometry on the bytecode
 /// member, the field-inline appendage composition, the composed input claim with its
 /// gamma-power extension) on a twin transcript positioned by the stage-1..5
 /// replays, on the field-active arithmetic trace: the appendage openings are
@@ -313,13 +306,10 @@ mod field_inline_round_trip {
         // the round trip exercises the extension for real rather than the
         // zero-fold degenerate case.
         let appendage = field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
-            &stage1.clear_output,
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,
-        )
-        .unwrap();
+        );
         let zero = Fr::from_u64(0);
-        assert!(appendage.field_op_flags.iter().any(|flag| *flag != zero));
         assert!(appendage.rd_wa_read_write != zero);
 
         // The verifier twin (stage6a::verify's clear body), positioned by the

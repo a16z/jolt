@@ -105,6 +105,36 @@ pub struct OuterRemainderOutputClaims<C> {
     pub is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence))]
     pub is_last_in_sequence: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAdd))]
+    pub field_add: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldSub))]
+    pub field_sub: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldMul))]
+    pub field_mul: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldInv))]
+    pub field_inv: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAssertEq))]
+    pub field_assert_eq: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadAccumulateFromRegister))]
+    pub field_load_accumulate_from_register: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAssertZero))]
+    pub field_assert_zero: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadImm))]
+    pub field_load_imm: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadAccumulateFromMemory))]
+    pub field_load_accumulate_from_memory: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAdviceLimb))]
+    pub field_advice_limb: C,
 }
 
 /// The Spartan outer remainder sumcheck: the quadratic R1CS form over the outer

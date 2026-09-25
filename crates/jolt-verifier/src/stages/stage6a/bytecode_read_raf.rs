@@ -199,6 +199,26 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
         outer_is_compressed: outer.is_compressed,
         outer_is_first_in_sequence: outer.is_first_in_sequence,
         outer_is_last_in_sequence: outer.is_last_in_sequence,
+        #[cfg(feature = "field-inline")]
+        outer_field_add: outer.field_add,
+        #[cfg(feature = "field-inline")]
+        outer_field_sub: outer.field_sub,
+        #[cfg(feature = "field-inline")]
+        outer_field_mul: outer.field_mul,
+        #[cfg(feature = "field-inline")]
+        outer_field_inv: outer.field_inv,
+        #[cfg(feature = "field-inline")]
+        outer_field_assert_eq: outer.field_assert_eq,
+        #[cfg(feature = "field-inline")]
+        outer_field_load_accumulate_from_register: outer.field_load_accumulate_from_register,
+        #[cfg(feature = "field-inline")]
+        outer_field_assert_zero: outer.field_assert_zero,
+        #[cfg(feature = "field-inline")]
+        outer_field_load_imm: outer.field_load_imm,
+        #[cfg(feature = "field-inline")]
+        outer_field_load_accumulate_from_memory: outer.field_load_accumulate_from_memory,
+        #[cfg(feature = "field-inline")]
+        outer_field_advice_limb: outer.field_advice_limb,
         outer_pc: outer.pc,
         product_jump: product.jump_flag,
         product_branch: product.branch_flag,
@@ -236,7 +256,7 @@ pub struct BytecodeReadRafAddressPhase<F: JoltField> {
     /// kernel reads these.
     stage_points: BytecodeStagePoints<F>,
     entry_bytecode_index: usize,
-    /// The field-inline side table and opening points the address-phase kernel folds over,
+    /// The field-register opening points the address-phase kernel folds over,
     /// composed in by both fronts right after the batch build
     /// ([`with_field_inline_geometry`](Self::with_field_inline_geometry)). See
     /// [`field_inline::FieldInlineBytecodeReadRafGeometry`](super::field_inline::FieldInlineBytecodeReadRafGeometry).
@@ -262,7 +282,7 @@ impl<F: JoltField> BytecodeReadRafAddressPhase<F> {
         }
     }
 
-    /// The relation composed with the field-inline kernel geometry (side table + field-inline
+    /// The relation composed with the field-inline kernel geometry (field-register
     /// opening points).
     #[cfg(feature = "field-inline")]
     pub fn with_field_inline_geometry(
@@ -466,7 +486,6 @@ mod field_inline_tests {
     use jolt_claims::{InputClaims as _, SumcheckChallenges as _};
     use jolt_field::{Fr, Ring};
     use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
-    use jolt_riscv::NUM_CIRCUIT_FLAGS;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -511,7 +530,6 @@ mod field_inline_tests {
 
     fn field_inline_inputs() -> FieldInlineBytecodeReadRafInputs<Fr> {
         FieldInlineBytecodeReadRafInputs {
-            field_op_flags: core::array::from_fn(|index| fr(200 + index as u64)),
             rd_wa_read_write: fr(301),
             rs1_ra: fr(302),
             rs2_ra: fr(303),
@@ -538,12 +556,7 @@ mod field_inline_tests {
         powers
     }
 
-    /// The composed input claim equals the from-scratch fold: the ordinary symbolic bind plus
-    /// the field-inline terms at the extended stage-1/4/5 power indices, each stage extension
-    /// riding the same outer gamma power as its ordinary stage claim (spec:
-    /// `field-inline-protocol.md`, "Stage 6 Composition" — Stage1 powers gain the eight
-    /// `FieldOpFlag`s, Stage4 powers gain `FieldRdWa`/`FieldRs1Ra`/`FieldRs2Ra`, Stage5 powers
-    /// gain the val-evaluation `FieldRdWa`).
+    /// Field-register accesses extend the ordinary input fold at their stage powers.
     #[test]
     fn composed_input_claim_matches_from_scratch_fold() {
         let relation = relation();
@@ -573,18 +586,11 @@ mod field_inline_tests {
             )
             .unwrap();
 
-        let stage1_powers = powers(challenges.stage1_gamma, 2 + NUM_CIRCUIT_FLAGS + 11);
         let stage4_powers = powers(challenges.stage4_gamma, 6);
         let stage5_powers = powers(
             challenges.stage5_gamma,
             2 + LookupTableKind::<RISCV_XLEN>::COUNT + 1,
         );
-        let field_inline_stage1: Fr = field_inline
-            .field_op_flags
-            .iter()
-            .enumerate()
-            .map(|(index, flag)| stage1_powers[2 + NUM_CIRCUIT_FLAGS + index] * *flag)
-            .sum();
         let field_inline_stage4 = stage4_powers[3] * field_inline.rd_wa_read_write
             + stage4_powers[4] * field_inline.rs1_ra
             + stage4_powers[5] * field_inline.rs2_ra;
@@ -592,7 +598,6 @@ mod field_inline_tests {
             * field_inline.rd_wa_val_evaluation;
         let gamma = challenges.gamma;
         let expected = ordinary
-            + field_inline_stage1
             + gamma * gamma * gamma * field_inline_stage4
             + gamma * gamma * gamma * gamma * field_inline_stage5;
 

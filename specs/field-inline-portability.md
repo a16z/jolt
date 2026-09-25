@@ -95,15 +95,20 @@ same sizing law on both sides of the PCS boundary.
 ## Field-specific execution encoding
 
 Akita proves over fp128. Its feature chain selects the tracer's `ProofField`
-as `jolt_field::Prime128OffsetA7F7` and `FieldValueEncoding::ACTIVE` as
-`TWO_LIMB_128_CANONICAL`. Dory uses BN254 Fr with
-`BN254_SCALAR_CANONICAL`. The tracer's `decode_field` and `encode_field` in
+as `jolt_field::Prime128OffsetA7F7`; Dory uses BN254 Fr. The tracer's
+`decode_field` and `encode_field` in
 `tracer/src/instruction/field_inline/mod.rs` operate on the selected field.
+Both use the fixed 32-byte `FieldEncodedValue` buffer: fp128 occupies the low
+16 bytes and leaves the high bytes zero. The tracer emits canonical values;
+witness generation decodes the buffer by reduction in its proof field.
 
-The encoding is recorded in `FieldInlineBytecodeMetadata` and the instruction
-profile fingerprint. A proof or preprocessing artifact using a different
-encoding is rejected by the metadata equality check. Field-inline guests
-are therefore configuration-specific.
+Bytecode preprocessing stores ordinary instruction rows only. Their opcodes,
+register indices, and integer immediates carry no field-specific value
+encoding, so there is no separate encoding tag or field-instruction table.
+The verifier checks instruction-profile legality and operand shapes on these
+rows. Proof configuration binds the field-inline and commitment modes; the
+commitment mode selects the proof field. Guests that use a field modulus or
+a fixed limb count still need to match that configuration.
 
 Guest ingress and readout still use u64 limbs because the integer register
 file is RV64; these instruction operands are independent of the commitment
@@ -131,5 +136,5 @@ representation:
   the field-increment role in the batch.
 
 The shared guest acceptance matrix runs field-inline in clear Dory, ZK Dory,
-and Akita modes. Encoding-mismatch tests run under both tracer field
-configurations.
+and Akita modes. Tracer tests check canonical-value roundtrips and zero
+padding under both proof-field configurations.

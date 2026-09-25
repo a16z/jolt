@@ -177,6 +177,30 @@ fn claim_mut_from_spartan_outer<F: JoltField>(
             CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
             CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
             CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAdd => Some(&mut claims.field_add),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldSub => Some(&mut claims.field_sub),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldMul => Some(&mut claims.field_mul),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldInv => Some(&mut claims.field_inv),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAssertEq => Some(&mut claims.field_assert_eq),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadAccumulateFromRegister => {
+                Some(&mut claims.field_load_accumulate_from_register)
+            }
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAssertZero => Some(&mut claims.field_assert_zero),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadImm => Some(&mut claims.field_load_imm),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadAccumulateFromMemory => {
+                Some(&mut claims.field_load_accumulate_from_memory)
+            }
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAdviceLimb => Some(&mut claims.field_advice_limb),
         },
         _ => None,
     }

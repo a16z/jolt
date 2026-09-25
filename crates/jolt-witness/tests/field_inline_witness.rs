@@ -6,10 +6,9 @@ use std::sync::Arc;
 use common::constants::RAM_START_ADDRESS;
 use jolt_claims::protocols::{
     field_inline::{
-        FieldInlineCommittedPolynomial, FieldInlineOpFlag, FieldInlinePolynomialId,
-        FieldInlineVirtualPolynomial,
+        FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
     },
-    jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId},
+    jolt::{JoltCommittedPolynomial, JoltOneHotConfig, JoltPolynomialId, JoltVirtualPolynomial},
 };
 use jolt_field::{Fr, Ring};
 use jolt_program::{
@@ -24,7 +23,7 @@ use jolt_program::{
     preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
 };
 use jolt_riscv::{
-    FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
+    CircuitFlags, FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
     NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_witness::{
@@ -232,12 +231,11 @@ fn field_inline_public_provider_materializes_views() {
     );
     assert_eq!(&products[..4], &[fr(0), fr(0), fr(221), fr(0)]);
 
-    let mul_flags = owned_view(
-        &provider,
-        FieldInlinePolynomialId::Virtual(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::Mul,
-        )),
-    );
+    let mul_flags = JoltWitnessOracle::<Fr>::oracle_table(
+        &witness,
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldMul)),
+    )
+    .unwrap();
     assert_eq!(&mul_flags[..4], &[fr(0), fr(0), fr(1), fr(0)]);
 }
 

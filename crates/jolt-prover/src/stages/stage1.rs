@@ -295,7 +295,7 @@ mod field_inline_zk {
         .unwrap();
 
         // The committed shell carries the composed 50 output-claim values
-        // (35 member openings + 15 field-inline appendage), row-committed in
+        // (45 common openings + five field value/product openings), row-committed in
         // capacity-sized chunks — the shape the verifier's
         // `composed_output_claim_count` check derives.
         let total: usize = out

@@ -815,7 +815,7 @@ where
     let (spartan_outer_raf, spartan_shift_raf, entry) =
         if input.checked.precommitted.bytecode.is_some() {
             // The field-inline extension anchors the field access selectors through the public
-            // side table, which committed-program mode cannot supply; the stage-6b batch build
+            // public bytecode, which committed-program mode cannot supply; the stage-6b batch build
             // already rejected this combination, so this arm is reachable only when
             // field-inline is disabled.
             #[cfg(feature = "field-inline")]
@@ -884,7 +884,7 @@ where
                     stage5_gammas: &stage_gamma_powers[4],
                 })
                 .map_err(|error| public_error(JoltRelationId::BytecodeReadRaf, error))?;
-            // The composed publics: the field-inline side-table stage values (already
+            // The composed publics: the field-register access contributions (already
             // cycle-weighted per stage) add onto the ordinary staged publics BEFORE they bake,
             // so the same `StageValue(i)` publics the symbolic output expression references
             // carry both families — exactly the clear composed relation's public composition.
@@ -894,7 +894,6 @@ where
                 &input.preprocessing.program,
                 &bytecode_r_address,
                 &bytecode_r_cycle,
-                &stage1_cycle,
                 input
                     .stage4
                     .output_points

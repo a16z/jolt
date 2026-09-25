@@ -2,11 +2,11 @@
 //! the source tree at test time).
 //!
 //! The architectural rule: `protocols/jolt` and `protocols/field_inline` are
-//! completely separate protocol families. They share algebra only through the
-//! id-free `twist` framework module, and they compose only in
-//! `jolt-verifier` — so neither protocol module may import the other, the
-//! Twist-identity module may reference neither, and no `field-inline` feature gate may
-//! appear in this crate (both families always compile here).
+//! separate protocol families. They share algebra through the id-free framework
+//! modules and compose only in `jolt-verifier`: neither protocol module may import
+//! the other. Both families compile unconditionally. The common Jolt flag carriers
+//! and their geometry mirror the feature-gated ISA flags in `jolt-riscv`; this does
+//! not introduce field-register protocol ids into the Jolt protocol.
 
 #![expect(clippy::expect_used, reason = "test-only source-tree walking")]
 
@@ -171,23 +171,29 @@ fn lattice_algebra_references_no_protocol_module() {
     );
 }
 
-/// Both protocol families always compile in this crate: the `field-inline`
-/// feature exists only in `jolt-verifier` (and above), so no source here may
-/// gate on it.
+/// Field-register relations and shared algebra remain unconditional. The three
+/// ordinary Jolt flag carriers mirror `jolt-riscv::CircuitFlags`, whose field
+/// instruction variants exist only with the `field-inline` ISA feature.
 #[test]
-fn no_field_inline_feature_gates_in_jolt_claims() {
-    // Raw text, not `code_text`: the gate's feature name is a string literal,
-    // which the code-only view blanks.
+fn field_inline_feature_gates_are_confined_to_common_flag_carriers() {
+    let source_dir = src_dir();
+    let flag_carriers = [
+        "protocols/jolt/geometry/spartan.rs",
+        "protocols/jolt/relations/spartan/outer_remainder.rs",
+        "protocols/jolt/relations/bytecode/read_raf_address_phase.rs",
+    ]
+    .map(|path| source_dir.join(path));
+    // The feature name is a string literal, which `code_text` would blank.
     let mut violations = Vec::new();
-    for file in rust_sources(&src_dir()) {
+    for file in rust_sources(&source_dir) {
         let source = fs::read_to_string(&file).expect("source file is readable");
-        if source.contains("feature = \"field-inline\"") {
+        if source.contains("feature = \"field-inline\"") && !flag_carriers.contains(&file) {
             violations.push(file.display().to_string());
         }
     }
     assert!(
         violations.is_empty(),
-        "jolt-claims must not gate on the field-inline feature:\n{}",
+        "field-inline feature gates belong only in the common ISA flag carriers:\n{}",
         violations.join("\n")
     );
 }

@@ -1,6 +1,6 @@
 //! field_inline Spartan-outer produced claims.
 //!
-//! The field-inline extension appends 15 extension columns to the composed
+//! The field-inline extension appends five value/product columns to the composed
 //! Spartan outer R1CS (`jolt-r1cs::constraints::jolt`); their openings are
 //! produced by the same stage-1 remainder sumcheck as the ordinary RV64
 //! openings and appended after them. There is no separate field-inline Spartan relation
@@ -9,12 +9,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocols::field_inline::FieldInlineOpFlag;
 use crate::OutputClaims;
 
 /// Produced field-inline Spartan-outer openings, in the appended-column order
 /// (`geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS`): the five
-/// value/product columns, then the ten op-flag selectors. All share the
+/// value/product columns. All share the
 /// stage-1 remainder opening point. Generic over the opening cell (`F` value /
 /// `Vec<F>` point).
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
@@ -36,26 +35,6 @@ pub struct FieldRegistersSpartanOuterOutputClaims<C> {
     pub product: C,
     #[opening(FieldInvProduct)]
     pub inv_product: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::Add))]
-    pub add: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::Sub))]
-    pub sub: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::Mul))]
-    pub mul: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::Inv))]
-    pub inv: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::AssertEq))]
-    pub assert_eq: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromRegister))]
-    pub load_accumulate_from_register: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::AssertZero))]
-    pub assert_zero: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadImm))]
-    pub load_imm: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromMemory))]
-    pub load_accumulate_from_memory: C,
-    #[opening(FieldOpFlag(FieldInlineOpFlag::AdviceLimb))]
-    pub advice_limb: C,
 }
 
 #[cfg(test)]
@@ -76,16 +55,6 @@ mod tests {
             rd_value: value,
             product: value,
             inv_product: value,
-            add: value,
-            sub: value,
-            mul: value,
-            inv: value,
-            assert_eq: value,
-            load_accumulate_from_register: value,
-            assert_zero: value,
-            load_imm: value,
-            load_accumulate_from_memory: value,
-            advice_limb: value,
         };
         assert_eq!(outputs.canonical_order(), outer_output_openings());
     }

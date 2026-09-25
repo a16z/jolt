@@ -3,7 +3,7 @@
 //!
 //! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
 //!   rows are evaluated per cycle as integers (`i64` guards, `S192`
-//!   magnitudes) straight off a typed witness bundle — the 35 R1CS input
+//!   magnitudes) straight off a typed witness bundle — the ordinary R1CS input
 //!   tables are never materialized as field vectors
 //!   (`R1CSEval::{eval_az,eval_bz}_*_group`).
 //! - **Univariate skip over the centered integer domain**: the first-round
@@ -24,11 +24,11 @@
 //!   joint `(cycle ‖ stream)` domain and the first round's endpoints are
 //!   produced by one pass over the typed rows
 //!   (`OuterLinearStage::fused_materialise_polynomials_round_zero`).
-//! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the 35 input
+//! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the ordinary input
 //!   tables are never bound.
-//! - **Post-hoc opening evaluation**: the 35 produced opening claims come
+//! - **Post-hoc opening evaluation**: the ordinary produced opening claims come
 //!   from one final eq-weighted walk over the typed rows
-//!   (`R1CSEval::compute_claimed_inputs`), not from binding 35 polynomials
+//!   (`R1CSEval::compute_claimed_inputs`), not from binding all input polynomials
 //!   through every round.
 //!
 //! Byte parity with the reference kernels holds because every step computes
@@ -48,8 +48,6 @@ use std::collections::BTreeMap;
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT;
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
 };
@@ -150,6 +148,26 @@ struct SpartanOuterRow {
     is_compressed: OpFlag,
     is_first_in_sequence: OpFlag,
     is_last_in_sequence: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_add: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_sub: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_mul: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_inv: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_assert_eq: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_load_accumulate_from_register: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_assert_zero: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_load_imm: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_load_accumulate_from_memory: OpFlag,
+    #[cfg(feature = "field-inline")]
+    field_advice_limb: OpFlag,
 }
 
 impl WitnessBundle for SpartanOuterRow {
@@ -216,6 +234,28 @@ impl WitnessBundle for SpartanOuterRow {
             is_compressed: flag(CircuitFlags::IsCompressed),
             is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
             is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
+            #[cfg(feature = "field-inline")]
+            field_add: flag(CircuitFlags::FieldAdd),
+            #[cfg(feature = "field-inline")]
+            field_sub: flag(CircuitFlags::FieldSub),
+            #[cfg(feature = "field-inline")]
+            field_mul: flag(CircuitFlags::FieldMul),
+            #[cfg(feature = "field-inline")]
+            field_inv: flag(CircuitFlags::FieldInv),
+            #[cfg(feature = "field-inline")]
+            field_assert_eq: flag(CircuitFlags::FieldAssertEq),
+            #[cfg(feature = "field-inline")]
+            field_load_accumulate_from_register: flag(
+                CircuitFlags::FieldLoadAccumulateFromRegister,
+            ),
+            #[cfg(feature = "field-inline")]
+            field_assert_zero: flag(CircuitFlags::FieldAssertZero),
+            #[cfg(feature = "field-inline")]
+            field_load_imm: flag(CircuitFlags::FieldLoadImm),
+            #[cfg(feature = "field-inline")]
+            field_load_accumulate_from_memory: flag(CircuitFlags::FieldLoadAccumulateFromMemory),
+            #[cfg(feature = "field-inline")]
+            field_advice_limb: flag(CircuitFlags::FieldAdviceLimb),
         })
     }
 
@@ -457,17 +497,24 @@ impl SpartanOuterRow {
         values.b_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_b_first);
         values.b_second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second);
 
-        // The field-inline rows with all field-inline columns zero — still integers,
-        // off the shared rv64 columns the bridge rows reuse. Active field-inline cycles
-        // go through `field_group_values` instead; calling this on one is a routing bug
-        // the parity tests would surface as a wrong t1 value. First group [FADD, FSUB,
-        // FMUL, FINV, LOAD_ACCUMULATE_FROM_MEMORY]: guards zero; magnitudes zero except FINV's
-        // `inv_product − 1 = −1` and the load row's `field_rd − 2^64·field_rs1 −
-        // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_ACCUMULATE_FROM_REGISTER,
-        // ASSERT_ZERO, LOAD_IMM, ADVICE_LIMB]: guards zero; magnitudes `0`,
-        // `−Rs1Value`, `0`, `−Imm`, and `−RdWriteValue`.
+        // Field rows with zero field values still use their ordinary op flags.
+        // Nonzero field magnitudes are supplied by `field_group_values` below.
         #[cfg(feature = "field-inline")]
         {
+            values.a_first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
+                flag(self.field_add.0),
+                flag(self.field_sub.0),
+                flag(self.field_mul.0),
+                flag(self.field_inv.0),
+                flag(self.field_load_accumulate_from_memory.0),
+            ]);
+            values.a_second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
+                flag(self.field_assert_eq.0),
+                flag(self.field_load_accumulate_from_register.0),
+                flag(self.field_assert_zero.0),
+                flag(self.field_load_imm.0),
+                flag(self.field_advice_limb.0),
+            ]);
             let rd_write_value = S192::from_u64(self.rd_write_value.0);
             values.b_first[RV64_FIRST_GROUP_LEN + 3] = S192::from_i64(-1);
             values.b_first[RV64_FIRST_GROUP_LEN + 4] = S192::zero() - rd_write_value;
@@ -498,13 +545,6 @@ impl SpartanOuterRow {
             b_first: integer.b_first.map(|value| s192_to_field(&value)),
             b_second: integer.b_second.map(|value| s192_to_field(&value)),
         };
-        let flag = |flag: FieldInlineOpFlag| field_row.flags[flag as usize];
-        values.a_first[RV64_FIRST_GROUP_LEN] = flag(FieldInlineOpFlag::Add);
-        values.a_first[RV64_FIRST_GROUP_LEN + 1] = flag(FieldInlineOpFlag::Sub);
-        values.a_first[RV64_FIRST_GROUP_LEN + 2] = flag(FieldInlineOpFlag::Mul);
-        values.a_first[RV64_FIRST_GROUP_LEN + 3] = flag(FieldInlineOpFlag::Inv);
-        values.a_first[RV64_FIRST_GROUP_LEN + 4] =
-            flag(FieldInlineOpFlag::LoadAccumulateFromMemory);
         let rd_write_value = F::from_u64(self.rd_write_value.0);
         values.b_first[RV64_FIRST_GROUP_LEN] =
             field_row.rs1_value + field_row.rs2_value - field_row.rd_value;
@@ -514,18 +554,12 @@ impl SpartanOuterRow {
         values.b_first[RV64_FIRST_GROUP_LEN + 3] = field_row.inv_product - F::one();
         values.b_first[RV64_FIRST_GROUP_LEN + 4] =
             field_row.rd_value - limb_radix::<F>() * field_row.rs1_value - rd_write_value;
-        values.a_second[RV64_SECOND_GROUP_LEN] = flag(FieldInlineOpFlag::AssertEq);
-        values.a_second[RV64_SECOND_GROUP_LEN + 1] =
-            flag(FieldInlineOpFlag::LoadAccumulateFromRegister);
-        values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::AssertZero);
-        values.a_second[RV64_SECOND_GROUP_LEN + 3] = flag(FieldInlineOpFlag::LoadImm);
         values.b_second[RV64_SECOND_GROUP_LEN] = field_row.rs1_value - field_row.rs2_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 1] = field_row.rd_value
             - limb_radix::<F>() * field_row.rs1_value
             - F::from_u64(self.rs1_value.0);
         values.b_second[RV64_SECOND_GROUP_LEN + 2] = field_row.rs1_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 3] = field_row.rd_value - F::from_i128(self.imm.0);
-        values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::AdviceLimb);
         values.b_second[RV64_SECOND_GROUP_LEN + 4] =
             field_row.rs1_value - rd_write_value - limb_radix::<F>() * field_row.rd_value;
         values
@@ -645,7 +679,7 @@ struct SpartanOuterCarry<F: JoltField> {
     /// ~176 B × T row vector is the prover's peak allocation at large scale).
     rows: BundleStore<SpartanOuterRow>,
     /// The active field-inline cycles' composed column values, sparse and sorted by
-    /// cycle (the witness seam's direct walk — the 15 dense field-inline tables never
+    /// cycle (the witness seam's direct walk — the five dense field-inline tables never
     /// materialize).
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
@@ -1035,7 +1069,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
     /// Az/Bz column weights at both stream values over the composed opening-column
     /// selection, from the same `jolt-r1cs` sources the verifier's coefficient build
-    /// uses (35 rv64 columns without field-inline; the non-contiguous 35 + 15 selection
+    /// uses (35 rv64 columns without field-inline; the non-contiguous 45 + 5 selection
     /// under `field-inline`).
     fn derived_weights(uniskip_challenge: F) -> Result<DerivedWeights<F>, KernelError<F>> {
         let matrices = spartan_outer_constraints::<F>();
@@ -1086,7 +1120,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         EqPolynomial::<F>::evals(&reversed, None)
     }
 
-    /// The 35 produced opening values at the bound cycle point: one
+    /// The ordinary produced opening values at the bound cycle point: one
     /// eq-weighted walk over the typed rows (`compute_claimed_inputs`),
     /// mixed-width accumulators per input.
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
@@ -1130,7 +1164,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 }
 
-const VARIABLE_COUNT: usize = 35;
+const VARIABLE_COUNT: usize = SPARTAN_OUTER_R1CS_INPUTS.len();
 
 /// Which canonical inputs are boolean-valued: those stay on the small-scalar
 /// accumulator, whose 5-limb (320-bit) window only has headroom when the
@@ -1143,7 +1177,7 @@ const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     mask[17] = true; // NextIsVirtual
     mask[18] = true; // NextIsFirstInSequence
     mask[20] = true; // ShouldJump
-    let mut flag = 21; // the 14 circuit flags
+    let mut flag = 21; // the circuit flags
     while flag < VARIABLE_COUNT {
         mask[flag] = true;
         flag += 1;
@@ -1191,6 +1225,19 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(32, row.is_compressed.0);
         flag(33, row.is_first_in_sequence.0);
         flag(34, row.is_last_in_sequence.0);
+        #[cfg(feature = "field-inline")]
+        {
+            flag(35, row.field_add.0);
+            flag(36, row.field_sub.0);
+            flag(37, row.field_mul.0);
+            flag(38, row.field_inv.0);
+            flag(39, row.field_assert_eq.0);
+            flag(40, row.field_load_accumulate_from_register.0);
+            flag(41, row.field_assert_zero.0);
+            flag(42, row.field_load_imm.0);
+            flag(43, row.field_load_accumulate_from_memory.0);
+            flag(44, row.field_advice_limb.0);
+        }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {
             if let Ok(magnitude) = u64::try_from(magnitude) {
@@ -1336,8 +1383,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
         // state, cross-checked against the verifier's coefficient build.
         let stream = self.challenges.as_slice()[0];
         let blend = |pair: [&F; 2]| *pair[0] + stream * (*pair[1] - *pair[0]);
-        // The composed selection width (48 with field-inline enabled), not the 35
-        // ordinary ids.
+        // The composed selection width (50 with field-inline enabled), including all ordinary ids and appended field values.
         let variable_count = self.derived.az_weights[0].len();
         let ids = std::iter::once(SpartanOuterPublic::TauKernel)
             .chain((0..variable_count).map(SpartanOuterPublic::AzWeight))
@@ -1448,7 +1494,27 @@ mod tests {
             32 => row.is_compressed.to_field(),
             33 => row.is_first_in_sequence.to_field(),
             34 => row.is_last_in_sequence.to_field(),
-            _ => unreachable!("35 canonical R1CS inputs"),
+            #[cfg(feature = "field-inline")]
+            35 => row.field_add.to_field(),
+            #[cfg(feature = "field-inline")]
+            36 => row.field_sub.to_field(),
+            #[cfg(feature = "field-inline")]
+            37 => row.field_mul.to_field(),
+            #[cfg(feature = "field-inline")]
+            38 => row.field_inv.to_field(),
+            #[cfg(feature = "field-inline")]
+            39 => row.field_assert_eq.to_field(),
+            #[cfg(feature = "field-inline")]
+            40 => row.field_load_accumulate_from_register.to_field(),
+            #[cfg(feature = "field-inline")]
+            41 => row.field_assert_zero.to_field(),
+            #[cfg(feature = "field-inline")]
+            42 => row.field_load_imm.to_field(),
+            #[cfg(feature = "field-inline")]
+            43 => row.field_load_accumulate_from_memory.to_field(),
+            #[cfg(feature = "field-inline")]
+            44 => row.field_advice_limb.to_field(),
+            _ => unreachable!("canonical R1CS inputs"),
         }
     }
 
@@ -1519,15 +1585,33 @@ mod tests {
                     is_compressed: OpFlag(bit()),
                     is_first_in_sequence: OpFlag(bit()),
                     is_last_in_sequence: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_add: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_sub: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_mul: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_inv: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_assert_eq: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_load_accumulate_from_register: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_assert_zero: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_load_imm: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_load_accumulate_from_memory: OpFlag(bit()),
+                    #[cfg(feature = "field-inline")]
+                    field_advice_limb: OpFlag(bit()),
                 }
             })
             .collect()
     }
 
     /// Sparse synthetic field-inline rows on roughly a third of the cycles, with
-    /// pseudo-random FULL-FIELD values in every field-inline column — flags included
-    /// (the composed matrices are linear in the flag columns, so parity must hold
-    /// pointwise on arbitrary flag values too).
+    /// pseudo-random full-field values in every field-inline value/product column.
     #[cfg(feature = "field-inline")]
     fn synthetic_field_rows(log_t: usize, seed: u64) -> Vec<(usize, FieldInlineSpartanRow<Fr>)> {
         let mut state = seed | 1;
@@ -1549,7 +1633,6 @@ mod tests {
                         rd_value: next(),
                         product: next(),
                         inv_product: next(),
-                        flags: core::array::from_fn(|_| next()),
                     },
                 )
             })
@@ -1626,7 +1709,7 @@ mod tests {
         let matrices = spartan_outer_constraints::<Fr>();
         let columns: Vec<usize> = spartan_outer_opening_columns();
         // Selection position → column value at cycle `t`: rv64 typed row fields for the
-        // first 35 positions, the sparse field-inline rows behind them.
+        // ordinary positions, the sparse field-inline rows behind them.
         let value = |t: usize, position: usize| -> Fr {
             if position < VARIABLE_COUNT {
                 return variable_field_value(&rows[t], position);
@@ -1668,7 +1751,7 @@ mod tests {
     /// One full parity case: uni-skip polynomial, every remainder round polynomial,
     /// typed output claims, and both kernels' derived-table validation — reference and
     /// optimized fed identical `ProverInputs` (with field-inline enabled: the composed
-    /// 48-column selection over synthetic field-inline rows too).
+    /// 50-column selection over synthetic field-inline rows too).
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
         let rows = synthetic_rows(log_t, seed);
         #[cfg(feature = "field-inline")]
@@ -1954,7 +2037,7 @@ mod tests {
 
     /// The typed bundle's columns equal the oracle tables the reference
     /// kernel materializes — the two witness paths meeting at the shared
-    /// `Extract` impls, for all 35 R1CS inputs.
+    /// `Extract` impls, for all ordinary R1CS inputs.
     #[test]
     fn bundle_columns_match_oracle_tables() {
         with_sample_backend(|backend| {

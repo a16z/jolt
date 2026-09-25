@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 jolt-claims = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
+jolt-riscv.workspace = true
 jolt-poly = { path = "../jolt-poly", default-features = false }
 num-traits.workspace = true
 rayon = { workspace = true, optional = true }
@@ -26,5 +27,5 @@ rand_core = { workspace = true }
 [features]
 default = ["parallel", "claim-lowering"]
 claim-lowering = ["dep:jolt-claims"]
-field-inline = ["claim-lowering", "jolt-claims/field-inline"]
+field-inline = ["claim-lowering", "jolt-claims/field-inline", "jolt-riscv/field-inline"]
 parallel = ["rayon", "jolt-poly/parallel"]

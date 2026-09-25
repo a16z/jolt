@@ -22,14 +22,13 @@ use jolt_claims::SymbolicSumcheck as _;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{try_eq_mle, LtPolynomial};
+use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
 use super::{SourceValues, VerifierOpeningId};
 use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::preprocessing::ProgramPreprocessing;
-use crate::stages::field_inline_bytecode::{
-    field_inline_stage_gamma_powers, FieldInlineBytecodeTable,
-};
+use crate::stages::field_inline_bytecode::field_inline_stage_gamma_powers;
 use crate::stages::stage4::Stage4OutputPoints;
 use crate::stages::stage5::Stage5OutputPoints;
 use crate::VerifierError;
@@ -59,8 +58,7 @@ pub(super) fn point_suffix<F: JoltField>(
     })
 }
 
-/// The 15 field-inline Spartan-outer rows appended after the 35 ordinary stage-1 columns, in
-/// appended-column order — the clear absorb/commit order.
+/// The five field value/product openings following the common stage-1 columns.
 pub(super) fn stage1_appended_opening_ids() -> impl Iterator<Item = VerifierOpeningId> {
     field_spartan_geometry::outer_output_openings()
         .into_iter()
@@ -186,32 +184,28 @@ pub(super) fn stage5_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
         .map(VerifierOpeningId::from)
 }
 
-/// Load the preprocessed field-inline side table and add its composed stage-value
+/// Derive field-register accesses from the bytecode and add their stage-value
 /// contributions onto the ordinary staged bytecode publics BEFORE they bake, so the same
 /// `StageValue(i)` publics the symbolic output expression references carry both families —
 /// exactly the clear composed relation's public composition.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the extension is a pure function of the bytecode bind points and the stage-4/5 field-inline opening points; bundling them would only rename the seam"
-)]
 pub(super) fn extend_bytecode_stage_values<F: JoltField, PCS: CommitmentScheme>(
     stage_values: &mut [F; 5],
     program: &ProgramPreprocessing<PCS>,
     r_address: &[F],
     r_cycle: &[F],
-    stage1_cycle_point: &[F],
     read_write_point: &[F],
     val_evaluation_point: &[F],
     challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
 ) -> Result<(), VerifierError> {
-    let table = crate::stages::field_inline_bytecode::convert_field_inline_bytecode(
-        crate::stages::field_inline_bytecode::required_field_inline_bytecode(program)?,
-    )?;
+    let bytecode = &program
+        .as_full()
+        .ok_or_else(crate::stages::stage6b::field_inline::committed_program_rejection)?
+        .bytecode
+        .bytecode;
     let field_inline_stage_values = composed_bytecode_stage_values(
-        &table,
+        bytecode,
         r_address,
         r_cycle,
-        stage1_cycle_point,
         read_write_point,
         val_evaluation_point,
         challenges,
@@ -223,16 +217,12 @@ pub(super) fn extend_bytecode_stage_values<F: JoltField, PCS: CommitmentScheme>(
     Ok(())
 }
 
-/// The field-inline side-table public stage-value contributions at `(r_address, r_cycle)`: the
-/// converted rows folded under the field-inline-extended stage-1/4/5 gamma powers, each stage
-/// weighted by its own cycle-eq factor — the same `read_raf_public_values` evaluation (over
-/// the same point splits) the clear composed relation performs, so the composed
-/// `StageValue(i)` publics cannot drift from the clear check.
+/// Evaluate the field-register access contributions with the same bytecode and
+/// opening-point geometry used by the clear verifier.
 pub(super) fn composed_bytecode_stage_values<F: JoltField>(
-    table: &FieldInlineBytecodeTable,
+    bytecode: &[JoltInstructionRow],
     r_address: &[F],
     r_cycle: &[F],
-    stage1_cycle_point: &[F],
     field_read_write_point: &[F],
     field_val_evaluation_point: &[F],
     challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
@@ -255,16 +245,13 @@ pub(super) fn composed_bytecode_stage_values<F: JoltField>(
     let gammas = field_inline_stage_gamma_powers(challenges);
     let public_values = field_inline_bytecode::read_raf_public_values(
         field_inline_bytecode::FieldInlineBytecodeReadRafEvaluationInputs {
-            bytecode: &table.rows,
-            field_register_log_k: table.field_register_log_k,
+            bytecode,
             r_address,
             r_cycle,
-            stage1_cycle_point,
             field_register_read_write_point: read_write_address,
             field_register_read_write_cycle_point: read_write_cycle,
             field_register_val_evaluation_point: val_evaluation_address,
             field_register_val_evaluation_cycle_point: val_evaluation_cycle,
-            stage1_gammas: &gammas.stage1,
             stage4_gammas: &gammas.stage4,
             stage5_gammas: &gammas.stage5,
         },

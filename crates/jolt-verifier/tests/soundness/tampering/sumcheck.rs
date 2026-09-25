@@ -348,7 +348,7 @@ fn real_advice_case() -> VerifierFixtureCase {
     crate::support::verifier_fixtures::standard_advice_consumer_case()
 }
 
-// Committed programs do not carry the field-inline bytecode side table.
+// Field-inline verification currently requires full public bytecode.
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "zk"),

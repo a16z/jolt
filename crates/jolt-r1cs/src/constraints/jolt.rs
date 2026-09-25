@@ -7,32 +7,20 @@ use jolt_poly::{
 };
 use thiserror::Error as ThisError;
 
-#[cfg(feature = "field-inline")]
-use crate::SparseRow;
 use crate::{ConstraintMatrices, ConstraintMatrixEvalError};
 
 use super::rv64;
 use super::rv64::NUM_CONSTRAINTS_PER_CYCLE as RV64_NUM_CONSTRAINTS_PER_CYCLE;
-#[cfg(feature = "field-inline")]
-use super::rv64::{
-    V_CONST as RV64_V_CONST, V_IMM as RV64_V_IMM, V_RD_WRITE_VALUE as RV64_V_RD_WRITE_VALUE,
-    V_RS1_VALUE as RV64_V_RS1_VALUE,
-};
 
 #[cfg(feature = "field-inline")]
 use super::field_constraints;
 #[cfg(feature = "field-inline")]
 use super::field_constraints::{
     NUM_CONSTRAINTS_PER_CYCLE as FIELD_NUM_CONSTRAINTS_PER_CYCLE,
-    NUM_EQ_CONSTRAINTS as FIELD_NUM_EQ_CONSTRAINTS,
-    NUM_PRODUCT_CONSTRAINTS as FIELD_NUM_PRODUCT_CONSTRAINTS,
-    NUM_VARS_PER_CYCLE as FIELD_NUM_VARS_PER_CYCLE, ROW_ADVICE_LIMB, ROW_ASSERT_EQ,
+    NUM_EQ_CONSTRAINTS as FIELD_NUM_EQ_CONSTRAINTS, NUM_FIELD_COLUMNS,
+    NUM_PRODUCT_CONSTRAINTS as FIELD_NUM_PRODUCT_CONSTRAINTS, ROW_ADVICE_LIMB, ROW_ASSERT_EQ,
     ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB, ROW_LOAD_ACCUMULATE_FROM_MEMORY,
-    ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM, V_CONST, V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT,
-    V_FIELD_RD_VALUE, V_FIELD_RS1_VALUE, V_FIELD_RS2_VALUE, V_IMM, V_IS_FIELD_ADD,
-    V_IS_FIELD_ADVICE_LIMB, V_IS_FIELD_ASSERT_EQ, V_IS_FIELD_ASSERT_ZERO, V_IS_FIELD_INV,
-    V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY, V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
-    V_IS_FIELD_LOAD_IMM, V_IS_FIELD_MUL, V_IS_FIELD_SUB, V_X_RD_WRITE_VALUE, V_X_RS1_VALUE,
+    ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
 };
 use super::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
 
@@ -43,17 +31,11 @@ pub const FIELD_INLINE_COLUMN_BASE: usize = rv64::NUM_VARS_PER_CYCLE;
 #[cfg(feature = "field-inline")]
 pub const FIELD_INLINE_ROW_BASE: usize = RV64_NUM_EQ_CONSTRAINTS;
 
-/// Field-inline variables that alias an RV64 column instead of appending one:
-/// `Rs1Value`, `RdWriteValue`, and `Imm`.
 #[cfg(feature = "field-inline")]
-pub const FIELD_INLINE_REUSED_NONCONST_COLUMNS: usize = 3;
+pub const FIELD_INLINE_APPENDED_COLUMNS: usize = NUM_FIELD_COLUMNS;
 
 #[cfg(feature = "field-inline")]
-pub const FIELD_INLINE_APPENDED_COLUMNS: usize =
-    FIELD_NUM_VARS_PER_CYCLE - 1 - FIELD_INLINE_REUSED_NONCONST_COLUMNS;
-
-#[cfg(feature = "field-inline")]
-pub const NUM_VARS_PER_CYCLE: usize = rv64::NUM_VARS_PER_CYCLE + FIELD_INLINE_APPENDED_COLUMNS;
+pub use super::field_constraints::NUM_VARS_PER_CYCLE;
 
 #[cfg(not(feature = "field-inline"))]
 pub const NUM_VARS_PER_CYCLE: usize = rv64::NUM_VARS_PER_CYCLE;
@@ -357,40 +339,6 @@ fn eval_linear_form<F: JoltField>(coefficients: &[F], constant: F, inputs: &[F])
 }
 
 #[cfg(feature = "field-inline")]
-pub const fn field_inline_column(local_column: usize) -> Option<usize> {
-    match local_column {
-        V_CONST => Some(RV64_V_CONST),
-        V_FIELD_RS1_VALUE => Some(FIELD_INLINE_COLUMN_BASE),
-        V_FIELD_RS2_VALUE => Some(FIELD_INLINE_COLUMN_BASE + 1),
-        V_FIELD_RD_VALUE => Some(FIELD_INLINE_COLUMN_BASE + 2),
-        V_FIELD_PRODUCT => Some(FIELD_INLINE_COLUMN_BASE + 3),
-        V_FIELD_INV_PRODUCT => Some(FIELD_INLINE_COLUMN_BASE + 4),
-        V_X_RS1_VALUE => Some(RV64_V_RS1_VALUE),
-        V_X_RD_WRITE_VALUE => Some(RV64_V_RD_WRITE_VALUE),
-        V_IMM => Some(RV64_V_IMM),
-        V_IS_FIELD_ADD => Some(FIELD_INLINE_COLUMN_BASE + 5),
-        V_IS_FIELD_SUB => Some(FIELD_INLINE_COLUMN_BASE + 6),
-        V_IS_FIELD_MUL => Some(FIELD_INLINE_COLUMN_BASE + 7),
-        V_IS_FIELD_INV => Some(FIELD_INLINE_COLUMN_BASE + 8),
-        V_IS_FIELD_ASSERT_EQ => Some(FIELD_INLINE_COLUMN_BASE + 9),
-        V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER => Some(FIELD_INLINE_COLUMN_BASE + 10),
-        V_IS_FIELD_ASSERT_ZERO => Some(FIELD_INLINE_COLUMN_BASE + 11),
-        V_IS_FIELD_LOAD_IMM => Some(FIELD_INLINE_COLUMN_BASE + 12),
-        V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY => Some(FIELD_INLINE_COLUMN_BASE + 13),
-        V_IS_FIELD_ADVICE_LIMB => Some(FIELD_INLINE_COLUMN_BASE + 14),
-        _ => None,
-    }
-}
-
-#[cfg(feature = "field-inline")]
-pub const fn field_inline_input_column(input_index: usize) -> Option<usize> {
-    match field_constraints::input_column(input_index) {
-        Some(local_column) => field_inline_column(local_column),
-        None => None,
-    }
-}
-
-#[cfg(feature = "field-inline")]
 fn append_field_inline_columns<F: JoltField>(
     base: ConstraintMatrices<F>,
     extension: ConstraintMatrices<F>,
@@ -401,33 +349,11 @@ fn append_field_inline_columns<F: JoltField>(
     let mut a = base.a;
     let mut b = base.b;
     let mut c = base.c;
-    a.extend(remap_rows(extension.a));
-    b.extend(remap_rows(extension.b));
-    c.extend(remap_rows(extension.c));
+    a.extend(extension.a);
+    b.extend(extension.b);
+    c.extend(extension.c);
 
     ConstraintMatrices::new(num_constraints, num_vars, a, b, c)
-}
-
-#[cfg(feature = "field-inline")]
-fn remap_rows<F: JoltField>(rows: Vec<SparseRow<F>>) -> Vec<SparseRow<F>> {
-    rows.into_iter()
-        .map(|row| {
-            row.into_iter()
-                .map(|(column, coefficient)| {
-                    let column = remap_field_inline_column(column);
-                    (column, coefficient)
-                })
-                .collect()
-        })
-        .collect()
-}
-
-#[cfg(feature = "field-inline")]
-fn remap_field_inline_column(column: usize) -> usize {
-    let Some(column) = field_inline_column(column) else {
-        unreachable!("field-inline constraint row referenced an unknown local column")
-    };
-    column
 }
 
 #[cfg(test)]
@@ -439,21 +365,25 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use super::field_constraints::{
         NUM_VARS_PER_CYCLE as FIELD_NUM_VARS_PER_CYCLE, ROW_FIELD_INV_PRODUCT, ROW_FIELD_PRODUCT,
-        V_CONST as FIELD_V_CONST, V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE,
-        V_FIELD_RS1_VALUE, V_FIELD_RS2_VALUE,
+        V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE, V_FIELD_RS1_VALUE,
+        V_FIELD_RS2_VALUE,
     };
     #[cfg(feature = "field-inline")]
-    use super::RV64_V_CONST;
+    use super::rv64::{flag_column, V_CONST, V_IMM, V_RD_WRITE_VALUE, V_RS1_VALUE};
     use super::*;
+    #[cfg(feature = "field-inline")]
+    use crate::SparseRow;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::{
         geometry::spartan::{
             outer_output_openings, FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS,
             FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT,
         },
-        FieldInlineOpFlag, FieldInlineVirtualPolynomial,
+        FieldInlineVirtualPolynomial,
     };
     use jolt_field::{Fr, Ring};
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::CircuitFlags;
     #[cfg(feature = "field-inline")]
     use num_traits::Zero;
 
@@ -503,14 +433,6 @@ mod tests {
 
         assert_eq!(composed.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
         assert_eq!(composed.num_vars, NUM_VARS_PER_CYCLE);
-        assert_eq!(field_inline_input_column(0), Some(FIELD_INLINE_COLUMN_BASE));
-        assert_eq!(field_inline_column(FIELD_V_CONST), Some(RV64_V_CONST));
-        assert_eq!(field_inline_column(V_X_RS1_VALUE), Some(RV64_V_RS1_VALUE));
-        assert_eq!(
-            field_inline_column(V_X_RD_WRITE_VALUE),
-            Some(RV64_V_RD_WRITE_VALUE)
-        );
-        assert_eq!(field_inline_column(V_IMM), Some(RV64_V_IMM));
     }
 
     #[cfg(feature = "field-inline")]
@@ -566,18 +488,6 @@ mod tests {
             FieldInlineVirtualPolynomial::FieldRdValue,
             FieldInlineVirtualPolynomial::FieldProduct,
             FieldInlineVirtualPolynomial::FieldInvProduct,
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Add),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Sub),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Mul),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Inv),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AssertEq),
-            FieldInlineVirtualPolynomial::FieldOpFlag(
-                FieldInlineOpFlag::LoadAccumulateFromRegister,
-            ),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AssertZero),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromMemory),
-            FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AdviceLimb),
         ];
         assert_eq!(FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, expected_inputs);
 
@@ -587,22 +497,9 @@ mod tests {
             V_FIELD_RD_VALUE,
             V_FIELD_PRODUCT,
             V_FIELD_INV_PRODUCT,
-            V_IS_FIELD_ADD,
-            V_IS_FIELD_SUB,
-            V_IS_FIELD_MUL,
-            V_IS_FIELD_INV,
-            V_IS_FIELD_ASSERT_EQ,
-            V_IS_FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
-            V_IS_FIELD_ASSERT_ZERO,
-            V_IS_FIELD_LOAD_IMM,
-            V_IS_FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
-            V_IS_FIELD_ADVICE_LIMB,
         ];
         for (index, local_column) in local_columns.into_iter().enumerate() {
-            assert_eq!(
-                field_inline_column(local_column),
-                Some(FIELD_INLINE_COLUMN_BASE + index)
-            );
+            assert_eq!(local_column, FIELD_INLINE_COLUMN_BASE + index);
         }
         assert_eq!(
             spartan_outer_opening_columns()[rv64::NUM_R1CS_INPUTS..],
@@ -658,17 +555,17 @@ mod tests {
         let composed = trace_constraints::<Fr>();
         let mut witness = vec![Fr::zero(); composed.num_vars];
 
-        witness[RV64_V_CONST] = Fr::from_u64(1);
+        witness[V_CONST] = Fr::from_u64(1);
         witness[rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
-        witness[remap_field_inline_column(V_FIELD_RS1_VALUE)] = Fr::from_u64(5);
-        witness[remap_field_inline_column(V_FIELD_RS2_VALUE)] = Fr::from_u64(7);
-        witness[remap_field_inline_column(V_FIELD_RD_VALUE)] = Fr::from_u64(12);
-        witness[remap_field_inline_column(V_FIELD_PRODUCT)] = Fr::from_u64(35);
-        witness[remap_field_inline_column(V_FIELD_INV_PRODUCT)] = Fr::from_u64(60);
-        witness[RV64_V_RS1_VALUE] = Fr::from_u64(12);
-        witness[RV64_V_RD_WRITE_VALUE] = Fr::from_u64(5);
-        witness[RV64_V_IMM] = Fr::from_u64(12);
-        witness[remap_field_inline_column(V_IS_FIELD_ADD)] = Fr::from_u64(1);
+        witness[V_FIELD_RS1_VALUE] = Fr::from_u64(5);
+        witness[V_FIELD_RS2_VALUE] = Fr::from_u64(7);
+        witness[V_FIELD_RD_VALUE] = Fr::from_u64(12);
+        witness[V_FIELD_PRODUCT] = Fr::from_u64(35);
+        witness[V_FIELD_INV_PRODUCT] = Fr::from_u64(60);
+        witness[V_RS1_VALUE] = Fr::from_u64(12);
+        witness[V_RD_WRITE_VALUE] = Fr::from_u64(5);
+        witness[V_IMM] = Fr::from_u64(12);
+        witness[flag_column(CircuitFlags::FieldAdd)] = Fr::from_u64(1);
 
         assert_eq!(composed.check_witness(&witness), Ok(()));
     }
@@ -689,7 +586,7 @@ mod tests {
         };
 
         let mut z = vec![Fr::zero(); FIELD_NUM_VARS_PER_CYCLE];
-        z[FIELD_V_CONST] = Fr::from_u64(1);
+        z[V_CONST] = Fr::from_u64(1);
         z[V_FIELD_RS1_VALUE] = Fr::from_u64(7);
         z[V_FIELD_RS2_VALUE] = Fr::from_u64(11);
         z[V_FIELD_RD_VALUE] = Fr::from_u64(13);

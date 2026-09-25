@@ -22,7 +22,11 @@
 >   construction-time range checks for immediates and register ids; loud
 >   `TraceRowError` (a `thiserror` enum) on memory-row contract violations.
 >   `from_components` is the producer contract and depends only on `jolt-riscv`
->   (no `jolt-prover-legacy`, no `tracer`, no lookup tables).
+>   (no `jolt-prover-legacy`, no `tracer`, no lookup tables). `CircuitFlagSet`
+>   uses a `u32`: field-inline appends ten flags to the fourteen base flags.
+>   The row's packed metadata reserves 16 circuit-flag bits in base builds
+>   and 24 with field-inline, followed by six instruction bits and the
+>   immediate sign. Both builds keep the 64-byte layout.
 > - `crates/jolt-lookup-tables/src/traits.rs`: `InstructionLookupTable for
 >   JoltTraceRow`, delegating through the row's cached `instruction_kind()` (this
 >   crate owns `LookupTableKind`, so the accessor cannot live in `jolt-riscv`).

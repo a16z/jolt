@@ -10,13 +10,15 @@
 //! | Range | Description |
 //! |-------|-------------|
 //! | `[0]` | Constant 1 |
-//! | `[1..=35]` | R1CS inputs (registers, flags, PC, lookups) |
-//! | `[36..=37]` | Product factor variables (`Branch`, `NextIsNoop`) |
+//! | `[1..=NUM_R1CS_INPUTS]` | R1CS inputs (registers, flags, PC, lookups) |
+//! | Next two columns | Product factor variables (`Branch`, `NextIsNoop`) |
 //!
 //! # Constraint forms
 //!
 //! - **Eq-conditional** (rows 0–18): `guard · (left − right) = 0`
 //! - **Product** (rows 19–21): `left · right = output`
+
+use jolt_riscv::{CircuitFlags, NUM_CIRCUIT_FLAGS};
 
 /// Constant-1 wire.
 pub const V_CONST: usize = 0;
@@ -58,15 +60,19 @@ pub const V_FLAG_IS_COMPRESSED: usize = 33;
 pub const V_FLAG_IS_FIRST_IN_SEQUENCE: usize = 34;
 pub const V_FLAG_IS_LAST_IN_SEQUENCE: usize = 35;
 
-pub const V_BRANCH: usize = 36;
-pub const V_NEXT_IS_NOOP: usize = 37;
+pub const V_BRANCH: usize = 1 + NUM_R1CS_INPUTS;
+pub const V_NEXT_IS_NOOP: usize = V_BRANCH + 1;
 
-pub const NUM_R1CS_INPUTS: usize = 35;
+pub const NUM_R1CS_INPUTS: usize = 21 + NUM_CIRCUIT_FLAGS;
 pub const NUM_PRODUCT_FACTORS: usize = 2;
-pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS; // 38
+pub const NUM_VARS_PER_CYCLE: usize = 1 + NUM_R1CS_INPUTS + NUM_PRODUCT_FACTORS;
 pub const NUM_EQ_CONSTRAINTS: usize = 19;
 pub const NUM_PRODUCT_CONSTRAINTS: usize = 3;
 pub const NUM_CONSTRAINTS_PER_CYCLE: usize = NUM_EQ_CONSTRAINTS + NUM_PRODUCT_CONSTRAINTS; // 22
+
+pub const fn flag_column(flag: CircuitFlags) -> usize {
+    V_FLAG_ADD_OPERANDS + flag as usize
+}
 
 pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
     let mut names = [""; NUM_VARS_PER_CYCLE];
@@ -106,6 +112,25 @@ pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
     names[V_FLAG_IS_COMPRESSED] = "OpFlags_IsCompressed";
     names[V_FLAG_IS_FIRST_IN_SEQUENCE] = "OpFlags_IsFirstInSequence";
     names[V_FLAG_IS_LAST_IN_SEQUENCE] = "OpFlags_IsLastInSequence";
+    #[cfg(feature = "field-inline")]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "const evaluation checks these circuit-flag indices against the variable layout"
+    )]
+    {
+        names[flag_column(CircuitFlags::FieldAdd)] = "OpFlags_FieldAdd";
+        names[flag_column(CircuitFlags::FieldSub)] = "OpFlags_FieldSub";
+        names[flag_column(CircuitFlags::FieldMul)] = "OpFlags_FieldMul";
+        names[flag_column(CircuitFlags::FieldInv)] = "OpFlags_FieldInv";
+        names[flag_column(CircuitFlags::FieldAssertEq)] = "OpFlags_FieldAssertEq";
+        names[flag_column(CircuitFlags::FieldLoadAccumulateFromRegister)] =
+            "OpFlags_FieldLoadAccumulateFromRegister";
+        names[flag_column(CircuitFlags::FieldAssertZero)] = "OpFlags_FieldAssertZero";
+        names[flag_column(CircuitFlags::FieldLoadImm)] = "OpFlags_FieldLoadImm";
+        names[flag_column(CircuitFlags::FieldLoadAccumulateFromMemory)] =
+            "OpFlags_FieldLoadAccumulateFromMemory";
+        names[flag_column(CircuitFlags::FieldAdviceLimb)] = "OpFlags_FieldAdviceLimb";
+    }
     names[V_BRANCH] = "Branch";
     names[V_NEXT_IS_NOOP] = "NextIsNoop";
     names
@@ -481,8 +506,8 @@ pub fn rv64_spartan_outer_constraints<F: Field>() -> crate::ConstraintMatrices<F
 /// - 19 equality-conditional: `guard · (left − right) = 0` → A=guard, B=left−right, C=0
 /// - 3 product: `left · right = output` → A=left, B=right, C=output
 ///
-/// Variable layout matches the constants in this module (V_CONST=0, inputs at 1–35,
-/// product factors at 36–37).
+/// Variable layout matches the constants in this module: the constant, all R1CS
+/// inputs, then the two product factors.
 pub fn rv64_trace_constraints<F: Field>() -> crate::ConstraintMatrices<F> {
     let (mut a_rows, mut b_rows, mut c_rows) = rv64_eq_constraint_rows();
     a_rows.reserve(NUM_PRODUCT_CONSTRAINTS);
@@ -507,6 +532,7 @@ mod tests {
 
     use super::*;
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::CIRCUIT_FLAGS;
     use num_traits::Zero;
 
     /// A no-op cycle: const=1, all else zero. All eq-conditional guards
@@ -591,7 +617,7 @@ mod tests {
         assert_eq!(input_column(0), Some(V_LEFT_INSTRUCTION_INPUT));
         assert_eq!(
             input_column(NUM_R1CS_INPUTS - 1),
-            Some(V_FLAG_IS_LAST_IN_SEQUENCE)
+            CIRCUIT_FLAGS.last().copied().map(flag_column)
         );
         assert_eq!(input_column(NUM_R1CS_INPUTS), None);
     }

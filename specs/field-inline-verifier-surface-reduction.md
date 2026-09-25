@@ -63,9 +63,10 @@ transcript byte, and fixture stays identical in every mode.
    extensions in `outer_remainder` / `product_remainder` / `product_uniskip` read the
    feature-aware jolt-r1cs tables (`spartan_outer_opening_columns`, lane
    tables) rather than carrying their own composition arithmetic.
-5. **Schema-drive the bytecode side-table converter.** The role mapping in
-   `field_inline_bytecode.rs` becomes a table; the fail-closed validation
-   surface is kept verbatim.
+5. **Use canonical bytecode rows.** Field operation flags now use `CircuitFlags`,
+   and field-register operands are projected from the instruction's existing
+   operand slots. The side table, conversion, and duplicate flag fold are removed;
+   operand validation lives at the ordinary bytecode boundary.
 
 ## Non-goals
 

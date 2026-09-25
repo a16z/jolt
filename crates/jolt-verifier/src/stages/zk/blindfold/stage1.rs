@@ -53,8 +53,8 @@ where
         values.public(VerifierPublicId::SpartanOuter(id), value)?;
     }
 
-    // The composed opening row order: the 35 ordinary openings in canonical order, then (under
-    // `field-inline`) the 15 field-inline columns in appended-column order — the clear path's
+    // The composed opening row order: the common value/flag openings in canonical order, then (under
+    // `field-inline`) the five field value/product columns in appended-column order — the clear path's
     // absorb order exactly.
     let opening_ids = stage1_spartan_outer_opening_ids(&dimensions);
 
@@ -111,9 +111,9 @@ where
     )
 }
 
-/// The composed stage-1 committed opening row order: the 35 ordinary Spartan-outer openings in
-/// canonical (`dimensions.variables()`) order, then — under `field-inline` — the 16
-/// field-inline openings in appended-column order. This is exactly `stage1::verify`'s
+/// The composed stage-1 committed opening row order: the common Spartan-outer openings in
+/// canonical (`dimensions.variables()`) order, then — under `field-inline` — the five
+/// field value/product openings in appended-column order. This is exactly `stage1::verify`'s
 /// absorb/commit order.
 pub(super) fn stage1_spartan_outer_opening_ids(
     dimensions: &SpartanOuterDimensions,
@@ -166,8 +166,8 @@ mod tests {
         }
     }
 
-    /// The composed opening row order is the clear absorb order: the 35 ordinary openings in
-    /// canonical order, then (with field-inline enabled) the 15 field-inline openings in
+    /// The composed opening row order is the clear absorb order: the common value/flag openings in
+    /// canonical order, then (with field-inline enabled) the five field value/product openings in
     /// appended-column order, matching the composed jolt-r1cs column count.
     #[test]
     fn stage1_opening_ids_follow_the_composed_column_order() {

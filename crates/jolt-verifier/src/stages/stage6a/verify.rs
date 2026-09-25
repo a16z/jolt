@@ -139,10 +139,9 @@ where
     let base_input_values = ComposedClaims {
         base: base_input_values,
         field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
-            stage1.clear()?,
             &stage4.clear()?.output_values,
             &stage5.clear()?.output_values,
-        )?,
+        ),
     };
     let address_input_values = Stage6aInputClaims {
         bytecode_read_raf: base_input_values,

@@ -19,6 +19,13 @@ both protocol families, and their symbolic expressions are the source for
 clear verification and BlindFold lowering. Kernels return these typed outputs
 directly through the regular batch interface.
 
+The `jolt-claims` protocol modules remain import-disjoint and compile in both
+feature configurations. Field operation flags belong to the common Jolt ISA:
+its Spartan input geometry, outer output claims, and bytecode read-RAF input
+claims follow the feature-gated `CircuitFlags` variants in `jolt-riscv`. Those
+three carriers contain the corresponding feature gates; the field-register
+protocol definitions and shared algebra remain unconditional.
+
 Stage 2 absorbs and commits each field-inline product opening once. The
 field-register claim reduction uses the existing opening-alias mechanism. Its
 three value copies are omitted from `Stage2OutputClaims` serialization and
@@ -36,9 +43,10 @@ Regenerate draft field-inline proofs after upgrading. Byte parity against the
 updated legacy prover checks agreement within this revision; it does not
 establish compatibility with earlier proof bytes.
 
-Committed-program construction rejects extension profiles before dropping full
-bytecode metadata, in both Dory and packed commitment paths. Committed
-field-inline programs remain unsupported. The verifier checks protocol and
+Committed-program construction rejects field instructions before dropping full
+bytecode rows, in both Dory and packed commitment paths. A field-enabled profile
+containing only base instructions needs no extra preprocessing data, but the
+field-inline verifier still requires full public bytecode. The verifier checks protocol and
 cheap input shapes before scanning full program metadata; stage 6a builds
 field-inline bytecode kernel geometry only on the prover path.
 
@@ -389,7 +397,7 @@ stage 5:
 
 stage 6 BytecodeReadRaf:
   extends BytecodeReadRaf with field-inline instruction/access terms
-  proves FieldRs1Ra, FieldRs2Ra, FieldRdWa, FieldOpFlag(...)
+  proves FieldRs1Ra, FieldRs2Ra, FieldRdWa, OpFlags(CircuitFlags::Field*)
   match the field operands/opcode selected by BytecodeRa(i)
 
 stage 6 FieldRegistersIncClaimReduction:
@@ -626,8 +634,9 @@ openings produced by earlier stages:
 
 ```text
 from stage 1 / selected Spartan outer:
-  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/AssertZero/LoadImm/
-              LoadAccumulateFromMemory/AdviceLimb)
+  OpFlags(CircuitFlags::FieldAdd/FieldSub/FieldMul/FieldInv/FieldAssertEq/
+          FieldLoadAccumulateFromRegister/FieldAssertZero/FieldLoadImm/
+          FieldLoadAccumulateFromMemory/FieldAdviceLimb)
 
 from stage 4 / FieldRegistersReadWriteChecking:
   FieldRdWa
@@ -650,29 +659,23 @@ There is no `FieldRegistersRa(i)` commitment. Field register access selectors
 are valid only because `BytecodeReadRaf` links them to the committed
 `BytecodeRa(i)` path and the public/preprocessed bytecode table.
 
-The v1 modular verifier represents the field-inline bytecode facts as a
-preprocessed side table parallel to ordinary bytecode rows:
+Field opcode flags are appended to `CircuitFlags`, and the ordinary stage-1
+bytecode fold handles them alongside the other operation flags. The instruction
+row's existing operand slots also supply field-register accesses through
+`JoltInstructionRow::field_operands()`. The opcode determines each slot's
+register file and read/write role, including implicit accumulator reads and
+bridge instructions with both integer and field destinations.
 
-```text
-FieldInlineBytecodeRow:
-  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/AssertZero/LoadImm/
-                  LoadAccumulateFromMemory/AdviceLimb
-  field operands: rd, rs1, rs2 as field register slots, each optional
-```
+There is no separate field-inline bytecode table. Preprocessing validates
+instruction operand shapes directly; the verifier repeats that validation for
+loaded program artifacts. Current field-inline verification requires full
+public bytecode; committed-program mode remains unsupported.
 
-When field inline is enabled, verifier preprocessing must supply this table.
-Stage 6 rejects a field-inline proof if the table is missing. This keeps the
-field-register RA/WA openings soundly tied to the program being verified while
-the prover and tracer work is still landing in the modular crates.
-
-The field-inline `BytecodeReadRaf` extension appends terms to existing bytecode
-RLCs instead of creating another bytecode relation:
+The field-register access claims extend the existing bytecode RLCs:
 
 ```text
 Stage1Gamma powers:
-  ordinary powers 0..(1 + NUM_CIRCUIT_FLAGS)
-  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/AssertZero/LoadImm/
-                  LoadAccumulateFromMemory/AdviceLimb)
+  UnexpandedPC, Imm, all CircuitFlags (including Field* flags)
 
 Stage4Gamma powers:
   ordinary powers: RdWa, Rs1Ra, Rs2Ra
@@ -683,11 +686,9 @@ Stage5Gamma powers:
   then FieldRdWa@FieldRegistersValEvaluation
 ```
 
-The input claim is the ordinary `BytecodeReadRaf` input claim plus those
-field-inline terms under the existing outer bytecode gamma. The output claim
-uses the same `BytecodeRa(i)@BytecodeReadRaf` product, with public stage values
-augmented by evaluating the field-inline side table at the bytecode point and
-the relevant stage cycle points.
+The output uses the existing `BytecodeRa(i)@BytecodeReadRaf` product. Public
+stage values are derived from the canonical bytecode rows, with each access
+term weighted by its own register-domain and cycle opening points.
 
 `FieldRegistersIncClaimReduction` consumes the two semantic openings of the
 committed `FieldRdInc` polynomial produced by Stage 4 and Stage 5:
@@ -896,8 +897,8 @@ Spartan outer has 29 rows: a 16-node uni-skip domain would overflow the
 kernels' `i128` power sums. Encoding: opcode `0x7b`,
 `FIELD_LOAD_ACCUMULATE_FROM_REGISTER`'s funct3, funct7 `0x60 | offset` with bits 4..0
 holding the word offset; `rd` is the scratch x-register, `rs1` the x base,
-and `rs2` the field destination. The side table uses that field destination
-as both its field `rs1` read and its write. Initialize it with
+and `rs2` the field destination. The canonical field-operand projection uses
+that destination as both its field `rs1` read and its write. Initialize it with
 `FIELD_LOAD_IMM destination, 0`, then accumulate every limb from most
 significant to least significant: one row per limb after the reset.
 
@@ -936,10 +937,9 @@ The ISA supplies bounded limb advice and a zero assertion; ergonomic
 `field_to`/`field_from` macros remain follow-up work in
 [#1934](https://github.com/a16z/jolt/issues/1934).
 
-Stage 1 appends the two selector openings (`FieldOpFlag(LoadAccumulateFromMemory)`,
-`FieldOpFlag(AdviceLimb)`) after the eight base flags, in that order, and the
-field-inline bytecode side table's stage-1 flag set grows by the same two
-entries, for ten selectors in total.
+Stage 1 carries `OpFlags(CircuitFlags::FieldLoadAccumulateFromMemory)` and
+`OpFlags(CircuitFlags::FieldAdviceLimb)` in the common flag columns. Bytecode
+read-RAF binds them through the ordinary circuit-flag fold.
 
 ## Stage 1 Composition
 
@@ -965,20 +965,10 @@ only expose the Spartan opening order for wires local to field-inline. The
 selected verifier then appends those openings after the ordinary RV64 openings
 when field inline is enabled.
 
-The selected R1CS layout reuses ordinary RV64 columns for bridge inputs:
-
-```text
-field local const       -> RV64 const
-field local Rs1Value    -> RV64 Rs1Value
-field local RdWriteValue -> RV64 RdWriteValue
-field local Imm         -> RV64 Imm
-```
-
-Those reused columns do not produce duplicate field-inline openings. They use
-the ordinary Jolt Spartan openings already present in the RV64 stage-1 list.
-
-The fifteen stage-1 openings local to field-inline correspond to its appended
-columns: five values and ten selectors.
+The selected R1CS layout uses the ordinary RV64 `Rs1Value`, `RdWriteValue`,
+`Imm`, and `OpFlags(CircuitFlags::Field*)` columns directly. Their openings
+are part of the common stage-1 list. Only five field-specific columns are
+appended:
 
 ```text
 FieldRs1Value
@@ -986,16 +976,6 @@ FieldRs2Value
 FieldRdValue
 FieldProduct
 FieldInvProduct
-IsFieldAdd
-IsFieldSub
-IsFieldMul
-IsFieldInv
-IsFieldAssertEq
-IsFieldLoadAccumulateFromRegister
-IsFieldAssertZero
-IsFieldLoadImm
-IsFieldLoadAccumulateFromMemory
-IsFieldAdviceLimb
 ```
 
 `jolt-verifier` should compute the selected Spartan outer expected claim using
@@ -1129,19 +1109,6 @@ The opening and polynomial IDs should mirror ordinary registers with
 field-register-specific names:
 
 ```rust
-pub enum FieldInlineOpFlag {
-    Add,
-    Sub,
-    Mul,
-    Inv,
-    AssertEq,
-    LoadAccumulateFromRegister,
-    AssertZero,
-    LoadImm,
-    LoadAccumulateFromMemory,
-    AdviceLimb,
-}
-
 pub enum FieldInlineVirtualPolynomial {
     FieldRs1Value,
     FieldRs2Value,
@@ -1152,7 +1119,6 @@ pub enum FieldInlineVirtualPolynomial {
     FieldRs1Ra,
     FieldRs2Ra,
     FieldRdWa,
-    FieldOpFlag(FieldInlineOpFlag),
 }
 
 pub enum FieldInlineCommittedPolynomial {

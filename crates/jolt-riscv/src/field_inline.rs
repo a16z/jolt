@@ -307,6 +307,34 @@ pub struct FieldInlineOperandShape {
 }
 
 impl FieldInlineOperandShape {
+    pub fn field_operands(self, operands: NormalizedOperands) -> NormalizedOperands {
+        let rd = if self.writes_field_rd {
+            if self.field_rd_in_rs2_slot {
+                operands.rs2
+            } else {
+                operands.rd
+            }
+        } else {
+            None
+        };
+        NormalizedOperands {
+            rs1: if self.field_rs1_is_field_rd {
+                rd
+            } else if self.reads_field_rs1 {
+                operands.rs1
+            } else {
+                None
+            },
+            rs2: if self.reads_field_rs2 {
+                operands.rs2
+            } else {
+                None
+            },
+            rd,
+            imm: operands.imm,
+        }
+    }
+
     /// Retain the ordinary register operands; field operands use a separate plane.
     pub fn x_operands(self, mut operands: NormalizedOperands) -> NormalizedOperands {
         operands.rs1 = match self.op {

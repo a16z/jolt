@@ -83,6 +83,16 @@ pub struct JoltInstructionRow {
 }
 
 impl JoltInstructionRow {
+    /// Logical operands belonging to the field register file, including an
+    /// accumulator's implicit read and bridge destinations encoded in `rs2`.
+    pub fn field_operands(&self) -> NormalizedOperands {
+        #[cfg(feature = "field-inline")]
+        if let Some(shape) = field_inline_operand_shape(self.instruction_kind) {
+            return shape.field_operands(self.operands);
+        }
+        NormalizedOperands::default()
+    }
+
     /// Operands belonging to the integer register file. Field-register slots
     /// are absent; bridge instructions retain their integer source or destination.
     pub fn integer_operands(&self) -> NormalizedOperands {

@@ -408,14 +408,11 @@ mod tests {
 )]
 mod field_inline_tests {
     use super::*;
-    use crate::stages::field_inline_bytecode::{FieldInlineBytecodeFold, FieldInlineBytecodeTable};
+    use crate::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use crate::stages::relations::ConcreteSumcheck as _;
     use crate::stages::stage6b::bytecode_read_raf::{
         BytecodeReadRaf, BytecodeReadRafCycleInputs, BytecodeReadRafInputClaims,
         BytecodeReadRafOutputClaims, BytecodeReadRafTableFoldInputs, READ_RAF_CYCLE_STAGES,
-    };
-    use jolt_claims::protocols::field_inline::geometry::bytecode::{
-        FieldInlineBytecodeFlags, FieldInlineBytecodeOperands, FieldInlineBytecodeRow,
     };
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
@@ -464,7 +461,7 @@ mod field_inline_tests {
         let stage_gammas = challenges.stage_gamma_powers();
         let mut bytecode = vec![JoltInstructionRow::default(); 4];
         *bytecode.get_mut(0).unwrap() = JoltInstructionRow {
-            instruction_kind: JoltInstructionKind::ADD,
+            instruction_kind: JoltInstructionKind::FIELD_MUL,
             address: 9,
             operands: NormalizedOperands {
                 rs1: Some(1),
@@ -475,22 +472,6 @@ mod field_inline_tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
-        };
-        let mut field_rows = vec![FieldInlineBytecodeRow::default(); 4];
-        *field_rows.get_mut(0).unwrap() = FieldInlineBytecodeRow {
-            operands: FieldInlineBytecodeOperands {
-                rd: Some(1),
-                rs1: Some(2),
-                rs2: Some(3),
-            },
-            flags: FieldInlineBytecodeFlags {
-                mul: true,
-                ..FieldInlineBytecodeFlags::default()
-            },
-        };
-        let table = FieldInlineBytecodeTable {
-            rows: field_rows,
-            field_register_log_k: FIELD_REGISTERS_LOG_K,
         };
         let entry_bytecode_index = 1usize;
 
@@ -508,7 +489,6 @@ mod field_inline_tests {
                 stage_gammas: stage_gammas.each_ref().map(Vec::as_slice),
             }),
             field_inline: FieldInlineBytecodeFold {
-                table: table.clone(),
                 read_write_address: point(90, FIELD_REGISTERS_LOG_K),
                 read_write_cycle: point(100, log_t),
                 val_evaluation_address: point(110, FIELD_REGISTERS_LOG_K),
@@ -560,10 +540,9 @@ mod field_inline_tests {
         })
         .unwrap();
         let composed = super::field_inline::composed_bytecode_stage_values(
-            &table,
+            &bytecode,
             &r_address,
             &r_cycle,
-            stage_cycle_points.first().unwrap(),
             &field_read_write_point,
             &field_val_evaluation_point,
             &challenges,

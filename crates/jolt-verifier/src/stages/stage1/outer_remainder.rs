@@ -276,6 +276,26 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
             is_compressed: opening_point.clone(),
             is_first_in_sequence: opening_point.clone(),
             is_last_in_sequence: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_add: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_sub: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_mul: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_inv: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_assert_eq: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_load_accumulate_from_register: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_assert_zero: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_load_imm: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_load_accumulate_from_memory: opening_point.clone(),
+            #[cfg(feature = "field-inline")]
+            field_advice_limb: opening_point.clone(),
         };
         #[cfg(feature = "field-inline")]
         let output = ComposedClaims {
@@ -286,16 +306,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for OuterRemainder<F> {
                 rd_value: opening_point.clone(),
                 product: opening_point.clone(),
                 inv_product: opening_point.clone(),
-                add: opening_point.clone(),
-                sub: opening_point.clone(),
-                mul: opening_point.clone(),
-                inv: opening_point.clone(),
-                assert_eq: opening_point.clone(),
-                load_accumulate_from_register: opening_point.clone(),
-                assert_zero: opening_point.clone(),
-                load_imm: opening_point.clone(),
-                load_accumulate_from_memory: opening_point.clone(),
-                advice_limb: opening_point.clone(),
             },
         };
         Ok(output)
@@ -356,51 +366,11 @@ mod tests {
         assert_eq!(relation_form.canonical_order(), expected);
     }
 
-    /// Fill all 35 produced opening *values* with the given values (in canonical
-    /// field / `SPARTAN_OUTER_R1CS_INPUTS` order).
     fn output_values_from(values: &[Fr]) -> OuterRemainderOutputClaims<Fr> {
-        let mut iter = values.iter().copied();
-        let mut next = || iter.next().unwrap();
-        OuterRemainderOutputClaims {
-            left_instruction_input: next(),
-            right_instruction_input: next(),
-            product: next(),
-            should_branch: next(),
-            pc: next(),
-            unexpanded_pc: next(),
-            imm: next(),
-            ram_address: next(),
-            rs1_value: next(),
-            rs2_value: next(),
-            rd_write_value: next(),
-            ram_read_value: next(),
-            ram_write_value: next(),
-            left_lookup_operand: next(),
-            right_lookup_operand: next(),
-            next_unexpanded_pc: next(),
-            next_pc: next(),
-            next_is_virtual: next(),
-            next_is_first_in_sequence: next(),
-            lookup_output: next(),
-            should_jump: next(),
-            add_operands: next(),
-            subtract_operands: next(),
-            multiply_operands: next(),
-            load: next(),
-            store: next(),
-            jump: next(),
-            write_lookup_output_to_rd: next(),
-            virtual_instruction: next(),
-            assert: next(),
-            do_not_update_unexpanded_pc: next(),
-            advice: next(),
-            is_compressed: next(),
-            is_first_in_sequence: next(),
-            is_last_in_sequence: next(),
-        }
+        let mut values = values.iter().copied();
+        OuterRemainderOutputClaims::from_opening_values(|_| values.next()).unwrap()
     }
 
-    /// All 35 produced opening *points* sharing a single opening point.
     #[cfg(not(feature = "field-inline"))]
     fn output_points_at(point: &[Fr]) -> OuterRemainderOutputClaims<Vec<Fr>> {
         let next = || point.to_vec();
@@ -443,13 +413,8 @@ mod tests {
         }
     }
 
-    /// Under `field-inline` the composed coefficient table carries 50 columns while the rv64
-    /// symbolic relation still names 35 openings; the composed clear check therefore evaluates
-    /// the factored form over the full selected opening vector. This pins both the sizing
-    /// invariant that used to panic (weight vectors follow the composed jolt-r1cs column
-    /// count) and the composed algebra: the symbolic output evaluates identically to
-    /// `JoltSpartanOuterRemainder::expected_output_claim` over all 50 openings (35 ordinary in
-    /// canonical order, then the 15 appended field-inline columns).
+    /// The composed symbolic output matches the factored R1CS form over the common
+    /// value/flag openings followed by the five field value/product openings.
     #[cfg(feature = "field-inline")]
     #[test]
     fn composed_expected_output_matches_factored_form() {

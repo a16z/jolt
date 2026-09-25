@@ -119,15 +119,6 @@ where
         .program
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let stage1_cycle_binding = stage1.cycle_binding_checked(JoltRelationId::BytecodeReadRaf)?;
-    // The field-inline bytecode side table, required fail-closed exactly like the
-    // verifier's `Stage6bSumchecks::build` (committed-program preprocessing
-    // cannot supply it, and neither can a full program preprocessed without field-inline
-    // support).
-    #[cfg(feature = "field-inline")]
-    let field_inline_bytecode =
-        jolt_verifier::stages::stage6b::field_inline::preprocessed_bytecode_table(
-            &preprocessing.verifier.program,
-        )?;
     let sumchecks = Stage6bSumchecks::build_from_parts(Stage6bBuildParts {
         formula_dimensions: &formula_dimensions,
         ram_log_k: log_k,
@@ -135,8 +126,6 @@ where
         precommitted,
         entry_bytecode_index,
         bytecode_table_rows,
-        #[cfg(feature = "field-inline")]
-        field_inline_bytecode,
         carried,
         eta: draws.eta,
         stage1_cycle_binding,
@@ -244,7 +233,6 @@ mod field_inline_round_trip {
     use jolt_program::execution::OwnedTrace;
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-    use jolt_verifier::stages::stage6b::field_inline as stage6b_field_inline;
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
@@ -434,9 +422,6 @@ mod field_inline_round_trip {
         let carried = &stage6a.clear_output.challenges;
         let draws = Stage6bDraws::draw(&mut transcript, false);
         let program = preprocessing.program().unwrap();
-        let field_inline_bytecode =
-            stage6b_field_inline::preprocessed_bytecode_table(&preprocessing.verifier.program)
-                .unwrap();
         let entry_bytecode_index = preprocessing
             .verifier
             .program
@@ -453,7 +438,6 @@ mod field_inline_round_trip {
             precommitted: &checked.precommitted,
             entry_bytecode_index,
             bytecode_table_rows: Some(program.bytecode.bytecode.as_slice()),
-            field_inline_bytecode,
             carried,
             eta: draws.eta,
             stage1_cycle_binding,

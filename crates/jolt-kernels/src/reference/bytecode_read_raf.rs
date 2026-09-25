@@ -37,10 +37,10 @@
 //! `field-inline-protocol.md`, "Stage 6 Composition") the composed way the Spartan
 //! kernels were extended — the jolt symbolic expressions cannot name the field-inline
 //! terms, so the kernels materialize them from the pinned jolt-claims composed helpers
-//! (the field-inline `read_raf_stage_values` row fold under the extended stage-1/4/5
-//! gamma powers), never restating the row formula. The address phase adds three
-//! (pushforward, field-inline row table) legs at the ordinary γ⁰/γ³/γ⁴ stage weights —
-//! the stage-1 leg over the ordinary stage-1 cycle binding, the stage-4/5 legs over the
+//! (the field-inline `read_raf_stage_values` row fold under the extended stage-4/5
+//! gamma powers), never restating the row formula. The address phase adds two
+//! (pushforward, field-register row table) legs at the ordinary γ³/γ⁴ stage weights —
+//! the stage-4/5 legs over the
 //! field-register read-write / val-evaluation cycle sub-points. The cycle phase swaps
 //! the naive prover for a composed hand kernel over `C(j) · Π_i BytecodeRa_i(j)`, with
 //! every scalar-weighted eq / RAF / entry / field-inline term pre-folded into the
@@ -78,6 +78,8 @@ use jolt_field::JoltField;
 use jolt_poly::{
     BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
+#[cfg(feature = "field-inline")]
+use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckOutputClaims;
 use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckInputClaims};
@@ -162,6 +164,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
         Ok(Box::new(BytecodeReadRafAddressKernel::new(
             relation,
             relation.dimensions(),
+            #[cfg(feature = "field-inline")]
+            bytecode_rows,
             stage_values,
             relation.stage_cycle_points(),
             relation.fused_inc_cycle_points(),
@@ -198,26 +202,23 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
     int_table: Polynomial<F>,
     entry_trace: Polynomial<F>,
     entry_expected: Polynomial<F>,
-    /// The field-inline extension's three (pushforward, row-table) legs.
+    /// The field-register extension's two (pushforward, row-table) legs.
     #[cfg(feature = "field-inline")]
     field_inline: FieldInlineAddressLegs<F>,
     rounds_bound: usize,
 }
 
-/// The address phase's field-inline extension: three additional `weight · pushforward ·
-/// row-table` products over the bytecode address domain (see the module doc). Leg
-/// order: the stage-1 op-flag leg (over the ordinary stage-1 cycle binding), the
-/// stage-4 leg (over the field-register read-write cycle sub-point), the stage-5 leg
-/// (over the field-register value-evaluation cycle sub-point).
+/// The two field-register access terms at the stage-4/5 cycle points and γ³/γ⁴
+/// weights, sharing the ordinary bytecode address domain.
 #[cfg(feature = "field-inline")]
 struct FieldInlineAddressLegs<F: JoltField> {
-    /// γ⁰ / γ³ / γ⁴ — each leg rides the same outer stage weight as its
+    /// γ³ / γ⁴ — each leg rides the same outer stage weight as its
     /// ordinary stage claim.
-    weights: [F; 3],
-    pushforwards: [Polynomial<F>; 3],
-    /// The field-inline side-table row values under the extended per-stage gamma powers
-    /// (the jolt-claims field-inline `read_raf_stage_values` columns 0/3/4).
-    values: [Polynomial<F>; 3],
+    weights: [F; 2],
+    pushforwards: [Polynomial<F>; 2],
+    /// The field-register row values under the extended per-stage gamma powers
+    /// (the jolt-claims field-inline `read_raf_stage_values` columns 3/4).
+    values: [Polynomial<F>; 2],
 }
 
 // Hand impl: the array-of-table fields have no derive-visitable shape.
@@ -273,6 +274,7 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
     pub fn new(
         relation: &BytecodeReadRafAddressPhase<F>,
         dimensions: BytecodeReadRafDimensions,
+        #[cfg(feature = "field-inline")] bytecode_rows: &[JoltInstructionRow],
         stage_values: Vec<[F; NUM_BYTECODE_VAL_STAGES]>,
         stage_cycle_points: &[Vec<F>; BASE_STAGES],
         fused_cycle_points: &[Vec<F>],
@@ -360,20 +362,12 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
             )
             .collect();
 
-        // The field-inline legs: the side-table row values under the extended gamma
+        // The field-inline legs: the field-register row values under the extended gamma
         // powers (the composed jolt-claims fold), each leg over its own cycle binding.
-        // Fail-closed on a missing side table or malformed field-inline opening points.
+        // Reject malformed field-register opening points.
         #[cfg(feature = "field-inline")]
         let field_inline = {
             let geometry = relation.field_inline_geometry()?;
-            let table = &geometry.table;
-            if table.rows.len() != addresses {
-                return Err(KernelError::TableSizeMismatch {
-                    table: "field-inline bytecode side table".to_owned(),
-                    expected: addresses,
-                    got: table.rows.len(),
-                });
-            }
             fn split_field_point<F: JoltField>(
                 point: &[F],
                 log_t: usize,
@@ -395,10 +389,9 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
                 );
             let field_rows = field_inline_bytecode::read_raf_stage_values(
                 field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
-                    bytecode: &table.rows,
+                    bytecode: bytecode_rows,
                     field_register_read_write_point: read_write_address,
                     field_register_val_evaluation_point: val_evaluation_address,
-                    stage1_gammas: &gammas.stage1,
                     stage4_gammas: &gammas.stage4,
                     stage5_gammas: &gammas.stage5,
                 },
@@ -406,13 +399,12 @@ impl<F: JoltField> BytecodeReadRafAddressKernel<F> {
             let column =
                 |s: usize| Polynomial::new(field_rows.iter().map(|row| row[s]).collect::<Vec<F>>());
             FieldInlineAddressLegs {
-                weights: [gamma_powers[0], gamma_powers[3], gamma_powers[4]],
+                weights: [gamma_powers[3], gamma_powers[4]],
                 pushforwards: [
-                    pushforward(&stage_cycle_points[0], false),
                     pushforward(read_write_cycle, false),
                     pushforward(val_evaluation_cycle, false),
                 ],
-                values: [column(0), column(3), column(4)],
+                values: [column(3), column(4)],
             }
         };
 
@@ -709,14 +701,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
         #[cfg(feature = "field-inline")]
         {
             let fold = relation.field_inline_fold()?;
-            let addresses = 1usize << dimensions.log_k();
-            if fold.table.rows.len() != addresses {
-                return Err(KernelError::TableSizeMismatch {
-                    table: "field-inline bytecode side table".to_owned(),
-                    expected: addresses,
-                    got: fold.table.rows.len(),
-                });
-            }
             if fold.read_write_address.len() != FIELD_REGISTERS_LOG_K
                 || fold.val_evaluation_address.len() != FIELD_REGISTERS_LOG_K
                 || fold.read_write_cycle.len() != dimensions.log_t()
@@ -727,25 +711,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
                 });
             }
             // The field-inline row values at `r_address`: the composed jolt-claims row
-            // fold under the carried extended gamma powers (stages 1/4/5; stages 2/3
+            // fold under the carried extended gamma powers (stages 4/5; stages 1/2/3
             // gain no field-inline terms).
-            let field_rows = field_inline_bytecode::read_raf_stage_values(
-                field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
-                    bytecode: &fold.table.rows,
-                    field_register_read_write_point: &fold.read_write_address,
-                    field_register_val_evaluation_point: &fold.val_evaluation_address,
-                    stage1_gammas: &fold.gammas.stage1,
-                    stage4_gammas: &fold.gammas.stage4,
-                    stage5_gammas: &fold.gammas.stage5,
-                },
-            );
-            let eq_address = eq_table(r_address);
-            let mut field_folds = [F::zero(); 5];
-            for (row, eq) in field_rows.iter().zip(&eq_address) {
-                for (field_fold, value) in field_folds.iter_mut().zip(row) {
-                    *field_fold += *value * *eq;
-                }
-            }
+            let field_folds = relation.field_inline_stage_values_at_r_address()?;
 
             let gamma = inputs.challenges.gamma;
             // γ^0..γ^{S+2}: the S stage weights (5, or 9 on the packed
@@ -762,12 +730,10 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
             }
             let mut coefficient = vec![F::zero(); cycles];
             for (s, cycle_point) in stage_cycle_points.iter().enumerate().take(BASE_STAGES) {
-                // The field-inline stage-1 leg shares the ordinary stage-1 cycle
-                // binding, so its fold merges into the stage-0 weight; the RAF terms
-                // ride the stage-1/3 cycle eq tables at γ^S/γ^{S+1}.
+                // The RAF terms ride the stage-1/3 cycle eq tables at γ^S/γ^{S+1}.
                 let mut weight = gamma_powers[s] * stage_values_at_r_address[s];
                 if s == 0 {
-                    weight += field_folds[0] + gamma_powers[num_stages] * int_at_r_address;
+                    weight += gamma_powers[num_stages] * int_at_r_address;
                 }
                 if s == 2 {
                     weight += gamma_powers[num_stages + 1] * int_at_r_address;

@@ -70,7 +70,7 @@ fn instruction(
 
 /// The fixture programs' preprocessing, shared verbatim between the witness
 /// backend and the prover-preprocessing carrier so both fronts see the same
-/// bytecode facts (PC mapping, field-inline side-table metadata).
+/// bytecode facts (PC mapping and canonical instruction operands).
 #[expect(clippy::unwrap_used, reason = "test fixture construction")]
 fn fixture_program_preprocessing(
     bytecode: Vec<JoltInstructionRow>,
@@ -890,11 +890,9 @@ pub(crate) mod twins {
         let base_input_values = ComposedClaims {
             base: base_input_values,
             field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
-                &stage1.clear_output,
                 &stage4.clear_output.output_values,
                 &stage5.clear_output.output_values,
-            )
-            .unwrap(),
+            ),
         };
         let input_values = Stage6aInputClaims {
             bytecode_read_raf: base_input_values,

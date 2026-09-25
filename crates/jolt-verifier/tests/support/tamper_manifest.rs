@@ -15,8 +15,9 @@ use jolt_verifier::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutp
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::stage1::outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
+    stages::stage1::OuterRemainderOutputClaims,
     stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims},
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
+    stages::{stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
     VerifierError,
 };
 use serde_json::Value;
@@ -1516,16 +1517,6 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.field_inline.rd_value",
             "claims.stage1.outer.outer_remainder.field_inline.product",
             "claims.stage1.outer.outer_remainder.field_inline.inv_product",
-            "claims.stage1.outer.outer_remainder.field_inline.add",
-            "claims.stage1.outer.outer_remainder.field_inline.sub",
-            "claims.stage1.outer.outer_remainder.field_inline.mul",
-            "claims.stage1.outer.outer_remainder.field_inline.inv",
-            "claims.stage1.outer.outer_remainder.field_inline.assert_eq",
-            "claims.stage1.outer.outer_remainder.field_inline.load_accumulate_from_register",
-            "claims.stage1.outer.outer_remainder.field_inline.assert_zero",
-            "claims.stage1.outer.outer_remainder.field_inline.load_imm",
-            "claims.stage1.outer.outer_remainder.field_inline.load_accumulate_from_memory",
-            "claims.stage1.outer.outer_remainder.field_inline.advice_limb",
         ],
         #[cfg(feature = "field-inline")]
         "claims.stage2.batch_outputs.product_remainder.field_inline.*" => vec![
@@ -1569,6 +1560,26 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.is_compressed",
             "claims.stage1.outer.outer_remainder.is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.is_last_in_sequence",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_add",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_sub",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_mul",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_inv",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_assert_eq",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_load_accumulate_from_register",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_assert_zero",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_load_imm",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_load_accumulate_from_memory",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_advice_limb",
         ],
         "claims.stage2.batch_outputs.ram_read_write.*" => vec![
             "claims.stage2.batch_outputs.ram_read_write.val",
@@ -1679,43 +1690,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
         stage1: Stage1OutputClaims::new(
             zero,
             Stage1BatchOutputClaims {
-                outer_remainder: stage1::OuterRemainderOutputClaims {
-                    left_instruction_input: zero,
-                    right_instruction_input: zero,
-                    product: zero,
-                    should_branch: zero,
-                    pc: zero,
-                    unexpanded_pc: zero,
-                    imm: zero,
-                    ram_address: zero,
-                    rs1_value: zero,
-                    rs2_value: zero,
-                    rd_write_value: zero,
-                    ram_read_value: zero,
-                    ram_write_value: zero,
-                    left_lookup_operand: zero,
-                    right_lookup_operand: zero,
-                    next_unexpanded_pc: zero,
-                    next_pc: zero,
-                    next_is_virtual: zero,
-                    next_is_first_in_sequence: zero,
-                    lookup_output: zero,
-                    should_jump: zero,
-                    add_operands: zero,
-                    subtract_operands: zero,
-                    multiply_operands: zero,
-                    load: zero,
-                    store: zero,
-                    jump: zero,
-                    write_lookup_output_to_rd: zero,
-                    virtual_instruction: zero,
-                    assert: zero,
-                    do_not_update_unexpanded_pc: zero,
-                    advice: zero,
-                    is_compressed: zero,
-                    is_first_in_sequence: zero,
-                    is_last_in_sequence: zero,
-                }.into(),
+                outer_remainder: OuterRemainderOutputClaims::<F>::default().into(),
             },
         ),
         stage2: Stage2OutputClaims::new(

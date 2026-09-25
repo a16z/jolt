@@ -169,9 +169,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// deployed verifier sees.
 #[cfg(not(feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v2";
-// AssertZero changes the field-inline instruction and proof schemas.
+// Field flags use the common circuit columns; preprocessing has no side table.
 #[cfg(feature = "field-inline")]
-const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v4";
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v5";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -312,9 +312,8 @@ mod tests {
     /// Golden digests. A change here is a Fiat-Shamir break for every
     /// deployed verifier: bump `PROGRAM_PREPROCESSING_DIGEST_DOMAIN` and say so
     /// in the PR. Pinned separately with and without `jolt-program/field-inline`:
-    /// the base-profile fixture has no side table, but enabling the feature adds
-    /// its serialized `None` tag to the `Full` bytecode encoding and selects
-    /// the field-inline digest domain.
+    /// the bytecode row schema is shared, while field-inline selects its own
+    /// digest domain for the extended instruction and proof profile.
     #[cfg(not(feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         42, 63, 50, 98, 242, 124, 42, 171, 43, 223, 155, 146, 108, 130, 235, 136, 177, 93, 248,
@@ -322,8 +321,8 @@ mod tests {
     ];
     #[cfg(feature = "field-inline")]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        159, 42, 134, 60, 39, 247, 245, 208, 238, 170, 173, 95, 244, 160, 156, 28, 109, 117, 188,
-        154, 230, 116, 36, 200, 180, 252, 153, 10, 115, 166, 153, 245,
+        102, 54, 187, 66, 54, 228, 103, 28, 102, 88, 129, 135, 250, 47, 104, 215, 38, 203, 135,
+        219, 16, 41, 198, 24, 13, 89, 213, 127, 111, 139, 110, 231,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -337,13 +336,13 @@ mod tests {
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        0, 72, 116, 160, 229, 41, 145, 135, 226, 34, 241, 30, 80, 26, 61, 54, 220, 22, 163, 234,
-        107, 31, 131, 129, 228, 86, 2, 27, 246, 131, 230, 230,
+        174, 124, 18, 23, 181, 244, 18, 72, 74, 61, 54, 195, 188, 95, 240, 106, 191, 172, 147, 197,
+        170, 48, 233, 238, 236, 123, 232, 208, 240, 225, 202, 20,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        112, 61, 57, 19, 71, 57, 73, 5, 247, 181, 132, 5, 193, 60, 185, 70, 5, 91, 145, 43, 225,
-        187, 39, 204, 125, 158, 43, 193, 181, 227, 247, 78,
+        16, 130, 0, 92, 223, 42, 224, 227, 251, 42, 100, 166, 128, 182, 254, 77, 20, 144, 95, 108,
+        190, 25, 90, 127, 205, 145, 75, 51, 132, 226, 123, 67,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout

@@ -464,9 +464,9 @@ field-inline.
    - Do not duplicate bridge openings for RV64 columns reused by
      `jolt-r1cs::constraints::jolt`: `Rs1Value`, `RdWriteValue`, and `Imm`
      remain ordinary Jolt openings.
-   - Spartan openings local to field-inline follow the selected
-     appended-column order: field register operand values, field product
-     witnesses, and field-inline selector flags.
+   - Field operation flags use the common `CircuitFlags` columns and Jolt
+     Spartan openings. The five openings local to field-inline follow the
+     appended-column order: field register operand values and product witnesses.
    - Add a selected Spartan outer remainder helper in `jolt-r1cs` that mirrors
      the existing RV64 helper but uses the selected equality constraints,
      selected row weights, and selected opening columns.
@@ -527,11 +527,13 @@ field-inline.
      RA/WA claims from stage 4, and `FieldRdWa` from stage 5.
    - Check those virtual openings against the field opcode and field operands
      encoded in the selected bytecode row.
-   - Require verifier preprocessing to carry the field-inline bytecode side
-     table when field inline is enabled; missing metadata is a verifier error.
-   - Extend the existing Stage1/Stage4/Stage5 bytecode RLC powers by appending
-     the field op flags and field-register access terms. Without field-inline,
-     the ordinary challenge counts and transcript order stay unchanged.
+   - Derive field operands directly from ordinary bytecode rows and validate
+     their shapes at preprocessing and verifier boundaries. Full public
+     bytecode is required; committed-program mode remains unsupported.
+   - The ordinary Stage1 circuit-flag fold includes the field op flags.
+     Extend the Stage4/Stage5 bytecode RLC powers with field-register access
+     terms. Without field-inline, challenge counts and transcript order stay
+     unchanged.
    - In BlindFold mode, lower the same mixed `BytecodeReadRaf` input
      expression: Jolt openings stay `JoltOpeningId`, field-inline openings stay
      `FieldInlineOpeningId`, and the shared bytecode challenges remain

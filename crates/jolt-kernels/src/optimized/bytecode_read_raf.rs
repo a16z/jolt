@@ -259,7 +259,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let num_stages = base_stages + fused_cycle_points.len();
         let gamma_powers = gamma_powers(inputs.challenges.gamma, num_stages + 3);
 
-        // The field-inline extension's fold geometry: the side-table row values under
+        // The field-inline extension's fold geometry: the field-register row values under
         // the extended per-stage gamma powers, each leg over its own cycle binding (see
         // the reference kernel's `FieldInlineAddressLegs`).
         #[cfg(feature = "field-inline")]
@@ -268,14 +268,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
 
             let geometry = relation.field_inline_geometry()?;
-            let table = &geometry.table;
-            if table.rows.len() != addresses {
-                return Err(KernelError::TableSizeMismatch {
-                    table: "field-inline bytecode side table".to_owned(),
-                    expected: addresses,
-                    got: table.rows.len(),
-                });
-            }
             if geometry.read_write_point.len() != FIELD_REGISTERS_LOG_K + dimensions.log_t()
                 || geometry.val_evaluation_point.len() != FIELD_REGISTERS_LOG_K + dimensions.log_t()
             {
@@ -294,10 +286,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 );
             let field_rows = field_inline_bytecode::read_raf_stage_values(
                 field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
-                    bytecode: &table.rows,
+                    bytecode: &program.bytecode.bytecode,
                     field_register_read_write_point: read_write_address,
                     field_register_val_evaluation_point: val_evaluation_address,
-                    stage1_gammas: &gammas.stage1,
                     stage4_gammas: &gammas.stage4,
                     stage5_gammas: &gammas.stage5,
                 },
@@ -305,7 +296,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             let column =
                 |s: usize| Polynomial::new(field_rows.iter().map(|row| row[s]).collect::<Vec<F>>());
             (
-                [column(0), column(3), column(4)],
+                [column(3), column(4)],
                 read_write_cycle.to_vec(),
                 val_evaluation_cycle.to_vec(),
             )
@@ -317,8 +308,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         let row_weight = InstructionCycleRow::fused_inc::<F>;
         // One walk computes every pushforward: the base stages (packed: plus the fused
         // stages) and, with field-inline enabled, the two field-inline cycle sub-points
-        // appended as unweighted base stages; the field-inline stage-1 leg shares the
-        // ordinary stage-1 pushforward (identical cycle binding).
+        // appended as unweighted base stages.
         #[cfg(feature = "field-inline")]
         let composed_points: Vec<Vec<F>> = stage_cycle_points
             .iter()
@@ -339,7 +329,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             row_weight,
         );
         #[cfg(feature = "field-inline")]
-        let field_pushforwards: [Polynomial<F>; 3] = {
+        let field_pushforwards: [Polynomial<F>; 2] = {
             let missing = || KernelError::InvariantViolation {
                 reason: "field-inline pushforwards missing from the shared walk",
             };
@@ -353,8 +343,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             }
             let val_evaluation = Polynomial::new(pushforwards.remove(field_start + 1));
             let read_write = Polynomial::new(pushforwards.remove(field_start));
-            let stage1 = Polynomial::new(pushforwards.first().cloned().ok_or_else(missing)?);
-            [stage1, read_write, val_evaluation]
+            [read_write, val_evaluation]
         };
         let pushforwards = pushforwards
             .into_iter()
@@ -403,7 +392,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             entry_expected: one_hot(entry_bytecode_index),
             #[cfg(feature = "field-inline")]
             field_inline: FieldInlineAddressLegs {
-                weights: [gamma_powers[0], gamma_powers[3], gamma_powers[4]],
+                weights: [gamma_powers[3], gamma_powers[4]],
                 pushforwards: field_pushforwards,
                 values: field_inline_values,
             },
@@ -411,17 +400,13 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
     }
 }
 
-/// The address phase's field-inline extension: three additional `weight · pushforward ·
-/// row-table` products over the bytecode address domain, mirroring the reference
-/// kernel's legs — the stage-1 op-flag leg (over the ordinary stage-1 cycle binding),
-/// the stage-4 leg (over the field-register read-write cycle sub-point), the stage-5
-/// leg (over the field-register value-evaluation cycle sub-point), at the ordinary
-/// γ⁰/γ³/γ⁴ stage weights.
+/// The two field-register access terms at the stage-4/5 cycle points and γ³/γ⁴
+/// weights, sharing the ordinary bytecode address domain.
 #[cfg(feature = "field-inline")]
 struct FieldInlineAddressLegs<F: JoltField> {
-    weights: [F; 3],
-    pushforwards: [Polynomial<F>; 3],
-    values: [Polynomial<F>; 3],
+    weights: [F; 2],
+    pushforwards: [Polynomial<F>; 2],
+    values: [Polynomial<F>; 2],
 }
 
 #[cfg(feature = "field-inline")]
@@ -765,9 +750,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         // in one cycle table, so   C(j) = Σ_s (γ^s·val_s + raf_s·int_r)·eq_s(j) +
         // γ⁷·entry·[j = 0] with raf_0 = γ⁵·int_r, raf_2 = γ⁶·int_r (SpartanOuterRaf
         // rides the stage-1 cycle point, SpartanShiftRaf the stage-3 one). With
-        // field-inline enabled, the composed field-inline terms pre-fold in too: the
-        // field-inline stage-1 leg shares the ordinary stage-1 cycle binding (its fold
-        // merges into the stage-0 weight), and the stage-4/5 legs ride the
+        // field-inline enabled, the stage-4/5 field-register legs ride the
         // field-register read-write / val-evaluation cycle sub-points at γ³/γ⁴ (the
         // reference kernel's composed pre-fold, term for term).
         let stage_values = relation.stage_values_at_r_address()?;
@@ -784,18 +767,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         let eq_address: Vec<F> = eq_table(r_address);
         #[cfg(feature = "field-inline")]
         let (field_folds, field_read_write_cycle, field_val_evaluation_cycle) = {
-            use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_bytecode;
             use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
 
             let fold = relation.field_inline_fold()?;
-            let addresses = 1usize << dimensions.log_k();
-            if fold.table.rows.len() != addresses {
-                return Err(KernelError::TableSizeMismatch {
-                    table: "field-inline bytecode side table".to_owned(),
-                    expected: addresses,
-                    got: fold.table.rows.len(),
-                });
-            }
             if fold.read_write_address.len() != FIELD_REGISTERS_LOG_K
                 || fold.val_evaluation_address.len() != FIELD_REGISTERS_LOG_K
                 || fold.read_write_cycle.len() != dimensions.log_t()
@@ -805,32 +779,13 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                     reason: "field-inline bytecode fold points have the wrong variable counts",
                 });
             }
-            let field_rows = field_inline_bytecode::read_raf_stage_values(
-                field_inline_bytecode::FieldInlineBytecodeReadRafStageValueInputs {
-                    bytecode: &fold.table.rows,
-                    field_register_read_write_point: &fold.read_write_address,
-                    field_register_val_evaluation_point: &fold.val_evaluation_address,
-                    stage1_gammas: &fold.gammas.stage1,
-                    stage4_gammas: &fold.gammas.stage4,
-                    stage5_gammas: &fold.gammas.stage5,
-                },
-            );
-            let mut field_folds = [F::zero(); 5];
-            for (row, eq) in field_rows.iter().zip(&eq_address) {
-                for (field_fold, value) in field_folds.iter_mut().zip(row) {
-                    *field_fold += *value * *eq;
-                }
-            }
+            let field_folds = relation.field_inline_stage_values_at_r_address()?;
             (
                 field_folds,
                 fold.read_write_cycle.clone(),
                 fold.val_evaluation_cycle.clone(),
             )
         };
-        #[cfg(feature = "field-inline")]
-        {
-            stage_weights[0] += field_folds[0];
-        }
 
         for point in stage_cycle_points {
             if point.len() != dimensions.log_t() {
@@ -856,7 +811,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         }
         // The field-inline stage-4/5 legs ride their own cycle sub-points at γ³/γ⁴. A
         // trace without field-inline activity folds both weights to zero (its
-        // side-table rows are all zero), so the two dense eq tables are skipped
+        // field-register operands are all absent), so the two dense eq tables are skipped
         // exactly.
         #[cfg(feature = "field-inline")]
         for (point, weight) in [
@@ -1189,9 +1144,7 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_program::execution::OwnedTrace;
     #[cfg(feature = "field-inline")]
-    use jolt_verifier::stages::field_inline_bytecode::{
-        convert_field_inline_bytecode, FieldInlineBytecodeFold, FieldInlineBytecodeTable,
-    };
+    use jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use jolt_verifier::stages::relations::SumcheckInputPoints;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     #[cfg(feature = "field-inline")]
@@ -1220,23 +1173,13 @@ mod tests {
         with_sample_backend(|backend| run_pair_on(backend, committed_program));
     }
 
-    /// Parity with field-inline enabled over a program whose side table is populated:
+    /// Parity with field-inline enabled over a program containing field instructions:
     /// the field-inline legs of both phases carry non-zero terms, so a drift between
     /// the reference and optimized field-inline folds surfaces here rather than only at
     /// the e2e.
     #[cfg(feature = "field-inline")]
     fn run_pair_with_field_inline_program(f: impl FnOnce(&TraceBackend<OwnedTrace>)) {
         structured_field_register_fixture(12).with_plane(4, |backend| {
-            let populated = backend
-                .program_preprocessing()
-                .bytecode
-                .field_inline
-                .as_ref()
-                .is_some_and(|metadata| metadata.rows.iter().any(|row| row.active));
-            assert!(
-                populated,
-                "the field-inline fixture must carry active side-table rows"
-            );
             f(backend);
         });
     }
@@ -1268,17 +1211,6 @@ mod tests {
                 register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 37),
                 fused_inc_cycle_points: Vec::new(),
             };
-            // The production side table when the program carries one; an all-inactive,
-            // well-formed geometry for a program without field-inline (the sample
-            // backend), whose field-inline legs vanish.
-            #[cfg(feature = "field-inline")]
-            let field_inline_table = match program.bytecode.field_inline.as_ref() {
-                Some(metadata) => convert_field_inline_bytecode(metadata).unwrap(),
-                None => FieldInlineBytecodeTable {
-                    rows: vec![Default::default(); bytecode_len],
-                    field_register_log_k: FIELD_REGISTERS_LOG_K,
-                },
-            };
             #[cfg(feature = "field-inline")]
             let field_read_write_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 41);
             #[cfg(feature = "field-inline")]
@@ -1294,7 +1226,6 @@ mod tests {
             #[cfg(feature = "field-inline")]
             let address_relation =
                 address_relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
-                    table: field_inline_table.clone(),
                     read_write_point: field_read_write_point.clone(),
                     val_evaluation_point: field_val_evaluation_point.clone(),
                 });
@@ -1381,7 +1312,6 @@ mod tests {
                 #[cfg(feature = "field-inline")]
                 field_inline:
                     FieldInlineBytecodeFold {
-                        table: field_inline_table.clone(),
                         read_write_address: field_read_write_point
                             [..FIELD_REGISTERS_LOG_K]
                             .to_vec(),
@@ -1458,7 +1388,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn bytecode_phases_match_reference_with_an_active_field_inline_side_table() {
+    fn bytecode_phases_match_reference_with_field_inline_instructions() {
         run_pair_with_field_inline_program(|backend| run_pair_on(backend, false));
     }
 }
@@ -1472,9 +1402,7 @@ mod akita_tests {
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
-    use jolt_verifier::stages::field_inline_bytecode::{
-        FieldInlineBytecodeFold, FieldInlineBytecodeTable,
-    };
+    use jolt_verifier::stages::field_inline_bytecode::FieldInlineBytecodeFold;
     use jolt_verifier::stages::relations::SumcheckInputPoints;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeStagePoints;
     #[cfg(feature = "field-inline")]
@@ -1521,10 +1449,6 @@ mod akita_tests {
             #[cfg(feature = "field-inline")]
             let relation =
                 relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
-                    table: FieldInlineBytecodeTable {
-                        rows: vec![Default::default(); bytecode_len],
-                        field_register_log_k: FIELD_REGISTERS_LOG_K,
-                    },
                     read_write_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 61),
                     val_evaluation_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 67),
                 });
@@ -1629,11 +1553,6 @@ mod akita_tests {
                 #[cfg(feature = "field-inline")]
                 field_inline:
                     FieldInlineBytecodeFold {
-                        table: FieldInlineBytecodeTable {
-                            rows: vec![Default::default(); bytecode_len],
-                            field_register_log_k:
-                                FIELD_REGISTERS_LOG_K,
-                        },
                         read_write_address: field_read_write_point
                             [..FIELD_REGISTERS_LOG_K]
                             .to_vec(),

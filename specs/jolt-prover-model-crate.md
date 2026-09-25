@@ -679,8 +679,8 @@ stage 5:
 
 stage 6 BytecodeReadRaf:
   prove the field-inline extension of BytecodeReadRaf
-  bind FieldOpFlag(...), FieldRs1Ra, FieldRs2Ra, and FieldRdWa to the
-  selected bytecode row
+  bind OpFlags(CircuitFlags::Field*), FieldRs1Ra, FieldRs2Ra, and FieldRdWa
+  to the selected ordinary bytecode row
   output the existing BytecodeRa(i)@BytecodeReadRaf claims
 
 stage 6 FieldRegistersIncClaimReduction:
