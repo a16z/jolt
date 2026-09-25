@@ -1,3 +1,5 @@
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::{
     geometry::{
         dimensions::TraceDimensions, ram::RamRafEvaluationDimensions,
@@ -12,6 +14,10 @@ use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "field-inline")]
+use super::field_registers_claim_reduction::{
+    field_registers_claim_reduction_input_values_from_upstream, FieldRegistersClaimReduction,
+};
 use super::{
     instruction_claim_reduction::{
         instruction_claim_reduction_input_values_from_upstream, InstructionClaimReduction,
@@ -58,8 +64,7 @@ enum ProductUniskipVerified<F: JoltField, C> {
 /// the generated `Stage2BatchInputClaims` aggregate. Each per-relation `*_from_upstream`
 /// helper wires which upstream opening feeds which downstream input. The product-remainder
 /// input is the product uni-skip's output claim (a separate stage-2 sub-sumcheck), not an
-/// upstream stage's opening. Errors only under `field-inline`, where the field-inline
-/// claim-reduction inputs are required fail-closed from the stage-1 field-inline carrier.
+/// upstream stage's opening.
 pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
@@ -71,7 +76,9 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
         ),
         instruction_claim_reduction: instruction_claim_reduction_input_values_from_upstream(stage1),
         #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction: super::field_inline::claim_reduction_inputs(stage1),
+        field_registers_claim_reduction: field_registers_claim_reduction_input_values_from_upstream(
+            stage1,
+        ),
         ram_raf_evaluation: ram_raf_evaluation_input_values_from_upstream(stage1),
         ram_output_check: RamOutputCheckInputClaims::default(),
     })
@@ -142,8 +149,8 @@ where
             uniskip.tau_low.clone(),
         ),
         #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction: super::field_inline::claim_reduction_member(
-            log_t,
+        field_registers_claim_reduction: FieldRegistersClaimReduction::new(
+            FieldRegistersTraceDimensions::new(log_t),
             uniskip.tau_low.clone(),
         ),
         ram_raf_evaluation: RamRafEvaluation::new(

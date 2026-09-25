@@ -10,6 +10,8 @@
 //! exactly when their precommitted layout needs a cycle-phase reduction, so the
 //! batch's instance count matches the prover's.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::{
@@ -42,7 +44,9 @@ use super::committed_reduction_cycle_phase::{
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase};
 #[cfg(feature = "field-inline")]
-use super::field_registers_inc_claim_reduction::FieldRegistersIncClaimReductionChallenges;
+use super::field_registers_inc_claim_reduction::{
+    FieldRegistersIncClaimReduction, FieldRegistersIncClaimReductionChallenges,
+};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
 use super::instruction_ra_virtualization::{
@@ -485,8 +489,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             registers_val_evaluation_cycle,
         );
         #[cfg(feature = "field-inline")]
-        let field_registers_inc_claim_reduction = super::field_inline::inc_claim_reduction_member(
-            log_t,
+        let field_registers_inc_claim_reduction = FieldRegistersIncClaimReduction::new(
+            FieldRegistersTraceDimensions::new(log_t),
             field_inline_legs.read_write_cycle,
             field_inline_legs.val_evaluation_cycle,
         );

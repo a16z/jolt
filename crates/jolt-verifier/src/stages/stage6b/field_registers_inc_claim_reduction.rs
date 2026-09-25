@@ -23,7 +23,29 @@ use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
+use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
+use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
 use crate::VerifierError;
+
+pub fn field_registers_inc_claim_reduction_input_values_from_upstream<F: JoltField>(
+    stage4: &Stage4OutputClaims<F>,
+    stage5: &Stage5OutputClaims<F>,
+) -> FieldRegistersIncClaimReductionInputClaims<F> {
+    FieldRegistersIncClaimReductionInputClaims {
+        rd_inc_read_write: stage4.field_registers_read_write.rd_inc,
+        rd_inc_val_evaluation: stage5.field_registers_val_evaluation.rd_inc,
+    }
+}
+
+pub fn field_registers_inc_claim_reduction_input_points_from_upstream<F: JoltField>(
+    stage4: &Stage4OutputPoints<F>,
+    stage5: &Stage5OutputPoints<F>,
+) -> FieldRegistersIncClaimReductionInputClaims<Vec<F>> {
+    FieldRegistersIncClaimReductionInputClaims {
+        rd_inc_read_write: stage4.field_registers_read_write.rd_inc().to_vec(),
+        rd_inc_val_evaluation: stage5.field_registers_val_evaluation.rd_inc().to_vec(),
+    }
+}
 
 #[derive(Clone)]
 pub struct FieldRegistersIncClaimReduction<F: JoltField> {

@@ -14,6 +14,11 @@ use super::committed_reduction_cycle_phase::{
     trusted_advice_cycle_phase_input_values_from_upstream,
     untrusted_advice_cycle_phase_input_values_from_upstream,
 };
+#[cfg(feature = "field-inline")]
+use super::field_registers_inc_claim_reduction::{
+    field_registers_inc_claim_reduction_input_points_from_upstream,
+    field_registers_inc_claim_reduction_input_values_from_upstream,
+};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
@@ -420,10 +425,11 @@ pub fn stage6b_input_values_from_upstream<F: JoltField>(
             stage5,
         ),
         #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction: super::field_inline::inc_claim_reduction_inputs(
-            &stage4.output_values,
-            stage5,
-        ),
+        field_registers_inc_claim_reduction:
+            field_registers_inc_claim_reduction_input_values_from_upstream(
+                &stage4.output_values,
+                stage5,
+            ),
         #[cfg(not(feature = "akita"))]
         trusted_advice: sumchecks
             .trusted_advice
@@ -481,9 +487,8 @@ pub fn stage6b_input_points_from_upstream<F: JoltField>(
         #[cfg(not(feature = "akita"))]
         inc_claim_reduction: inc_claim_reduction_input_points_from_upstream(stage2, stage4, stage5),
         #[cfg(feature = "field-inline")]
-        field_registers_inc_claim_reduction: super::field_inline::inc_claim_reduction_input_points(
-            stage4, stage5,
-        ),
+        field_registers_inc_claim_reduction:
+            field_registers_inc_claim_reduction_input_points_from_upstream(stage4, stage5),
         ..sumchecks.empty_input_points()
     }
 }

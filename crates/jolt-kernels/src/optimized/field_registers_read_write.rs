@@ -856,7 +856,7 @@ mod tests {
     };
     use jolt_field::{Fr, Ring};
     use jolt_riscv::FieldInlineOp;
-    use jolt_verifier::stages::stage4::field_inline::read_write_member;
+    use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
 
     use super::*;
     use crate::optimized::field_registers_testing::{
@@ -873,7 +873,11 @@ mod tests {
         expect_active: bool,
     ) {
         fixture.with_plane(log_t, |backend| {
-            let relation = read_write_member::<Fr>(log_t);
+            let relation = FieldRegistersReadWriteChecking::<Fr>::new(
+                JOLT_VERIFIER_CONFIG
+                    .field_inline
+                    .read_write_dimensions(log_t),
+            );
             let r_cycle = synthetic_point(log_t, seed);
             let claims = FieldRegistersReadWriteInputClaims {
                 rd_value: Fr::from_u64(0),

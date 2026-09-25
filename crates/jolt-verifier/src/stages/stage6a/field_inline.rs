@@ -90,9 +90,8 @@ pub struct FieldInlineBytecodeReadRafInputs<F> {
 }
 
 /// Wire the field-inline opening values the extended bytecode read-RAF input claim consumes
-/// from the upstream clear outputs. Fail-closed: a field-inline proof whose stage-1 carrier
-/// lacks the field-inline payload cannot feed the extension.
-pub fn bytecode_read_raf_inputs<F: JoltField>(
+/// from the upstream clear outputs, rejecting any unresolved field-op flag opening.
+pub fn field_inline_bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     stage4: &Stage4OutputClaims<F>,
     stage5: &Stage5OutputClaims<F>,

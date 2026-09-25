@@ -34,6 +34,8 @@ use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
 use jolt_verifier::stages::stage6a::batch::Stage6aBuildParts;
 use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseInputClaims;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage6a::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
 use jolt_verifier::stages::stage6a::outputs::{
     Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutputClaims,
     Stage6aSumchecks,
@@ -151,7 +153,7 @@ where
     #[cfg(feature = "field-inline")]
     let bytecode_input_values = ComposedClaims {
         base: bytecode_input_values,
-        field_inline: jolt_verifier::stages::stage6a::field_inline::bytecode_read_raf_inputs(
+        field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
             stage1,
             &stage4.output_values,
             &stage5.output_values,
@@ -207,7 +209,6 @@ mod field_inline_round_trip {
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
-    use jolt_verifier::stages::stage6a::field_inline as stage6a_field_inline;
 
     use super::*;
     use crate::recorder::ProofMode;
@@ -311,7 +312,7 @@ mod field_inline_round_trip {
         // carries nonzero openings (the trace executes field-inline instructions), so
         // the round trip exercises the extension for real rather than the
         // zero-fold degenerate case.
-        let appendage = stage6a_field_inline::bytecode_read_raf_inputs(
+        let appendage = field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
             &stage1.clear_output,
             &stage4.clear_output.output_values,
             &stage5.clear_output.output_values,

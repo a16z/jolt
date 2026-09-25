@@ -29,7 +29,20 @@ use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
+use crate::stages::stage1::Stage1ClearOutput;
 use crate::VerifierError;
+
+/// Wire the consumed field-register value openings from stage 1's composed outer sumcheck.
+pub fn field_registers_claim_reduction_input_values_from_upstream<F: JoltField>(
+    stage1: &Stage1ClearOutput<F>,
+) -> FieldRegistersClaimReductionInputClaims<F> {
+    let outer = &stage1.output_values.outer_remainder.field_inline;
+    FieldRegistersClaimReductionInputClaims {
+        rd_value: outer.rd_value,
+        rs1_value: outer.rs1_value,
+        rs2_value: outer.rs2_value,
+    }
+}
 
 #[derive(Clone)]
 pub struct FieldRegistersClaimReduction<F: JoltField> {

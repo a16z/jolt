@@ -22,7 +22,28 @@ use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
+use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
 use crate::VerifierError;
+
+/// Wire the consumed `FieldRegistersVal` opening value from the upstream
+/// field-register read-write checking (stage 4).
+pub fn field_registers_val_evaluation_input_values_from_upstream<F: JoltField>(
+    stage4: &Stage4OutputClaims<F>,
+) -> FieldRegistersValEvaluationInputClaims<F> {
+    FieldRegistersValEvaluationInputClaims {
+        registers_val: stage4.field_registers_read_write.registers_val,
+    }
+}
+
+/// Wire the consumed `FieldRegistersVal` opening point from the upstream
+/// field-register read-write checking (stage 4).
+pub fn field_registers_val_evaluation_input_points_from_upstream<F: JoltField>(
+    stage4: &Stage4OutputPoints<F>,
+) -> FieldRegistersValEvaluationInputClaims<Vec<F>> {
+    FieldRegistersValEvaluationInputClaims {
+        registers_val: stage4.field_registers_read_write_point().to_vec(),
+    }
+}
 
 #[derive(Clone)]
 pub struct FieldRegistersValEvaluation<F: JoltField> {

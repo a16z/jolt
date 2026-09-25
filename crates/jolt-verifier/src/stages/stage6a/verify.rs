@@ -6,6 +6,8 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "field-inline")]
+use super::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
 use super::{
     batch::Stage6aBuildParts,
     booleanity::BooleanityAddressPhaseInputClaims,
@@ -136,7 +138,7 @@ where
     #[cfg(feature = "field-inline")]
     let base_input_values = ComposedClaims {
         base: base_input_values,
-        field_inline: super::field_inline::bytecode_read_raf_inputs(
+        field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
             stage1.clear()?,
             &stage4.clear()?.output_values,
             &stage5.clear()?.output_values,

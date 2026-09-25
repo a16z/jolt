@@ -1,57 +1,9 @@
-//! Stage 4's field-inline seam: every field-inline-specific divergence of the stage-4 verifier
-//! in one place — the field-register read/write batch member, its input wiring from stage 2's
-//! field-inline claim reduction, and the curated absorb splice. `verify.rs`/`outputs.rs`
-//! interact with the field-inline protocol only through the functions here (plus the
-//! field-inline carrier fields, which are proof shape).
+//! Field-inline openings in the stage-4 Fiat-Shamir absorption order.
 
 use jolt_field::JoltField;
 
-use super::field_registers_read_write_checking::{
-    FieldRegistersReadWriteChecking, FieldRegistersReadWriteInputClaims,
-};
 use super::outputs::Stage4OutputClaims;
-use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::stages::relations::OutputClaims as _;
-use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
-
-/// The stage-4 field-inline batch member. Field-inline dimensions are pinned by the
-/// compile-time protocol config (phase1 = log_t, phase2 = log_k), not the proof's rw_config,
-/// so no eager phase-split validation is needed.
-pub fn read_write_member<F: JoltField>(log_t: usize) -> FieldRegistersReadWriteChecking<F> {
-    FieldRegistersReadWriteChecking::new(
-        JOLT_VERIFIER_CONFIG
-            .field_inline
-            .read_write_dimensions(log_t),
-    )
-}
-
-/// Wire the consumed field-register value opening *values* from stage 2's field-inline claim
-/// reduction. The upstream cells are plain (non-optional) fields of the field-inline stage-2
-/// batch claims, so presence is a compile-time fact — a field-inline proof without them fails
-/// proof deserialization / shape validation upstream.
-pub fn read_write_inputs<F: JoltField>(
-    stage2: &Stage2BatchOutputClaims<F>,
-) -> FieldRegistersReadWriteInputClaims<F> {
-    let reduction = &stage2.field_registers_claim_reduction;
-    FieldRegistersReadWriteInputClaims {
-        rd_value: reduction.rd_value,
-        rs1_value: reduction.rs1_value,
-        rs2_value: reduction.rs2_value,
-    }
-}
-
-/// Wire the consumed field-inline opening *points* from stage 2's field-inline claim
-/// reduction, all sharing that relation's reduced opening point (`r_prod`).
-pub fn read_write_input_points<F: JoltField>(
-    stage2: &Stage2BatchOutputPoints<F>,
-) -> FieldRegistersReadWriteInputClaims<Vec<F>> {
-    let reduction = &stage2.field_registers_claim_reduction;
-    FieldRegistersReadWriteInputClaims {
-        rd_value: reduction.rd_value().to_vec(),
-        rs1_value: reduction.rs1_value().to_vec(),
-        rs2_value: reduction.rs2_value().to_vec(),
-    }
-}
 
 /// Splice the five field-register read/write openings into the stage-4 Fiat-Shamir value
 /// order: after the ordinary register openings, before the RAM value-check ones (the spec's

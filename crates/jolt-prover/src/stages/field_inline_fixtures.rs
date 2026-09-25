@@ -458,6 +458,7 @@ pub(crate) fn test_public_io() -> JoltDevice {
 #[expect(clippy::unwrap_used, reason = "test twin helpers")]
 pub(crate) mod twins {
     use common::jolt_device::JoltDevice;
+    use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
     use jolt_claims::protocols::jolt::geometry::spartan::{
         SpartanOuterDimensions, SpartanProductDimensions,
@@ -467,11 +468,13 @@ pub(crate) mod twins {
     use jolt_field::{Fr, Ring};
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::{AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript};
+    use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage1::outer_remainder::{
         outer_remainder_input_values_from_uniskip_output, OuterRemainder,
     };
     use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
+    use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
     use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
     use jolt_verifier::stages::stage2::outputs::Stage2BatchSumchecks;
     use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
@@ -481,10 +484,7 @@ pub(crate) mod twins {
     use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
     use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
     use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-    use jolt_verifier::stages::stage2::{
-        field_inline as stage2_field_inline, product_tau_low,
-        stage2_batch_input_values_from_upstream,
-    };
+    use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
     use jolt_verifier::stages::stage3::outputs::{
         InstructionInput, RegistersClaimReduction, SpartanShift, Stage3Sumchecks,
     };
@@ -499,26 +499,27 @@ pub(crate) mod twins {
     use jolt_claims::protocols::jolt::JoltRelationId;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
+    use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
     use jolt_verifier::stages::stage4::outputs::Stage4Sumchecks;
     use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
     use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
     use jolt_verifier::stages::stage4::{
-        field_inline as stage4_field_inline, public_initial_ram_evaluation,
-        ram_val_check_init_structure, stage4_input_points_from_upstream,
-        stage4_input_values_from_upstream, RamValCheckInitialEvaluation,
+        public_initial_ram_evaluation, ram_val_check_init_structure,
+        stage4_input_points_from_upstream, stage4_input_values_from_upstream,
+        RamValCheckInitialEvaluation,
     };
+    use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
     use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
     use jolt_verifier::stages::stage5::outputs::Stage5Sumchecks;
     use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
     use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
     use jolt_verifier::stages::stage5::{
-        field_inline as stage5_field_inline, stage5_input_points_from_upstream,
-        stage5_input_values_from_upstream,
+        stage5_input_points_from_upstream, stage5_input_values_from_upstream,
     };
     use jolt_verifier::stages::stage6a::batch::Stage6aBuildParts;
     use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhaseInputClaims;
     use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address_phase_input_values_from_upstream;
-    use jolt_verifier::stages::stage6a::field_inline as stage6a_field_inline;
+    use jolt_verifier::stages::stage6a::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
     use jolt_verifier::stages::stage6a::outputs::{Stage6aInputClaims, Stage6aSumchecks};
     use jolt_verifier::CheckedInputs;
 
@@ -626,8 +627,8 @@ pub(crate) mod twins {
                 trace_dimensions,
                 tau_low.clone(),
             ),
-            field_registers_claim_reduction: stage2_field_inline::claim_reduction_member(
-                log_t,
+            field_registers_claim_reduction: FieldRegistersClaimReduction::new(
+                FieldRegistersTraceDimensions::new(log_t),
                 tau_low.clone(),
             ),
             ram_raf_evaluation: RamRafEvaluation::new(
@@ -729,7 +730,11 @@ pub(crate) mod twins {
             ram_val_check_init_structure(checked, false, r_address, public_eval).unwrap();
         let sumchecks = Stage4Sumchecks {
             registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
-            field_registers_read_write: stage4_field_inline::read_write_member(LOG_T),
+            field_registers_read_write: FieldRegistersReadWriteChecking::new(
+                JOLT_VERIFIER_CONFIG
+                    .field_inline
+                    .read_write_dimensions(LOG_T),
+            ),
             ram_val_check: RamValCheck::new(
                 TraceDimensions::new(LOG_T),
                 RAM_LOG_K,
@@ -790,8 +795,8 @@ pub(crate) mod twins {
             instruction_read_raf: InstructionReadRaf::new(formula_dimensions.instruction_read_raf),
             ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, RAM_LOG_K),
             registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
-            field_registers_val_evaluation: stage5_field_inline::val_evaluation_member(
-                trace_dimensions.log_t(),
+            field_registers_val_evaluation: FieldRegistersValEvaluation::new(
+                FieldRegistersTraceDimensions::new(trace_dimensions.log_t()),
             ),
         };
         let challenges = sumchecks.draw_challenges(transcript).unwrap();
@@ -884,7 +889,7 @@ pub(crate) mod twins {
         use jolt_verifier::stages::composed::ComposedClaims;
         let base_input_values = ComposedClaims {
             base: base_input_values,
-            field_inline: stage6a_field_inline::bytecode_read_raf_inputs(
+            field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(
                 &stage1.clear_output,
                 &stage4.clear_output.output_values,
                 &stage5.clear_output.output_values,

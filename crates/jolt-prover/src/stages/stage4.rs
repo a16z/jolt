@@ -22,8 +22,12 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
 use jolt_verifier::stages::stage4::outputs::{
     Stage4ClearOutput, Stage4OutputClaims, Stage4Sumchecks,
 };
@@ -173,8 +177,10 @@ where
     let sumchecks = Stage4Sumchecks {
         registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
         #[cfg(feature = "field-inline")]
-        field_registers_read_write: jolt_verifier::stages::stage4::field_inline::read_write_member(
-            log_t,
+        field_registers_read_write: FieldRegistersReadWriteChecking::new(
+            JOLT_VERIFIER_CONFIG
+                .field_inline
+                .read_write_dimensions(log_t),
         ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
@@ -254,7 +260,6 @@ mod field_inline_round_trip {
     use jolt_poly::EqPolynomial;
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-    use jolt_verifier::stages::stage4::field_inline as stage4_field_inline;
     use jolt_witness::JoltWitnessOracle as _;
 
     use super::*;
@@ -368,7 +373,11 @@ mod field_inline_round_trip {
         let mut session = backend.begin_proof();
         let oracle = witness.field_inline().unwrap();
 
-        let relation = stage4_field_inline::read_write_member::<Fr>(LOG_T);
+        let relation = FieldRegistersReadWriteChecking::<Fr>::new(
+            JOLT_VERIFIER_CONFIG
+                .field_inline
+                .read_write_dimensions(LOG_T),
+        );
         let r_cycle: Vec<Fr> = (0..LOG_T as u64).map(|i| fr(100 + i)).collect();
         let table = |id: FieldInlinePolynomialId| oracle.oracle_table(id).unwrap();
         let cycle_table = |polynomial: FieldInlineVirtualPolynomial| {

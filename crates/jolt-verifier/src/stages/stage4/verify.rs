@@ -12,6 +12,11 @@ use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "field-inline")]
+use super::field_registers_read_write_checking::{
+    field_registers_read_write_input_points_from_upstream,
+    field_registers_read_write_input_values_from_upstream, FieldRegistersReadWriteChecking,
+};
 use super::{
     outputs::{
         Stage4ClearOutput, Stage4InputClaims, Stage4InputPoints, Stage4Output, Stage4Sumchecks,
@@ -27,6 +32,8 @@ use super::{
         registers_read_write_input_values_from_upstream, RegistersReadWriteChecking,
     },
 };
+#[cfg(feature = "field-inline")]
+use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
@@ -53,7 +60,7 @@ pub fn stage4_input_values_from_upstream<F: JoltField>(
     Stage4InputClaims {
         registers_read_write: registers_read_write_input_values_from_upstream(stage3),
         #[cfg(feature = "field-inline")]
-        field_registers_read_write: super::field_inline::read_write_inputs(stage2),
+        field_registers_read_write: field_registers_read_write_input_values_from_upstream(stage2),
         ram_val_check: ram_val_check_input_values_from_upstream(stage2, ram_val_check_init),
     }
 }
@@ -70,7 +77,7 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
     Stage4InputPoints {
         registers_read_write: registers_read_write_input_points_from_upstream(stage3),
         #[cfg(feature = "field-inline")]
-        field_registers_read_write: super::field_inline::read_write_input_points(stage2),
+        field_registers_read_write: field_registers_read_write_input_points_from_upstream(stage2),
         ram_val_check: ram_val_check_input_points_from_upstream(stage2, structure),
     }
 }
@@ -141,10 +148,16 @@ where
         ram_val_check_public_eval,
     )?;
 
+    // Field-register dimensions use the compile-time config's phase split, so they need
+    // no validation of a proof-supplied split like the ordinary register dimensions above.
     let sumchecks = Stage4Sumchecks {
         registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
         #[cfg(feature = "field-inline")]
-        field_registers_read_write: super::field_inline::read_write_member(log_t),
+        field_registers_read_write: FieldRegistersReadWriteChecking::new(
+            JOLT_VERIFIER_CONFIG
+                .field_inline
+                .read_write_dimensions(log_t),
+        ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
 

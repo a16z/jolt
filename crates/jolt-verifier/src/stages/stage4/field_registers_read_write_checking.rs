@@ -27,7 +27,33 @@ use jolt_field::JoltField;
 
 use crate::stages::derivations;
 use crate::stages::relations::{project_public, stage_claim_failed, ConcreteSumcheck};
+use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::VerifierError;
+
+/// Wire the consumed field-register value openings from stage 2's claim reduction.
+pub fn field_registers_read_write_input_values_from_upstream<F: JoltField>(
+    stage2: &Stage2BatchOutputClaims<F>,
+) -> FieldRegistersReadWriteInputClaims<F> {
+    let reduction = &stage2.field_registers_claim_reduction;
+    FieldRegistersReadWriteInputClaims {
+        rd_value: reduction.rd_value,
+        rs1_value: reduction.rs1_value,
+        rs2_value: reduction.rs2_value,
+    }
+}
+
+/// Wire the consumed field-register opening points from stage 2's claim reduction,
+/// all sharing that relation's reduced opening point (`r_prod`).
+pub fn field_registers_read_write_input_points_from_upstream<F: JoltField>(
+    stage2: &Stage2BatchOutputPoints<F>,
+) -> FieldRegistersReadWriteInputClaims<Vec<F>> {
+    let reduction = &stage2.field_registers_claim_reduction;
+    FieldRegistersReadWriteInputClaims {
+        rd_value: reduction.rd_value().to_vec(),
+        rs1_value: reduction.rs1_value().to_vec(),
+        rs2_value: reduction.rs2_value().to_vec(),
+    }
+}
 
 #[derive(Clone)]
 pub struct FieldRegistersReadWriteChecking<F: JoltField> {

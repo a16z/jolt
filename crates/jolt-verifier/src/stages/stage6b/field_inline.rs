@@ -1,29 +1,20 @@
-//! Stage 6b's field-inline seam: every field-inline-specific divergence of the stage-6b
-//! verifier in one place — the committed-program rejection, the preprocessed side-table load,
-//! the field-inline fold legs and cycle sub-points for the batch build, the field-register
-//! increment-reduction member and its input wiring, and the curated absorb splice.
-//! `verify.rs`/`batch.rs` interact with the field-inline protocol only through the functions
-//! here (plus the field-inline carrier fields, which are proof shape).
+//! Field-inline bytecode composition, preprocessing checks, and transcript ordering
+//! for stage 6b.
 
-use jolt_claims::protocols::field_inline::{
-    FieldInlineRelationId, FieldRegistersTraceDimensions, FIELD_REGISTERS_LOG_K,
-};
+use jolt_claims::protocols::field_inline::{FieldInlineRelationId, FIELD_REGISTERS_LOG_K};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::OutputClaims as _;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 
-use super::field_registers_inc_claim_reduction::{
-    FieldRegistersIncClaimReduction, FieldRegistersIncClaimReductionInputClaims,
-};
 use super::outputs::Stage6bOutputClaims;
 use crate::preprocessing::ProgramPreprocessing;
 use crate::stages::field_inline_bytecode::{
     convert_field_inline_bytecode, field_inline_checked_split, field_inline_stage_gamma_powers,
     required_field_inline_bytecode, FieldInlineBytecodeFold, FieldInlineBytecodeTable,
 };
-use crate::stages::stage4::{Stage4OutputClaims, Stage4OutputPoints};
-use crate::stages::stage5::{Stage5OutputClaims, Stage5OutputPoints};
+use crate::stages::stage4::Stage4OutputPoints;
+use crate::stages::stage5::Stage5OutputPoints;
 use crate::stages::stage6a::outputs::Stage6aCarriedChallenges;
 use crate::VerifierError;
 
@@ -100,47 +91,6 @@ pub(super) fn bytecode_fold_and_cycles<F: JoltField>(
         read_write_cycle: read_write_cycle.to_vec(),
         val_evaluation_cycle: val_evaluation_cycle.to_vec(),
     })
-}
-
-/// The stage-6b field-inline batch member: reduces the two semantic `FieldRdInc` openings to
-/// the single reduced opening the stage-8 joint opening consumes, with Eq publics over the
-/// given stage-4/5 field-inline cycle sub-points.
-pub(super) fn inc_claim_reduction_member<F: JoltField>(
-    log_t: usize,
-    read_write_cycle: Vec<F>,
-    val_evaluation_cycle: Vec<F>,
-) -> FieldRegistersIncClaimReduction<F> {
-    FieldRegistersIncClaimReduction::new(
-        FieldRegistersTraceDimensions::new(log_t),
-        read_write_cycle,
-        val_evaluation_cycle,
-    )
-}
-
-/// Wire the two consumed `FieldRdInc` opening *values* from the stage-4 field-inline
-/// read/write checking and the stage-5 field-register value evaluation. The upstream cells are
-/// plain (non-optional) fields of the field-inline stage-4/5 claims, so presence is a
-/// compile-time fact.
-pub fn inc_claim_reduction_inputs<F: JoltField>(
-    stage4: &Stage4OutputClaims<F>,
-    stage5: &Stage5OutputClaims<F>,
-) -> FieldRegistersIncClaimReductionInputClaims<F> {
-    FieldRegistersIncClaimReductionInputClaims {
-        rd_inc_read_write: stage4.field_registers_read_write.rd_inc,
-        rd_inc_val_evaluation: stage5.field_registers_val_evaluation.rd_inc,
-    }
-}
-
-/// Wire the two consumed `FieldRdInc` opening *points* from the stage-4/5 field-inline
-/// members' output points. ZK-agnostic.
-pub fn inc_claim_reduction_input_points<F: JoltField>(
-    stage4: &Stage4OutputPoints<F>,
-    stage5: &Stage5OutputPoints<F>,
-) -> FieldRegistersIncClaimReductionInputClaims<Vec<F>> {
-    FieldRegistersIncClaimReductionInputClaims {
-        rd_inc_read_write: stage4.field_registers_read_write.rd_inc().to_vec(),
-        rd_inc_val_evaluation: stage5.field_registers_val_evaluation.rd_inc().to_vec(),
-    }
 }
 
 /// Splice the reduced `FieldRdInc` opening into the stage-6b Fiat-Shamir value

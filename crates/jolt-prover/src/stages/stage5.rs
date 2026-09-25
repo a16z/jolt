@@ -11,6 +11,8 @@
 //! lookup rows, fetched by its kernel's `prepare` off the witness plane's
 //! typed stage-5 rows accessor — never staged here.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
@@ -22,6 +24,8 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_verifier::stages::stage5::outputs::{
     Stage5ClearOutput, Stage5OutputClaims, Stage5Sumchecks,
@@ -82,10 +86,9 @@ where
         ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, log_k),
         registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
         #[cfg(feature = "field-inline")]
-        field_registers_val_evaluation:
-            jolt_verifier::stages::stage5::field_inline::val_evaluation_member(
-                trace_dimensions.log_t(),
-            ),
+        field_registers_val_evaluation: FieldRegistersValEvaluation::new(
+            FieldRegistersTraceDimensions::new(trace_dimensions.log_t()),
+        ),
     };
     // Draws the instruction gamma, then the RAM gamma (registers draws
     // nothing, and so does the `field-inline` field value-evaluation member) —
@@ -152,7 +155,6 @@ mod field_inline_round_trip {
     use jolt_poly::EqPolynomial;
     use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-    use jolt_verifier::stages::stage5::field_inline as stage5_field_inline;
     use jolt_witness::JoltWitnessOracle as _;
 
     use super::*;
@@ -292,7 +294,8 @@ mod field_inline_round_trip {
         let mut session = backend.begin_proof();
         let oracle = witness.field_inline().unwrap();
 
-        let relation = stage5_field_inline::val_evaluation_member::<Fr>(LOG_T);
+        let relation =
+            FieldRegistersValEvaluation::<Fr>::new(FieldRegistersTraceDimensions::new(LOG_T));
         let upstream_point: Vec<Fr> = (0..(FIELD_REGISTERS_LOG_K + LOG_T) as u64)
             .map(|i| fr(100 + i))
             .collect();

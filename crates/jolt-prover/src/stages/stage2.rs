@@ -10,6 +10,8 @@
 //! slots.
 
 use common::jolt_device::JoltDevice;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
@@ -28,6 +30,8 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::Transcript;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
 use jolt_verifier::stages::stage2::outputs::{
     Stage2BatchSumchecks, Stage2ClearOutput, Stage2OutputClaims,
@@ -149,11 +153,10 @@ where
             tau_low.clone(),
         ),
         #[cfg(feature = "field-inline")]
-        field_registers_claim_reduction:
-            jolt_verifier::stages::stage2::field_inline::claim_reduction_member(
-                log_t,
-                tau_low.clone(),
-            ),
+        field_registers_claim_reduction: FieldRegistersClaimReduction::new(
+            FieldRegistersTraceDimensions::new(log_t),
+            tau_low.clone(),
+        ),
         ram_raf_evaluation: RamRafEvaluation::new(
             read_write_dimensions,
             raf_dimensions,
@@ -226,7 +229,6 @@ mod field_inline_round_trip {
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
-    use jolt_verifier::stages::stage2::field_inline as stage2_field_inline;
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
 
     use super::*;
@@ -365,8 +367,8 @@ mod field_inline_round_trip {
                 trace_dimensions,
                 tau_low.clone(),
             ),
-            field_registers_claim_reduction: stage2_field_inline::claim_reduction_member(
-                log_t,
+            field_registers_claim_reduction: FieldRegistersClaimReduction::new(
+                FieldRegistersTraceDimensions::new(log_t),
                 tau_low.clone(),
             ),
             ram_raf_evaluation: RamRafEvaluation::new(
@@ -418,7 +420,6 @@ mod field_inline_zk {
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage1::outputs::Stage1BatchSumchecks;
-    use jolt_verifier::stages::stage2::field_inline as stage2_field_inline;
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_verifier::stages::PrecommittedSchedule;
     use jolt_verifier::CheckedInputs;
@@ -547,8 +548,8 @@ mod field_inline_zk {
                 TraceDimensions::new(log_t),
                 tau_low.clone(),
             ),
-            field_registers_claim_reduction: stage2_field_inline::claim_reduction_member(
-                log_t,
+            field_registers_claim_reduction: FieldRegistersClaimReduction::new(
+                FieldRegistersTraceDimensions::new(log_t),
                 tau_low.clone(),
             ),
             ram_raf_evaluation: RamRafEvaluation::new(
