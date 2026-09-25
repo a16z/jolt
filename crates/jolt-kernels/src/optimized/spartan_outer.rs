@@ -1,17 +1,17 @@
 //! Optimized stage-1 Spartan outer kernels with the reference kernels' exact
 //! wire behavior:
 //!
-//! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
+//! - **Typed small-scalar row evaluation**: the eq-conditional constraint
 //!   rows are evaluated per cycle as integers (`i64` guards, `S192`
-//!   magnitudes) straight off a typed witness bundle — the 35 R1CS input
-//!   tables are never materialized as field vectors
+//!   magnitudes) straight off a typed witness bundle — the R1CS input tables
+//!   are never materialized as field vectors
 //!   (`R1CSEval::{eval_az,eval_bz}_*_group`).
 //! - **Univariate skip over the centered integer domain**: the first-round
-//!   polynomial needs only the 9 extended-node evaluations (in-domain nodes
-//!   vanish); each is an integer Lagrange extension of the row values
-//!   (`COEFFS_PER_J` / `extended_azbz_product_*`), so the whole pass costs 9
-//!   integer dot products and one field fmadd per `(cycle, stream)` instead
-//!   of per-row field multiplies.
+//!   polynomial needs only the `DOMAIN − 1` extended-node evaluations
+//!   (in-domain nodes vanish); each is an integer Lagrange extension of the
+//!   row values (`COEFFS_PER_J` / `extended_azbz_product_*`), so the whole
+//!   pass costs `DOMAIN − 1` integer dot products and one field fmadd per
+//!   `(cycle, stream)` instead of per-row field multiplies.
 //! - **Unreduced accumulation**: field × wide-integer products accumulate
 //!   through `jolt-field`'s specialized accumulators and reduce once per block
 //!   (`FullAccumS`/`SmallAccumU`/`WideAccumS` + `barrett_reduce`).
@@ -24,12 +24,12 @@
 //!   joint `(cycle ‖ stream)` domain and the first round's endpoints are
 //!   produced by one pass over the typed rows
 //!   (`OuterLinearStage::fused_materialise_polynomials_round_zero`).
-//! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the 35 input
+//! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the input
 //!   tables are never bound.
-//! - **Post-hoc opening evaluation**: the 35 produced opening claims come
-//!   from one final eq-weighted walk over the typed rows
-//!   (`R1CSEval::compute_claimed_inputs`), not from binding 35 polynomials
-//!   through every round.
+//! - **Post-hoc opening evaluation**: the produced opening claims (one per
+//!   `SPARTAN_OUTER_R1CS_INPUTS` entry) come from one final eq-weighted walk
+//!   over the typed rows (`R1CSEval::compute_claimed_inputs`), not from
+//!   binding every input polynomial through every round.
 //!
 //! Byte parity with the reference kernels holds because every step computes
 //! the same field values by exact integer/field algebra (the integer Lagrange
@@ -44,7 +44,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_opening, SpartanOuterDimensions, SPARTAN_OUTER_R1CS_INPUTS,
 };
 use jolt_claims::protocols::jolt::{
-    JoltDerivedId, JoltOpeningId, JoltPolynomialId, SpartanOuterPublic,
+    JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltVirtualPolynomial, SpartanOuterPublic,
 };
 use jolt_claims::{InputClaims as _, OutputClaims as _};
 use jolt_field::signed::{S128, S192, S256, S64};
@@ -68,6 +68,8 @@ use jolt_witness::witnesses::{
     RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
+#[cfg(feature = "implicit-carry")]
+use jolt_witness::witnesses::{CarryUsed, Extract as _, NextCarry};
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -125,6 +127,14 @@ struct SpartanOuterRow {
     is_compressed: OpFlag,
     is_first_in_sequence: OpFlag,
     is_last_in_sequence: OpFlag,
+    #[cfg(feature = "implicit-carry")]
+    uses_carry: OpFlag,
+    #[cfg(feature = "implicit-carry")]
+    produces_carry: OpFlag,
+    #[cfg(feature = "implicit-carry")]
+    carry_used: CarryUsed,
+    #[cfg(feature = "implicit-carry")]
+    next_carry: NextCarry,
 }
 
 impl WitnessBundle for SpartanOuterRow {
@@ -132,8 +142,10 @@ impl WitnessBundle for SpartanOuterRow {
     fn from_row(
         row: &TraceRow,
         next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
+        env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
+        #[cfg(not(feature = "implicit-carry"))]
+        let _ = env;
         let circuit_flags = row.circuit_flags();
         let instruction_flags = row.instruction_flags();
         let (
@@ -191,6 +203,14 @@ impl WitnessBundle for SpartanOuterRow {
             is_compressed: flag(CircuitFlags::IsCompressed),
             is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
             is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
+            #[cfg(feature = "implicit-carry")]
+            uses_carry: flag(CircuitFlags::UsesCarry),
+            #[cfg(feature = "implicit-carry")]
+            produces_carry: flag(CircuitFlags::ProducesCarry),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: CarryUsed::extract(row, next, env)?,
+            #[cfg(feature = "implicit-carry")]
+            next_carry: NextCarry::extract(row, next, env)?,
         })
     }
 
@@ -202,8 +222,8 @@ impl WitnessBundle for SpartanOuterRow {
     }
 }
 
-/// One cycle's integer values of the 19 eq-conditional rows, split into the
-/// two uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as
+/// One cycle's integer values of the eq-conditional rows, split into the two
+/// uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as
 /// `S192` — wide enough for the `RightLookupOperand`-bearing rows, whose
 /// values reach ±2^130).
 struct RowGroupValues {
@@ -213,9 +233,10 @@ struct RowGroupValues {
     b_second: [S192; SECOND_GROUP_LEN],
 }
 
-/// Evaluate the 19 constraint rows at one cycle with exact integer
-/// arithmetic. Formulas transcribe `jolt-r1cs`'s `rv64_eq_constraint_rows`
-/// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
+/// Evaluate the eq-conditional constraint rows at one cycle with exact
+/// integer arithmetic. Formulas transcribe `jolt-r1cs`'s
+/// `rv64_eq_constraint_rows` verbatim (matrix semantics, not
+/// satisfied-witness shortcuts), grouped as
 /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
 fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
     let flag = |value: bool| i64::from(value);
@@ -226,8 +247,12 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
     let mul = flag(row.multiply_operands.0);
     let jump = flag(row.jump.0);
     let should_branch = flag(row.should_branch.0);
+    #[cfg(feature = "implicit-carry")]
+    let produces_carry = flag(row.produces_carry.0);
+    #[cfg(feature = "implicit-carry")]
+    let not_produces_carry = 1 - produces_carry;
 
-    // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18.
+    // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18 (implicit-carry appends 20).
     let a_first = [
         1 - load - store,
         load,
@@ -239,8 +264,10 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
         flag(row.should_jump.0),
         flag(row.virtual_instruction.0) - flag(row.is_last_in_sequence.0),
         flag(row.next_is_virtual.0) - flag(row.next_is_first_in_sequence.0),
+        #[cfg(feature = "implicit-carry")]
+        not_produces_carry,
     ];
-    // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
+    // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16 (implicit-carry appends 19).
     let a_second = [
         load + store,
         add,
@@ -251,6 +278,8 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
         jump,
         should_branch,
         1 - should_branch - jump,
+        #[cfg(feature = "implicit-carry")]
+        produces_carry,
     ];
 
     let diff = |a: u64, b: u64| S192::from_i128(i128::from(a) - i128::from(b));
@@ -265,6 +294,8 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
         diff(row.next_unexpanded_pc.0, row.lookup_output.0),
         S192::from_i128(i128::from(row.next_pc.0) - i128::from(row.pc.0) - 1),
         S192::from_i64(1 - flag(row.do_not_update_unexpanded_pc.0)),
+        #[cfg(feature = "implicit-carry")]
+        S192::from_u64(row.next_carry.0),
     ];
 
     let flag_i128 = |value: bool| i128::from(value);
@@ -278,11 +309,29 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
         row.product.0.is_positive,
     );
     let two_pow_64 = S192::new([0, 1, 0], true);
+    // Rows 7 and 9: the add/mul lookup operand also absorbs the incoming
+    // carry (`RightLookupOperand = ... + CarryUsed`).
+    let right_lookup_minus_add = right_lookup - left_input - right_input;
+    let right_lookup_minus_product = right_lookup - product;
+    #[cfg(feature = "implicit-carry")]
+    let (right_lookup_minus_add, right_lookup_minus_product) = {
+        let carry_used = S192::from_u64(row.carry_used.0);
+        (
+            right_lookup_minus_add - carry_used,
+            right_lookup_minus_product - carry_used,
+        )
+    };
+    // Row 19: `RightLookupOperand − (LookupOutput + 2^64 · NextCarry)`; the
+    // `2^64 · NextCarry` term is `NextCarry` placed in limb 1.
+    #[cfg(feature = "implicit-carry")]
+    let right_lookup_minus_split = right_lookup
+        - S192::from_u64(row.lookup_output.0)
+        - S192::new([0, row.next_carry.0, 0], true);
     let b_second = [
         S192::from_i128(i128::from(row.ram_address.0) - i128::from(row.rs1_value.0)) - imm,
-        right_lookup - left_input - right_input,
+        right_lookup_minus_add,
         right_lookup - left_input + right_input - two_pow_64,
-        right_lookup - product,
+        right_lookup_minus_product,
         right_lookup - right_input,
         S192::from_i128(i128::from(row.rd_write_value.0) - i128::from(row.lookup_output.0)),
         S192::from_i128(
@@ -296,6 +345,8 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
                 + 4 * flag_i128(row.do_not_update_unexpanded_pc.0)
                 + 2 * flag_i128(row.is_compressed.0),
         ),
+        #[cfg(feature = "implicit-carry")]
+        right_lookup_minus_split,
     ];
 
     RowGroupValues {
@@ -342,7 +393,7 @@ fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
 
 /// `Az·Bz` at every extended node for one cycle, per stream: integer Lagrange
 /// extension of the group row values, then one wide integer product. Ranges:
-/// `|az| < 2^22`, `|bz| < 2^152`, product `< 2^174` — inside `S256`.
+/// `|az| < 2^22`, `|bz| < 2^155`, product `< 2^177` — inside `S256`.
 fn extended_products(
     values: &RowGroupValues,
     coefficients: &[(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT],
@@ -789,7 +840,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 }
 
-const VARIABLE_COUNT: usize = 35;
+const VARIABLE_COUNT: usize = SPARTAN_OUTER_R1CS_INPUTS.len();
 
 /// Which canonical inputs are boolean-valued: those stay on the small-scalar
 /// accumulator, whose 5-limb (320-bit) window only has headroom when the
@@ -798,14 +849,17 @@ const VARIABLE_COUNT: usize = 35;
 /// at ~2^318 — so they go through the signed-product path instead.
 const BOOLEAN_INPUT: [bool; VARIABLE_COUNT] = {
     let mut mask = [false; VARIABLE_COUNT];
-    mask[3] = true; // ShouldBranch
-    mask[17] = true; // NextIsVirtual
-    mask[18] = true; // NextIsFirstInSequence
-    mask[20] = true; // ShouldJump
-    let mut flag = 21; // the 14 circuit flags
-    while flag < VARIABLE_COUNT {
-        mask[flag] = true;
-        flag += 1;
+    let mut index = 0;
+    while index < VARIABLE_COUNT {
+        mask[index] = matches!(
+            SPARTAN_OUTER_R1CS_INPUTS[index],
+            JoltVirtualPolynomial::ShouldBranch
+                | JoltVirtualPolynomial::NextIsVirtual
+                | JoltVirtualPolynomial::NextIsFirstInSequence
+                | JoltVirtualPolynomial::ShouldJump
+                | JoltVirtualPolynomial::OpFlags(_)
+        );
+        index += 1;
     }
     mask
 };
@@ -850,6 +904,11 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(32, row.is_compressed.0);
         flag(33, row.is_first_in_sequence.0);
         flag(34, row.is_last_in_sequence.0);
+        #[cfg(feature = "implicit-carry")]
+        {
+            flag(35, row.uses_carry.0);
+            flag(36, row.produces_carry.0);
+        }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {
             if let Ok(magnitude) = u64::try_from(magnitude) {
@@ -891,6 +950,11 @@ impl<F: JoltField> ClaimAccumulator<F> {
         );
         word(6, row.imm.0.unsigned_abs(), row.imm.0 >= 0);
         word(14, row.right_lookup_operand.0, true);
+        #[cfg(feature = "implicit-carry")]
+        {
+            word(37, u128::from(row.carry_used.0), true);
+            word(38, u128::from(row.next_carry.0), true);
+        }
     }
 
     fn finish(self) -> Vec<F> {
@@ -1076,7 +1140,15 @@ mod tests {
             32 => row.is_compressed.to_field(),
             33 => row.is_first_in_sequence.to_field(),
             34 => row.is_last_in_sequence.to_field(),
-            _ => unreachable!("35 canonical R1CS inputs"),
+            #[cfg(feature = "implicit-carry")]
+            35 => row.uses_carry.to_field(),
+            #[cfg(feature = "implicit-carry")]
+            36 => row.produces_carry.to_field(),
+            #[cfg(feature = "implicit-carry")]
+            37 => row.carry_used.to_field(),
+            #[cfg(feature = "implicit-carry")]
+            38 => row.next_carry.to_field(),
+            _ => unreachable!("{VARIABLE_COUNT} canonical R1CS inputs"),
         }
     }
 
@@ -1147,6 +1219,14 @@ mod tests {
                     is_compressed: OpFlag(bit()),
                     is_first_in_sequence: OpFlag(bit()),
                     is_last_in_sequence: OpFlag(bit()),
+                    #[cfg(feature = "implicit-carry")]
+                    uses_carry: OpFlag(bit()),
+                    #[cfg(feature = "implicit-carry")]
+                    produces_carry: OpFlag(bit()),
+                    #[cfg(feature = "implicit-carry")]
+                    carry_used: CarryUsed(next()),
+                    #[cfg(feature = "implicit-carry")]
+                    next_carry: NextCarry(next()),
                 }
             })
             .collect()

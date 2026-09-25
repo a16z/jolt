@@ -3,11 +3,13 @@
 //! integer Lagrange extension over the centered uni-skip domain, unreduced
 //! accumulation, split-eq/Gruen rounds, fused round-0 materialization,
 //! in-place binding, post-hoc opening walk), on the much smaller product
-//! geometry: a 3-node uni-skip window over three factor lanes, a remainder
-//! over the plain cycle domain, and eight per-cycle witness columns.
+//! geometry: a `DOMAIN`-node uni-skip window over one factor lane per node
+//! (three lanes; `implicit-carry` adds the `CarryUsed` lane pairing the
+//! `UsesCarry` flag with the committed `Carry` column), a remainder over the
+//! plain cycle domain, and one per-cycle witness column per output claim.
 //!
 //! Unlike the outer uni-skip, the in-domain `t1` nodes do not vanish (they
-//! are the three stage-1 product claims), so all `2·3 − 1` node values are
+//! are the stage-1 product claims), so all `2·DOMAIN − 1` node values are
 //! computed; the extension coefficients at in-domain nodes are the 0/1
 //! Lagrange selectors, so one integer pipeline serves every node.
 
@@ -19,6 +21,8 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
     write_lookup_output_to_rd_product,
 };
+#[cfg(feature = "implicit-carry")]
+use jolt_claims::protocols::jolt::geometry::spartan::{carry_product, uses_carry_product};
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, SpartanProductVirtualizationPublic,
 };
@@ -38,6 +42,8 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
+#[cfg(feature = "implicit-carry")]
+use jolt_witness::witnesses::Carry;
 use jolt_witness::witnesses::{
     InstructionFlag, LeftInstructionInput, LookupOutput, NextIsNoop, OpFlag, RightInstructionInput,
 };
@@ -46,8 +52,8 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::support::{
-    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    RoundChallenges,
+    fmadd_u64_split, pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore,
+    GruenRoundMessage, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -59,7 +65,7 @@ const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
-/// The per-cycle product-virtualization witness: the three left/right factor
+/// The per-cycle product-virtualization witness: the left/right factor
 /// lanes plus the two wire passengers, as native small scalars.
 #[derive(Clone, Copy, Debug, WitnessBundle)]
 pub struct SpartanProductRow {
@@ -79,11 +85,27 @@ pub struct SpartanProductRow {
     pub next_is_noop: NextIsNoop,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction))]
     pub virtual_instruction: OpFlag,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::UsesCarry))]
+    pub uses_carry: OpFlag,
+    /// The committed `Carry` column: the `CarryUsed` lane's right factor.
+    #[cfg(feature = "implicit-carry")]
+    #[opening(committed = Carry)]
+    pub carry: Carry,
 }
 
-/// The exact integer Lagrange coefficients `L_i(node)` of the 3-node base
-/// window at every node of the extended window (in-domain nodes included —
-/// there they are the 0/1 selectors).
+/// Word-valued output columns (`left`, `right`, `lookup_output`; plus the
+/// committed `Carry` under `implicit-carry`) — the signed-product
+/// accumulator path of the opening walk.
+const WORD_COLUMNS: usize = 3 + cfg!(feature = "implicit-carry") as usize;
+/// Boolean output columns (`jump`, `write_lookup`, `branch`, `next_is_noop`,
+/// `virtual_instruction`; plus `uses_carry` under `implicit-carry`) — the
+/// small-scalar accumulator path.
+const FLAG_COLUMNS: usize = 5 + cfg!(feature = "implicit-carry") as usize;
+
+/// The exact integer Lagrange coefficients `L_i(node)` of the `DOMAIN`-node
+/// base window at every node of the extended window (in-domain nodes
+/// included — there they are the 0/1 selectors).
 fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     let mut out = [[0i64; DOMAIN]; EXTENDED_SIZE];
     for (position, coefficients) in out.iter_mut().enumerate() {
@@ -106,8 +128,10 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
 }
 
 /// `left(node) · right(node)` for one cycle at every extended node, as exact
-/// integers: `|left| < 2^67` (two u64 lanes and a flag), `|right| < 2^129`
-/// (the i128 lane), product `< 2^196` — inside `S256`.
+/// integers. The Lagrange coefficients of a node sum to at most 7 (49 under
+/// `implicit-carry`) in magnitude, so `|left| < 2^68` (`2^71`; two u64 lanes
+/// and flags), `|right| < 2^130` (`2^133`; the i128 lane plus the u64 `Carry`
+/// lane) and the product stays below `2^198` (`2^204`) — inside `S256`.
 /// `coefficients` is [`extension_coefficients`], hoisted out of the per-cycle
 /// loop (its integer Lagrange build is not free at `2^23` calls).
 fn extended_products(
@@ -119,6 +143,8 @@ fn extended_products(
         i128::from(row.left_instruction_input.0),
         i128::from(row.lookup_output.0),
         i128::from(row.jump_flag.0),
+        #[cfg(feature = "implicit-carry")]
+        i128::from(row.uses_carry.0),
     ];
     let right_wide = S192::from_i128(row.right_instruction_input.0);
     let right_flags = [
@@ -133,6 +159,10 @@ fn extended_products(
         let mut right = S192::from_i64(coefficients[0]).mul_trunc::<3, 3>(&right_wide);
         right +=
             S192::from_i64(coefficients[1] * right_flags[0] + coefficients[2] * right_flags[1]);
+        #[cfg(feature = "implicit-carry")]
+        {
+            right += S192::from_i128(i128::from(coefficients[3]) * i128::from(row.carry.0));
+        }
         *slot = S128::from_i128(left).mul_trunc::<3, 4>(&right);
     }
     out
@@ -335,10 +365,13 @@ impl<F: JoltField> ProductRemainderKernel<F> {
 
         // Fused round-0 materialization: one pass over the typed rows writes
         // the weighted left/right tables and accumulates the first round's
-        // Gruen endpoints. Left folds through the small-scalar accumulator —
-        // its 5-limb window holds exactly this shape (two full-u64 lanes and
-        // a flag stay under 2^319); right's i128 lane goes through the
-        // signed-product path.
+        // Gruen endpoints. Left folds through the small-scalar accumulator,
+        // whose Barrett reduction is exact only below 2^318 (its top bits are
+        // folded into one `u64`): a single full-range `field × u64` product
+        // already reaches ~2^317.6, so the two word lanes enter as u32 halves
+        // (`fmadd_u64_split`, ≤ 2^286 per product) with the boolean lanes
+        // riding along; right's i128 lane (and the u64 `Carry` lane) goes
+        // through the signed-product path.
         let cycles = 1usize << log_t;
         let mut left: Vec<F> = unsafe_allocate_zero_vec(cycles);
         let mut right: Vec<F> = unsafe_allocate_zero_vec(cycles);
@@ -348,11 +381,24 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         let width = 2 * in_len;
         let access = rows.access();
         let weights_ref = &weights;
+        let word_weights_shifted = [weights[0].mul_pow_2(32), weights[1].mul_pow_2(32)];
         let cell = |row: &SpartanProductRow| -> (F, F) {
             let mut left_acc = <F as WithAccumulator>::SmallScalarAccumulator::default();
-            left_acc.fmadd_u64(weights_ref[0], row.left_instruction_input.0);
-            left_acc.fmadd_u64(weights_ref[1], row.lookup_output.0);
+            fmadd_u64_split(
+                &mut left_acc,
+                weights_ref[0],
+                word_weights_shifted[0],
+                row.left_instruction_input.0,
+            );
+            fmadd_u64_split(
+                &mut left_acc,
+                weights_ref[1],
+                word_weights_shifted[1],
+                row.lookup_output.0,
+            );
             left_acc.fmadd_u64(weights_ref[2], u64::from(row.jump_flag.0));
+            #[cfg(feature = "implicit-carry")]
+            left_acc.fmadd_u64(weights_ref[3], u64::from(row.uses_carry.0));
             let mut right_acc = <F as WithAccumulator>::SignedProductAccumulator::default();
             right_acc.fmadd_s256(
                 weights_ref[0],
@@ -366,6 +412,8 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                 weights_ref[2],
                 &S256::from_u64(1 - u64::from(row.next_is_noop.0)),
             );
+            #[cfg(feature = "implicit-carry")]
+            right_acc.fmadd_s256(weights_ref[3], &S256::from_u64(row.carry.0));
             (left_acc.reduce(), right_acc.reduce())
         };
         let block = |x_out: usize,
@@ -437,9 +485,8 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    /// The eight produced opening values at the bound cycle point: one
-    /// eq-weighted walk over the typed rows, in the output claims' canonical
-    /// field order.
+    /// The produced opening values at the bound cycle point: one eq-weighted
+    /// walk over the typed rows, in [`Self::output_ids`] order.
     fn claimed_inputs(&self) -> Result<Vec<F>, WitnessError> {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
@@ -451,9 +498,10 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         let block = |index: usize| -> Result<Vec<F>, WitnessError> {
             let start = index * block_size;
             let end = (start + block_size).min(cycles);
-            let mut words: [<F as WithAccumulator>::SignedProductAccumulator; 3] =
-                [Default::default(), Default::default(), Default::default()];
-            let mut flags: [<F as WithAccumulator>::SmallScalarAccumulator; 5] = Default::default();
+            let mut words: [<F as WithAccumulator>::SignedProductAccumulator; WORD_COLUMNS] =
+                Default::default();
+            let mut flags: [<F as WithAccumulator>::SmallScalarAccumulator; FLAG_COLUMNS] =
+                Default::default();
             for (t, &weight) in (start..end).zip(&weights[start..end]) {
                 let row = access.row(t)?;
                 words[0].fmadd_s256(weight, &S256::from_u64(row.left_instruction_input.0));
@@ -464,21 +512,42 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                 flags[2].fmadd_u64(weight, u64::from(row.branch_flag.0));
                 flags[3].fmadd_u64(weight, u64::from(row.next_is_noop.0));
                 flags[4].fmadd_u64(weight, u64::from(row.virtual_instruction.0));
+                #[cfg(feature = "implicit-carry")]
+                {
+                    flags[5].fmadd_u64(weight, u64::from(row.uses_carry.0));
+                    words[3].fmadd_s256(weight, &S256::from_u64(row.carry.0));
+                }
             }
-            let [left_input, right_input, lookup_output] = words;
-            let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
-            Ok(vec![
-                left_input.reduce(),
-                right_input.reduce(),
-                jump.reduce(),
-                write_lookup.reduce(),
-                lookup_output.reduce(),
-                branch.reduce(),
-                noop.reduce(),
-                virtual_instruction.reduce(),
-            ])
+            let words = words.map(|word| word.reduce());
+            let flags = flags.map(|flag| flag.reduce());
+            #[cfg_attr(not(feature = "implicit-carry"), expect(unused_mut))]
+            let mut values = vec![
+                words[0], words[1], flags[0], flags[1], words[2], flags[2], flags[3], flags[4],
+            ];
+            #[cfg(feature = "implicit-carry")]
+            values.extend([flags[5], words[3]]);
+            Ok(values)
         };
-        try_par_sum_vecs(blocks, 8, block)
+        try_par_sum_vecs(blocks, WORD_COLUMNS + FLAG_COLUMNS, block)
+    }
+
+    /// The produced opening ids in the output claims' canonical field order
+    /// — the order [`Self::claimed_inputs`] emits.
+    fn output_ids() -> [JoltOpeningId; WORD_COLUMNS + FLAG_COLUMNS] {
+        [
+            left_instruction_input_product(),
+            right_instruction_input_product(),
+            jump_flag_product(),
+            write_lookup_output_to_rd_product(),
+            lookup_output_product(),
+            branch_flag_product(),
+            next_is_noop_product(),
+            virtual_instruction_product(),
+            #[cfg(feature = "implicit-carry")]
+            uses_carry_product(),
+            #[cfg(feature = "implicit-carry")]
+            carry_product(),
+        ]
     }
 }
 
@@ -519,24 +588,15 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
         inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let ids = [
-            left_instruction_input_product(),
-            right_instruction_input_product(),
-            jump_flag_product(),
-            write_lookup_output_to_rd_product(),
-            lookup_output_product(),
-            branch_flag_product(),
-            next_is_noop_product(),
-            virtual_instruction_product(),
-        ];
-        let claims: BTreeMap<JoltOpeningId, F> =
-            ids.into_iter()
-                .zip(self.claimed_inputs().map_err(|_| {
-                    SumcheckKernelError::InvariantViolation {
+        let claims: BTreeMap<JoltOpeningId, F> = Self::output_ids()
+            .into_iter()
+            .zip(
+                self.claimed_inputs()
+                    .map_err(|_| SumcheckKernelError::InvariantViolation {
                         reason: "product opening walk re-extraction failed after the rounds",
-                    }
-                })?)
-                .collect();
+                    })?,
+            )
+            .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| {
             claims.get(id).copied().or_else(|| inputs.resolve_input(id))
         })
@@ -582,6 +642,8 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::spartan::SpartanProductDimensions;
+    #[cfg(feature = "implicit-carry")]
+    use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
     use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, Ring};
@@ -593,19 +655,30 @@ mod tests {
     use jolt_witness::{BundleSource, FixedBackend, JoltWitnessOracle, PolynomialEncoding, Shape};
 
     use super::*;
+    use crate::optimized::support::collect_rows;
     use crate::reference::spartan_product::{ReferenceProductRemainder, SpartanProductKernel};
     use crate::ReferenceBackend;
 
-    /// The eight product columns in the output claims' canonical order.
-    const COLUMNS: [JoltVirtualPolynomial; 8] = [
-        JoltVirtualPolynomial::LeftInstructionInput,
-        JoltVirtualPolynomial::RightInstructionInput,
-        JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump),
-        JoltVirtualPolynomial::OpFlags(CircuitFlags::WriteLookupOutputToRD),
-        JoltVirtualPolynomial::LookupOutput,
-        JoltVirtualPolynomial::InstructionFlags(InstructionFlags::Branch),
-        JoltVirtualPolynomial::NextIsNoop,
-        JoltVirtualPolynomial::OpFlags(CircuitFlags::VirtualInstruction),
+    /// The product columns in the output claims' canonical order.
+    const COLUMNS: [JoltPolynomialId; WORD_COLUMNS + FLAG_COLUMNS] = [
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::LeftInstructionInput),
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::RightInstructionInput),
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(CircuitFlags::Jump)),
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(
+            CircuitFlags::WriteLookupOutputToRD,
+        )),
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::LookupOutput),
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::InstructionFlags(
+            InstructionFlags::Branch,
+        )),
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::NextIsNoop),
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(
+            CircuitFlags::VirtualInstruction,
+        )),
+        #[cfg(feature = "implicit-carry")]
+        JoltPolynomialId::Virtual(JoltVirtualPolynomial::OpFlags(CircuitFlags::UsesCarry)),
+        #[cfg(feature = "implicit-carry")]
+        JoltPolynomialId::Committed(JoltCommittedPolynomial::Carry),
     ];
 
     fn column_field_value(row: &SpartanProductRow, index: usize) -> Fr {
@@ -618,7 +691,11 @@ mod tests {
             5 => row.branch_flag.to_field(),
             6 => row.next_is_noop.to_field(),
             7 => row.virtual_instruction.to_field(),
-            _ => unreachable!("8 product columns"),
+            #[cfg(feature = "implicit-carry")]
+            8 => row.uses_carry.to_field(),
+            #[cfg(feature = "implicit-carry")]
+            9 => row.carry.to_field(),
+            _ => unreachable!("{} product columns", COLUMNS.len()),
         }
     }
 
@@ -651,6 +728,10 @@ mod tests {
                     branch_flag: InstructionFlag(bits & 4 == 4),
                     next_is_noop: NextIsNoop(bits & 8 == 8),
                     virtual_instruction: OpFlag(bits & 16 == 16),
+                    #[cfg(feature = "implicit-carry")]
+                    uses_carry: OpFlag(bits & 32 == 32),
+                    #[cfg(feature = "implicit-carry")]
+                    carry: Carry(next()),
                 }
             })
             .collect()
@@ -658,17 +739,13 @@ mod tests {
 
     fn fixed_backend_from_rows(log_t: usize, rows: &[SpartanProductRow]) -> FixedBackend<Fr> {
         let mut backend = FixedBackend::new();
-        for (index, variable) in COLUMNS.iter().enumerate() {
+        for (index, id) in COLUMNS.iter().enumerate() {
             let values: Vec<Fr> = rows
                 .iter()
                 .map(|row| column_field_value(row, index))
                 .collect();
             backend
-                .insert(
-                    JoltPolynomialId::Virtual(*variable),
-                    Shape::new(log_t, PolynomialEncoding::Dense),
-                    values,
-                )
+                .insert(*id, Shape::new(log_t, PolynomialEncoding::Dense), values)
                 .unwrap();
         }
         backend
@@ -689,6 +766,11 @@ mod tests {
             let right = weights[0] * column_field_value(row, 1)
                 + weights[1] * column_field_value(row, 5)
                 + weights[2] * (one - column_field_value(row, 6));
+            #[cfg(feature = "implicit-carry")]
+            let (left, right) = (
+                left + weights[3] * column_field_value(row, 8),
+                right + weights[3] * column_field_value(row, 9),
+            );
             total += eq_value * left * right;
         }
         scale * total
@@ -703,11 +785,17 @@ mod tests {
             product: at(-Fr::from_u64(1)),
             should_branch: at(Fr::from_u64(0)),
             should_jump: at(Fr::from_u64(1)),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: at(Fr::from_u64(2)),
         }
     }
 
-    fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        let rows = synthetic_rows(log_t, seed);
+    fn parity_case(
+        dummy_plane: &dyn JoltWitnessPlane<Fr>,
+        log_t: usize,
+        seed: u64,
+        rows: Vec<SpartanProductRow>,
+    ) {
         let tau_low: Vec<Fr> = (0..log_t)
             .map(|i| Fr::from_u64(5 + seed + 11 * i as u64))
             .collect();
@@ -740,6 +828,11 @@ mod tests {
 
         let r0 = Fr::from_u64(31337 + seed);
         let input_claim = true_input_claim(&rows, &tau_low, tau_high, r0);
+        assert_eq!(
+            reference_uniskip.evaluate(r0),
+            input_claim,
+            "uni-skip reduced output vs the true remainder sum, log_t = {log_t}"
+        );
         let relation = ProductRemainder::new(
             SpartanProductDimensions::new(log_t),
             r0,
@@ -816,117 +909,169 @@ mod tests {
     fn synthetic_parity_with_reference_kernels() {
         with_sample_backend(|dummy| {
             for (log_t, seed) in [(1usize, 71u64), (2, 72), (3, 73), (4, 74)] {
-                parity_case(dummy, log_t, seed);
+                parity_case(dummy, log_t, seed, synthetic_rows(log_t, seed));
             }
         });
     }
 
-    /// Full trait-path parity on the real sample trace, with the remainder
-    /// driven by the true joint-domain sum (the sample fixture is not a
-    /// constraint-satisfying trace; see the outer module's twin test).
+    /// [`synthetic_rows`] with both word lanes pinned at `u64::MAX`: the
+    /// magnitudes that exhaust a small-scalar accumulator window when two
+    /// full-range `field × u64` products share it.
+    fn wide_lane_rows(log_t: usize, seed: u64) -> Vec<SpartanProductRow> {
+        synthetic_rows(log_t, seed)
+            .into_iter()
+            .map(|row| SpartanProductRow {
+                left_instruction_input: LeftInstructionInput(u64::MAX),
+                lookup_output: LookupOutput(u64::MAX),
+                ..row
+            })
+            .collect()
+    }
+
+    /// Full-range word lanes across a sweep of Lagrange-weight draws (`r₀`
+    /// is seeded): the remainder's fused left fold must stay exact whatever
+    /// the weights' magnitudes.
+    #[test]
+    fn wide_lane_parity_with_reference_kernels() {
+        with_sample_backend(|dummy| {
+            for seed in 100u64..112 {
+                parity_case(dummy, 3, seed, wide_lane_rows(3, seed));
+            }
+        });
+    }
+
+    /// Full trait-path parity (`BundleStore::resolve` over a real plane), with
+    /// the remainder driven by the true joint-domain sum — which the uni-skip
+    /// polynomial's reduced output must reproduce (the production hand-off).
+    fn trait_path_parity(backend: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
+        let tau_low: Vec<Fr> = (0..log_t)
+            .map(|i| Fr::from_u64(41 + seed + 19 * i as u64))
+            .collect();
+        let tau_high = Fr::from_u64(7211 + seed);
+        let rows: Vec<SpartanProductRow> = collect_rows(backend, 1 << log_t).unwrap();
+        let uniskip_inputs = uniskip_input_claims(&rows, &tau_low);
+
+        let mut reference_session = ProofSession::default();
+        <ReferenceBackend as UniskipKernel<
+            Fr,
+            ProductRemainder<Fr>,
+            ProductUniskipInputClaims<Fr>,
+        >>::prepare(
+            &ReferenceBackend,
+            &mut reference_session,
+            log_t,
+            &tau_low,
+            backend,
+        )
+        .unwrap();
+        let reference_uniskip = ReferenceBackend
+            .first_round_poly(&mut reference_session, &[tau_high], &uniskip_inputs)
+            .unwrap();
+
+        let mut optimized_session = ProofSession::default();
+        <OptimizedProductUniskip as UniskipKernel<
+            Fr,
+            ProductRemainder<Fr>,
+            ProductUniskipInputClaims<Fr>,
+        >>::prepare(
+            &OptimizedProductUniskip,
+            &mut optimized_session,
+            log_t,
+            &tau_low,
+            backend,
+        )
+        .unwrap();
+        let optimized_uniskip = OptimizedProductUniskip
+            .first_round_poly(&mut optimized_session, &[tau_high], &uniskip_inputs)
+            .unwrap();
+        assert_eq!(optimized_uniskip, reference_uniskip, "seed {seed}");
+
+        let r0 = Fr::from_u64(15013 + seed);
+        let input_claim = true_input_claim(&rows, &tau_low, tau_high, r0);
+        assert_eq!(
+            reference_uniskip.evaluate(r0),
+            input_claim,
+            "uni-skip reduced output vs the true remainder sum, seed {seed}"
+        );
+
+        let relation = ProductRemainder::new(
+            SpartanProductDimensions::new(log_t),
+            r0,
+            tau_high,
+            tau_low.clone(),
+        );
+        let claims = product_remainder_input_values_from_uniskip_output(input_claim);
+        let points = ProductRemainderInputClaims::<Vec<Fr>>::default();
+        let no_challenges = NoChallenges::<Fr>::default();
+        let mut reference_kernel = ReferenceProductRemainder
+            .prepare(
+                &mut reference_session,
+                backend,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &no_challenges,
+                },
+            )
+            .unwrap();
+        let mut optimized_kernel = OptimizedProductRemainder
+            .prepare(
+                &mut optimized_session,
+                backend,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &points,
+                    challenges: &no_challenges,
+                },
+            )
+            .unwrap();
+
+        let challenges: Vec<Fr> = (0..log_t)
+            .map(|i| Fr::from_u64(883 + seed + 29 * i as u64))
+            .collect();
+        let mut bind = None;
+        let mut previous = input_claim;
+        for (round, &challenge) in challenges.iter().enumerate() {
+            let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
+            let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
+            assert_eq!(
+                optimized_round, reference_round,
+                "round {round}, seed {seed}"
+            );
+            previous = reference_round.evaluate(challenge);
+            bind = Some(challenge);
+        }
+        let last = *challenges.last().unwrap();
+        reference_kernel.finish_rounds(last).unwrap();
+        optimized_kernel.finish_rounds(last).unwrap();
+        assert_eq!(
+            optimized_kernel.output_claims(&claims).unwrap(),
+            reference_kernel.output_claims(&claims).unwrap(),
+            "seed {seed}"
+        );
+    }
+
+    /// The real sample trace (not a constraint-satisfying trace; see the
+    /// outer module's twin test).
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
-        with_sample_backend(|backend| {
-            let log_t = 2usize;
-            let tau_low: Vec<Fr> = (0..log_t)
-                .map(|i| Fr::from_u64(41 + 19 * i as u64))
-                .collect();
-            let tau_high = Fr::from_u64(7211);
-            let rows: Vec<SpartanProductRow> = backend.bundles().unwrap();
-            let uniskip_inputs = uniskip_input_claims(&rows, &tau_low);
+        with_sample_backend(|backend| trait_path_parity(backend, 2, 0));
+    }
 
-            let mut reference_session = ProofSession::default();
-            <ReferenceBackend as UniskipKernel<
-                Fr,
-                ProductRemainder<Fr>,
-                ProductUniskipInputClaims<Fr>,
-            >>::prepare(
-                &ReferenceBackend,
-                &mut reference_session,
-                log_t,
-                &tau_low,
-                backend,
-            )
-            .unwrap();
-            let reference_uniskip = ReferenceBackend
-                .first_round_poly(&mut reference_session, &[tau_high], &uniskip_inputs)
-                .unwrap();
+    /// A live-carry trace (non-zero committed `Carry` column, full-range word
+    /// lanes) across a sweep of Lagrange-weight draws.
+    #[cfg(feature = "implicit-carry")]
+    #[test]
+    fn live_carry_trace_parity_through_the_trait_path() {
+        use crate::optimized::testing::with_carry_fixture;
 
-            let mut optimized_session = ProofSession::default();
-            <OptimizedProductUniskip as UniskipKernel<
-                Fr,
-                ProductRemainder<Fr>,
-                ProductUniskipInputClaims<Fr>,
-            >>::prepare(
-                &OptimizedProductUniskip,
-                &mut optimized_session,
-                log_t,
-                &tau_low,
-                backend,
-            )
-            .unwrap();
-            let optimized_uniskip = OptimizedProductUniskip
-                .first_round_poly(&mut optimized_session, &[tau_high], &uniskip_inputs)
-                .unwrap();
-            assert_eq!(optimized_uniskip, reference_uniskip);
-
-            let r0 = Fr::from_u64(15013);
-            let input_claim = true_input_claim(&rows, &tau_low, tau_high, r0);
-
-            let relation = ProductRemainder::new(
-                SpartanProductDimensions::new(log_t),
-                r0,
-                tau_high,
-                tau_low.clone(),
-            );
-            let claims = product_remainder_input_values_from_uniskip_output(input_claim);
-            let points = ProductRemainderInputClaims::<Vec<Fr>>::default();
-            let no_challenges = NoChallenges::<Fr>::default();
-            let mut reference_kernel = ReferenceProductRemainder
-                .prepare(
-                    &mut reference_session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &no_challenges,
-                    },
-                )
-                .unwrap();
-            let mut optimized_kernel = OptimizedProductRemainder
-                .prepare(
-                    &mut optimized_session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &no_challenges,
-                    },
-                )
-                .unwrap();
-
-            let challenges: Vec<Fr> = (0..log_t)
-                .map(|i| Fr::from_u64(883 + 29 * i as u64))
-                .collect();
-            let mut bind = None;
-            let mut previous = input_claim;
-            for (round, &challenge) in challenges.iter().enumerate() {
-                let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
-                let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
-                assert_eq!(optimized_round, reference_round, "round {round}");
-                previous = reference_round.evaluate(challenge);
-                bind = Some(challenge);
-            }
-            let last = *challenges.last().unwrap();
-            reference_kernel.finish_rounds(last).unwrap();
-            optimized_kernel.finish_rounds(last).unwrap();
-            assert_eq!(
-                optimized_kernel.output_claims(&claims).unwrap(),
-                reference_kernel.output_claims(&claims).unwrap()
-            );
-        });
+        for seed in 0..8u64 {
+            with_carry_fixture(3, &[0, 7, 1 << 40, 3, u64::MAX, 1 << 63], |backend| {
+                trait_path_parity(backend, 3, seed);
+            });
+        }
     }
 
     /// The integer extension coefficients equal the field Lagrange basis
@@ -946,23 +1091,19 @@ mod tests {
         }
     }
 
-    /// The typed bundle's columns equal the oracle tables for all eight
-    /// product openings.
+    /// The typed bundle's columns equal the oracle tables for every product
+    /// opening.
     #[test]
     fn bundle_columns_match_oracle_tables() {
         with_sample_backend(|backend| {
             let rows: Vec<SpartanProductRow> = backend.bundles().unwrap();
-            for (index, variable) in COLUMNS.iter().enumerate() {
-                let table: Vec<Fr> = JoltWitnessOracle::<Fr>::oracle_table(
-                    backend,
-                    JoltPolynomialId::Virtual(*variable),
-                )
-                .unwrap();
+            for (index, id) in COLUMNS.iter().enumerate() {
+                let table: Vec<Fr> = JoltWitnessOracle::<Fr>::oracle_table(backend, *id).unwrap();
                 let column: Vec<Fr> = rows
                     .iter()
                     .map(|row| column_field_value(row, index))
                     .collect();
-                assert_eq!(column, table, "{variable:?}");
+                assert_eq!(column, table, "{id:?}");
             }
         });
     }

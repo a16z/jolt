@@ -32,6 +32,8 @@ use crate::JoltBackend;
 
 pub mod booleanity;
 pub mod bytecode_read_raf;
+#[cfg(feature = "implicit-carry")]
+pub mod carry_claim_reduction;
 pub mod commitment;
 pub mod hamming_weight_claim_reduction;
 pub mod inc_claim_reduction;
@@ -60,6 +62,8 @@ pub mod spartan_shift;
 mod support;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
+#[cfg(feature = "implicit-carry")]
+pub use carry_claim_reduction::OptimizedCarryClaimReduction;
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 pub use inc_claim_reduction::OptimizedIncClaimReduction;
 pub use precommitted_reduction::{OptimizedPrecommittedAddress, OptimizedPrecommittedCycle};
@@ -131,6 +135,10 @@ where
         self.bytecode_read_raf_cycle = Box::new(OptimizedBytecodeReadRafCycle);
         self.hamming_weight_claim_reduction = Box::new(OptimizedHammingWeightClaimReduction);
         self.inc_claim_reduction = Box::new(OptimizedIncClaimReduction);
+        #[cfg(feature = "implicit-carry")]
+        {
+            self.carry_claim_reduction = Box::new(OptimizedCarryClaimReduction);
+        }
 
         self.trusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);
         self.untrusted_advice_cycle = Box::new(OptimizedPrecommittedCycle);

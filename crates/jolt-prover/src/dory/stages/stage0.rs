@@ -309,6 +309,8 @@ fn assemble_commitments<PCS: CommitmentScheme>(
     let mut instruction = Vec::new();
     let mut ram = Vec::new();
     let mut bytecode = Vec::new();
+    #[cfg(feature = "implicit-carry")]
+    let mut carry = None;
     let mut hints = Vec::with_capacity(committed.len());
 
     for entry in committed {
@@ -323,6 +325,8 @@ fn assemble_commitments<PCS: CommitmentScheme>(
             JoltCommittedPolynomial::InstructionRa(_) => instruction.push(commitment),
             JoltCommittedPolynomial::RamRa(_) => ram.push(commitment),
             JoltCommittedPolynomial::BytecodeRa(_) => bytecode.push(commitment),
+            #[cfg(feature = "implicit-carry")]
+            JoltCommittedPolynomial::Carry => carry = Some(commitment),
             other => {
                 return Err(ProverError::InvariantViolation {
                     reason: match other {
@@ -343,8 +347,21 @@ fn assemble_commitments<PCS: CommitmentScheme>(
             reason: "witness did not produce the RdInc/RamInc commitments",
         });
     };
-    Ok((
-        JoltCommitments::new(rd_inc, ram_inc, instruction, ram, bytecode),
-        hints,
-    ))
+    #[cfg(feature = "implicit-carry")]
+    let Some(carry) = carry
+    else {
+        return Err(ProverError::InvariantViolation {
+            reason: "witness did not produce the Carry commitment",
+        });
+    };
+    let commitments = JoltCommitments::new(
+        rd_inc,
+        ram_inc,
+        instruction,
+        ram,
+        bytecode,
+        #[cfg(feature = "implicit-carry")]
+        carry,
+    );
+    Ok((commitments, hints))
 }

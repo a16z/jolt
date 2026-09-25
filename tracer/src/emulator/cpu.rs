@@ -255,6 +255,8 @@ pub(crate) struct ChunkCpuState {
     advice_suffix: Vec<u8>,
     #[cfg(feature = "field-inline")]
     field_registers: FieldRegisterFile,
+    #[cfg(feature = "implicit-carry")]
+    carry: u64,
 }
 
 impl ChunkCpuState {
@@ -325,6 +327,10 @@ impl ChunkCpuState {
                 self.executed_instrs, cpu.executed_instrs
             ));
         }
+        #[cfg(feature = "implicit-carry")]
+        if self.carry != cpu.carry {
+            return Some(format!("carry: {:#x} vs {:#x}", self.carry, cpu.carry));
+        }
         let cpu_suffix = &cpu.advice_tape.data[cpu.advice_tape.read_position..];
         if self.advice_suffix != cpu_suffix {
             return Some(format!(
@@ -370,6 +376,12 @@ pub struct Cpu {
     host_io: HostIo,
     #[cfg(feature = "field-inline")]
     pub field_registers: FieldRegisterFile,
+    /// Emulator-local implicit carry: the carry-out of the most recently
+    /// executed instruction (zero unless it was `ADD`, `MUL`, `ADDC`, or
+    /// `MULC`). Non-architectural: not part of the memory-checked register
+    /// file; committed separately as the `Carry` column.
+    #[cfg(feature = "implicit-carry")]
+    pub carry: u64,
 }
 
 /// Width of an LR/SC reservation set. Ordered `Word < Doubleword` so
@@ -541,6 +553,8 @@ impl Cpu {
             host_io: HostIo::Live,
             #[cfg(feature = "field-inline")]
             field_registers: FieldRegisterFile::default(),
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
         };
         // cpu.x[0xb] = 0x1020; // I don't know why but Linux boot seems to require this initialization
         cpu.write_csr_raw(CSR_MISA_ADDRESS, 0x800000008014312f);
@@ -1384,6 +1398,8 @@ impl Cpu {
             host_io: self.host_io,
             #[cfg(feature = "field-inline")]
             field_registers: self.field_registers.clone(),
+            #[cfg(feature = "implicit-carry")]
+            carry: self.carry,
         }
     }
 
@@ -1425,6 +1441,8 @@ impl Cpu {
             host_io: _,
             #[cfg(feature = "field-inline")]
             field_registers,
+            #[cfg(feature = "implicit-carry")]
+            carry,
         } = self;
         debug_assert!(
             vr_allocator.is_quiescent(),
@@ -1446,6 +1464,8 @@ impl Cpu {
             advice_suffix: advice_tape.data[advice_tape.read_position..].to_vec(),
             #[cfg(feature = "field-inline")]
             field_registers: field_registers.clone(),
+            #[cfg(feature = "implicit-carry")]
+            carry: *carry,
         }
     }
 
@@ -1475,6 +1495,10 @@ impl Cpu {
         #[cfg(feature = "field-inline")]
         {
             self.field_registers = state.field_registers.clone();
+        }
+        #[cfg(feature = "implicit-carry")]
+        {
+            self.carry = state.carry;
         }
     }
 
@@ -1562,6 +1586,10 @@ impl Cpu {
                 "executed_instrs: {} vs {}",
                 self.executed_instrs, other.executed_instrs
             ));
+        }
+        #[cfg(feature = "implicit-carry")]
+        if self.carry != other.carry {
+            return Some(format!("carry: {:#x} vs {:#x}", self.carry, other.carry));
         }
         match (&self.mmu.jolt_device, &other.mmu.jolt_device) {
             (Some(a), Some(b)) => {

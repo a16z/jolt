@@ -14,6 +14,17 @@ workspace = true
 [features]
 default = ["parallel"]
 akita = ["jolt-claims/akita", "jolt-verifier/akita", "jolt-field/solinas"]
+# The implicit-carry protocol lane (committed `Carry` column, `NextCarry`
+# R1CS input, fourth product term, sixth shift term, carry claim reduction).
+implicit-carry = [
+  "jolt-claims/implicit-carry",
+  "jolt-lookup-tables/implicit-carry",
+  "jolt-program/implicit-carry",
+  "jolt-r1cs/implicit-carry",
+  "jolt-riscv/implicit-carry",
+  "jolt-verifier/implicit-carry",
+  "jolt-witness/implicit-carry",
+]
 # Shallow heap visitation of the proof session (profile harness flamegraphs).
 allocative = ["dep:allocative", "jolt-field/allocative", "jolt-poly/allocative"]
 parallel = [

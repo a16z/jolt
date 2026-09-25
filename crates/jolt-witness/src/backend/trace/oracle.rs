@@ -18,6 +18,8 @@ use crate::witnesses::{
     RightInstructionInput, RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump,
     UnexpandedPc,
 };
+#[cfg(feature = "implicit-carry")]
+use crate::witnesses::{Carry, CarryUsed, NextCarry};
 use crate::{JoltWitnessOracle, PolynomialEncoding, Shape};
 
 /// Base-mode committed-program polynomials: precommitted from preprocessing,
@@ -84,6 +86,8 @@ impl<T: TraceSource> TraceBackend<T> {
                         Compact,
                     ))
                 }
+                #[cfg(feature = "implicit-carry")]
+                C::Carry => Ok(Shape::new(self.trace_log_rows(), Compact)),
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
@@ -133,6 +137,8 @@ impl<T: TraceSource> TraceBackend<T> {
                 | V::RamHammingWeight
                 | V::OpFlags(_)
                 | V::InstructionFlags(_) => Ok(Shape::new(self.trace_log_rows(), Dense)),
+                #[cfg(feature = "implicit-carry")]
+                V::CarryUsed | V::NextCarry => Ok(Shape::new(self.trace_log_rows(), Dense)),
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)
@@ -192,6 +198,8 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                 ),
                 C::TrustedAdvice => self.materialize_trusted_advice(),
                 C::UntrustedAdvice => self.materialize_untrusted_advice(),
+                #[cfg(feature = "implicit-carry")]
+                C::Carry => self.materialize_cycle::<F, Carry>(),
                 C::BytecodeChunk(_) | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
@@ -249,6 +257,10 @@ impl<F: JoltField, T: TraceSource> JoltWitnessOracle<F> for TraceBackend<T> {
                 V::LookupTableFlag(table) => {
                     self.materialize_cycle_indexed::<F, LookupTableFlag, _>(table)
                 }
+                #[cfg(feature = "implicit-carry")]
+                V::CarryUsed => self.materialize_cycle::<F, CarryUsed>(),
+                #[cfg(feature = "implicit-carry")]
+                V::NextCarry => self.materialize_cycle::<F, NextCarry>(),
                 V::Rd | V::InstructionRaf | V::RamValInit => Err(not_served(id, UNSERVED_REASON)),
                 V::UnivariateSkip
                 | V::BytecodeValClaim(_)

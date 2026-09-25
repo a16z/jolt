@@ -43,6 +43,8 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder
 use jolt_field::JoltField;
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;
+#[cfg(feature = "implicit-carry")]
+use jolt_witness::witnesses::Carry;
 use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
 use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamConsumer};
 #[cfg(feature = "parallel")]
@@ -162,8 +164,8 @@ const fn is_block_embedded(polynomial: JoltCommittedPolynomial) -> bool {
 
 /// Packed per-cycle facts behind every committed trace column — the
 /// [`CommittedColumnsWitness`] bundle stored column-major with `Option`s
-/// packed as [`COLD`] sentinels: 64 bytes per cycle, shared by every trace
-/// polynomial view.
+/// packed as [`COLD`] sentinels: 64 bytes per cycle (72 with the
+/// implicit-carry column), shared by every trace polynomial view.
 pub(crate) struct OpeningColumns {
     rd_inc: Vec<i128>,
     ram_inc: Vec<i128>,
@@ -173,6 +175,8 @@ pub(crate) struct OpeningColumns {
     bytecode_pc: Vec<u64>,
     /// Remapped RAM word address per cycle; [`COLD`] on no-access cycles.
     ram_address: Vec<u64>,
+    #[cfg(feature = "implicit-carry")]
+    carry: Vec<u64>,
 }
 
 impl OpeningColumns {
@@ -196,6 +200,8 @@ impl OpeningColumns {
                 lookup_index: Vec::with_capacity(cycles),
                 bytecode_pc: Vec::with_capacity(cycles),
                 ram_address: Vec::with_capacity(cycles),
+                #[cfg(feature = "implicit-carry")]
+                carry: Vec::with_capacity(cycles),
             },
         },);
         stream_witnesses(witness, 0..cycles, COLLECT_CHUNK, &mut consumers)?;
@@ -225,41 +231,52 @@ impl OpeningColumns {
         let mut lookup_index: Vec<u128> = unsafe_allocate_zero_vec(cycles);
         let mut bytecode_pc: Vec<u64> = unsafe_allocate_zero_vec(cycles);
         let mut ram_address: Vec<u64> = unsafe_allocate_zero_vec(cycles);
+        #[cfg(feature = "implicit-carry")]
+        let mut carry: Vec<u64> = unsafe_allocate_zero_vec(cycles);
         let error = std::sync::Mutex::new(None);
-        (
+        let chunks = (
             rd_inc.par_chunks_mut(CHUNK),
             ram_inc.par_chunks_mut(CHUNK),
             lookup_index.par_chunks_mut(CHUNK),
             bytecode_pc.par_chunks_mut(CHUNK),
             ram_address.par_chunks_mut(CHUNK),
         )
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(chunk_index, (rd, ram, lookup, pc, address))| {
-                let base = chunk_index * CHUNK;
-                for offset in 0..rd.len() {
-                    match access.window::<CommittedColumnsWitness>(base + offset) {
-                        Ok(row) => {
-                            debug_assert_ne!(
-                                row.ram_address.0,
-                                Some(COLD),
-                                "a live remapped RAM address collides with the COLD sentinel"
-                            );
-                            rd[offset] = row.rd_inc.0;
-                            ram[offset] = row.ram_inc.0;
-                            lookup[offset] = row.lookup_index.0;
-                            pc[offset] = row.bytecode_pc.0 as u64;
-                            address[offset] = row.ram_address.0.unwrap_or(COLD);
-                        }
-                        Err(failure) => {
-                            if let Ok(mut guard) = error.try_lock() {
-                                let _ = guard.get_or_insert(failure);
-                            }
-                            return;
+            .into_par_iter();
+        #[cfg(feature = "implicit-carry")]
+        let chunks = chunks.zip(carry.par_chunks_mut(CHUNK));
+        chunks.enumerate().for_each(|(chunk_index, slots)| {
+            #[cfg(not(feature = "implicit-carry"))]
+            let (rd, ram, lookup, pc, address) = slots;
+            #[cfg(feature = "implicit-carry")]
+            let ((rd, ram, lookup, pc, address), carry) = slots;
+            let base = chunk_index * CHUNK;
+            for offset in 0..rd.len() {
+                match access.window::<CommittedColumnsWitness>(base + offset) {
+                    Ok(row) => {
+                        debug_assert_ne!(
+                            row.ram_address.0,
+                            Some(COLD),
+                            "a live remapped RAM address collides with the COLD sentinel"
+                        );
+                        rd[offset] = row.rd_inc.0;
+                        ram[offset] = row.ram_inc.0;
+                        lookup[offset] = row.lookup_index.0;
+                        pc[offset] = row.bytecode_pc.0 as u64;
+                        address[offset] = row.ram_address.0.unwrap_or(COLD);
+                        #[cfg(feature = "implicit-carry")]
+                        {
+                            carry[offset] = row.carry.0;
                         }
                     }
+                    Err(failure) => {
+                        if let Ok(mut guard) = error.try_lock() {
+                            let _ = guard.get_or_insert(failure);
+                        }
+                        return;
+                    }
                 }
-            });
+            }
+        });
         #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
         if let Some(failure) = error.into_inner().unwrap() {
             return Err(failure.into());
@@ -270,6 +287,8 @@ impl OpeningColumns {
             lookup_index,
             bytecode_pc,
             ram_address,
+            #[cfg(feature = "implicit-carry")]
+            carry,
         })
     }
 
@@ -288,6 +307,8 @@ impl OpeningColumns {
             lookup_index: LookupIndex(self.lookup_index[cycle]),
             bytecode_pc: BytecodePc(bytecode_pc as usize),
             ram_address: RemappedRamAddress((ram_address != COLD).then_some(ram_address)),
+            #[cfg(feature = "implicit-carry")]
+            carry: Carry(self.carry[cycle]),
         }
     }
 }
@@ -312,6 +333,8 @@ impl StreamConsumer for CollectOpeningColumns {
             columns.lookup_index.push(row.lookup_index.0);
             columns.bytecode_pc.push(row.bytecode_pc.0 as u64);
             columns.ram_address.push(row.ram_address.0.unwrap_or(COLD));
+            #[cfg(feature = "implicit-carry")]
+            columns.carry.push(row.carry.0);
         }
     }
 }
@@ -428,7 +451,7 @@ struct TraceOpeningPoly<F: JoltField> {
 
 impl<F: JoltField> TraceOpeningPoly<F> {
     /// The cycle's grid entry, `None` when the cycle contributes nothing
-    /// (cold one-hot cycle, zero increment).
+    /// (cold one-hot cycle, zero dense value).
     #[inline]
     fn entry(&self, cycle: usize) -> Option<(usize, F)> {
         let row = self.columns.witness_row(cycle);
@@ -436,11 +459,8 @@ impl<F: JoltField> TraceOpeningPoly<F> {
             let address = self.kind.hot_address(&row)?;
             Some((self.placement.index(cycle, address), F::one()))
         } else {
-            let increment = self.kind.increment(&row);
-            if increment == 0 {
-                return None;
-            }
-            Some((self.placement.index(cycle, 0), F::from_i128(increment)))
+            let value = self.kind.dense_value(&row)?;
+            Some((self.placement.index(cycle, 0), value))
         }
     }
 }

@@ -177,6 +177,10 @@ pub struct TraceRow {
     slots: [u64; 4],
     address: u64,
     imm_abs: u64,
+    /// The row's incoming implicit carry (the previous row's carry-out).
+    /// Zero on padding rows.
+    #[cfg(feature = "implicit-carry")]
+    carry: u64,
     circuit_flags: u16,
     kind_tag: u16,
     virtual_sequence_remaining: u16,
@@ -200,6 +204,8 @@ struct TraceRowWire {
     ram_access: RamAccess,
     #[cfg(feature = "field-inline")]
     field_inline: Option<Arc<FieldInlineTraceData>>,
+    #[cfg(feature = "implicit-carry")]
+    carry: u64,
 }
 
 #[cfg(feature = "serialization")]
@@ -211,6 +217,8 @@ impl Serialize for TraceRow {
             ram_access: self.ram_access(),
             #[cfg(feature = "field-inline")]
             field_inline: self.field_inline.clone(),
+            #[cfg(feature = "implicit-carry")]
+            carry: self.carry,
         }
         .serialize(serializer)
     }
@@ -227,14 +235,24 @@ impl<'de> Deserialize<'de> for TraceRow {
         {
             row.field_inline = wire.field_inline;
         }
+        #[cfg(feature = "implicit-carry")]
+        let row = row.with_carry(wire.carry);
         Ok(row)
     }
 }
 
+/// The packed row is one cache line; the implicit-carry lane adds one word.
+#[cfg(not(feature = "field-inline"))]
+const TRACE_ROW_BYTES: usize = if cfg!(feature = "implicit-carry") {
+    72
+} else {
+    64
+};
+
 #[cfg(not(feature = "field-inline"))]
 const _: () = assert!(
-    std::mem::size_of::<TraceRow>() == 64,
-    "TraceRow must stay 64 bytes; any size change should be intentional and reviewed"
+    std::mem::size_of::<TraceRow>() == TRACE_ROW_BYTES,
+    "TraceRow size drifted; any size change should be intentional and reviewed"
 );
 
 impl Default for TraceRow {
@@ -362,9 +380,19 @@ impl TraceRow {
             rs1_operand: checked_operand_id(kind, instruction.operands.rs1)?,
             rs2_operand: checked_operand_id(kind, instruction.operands.rs2)?,
             rd_operand: checked_operand_id(kind, instruction.operands.rd)?,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             #[cfg(feature = "field-inline")]
             field_inline: None,
         })
+    }
+
+    /// Sets the row's incoming implicit carry (the previous row's carry-out).
+    #[cfg(feature = "implicit-carry")]
+    #[inline]
+    pub fn with_carry(mut self, carry: u64) -> Self {
+        self.carry = carry;
+        self
     }
 
     pub fn from_instruction(instruction: JoltInstructionRow) -> Result<Self, TraceRowError> {
@@ -523,6 +551,12 @@ impl JoltCycle for TraceRow {
     #[inline]
     fn ram_write_value(&self) -> Option<u64> {
         (self.meta.ram_access() == RamAccessKind::Write).then_some(self.ram_slots().2)
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    #[inline]
+    fn carry(&self) -> u64 {
+        self.carry
     }
 }
 
@@ -863,7 +897,7 @@ mod tests {
 
     #[cfg(not(feature = "field-inline"))]
     #[test]
-    fn trace_row_is_64_bytes() {
-        assert_eq!(std::mem::size_of::<TraceRow>(), 64);
+    fn trace_row_size_is_pinned() {
+        assert_eq!(std::mem::size_of::<TraceRow>(), TRACE_ROW_BYTES);
     }
 }

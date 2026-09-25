@@ -92,6 +92,7 @@ members = [
   "examples/large-alloc/guest",
   "examples/stdlib",
   "examples/stdlib/guest",
+  "examples/carry-chain/guest",
   "examples/muldiv",
   "examples/muldiv/guest",
   "examples/overflow",

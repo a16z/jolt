@@ -122,14 +122,18 @@ where
     }
 }
 
-/// A committed column's derivation from the fact bundle: the increments
-/// directly, the one-hots through the consumer-held chunk selector. Shared
-/// with the optimized joint-opening kernel — the opened values must be the
-/// committed values, so both derive through this one type.
+/// A committed column's derivation from the fact bundle: the dense columns
+/// (the increments, the carry) directly, the one-hots through the
+/// consumer-held chunk selector. Shared with the optimized joint-opening
+/// kernel — the opened values must be the committed values, so both derive
+/// through this one type.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ColumnKind {
     RdInc,
     RamInc,
+    /// The dense non-negative `Carry` column (implicit-carry).
+    #[cfg(feature = "implicit-carry")]
+    Carry,
     InstructionRa(RaChunkSelector),
     BytecodeRa(RaChunkSelector),
     RamRa(RaChunkSelector),
@@ -147,6 +151,25 @@ impl ColumnKind {
         match self {
             Self::RdInc => row.rd_inc.0,
             Self::RamInc => row.ram_inc.0,
+            #[cfg(feature = "implicit-carry")]
+            Self::Carry => unreachable!("the carry column goes through its own commit lane"),
+            Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => {
+                unreachable!("one-hot columns go through hot_address")
+            }
+        }
+    }
+
+    /// A dense column's per-cycle value, `None` when its small scalar is
+    /// zero: the grid tables are pre-zeroed and the lazy views skip zero
+    /// cycles, so the field conversion is spent on live cycles only.
+    pub(crate) fn dense_value<F: JoltField>(self, row: &CommittedColumnsWitness) -> Option<F> {
+        match self {
+            Self::RdInc | Self::RamInc => {
+                let increment = self.increment(row);
+                (increment != 0).then(|| F::from_i128(increment))
+            }
+            #[cfg(feature = "implicit-carry")]
+            Self::Carry => (row.carry.0 != 0).then(|| F::from_u64(row.carry.0)),
             Self::InstructionRa(_) | Self::BytecodeRa(_) | Self::RamRa(_) => {
                 unreachable!("one-hot columns go through hot_address")
             }
@@ -162,6 +185,8 @@ impl ColumnKind {
                 .0
                 .map(|address| selector.chunk_usize(address as usize)),
             Self::RdInc | Self::RamInc => unreachable!("increments go through increment"),
+            #[cfg(feature = "implicit-carry")]
+            Self::Carry => unreachable!("the carry column goes through dense_value"),
         }
     }
 }
@@ -196,6 +221,8 @@ pub(crate) fn column_kinds<F: JoltField>(
             JoltCommittedPolynomial::RamRa(index) => {
                 Ok(ColumnKind::RamRa(selector(index, ram_chunks)?))
             }
+            #[cfg(feature = "implicit-carry")]
+            JoltCommittedPolynomial::Carry => Ok(ColumnKind::Carry),
             _ => Err(KernelError::InvalidGeometry {
                 reason: format!(
                     "{id:?} is not a trace-derived column (advice commits through commit_advice)"
@@ -215,6 +242,8 @@ struct FusedColumns<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStr
     /// windows and columns to avoid per-chunk allocation.
     increments: Vec<i128>,
     hot_addresses: Vec<Option<usize>>,
+    #[cfg(feature = "implicit-carry")]
+    carries: Vec<u64>,
 }
 
 /// One column's in-progress commitment: dense columns accumulate a partial
@@ -225,6 +254,10 @@ enum ColumnCommitState<PCS: StreamingCommitment> {
         kind: ColumnKind,
         partial: PCS::PartialCommitment,
     },
+    /// The carry column: non-negative words, fed on the u64 path (no sign
+    /// partition, unlike the increment columns).
+    #[cfg(feature = "implicit-carry")]
+    Carry { partial: PCS::PartialCommitment },
     OneHot {
         kind: ColumnKind,
         context: PCS::OneHotStreamContext,
@@ -244,6 +277,12 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
         let columns = kinds
             .iter()
             .map(|&kind| {
+                #[cfg(feature = "implicit-carry")]
+                if matches!(kind, ColumnKind::Carry) {
+                    return ColumnCommitState::Carry {
+                        partial: PCS::begin(setup),
+                    };
+                }
                 if kind.is_one_hot() {
                     ColumnCommitState::OneHot {
                         kind,
@@ -264,6 +303,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
             setup,
             increments: Vec::with_capacity(row_width),
             hot_addresses: Vec::with_capacity(row_width),
+            #[cfg(feature = "implicit-carry")]
+            carries: Vec::with_capacity(row_width),
         }
     }
 
@@ -275,6 +316,8 @@ impl<'a, F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitmen
                 ColumnCommitState::Increment { partial, .. } => {
                     finish_streamed::<PCS>(partial, setup)
                 }
+                #[cfg(feature = "implicit-carry")]
+                ColumnCommitState::Carry { partial } => finish_streamed::<PCS>(partial, setup),
                 ColumnCommitState::OneHot {
                     chunk_commitments, ..
                 } => finish_streamed_one_hot::<PCS>(setup, one_hot_k, &chunk_commitments),
@@ -296,6 +339,12 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
                     self.increments
                         .extend(chunk.iter().map(|row| kind.increment(row)));
                     PCS::feed_i128(partial, &self.increments, self.setup);
+                }
+                #[cfg(feature = "implicit-carry")]
+                ColumnCommitState::Carry { partial } => {
+                    self.carries.clear();
+                    self.carries.extend(chunk.iter().map(|row| row.carry.0));
+                    PCS::feed_u64(partial, &self.carries, self.setup);
                 }
                 ColumnCommitState::OneHot {
                     kind,
@@ -379,8 +428,8 @@ impl<F: JoltField> StreamConsumer for MaterializedColumn<F> {
                     };
                     self.table[index] = F::one();
                 }
-            } else {
-                self.table[self.cycle * self.cycle_stride] = F::from_i128(self.kind.increment(row));
+            } else if let Some(value) = self.kind.dense_value(row) {
+                self.table[self.cycle * self.cycle_stride] = value;
             }
             self.cycle += 1;
         }

@@ -170,15 +170,6 @@ pub(crate) fn fmadd_u64_split<F: JoltField>(
     accumulator.fmadd_u64(eq, value & 0xFFFF_FFFF);
 }
 
-/// `[1, γ, γ², …, γ^{N−1}]`.
-pub(crate) fn gamma_powers_array<F: JoltField, const N: usize>(gamma: F) -> [F; N] {
-    let mut powers = [F::one(); N];
-    for i in 1..N {
-        powers[i] = powers[i - 1] * gamma;
-    }
-    powers
-}
-
 /// `[1, γ, γ², …]` of length `count`.
 pub(crate) fn gamma_powers<F: JoltField>(gamma: F, count: usize) -> Vec<F> {
     let mut powers = Vec::with_capacity(count);

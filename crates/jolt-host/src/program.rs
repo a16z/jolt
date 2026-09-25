@@ -10,6 +10,8 @@ use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOu
 use jolt_program::{JoltProgram, ProgramError};
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
+#[cfg(feature = "implicit-carry")]
+use jolt_riscv::RV64IMAC_JOLT_IMPLICIT_CARRY;
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
 use std::fs;
 use std::io::{self, Write};
@@ -75,6 +77,12 @@ impl Program {
     pub fn enable_field_inline(&mut self) {
         self.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
         self.add_guest_feature("field-inline");
+    }
+
+    #[cfg(feature = "implicit-carry")]
+    pub fn enable_implicit_carry(&mut self) {
+        self.set_instruction_profile(RV64IMAC_JOLT_IMPLICIT_CARRY);
+        self.add_guest_feature("implicit-carry");
     }
 
     /// Set backtrace mode for the guest build.

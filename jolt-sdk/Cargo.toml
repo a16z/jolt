@@ -24,6 +24,14 @@ field-inline = [
   "jolt-witness?/field-inline",
   "tracer?/field-inline",
 ]
+implicit-carry = [
+  "jolt-host?/implicit-carry",
+  "jolt-program?/implicit-carry",
+  "jolt-prover?/implicit-carry",
+  "jolt-verifier?/implicit-carry",
+  "jolt-witness?/implicit-carry",
+  "tracer?/implicit-carry",
+]
 
 host = [
   "dep:bincode",

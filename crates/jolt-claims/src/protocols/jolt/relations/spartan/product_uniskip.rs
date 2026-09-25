@@ -28,6 +28,9 @@ pub struct ProductUniskipInputClaims<C> {
     pub should_branch: C,
     #[opening(ShouldJump, from = SpartanOuter)]
     pub should_jump: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(CarryUsed, from = SpartanOuter)]
+    pub carry_used: C,
 }
 
 /// Produced product uni-skip opening (the single reduced univariate-skip value).
@@ -81,9 +84,18 @@ impl SymbolicSumcheck for ProductUniskip {
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        product_uniskip_weight(0) * opening(product_outer_opening())
+        let base = product_uniskip_weight(0) * opening(product_outer_opening())
             + product_uniskip_weight(1) * opening(product_should_branch_outer_opening())
-            + product_uniskip_weight(2) * opening(product_should_jump_outer_opening())
+            + product_uniskip_weight(2) * opening(product_should_jump_outer_opening());
+        #[cfg(feature = "implicit-carry")]
+        {
+            base + product_uniskip_weight(3)
+                * opening(
+                    crate::protocols::jolt::geometry::spartan::product_carry_used_outer_opening(),
+                )
+        }
+        #[cfg(not(feature = "implicit-carry"))]
+        base
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
@@ -97,6 +109,8 @@ mod tests {
     use crate::protocols::jolt::geometry::dimensions::{
         PRODUCT_UNISKIP_DOMAIN_SIZE, PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
     };
+    #[cfg(feature = "implicit-carry")]
+    use crate::protocols::jolt::geometry::spartan::product_carry_used_outer_opening;
     use crate::protocols::jolt::SpartanProductVirtualizationPublic;
     use jolt_field::{Fr, Ring};
 
@@ -111,7 +125,14 @@ mod tests {
         let product = Fr::from_u64(2);
         let should_branch = Fr::from_u64(3);
         let should_jump = Fr::from_u64(5);
-        let weights = [Fr::from_u64(7), Fr::from_u64(11), Fr::from_u64(13)];
+        #[cfg(feature = "implicit-carry")]
+        let carry_used = Fr::from_u64(17);
+        let weights = [
+            Fr::from_u64(7),
+            Fr::from_u64(11),
+            Fr::from_u64(13),
+            Fr::from_u64(19),
+        ];
         let zero = Fr::from_u64(0);
 
         let input = relation.input_expression::<Fr>().evaluate(
@@ -119,6 +140,8 @@ mod tests {
                 id if id == product_outer_opening() => product,
                 id if id == product_should_branch_outer_opening() => should_branch,
                 id if id == product_should_jump_outer_opening() => should_jump,
+                #[cfg(feature = "implicit-carry")]
+                id if id == product_carry_used_outer_opening() => carry_used,
                 _ => zero,
             },
             |_| zero,
@@ -130,10 +153,10 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            input,
-            weights[0] * product + weights[1] * should_branch + weights[2] * should_jump
-        );
+        let expected = weights[0] * product + weights[1] * should_branch + weights[2] * should_jump;
+        #[cfg(feature = "implicit-carry")]
+        let expected = expected + weights[3] * carry_used;
+        assert_eq!(input, expected);
     }
 
     /// The output claim is the single reduced uni-skip opening passed through
@@ -186,16 +209,18 @@ mod tests {
             product: Fr::from_u64(2),
             should_branch: Fr::from_u64(3),
             should_jump: Fr::from_u64(5),
+            #[cfg(feature = "implicit-carry")]
+            carry_used: Fr::from_u64(7),
         };
 
-        assert_eq!(
-            claims.canonical_order(),
-            vec![
-                product_outer_opening(),
-                product_should_branch_outer_opening(),
-                product_should_jump_outer_opening(),
-            ],
-        );
+        let expected_order = vec![
+            product_outer_opening(),
+            product_should_branch_outer_opening(),
+            product_should_jump_outer_opening(),
+        ];
+        #[cfg(feature = "implicit-carry")]
+        let expected_order = [expected_order, vec![product_carry_used_outer_opening()]].concat();
+        assert_eq!(claims.canonical_order(), expected_order);
         assert_eq!(
             claims.resolve_input(&product_outer_opening()),
             Some(Fr::from_u64(2)),
@@ -207,6 +232,11 @@ mod tests {
         assert_eq!(
             claims.resolve_input(&product_should_jump_outer_opening()),
             Some(Fr::from_u64(5)),
+        );
+        #[cfg(feature = "implicit-carry")]
+        assert_eq!(
+            claims.resolve_input(&product_carry_used_outer_opening()),
+            Some(Fr::from_u64(7)),
         );
         assert_eq!(claims.resolve_input(&product_uniskip_opening()), None);
     }

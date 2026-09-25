@@ -40,6 +40,8 @@ use jolt_verifier::stages::stage6a::booleanity::BooleanityAddressPhase;
 use jolt_verifier::stages::stage6a::bytecode_read_raf::BytecodeReadRafAddressPhase;
 use jolt_verifier::stages::stage6b::booleanity::Booleanity;
 use jolt_verifier::stages::stage6b::bytecode_read_raf::BytecodeReadRafCycle;
+#[cfg(feature = "implicit-carry")]
+use jolt_verifier::stages::stage6b::carry_claim_reduction::CarryClaimReduction;
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::{
     BytecodeReductionCyclePhase, ProgramImageReductionCyclePhase, TrustedAdviceCyclePhase,
     UntrustedAdviceCyclePhase,
@@ -160,6 +162,8 @@ where
     pub ram_ra_virtualization: Box<dyn PrepareKernel<F, RamRaVirtualization<F>>>,
     pub instruction_ra_virtualization: Box<dyn PrepareKernel<F, InstructionRaVirtualization<F>>>,
     pub inc_claim_reduction: Box<dyn PrepareKernel<F, IncClaimReduction<F>>>,
+    #[cfg(feature = "implicit-carry")]
+    pub carry_claim_reduction: Box<dyn PrepareKernel<F, CarryClaimReduction<F>>>,
     pub trusted_advice_cycle: Box<dyn PrepareKernel<F, TrustedAdviceCyclePhase<F>>>,
     pub untrusted_advice_cycle: Box<dyn PrepareKernel<F, UntrustedAdviceCyclePhase<F>>>,
     pub bytecode_reduction_cycle: Box<dyn PrepareKernel<F, BytecodeReductionCyclePhase<F>>>,

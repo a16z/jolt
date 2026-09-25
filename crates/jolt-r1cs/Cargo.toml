@@ -27,4 +27,5 @@ rand_core = { workspace = true }
 default = ["parallel", "claim-lowering"]
 claim-lowering = ["dep:jolt-claims"]
 field-inline = ["claim-lowering", "jolt-claims/field-inline"]
+implicit-carry = ["jolt-claims?/implicit-carry"]
 parallel = ["rayon", "jolt-poly/parallel"]

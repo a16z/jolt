@@ -11,6 +11,8 @@ use crate::protocols::jolt::geometry::spartan::{
     next_is_noop_product, next_is_virtual_outer, next_pc_outer, next_unexpanded_pc_outer, pc_shift,
     unexpanded_pc_shift,
 };
+#[cfg(feature = "implicit-carry")]
+use crate::protocols::jolt::JoltCommittedPolynomial;
 use crate::protocols::jolt::{
     JoltExpr, JoltRelationId, JoltVirtualPolynomial, SpartanShiftChallenge, SpartanShiftPublic,
     TraceDimensions, UnbatchedClaim, UnbatchedClaimExpr, UnbatchedRelation,
@@ -38,6 +40,11 @@ pub struct SpartanShiftOutputClaims<C> {
     pub is_first_in_sequence: C,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
     pub is_noop: C,
+    /// The committed Carry column at the shift point (the shifted output of
+    /// the NextCarry term).
+    #[cfg(feature = "implicit-carry")]
+    #[opening(committed = Carry)]
+    pub carry: C,
 }
 
 /// Consumed shift openings: the `Next*` PC/flag columns from stage 1's outer
@@ -55,6 +62,9 @@ pub struct SpartanShiftInputClaims<C> {
     pub next_is_first_in_sequence: C,
     #[opening(NextIsNoop, from = SpartanProductVirtualization)]
     pub next_is_noop: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(NextCarry, from = SpartanOuter)]
+    pub next_carry: C,
 }
 
 /// Fiat-Shamir challenge drawn by the Spartan shift sumcheck.
@@ -122,6 +132,16 @@ impl Shift {
                             InstructionFlags::IsNoop,
                         )),
                     output_weight: SpartanShiftPublic::EqPlusOneProduct.into(),
+                    offset: true,
+                },
+                // Sixth gamma term: `NextCarry(t) = Carry(t+1)` ties each row's
+                // carry-out to the next row's committed carry-in.
+                #[cfg(feature = "implicit-carry")]
+                UnbatchedClaim {
+                    input_relation: JoltRelationId::SpartanOuter,
+                    input: v(JoltVirtualPolynomial::NextCarry),
+                    output: UnbatchedClaimExpr::polynomial(JoltCommittedPolynomial::Carry),
+                    output_weight: SpartanShiftPublic::EqPlusOneOuter.into(),
                     offset: true,
                 },
             ],

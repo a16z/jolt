@@ -16,6 +16,13 @@ field-inline = [
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
+# Passthrough only: the AOT backend has no carry register; the feature exists
+# so `for_each_jolt_instruction_kind!` expansions resolve their cfg entries.
+implicit-carry = [
+  "jolt-program/implicit-carry",
+  "jolt-riscv/implicit-carry",
+  "tracer/implicit-carry",
+]
 
 [dependencies]
 common = { workspace = true, features = ["std"] }

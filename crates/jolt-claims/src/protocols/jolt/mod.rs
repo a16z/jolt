@@ -36,4 +36,6 @@ pub use ids::{
     RegistersReadWritePublic, RegistersValEvaluationPublic, SpartanOuterPublic,
     SpartanProductVirtualizationPublic, SpartanShiftChallenge, SpartanShiftPublic,
 };
+#[cfg(feature = "implicit-carry")]
+pub use ids::{CarryClaimReductionChallenge, CarryClaimReductionPublic};
 pub use unbatched::{UnbatchedClaim, UnbatchedClaimExpr, UnbatchedRelation};

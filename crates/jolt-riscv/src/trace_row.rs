@@ -191,7 +191,8 @@ struct TraceValueSlots {
     slot3: u64,
 }
 
-/// Compact, copyable proof-facing trace row (balanced packed, 64 bytes).
+/// Compact, copyable proof-facing trace row (balanced packed; size pinned by
+/// `TRACE_ROW_BYTES`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct JoltTraceRow {
@@ -200,6 +201,10 @@ pub struct JoltTraceRow {
     unexpanded_pc: u64,
     /// Magnitude of the immediate; sign is bit `META_IMM_NEGATIVE_SHIFT` of `meta`.
     imm_abs: u64,
+    /// The row's incoming implicit carry (the previous row's carry-out).
+    /// Zero on padding rows.
+    #[cfg(feature = "implicit-carry")]
+    carry: u64,
     /// Compact local bytecode index (expanded "PC"); see [`JoltTraceRow::pc`].
     bytecode_pc: u32,
     /// Packed flags + immediate sign: circuit flags in bits `0..16`, instruction
@@ -216,9 +221,16 @@ pub struct JoltTraceRow {
     _reserved: [u8; 3],
 }
 
+/// The packed row is one cache line; the implicit-carry lane adds one word.
+const TRACE_ROW_BYTES: usize = if cfg!(feature = "implicit-carry") {
+    72
+} else {
+    64
+};
+
 const _: () = assert!(
-    core::mem::size_of::<JoltTraceRow>() == 64,
-    "JoltTraceRow must stay 64 bytes; any size change should be intentional and reviewed"
+    core::mem::size_of::<JoltTraceRow>() == TRACE_ROW_BYTES,
+    "JoltTraceRow size drifted; any size change should be intentional and reviewed"
 );
 
 impl Default for JoltTraceRow {
@@ -238,6 +250,8 @@ impl JoltTraceRow {
             values: TraceValueSlots::default(),
             unexpanded_pc: 0,
             imm_abs: 0,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             bytecode_pc: 0,
             meta: pack_meta(circuit_flags, instruction_flags, false),
             jolt_tag: instruction.instruction_kind.tag().0,
@@ -254,7 +268,8 @@ impl JoltTraceRow {
     /// The captured-state variant must agree with the instruction's `Load`/
     /// `Store` flags; register indices and the immediate are taken from the
     /// instruction's operands (not the captured state), so they are not
-    /// duplicated.
+    /// duplicated. Under `implicit-carry` the row starts with a zero incoming
+    /// carry; producers set it with [`JoltTraceRow::with_carry`].
     pub fn from_components(
         state: CapturedState,
         instruction: &JoltInstructionRow,
@@ -286,6 +301,8 @@ impl JoltTraceRow {
             values,
             unexpanded_pc: instruction.address as u64,
             imm_abs: imm_magnitude as u64,
+            #[cfg(feature = "implicit-carry")]
+            carry: 0,
             bytecode_pc,
             meta: pack_meta(circuit_flags, instruction_flags, imm < 0),
             jolt_tag: kind.tag().0,
@@ -294,6 +311,21 @@ impl JoltTraceRow {
             rd_id: checked_register_id(instruction.operands.rd)?,
             _reserved: [0; 3],
         })
+    }
+
+    /// Sets the row's incoming implicit carry (the previous row's carry-out).
+    #[cfg(feature = "implicit-carry")]
+    #[inline]
+    pub fn with_carry(mut self, carry: u64) -> Self {
+        self.carry = carry;
+        self
+    }
+
+    /// The row's incoming implicit carry (the previous row's carry-out).
+    #[cfg(feature = "implicit-carry")]
+    #[inline(always)]
+    pub fn carry(&self) -> u64 {
+        self.carry
     }
 
     /// The per-cycle witness values, typed by row class.
@@ -518,8 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn layout_is_64_bytes() {
-        assert_eq!(core::mem::size_of::<JoltTraceRow>(), 64);
+    fn layout_is_packed_to_declared_size() {
+        assert_eq!(core::mem::size_of::<JoltTraceRow>(), TRACE_ROW_BYTES);
         assert_eq!(core::mem::align_of::<JoltTraceRow>(), 8);
     }
 
@@ -544,6 +576,8 @@ mod tests {
             default.captured_state(),
             CapturedState::NonMemory(NonMemoryState::default())
         );
+        #[cfg(feature = "implicit-carry")]
+        assert_eq!(default.carry(), 0);
     }
 
     #[test]
@@ -578,6 +612,11 @@ mod tests {
         assert_eq!(r.rd_index(), Some(1));
         assert!(!r.is_load() && !r.is_store());
         assert_eq!(r.captured_state(), state);
+        #[cfg(feature = "implicit-carry")]
+        {
+            assert_eq!(r.carry(), 0, "from_components starts with no carry");
+            assert_eq!(r.with_carry(0xdead).carry(), 0xdead);
+        }
     }
 
     #[test]

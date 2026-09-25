@@ -13,6 +13,8 @@ use jolt_openings::CommitmentScheme;
 use jolt_openings::StreamingCommitment;
 #[cfg(feature = "zk")]
 use jolt_openings::ZkStreamingCommitment;
+#[cfg(feature = "implicit-carry")]
+use jolt_witness::witnesses::Carry;
 use jolt_witness::witnesses::{BytecodePc, LookupIndex, RamInc, RdInc, RemappedRamAddress};
 use jolt_witness::{JoltWitnessOracle, RowSource, WitnessBundle};
 
@@ -29,6 +31,9 @@ pub struct CommittedColumnsWitness {
     pub lookup_index: LookupIndex,
     pub bytecode_pc: BytecodePc,
     pub ram_address: RemappedRamAddress,
+    /// The row's incoming implicit carry: the committed `Carry` column.
+    #[cfg(feature = "implicit-carry")]
+    pub carry: Carry,
 }
 
 /// The streaming-commitment surface a streaming commit kernel requires in the

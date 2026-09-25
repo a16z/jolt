@@ -105,6 +105,18 @@ pub struct OuterRemainderOutputClaims<C> {
     pub is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence))]
     pub is_last_in_sequence: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::UsesCarry))]
+    pub uses_carry: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(OpFlags(CircuitFlags::ProducesCarry))]
+    pub produces_carry: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(CarryUsed)]
+    pub carry_used: C,
+    #[cfg(feature = "implicit-carry")]
+    #[opening(NextCarry)]
+    pub next_carry: C,
 }
 
 /// The Spartan outer remainder sumcheck: the quadratic R1CS form over the outer
