@@ -5,14 +5,14 @@
 //! concrete field belongs to witness generation.
 
 #[cfg(feature = "serialization")]
-use ark_serialize::{
-    CanonicalDeserialize, CanonicalSerialize, Compress, Read, SerializationError, Valid, Validate,
-};
-use jolt_riscv::{
-    field_inline_operand_shape, FieldInlineOp, FieldInlineXRegisterRole, FieldRegister,
-    JoltInstructionRow, FIELD_REGISTER_LOG_K,
-};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use jolt_riscv::{field_inline_operand_shape, FieldInlineOp, FieldRegister, JoltInstructionRow};
 
+/// A field element in canonical little-endian bytes.
+///
+/// The buffer is 32 bytes under every proof field. Narrower fields occupy
+/// the low bytes and leave the remainder zero, so trace consumers can decode
+/// the same fixed-size register values using their concrete proof field.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "serialization",
@@ -41,230 +41,70 @@ impl FieldEncodedValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(
-        CanonicalSerialize,
-        CanonicalDeserialize,
-        serde::Serialize,
-        serde::Deserialize
-    )
-)]
-pub struct FieldValueEncoding {
-    pub byte_len: u16,
-    pub limb_bits: u16,
-    pub limb_count: u16,
-    pub canonical: bool,
-}
-
-impl FieldValueEncoding {
-    pub const BN254_SCALAR_CANONICAL: Self = Self {
-        byte_len: FieldEncodedValue::BYTE_LEN,
-        limb_bits: 64,
-        limb_count: 4,
-        canonical: true,
+/// Validate field and integer operand roles at the ordinary bytecode boundary.
+pub fn validate_field_inline_instruction(
+    row: &JoltInstructionRow,
+) -> Result<(), FieldInlineInstructionError> {
+    let Some(shape) = field_inline_operand_shape(row.instruction_kind) else {
+        return Ok(());
     };
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(CanonicalSerialize, serde::Serialize, serde::Deserialize)
-)]
-pub struct FieldInlineBytecodeMetadata {
-    pub rows: Vec<FieldInlineBytecodeRow>,
-    pub field_register_log_k: u8,
-    pub value_encoding: FieldValueEncoding,
-    pub profile_fingerprint: u64,
-}
-
-#[cfg(feature = "serialization")]
-impl Valid for FieldInlineBytecodeMetadata {
-    fn check(&self) -> Result<(), SerializationError> {
-        // Metadata loaded from disk would otherwise be trusted unvalidated. Re-run the
-        // structural checks (register bounds, value encoding, per-row operand shape) so a
-        // tampered artifact is rejected at deserialize time rather than during proving.
-        self.validate(self.rows.len())
-            .map_err(|_| SerializationError::InvalidData)
+    let field_rd_name = if shape.field_rd_in_rs2_slot {
+        "rs2"
+    } else {
+        "rd"
+    };
+    let field_operands = row.field_operands();
+    if shape.writes_field_rd {
+        validate_field_register(field_operands.rd, field_rd_name)?;
     }
-}
-
-#[cfg(feature = "serialization")]
-impl CanonicalDeserialize for FieldInlineBytecodeMetadata {
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        compress: Compress,
-        validate: Validate,
-    ) -> Result<Self, SerializationError> {
-        let value = Self {
-            rows: Vec::<FieldInlineBytecodeRow>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                Validate::No,
-            )?,
-            field_register_log_k: u8::deserialize_with_mode(&mut reader, compress, Validate::No)?,
-            value_encoding: FieldValueEncoding::deserialize_with_mode(
-                &mut reader,
-                compress,
-                Validate::No,
-            )?,
-            profile_fingerprint: u64::deserialize_with_mode(&mut reader, compress, Validate::No)?,
-        };
-        if let Validate::Yes = validate {
-            value.check()?;
-        }
-        Ok(value)
-    }
-}
-
-impl FieldInlineBytecodeMetadata {
-    pub fn from_bytecode(
-        bytecode: &[JoltInstructionRow],
-        profile_fingerprint: u64,
-    ) -> Result<Self, FieldInlineMetadataError> {
-        let mut rows = Vec::with_capacity(bytecode.len());
-        for row in bytecode {
-            rows.push(FieldInlineBytecodeRow::from_instruction(row)?);
-        }
-        let metadata = Self {
-            rows,
-            field_register_log_k: FIELD_REGISTER_LOG_K,
-            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
-            profile_fingerprint,
-        };
-        metadata.validate(bytecode.len())?;
-        Ok(metadata)
-    }
-
-    pub fn validate(&self, expected_len: usize) -> Result<(), FieldInlineMetadataError> {
-        if self.rows.len() != expected_len {
-            return Err(FieldInlineMetadataError::LengthMismatch {
-                expected: expected_len,
-                actual: self.rows.len(),
-            });
-        }
-        if self.field_register_log_k != FIELD_REGISTER_LOG_K {
-            return Err(FieldInlineMetadataError::InvalidFieldRegisterLogK {
-                log_k: self.field_register_log_k,
-            });
-        }
-        if self.value_encoding.byte_len != FieldEncodedValue::BYTE_LEN
-            || self.value_encoding.limb_bits != 64
-            || self.value_encoding.limb_count != 4
-            || !self.value_encoding.canonical
-        {
-            return Err(FieldInlineMetadataError::InvalidValueEncoding(
-                self.value_encoding,
-            ));
-        }
-        for (index, row) in self.rows.iter().enumerate() {
-            row.validate(index, self.field_register_log_k)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(
-        CanonicalSerialize,
-        CanonicalDeserialize,
-        serde::Serialize,
-        serde::Deserialize
-    )
-)]
-pub struct FieldInlineBytecodeRow {
-    pub active: bool,
-    pub op: Option<FieldInlineOp>,
-    pub rs1: Option<FieldRegister>,
-    pub rs2: Option<FieldRegister>,
-    pub rd: Option<FieldRegister>,
-    pub bridge_x_register: Option<u8>,
-    pub immediate: Option<FieldEncodedValue>,
-}
-
-impl FieldInlineBytecodeRow {
-    pub fn from_instruction(row: &JoltInstructionRow) -> Result<Self, FieldInlineMetadataError> {
-        let Some(shape) = field_inline_operand_shape(row.instruction_kind) else {
-            return Ok(Self::default());
-        };
-        let rs1 = if shape.reads_fr_rs1 {
-            Some(field_register(row.operands.rs1, "rs1")?)
+    if shape.reads_field_rs1 {
+        let operand = if shape.field_rs1_is_field_rd {
+            field_rd_name
         } else {
-            None
+            "rs1"
         };
-        let rs2 = if shape.reads_fr_rs2 {
-            Some(field_register(row.operands.rs2, "rs2")?)
-        } else {
-            None
-        };
-        let rd = if shape.writes_fr_rd {
-            Some(field_register(row.operands.rd, "rd")?)
-        } else {
-            None
-        };
-        let bridge_x_register = match shape.bridge_x_register_role {
-            Some(FieldInlineXRegisterRole::ReadRs1) => Some(x_register(row.operands.rs1, "rs1")?),
-            Some(FieldInlineXRegisterRole::WriteRd) => Some(x_register(row.operands.rd, "rd")?),
-            None => None,
-        };
-        let immediate = if shape.has_immediate {
-            Some(encoded_immediate(row.operands.imm)?)
-        } else {
-            None
-        };
-        Ok(Self {
-            active: true,
-            op: Some(shape.op),
-            rs1,
-            rs2,
-            rd,
-            bridge_x_register,
-            immediate,
-        })
+        validate_field_register(field_operands.rs1, operand)?;
     }
-
-    fn validate(&self, index: usize, log_k: u8) -> Result<(), FieldInlineMetadataError> {
-        if !self.active {
-            if self.op.is_some()
-                || self.rs1.is_some()
-                || self.rs2.is_some()
-                || self.rd.is_some()
-                || self.bridge_x_register.is_some()
-                || self.immediate.is_some()
-            {
-                return Err(FieldInlineMetadataError::InactiveRowHasData { index });
+    if shape.reads_field_rs2 {
+        validate_field_register(field_operands.rs2, "rs2")?;
+    }
+    let integer_operands = row.integer_operands();
+    match shape.op {
+        FieldInlineOp::LoadAccumulateFromRegister => {
+            let _ = x_register(integer_operands.rs1, "rs1")?;
+        }
+        FieldInlineOp::LoadAccumulateFromMemory | FieldInlineOp::AdviceLimb => {
+            if x_register(integer_operands.rd, "rd")? == 0 {
+                return Err(FieldInlineInstructionError::ZeroWriteRegister);
             }
-            return Ok(());
-        }
-        let Some(op) = self.op else {
-            return Err(FieldInlineMetadataError::ActiveRowMissingOp { index });
-        };
-        let max_register = 1u8
-            .checked_shl(u32::from(log_k))
-            .ok_or(FieldInlineMetadataError::InvalidFieldRegisterLogK { log_k })?;
-        for register in [self.rs1, self.rs2, self.rd].into_iter().flatten() {
-            if register.index() >= max_register {
-                return Err(FieldInlineMetadataError::FieldRegisterOutOfBounds {
-                    index,
-                    register: register.index(),
-                    log_k,
-                });
+            if shape.op == FieldInlineOp::LoadAccumulateFromMemory {
+                let _ = x_register(integer_operands.rs1, "rs1")?;
             }
         }
-        let expected = jolt_riscv::field_inline_operand_shape_for_op(op);
-        if expected.reads_fr_rs1 != self.rs1.is_some()
-            || expected.reads_fr_rs2 != self.rs2.is_some()
-            || expected.writes_fr_rd != self.rd.is_some()
-            || expected.bridge_x_register_role.is_some() != self.bridge_x_register.is_some()
-            || expected.has_immediate != self.immediate.is_some()
-        {
-            return Err(FieldInlineMetadataError::OperandShapeMismatch { index, op });
-        }
-        Ok(())
+        FieldInlineOp::Add
+        | FieldInlineOp::Sub
+        | FieldInlineOp::Mul
+        | FieldInlineOp::Inv
+        | FieldInlineOp::AssertEq
+        | FieldInlineOp::AssertZero
+        | FieldInlineOp::LoadImm => {}
     }
+    let reads_rs1 =
+        (shape.reads_field_rs1 && !shape.field_rs1_is_field_rd) || integer_operands.rs1.is_some();
+    let reads_rs2 = shape.reads_field_rs2 || shape.field_rd_in_rs2_slot;
+    let writes_rd =
+        (shape.writes_field_rd && !shape.field_rd_in_rs2_slot) || integer_operands.rd.is_some();
+    if row.operands.rs1.is_some() != reads_rs1
+        || row.operands.rs2.is_some() != reads_rs2
+        || row.operands.rd.is_some() != writes_rd
+    {
+        return Err(FieldInlineInstructionError::OperandShapeMismatch { op: shape.op });
+    }
+    if shape.has_immediate {
+        let _ = u64::try_from(row.operands.imm)
+            .map_err(|_| FieldInlineInstructionError::InvalidImmediate(row.operands.imm))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,16 +134,25 @@ pub struct FieldRegisterWrite {
     derive(serde::Serialize, serde::Deserialize)
 )]
 pub enum FieldInlineBridge {
-    LoadFromX {
+    LoadAccumulateFromRegister {
         x_register: u8,
         x_value: u64,
         field_value: FieldEncodedValue,
     },
-    StoreToX {
+    AdviceLimb {
         field_register: u8,
         field_value: FieldEncodedValue,
         x_register: u8,
         x_value: u64,
+    },
+    /// The word at `x[x_base] + offset` is written to integer register
+    /// `x_register` and accumulated into the field destination. The integer
+    /// write lets the ordinary RV64 load constraints bind the memory value.
+    LoadAccumulateFromMemory {
+        x_base: u8,
+        x_register: u8,
+        word: u64,
+        field_value: FieldEncodedValue,
     },
 }
 
@@ -317,101 +166,91 @@ pub struct FieldInlineTraceData {
     pub rs1: Option<FieldRegisterRead>,
     pub rs2: Option<FieldRegisterRead>,
     pub rd: Option<FieldRegisterWrite>,
-    pub product: Option<FieldEncodedValue>,
-    pub inv_product: Option<FieldEncodedValue>,
     pub bridge: Option<FieldInlineBridge>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum FieldInlineMetadataError {
-    #[error("field-inline metadata length mismatch: expected {expected}, got {actual}")]
-    LengthMismatch { expected: usize, actual: usize },
-    #[error("invalid field-register log_k in field-inline metadata: {log_k}")]
-    InvalidFieldRegisterLogK { log_k: u8 },
-    #[error("invalid field value encoding in field-inline metadata: {0:?}")]
-    InvalidValueEncoding(FieldValueEncoding),
-    #[error("field-inline inactive metadata row {index} carries data")]
-    InactiveRowHasData { index: usize },
-    #[error("field-inline active metadata row {index} is missing its op")]
-    ActiveRowMissingOp { index: usize },
-    #[error(
-        "field-inline metadata row {index} has field register {register} outside log_k {log_k}"
-    )]
-    FieldRegisterOutOfBounds {
-        index: usize,
-        register: u8,
-        log_k: u8,
-    },
-    #[error("field-inline metadata row {index} does not match operand shape for {op:?}")]
-    OperandShapeMismatch { index: usize, op: FieldInlineOp },
+pub enum FieldInlineInstructionError {
+    #[error("field-inline row does not match operand shape for {op:?}")]
+    OperandShapeMismatch { op: FieldInlineOp },
     #[error("field-inline row is missing {operand}")]
     MissingOperand { operand: &'static str },
     #[error("field-inline field register operand {operand} is out of bounds: {register}")]
     InvalidFieldRegister { operand: &'static str, register: u8 },
     #[error("field-inline x-register operand {operand} is out of bounds: {register}")]
     InvalidXRegister { operand: &'static str, register: u8 },
+    #[error("field-inline write bridge targets x0, which discards the write")]
+    ZeroWriteRegister,
     #[error("field-inline immediate must be non-negative and fit in u64: {0}")]
     InvalidImmediate(i128),
 }
 
-fn field_register(
+fn validate_field_register(
     register: Option<u8>,
     operand: &'static str,
-) -> Result<FieldRegister, FieldInlineMetadataError> {
-    let register = register.ok_or(FieldInlineMetadataError::MissingOperand { operand })?;
+) -> Result<(), FieldInlineInstructionError> {
+    let register = register.ok_or(FieldInlineInstructionError::MissingOperand { operand })?;
     FieldRegister::new(register)
-        .ok_or(FieldInlineMetadataError::InvalidFieldRegister { operand, register })
+        .map(|_| ())
+        .ok_or(FieldInlineInstructionError::InvalidFieldRegister { operand, register })
 }
 
-fn x_register(register: Option<u8>, operand: &'static str) -> Result<u8, FieldInlineMetadataError> {
-    let register = register.ok_or(FieldInlineMetadataError::MissingOperand { operand })?;
+fn x_register(
+    register: Option<u8>,
+    operand: &'static str,
+) -> Result<u8, FieldInlineInstructionError> {
+    let register = register.ok_or(FieldInlineInstructionError::MissingOperand { operand })?;
     if register < common::constants::RISCV_REGISTER_COUNT {
         Ok(register)
     } else {
-        Err(FieldInlineMetadataError::InvalidXRegister { operand, register })
+        Err(FieldInlineInstructionError::InvalidXRegister { operand, register })
     }
 }
 
-fn encoded_immediate(value: i128) -> Result<FieldEncodedValue, FieldInlineMetadataError> {
-    let value =
-        u64::try_from(value).map_err(|_| FieldInlineMetadataError::InvalidImmediate(value))?;
-    Ok(FieldEncodedValue::from_u64(value))
-}
-
-#[cfg(all(test, feature = "serialization"))]
-#[expect(clippy::unwrap_used)]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+    use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
 
-    fn roundtrip(
-        metadata: &FieldInlineBytecodeMetadata,
-        validate: Validate,
-    ) -> Result<FieldInlineBytecodeMetadata, SerializationError> {
-        let mut bytes = Vec::new();
-        metadata
-            .serialize_with_mode(&mut bytes, Compress::No)
-            .unwrap();
-        FieldInlineBytecodeMetadata::deserialize_with_mode(&bytes[..], Compress::No, validate)
+    #[test]
+    fn field_write_bridges_require_nonzero_integer_destinations() {
+        for instruction_kind in [
+            Kind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+            Kind::FIELD_ADVICE_LIMB,
+        ] {
+            let mut row = JoltInstructionRow {
+                instruction_kind,
+                operands: NormalizedOperands {
+                    rd: Some(0),
+                    rs1: Some(1),
+                    rs2: Some(2),
+                    imm: 0,
+                },
+                ..Default::default()
+            };
+            assert!(validate_field_inline_instruction(&row).is_err());
+            row.operands.rd = Some(3);
+            assert!(validate_field_inline_instruction(&row).is_ok());
+        }
     }
 
     #[test]
-    fn metadata_roundtrips() {
-        let metadata = FieldInlineBytecodeMetadata::from_bytecode(&[], 0).unwrap();
-        assert_eq!(roundtrip(&metadata, Validate::Yes).unwrap(), metadata);
-    }
-
-    #[test]
-    fn metadata_deserialize_reruns_validation() {
-        // `from_bytecode` is the only validated constructor; a metadata assembled directly
-        // with an invalid field-register width must still be rejected when deserialized.
-        let tampered = FieldInlineBytecodeMetadata {
-            rows: Vec::new(),
-            field_register_log_k: FIELD_REGISTER_LOG_K + 1,
-            value_encoding: FieldValueEncoding::BN254_SCALAR_CANONICAL,
-            profile_fingerprint: 0,
+    fn field_operand_shape_rejects_unused_slots() {
+        let mut row = JoltInstructionRow {
+            instruction_kind: Kind::FIELD_ASSERT_ZERO,
+            operands: NormalizedOperands {
+                rs1: Some(3),
+                ..Default::default()
+            },
+            ..Default::default()
         };
-        assert!(roundtrip(&tampered, Validate::Yes).is_err());
-        assert!(roundtrip(&tampered, Validate::No).is_ok());
+        assert!(validate_field_inline_instruction(&row).is_ok());
+        row.operands.rd = Some(1);
+        assert_eq!(
+            validate_field_inline_instruction(&row),
+            Err(FieldInlineInstructionError::OperandShapeMismatch {
+                op: FieldInlineOp::AssertZero
+            })
+        );
     }
 }

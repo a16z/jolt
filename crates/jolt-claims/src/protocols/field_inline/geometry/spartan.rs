@@ -1,21 +1,11 @@
-use super::super::{
-    FieldInlineOpFlag, FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
-};
+use super::super::{FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial};
 
-pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS: [FieldInlineVirtualPolynomial; 13] = [
+pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS: [FieldInlineVirtualPolynomial; 5] = [
     FieldInlineVirtualPolynomial::FieldRs1Value,
     FieldInlineVirtualPolynomial::FieldRs2Value,
     FieldInlineVirtualPolynomial::FieldRdValue,
     FieldInlineVirtualPolynomial::FieldProduct,
     FieldInlineVirtualPolynomial::FieldInvProduct,
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Add),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Sub),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Mul),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Inv),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AssertEq),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadFromX),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::StoreToX),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
 ];
 
 pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT: usize =
@@ -36,30 +26,6 @@ pub fn outer_output_openings() -> [FieldInlineOpeningId; FIELD_INLINE_SPARTAN_OU
         outer_opening(FieldInlineVirtualPolynomial::FieldRdValue),
         outer_opening(FieldInlineVirtualPolynomial::FieldProduct),
         outer_opening(FieldInlineVirtualPolynomial::FieldInvProduct),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::Add,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::Sub,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::Mul,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::Inv,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::AssertEq,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::LoadFromX,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::StoreToX,
-        )),
-        outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::LoadImm,
-        )),
     ]
 }
 

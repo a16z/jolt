@@ -7,7 +7,7 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomi
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
-    CommitmentScheme, GroupSetupMetadata, PrecommittedRole, TransparentObjectSetup,
+    CommitmentGroupRole, CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup,
 };
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::{
@@ -16,6 +16,8 @@ use jolt_verifier::{
 };
 use jolt_witness::JoltWitnessPlane;
 
+#[cfg(feature = "field-inline")]
+use super::field_inline::FieldIncObject;
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -29,6 +31,9 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
+    /// The field increment polynomial, committed on every packed field-inline proof.
+    #[cfg(feature = "field-inline")]
+    pub field_inc: FieldIncObject<PCS>,
 }
 
 /// Validate inputs, commit the packed objects, and seed the transcript.
@@ -140,7 +145,8 @@ where
             reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
         });
     }
-    // Precommitted objects precede the trace because their profiles select its grouped row.
+    // Auxiliary objects commit before the trace because their frozen
+    // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
         Some(commit_advice::<PCS>(
             PCS::transparent_setup_context(&preprocessing.pcs_setup),
@@ -151,40 +157,41 @@ where
     } else {
         None
     };
+    #[cfg(feature = "field-inline")]
+    let field_inc = super::field_inline::commit_field_inc::<F, PCS>(
+        PCS::transparent_setup_context(&preprocessing.pcs_setup),
+        log_t,
+        witness,
+    )?;
 
-    let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
+    // Canonical public batch order: advice, (field-inline) the field increment polynomial,
+    // then the direct committed-program objects, then OneHotTrace.
+    let mut auxiliary_groups: Vec<(CommitmentGroupRole, &PCS::Output, &PCS::OpeningHint)> =
         untrusted_advice
             .as_ref()
-            .map(|object| {
-                (
-                    object.plan.precommitted_role(),
-                    &object.commitment,
-                    &object.hint,
-                )
-            })
+            .map(|object| (object.plan.group_role(), &object.commitment, &object.hint))
             .into_iter()
-            .chain(trusted_advice.map(|object| {
-                (
-                    object.plan.precommitted_role(),
-                    &object.commitment,
-                    &object.hint,
-                )
-            }))
+            .chain(
+                trusted_advice
+                    .map(|object| (object.plan.group_role(), &object.commitment, &object.hint)),
+            )
             .collect();
+    #[cfg(feature = "field-inline")]
+    auxiliary_groups.push((
+        jolt_claims::protocols::field_inline::lattice::field_inc_group_role(),
+        &field_inc.commitment,
+        &field_inc.hint,
+    ));
     if let Some(program) = preprocessing
         .committed_program
         .as_ref()
         .map(|data| &data.direct_program)
     {
         for object in &program.objects {
-            precommitted.push((
-                object.plan.precommitted_role(),
-                &object.commitment,
-                &object.hint,
-            ));
+            auxiliary_groups.push((object.plan.group_role(), &object.commitment, &object.hint));
         }
     }
-    let required_batch_polys = precommitted.len() + 1;
+    let required_batch_polys = auxiliary_groups.len() + 1;
     // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
         || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
@@ -204,7 +211,7 @@ where
                 log_k_chunk,
                 log_t,
             )?;
-            let precommitted_hints = precommitted
+            let group_hints = auxiliary_groups
                 .iter()
                 .map(|(_, _, hint)| *hint)
                 .collect::<Vec<_>>();
@@ -213,7 +220,7 @@ where
                 preprocessing.pcs_setup.default_layout_digest(),
                 plan.packing().slot_capacity(),
                 packed_trace_rows,
-                &precommitted_hints,
+                &group_hints,
             );
             let (commitment, hint) =
                 committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
@@ -231,6 +238,8 @@ where
         &commitment,
         untrusted_advice.as_ref().map(|object| &object.commitment),
         trusted_advice.map(|object| &object.commitment),
+        #[cfg(feature = "field-inline")]
+        Some(&field_inc.commitment),
         preprocessing
             .verifier
             .program
@@ -245,5 +254,7 @@ where
         commitment,
         hint,
         untrusted_advice,
+        #[cfg(feature = "field-inline")]
+        field_inc,
     })
 }

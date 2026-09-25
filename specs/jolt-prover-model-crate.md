@@ -427,8 +427,8 @@ Jolt VM:
   trace rows, advice tapes, final memory, committed oracles, virtual evals
 
 Jolt VM + field inline:
-  base trace rows, field_rows, FR register accesses, FR products, bridge rows,
-  FieldRdInc committed oracle, field-inline virtual evals
+  base trace rows, field_rows, field register accesses, field products,
+  bridge rows, FieldRdInc committed oracle, field-inline virtual evals
 
 Dory assist:
   operation traces, packing witnesses, Miller-loop witness, assist public inputs
@@ -479,9 +479,9 @@ ordinary row data:
 
 field-inline row data, when enabled:
   field op kind / selector flags
-  FR register operands and destination
-  FR register read/write values
-  bridge payloads for x-register <-> FR movement
+  field register operands and destination
+  field register read/write values
+  bridge payloads for x-register <-> field-register movement
 ```
 
 Pure field operations should not create incidental ordinary x-register effects.
@@ -536,14 +536,16 @@ Guest exposure should be SDK-level. On guest builds, field-element helper
 methods or intrinsics emit field-inline source rows such as:
 
 ```text
-FIELD_LOAD_FROM_X
+FIELD_LOAD_ACCUMULATE_FROM_REGISTER
 FIELD_LOAD_IMM
 FIELD_ADD
 FIELD_SUB
 FIELD_MUL
 FIELD_INV
 FIELD_ASSERT_EQ
-FIELD_STORE_TO_X
+FIELD_ASSERT_ZERO
+FIELD_LOAD_ACCUMULATE_FROM_MEMORY
+FIELD_ADVICE_LIMB
 ```
 
 `jolt-program` validates and expands these rows under the selected ISA/profile.
@@ -574,11 +576,11 @@ The field-inline witness provider owns:
 
 - `field_rows`: trace rows where native field instructions or bridge
   instructions are active;
-- FR register read/write events for `FieldRs1`, `FieldRs2`, and `FieldRd`;
+- field register read/write events for `FieldRs1`, `FieldRs2`, and `FieldRd`;
 - field opcode and field operand metadata needed by the bytecode read-RAF
   extension;
 - `FieldRdInc` committed polynomial material;
-- virtual FR values: `FieldRs1Value`, `FieldRs2Value`, `FieldRdValue`,
+- virtual field values: `FieldRs1Value`, `FieldRs2Value`, `FieldRdValue`,
   `FieldRegistersVal`, `FieldRs1Ra`, `FieldRs2Ra`, `FieldRdWa`, and
   write-address helpers;
 - product witnesses for `FieldProduct = FieldRs1Value * FieldRs2Value` and
@@ -589,36 +591,57 @@ The field-inline witness provider owns:
 Representative trace-to-witness mapping:
 
 ```text
-FIELD_MUL fr3, fr1, fr2:
+FIELD_MUL field[3], field[1], field[2]:
   field trace:
-    read fr1, read fr2, write fr3
+    read field[1], read field[2], write field[3]
   witness:
-    FieldRs1Value = fr1
-    FieldRs2Value = fr2
-    FieldRdValue = fr3
-    FieldProduct = fr1 * fr2
+    FieldRs1Value = field[1]
+    FieldRs2Value = field[2]
+    FieldRdValue = field[3]
+    FieldProduct = field[1] * field[2]
     IsFieldMul = 1
 
-FIELD_LOAD_FROM_X fr4, x10:
+FIELD_LOAD_ACCUMULATE_FROM_REGISTER field[4], x10:
   ordinary trace:
     read x10
   field trace:
-    write fr4
+    read field[4], write field[4]
   witness:
     Rs1Value comes from the ordinary register witness
-    FieldRdValue comes from the FR register witness
-    bridge row enforces FieldRdValue = decode_x_register(Rs1Value, F)
+    FieldRs1Value is the old field[4] value
+    FieldRdValue comes from the field register witness
+    bridge row enforces FieldRdValue = 2^64 * FieldRs1Value + Rs1Value
 
-FIELD_STORE_TO_X x11, fr4:
+FIELD_ADVICE_LIMB x11, field[4] -> field[4]:
   field trace:
-    read fr4
+    read field[4], write the quotient to field[4]
   ordinary trace:
-    write x11
+    write a range-checked advice limb to x11
   witness:
-    FieldRs1Value comes from the FR register witness
+    FieldRs1Value comes from the field register witness
+    FieldRdValue is the quotient
     RdWriteValue comes from the ordinary register witness
-    bridge row enforces RdWriteValue = encode_field_register(FieldRs1Value, F)
+    bridge row enforces FieldRs1Value = RdWriteValue + 2^64 * FieldRdValue
+
+FIELD_ASSERT_ZERO field[4]:
+  field trace:
+    read field[4], no write
+  witness:
+    IsFieldAssertZero * FieldRs1Value = 0
 ```
+
+Both x-register and memory ingress accumulate `old_destination * 2^64 + limb`
+modulo the proof-field modulus. Initialize the destination to zero with `FIELD_LOAD_IMM`
+before loading a new value, then process its limbs from most significant to
+least significant.
+
+Canonical readout consumes the source in place with `N` `FIELD_ADVICE_LIMB`
+instructions, checks its final quotient with `FIELD_ASSERT_ZERO`, and checks
+the emitted integer `L < p`. The relations alone establish equality modulo
+the proof-field modulus. To preserve the source, accumulate the emitted limbs
+high-to-low into that now-zero register; no scratch field register or reserved
+zero register is needed. Ergonomic `field_to`/`field_from` macros remain
+follow-up work in [#1934](https://github.com/a16z/jolt/issues/1934).
 
 Field inline v1 is native-field only: the field used by the Jolt proof and the
 field used by field-inline arithmetic are the same field. Prover code should not
@@ -636,7 +659,8 @@ preamble:
 stage 1:
   build the selected R1CS row layout: RV64 rows plus field_constraints rows
   compute selected Spartan outer openings
-  reuse ordinary openings for bridge columns and append only FR-local openings
+  reuse ordinary openings for bridge columns
+  append only openings local to field-inline
   retain committed output-claim rows/blindings in BlindFold mode
 
 stage 2:
@@ -655,8 +679,8 @@ stage 5:
 
 stage 6 BytecodeReadRaf:
   prove the field-inline extension of BytecodeReadRaf
-  bind FieldOpFlag(...), FieldRs1Ra, FieldRs2Ra, and FieldRdWa to the
-  selected bytecode row
+  bind OpFlags(CircuitFlags::Field*), FieldRs1Ra, FieldRs2Ra, and FieldRdWa
+  to the selected ordinary bytecode row
   output the existing BytecodeRa(i)@BytecodeReadRaf claims
 
 stage 6 FieldRegistersIncClaimReduction:
@@ -843,8 +867,8 @@ Required coverage:
 - witness provider reference checks for committed and virtual polynomial evals;
 - stage-8 opening plan, ZK opening data, and Dory-assist inputs;
 - field-inline witness provider checks for field_rows, bridge rows,
-  FieldRdInc, FR products, virtual FR evals, and bytecode RAF anchoring of
-  FieldRs1Ra/FieldRs2Ra/FieldRdWa;
+  FieldRdInc, field products, virtual field evals, and bytecode RAF anchoring
+  of FieldRs1Ra/FieldRs2Ra/FieldRdWa;
 - field-inline transparent and BlindFold prover paths accepted by the
   matching `jolt-verifier` path;
 - tampering of transcript, dependencies, openings, committed claims, advice

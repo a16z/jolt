@@ -10,18 +10,25 @@
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::{
     tamper_manifest,
-    verifier_fixtures::{standard_muldiv_case, VerifierFixtureCase},
+    verifier_fixtures::{ordinary_tamper_bases, VerifierFixtureCase},
 };
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::proof_claims::{offset_opening_claim, opening_claim};
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::{
+    bytecode as bytecode_reduction, program_image as program_image_reduction,
+};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::protocols::jolt::{
     geometry::{
         booleanity, bytecode,
         claim_reductions::{
-            advice, bytecode as bytecode_reduction, hamming_weight, increments,
-            instruction as instruction_claim_reduction, program_image as program_image_reduction,
+            advice, hamming_weight, increments, instruction as instruction_claim_reduction,
             registers as registers_claim_reduction,
         },
         dimensions::JoltFormulaDimensions,
@@ -51,141 +58,150 @@ use num_traits::Zero;
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage1_sumcheck_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage1_uniskip_round(&base);
-    tamper_each_stage1_remainder_round(&base);
-    tamper_stage1_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage1_uniskip_round(&base);
+        tamper_each_stage1_remainder_round(&base);
+        tamper_stage1_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage1_opening_claims_reject() {
-    let base = standard_muldiv_case();
-
-    for (target_name, id) in stage1_required_openings(&base) {
-        offset_claim_rejects(&base, target_name, id);
+    for base in ordinary_tamper_bases() {
+        for (target_name, id) in stage1_required_openings(&base) {
+            offset_claim_rejects(&base, target_name, id);
+        }
     }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_uniskip_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage2_uniskip_round(&base);
-    tamper_stage2_uniskip_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage2_uniskip_round(&base);
+        tamper_stage2_uniskip_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_sumcheck_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage2_batch_round(&base);
-    tamper_stage2_batch_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage2_batch_round(&base);
+        tamper_stage2_batch_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_input_claims_reject() {
-    let base = standard_muldiv_case();
-
-    // The Spartan-outer input openings this stage consumes are already swept by
-    // tampered_stage1_opening_claims_reject (every SPARTAN_OUTER_R1CS_INPUTS
-    // variable). Only the product uni-skip output claim, which lives under the
-    // SpartanProductVirtualization relation, is unique to this stage.
-    offset_claim_rejects(
-        &base,
-        "stage2.claims.product_uniskip_output_claim",
-        product_uniskip_opening(),
-    );
+    for base in ordinary_tamper_bases() {
+        // The Spartan-outer input openings this stage consumes are already swept by
+        // tampered_stage1_opening_claims_reject (every SPARTAN_OUTER_R1CS_INPUTS
+        // variable). Only the product uni-skip output claim, which lives under the
+        // SpartanProductVirtualization relation, is unique to this stage.
+        offset_claim_rejects(
+            &base,
+            "stage2.claims.product_uniskip_output_claim",
+            product_uniskip_opening(),
+        );
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_output_claims_reject() {
-    let base = standard_muldiv_case();
+    for base in ordinary_tamper_bases() {
+        // Every wire cell is present (the aliased reduction cells carry
+        // validated-equal copies of the product-remainder values), so a plain offset
+        // suffices; the aliased offsets are rejected by the generated
+        // `validate_aliases`, the rest by the batch fold.
+        for (target_name, id) in stage2_formula_output_openings() {
+            offset_claim_rejects(&base, target_name, id);
+        }
 
-    // Every wire cell is present (the aliased reduction cells carry
-    // validated-equal copies of the product-remainder values), so a plain offset
-    // suffices; the aliased offsets are rejected by the generated
-    // `validate_aliases`, the rest by the batch fold.
-    for (target_name, id) in stage2_formula_output_openings() {
-        offset_claim_rejects(&base, target_name, id);
-    }
-
-    for (target_name, id) in [
-        (
-            "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
-            spartan::write_lookup_output_to_rd_product(),
-        ),
-        (
-            "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
-            spartan::virtual_instruction_product(),
-        ),
-    ] {
-        offset_claim_rejects(&base, target_name, id);
+        for (target_name, id) in [
+            (
+                "stage2.claims.batch_outputs.product_remainder.write_lookup_output_to_rd",
+                spartan::write_lookup_output_to_rd_product(),
+            ),
+            (
+                "stage2.claims.batch_outputs.product_remainder.virtual_instruction",
+                spartan::virtual_instruction_product(),
+            ),
+        ] {
+            offset_claim_rejects(&base, target_name, id);
+        }
     }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage2_ram_phase_config_reject() {
-    let base = standard_muldiv_case();
+    for base in ordinary_tamper_bases() {
+        tamper_manifest::assert_verifier_fixture_tamper_rejects(
+            manifest_target("proof.rw_config"),
+            &base,
+            |case| {
+                case.proof.rw_config.ram_rw_phase1_num_rounds =
+                    case.proof.trace_length.ilog2() as u8 + 1;
+            },
+        );
 
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("proof.rw_config"),
-        &base,
-        |case| {
-            case.proof.rw_config.ram_rw_phase1_num_rounds =
-                case.proof.trace_length.ilog2() as u8 + 1;
-        },
-    );
-
-    tamper_manifest::assert_verifier_fixture_tamper_rejects(
-        manifest_target("proof.rw_config"),
-        &base,
-        |case| {
-            case.proof.rw_config.ram_rw_phase2_num_rounds = case.proof.ram_K.ilog2() as u8 + 1;
-        },
-    );
+        tamper_manifest::assert_verifier_fixture_tamper_rejects(
+            manifest_target("proof.rw_config"),
+            &base,
+            |case| {
+                case.proof.rw_config.ram_rw_phase2_num_rounds = case.proof.ram_K.ilog2() as u8 + 1;
+            },
+        );
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage3_sumcheck_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage3_batch_round(&base);
-    tamper_stage3_batch_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage3_batch_round(&base);
+        tamper_stage3_batch_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage3_output_claims_reject() {
-    let base = standard_muldiv_case();
-
-    for (target_name, id) in stage3_formula_output_openings() {
-        offset_claim_rejects(&base, target_name, id);
+    for base in ordinary_tamper_bases() {
+        for (target_name, id) in stage3_formula_output_openings() {
+            offset_claim_rejects(&base, target_name, id);
+        }
     }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage4_sumcheck_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage4_batch_round(&base);
-    tamper_stage4_batch_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage4_batch_round(&base);
+        tamper_stage4_batch_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage4_output_claims_reject() {
-    let base = standard_muldiv_case();
-
-    for (target_name, id) in stage4_formula_output_openings() {
-        offset_claim_rejects(&base, target_name, id);
+    for base in ordinary_tamper_bases() {
+        for (target_name, id) in stage4_formula_output_openings() {
+            offset_claim_rejects(&base, target_name, id);
+        }
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[test]
 fn tampered_stage4_advice_claims_reject() {
     let base = real_advice_case();
@@ -198,42 +214,48 @@ fn tampered_stage4_advice_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage5_sumcheck_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage5_batch_round(&base);
-    tamper_stage5_batch_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage5_batch_round(&base);
+        tamper_stage5_batch_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage5_output_claims_reject() {
-    let base = standard_muldiv_case();
-
-    for (target_name, id) in stage5_formula_output_openings(&base) {
-        offset_claim_rejects(&base, target_name, id);
+    for base in ordinary_tamper_bases() {
+        for (target_name, id) in stage5_formula_output_openings(&base) {
+            offset_claim_rejects(&base, target_name, id);
+        }
     }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage6_sumcheck_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage6_address_phase_round(&base);
-    tamper_stage6_address_phase_round_counts(&base);
-    tamper_each_stage6_cycle_phase_round(&base);
-    tamper_stage6_cycle_phase_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage6_address_phase_round(&base);
+        tamper_stage6_address_phase_round_counts(&base);
+        tamper_each_stage6_cycle_phase_round(&base);
+        tamper_stage6_cycle_phase_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage6_output_claims_reject() {
-    let base = standard_muldiv_case();
-
-    for (target_name, id) in stage6_formula_output_openings(&base) {
-        offset_claim_rejects(&base, target_name, id);
+    for base in ordinary_tamper_bases() {
+        for (target_name, id) in stage6_formula_output_openings(&base) {
+            offset_claim_rejects(&base, target_name, id);
+        }
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[test]
 fn tampered_stage6_advice_claims_reject() {
     let base = real_advice_case();
@@ -246,22 +268,27 @@ fn tampered_stage6_advice_claims_reject() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage7_sumcheck_payload_reject() {
-    let base = standard_muldiv_case();
-    tamper_each_stage7_batch_round(&base);
-    tamper_stage7_batch_round_counts(&base);
+    for base in ordinary_tamper_bases() {
+        tamper_each_stage7_batch_round(&base);
+        tamper_stage7_batch_round_counts(&base);
+    }
 }
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 #[test]
 fn tampered_stage7_output_claims_reject() {
-    let base = standard_muldiv_case();
-
-    for (target_name, id) in stage7_formula_output_openings(&base) {
-        offset_claim_rejects(&base, target_name, id);
+    for base in ordinary_tamper_bases() {
+        for (target_name, id) in stage7_formula_output_openings(&base) {
+            offset_claim_rejects(&base, target_name, id);
+        }
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[test]
 fn tampered_stage7_advice_claims_reject() {
     let base = real_advice_case();
@@ -311,17 +338,31 @@ fn tampered_stage6_sumcheck_payload_reject() {}
 #[ignore = "enable --features prover-fixtures in a non-ZK build to live-generate and tamper verifier-native proofs"]
 fn tampered_stage7_sumcheck_payload_reject() {}
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+/// Legacy advice fixture: only when field-inline is disabled (see `tampering/mod.rs`).
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 fn real_advice_case() -> VerifierFixtureCase {
     crate::support::verifier_fixtures::standard_advice_consumer_case()
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+// Field-inline verification currently requires full public bytecode.
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 fn real_committed_case() -> VerifierFixtureCase {
     crate::support::verifier_fixtures::standard_committed_muldiv_case()
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[test]
 fn tampered_stage4_program_image_contribution_rejects() {
     let base = real_committed_case();
@@ -332,7 +373,11 @@ fn tampered_stage4_program_image_contribution_rejects() {
     );
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[test]
 fn tampered_stage6_committed_bytecode_claims_reject() {
     let base = real_committed_case();
@@ -364,7 +409,11 @@ fn tampered_stage6_committed_bytecode_claims_reject() {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[test]
 fn tampered_stage6_committed_program_image_claim_rejects() {
     let base = real_committed_case();
@@ -382,7 +431,11 @@ fn tampered_stage6_committed_program_image_claim_rejects() {
     }
 }
 
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    not(feature = "zk"),
+    not(feature = "field-inline")
+))]
 #[test]
 fn tampered_stage7_committed_claims_reject() {
     let base = real_committed_case();

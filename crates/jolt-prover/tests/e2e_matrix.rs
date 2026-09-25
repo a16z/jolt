@@ -1,15 +1,10 @@
-//! The end-to-end acceptance matrix: guests × protocol modes.
+//! End-to-end acceptance: one guest table per instruction profile, across all modes.
 //!
-//! One guest table; the mode is whichever protocol this crate was compiled
-//! for (Dory clear by default, Dory ZK under `zk`, Akita under `akita`), so
-//! the three prover lanes in CI prove the same guests and a guest missing from
-//! a lane is a build-matrix gap, not a test-file gap. Every case checks the
-//! guest's output against a natively computed value, proves with the
-//! optimized backend, and verifies through the public verifier API. The clear
-//! arm deliberately overlaps the jolt-verifier fixture completeness cases so
-//! the table stays identical across modes. Mode-specific behavior (tampering,
-//! committed programs, forced one-hot sizes) lives in `zk_e2e.rs` and
-//! `akita_e2e.rs`.
+//! Every case checks native expected output, proves with the optimized backend,
+//! and verifies through the public verifier API. Field-inline builds select the
+//! active field-ops and inactive muldiv cases; ordinary builds select the general
+//! guest table. Specialized suites retain tampering, reference-backend parity,
+//! committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
 mod support;
@@ -18,35 +13,47 @@ mod support;
 #[expect(clippy::expect_used, reason = "end-to-end fixtures fail loudly")]
 mod matrix {
     // Host-side inline registrations for the hashing guests.
+    #[cfg(not(feature = "field-inline"))]
     extern crate jolt_inlines_keccak256;
+    #[cfg(not(feature = "field-inline"))]
     extern crate jolt_inlines_sha2;
 
+    #[cfg(not(feature = "field-inline"))]
     use std::collections::BTreeMap;
 
+    #[cfg(not(feature = "field-inline"))]
     use serde::Serialize;
+    #[cfg(not(feature = "field-inline"))]
     use sha2::{Digest, Sha256};
+    #[cfg(not(feature = "field-inline"))]
     use sha3::Keccak256;
 
+    #[cfg(not(feature = "field-inline"))]
     use crate::support::GuestCase;
 
+    #[cfg(not(feature = "field-inline"))]
     fn encode<T: Serialize>(value: &T) -> Vec<u8> {
         postcard::to_stdvec(value).expect("serialize guest value")
     }
 
+    #[cfg(not(feature = "field-inline"))]
     fn sha256(bytes: &[u8]) -> [u8; 32] {
         Sha256::digest(bytes).into()
     }
 
+    #[cfg(not(feature = "field-inline"))]
     fn keccak256(bytes: &[u8]) -> [u8; 32] {
         Keccak256::digest(bytes).into()
     }
 
+    #[cfg(not(feature = "field-inline"))]
     fn message(len: usize) -> Vec<u8> {
         (0..len).map(|i| i as u8).collect()
     }
 
     /// Two full Keccak rate blocks as the `sha3_aligned` guest takes them; the
     /// guest hashes their little-endian bytes.
+    #[cfg(not(feature = "field-inline"))]
     fn keccak_blocks() -> [[u64; 17]; 2] {
         let mut blocks = [[0u64; 17]; 2];
         for (index, lane) in blocks.iter_mut().flatten().enumerate() {
@@ -55,6 +62,7 @@ mod matrix {
         blocks
     }
 
+    #[cfg(not(feature = "field-inline"))]
     fn keccak_block_bytes(blocks: &[[u64; 17]; 2]) -> Vec<u8> {
         blocks
             .iter()
@@ -64,6 +72,7 @@ mod matrix {
     }
 
     /// Native replica of the btreemap guest's workload.
+    #[cfg(not(feature = "field-inline"))]
     fn btreemap_reference(n: u32) -> u128 {
         fn wyhash64(mut x: u64) -> u64 {
             x ^= x >> 32;
@@ -95,6 +104,7 @@ mod matrix {
         (map.len() as u128).wrapping_add(u128::from(range_sum))
     }
 
+    #[cfg(not(feature = "field-inline"))]
     macro_rules! guests {
         ($emit:ident) => {
             $emit! {
@@ -168,6 +178,16 @@ mod matrix {
         };
     }
 
+    #[cfg(feature = "field-inline")]
+    macro_rules! guests {
+        ($emit:ident) => {
+            $emit! {
+                field_ops => crate::support::field_inline::field_ops();
+                muldiv => crate::support::field_inline::muldiv();
+            }
+        };
+    }
+
     macro_rules! emit_tests {
         ($($test:ident => $case:expr;)*) => {
             $(
@@ -183,23 +203,26 @@ mod matrix {
     // matrix cell it proved.
     #[cfg(not(any(feature = "zk", feature = "akita")))]
     mod clear {
+        #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
     }
 
     #[cfg(all(feature = "zk", not(feature = "akita")))]
     mod zk {
+        #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
     }
 
     #[cfg(feature = "akita")]
     mod akita {
+        #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
     }
 
-    #[cfg(not(feature = "akita"))]
+    #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     mod mode {
         use jolt_crypto::{Bn254G1, Pedersen};
         use jolt_dory::DoryScheme;
@@ -272,7 +295,7 @@ mod matrix {
         }
     }
 
-    #[cfg(feature = "akita")]
+    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     mod mode {
         use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_program::execution::OwnedTrace;
@@ -337,6 +360,50 @@ mod matrix {
                 trusted.as_ref().map(|object| &object.commitment),
             )
             .expect("Akita proof must verify");
+        }
+    }
+    #[cfg(feature = "field-inline")]
+    mod mode {
+        #[cfg(feature = "akita")]
+        use jolt_prover::akita::JoltAkitaBackend;
+        #[cfg(not(feature = "akita"))]
+        use jolt_prover::JoltBackend;
+
+        #[cfg(feature = "zk")]
+        use crate::support;
+        #[cfg(feature = "akita")]
+        use crate::support::field_inline::akita;
+        #[cfg(not(feature = "akita"))]
+        use crate::support::field_inline::dory;
+        use crate::support::GuestCase;
+
+        pub fn prove_and_verify(case: &GuestCase) {
+            #[cfg(feature = "zk")]
+            {
+                let case = case.clone();
+                support::with_zk_stack(move || prove_case(&case));
+            }
+            #[cfg(not(feature = "zk"))]
+            prove_case(case);
+        }
+
+        fn prove_case(case: &GuestCase) {
+            #[cfg(not(feature = "akita"))]
+            {
+                let (preprocessing, public_io, proof) = dory::prove(case, JoltBackend::optimized());
+                dory::verify_full(&preprocessing, &public_io, &proof)
+                    .expect("field-inline Dory proof must verify");
+            }
+            #[cfg(feature = "akita")]
+            {
+                let (output, ()) = akita::prove(case, JoltAkitaBackend::optimized(), |_, _| ());
+                akita::verify_full(
+                    &output.verifier_preprocessing,
+                    &output.public_io,
+                    &output.proof,
+                )
+                .expect("field-inline Akita proof must verify");
+            }
         }
     }
 }

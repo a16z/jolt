@@ -1,37 +1,45 @@
 //! Per-instruction test helpers.
 
 use std::any::TypeId;
+use std::fmt::Debug;
 
 use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltInstructionRowData};
 use rand::prelude::*;
 use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
-use tracer::instruction::format::{InstructionFormat, InstructionRegisterState};
-use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
+use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVInstruction, RISCVTrace};
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
 
+/// Generate a cycle together with the register state needed to replay it.
 pub trait RandomLookupCycle: JoltCycle {
     fn random(rng: &mut StdRng) -> Self;
+    fn initialize_cpu(&self, cpu: &mut Cpu);
 }
 
 impl<T> RandomLookupCycle for RISCVCycle<T>
 where
-    T: tracer::instruction::RISCVInstruction + JoltInstructionRowData,
+    T: RISCVInstruction + JoltInstructionRowData,
 {
     fn random(rng: &mut StdRng) -> Self {
-        let instruction = T::random(rng);
-        let concrete: tracer::instruction::Instruction = instruction.into();
-        let source_instruction = concrete.source_instruction();
-        let register_state =
-            <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
-                rng,
-                &source_instruction.row().operands,
-            );
-        Self {
-            instruction,
-            register_state,
-            ram_access: T::RAMAccess::default(),
+        T::random_cycle(rng)
+    }
+
+    #[expect(
+        clippy::unwrap_used,
+        reason = "register values require corresponding operands"
+    )]
+    fn initialize_cpu(&self, cpu: &mut Cpu) {
+        let operands = self.instruction.jolt_instruction_row().operands;
+        if let Some((pre, _)) = self.rd_vals() {
+            cpu.write_register(operands.rd.unwrap() as usize, pre as i64);
         }
+        if let Some(value) = self.rs1_val() {
+            cpu.write_register(operands.rs1.unwrap() as usize, value as i64);
+        }
+        if let Some(value) = self.rs2_val() {
+            cpu.write_register(operands.rs2.unwrap() as usize, value as i64);
+        }
+        T::initialize_test_cpu(self, cpu);
     }
 }
 
@@ -45,7 +53,7 @@ pub fn materialize_entry_test_fn<T, C, I>(
     cycle_wrapper: impl Fn(C) -> T,
     instr_wrapper: impl Fn(C::Instruction) -> I,
 ) where
-    T: LookupQuery<XLEN> + core::fmt::Debug,
+    T: LookupQuery<XLEN> + Debug,
     C: RandomLookupCycle,
     I: InstructionLookupTable<XLEN>,
 {
@@ -83,7 +91,7 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
     instr_wrapper: impl Fn(C::Instruction) -> I,
 ) where
     C: RandomLookupCycle,
-    T: LookupQuery<XLEN> + core::fmt::Debug,
+    T: LookupQuery<XLEN> + Debug,
     I: JoltInstructionRowData + Flags,
 {
     let mut rng = StdRng::seed_from_u64(12345);
@@ -135,14 +143,13 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
 /// `C: Copy` lets us print the failing cycle in the assert message after it
 /// has been moved into the wrapper.
 #[doc(hidden)]
-#[expect(clippy::unwrap_used)]
 #[expect(
     clippy::panic,
     reason = "deliberate guard against silent passes; see body"
 )]
 pub fn lookup_output_matches_trace_test_fn<C, T>(cycle_wrapper: impl Fn(C) -> T)
 where
-    C: RandomLookupCycle + Copy + core::fmt::Debug,
+    C: RandomLookupCycle + Copy + Debug,
     C::Instruction: RISCVTrace + 'static,
     RISCVCycle<C::Instruction>: Into<Cycle>,
     T: LookupQuery<XLEN>,
@@ -152,17 +159,10 @@ where
         let raw: C = RandomLookupCycle::random(&mut rng);
         let instr = raw.instruction();
         let normalized = instr.jolt_instruction_row();
-        let rs1_idx = normalized.operands.rs1;
-        let rs2_idx = normalized.operands.rs2;
         let rd_idx = normalized.operands.rd;
 
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
-        if let Some(rs1_val) = raw.rs1_val() {
-            cpu.write_register(rs1_idx.unwrap() as usize, rs1_val as i64);
-        }
-        if let Some(rs2_val) = raw.rs2_val() {
-            cpu.write_register(rs2_idx.unwrap() as usize, rs2_val as i64);
-        }
+        raw.initialize_cpu(&mut cpu);
 
         instr.trace(&mut cpu, None);
 

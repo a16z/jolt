@@ -1,10 +1,11 @@
 //! Verifier error types.
 
-use jolt_claims::protocols::jolt::{
-    JoltChallengeId, JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltRelationId,
-};
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
+use jolt_riscv::JoltInstructionKind;
 
 use crate::config::JoltProtocolConfig;
+use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
+use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
@@ -13,6 +14,21 @@ pub enum VerifierError {
         expected: JoltProtocolConfig,
         got: JoltProtocolConfig,
     },
+
+    #[error("the protocol axis `{axis}` is not supported on this path: {pending}")]
+    ProtocolAxisUnimplemented {
+        axis: &'static str,
+        pending: &'static str,
+    },
+
+    #[error("proof payload {field} is required by the configured protocol but missing")]
+    MissingProofPayload { field: &'static str },
+
+    #[error(
+        "verifier preprocessing payload {field} is required by the configured protocol but \
+         missing"
+    )]
+    MissingPreprocessingPayload { field: &'static str },
 
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
@@ -30,10 +46,10 @@ pub enum VerifierError {
     UnexpectedOpeningClaims,
 
     #[error("missing opening claim scalar {id:?}")]
-    MissingOpeningClaim { id: JoltOpeningId },
+    MissingOpeningClaim { id: ComposedOpeningId },
 
     #[error("unexpected opening claim scalar {id:?}")]
-    UnexpectedOpeningClaim { id: JoltOpeningId },
+    UnexpectedOpeningClaim { id: ComposedOpeningId },
 
     #[error("vector commitment setup is missing from verifier preprocessing")]
     MissingVectorCommitmentSetup,
@@ -66,19 +82,19 @@ pub enum VerifierError {
     InvalidCommittedProgram { reason: String },
 
     #[error("missing stage claim challenge input {id:?}")]
-    MissingStageClaimChallenge { id: JoltChallengeId },
+    MissingStageClaimChallenge { id: VerifierChallengeId },
 
     #[error(transparent)]
     ChallengeDraw(#[from] jolt_claims::ChallengeDrawError),
 
     #[error("missing stage claim public input {id:?}")]
-    MissingStageClaimDerived { id: JoltDerivedId },
+    MissingStageClaimDerived { id: VerifierDerivedId },
 
     #[error("stage {stage} opening inputs {left:?} and {right:?} must have the same evaluation")]
     StageClaimOpeningMismatch {
         stage: String,
-        left: JoltOpeningId,
-        right: JoltOpeningId,
+        left: ComposedOpeningId,
+        right: ComposedOpeningId,
     },
 
     #[error("stage {stage} sumcheck verification failed: {reason}")]
@@ -110,6 +126,11 @@ pub enum VerifierError {
 
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
+
+    #[error("bytecode carries {kind:?}, which this verifier build has no constraints for")]
+    UnsupportedInstruction { kind: JoltInstructionKind },
+    #[error("invalid field-inline bytecode: {reason}")]
+    InvalidFieldInlineBytecode { reason: String },
 
     #[error("program preprocessing digest failed: {reason}")]
     PreprocessingDigestFailed { reason: String },

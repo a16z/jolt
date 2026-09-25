@@ -24,7 +24,9 @@ pub(crate) fn field_rd_inc_val_evaluation() -> FieldInlineOpeningId {
     )
 }
 
-pub(crate) fn field_rd_inc_reduced() -> FieldInlineOpeningId {
+/// The reduced `FieldRdInc` opening — the single field-inline claim handed to
+/// the stage-8 final opening planner.
+pub fn field_rd_inc_reduced() -> FieldInlineOpeningId {
     FieldInlineOpeningId::committed(
         FieldInlineCommittedPolynomial::FieldRdInc,
         FieldInlineRelationId::FieldRegistersIncClaimReduction,

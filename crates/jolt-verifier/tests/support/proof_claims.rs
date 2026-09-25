@@ -177,6 +177,30 @@ fn claim_mut_from_spartan_outer<F: JoltField>(
             CircuitFlags::IsCompressed => Some(&mut claims.is_compressed),
             CircuitFlags::IsFirstInSequence => Some(&mut claims.is_first_in_sequence),
             CircuitFlags::IsLastInSequence => Some(&mut claims.is_last_in_sequence),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAdd => Some(&mut claims.field_add),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldSub => Some(&mut claims.field_sub),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldMul => Some(&mut claims.field_mul),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldInv => Some(&mut claims.field_inv),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAssertEq => Some(&mut claims.field_assert_eq),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadAccumulateFromRegister => {
+                Some(&mut claims.field_load_accumulate_from_register)
+            }
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAssertZero => Some(&mut claims.field_assert_zero),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadImm => Some(&mut claims.field_load_imm),
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldLoadAccumulateFromMemory => {
+                Some(&mut claims.field_load_accumulate_from_memory)
+            }
+            #[cfg(feature = "field-inline")]
+            CircuitFlags::FieldAdviceLimb => Some(&mut claims.field_advice_limb),
         },
         _ => None,
     }
@@ -392,10 +416,10 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
     stage6b: &'a mut Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&'a mut F> {
-    for (stage, opening_claim) in stage6a.bytecode_read_raf.val_stages.iter_mut().enumerate() {
-        if id == bytecode_reduction::bytecode_val_stage_opening(stage) {
-            return Some(opening_claim);
-        }
+    if let Some(stage) = (0..stage6a.bytecode_read_raf.val_stages.len())
+        .find(|&stage| id == bytecode_reduction::bytecode_val_stage_opening(stage))
+    {
+        return stage6a.bytecode_read_raf.val_stages.get_mut(stage);
     }
     if let Some(reduction) = stage6b.bytecode_reduction.as_mut() {
         if id == bytecode_reduction::cycle_phase_intermediate_opening() {

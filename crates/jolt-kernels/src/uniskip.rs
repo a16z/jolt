@@ -10,6 +10,8 @@
 //! backend, and the same backend's `PrepareKernel<F, R>` remainder slot
 //! reclaims it once the uni-skip challenge is drawn.
 
+use jolt_verifier::stages::relations::OpeningIdOf;
+
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::JoltField;
@@ -24,13 +26,14 @@ use crate::{KernelError, ProofSession};
 /// The uni-skip front slot of a stage. `R` is never named by the methods —
 /// it types the slot to the remainder relation the parked state becomes.
 /// `I` carries the upstream claims needed for interpolation: `()` for outer,
-/// and the three typed stage-1 claims for product virtualization.
+/// and the selected stage-1 product claims for product virtualization (including
+/// the two field-register products under `field-inline`).
 pub trait UniskipKernel<F, R, I = ()>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     /// Compute the uni-skip first-round state and park it in the session

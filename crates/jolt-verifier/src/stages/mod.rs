@@ -7,7 +7,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::protocols::jolt::{
     geometry::claim_reductions::{bytecode, program_image},
     geometry::dimensions::JoltFormulaDimensions,
-    geometry::error::JoltFormulaPointError,
+    geometry::error::PointGeometryError,
     BytecodeClaimReductionLayout, JoltOneHotConfig, JoltRelationId, PrecommittedClaimReduction,
     ProgramImageClaimReductionLayout, TracePolynomialOrder,
 };
@@ -21,6 +21,10 @@ use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
+pub(crate) mod derivations;
+#[cfg(feature = "field-inline")]
+pub mod field_inline_bytecode;
+pub mod ids;
 pub mod relations;
 pub mod stage1;
 pub mod stage2;
@@ -138,7 +142,7 @@ impl PrecommittedSchedule {
         #[cfg(not(feature = "akita"))] trusted_max_advice_bytes: Option<usize>,
         #[cfg(not(feature = "akita"))] untrusted_max_advice_bytes: Option<usize>,
         committed_program: Option<CommittedProgramSchedule>,
-    ) -> Result<Self, JoltFormulaPointError> {
+    ) -> Result<Self, PointGeometryError> {
         #[cfg(not(feature = "akita"))]
         let mut candidates =
             advice::candidate_total_vars(trusted_max_advice_bytes, untrusted_max_advice_bytes);

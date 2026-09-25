@@ -72,6 +72,36 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub outer_is_first_in_sequence: C,
     #[opening(OpFlags(CircuitFlags::IsLastInSequence), from = SpartanOuter)]
     pub outer_is_last_in_sequence: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAdd), from = SpartanOuter)]
+    pub outer_field_add: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldSub), from = SpartanOuter)]
+    pub outer_field_sub: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldMul), from = SpartanOuter)]
+    pub outer_field_mul: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldInv), from = SpartanOuter)]
+    pub outer_field_inv: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAssertEq), from = SpartanOuter)]
+    pub outer_field_assert_eq: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadAccumulateFromRegister), from = SpartanOuter)]
+    pub outer_field_load_accumulate_from_register: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAssertZero), from = SpartanOuter)]
+    pub outer_field_assert_zero: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadImm), from = SpartanOuter)]
+    pub outer_field_load_imm: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldLoadAccumulateFromMemory), from = SpartanOuter)]
+    pub outer_field_load_accumulate_from_memory: C,
+    #[cfg(feature = "field-inline")]
+    #[opening(OpFlags(CircuitFlags::FieldAdviceLimb), from = SpartanOuter)]
+    pub outer_field_advice_limb: C,
     #[opening(PC, from = SpartanOuter)]
     pub outer_pc: C,
     #[opening(OpFlags(CircuitFlags::Jump), from = SpartanProductVirtualization)]

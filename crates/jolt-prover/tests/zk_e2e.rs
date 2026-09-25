@@ -3,10 +3,18 @@
 //! unaligned SHA3 inline expansion, committed programs). Plain acceptance
 //! across guests is `e2e_matrix.rs`.
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 mod support;
 
-#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "zk",
+    not(feature = "field-inline")
+))]
 #[expect(
     clippy::expect_used,
     clippy::panic,

@@ -900,7 +900,7 @@ fn input_expression<F: RingCore>(&self) -> JoltExpr<F> {
 
 **Files:** `crates/jolt-verifier/src/stages/zk/blindfold/mod.rs` (`ram_val_check_init` → publics), `blindfold/stage4.rs`.
 
-- [ ] **Step 1:** Replace `ram_val_check_init` (which built `RamValCheckInit`) with code that pushes `(VerifierPublicId::Jolt(InitEval), value)` and `(InitSelector(kind), value)` into `SourceValues` for each present contribution — values identical to today's selectors/public_eval. The advice openings remain hidden `VerifierOpeningId` witnesses.
+- [ ] **Step 1:** Replace `ram_val_check_init` (which built `RamValCheckInit`) with code that pushes `(VerifierPublicId::Jolt(InitEval), value)` and `(InitSelector(kind), value)` into `SourceValues` for each present contribution — values identical to today's selectors/public_eval. The advice openings remain hidden `ComposedOpeningId` witnesses.
 - [ ] **Step 2: Gate hard.** clippy ×2; `muldiv --features host` AND `host,zk`; the `advice` e2e tests; `core-fixtures{,zk}` (sandbox off). All must pass before commit. Commit as one self-contained "val_check remodel" change (Tasks 7.1–7.4).
 
 ---

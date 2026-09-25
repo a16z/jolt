@@ -1,3 +1,4 @@
+use crate::instruction::registers::virtual_right_shift_r::RegisterStateVirtualRightShiftR;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -11,6 +12,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatVirtualRightShiftR<32>,
+    registers = RegisterStateVirtualRightShiftR<32>,
     ram = ()
 );
 

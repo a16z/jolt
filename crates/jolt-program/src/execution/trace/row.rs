@@ -157,8 +157,8 @@ impl TraceRowMeta {
     }
 }
 
-const IS_LOAD: u16 = 1 << CircuitFlags::Load as u16;
-const IS_STORE: u16 = 1 << CircuitFlags::Store as u16;
+const IS_LOAD: u32 = 1 << CircuitFlags::Load as u32;
+const IS_STORE: u32 = 1 << CircuitFlags::Store as u32;
 const VSR_NONE: u16 = u16::MAX;
 const OPERAND_NONE: u8 = u8::MAX;
 
@@ -177,7 +177,7 @@ pub struct TraceRow {
     slots: [u64; 4],
     address: u64,
     imm_abs: u64,
-    circuit_flags: u16,
+    circuit_flags: u32,
     kind_tag: u16,
     virtual_sequence_remaining: u16,
     instruction_flags: u8,
@@ -389,9 +389,9 @@ impl TraceRow {
             virtual_sequence_remaining: (self.virtual_sequence_remaining != VSR_NONE)
                 .then_some(self.virtual_sequence_remaining),
             is_first_in_sequence: self.circuit_flags
-                & (1 << CircuitFlags::IsFirstInSequence as u16)
+                & (1 << CircuitFlags::IsFirstInSequence as u32)
                 != 0,
-            is_compressed: self.circuit_flags & (1 << CircuitFlags::IsCompressed as u16) != 0,
+            is_compressed: self.circuit_flags & (1 << CircuitFlags::IsCompressed as u32) != 0,
         }
     }
 

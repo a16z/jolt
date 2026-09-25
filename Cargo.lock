@@ -2557,6 +2557,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "field-ops"
+version = "0.1.0"
+dependencies = [
+ "field-ops-guest",
+ "jolt-field",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-sdk",
+ "jolt-witness",
+]
+
+[[package]]
+name = "field-ops-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-sdk",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3157,6 +3176,7 @@ dependencies = [
  "akita-schedules",
  "akita-types",
  "bincode 2.0.1",
+ "jolt-claims",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
@@ -3669,6 +3689,7 @@ dependencies = [
  "jolt-poly",
  "jolt-profiling",
  "jolt-program",
+ "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
  "jolt-transcript",
@@ -3693,6 +3714,7 @@ dependencies = [
  "jolt-claims",
  "jolt-field",
  "jolt-poly",
+ "jolt-riscv",
  "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",

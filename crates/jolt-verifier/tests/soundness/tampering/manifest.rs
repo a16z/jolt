@@ -21,6 +21,18 @@ fn batch_sumcheck_errors_have_rejection_phases() {
         ("Stage6a", VerifierPhase::Stage6),
         ("Stage6b", VerifierPhase::Stage6),
         ("Stage7", VerifierPhase::Stage7),
+        #[cfg(feature = "field-inline")]
+        ("FieldRegistersSpartanOuter", VerifierPhase::Stage1),
+        #[cfg(feature = "field-inline")]
+        ("FieldRegistersClaimReduction", VerifierPhase::Stage2),
+        #[cfg(feature = "field-inline")]
+        ("FieldRegistersProduct", VerifierPhase::Stage2),
+        #[cfg(feature = "field-inline")]
+        ("FieldRegistersReadWriteChecking", VerifierPhase::Stage4),
+        #[cfg(feature = "field-inline")]
+        ("FieldRegistersValEvaluation", VerifierPhase::Stage5),
+        #[cfg(feature = "field-inline")]
+        ("FieldRegistersIncClaimReduction", VerifierPhase::Stage6),
     ] {
         let error = VerifierError::StageClaimSumcheckFailed {
             stage: stage.to_string(),
@@ -107,7 +119,7 @@ fn tamper_manifest_covers_top_level_proof_fields() {
     let missing = proof_field_paths()
         .iter()
         .copied()
-        .filter(|path| !manifest_paths.contains(path))
+        .filter(|path| !manifest_paths.contains(*path))
         .collect::<Vec<_>>();
 
     assert!(

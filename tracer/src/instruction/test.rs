@@ -2,7 +2,7 @@ use core::panic::AssertUnwindSafe;
 use std::panic;
 
 use crate::emulator::cpu::Cpu;
-use crate::instruction::format::{InstructionFormat, InstructionRegisterState};
+use crate::instruction::registers::InstructionRegisterState;
 #[cfg(test)]
 use jolt_riscv::RV64IMAC_JOLT;
 
@@ -156,11 +156,10 @@ where
         let instruction = I::random(&mut rng);
         let concrete: Instruction = instruction.into();
         let source = concrete.source_instruction();
-        let register_state =
-            <<I::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
-                &mut rng,
-                &source.row().operands,
-            );
+        let register_state = <I::RegisterState as InstructionRegisterState>::random(
+            &mut rng,
+            &source.row().operands,
+        );
 
         let mut original_cpu = Cpu::new(Box::new(DummyTerminal::default()));
         let memory_config = common::jolt_device::MemoryConfig {

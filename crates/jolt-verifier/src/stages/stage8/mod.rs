@@ -1,6 +1,8 @@
 //! Stage 8: the final PCS opening. [`verify`] is the per-build entry point;
 //! the feature-specific statement assembly lives beside it.
 
+#[cfg(all(feature = "field-inline", not(feature = "akita")))]
+pub mod field_inline;
 pub mod outputs;
 /// Packed-build statement assembly: per-object packings, leaf-claim
 /// resolution, and the joint opening call. Public because the prover's

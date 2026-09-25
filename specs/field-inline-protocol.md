@@ -4,16 +4,70 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Codex |
 | Created | 2026-05-21 |
-| Status | draft |
-| PR | TBD |
+| Status | implemented (modular stack) |
+| PR | #1808 |
+
+## Implementation Status
+
+Implemented end-to-end on the modular stack (`jolt-prover` proves and
+`jolt-verifier` verifies, in clear and ZK modes) behind `field-inline`.
+The legacy prover keeps this axis disabled.
+
+The composed outer, product, and bytecode address-phase relations live in
+`jolt-claims::protocols::composed`. That sibling module owns `ComposedOpeningId`,
+`ComposedClaims`, the four `SymbolicSumcheck` implementations, and the selected
+product geometry. Its typed inputs and outputs name both protocol families;
+its symbolic expressions are the source for clear verification and BlindFold
+lowering. The verifier owns concrete evaluation, upstream stage wiring, and
+transcript handling. Kernels return the typed outputs directly through the
+regular batch interface.
+
+The `jolt-claims::protocols::{jolt, field_inline}` families remain import-disjoint
+and compile in both feature configurations. Neither imports `composed`; the
+sibling module imports both. Field operation flags belong to the common Jolt ISA:
+its Spartan input geometry, outer output claims, and bytecode read-RAF input
+claims follow the feature-gated `CircuitFlags` variants in `jolt-riscv`. Those
+three carriers contain the corresponding feature gates. The sibling `composed`
+module selects the active protocol geometry; the field-register protocol
+definitions and shared algebra remain unconditional.
+
+Stage 2 absorbs and commits each field-inline product opening once. The
+field-register claim reduction uses the existing opening-alias mechanism. Its
+three value copies are omitted from `Stage2OutputClaims` serialization and
+reconstructed from the product outputs when decoding. The internal batch
+evaluator still checks alias consistency for callers that construct claim
+objects directly.
+
+This is a new wire-format revision, not a decoder for pre-#1808 proofs.
+`JoltProtocolConfig` serializes the extension axis even when disabled; the
+config fixture pins the six-byte header for transparent, homomorphic proofs
+with field-inline disabled and rejects the old three-byte header. There is no
+implicit old-format fallback. The mandatory composed claim carriers and
+canonical stage-2 rows also replace the draft field-inline appendage format.
+Regenerate draft field-inline proofs after upgrading. Byte parity against the
+updated legacy prover checks agreement within this revision; it does not
+establish compatibility with earlier proof bytes.
+
+Committed-program construction rejects field instructions before dropping full
+bytecode rows, in both Dory and packed commitment paths. A field-enabled profile
+containing only base instructions needs no extra preprocessing data, but the
+field-inline verifier still requires full public bytecode. The verifier checks protocol and
+cheap input shapes before scanning full program metadata; stage 6a builds
+field-inline bytecode kernel geometry only on the prover path.
+
+Limb readout uses `FIELD_ADVICE_LIMB` repeatedly and checks the final quotient
+with `FIELD_ASSERT_ZERO`. The guest must also establish that the emitted
+integer is below the active field modulus when it needs a canonical encoding.
+The `field-ops` guest checks a pinned integer below both supported moduli and
+exercises readout and restoration in the same field register.
 
 ## Purpose
 
 Field inline adds native field operations to the Jolt VM. From the proof
-machinery perspective, it is a uniform extension of existing Jolt machinery:
-an FR register file is another memory-checking instance, field instructions add
-`field_constraints`, and multiplication uses an explicit FR-native product
-relation.
+machinery perspective, it is a uniform extension of existing Jolt machinery: a
+field register file is another memory-checking instance, field instructions
+add `field_constraints`, and multiplication uses an explicit field-native
+product relation.
 
 This spec owns the field-inline protocol axis. Composition with Dory assist,
 wrapping, ZK, and proof-shape validation is specified in
@@ -23,7 +77,7 @@ execution and witness construction concerns are tracked by
 
 Reference implementation context:
 
-- Sagar's `sagar/fr-coprocessor-v2-port` PR/branch is the concrete reference
+- Sagar's [native-field coprocessor implementation](https://github.com/a16z/jolt/tree/8e35ed3de616dd6881ff4c2e087443bc488f7502) is the concrete reference
   for the first modular port.
 - The v1 port should preserve the important protocol choices while moving the
   protocol facts into modular crates.
@@ -34,10 +88,10 @@ V1 scope:
 
 ```text
 native field-inline arithmetic only
-FR register file with K = 16 slots
+field register file with K = 16 slots
 explicit FieldProduct relation
 field_constraints
-x-register <-> FR bridge rows
+x-register <-> field-register bridge rows
 advice-style optionality when field inline is disabled
 ```
 
@@ -46,7 +100,7 @@ Out of scope:
 ```text
 non-native field arithmetic q != modulus(F)
 limb modular-reduction gadgets
-one universal wrapper circuit for FR-on and FR-off verifier configs
+one universal wrapper circuit for verifier configs with and without field-inline
 multi-width field arithmetic independent of the Jolt field
 ```
 
@@ -63,7 +117,7 @@ q = p
 The protocol is generic over `F: JoltField`, not over an independent modulus.
 A 254-bit target means Jolt itself is compiled over a 254-bit field such as
 BN254 Fr. A 128-bit target means Jolt itself is compiled over a 128-bit field.
-In both cases, FR register values are elements of `F`, and local field
+In both cases, field register values are elements of `F`, and local field
 arithmetic is native R1CS arithmetic.
 
 This is why the FMUL relation is simple:
@@ -113,7 +167,7 @@ product virtualization:
 Field inline follows the same pattern:
 
 ```text
-FR register Twist:
+field register Twist:
   tracks reads and writes of field-register slots
 
 field instruction flags:
@@ -142,23 +196,23 @@ field_constraints:
   prove local algebraic instruction semantics
 
 FieldProduct:
-  proves the FR-native multiplication witness used by local rows
+  proves the field-native multiplication witness used by local rows
 ```
 
 Twist does not prove that a field multiplication is correct. It proves that the
-values read from and written to the FR register file are consistent over time.
+values read from and written to the field register file are consistent over time.
 The multiplication equation is owned by the local R1CS/product relation.
 
 ## Trace Semantics
 
-Pure field operations should use pure FR access in v1:
+Pure field operations should access only field registers in v1:
 
 ```text
 pure field op:
-  FR metadata/events + FR Twist + field_constraints
+  field-register metadata/events + field-register Twist + field_constraints
 
 bridge op:
-  x-register Twist + FR Twist + bridge field_constraints
+  x-register Twist + field-register Twist + bridge field_constraints
 ```
 
 Example:
@@ -169,11 +223,11 @@ cycle 10:
   x-register reads/writes are active
   normal register Twist is active
   ordinary RV64 R1CS rows are active
-  FR register Twist is inactive
+  field register Twist is inactive
 
 cycle 11:
   opcode = FMUL
-  FR register reads/writes are active
+  field register reads/writes are active
   FieldProduct relation is active
   field_constraints enforce FieldProduct = FieldRdValue
   ordinary x-register accesses are suppressed
@@ -181,7 +235,7 @@ cycle 11:
 cycle 12:
   opcode = FIELD_MOV_FROM_X
   x-register read is active
-  FR register write is active
+  field register write is active
   bridge row enforces FieldRdValue = decode_x_register(Rs1Value, F)
 ```
 
@@ -193,14 +247,14 @@ compatibility choice, not an accidental side effect.
 
 ## Field Register Memory
 
-V1 uses a small FR register file:
+V1 uses a small field register file:
 
 ```text
 field_register_log_k = 4
 K = 16 slots
 ```
 
-The FR register file is a Twist/read-write memory instance. It has its own
+The field register file is a Twist/read-write memory instance. It has its own
 read/write events and value claims, analogous to normal registers and RAM:
 
 ```text
@@ -241,7 +295,7 @@ work.
 
 ## Field Product
 
-`FieldProduct` is an explicit FR-native product relation:
+`FieldProduct` is an explicit field-native product relation:
 
 ```text
 FieldProduct = FieldRs1Value * FieldRs2Value
@@ -254,9 +308,9 @@ IsFieldMul * (FieldProduct - FieldRdValue) = 0
 ```
 
 This relation is wired as another lane in Spartan product virtualization. The
-field-specific name remains important so the witness path stays FR-aware. It
-should not reuse an integer product witness unless that witness path is
-explicitly field-register aware.
+field-specific name remains important so the witness path handles field
+registers. It should not reuse an integer product witness unless that witness
+path explicitly supports field registers.
 
 For FINV-style rows, the guarded inverse equation needs a separate product
 witness:
@@ -328,7 +382,7 @@ placing them in the same stage-2 batch gives both relations the same
 
 This is the important dependency: the `FieldRs1Value(r_prod)` and
 `FieldRs2Value(r_prod)` used by product virtualization are the same values
-that enter FR register memory checking. If field product and field-register
+that enter field register memory checking. If field product and field-register
 claim reduction used different points, an extra equality/reduction protocol
 would be needed to connect them.
 
@@ -337,18 +391,18 @@ The downstream memory path is:
 ```text
 stage 4:
   consumes FieldRd/Rs1/Rs2 values at r_prod
-  proves FR read/write consistency at r_rw
+  proves field-register read/write consistency at r_rw
   outputs FieldRegistersVal(r_rw), FieldRs1Ra(r_rw), FieldRs2Ra(r_rw),
   FieldRdWa(r_rw), FieldRdInc(rw_cycle)
 
 stage 5:
   consumes FieldRegistersVal(r_rw)
-  proves FR val evaluation at r_val
+  proves field-register value evaluation at r_val
   outputs FieldRdWa(r_val), FieldRdInc(val_cycle)
 
 stage 6 BytecodeReadRaf:
   extends BytecodeReadRaf with field-inline instruction/access terms
-  proves FieldRs1Ra, FieldRs2Ra, FieldRdWa, FieldOpFlag(...)
+  proves FieldRs1Ra, FieldRs2Ra, FieldRdWa, OpFlags(CircuitFlags::Field*)
   match the field operands/opcode selected by BytecodeRa(i)
 
 stage 6 FieldRegistersIncClaimReduction:
@@ -364,11 +418,11 @@ For v1, the new committed field-inline surface is nested under
 `FieldInlineCommitments::field_registers` and includes `FieldRdInc`.
 `FieldRdInc` enters the stage-6 reduction and then the final PCS RLC.
 `FieldRs1Ra`, `FieldRs2Ra`, and `FieldRdWa` mirror ordinary register-Twist RA/WA
-columns: they are virtual openings inside the FR read/write relation, not
-committed PCS polynomials.
+columns: they are virtual openings inside the field-register read/write
+relation, not committed PCS polynomials.
 
-Those virtual FR access columns are still anchored to committed data. The
-anchor is the existing bytecode RA commitment path:
+Those virtual field-register access columns are still anchored to committed
+data. The anchor is the existing bytecode RA commitment path:
 
 ```text
 FieldRs1Ra / FieldRs2Ra / FieldRdWa
@@ -380,22 +434,24 @@ FieldRs1Ra / FieldRs2Ra / FieldRdWa
 ```
 
 Field op flags follow the same rule. They are virtual Spartan/R1CS inputs, but
-BytecodeReadRaf must check them against the decoded field opcode carried by the
-selected bytecode row. A field-inline verifier must not accept FR RA/WA claims
-that are only self-consistent under `FieldRegistersReadWriteChecking`; they must
-also be linked to `BytecodeRa(i)`.
+BytecodeReadRaf must check them against the decoded field opcode carried by
+the selected bytecode row. A field-inline verifier must not accept
+field-register RA/WA claims that are only self-consistent under
+`FieldRegistersReadWriteChecking`; they must also be linked to
+`BytecodeRa(i)`.
 
 ### Stage 2 Composition
 
-The selected product uniskip geometry lives with the selected R1CS constants in
-`jolt-r1cs::constraints::jolt`:
+The selected product uniskip geometry lives in
+`jolt-claims::protocols::composed::geometry`. The R1CS layout, kernels, and
+verifier consume these shared lane counts and first-round sizing constants:
 
 ```text
-FR off:
+Field-inline disabled:
   product lanes = 3
   domain size   = 3
 
-FR on:
+Field-inline enabled:
   ordinary product lanes = 3
   field product lanes    = 2
   domain size            = 5
@@ -438,8 +494,8 @@ stage-2 equations.
 
 The field-register claim-reduction gamma is pulled after the ordinary RAM
 read/write and instruction claim-reduction gammas, before RAM output address
-challenges. FR-off skips the field challenge and field sumcheck instance
-entirely.
+challenges. Without field-inline, the verifier skips the field challenge and
+field sumcheck instance entirely.
 
 ### Stage 4 Composition
 
@@ -447,11 +503,11 @@ Stage 4 batches field-register read/write checking beside the ordinary
 register and RAM value-check work:
 
 ```text
-FR off:
+Field-inline disabled:
   1. RegistersReadWriteChecking
   2. RamValCheck
 
-FR on:
+Field-inline enabled:
   1. RegistersReadWriteChecking
   2. FieldRegistersReadWriteChecking
   3. RamValCheck
@@ -475,7 +531,7 @@ FieldRdValue(r_prod)
   + gamma^2 * FieldRs2Value(r_prod)
 ```
 
-The output claim opens the FR register memory relation at `r_field_rw`:
+The output claim opens the field register memory relation at `r_field_rw`:
 
 ```text
 Eq(r_prod, r_field_rw.cycle) * (
@@ -509,12 +565,12 @@ Stage 5 batches field-register value evaluation beside the ordinary
 instruction read-RAF, RAM RA reduction, and register value-evaluation work:
 
 ```text
-FR off:
+Field-inline disabled:
   1. InstructionReadRaf
   2. RamRaClaimReduction
   3. RegistersValEvaluation
 
-FR on:
+Field-inline enabled:
   1. InstructionReadRaf
   2. RamRaClaimReduction
   3. RegistersValEvaluation
@@ -559,7 +615,7 @@ reduction beside the ordinary Booleanity, RA virtualization, and
 increment-reduction work:
 
 ```text
-FR off:
+Field-inline disabled:
   1. BytecodeReadRaf
   2. Booleanity
   3. RamHammingBooleanity
@@ -568,7 +624,7 @@ FR off:
   6. IncClaimReduction
   7+. optional advice cycle-phase reductions
 
-FR on:
+Field-inline enabled:
   1. BytecodeReadRaf, with field-inline opcode/access terms enabled
   2. Booleanity
   3. RamHammingBooleanity
@@ -584,7 +640,9 @@ openings produced by earlier stages:
 
 ```text
 from stage 1 / selected Spartan outer:
-  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadFromX/StoreToX/LoadImm)
+  OpFlags(CircuitFlags::FieldAdd/FieldSub/FieldMul/FieldInv/FieldAssertEq/
+          FieldLoadAccumulateFromRegister/FieldAssertZero/FieldLoadImm/
+          FieldLoadAccumulateFromMemory/FieldAdviceLimb)
 
 from stage 4 / FieldRegistersReadWriteChecking:
   FieldRdWa
@@ -603,31 +661,27 @@ remains the existing committed bytecode RA product:
 BytecodeRa(i)@BytecodeReadRaf
 ```
 
-There is no `FieldRegistersRa(i)` commitment. FR register access selectors are
-valid only because `BytecodeReadRaf` links them to the committed `BytecodeRa(i)`
-path and the public/preprocessed bytecode table.
+There is no `FieldRegistersRa(i)` commitment. Field register access selectors
+are valid only because `BytecodeReadRaf` links them to the committed
+`BytecodeRa(i)` path and the public/preprocessed bytecode table.
 
-The v1 modular verifier represents the field-inline bytecode facts as a
-preprocessed side table parallel to ordinary bytecode rows:
+Field opcode flags are appended to `CircuitFlags`, and the ordinary stage-1
+bytecode fold handles them alongside the other operation flags. The instruction
+row's existing operand slots also supply field-register accesses through
+`JoltInstructionRow::field_operands()`. The opcode determines each slot's
+register file and read/write role, including implicit accumulator reads and
+bridge instructions with both integer and field destinations.
 
-```text
-FieldInlineBytecodeRow:
-  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadFromX/StoreToX/LoadImm
-  field operands: rd, rs1, rs2 as FR register slots, each optional
-```
+There is no separate field-inline bytecode table. Preprocessing validates
+instruction operand shapes directly; the verifier repeats that validation for
+loaded program artifacts. Current field-inline verification requires full
+public bytecode; committed-program mode remains unsupported.
 
-When field inline is enabled, verifier preprocessing must supply this table.
-Stage 6 rejects a field-inline proof if the table is missing. This keeps the
-FR RA/WA openings soundly tied to the program being verified while the prover
-and tracer work is still landing in the modular crates.
-
-The field-inline `BytecodeReadRaf` extension appends terms to existing bytecode
-RLCs instead of creating another bytecode relation:
+The field-register access claims extend the existing bytecode RLCs:
 
 ```text
 Stage1Gamma powers:
-  ordinary powers 0..(1 + NUM_CIRCUIT_FLAGS)
-  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadFromX/StoreToX/LoadImm)
+  UnexpandedPC, Imm, all CircuitFlags (including Field* flags)
 
 Stage4Gamma powers:
   ordinary powers: RdWa, Rs1Ra, Rs2Ra
@@ -638,11 +692,9 @@ Stage5Gamma powers:
   then FieldRdWa@FieldRegistersValEvaluation
 ```
 
-The input claim is the ordinary `BytecodeReadRaf` input claim plus those
-field-inline terms under the existing outer bytecode gamma. The output claim
-uses the same `BytecodeRa(i)@BytecodeReadRaf` product, with public stage values
-augmented by evaluating the field-inline side table at the bytecode point and
-the relevant stage cycle points.
+The output uses the existing `BytecodeRa(i)@BytecodeReadRaf` product. Public
+stage values are derived from the canonical bytecode rows, with each access
+term weighted by its own register-domain and cycle opening points.
 
 `FieldRegistersIncClaimReduction` consumes the two semantic openings of the
 committed `FieldRdInc` polynomial produced by Stage 4 and Stage 5:
@@ -663,9 +715,9 @@ output:
     * FieldRdInc@FieldRegistersIncClaimReduction
 ```
 
-The verifier pulls a separate field-inline increment-reduction challenge
-`eta` when field inline is enabled. FR-off skips this challenge and skips the
-field sumcheck instance entirely.
+The verifier pulls a separate field-inline increment-reduction challenge `eta`
+when field inline is enabled. Without field-inline, it skips this challenge
+and the field sumcheck instance entirely.
 
 The committed output-claim row order appends the reduced field `FieldRdInc`
 after ordinary `RamInc`/`RdInc` increment-reduction outputs and before optional
@@ -724,9 +776,11 @@ selectors:
   IsFieldMul
   IsFieldInv
   IsFieldAssertEq
-  IsFieldLoadFromX
-  IsFieldStoreToX
+  IsFieldLoadAccumulateFromRegister
+  IsFieldAssertZero
   IsFieldLoadImm
+  IsFieldLoadAccumulateFromMemory
+  IsFieldAdviceLimb
 
 field values:
   FieldRs1Value
@@ -761,18 +815,26 @@ ASSERT_EQ:
   IsFieldAssertEq * (FieldRs1Value - FieldRs2Value) = 0
 
 x-register -> field-register:
-  IsFieldLoadFromX * (FieldRdValue - decode_x_register(Rs1Value, F)) = 0
+  IsFieldLoadAccumulateFromRegister
+    * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
-field-register -> x-register:
-  IsFieldStoreToX * (RdWriteValue - encode_field_register(FieldRs1Value, F)) = 0
+ASSERT_ZERO:
+  IsFieldAssertZero * FieldRs1Value = 0
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(Imm, F)) = 0
+
+memory -> field-register (see "Memory-Sourced Loads And Limb Readout"):
+  IsFieldLoadAccumulateFromMemory
+    * (FieldRdValue - 2^64 * FieldRs1Value - RdWriteValue) = 0
+
+field-register -> limbs:
+  IsFieldAdviceLimb * (FieldRs1Value - RdWriteValue - 2^64 * FieldRdValue) = 0
 ```
 
 The FINV relation cannot be represented as
 `IsFieldInv * (FieldRs1Value * FieldRdValue - 1) = 0` in one R1CS row because
-that is cubic. V1 includes `FieldInvProduct` as a second FR-native product
+that is cubic. V1 includes `FieldInvProduct` as a second field-native product
 witness batched with `FieldProduct`.
 
 These are constraints in Jolt's execution relation. They are separate from the
@@ -780,25 +842,110 @@ wrapper R1CS, which proves a verifier computation.
 
 ## Conversion Rows
 
-Conversion rows prove that ordinary Jolt data and FR register values agree at
+Conversion rows prove that ordinary Jolt data and field register values agree at
 bridge instructions:
 
 ```text
 x-register -> field-register:
-  IsFieldLoadFromX * (FieldRdValue - decode_x_register(Rs1Value, F)) = 0
+  IsFieldLoadAccumulateFromRegister
+    * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
-field-register -> x-register:
-  IsFieldStoreToX * (RdValue - encode_field_register(FieldRs1Value, F)) = 0
+field-register -> limb and quotient:
+  IsFieldAdviceLimb * (FieldRs1Value - RdWriteValue - 2^64 * FieldRdValue) = 0
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(imm, F)) = 0
 ```
 
+Conversion semantics (`jolt-r1cs` `constraints::field_constraints`): each
+bridge transfers one 64-bit limb on the x-register side. Ingress reads the
+old destination through `FieldRs1Value` and updates it to
+`old_destination * 2^64 + limb` in the proof field. Start a new value with
+`FIELD_LOAD_IMM destination, 0`, then accumulate limbs from most significant
+to least significant; a scalar load is a reset followed by one accumulation.
+Accumulation reduces modulo the proof-field modulus; it does not check that
+the reconstructed integer is a canonical field representative.
+
+- `decode_x_register(Rs1Value, F) := Rs1Value` and
+  `decode_immediate(imm, F) := imm`. Both inputs are bounded by the base
+  protocol (x-register values come from lookup outputs, loads, and jumps;
+  `Imm` is a bytecode constant), so these limb embeddings are exact.
+- `FIELD_ADVICE_LIMB` carries the `Advice` and `WriteLookupOutputToRD`
+  circuit flags and the `RangeCheck` lookup table. RV64 row 12 equates
+  `RdWriteValue` with that bounded lookup output. The field-inline row
+  relates this limb and the field quotient to the source value; it does not
+  impose an integer bound on the field source or quotient.
+
+Full-width values use repeated accumulating ingress instructions or the
+advice readout below; each instruction still transfers one bounded u64 limb.
+
 These rows depend on canonical encoding for the active `F: JoltField`. For a
 254-bit Jolt field, host/guest encodings may use four 64-bit limbs. For a
 128-bit Jolt field, they may use two 64-bit limbs. This affects ABI,
-advice-tape encoding, and bridge/load/store row shape. It does not change the
-field arithmetic relation: FR values remain native elements of `F`.
+advice-tape encoding, and the number of ingress/readout rows. It does not change
+the field arithmetic relation: field values remain native elements of `F`.
+
+## Memory-Sourced Loads And Limb Readout
+
+Memory-sourced loads move one word per VM row into the field-register file.
+Limb advice provides bounded integer outputs for field values; callers that
+need canonical readout must additionally check the reconstructed integer.
+
+`FIELD_LOAD_ACCUMULATE_FROM_MEMORY field_rd <- field_rd · 2^64 + mem[x_rs1 + 8·offset]`
+is, to the RV64 rows, an `LD` into a scratch x-register: it carries the `Load` circuit
+flag, so `RamAddress = Rs1Value + Imm`, `RamReadValue = RamWriteValue` and
+`RdWriteValue = RamReadValue` bind the word exactly as for `LD`, the RAM
+Twist records the read, and the register Twist records the scratch write.
+The field-inline row equates the field destination with the word folded into
+the old destination, read back as `FieldRs1Value` (`2^64` is a constant of
+`F`). This has the same accumulation semantics as x-register ingress. The
+Spartan outer has 29 rows: a 16-node uni-skip domain would overflow the
+kernels' `i128` power sums. Encoding: opcode `0x7b`,
+`FIELD_LOAD_ACCUMULATE_FROM_REGISTER`'s funct3, funct7 `0x60 | offset` with bits 4..0
+holding the word offset; `rd` is the scratch x-register, `rs1` the x base,
+and `rs2` the field destination. The canonical field-operand projection uses
+that destination as both its field `rs1` read and its write. Initialize it with
+`FIELD_LOAD_IMM destination, 0`, then accumulate every limb from most
+significant to least significant: one row per limb after the reset.
+
+`FIELD_ADVICE_LIMB x_rd, field_rs1 -> field_rs2` supplies a 64-bit advice limb
+and constrains `field_rs1 = x_rd + 2^64 · field_rs2` in the proof field. The
+`RangeCheck` lookup (`Advice` + `WriteLookupOutputToRD`, RV64 row 12)
+bounds `x_rd`, but does not uniquely determine either output. The honest
+tracer chooses the canonical low limb and quotient; this choice is not a
+constraint. In particular, input zero also permits limb one with quotient
+`−1/2^64`. Encoding: opcode `0x7b`, funct3 `6`, funct7 `1`; `rd` is the
+x-register, `rs1` the field source, and `rs2` the quotient. Source and quotient
+may name the same field register, allowing the readout to consume it in place.
+
+`FIELD_ASSERT_ZERO field_rs1` checks `IsFieldAssertZero * FieldRs1Value = 0`
+without writing any field or integer register. Encoding: opcode `0x7b`,
+funct3 `6`, funct7 `2`, field-op tag `11`. The SDK emits zero in the unused
+`rd` and `rs2` fields; these operands are ignored by decoding and do not reserve
+a zero field register. Field register zero is an ordinary writable slot, like
+the other fifteen slots.
+
+A deterministic conversion requires `N` advice limbs followed by
+`FIELD_ASSERT_ZERO` on the final quotient, **and** a guest integer check
+`L = Σ limb_i · 2^(64 i) < p`. With final quotient zero, the instruction
+relations establish `source = L (mod p)`; the integer check makes the
+representative unique. Without it, zero could be represented by the limbs of
+`p`, violating field wrappers' canonical storage invariant. All `N` steps may
+reuse the source as the quotient destination. To preserve the source, after
+the zero check accumulate the emitted limbs back into that now-zero register
+from most significant to least significant. This needs no scratch field
+register or hardwired zero register.
+
+Raw instruction users must check `L < p` whenever subsequent computation
+requires canonical limbs. Equality with an independently pinned integer known
+to be below `p` also suffices, as in the `field-ops` memory/readout regression.
+The ISA supplies bounded limb advice and a zero assertion; ergonomic
+`field_to`/`field_from` macros remain follow-up work in
+[#1934](https://github.com/a16z/jolt/issues/1934).
+
+Stage 1 carries `OpFlags(CircuitFlags::FieldLoadAccumulateFromMemory)` and
+`OpFlags(CircuitFlags::FieldAdviceLimb)` in the common flag columns. Bytecode
+read-RAF binds them through the ordinary circuit-flag fold.
 
 ## Stage 1 Composition
 
@@ -810,33 +957,29 @@ jolt-claims::protocols::jolt:
   ordinary RV64 Spartan outer opening semantics
 
 jolt-claims::protocols::field_inline:
-  field-inline-local Spartan outer opening semantics
+  Spartan outer opening semantics local to field-inline
+
+jolt-claims::protocols::composed:
+  selected opening carriers, symbolic relations, and product geometry
 
 jolt-r1cs::constraints::jolt:
-  selected R1CS column layout and field-inline column remapping
+  selected R1CS column layout and constraint coefficients
 
 jolt-verifier::stages::stage1:
-  selected composition of openings, public coefficients, and expected claim
+  concrete evaluation, upstream claim wiring, and transcript handling
 ```
 
-`jolt-claims` should not define a mixed selected Spartan protocol. It should
-only expose the protocol-local FR Spartan opening order for field-inline-local
-wires. The selected verifier then appends those FR-local openings after the
-ordinary RV64 openings when field inline is enabled.
+The protocol families expose their own Spartan openings. The sibling
+`composed` module appends field-inline openings after the ordinary RV64
+openings when field inline is enabled and defines the symbolic relation over
+the combined claims. `jolt-claims` depends on neither `jolt-r1cs` nor
+`jolt-verifier`; concrete verification supplies R1CS coefficients to the
+symbolic relation.
 
-The selected R1CS layout reuses ordinary RV64 columns for bridge inputs:
-
-```text
-field local const       -> RV64 const
-field local Rs1Value    -> RV64 Rs1Value
-field local RdWriteValue -> RV64 RdWriteValue
-field local Imm         -> RV64 Imm
-```
-
-Those reused columns do not produce duplicate FR openings. They use the
-ordinary Jolt Spartan openings already present in the RV64 stage-1 list.
-
-The FR-local stage-1 openings are the true appended field-inline columns:
+The selected R1CS layout uses the ordinary RV64 `Rs1Value`, `RdWriteValue`,
+`Imm`, and `OpFlags(CircuitFlags::Field*)` columns directly. Their openings
+are part of the common stage-1 list. Only five field-specific columns are
+appended:
 
 ```text
 FieldRs1Value
@@ -844,21 +987,12 @@ FieldRs2Value
 FieldRdValue
 FieldProduct
 FieldInvProduct
-IsFieldAdd
-IsFieldSub
-IsFieldMul
-IsFieldInv
-IsFieldAssertEq
-IsFieldLoadFromX
-IsFieldStoreToX
-IsFieldLoadImm
 ```
 
-`jolt-verifier` should compute the selected Spartan outer expected claim using
-a helper in `jolt-r1cs::constraints::jolt`, analogous to the RV64-only helper
-but parameterized by the selected equality constraints, selected row weights,
-and selected opening columns. FR-off must reduce exactly to the ordinary RV64
-helper.
+`jolt-verifier` evaluates the selected Spartan outer symbolic relation using
+the selected equality constraints, row weights, and opening columns from
+`jolt-r1cs::constraints::jolt`. Without field inline, the composed relation
+reduces to the ordinary RV64 relation.
 
 This stage-1 change must land for both verifier modes:
 
@@ -879,20 +1013,21 @@ Spartan outer formula is built in the BlindFold protocol assembly. When field
 inline is enabled, `add_stage1` must consume the same composed opening order,
 the same public coefficients, and the same expected-claim helper as the
 transparent verifier. Otherwise the verifier would either reject due to output
-claim shape mismatch or fail to bind the extra FR-local stage-1 claims.
+claim shape mismatch or fail to bind the extra field-inline stage-1 claims.
 
 ## `jolt-claims` Layout
 
-Field inline should be its own `jolt-claims` protocol module. Describing the
-FR register-file Twist semantics is protocol logic distinct from base Jolt,
-even though `jolt-verifier` later composes the resulting claims into the same
-linear verifier flow as ordinary Jolt stages.
+Field inline has its own `jolt-claims` protocol module. Describing the field
+register-file Twist semantics is protocol logic distinct from base Jolt. The
+sibling `protocols::composed` module owns relations that combine the two
+families; the verifier places those relations in its stage flow.
 
 The module should mirror the organization of `protocols::jolt` instead of
 inventing a separate component hierarchy. The main v1 `jolt-claims` work is to
-describe the FR register-file Twist memory-checking formulas, FR-native product
-formula, and field-inline-local Spartan opening metadata. Composition with the
-ordinary Jolt Spartan opening list happens later in `jolt-verifier`.
+describe the field register-file Twist memory-checking formulas, field-native
+product formula, and Spartan opening metadata local to field-inline.
+Composition with the ordinary Jolt Spartan opening list lives in
+`protocols::composed`, alongside the combined opening ID and claim carriers.
 
 Target layout:
 
@@ -926,12 +1061,13 @@ field registers:
   protocols/field_inline/formulas/claim_reductions/registers.rs
 ```
 
-Inside `protocols::field_inline`, `registers` means FR registers. The formulas
+Inside `protocols::field_inline`, `registers` means field registers. The formulas
 should use the same generic claim-expression machinery as `protocols::jolt`,
 but with field-inline-specific relation IDs, challenge IDs, opening IDs, and
-dimension types. `jolt-verifier` owns the composition step that batches these
-field-inline claims into the appropriate verifier stages alongside ordinary
-Jolt claims.
+dimension types. `protocols::composed` imports both families to define the
+combined symbolic relations. `jolt-verifier` batches the resulting claims into
+the appropriate verifier stages and implements concrete evaluation without
+owning any `SymbolicSumcheck` implementation.
 
 Initial protocol IDs:
 
@@ -984,17 +1120,6 @@ The opening and polynomial IDs should mirror ordinary registers with
 field-register-specific names:
 
 ```rust
-pub enum FieldInlineOpFlag {
-    Add,
-    Sub,
-    Mul,
-    Inv,
-    AssertEq,
-    LoadFromX,
-    StoreToX,
-    LoadImm,
-}
-
 pub enum FieldInlineVirtualPolynomial {
     FieldRs1Value,
     FieldRs2Value,
@@ -1005,7 +1130,6 @@ pub enum FieldInlineVirtualPolynomial {
     FieldRs1Ra,
     FieldRs2Ra,
     FieldRdWa,
-    FieldOpFlag(FieldInlineOpFlag),
 }
 
 pub enum FieldInlineCommittedPolynomial {
@@ -1014,7 +1138,7 @@ pub enum FieldInlineCommittedPolynomial {
 ```
 
 Exact committed vs virtual polynomial placement should follow the implemented
-FR witness layout. Conceptually, it mirrors ordinary registers:
+field-inline witness layout. Conceptually, it mirrors ordinary registers:
 
 ```text
 ordinary:
@@ -1030,10 +1154,12 @@ field:
 ### Field-Register Formulas
 
 The formulas mirror ordinary register Twist memory checking.
-The register read/write and val-evaluation formulas prove FR memory consistency;
+The register read/write and val-evaluation formulas prove field-register
+memory consistency;
 they do not by themselves prove that a given field instruction selected those
-FR registers. BytecodeReadRaf supplies that instruction-access binding by
-checking the same virtual FR RA/WA openings against committed bytecode rows.
+field registers. BytecodeReadRaf supplies that instruction-access binding by
+checking the same virtual field-register RA/WA openings against committed
+bytecode rows.
 
 Claim reduction:
 
@@ -1141,19 +1267,19 @@ stay as close as possible to the ordinary-register formula pattern.
 Field inline follows the advice optionality pattern:
 
 ```text
-FR off:
-  no FR commitments
-  no FR opening claims
-  no FR sumcheck instances
-  no FR challenges
-  no dummy zero FR claims
+Field-inline disabled:
+  no field-inline commitments
+  no field-inline opening claims
+  no field-inline sumcheck instances
+  no field-inline challenges
+  no dummy zero field-inline claims
 
-FR on:
-  FR commitments, claims, and challenges appear in fixed order
-  the configured verifier flow includes FR stage additions
+Field-inline enabled:
+  field-inline commitments, claims, and challenges appear in fixed order
+  the configured verifier flow includes field-inline stage additions
 ```
 
-`JOLT_VERIFIER_CONFIG` determines whether FR payloads are accepted. The
+`JOLT_VERIFIER_CONFIG` determines whether field-inline payloads are accepted. The
 verifier binds the configured protocol before Fiat-Shamir challenge derivation.
 Detailed proof-shape validation and transcript ordering live in
 [selected-verifier-integration.md](selected-verifier-integration.md).
@@ -1161,14 +1287,15 @@ Detailed proof-shape validation and transcript ordering live in
 ## Interaction With Dory Assist And Wrapper
 
 Dory assist sees field inline only through the configured verifier outputs. If
-field inline is enabled, the composed verifier stages already include FR claims
-and openings where relevant. Dory assist consumes those configured outputs
-without needing separate field-inline awareness.
+field inline is enabled, the composed verifier stages already include
+field-inline claims and openings where relevant. Dory assist consumes those
+configured outputs without needing separate field-inline awareness.
 
-The wrapper proves the configured verifier computation. If field inline is off,
-the wrapper R1CS excludes FR checks. If field inline is on, the wrapper includes
-the FR verifier work by lowering the configured verifier flow through the
-generic claim, sumcheck, transcript, and opening R1CS helpers.
+The wrapper proves the configured verifier computation. If field inline is
+off, the wrapper R1CS excludes field-inline checks. If field inline is on, the
+wrapper includes the field-inline verifier work by lowering the configured
+verifier flow through the generic claim, sumcheck, transcript, and opening
+R1CS helpers.
 
 ## Implementation Steps
 
@@ -1177,16 +1304,17 @@ Each step should be reviewed before continuing to the next.
 1. Add `jolt-claims::protocols::field_inline`.
    - Add field-register relation IDs, challenge IDs, opening IDs, dimensions, and
      opening helpers in a layout that mirrors `protocols::jolt`.
-   - Keep the module focused on FR Twist protocol semantics. Composition with
-     ordinary Jolt happens in `jolt-verifier`.
+   - Keep the module focused on field-register Twist protocol semantics.
+     Composition with ordinary Jolt lives in the sibling
+     `jolt-claims::protocols::composed` module.
    - Review gate: API shape mirrors ordinary registers and does not expose
      non-native modulus configuration.
 
 2. Add field-register claim formulas.
-   - Add FR claim reduction, read/write, val-evaluation, and increment
+   - Add field-inline claim reduction, read/write, val-evaluation, and increment
      reduction formulas.
    - Add canonical opening-order helpers.
-   - Review gate: formula tests cover small synthetic FR traces.
+   - Review gate: formula tests cover small synthetic field-inline traces.
 
 3. Add explicit field product-virtualization lanes.
    - Add `FieldRegistersProduct` relation IDs and `FieldProduct` /
@@ -1201,17 +1329,19 @@ Each step should be reviewed before continuing to the next.
 
 4. Add `field_constraints`.
    - Implement `jolt-r1cs::constraints::field_constraints`.
-   - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, and bridge rows.
+   - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, ASSERT_ZERO, and bridge rows.
    - Review gate: constraint tests prove native-field arithmetic and reject bad
      FieldProduct witnesses.
 
-5. Add conversion row semantics.
-   - Define `decode_x_register`, `encode_field_register`, and immediate
-     encoding for the active `F`.
+5. Add conversion row semantics. **Landed** as 64-bit accumulating ingress
+   and `RangeCheck`-bound limb advice ("Conversion Rows" above).
+   - Define ingress and immediate encoding for the active `F`, and the
+     limb/quotient relation with a final `FIELD_ASSERT_ZERO` check.
    - Keep 128-bit and 254-bit handling as field-instantiation encoding, not
      non-native arithmetic.
-   - Review gate: bridge-row fixtures cover two-limb and four-limb field
-     encodings when both field instantiations exist.
+   - Review gate: fixtures exercise accumulating ingress on both fields;
+     readout checks an independently pinned integer below both moduli,
+     including in-place restoration from its emitted limbs.
 
 6. Wire verifier support one stage slice at a time.
    - Proof/config gate: require `proof.protocol.field_inline` to match the
@@ -1219,15 +1349,16 @@ Each step should be reviewed before continuing to the next.
    - Commitment absorption: absorb the nested FieldRegisters commitment,
      currently `FieldRdInc`, only when field inline is enabled.
    - Selected R1CS composition: add `jolt-r1cs::constraints::jolt` so the
-     compile-time selected R1CS is RV64 alone when FR is off and RV64 plus
-     field-inline rows when FR is on. The composition keeps protocol semantics
+     compile-time selected R1CS is RV64 alone when field-inline is off and RV64 plus
+     field-inline rows when field-inline is on. The composition keeps protocol semantics
      separate and performs the mixing only in the selected R1CS layout: it
      reuses the RV64 constant, `Rs1Value`, `RdWriteValue`, and `Imm` columns for
-     bridge rows, then appends true FR-local columns after the RV64 layout.
+     bridge rows, then appends columns local to field-inline after the RV64 layout.
    - Stage 1 selected Spartan outer composition: compose ordinary Jolt Spartan
-     openings with field-inline-local Spartan openings in `jolt-verifier`.
-     Reused bridge columns use ordinary Jolt openings; only true FR-local
-     columns are appended as field-inline openings.
+     openings with field-inline Spartan openings in
+     `jolt-claims::protocols::composed`. Reused
+     bridge columns use ordinary Jolt openings; only columns local to
+     field-inline are appended as field-inline openings.
      This slice must update both transparent verification and the ZK/BlindFold
      stage-1 relation assembly. The transparent path checks clear output
      claims directly; the BlindFold path must lower the same composed Spartan
@@ -1249,8 +1380,8 @@ Each step should be reviewed before continuing to the next.
      committed claim.
    - Stage 8: include the reduced `FieldRdInc` claim in the ordinary joint PCS
      RLC using an explicit polynomial-to-relation mapping.
-   - Review gate for every slice: FR-off ordering, transcript pulls, and
-     opening accumulator entries remain unchanged.
+   - Review gate for every slice: without field-inline, ordering, transcript
+     pulls, and opening accumulator entries remain unchanged.
    - Final review gate before prover work: standard and ZK tests pass with
      field inline disabled.
    - Final review gate once the prover path for a slice exists: field-inline
@@ -1258,7 +1389,7 @@ Each step should be reviewed before continuing to the next.
      unsupported mode is explicitly unavailable behind config/feature gating.
 
 7. Add prover/trace wiring.
-   - Trace pure field ops through FR accesses.
+   - Trace pure field ops through field-register accesses.
    - Suppress incidental x-register accesses for pure field ops.
    - Review gate: trace-level fixtures show ordinary, pure field, and bridge
      cycles.

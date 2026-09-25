@@ -50,6 +50,26 @@ pub enum CircuitFlags {
     IsFirstInSequence,
     /// Last instruction in a virtual sequence.
     IsLastInSequence,
+    #[cfg(feature = "field-inline")]
+    FieldAdd,
+    #[cfg(feature = "field-inline")]
+    FieldSub,
+    #[cfg(feature = "field-inline")]
+    FieldMul,
+    #[cfg(feature = "field-inline")]
+    FieldInv,
+    #[cfg(feature = "field-inline")]
+    FieldAssertEq,
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromRegister,
+    #[cfg(feature = "field-inline")]
+    FieldAssertZero,
+    #[cfg(feature = "field-inline")]
+    FieldLoadImm,
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromMemory,
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb,
 }
 
 /// Number of circuit flags.
@@ -70,6 +90,26 @@ pub const CIRCUIT_FLAGS: [CircuitFlags; NUM_CIRCUIT_FLAGS] = [
     CircuitFlags::IsCompressed,
     CircuitFlags::IsFirstInSequence,
     CircuitFlags::IsLastInSequence,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAdd,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldSub,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldMul,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldInv,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAssertEq,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldLoadAccumulateFromRegister,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAssertZero,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldLoadImm,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldLoadAccumulateFromMemory,
+    #[cfg(feature = "field-inline")]
+    CircuitFlags::FieldAdviceLimb,
 ];
 
 /// Boolean flags that are NOT part of Jolt's R1CS constraints.
@@ -101,26 +141,26 @@ pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;
 
 /// Packed bitfield of [`CircuitFlags`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct CircuitFlagSet(u16);
+pub struct CircuitFlagSet(u32);
 
 impl CircuitFlagSet {
     #[inline]
     pub fn set(self, flag: CircuitFlags) -> Self {
-        Self(self.0 | (1 << flag as u16))
+        Self(self.0 | (1 << flag as u32))
     }
 
     #[inline]
     pub fn get(self, flag: CircuitFlags) -> bool {
-        self.0 & (1 << flag as u16) != 0
+        self.0 & (1 << flag as u32) != 0
     }
 
     #[inline]
-    pub fn bits(self) -> u16 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 
     #[inline]
-    pub const fn from_bits(bits: u16) -> Self {
+    pub const fn from_bits(bits: u32) -> Self {
         Self(bits)
     }
 }

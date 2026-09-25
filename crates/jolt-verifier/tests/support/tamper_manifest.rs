@@ -1,10 +1,23 @@
 use std::collections::BTreeSet;
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineRelationId;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::{Fr, JoltField};
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage4::FieldRegistersReadWriteOutputClaims;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage5::FieldRegistersValEvaluationOutputClaims;
+#[cfg(feature = "field-inline")]
+use jolt_verifier::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims;
 use jolt_verifier::{
     proof::ClearProofClaims,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
+    stages::stage1::outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
+    stages::stage1::OuterRemainderOutputClaims,
+    stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims},
+    stages::{stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
     VerifierError,
 };
 use serde_json::Value;
@@ -424,6 +437,15 @@ pub const STAGE1_TARGETS: &[TamperTarget] = &[
         "outer output claims are consumed as stage-2 input claims (product \
          virtualization); the PCS binds them again at final openings",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage1.claims.field_inline_outer",
+        "claims.stage1.outer.outer_remainder.field_inline.*",
+        VerifierPhase::Stage1,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "field-inline fixture test offsets every field-inline Spartan outer opening claim",
+    ),
 ];
 
 pub const STAGE2_TARGETS: &[TamperTarget] = &[
@@ -522,6 +544,25 @@ pub const STAGE2_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets each instruction claim-reduction output (aliased cells are rejected by the generated validate_aliases)",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage2.claims.batch_outputs.field_registers_claim_reduction",
+        "claims.stage2.batch_outputs.field_registers_claim_reduction.*",
+        VerifierPhase::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each field-inline claim-reduction output (the stage-2 fold \
+         and the generated alias check consume them)",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage2.claims.field_inline_product",
+        "claims.stage2.batch_outputs.product_remainder.field_inline.*",
+        VerifierPhase::Stage2,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each composed field-inline product opening (the remainder and generated alias check consume them)",
     ),
     checked_standard(
         "stage2.claims.batch_outputs.ram_raf_evaluation",
@@ -657,6 +698,16 @@ pub const STAGE4_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "committed fixture offsets the staged program-image init contribution",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage4.claims.field_registers_read_write",
+        "claims.stage4.field_registers_read_write.*",
+        VerifierPhase::Stage4,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each field-register read-write output (the stage-4 fold and \
+         the stage-5 field-register value-evaluation input consume them)",
+    ),
 ];
 
 pub const STAGE5_TARGETS: &[TamperTarget] = &[
@@ -723,6 +774,16 @@ pub const STAGE5_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets each register value-evaluation output claim",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage5.claims.field_registers_val_evaluation",
+        "claims.stage5.field_registers_val_evaluation.*",
+        VerifierPhase::Stage5,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "field-inline fixture test offsets each field-register value-evaluation output (the stage-5 fold \
+         and the stage-6 FieldRdInc reduction consume them)",
     ),
 ];
 
@@ -862,6 +923,16 @@ pub const STAGE6_TARGETS: &[TamperTarget] = &[
         MutationStrategy::OffsetScalar,
         TamperCoverage::Active,
         "prover-fixture test offsets the register increment reduction output claim",
+    ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "stage6.claims.field_registers_inc_claim_reduction.rd_inc",
+        "claims.stage6b.field_registers_inc_claim_reduction.rd_inc",
+        VerifierPhase::Stage6,
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "field-inline fixture test offsets the reduced FieldRdInc claim (the anchor of the \
+         stage-8 joint opening's FieldRdInc entry)",
     ),
     #[cfg(not(feature = "akita"))]
     checked_standard(
@@ -1085,6 +1156,16 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         TamperCoverage::Active,
         "the hamming-weight reduction final-claim fold covers the increment carry",
     ),
+    #[cfg(feature = "field-inline")]
+    checked_standard(
+        "proof.field_inc_commitment",
+        "proof.field_inc_commitment",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::ReplaceProofPayload,
+        TamperCoverage::Active,
+        "the packed field-inline e2e flips the field increment commitment's layout-digest byte, mutates the batch \
+         proof, and strips the group; each rejects",
+    ),
 ];
 
 pub fn all_targets() -> Vec<TamperTarget> {
@@ -1123,10 +1204,26 @@ pub fn target_names_are_unique() -> bool {
         .all(|target| names.insert(target.name))
 }
 
-pub fn manifest_paths() -> BTreeSet<&'static str> {
+pub fn manifest_paths() -> BTreeSet<String> {
     all_targets()
         .into_iter()
         .flat_map(expand_manifest_path)
+        .map(|path| {
+            let path = path.to_owned();
+            #[cfg(feature = "field-inline")]
+            for prefix in [
+                "claims.stage1.outer.outer_remainder.",
+                "claims.stage2.batch_outputs.product_remainder.",
+                "claims.stage6a.bytecode_read_raf.",
+            ] {
+                if let Some(field) = path.strip_prefix(prefix) {
+                    if !field.starts_with("field_inline.") {
+                        return format!("{prefix}base.{field}");
+                    }
+                }
+            }
+            path
+        })
         .collect()
 }
 
@@ -1147,6 +1244,8 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.commitments[*]",
         "proof.joint_opening_proof",
         "proof.untrusted_advice_commitment",
+        #[cfg(all(feature = "akita", feature = "field-inline"))]
+        "proof.field_inc_commitment",
         "proof.claims",
         "proof.trace_length",
         "proof.ram_K",
@@ -1241,8 +1340,8 @@ fn relation_phase(id: JoltRelationId) -> VerifierPhase {
 }
 
 /// Relation-level errors use `format!("{:?}", relation_id)`.
-fn relation_from_stage_string(stage: &str) -> Option<JoltRelationId> {
-    [
+fn relation_phase_from_stage_string(stage: &str) -> Option<VerifierPhase> {
+    let phase = [
         JoltRelationId::SpartanOuter,
         JoltRelationId::SpartanProductVirtualization,
         JoltRelationId::SpartanShift,
@@ -1273,6 +1372,29 @@ fn relation_from_stage_string(stage: &str) -> Option<JoltRelationId> {
     ]
     .into_iter()
     .find(|id| format!("{id:?}") == stage)
+    .map(relation_phase);
+    #[cfg(feature = "field-inline")]
+    let phase = phase.or_else(|| {
+        [
+            FieldInlineRelationId::FieldRegistersSpartanOuter,
+            FieldInlineRelationId::FieldRegistersClaimReduction,
+            FieldInlineRelationId::FieldRegistersProduct,
+            FieldInlineRelationId::FieldRegistersReadWriteChecking,
+            FieldInlineRelationId::FieldRegistersValEvaluation,
+            FieldInlineRelationId::FieldRegistersIncClaimReduction,
+        ]
+        .into_iter()
+        .find(|id| format!("{id:?}") == stage)
+        .map(|id| match id {
+            FieldInlineRelationId::FieldRegistersSpartanOuter => VerifierPhase::Stage1,
+            FieldInlineRelationId::FieldRegistersClaimReduction
+            | FieldInlineRelationId::FieldRegistersProduct => VerifierPhase::Stage2,
+            FieldInlineRelationId::FieldRegistersReadWriteChecking => VerifierPhase::Stage4,
+            FieldInlineRelationId::FieldRegistersValEvaluation => VerifierPhase::Stage5,
+            FieldInlineRelationId::FieldRegistersIncClaimReduction => VerifierPhase::Stage6,
+        })
+    });
+    phase
 }
 
 /// Maps a rejection to the verifier phase that raised it, where the error
@@ -1297,7 +1419,14 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::InvalidMemoryLayout { .. }
         | VerifierError::InvalidPrecommittedSchedule { .. }
         | VerifierError::InvalidCommittedProgram { .. }
+        | VerifierError::MissingPreprocessingPayload { .. }
+        | VerifierError::UnsupportedInstruction { .. }
+        | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
+        VerifierError::MissingProofPayload { field } => match *field {
+            "commitments.field_inline" | "field_inc_commitment" => Some(VerifierPhase::Preamble),
+            _ => None,
+        },
         VerifierError::StageClaimSumcheckFailed { stage, .. }
         | VerifierError::StageClaimOpeningMismatch { stage, .. } => {
             let phase = match stage.as_str() {
@@ -1308,7 +1437,7 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
                 "Stage5" => Some(VerifierPhase::Stage5),
                 "Stage6a" | "Stage6b" => Some(VerifierPhase::Stage6),
                 "Stage7" => Some(VerifierPhase::Stage7),
-                _ => relation_from_stage_string(stage).map(relation_phase),
+                _ => relation_phase_from_stage_string(stage),
             };
             assert!(phase.is_some(), "unrecognized verifier stage: {stage}");
             phase
@@ -1332,7 +1461,8 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         }
         VerifierError::BlindFoldConstructionFailed { .. }
         | VerifierError::BlindFoldVerificationFailed { .. } => Some(VerifierPhase::Zk),
-        VerifierError::MissingOpeningClaim { .. }
+        VerifierError::ProtocolAxisUnimplemented { .. }
+        | VerifierError::MissingOpeningClaim { .. }
         | VerifierError::UnexpectedOpeningClaim { .. }
         | VerifierError::MissingStageClaimChallenge { .. }
         | VerifierError::MissingStageClaimDerived { .. }
@@ -1351,6 +1481,8 @@ pub fn assert_verifier_fixture_tamper_rejects(
     mutate: impl FnOnce(&mut crate::support::verifier_fixtures::VerifierFixtureCase),
 ) {
     assert_manifest_target_is_active(target);
+    // A tamper test is vacuous unless the untampered fixture verifies.
+    crate::support::assert_accepts(base.verify());
     let mut case = base.clone();
     mutate(&mut case);
     let result = case.verify();
@@ -1378,6 +1510,20 @@ pub fn assert_verifier_fixture_tamper_rejects(
 
 fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
     match target.path {
+        #[cfg(feature = "field-inline")]
+        "claims.stage1.outer.outer_remainder.field_inline.*" => vec![
+            "claims.stage1.outer.outer_remainder.field_inline.rs1_value",
+            "claims.stage1.outer.outer_remainder.field_inline.rs2_value",
+            "claims.stage1.outer.outer_remainder.field_inline.rd_value",
+            "claims.stage1.outer.outer_remainder.field_inline.product",
+            "claims.stage1.outer.outer_remainder.field_inline.inv_product",
+        ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage2.batch_outputs.product_remainder.field_inline.*" => vec![
+            "claims.stage2.batch_outputs.product_remainder.field_inline.rs1_value",
+            "claims.stage2.batch_outputs.product_remainder.field_inline.rs2_value",
+            "claims.stage2.batch_outputs.product_remainder.field_inline.rd_value",
+        ],
         "claims.stage1.outer.*" => vec![
             "claims.stage1.outer.outer_remainder.left_instruction_input",
             "claims.stage1.outer.outer_remainder.right_instruction_input",
@@ -1414,6 +1560,26 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage1.outer.outer_remainder.is_compressed",
             "claims.stage1.outer.outer_remainder.is_first_in_sequence",
             "claims.stage1.outer.outer_remainder.is_last_in_sequence",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_add",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_sub",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_mul",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_inv",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_assert_eq",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_load_accumulate_from_register",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_assert_zero",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_load_imm",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_load_accumulate_from_memory",
+            #[cfg(feature = "field-inline")]
+            "claims.stage1.outer.outer_remainder.field_advice_limb",
         ],
         "claims.stage2.batch_outputs.ram_read_write.*" => vec![
             "claims.stage2.batch_outputs.ram_read_write.val",
@@ -1434,6 +1600,12 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage2.batch_outputs.instruction_claim_reduction.right_lookup_operand",
             "claims.stage2.batch_outputs.instruction_claim_reduction.left_instruction_input",
             "claims.stage2.batch_outputs.instruction_claim_reduction.right_instruction_input",
+        ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage2.batch_outputs.field_registers_claim_reduction.*" => vec![
+            "claims.stage2.batch_outputs.field_registers_claim_reduction.rd_value",
+            "claims.stage2.batch_outputs.field_registers_claim_reduction.rs1_value",
+            "claims.stage2.batch_outputs.field_registers_claim_reduction.rs2_value",
         ],
         "claims.stage3.shift.*" => vec![
             "claims.stage3.shift.unexpanded_pc",
@@ -1464,6 +1636,14 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage4.registers_read_write.rd_wa",
             "claims.stage4.registers_read_write.rd_inc",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage4.field_registers_read_write.*" => vec![
+            "claims.stage4.field_registers_read_write.registers_val",
+            "claims.stage4.field_registers_read_write.rs1_ra",
+            "claims.stage4.field_registers_read_write.rs2_ra",
+            "claims.stage4.field_registers_read_write.rd_wa",
+            "claims.stage4.field_registers_read_write.rd_inc",
+        ],
         "claims.stage4.ram_val_check.*" => vec![
             "claims.stage4.ram_val_check.ram_ra",
             "claims.stage4.ram_val_check.ram_inc",
@@ -1472,12 +1652,18 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage5.registers_val_evaluation.rd_inc",
             "claims.stage5.registers_val_evaluation.rd_wa",
         ],
+        #[cfg(feature = "field-inline")]
+        "claims.stage5.field_registers_val_evaluation.*" => vec![
+            "claims.stage5.field_registers_val_evaluation.rd_inc",
+            "claims.stage5.field_registers_val_evaluation.rd_wa",
+        ],
         path => vec![path],
     }
 }
 
 fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>) {
     match value {
+        Value::Null if prefix.ends_with(".field_inline") => {}
         Value::Object(map) => {
             for (key, value) in map {
                 collect_leaf_paths(&format!("{prefix}.{key}"), value, paths);
@@ -1489,56 +1675,27 @@ fn collect_leaf_paths(prefix: &str, value: &Value, paths: &mut BTreeSet<String>)
     }
 }
 
+#[cfg_attr(
+    not(feature = "field-inline"),
+    expect(
+        clippy::useless_conversion,
+        reason = "field-inline selects composed claim and opening types"
+    )
+)]
 pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
     let zero = F::zero();
     let optional = fill_optionals.then_some(zero);
 
     ClearProofClaims {
-        stage1: stage1::outputs::Stage1OutputClaims {
-            uniskip_output_claim: zero,
-            outer: stage1::outputs::Stage1BatchOutputClaims {
-                outer_remainder: stage1::OuterRemainderOutputClaims {
-                    left_instruction_input: zero,
-                    right_instruction_input: zero,
-                    product: zero,
-                    should_branch: zero,
-                    pc: zero,
-                    unexpanded_pc: zero,
-                    imm: zero,
-                    ram_address: zero,
-                    rs1_value: zero,
-                    rs2_value: zero,
-                    rd_write_value: zero,
-                    ram_read_value: zero,
-                    ram_write_value: zero,
-                    left_lookup_operand: zero,
-                    right_lookup_operand: zero,
-                    next_unexpanded_pc: zero,
-                    next_pc: zero,
-                    next_is_virtual: zero,
-                    next_is_first_in_sequence: zero,
-                    lookup_output: zero,
-                    should_jump: zero,
-                    add_operands: zero,
-                    subtract_operands: zero,
-                    multiply_operands: zero,
-                    load: zero,
-                    store: zero,
-                    jump: zero,
-                    write_lookup_output_to_rd: zero,
-                    virtual_instruction: zero,
-                    assert: zero,
-                    do_not_update_unexpanded_pc: zero,
-                    advice: zero,
-                    is_compressed: zero,
-                    is_first_in_sequence: zero,
-                    is_last_in_sequence: zero,
-                },
+        stage1: Stage1OutputClaims::new(
+            zero,
+            Stage1BatchOutputClaims {
+                outer_remainder: OuterRemainderOutputClaims::<F>::default().into(),
             },
-        },
-        stage2: stage2::outputs::Stage2OutputClaims {
-            product_uniskip_output_claim: zero,
-            batch_outputs: stage2::outputs::Stage2BatchOutputClaims {
+        ),
+        stage2: Stage2OutputClaims::new(
+            zero,
+            Stage2BatchOutputClaims {
                 ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
                     val: zero,
                     ra: zero,
@@ -1553,7 +1710,7 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     branch_flag: zero,
                     next_is_noop: zero,
                     virtual_instruction: zero,
-                },
+                }.into(),
                 instruction_claim_reduction:
                     stage2::outputs::InstructionClaimReductionOutputClaims {
                         lookup_output: zero,
@@ -1562,10 +1719,17 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                         left_instruction_input: zero,
                         right_instruction_input: zero,
                     },
+                #[cfg(feature = "field-inline")]
+                field_registers_claim_reduction:
+                    FieldRegistersClaimReductionOutputClaims {
+                        rd_value: zero,
+                        rs1_value: zero,
+                        rs2_value: zero,
+                    },
                 ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims { ram_ra: zero },
                 ram_output_check: stage2::outputs::RamOutputCheckOutputClaims { val_final: zero },
             },
-        },
+        ),
         stage3: stage3::outputs::Stage3OutputClaims {
             shift: stage3::outputs::SpartanShiftOutputClaims {
                 unexpanded_pc: zero,
@@ -1598,6 +1762,14 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rd_wa: zero,
                 rd_inc: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write: FieldRegistersReadWriteOutputClaims {
+                registers_val: zero,
+                rs1_ra: zero,
+                rs2_ra: zero,
+                rd_wa: zero,
+                rd_inc: zero,
+            },
             ram_val_check: stage4::RamValCheckOutputClaims {
                 untrusted_advice: optional,
                 trusted_advice: optional,
@@ -1617,12 +1789,17 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rd_inc: zero,
                 rd_wa: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_registers_val_evaluation: FieldRegistersValEvaluationOutputClaims {
+                rd_inc: zero,
+                rd_wa: zero,
+            },
         },
         stage6a: stage6a::outputs::Stage6aOutputClaims {
             bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
                 intermediate: zero,
                 val_stages: Vec::new(),
-            },
+            }.into(),
             booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
                 intermediate: zero,
             },
@@ -1668,6 +1845,9 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 ram_inc: zero,
                 rd_inc: zero,
             },
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction:
+                FieldRegistersIncClaimReductionOutputClaims { rd_inc: zero },
             #[cfg(not(feature = "akita"))]
             trusted_advice: fill_optionals.then_some(
                 stage6b::outputs::TrustedAdviceCyclePhaseOutputClaims { trusted: zero },

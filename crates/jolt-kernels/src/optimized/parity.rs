@@ -9,15 +9,11 @@
 //! per-kernel tests.
 #![expect(clippy::expect_used, clippy::panic, reason = "test-only module")]
 
-use jolt_claims::protocols::jolt::JoltChallengeId;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, JoltField, Ring};
 use jolt_sumcheck::SumcheckError;
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
-};
+use jolt_verifier::stages::relations::ConcreteSumcheck;
 #[cfg(not(feature = "akita"))]
 use jolt_witness::JoltWitnessOracle;
 
@@ -64,9 +60,6 @@ pub(crate) fn probe_input_claim<F: JoltField, R>(
 ) -> F
 where
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     match kernel.prove_round(None, 0, F::zero()) {
         Ok(_) => F::zero(),
@@ -76,10 +69,10 @@ where
 }
 
 /// Drive both kernels through every round with shared challenges, asserting
-/// byte-equal round polynomials, then finish and return both (fully bound)
-/// for output-claim comparison. `initial_claim` must be the honest input
-/// claim (see [`probe_input_claim`]); a zero claim is rejected so a
-/// degenerate all-zero fixture cannot make the parity vacuous.
+/// byte-equal round polynomials, then finish both kernels for output-claim
+/// comparison. `initial_claim` must be the honest input claim (see
+/// [`probe_input_claim`]). Fixture-specific nontriviality checks belong in
+/// callers: a zero claim can still yield nonzero round polynomials.
 pub(crate) fn run_lockstep<F: JoltField, R>(
     reference: &mut dyn SumcheckKernel<F, Relation = R>,
     optimized: &mut dyn SumcheckKernel<F, Relation = R>,
@@ -87,18 +80,11 @@ pub(crate) fn run_lockstep<F: JoltField, R>(
     challenges: &[F],
 ) where
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     let rounds = reference.num_rounds();
     assert_eq!(rounds, optimized.num_rounds(), "round count mismatch");
     assert_eq!(rounds, challenges.len(), "challenge count mismatch");
     assert!(rounds > 0, "zero-round parity run proves nothing");
-    assert!(
-        initial_claim != F::zero(),
-        "zero input claim: the fixture degenerated and parity would be vacuous"
-    );
 
     let mut claim = initial_claim;
     for round in 0..rounds {

@@ -1,3 +1,4 @@
+use crate::instruction::registers::u::RegisterStateU;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -12,6 +13,7 @@ declare_riscv_instr!(
     mask   = 0x0000007f,
     match  = 0x00000037,
     format = FormatU,
+    registers = RegisterStateU,
     ram    = ()
 );
 

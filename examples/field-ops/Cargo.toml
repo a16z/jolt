@@ -1,0 +1,25 @@
+[package]
+name = "field-ops"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# The guest uses raw field-inline instructions and requires the modular prover.
+# The whole pipeline hangs off this non-default feature: default workspace
+# builds must not unify field-inline into the modular prover stack.
+field-inline = [
+  "guest/field-inline",
+  "dep:jolt-field",
+  "dep:jolt-program",
+  "dep:jolt-prover",
+  "dep:jolt-witness",
+  "jolt-prover/field-inline",
+]
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../jolt-sdk", features = ["host"] }
+guest = { package = "field-ops-guest", path = "./guest" }
+jolt-field = { workspace = true, optional = true }
+jolt-program = { workspace = true, optional = true }
+jolt-prover = { workspace = true, optional = true }
+jolt-witness = { workspace = true, optional = true }

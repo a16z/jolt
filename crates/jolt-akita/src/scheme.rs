@@ -4,8 +4,8 @@ use akita_types::PrecommittedGroupProfiles;
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError,
-    PrecommittedClaim, PrecommittedOpening, PrecommittedRole, TransparentObjectSetup,
+    BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupOpeningClaim,
+    GroupOpeningWithHint, OpeningsError, TaggedGroupOpeningClaim, TransparentObjectSetup,
     VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
@@ -42,24 +42,24 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         layout_digest: [u8; 32],
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
-        precommitted_hints: &[&Self::OpeningHint],
+        group_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
     /// Releases backend state that can be rebuilt before the opening proof.
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError>;
 }
 
-/// Strictly ascending roles make the ordered precommitted group list
+/// Strictly ascending roles make the ordered commitment group list
 /// unambiguous and forbid duplicate or permuted groups.
-pub(crate) fn validate_precommitted_order(
-    roles: impl IntoIterator<Item = PrecommittedRole>,
+pub(crate) fn validate_group_order(
+    roles: impl IntoIterator<Item = CommitmentGroupRole>,
 ) -> Result<(), OpeningsError> {
-    let mut previous: Option<PrecommittedRole> = None;
+    let mut previous: Option<CommitmentGroupRole> = None;
     for role in roles {
         if let Some(previous) = previous {
             if role.order() <= previous.order() {
                 return Err(invalid_batch(format!(
-                    "Akita precommitted groups must be in canonical ascending order, found {} after {}",
+                    "Akita commitment groups must be in canonical ascending order, found {} after {}",
                     role.diagnostic_name(),
                     previous.diagnostic_name()
                 )));
@@ -173,13 +173,13 @@ impl AkitaScheme {
         )
     }
 
-    /// Contextual owned one-hot final commit with precommitted objects.
+    /// Contextual owned one-hot final commit with auxiliary commitment groups.
     /// The witness buffers move into the opening hint without cloning.
-    pub fn commit_one_hot_group_owned_with_precommitted(
+    pub fn commit_one_hot_group_owned_with_groups(
         setup: &AkitaProverSetup,
         layout_digest: [u8; 32],
         polynomials: Vec<OneHotPolynomial>,
-        precommitted_hints: &[&AkitaProverHint],
+        group_hints: &[&AkitaProverHint],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let first = polynomials
             .first()
@@ -198,9 +198,9 @@ impl AkitaScheme {
                 owned_one_hot_polynomial(polynomial, setup.one_hot_k())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let profiles = Self::precommitted_profiles(setup, precommitted_hints)?;
+        let profiles = Self::group_profiles(setup, group_hints)?;
         let (backend_commitment, backend_hint) =
-            Self::commit_one_hot_backend_with_precommitted(setup, &backend_polynomials, &profiles)?;
+            Self::commit_one_hot_backend_with_groups(setup, &backend_polynomials, &profiles)?;
         Self::package_commitment(
             layout_digest,
             num_vars,
@@ -217,12 +217,12 @@ impl AkitaScheme {
         layout_digest: [u8; 32],
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
-        precommitted_hints: &[&AkitaProverHint],
+        group_hints: &[&AkitaProverHint],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let profiles = if precommitted_hints.is_empty() {
+        let profiles = if group_hints.is_empty() {
             None
         } else {
-            Some(Self::precommitted_profiles(setup, precommitted_hints)?)
+            Some(Self::group_profiles(setup, group_hints)?)
         };
         let source = TracePackedOneHot::new(
             setup.one_hot_k(),
@@ -323,7 +323,7 @@ impl AkitaScheme {
         .map_err(commit_failed)
     }
 
-    fn commit_one_hot_backend_with_precommitted(
+    fn commit_one_hot_backend_with_groups(
         setup: &AkitaProverSetup,
         polynomials: &[AkitaBackendOneHotPoly],
         profiles: &PrecommittedGroupProfiles,
@@ -357,44 +357,44 @@ impl AkitaScheme {
         .map_err(commit_failed)
     }
 
-    /// Freezes the ordered precommitted profiles the final trace group commits
+    /// Freezes the ordered group profiles the final trace group commits
     /// against. Order is the caller's canonical role order; the backend keys the
     /// grouped row on this exact sequence.
-    fn precommitted_profiles(
+    fn group_profiles(
         setup: &AkitaProverSetup,
-        precommitted_hints: &[&AkitaProverHint],
+        group_hints: &[&AkitaProverHint],
     ) -> Result<PrecommittedGroupProfiles, OpeningsError> {
-        if precommitted_hints.is_empty() {
+        if group_hints.is_empty() {
             return Err(invalid_batch(
-                "Akita grouped trace opening requires at least one precommitted group",
+                "Akita grouped trace opening requires at least one auxiliary group",
             ));
         }
-        // Every precommitted group plus the final trace group must fit the
+        // Every auxiliary group plus the final trace group must fit the
         // setup's total batch capacity.
-        let required = precommitted_hints
+        let required = group_hints
             .len()
             .checked_add(1)
-            .ok_or_else(|| invalid_batch("Akita precommitted group count overflows"))?;
+            .ok_or_else(|| invalid_batch("Akita auxiliary group count overflows"))?;
         if setup.max_total_batch_polys() < required {
             return Err(invalid_batch(format!(
                 "Akita grouped trace opening requires total polynomial capacity {required}, setup has {}",
                 setup.max_total_batch_polys()
             )));
         }
-        let mut profiles = Vec::with_capacity(precommitted_hints.len());
-        for hint in precommitted_hints {
+        let mut profiles = Vec::with_capacity(group_hints.len());
+        for hint in group_hints {
             if hint.commitment.backend_flavor != AkitaBackendFlavor::Dense
                 || hint.commitment.poly_count != 1
                 || !matches!(hint.polynomials, AkitaHintPolynomials::Dense(_))
             {
                 return Err(invalid_batch(
-                    "Akita trace precommit must be one advice polynomial",
+                    "Akita auxiliary group must contain one dense polynomial",
                 ));
             }
-            let (precommitted_group, _) = hint.backend.as_ref().ok_or_else(|| {
-                invalid_batch("Akita advice precommit is missing backend opening data")
+            let (auxiliary_group, _) = hint.backend.as_ref().ok_or_else(|| {
+                invalid_batch("Akita auxiliary group is missing backend opening data")
             })?;
-            profiles.push(precommitted_group.profile);
+            profiles.push(auxiliary_group.profile);
         }
         PrecommittedGroupProfiles::from_profiles(profiles).map_err(akita_error)
     }
@@ -494,15 +494,9 @@ impl TraceOneHotCommitment for AkitaScheme {
         layout_digest: [u8; 32],
         column_capacity: usize,
         rows: Arc<dyn TraceOneHotRows>,
-        precommitted_hints: &[&Self::OpeningHint],
+        group_hints: &[&Self::OpeningHint],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
-        Self::commit_trace_one_hot(
-            setup,
-            layout_digest,
-            column_capacity,
-            rows,
-            precommitted_hints,
-        )
+        Self::commit_trace_one_hot(setup, layout_digest, column_capacity, rows, group_hints)
     }
 
     fn release_post_commit_residency(setup: &Self::ProverSetup) -> Result<(), OpeningsError> {
@@ -526,7 +520,7 @@ impl CommitmentScheme for AkitaScheme {
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
         if params
-            .precommitted_schedule
+            .grouped_schedule
             .as_ref()
             .is_some_and(|request| request.final_num_vars() != params.max_num_vars)
         {
@@ -542,12 +536,17 @@ impl CommitmentScheme for AkitaScheme {
                 .one_hot_catalog(params.one_hot_k)
                 .map_err(invalid_setup)?;
             let catalog = params
-                .precommitted_schedule
+                .grouped_schedule
                 .as_ref()
                 .map_or_else(
                     || Ok(base.clone()),
-                    |precommitted| {
-                        precommitted.extend_catalog(&dense_catalog, &base, params.one_hot_k)
+                    |grouped_schedule| {
+                        grouped_schedule.extend_catalog(
+                            &dense_catalog,
+                            &artifacts.full_dense_catalog()?,
+                            &base,
+                            params.one_hot_k,
+                        )
                     },
                 )
                 .map_err(invalid_setup)?;
@@ -758,14 +757,14 @@ impl CommitmentScheme for AkitaScheme {
 
     fn prove_batch(
         setup: &Self::ProverSetup,
-        precommitted: Vec<PrecommittedOpening<Self::Field, Self::Output, Self::OpeningHint>>,
+        auxiliary_groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         final_group: GroupOpeningClaim<Self::Field, Self::Output>,
         final_hint: Self::OpeningHint,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         AkitaNativeBatching::prove_trace_batch(
             setup,
-            precommitted,
+            auxiliary_groups,
             final_group,
             final_hint,
             transcript,
@@ -774,12 +773,18 @@ impl CommitmentScheme for AkitaScheme {
 
     fn verify_batch(
         setup: &Self::VerifierSetup,
-        precommitted: &[PrecommittedClaim<Self::Field, Self::Output>],
+        auxiliary_groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
         final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         proof: &Self::Proof,
         transcript: &mut impl Transcript<Challenge = Self::Field>,
     ) -> Result<(), OpeningsError> {
-        AkitaNativeBatching::verify_trace_batch(setup, precommitted, final_group, proof, transcript)
+        AkitaNativeBatching::verify_trace_batch(
+            setup,
+            auxiliary_groups,
+            final_group,
+            proof,
+            transcript,
+        )
     }
 }
 
@@ -801,6 +806,41 @@ impl TransparentObjectSetup for AkitaScheme {
             layout_digest,
             context.clone(),
         ))
+    }
+
+    fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
+        context: &Self::SetupContext,
+        poly: &P,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let scheme = context.full_dense_scheme().map_err(invalid_setup)?;
+        let num_vars = poly.num_vars();
+        let dense = vec![AkitaBackendDensePoly::from_field_evals(
+            num_vars,
+            akita_ordered_evaluations(poly)?,
+        )
+        .map_err(akita_error)?];
+        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+            let setup = scheme.setup_prover(num_vars, 1)?;
+            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup)?;
+            let stack = backend_stack(&setup, &prepared)
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+            scheme.commit(
+                &setup,
+                dense.as_slice(),
+                stack.commitment(),
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::Dense(dense.into()),
+        )
     }
 
     fn transparent_setup_context(setup: &Self::ProverSetup) -> &Self::SetupContext {
@@ -910,6 +950,18 @@ mod tests {
     use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
+
+    #[test]
+    fn full_width_objects_do_not_widen_bounded_dense_commitments() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (bounded, _) = AkitaScheme::transparent_object_setup(&artifacts, 14, [7; 32]).unwrap();
+        let polynomial = Polynomial::new(vec![AkitaField::pow2(80); 1 << 14]);
+        assert!(AkitaScheme::commit(&polynomial, &bounded).is_err());
+        let (commitment, hint) =
+            AkitaScheme::commit_full_width_object(&artifacts, &polynomial, [7; 32]).unwrap();
+        assert_eq!(commitment, hint.commitment);
+        assert_eq!(commitment.num_vars, polynomial.num_vars());
+    }
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
@@ -1107,11 +1159,11 @@ mod tests {
 
     #[test]
     fn serde_transported_recursive_grouped_setup_restores_its_schedule_rows() {
-        use crate::schedule_registry::{PrecommittedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
+        use crate::schedule_registry::{GroupedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_PACKING_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
         let final_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES;
-        let precommitted_schedule = PrecommittedScheduleParams::new(
+        let grouped_schedule = GroupedScheduleParams::new(
             None,
             Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
             final_num_vars,
@@ -1122,7 +1174,7 @@ mod tests {
             2,
             [3; 32],
             AKITA_ONE_HOT_K16,
-            Some(precommitted_schedule),
+            Some(grouped_schedule),
             AkitaScheduleArtifacts::shared_from_default_directory(),
         ))
         .unwrap();
@@ -1153,9 +1205,9 @@ mod tests {
 
     #[test]
     fn grouped_setup_rejects_a_final_arity_different_from_the_main_setup() {
-        use crate::schedule_registry::PrecommittedScheduleParams;
+        use crate::schedule_registry::GroupedScheduleParams;
 
-        let request = PrecommittedScheduleParams::new(None, Some(14), 15);
+        let request = GroupedScheduleParams::new(None, Some(14), 15);
         let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
             14,
             1,
@@ -1227,6 +1279,11 @@ mod tests {
         );
         let alternate_artifacts = Arc::new(AkitaScheduleArtifacts::new(
             reduced_catalog.to_artifact_bytes().unwrap(),
+            artifacts
+                .full_dense_catalog()
+                .unwrap()
+                .to_artifact_bytes()
+                .unwrap(),
             artifacts
                 .one_hot_catalog(AKITA_ONE_HOT_K16)
                 .unwrap()

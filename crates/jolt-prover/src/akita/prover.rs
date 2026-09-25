@@ -167,6 +167,8 @@ where
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
+        #[cfg(feature = "field-inline")]
+        &stage0.field_inc,
         preprocessing
             .committed_program
             .as_ref()
@@ -196,6 +198,8 @@ where
         untrusted_advice_commitment: stage0
             .untrusted_advice
             .map(|object| object.commitment.clone()),
+        #[cfg(feature = "field-inline")]
+        field_inc_commitment: Some(stage0.field_inc.commitment),
         claims: JoltProofClaims::Clear(ClearProofClaims {
             stage1: stage1.claims,
             stage2: stage2.claims,

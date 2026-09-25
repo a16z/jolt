@@ -11,7 +11,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::JoltProtocolConfig,
-    stages::{stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7},
+    stages::{
+        stage1::outputs::Stage1OutputClaims, stage2::outputs::Stage2OutputClaims,
+        stage3::outputs::Stage3OutputClaims, stage4::outputs::Stage4OutputClaims,
+        stage5::outputs::Stage5OutputClaims, stage6a::outputs::Stage6aOutputClaims,
+        stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims,
+    },
     VerifierError,
 };
 
@@ -50,12 +55,69 @@ pub struct JoltProof<
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
+    /// Direct commitment to the full field-register increment polynomial.
+    /// Required for every Akita field-inline proof, including an all-zero trace.
+    /// Producers without field-inline semantics leave this absent and are rejected
+    /// by the protocol-config gate when field-inline is required.
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub field_inc_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
+}
+
+impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    /// Assemble a proof without a field-inline payload. Producers with no field-inline
+    /// semantics (the legacy converters) build through here so they never name the
+    /// feature-gated slots; the modular provers with field-inline enabled attach theirs with
+    /// [`Self::with_field_inc_commitment`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per proof component, mirroring the wire struct"
+    )]
+    pub fn new(
+        protocol: JoltProtocolConfig,
+        commitments: ProofCommitments<PCS>,
+        stages: JoltStageProofs<PCS::Field, VC>,
+        joint_opening_proof: JointOpeningProof<PCS>,
+        untrusted_advice_commitment: Option<PCS::Output>,
+        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        trace_length: usize,
+        ram_k: usize,
+        rw_config: JoltReadWriteConfig,
+        one_hot_config: JoltOneHotConfig,
+        trace_polynomial_order: TracePolynomialOrder,
+    ) -> Self {
+        Self {
+            protocol,
+            commitments,
+            stages,
+            joint_opening_proof,
+            untrusted_advice_commitment,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_commitment: None,
+            claims,
+            trace_length,
+            ram_K: ram_k,
+            rw_config,
+            one_hot_config,
+            trace_polynomial_order,
+        }
+    }
+
+    /// Attach the direct field-increment commitment required by Akita field-inline proofs.
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub fn with_field_inc_commitment(mut self, commitment: PCS::Output) -> Self {
+        self.field_inc_commitment = Some(commitment);
+        self
+    }
 }
 
 impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
@@ -87,6 +149,8 @@ where
             stages: self.stages,
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_commitment: self.field_inc_commitment,
             claims,
             trace_length: self.trace_length,
             ram_K: self.ram_K,
@@ -97,6 +161,24 @@ where
     }
 }
 
+/// The field-register commitments of the field-inline extension. `FieldRdInc` is the
+/// extension's single committed polynomial; the field-register access columns are virtual
+/// (anchored through the bytecode read-RAF path), so this nest stays one deep until the
+/// protocol commits more.
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldRegistersCommitments<C> {
+    pub rd_inc: C,
+}
+
+/// The field-inline extension's committed payload, grouped by component as the
+/// protocol spec lays it out (`FieldInlineCommitments::field_registers`).
+#[cfg(feature = "field-inline")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldInlineCommitments<C> {
+    pub field_registers: FieldRegistersCommitments<C>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltCommitments<C> {
     pub rd_inc: C,
@@ -104,6 +186,16 @@ pub struct JoltCommitments<C> {
     pub instruction_ra: Vec<C>,
     pub ram_ra: Vec<C>,
     pub bytecode_ra: Vec<C>,
+    /// Present on every field-inline proof (the build with field-inline enabled proves all
+    /// guests under the composed protocol). Carried as an `Option` because this type is shared
+    /// with producers that cannot supply field-inline commitments — the legacy prover and the
+    /// packed converter — whose proofs fail the protocol-config gate before this field is ever
+    /// read; [`validate_proof_consistency`] rejects a missing payload fail-closed for
+    /// everything else.
+    ///
+    /// [`validate_proof_consistency`]: crate::verifier::validate_proof_consistency
+    #[cfg(feature = "field-inline")]
+    pub field_inline: Option<FieldInlineCommitments<C>>,
 }
 
 impl<C> JoltCommitments<C> {
@@ -120,7 +212,17 @@ impl<C> JoltCommitments<C> {
             instruction_ra,
             ram_ra,
             bytecode_ra,
+            #[cfg(feature = "field-inline")]
+            field_inline: None,
         }
+    }
+
+    /// Attach the field-inline committed payload (the modular prover's stage 0 sets this on
+    /// every field-inline proof).
+    #[cfg(feature = "field-inline")]
+    pub fn with_field_inline(mut self, field_inline: FieldInlineCommitments<C>) -> Self {
+        self.field_inline = Some(field_inline);
+        self
     }
 }
 
@@ -156,14 +258,43 @@ where
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
 pub struct ClearProofClaims<F: JoltField> {
-    pub stage1: stage1::outputs::Stage1OutputClaims<F>,
-    pub stage2: stage2::outputs::Stage2OutputClaims<F>,
-    pub stage3: stage3::outputs::Stage3OutputClaims<F>,
-    pub stage4: stage4::outputs::Stage4OutputClaims<F>,
-    pub stage5: stage5::outputs::Stage5OutputClaims<F>,
-    pub stage6a: stage6a::outputs::Stage6aOutputClaims<F>,
-    pub stage6b: stage6b::outputs::Stage6bOutputClaims<F>,
-    pub stage7: stage7::outputs::Stage7OutputClaims<F>,
+    pub stage1: Stage1OutputClaims<F>,
+    pub stage2: Stage2OutputClaims<F>,
+    pub stage3: Stage3OutputClaims<F>,
+    pub stage4: Stage4OutputClaims<F>,
+    pub stage5: Stage5OutputClaims<F>,
+    pub stage6a: Stage6aOutputClaims<F>,
+    pub stage6b: Stage6bOutputClaims<F>,
+    pub stage7: Stage7OutputClaims<F>,
+}
+
+impl<F: JoltField> ClearProofClaims<F> {
+    /// Assemble the clear claims from the stage outputs.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per stage, mirroring the wire struct"
+    )]
+    pub fn new(
+        stage1: Stage1OutputClaims<F>,
+        stage2: Stage2OutputClaims<F>,
+        stage3: Stage3OutputClaims<F>,
+        stage4: Stage4OutputClaims<F>,
+        stage5: Stage5OutputClaims<F>,
+        stage6a: Stage6aOutputClaims<F>,
+        stage6b: Stage6bOutputClaims<F>,
+        stage7: Stage7OutputClaims<F>,
+    ) -> Self {
+        Self {
+            stage1,
+            stage2,
+            stage3,
+            stage4,
+            stage5,
+            stage6a,
+            stage6b,
+            stage7,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

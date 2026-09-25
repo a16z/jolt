@@ -23,10 +23,9 @@ pub mod i;
 pub mod m;
 pub mod virt;
 
-use crate::{
-    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, SourceInlineKey,
-    SourceInstructionKind, SourceInstructionRow,
-};
+use crate::{JoltInstructionKind, JoltInstructionRow, SourceInstructionKind, SourceInstructionRow};
+#[cfg(feature = "serialization")]
+use crate::{NormalizedOperands, SourceInlineKey};
 pub use assert::AssertEq;
 pub use assert::AssertHalfwordAlignment;
 pub use assert::AssertLte;
@@ -36,7 +35,8 @@ pub use assert::AssertValidUnsignedRemainder;
 pub use assert::AssertWordAlignment;
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
+    FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldAssertZero, FieldInv,
+    FieldLoadAccumulateFromMemory, FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul,
     FieldSub,
 };
 pub use i::Add;
@@ -453,11 +453,15 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     #[cfg(feature = "field-inline")]
     FieldAssertEq(FieldAssertEq<T>),
     #[cfg(feature = "field-inline")]
-    FieldLoadFromX(FieldLoadFromX<T>),
+    FieldLoadAccumulateFromRegister(FieldLoadAccumulateFromRegister<T>),
     #[cfg(feature = "field-inline")]
-    FieldStoreToX(FieldStoreToX<T>),
+    FieldAssertZero(FieldAssertZero<T>),
     #[cfg(feature = "field-inline")]
     FieldLoadImm(FieldLoadImm<T>),
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromMemory(FieldLoadAccumulateFromMemory<T>),
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb(FieldAdviceLimb<T>),
 }
 
 macro_rules! impl_jolt_instruction_try_from_row {
@@ -677,11 +681,15 @@ impl_jolt_instructions_flags! {
     #[cfg(feature = "field-inline")]
     FieldAssertEq => FIELD_ASSERT_EQ,
     #[cfg(feature = "field-inline")]
-    FieldLoadFromX => FIELD_LOAD_FROM_X,
+    FieldLoadAccumulateFromRegister => FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
     #[cfg(feature = "field-inline")]
-    FieldStoreToX => FIELD_STORE_TO_X,
+    FieldAssertZero => FIELD_ASSERT_ZERO,
     #[cfg(feature = "field-inline")]
     FieldLoadImm => FIELD_LOAD_IMM,
+    #[cfg(feature = "field-inline")]
+    FieldLoadAccumulateFromMemory => FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+    #[cfg(feature = "field-inline")]
+    FieldAdviceLimb => FIELD_ADVICE_LIMB,
 }
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,7 @@
 //! Virtual instruction that asserts unsigned multiplication of two operands does not overflow.
 
+use crate::instruction::registers::b::RegisterStateB;
+
 use super::{format::format_b::FormatB, RISCVInstruction, RISCVTrace};
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,7 @@ declare_riscv_instr!(
     mask = 0,
     match = 0,
     format = FormatB,
+    registers = RegisterStateB,
     ram = ()
 );
 
