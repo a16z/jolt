@@ -47,7 +47,8 @@ impl FieldIncLayout {
     }
 }
 
-/// The field increment follows advice roles 0 and 1 in the joint opening.
+/// Places `FieldRdInc` after any untrusted and trusted advice commitments
+/// in Akita's final batched opening.
 #[cfg(feature = "akita")]
 pub const fn field_inc_precommitted_role() -> PrecommittedRole {
     PrecommittedRole::new(2, b"field_inc", "field-inc")
