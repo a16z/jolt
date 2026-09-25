@@ -3192,6 +3192,7 @@ name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "bincode 2.0.1",
  "blake2 0.11.0",
  "derive_more",
  "jolt-claims-derive",
@@ -3201,6 +3202,8 @@ dependencies = [
  "jolt-poly",
  "jolt-riscv",
  "jolt-utils",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.20",
 ]
@@ -3209,6 +3212,7 @@ dependencies = [
 name = "jolt-claims-derive"
 version = "0.1.0"
 dependencies = [
+ "prettyplease 0.3.0",
  "proc-macro2",
  "quote",
  "syn 3.0.3",
@@ -5034,6 +5038,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettyplease"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "primeorder"
 version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5157,7 +5171,7 @@ dependencies = [
  "multimap",
  "once_cell",
  "petgraph",
- "prettyplease",
+ "prettyplease 0.2.37",
  "prost",
  "prost-types",
  "regex",

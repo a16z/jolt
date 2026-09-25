@@ -30,6 +30,7 @@ use jolt_poly::lagrange::{
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
 use jolt_witness::JoltWitnessOracle;
 
 use super::views::{dense_view, eq_table};
@@ -39,7 +40,9 @@ use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
 };
 use jolt_witness::JoltWitnessPlane;
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, ProductUniskipInputClaims<F>>
+    for ReferenceBackend
+{
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
     /// the slot as the single `late_tau` entry of
     /// [`first_round_poly`](UniskipKernel::first_round_poly).
@@ -62,6 +65,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>> for ReferenceBackend {
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        _inputs: &ProductUniskipInputClaims<F>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {

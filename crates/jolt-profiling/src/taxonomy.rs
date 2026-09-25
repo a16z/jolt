@@ -1,5 +1,5 @@
 //! The versioned span taxonomy for the modular prover — **the normative
-//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 2).
+//! schema** for every span the pipeline emits ([`TAXONOMY_VERSION`] = 3).
 //!
 //! One instrumentation layer, two renderings: the same `tracing` span stream
 //! becomes both the Perfetto-viewable chrome trace and the machine-queryable
@@ -77,7 +77,7 @@
 //!    explicitly after taxonomy changes.
 
 /// Version of the span label set documented in this module.
-pub const TAXONOMY_VERSION: u32 = 2;
+pub const TAXONOMY_VERSION: u32 = 3;
 
 /// The whole-run root span emitted by the Dory and Akita provers. Named
 /// `jolt_prover::prove` rather than bare `prove`, which jolt-dory uses for an
@@ -149,7 +149,11 @@ pub const UNISKIP_SEAM_SPANS: [&str; 4] = [
 /// Kernel-seam spans that fire only on proves whose guest consumes advice.
 /// Call-boundary spans like [`KERNEL_SEAM_SPANS`]; exempt from the smoke
 /// test's presence assertion (fibonacci has no advice).
-pub const ADVICE_SEAM_SPANS: [&str; 2] = ["commit_advice", "AdviceOpeningEvaluation::evaluate"];
+pub const ADVICE_SEAM_SPANS: [&str; 1] = ["commit_advice"];
+
+/// Stage-4 evaluation seam for advice or a committed program image. Absent
+/// when neither private initial-RAM contribution is present.
+pub const INITIAL_RAM_OPENING_SEAM_SPANS: [&str; 1] = ["RamInitialOpeningEvaluation::evaluate"];
 
 /// Kernel-seam spans that fire only with committed-program preprocessing.
 pub const COMMITTED_PROGRAM_SEAM_SPANS: [&str; 1] = ["build_committed_bytecode_chunk_coeffs"];
@@ -195,7 +199,7 @@ pub enum ProverMode {
     Akita,
 }
 
-/// Every v2 label that fires on all proves of the given mode: the presence
+/// Every current label that fires on all proves of the given mode: the presence
 /// set the `jolt-prover` profiling smoke test asserts against a freshly
 /// emitted trace.
 ///

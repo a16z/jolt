@@ -54,7 +54,7 @@ jobs:
     outputs:
       matrix: ${{ steps.inventory.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Test repository fuzz runner
@@ -88,7 +88,7 @@ jobs:
       group: fuzz-${{ github.event.schedule || github.head_ref || github.ref }}-${{ matrix.workspace }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Select fuzz profile
@@ -122,20 +122,20 @@ jobs:
           esac
 
           echo "name=$profile" >> "$GITHUB_OUTPUT"
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           toolchain: nightly-2026-08-24
           components: llvm-tools-preview,rust-src
           targets: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
       - name: Install pinned cargo-fuzz
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
         with:
           tool: cargo-fuzz@0.13.2
       - name: Install guest builder
         if: matrix.workspace == 'jolt-eval'
         run: cargo install --path . --locked
       - name: Cache fuzz builds
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.directory }}/target
           key: fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ hashFiles(format('{0}/Cargo.lock', matrix.directory)) }}
@@ -143,7 +143,7 @@ jobs:
             fuzz-build-v1-${{ runner.os }}-${{ matrix.workspace }}-
       - name: Restore trusted corpus
         id: corpus
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.directory }}/corpus
           key: fuzz-corpus-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ github.run_id }}
@@ -171,7 +171,7 @@ jobs:
       # flavors from invalidating each other's artifacts every week.
       - name: Cache coverage builds
         if: success() && steps.profile.outputs.name == 'weekly'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.directory }}/target-coverage
           key: fuzz-coverage-build-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ hashFiles(format('{0}/Cargo.lock', matrix.directory)) }}
@@ -182,7 +182,7 @@ jobs:
         run: python3 scripts/fuzz.py --workspace "${{ matrix.workspace }}" --target-triple x86_64-unknown-linux-gnu coverage
       - name: Save trusted corpus
         if: success() && github.event_name == 'schedule' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ matrix.directory }}/corpus
           key: fuzz-corpus-v1-${{ runner.os }}-${{ matrix.workspace }}-${{ github.run_id }}
@@ -205,7 +205,7 @@ jobs:
             done
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: fuzz-failure-${{ matrix.workspace }}-${{ github.run_id }}
           path: |
@@ -215,7 +215,7 @@ jobs:
           retention-days: 7
       - name: Upload weekly coverage
         if: success() && steps.profile.outputs.name == 'weekly'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: fuzz-coverage-${{ matrix.workspace }}-${{ github.run_id }}
           path: ${{ matrix.directory }}/coverage/

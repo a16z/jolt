@@ -58,6 +58,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _inputs: &(),
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         session
             .state::<SpartanOuterKernel<F>>()

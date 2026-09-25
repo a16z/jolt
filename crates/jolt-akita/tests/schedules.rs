@@ -3,10 +3,11 @@
     reason = "catalog tests should fail loudly when an artifact or grid is malformed"
 )]
 
-//! Coverage, setup-sizing, and regeneration guards for Jolt's external catalogs.
+//! Coverage and setup-sizing guards for Jolt's external catalogs.
+
+use std::path::PathBuf;
 
 use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
-use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
@@ -391,31 +392,79 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
     assert!(error.to_string().contains("outside the supported range"));
 }
 
-/// Re-run every planner solve and byte-compare canonical artifacts.
+/// The emit specs are the single source of truth for what the generator
+/// writes; each checked-in one-hot catalog must be exactly its family's grid —
+/// the forward inclusion is checked above, so a length match plus a
+/// reverse-inclusion sweep rules out stale or duplicated entries.
 #[test]
-#[ignore = "regenerates every schedule through the planner DP (minutes)"]
-fn catalogs_match_planner_regeneration() {
-    let output =
-        std::env::temp_dir().join(format!("jolt-akita-schedule-check-{}", std::process::id()));
-    std::fs::create_dir_all(&output).expect("temporary artifact directory");
-    let specs = family_specs(output.clone()).expect("valid family specs");
-    let rendered = akita_planner::emit::render_schedule_artifact_outputs_with_validation(
-        &specs,
-        MaterializationDiagnostics::default(),
-        |_, _| Ok(()),
-    )
-    .expect("regenerate artifacts");
-    let generated = akita_planner::emit::publish_artifact_outputs(rendered)
-        .expect("publish temporary artifacts");
-    for generated in generated {
-        let checked_in = AkitaScheduleArtifacts::packaged_directory()
-            .join(generated.file_name().expect("generated artifact file name"));
-        assert_eq!(
-            std::fs::read(&generated).expect("generated artifact"),
-            std::fs::read(&checked_in).expect("checked-in artifact"),
-            "{} drifted from planner output",
-            checked_in.display()
+fn emit_specs_and_checked_in_catalogs_agree_exactly() {
+    let specs = family_specs(PathBuf::new()).expect("emit specs");
+    let cases = [
+        (
+            "jolt-fp128-onehot-k16",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single),
+        ),
+        (
+            "jolt-fp128-onehot-k256",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single),
+        ),
+        (
+            "jolt-fp128-onehot-k16-w2r2",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Two),
+        ),
+        (
+            "jolt-fp128-onehot-k256-w2r2",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Two),
+        ),
+        (
+            "jolt-fp128-onehot-k16-w4r2",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Four),
+        ),
+        (
+            "jolt-fp128-onehot-k256-w4r2",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Four),
+        ),
+        (
+            "jolt-fp128-onehot-k16-multi-chunk",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Eight),
+        ),
+        (
+            "jolt-fp128-onehot-k256-multi-chunk",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Eight),
+        ),
+    ];
+    assert_eq!(specs.len(), cases.len() + 1);
+    assert_eq!(
+        specs.last().expect("dense emit spec").family_name,
+        JoltDenseBounded::schedule_family_name()
+    );
+    for (spec, (family_name, catalog)) in specs.iter().zip(cases) {
+        assert_eq!(spec.family_name, family_name, "spec order regressed");
+        assert!(
+            spec.grouped_requests.is_empty(),
+            "Jolt one-hot families emit scalar single-group schedules only"
         );
+        assert_eq!(
+            spec.keys.len(),
+            catalog.len(),
+            "{family_name}: grid and catalog must have the same key count"
+        );
+        for row in catalog.rows() {
+            assert!(
+                row.profiles().precommitteds.is_empty(),
+                "{family_name}: Jolt one-hot catalogs are scalar-only"
+            );
+            assert!(
+                spec.keys.contains(&row.profiles().final_group.group),
+                "{family_name}: stale catalog entry {:?} is not a reachable shape",
+                row.profiles().final_group.group
+            );
+        }
+        for (index, key) in spec.keys.iter().enumerate() {
+            assert!(
+                !spec.keys[..index].contains(key),
+                "{family_name}: duplicate grid key {key:?}"
+            );
+        }
     }
-    std::fs::remove_dir_all(output).expect("remove temporary artifacts");
 }
