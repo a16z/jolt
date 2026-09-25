@@ -86,12 +86,12 @@ use blake2::{digest::consts::U32, Blake2b};
     )
 ))]
 use jolt_field::Fr;
-#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
-use spongefish::instantiations::Blake2b512;
 #[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
 use jolt_inlines_blake2::digest_adapter::{Blake2b, U32, U64};
 #[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
 use spongefish::instantiations::hash::Hash;
+#[cfg(all(feature = "transcript-blake2b", not(feature = "blake2-inline")))]
+use spongefish::instantiations::Blake2b512;
 #[cfg(all(feature = "transcript-blake2b", feature = "blake2-inline"))]
 type Blake2b512 = Hash<Blake2b<U64>>;
 #[cfg(feature = "transcript-keccak")]

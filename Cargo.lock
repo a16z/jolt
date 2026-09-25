@@ -3314,6 +3314,7 @@ dependencies = [
  "bincode 2.0.1",
  "cc",
  "criterion",
+ "jolt-riscv",
  "num-bigint",
  "num-traits",
  "rand 0.8.7",

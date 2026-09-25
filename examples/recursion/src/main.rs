@@ -444,7 +444,10 @@ fn collect_guest_proofs(
     use tracer::execution_backend::TracerBackend;
 
     let max_trace_length = guest.get_max_trace_length(false);
-    let mut memory_config = MemoryConfig { heap_size: 32768u64, ..Default::default() };
+    let mut memory_config = MemoryConfig {
+        heap_size: 32768u64,
+        ..Default::default()
+    };
     let mut program = Program::new(guest.name());
     #[cfg(feature = "field-inline")]
     program.enable_field_inline();
@@ -456,37 +459,57 @@ fn collect_guest_proofs(
     let inputs = guest.inputs(proofs);
     let (_, _, _, io_device) = program.trace(&inputs[0], &[], &[]);
     memory_config.program_size = Some(io_device.memory_layout.program_size);
-    let program_data = Arc::new(JoltProgramPreprocessing::new(
-        jolt_program.expanded_bytecode.clone(), jolt_program.memory_init.clone(),
-        io_device.memory_layout.clone(), jolt_program.entry_address,
-        max_trace_length, program.instruction_profile(),
-    ).expect("inner program preprocessing"));
+    let program_data = Arc::new(
+        JoltProgramPreprocessing::new(
+            jolt_program.expanded_bytecode.clone(),
+            jolt_program.memory_init.clone(),
+            io_device.memory_layout.clone(),
+            jolt_program.entry_address,
+            max_trace_length,
+            program.instruction_profile(),
+        )
+        .expect("inner program preprocessing"),
+    );
     let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
     let mut all_groups_data = Vec::new();
     let n = inputs.len() as u32;
     let mut verifier_preprocessing = None;
     let mut records = Vec::new();
     for input_bytes in inputs {
-        let trace = TracerBackend::new().trace(
-            &jolt_program, TraceInputs::new(input_bytes, Vec::new(), Vec::new(), memory_config),
-        ).expect("trace inner program");
+        let trace = TracerBackend::new()
+            .trace(
+                &jolt_program,
+                TraceInputs::new(input_bytes, Vec::new(), Vec::new(), memory_config),
+            )
+            .expect("trace inner program");
         let config = ProverConfig::derive::<AkitaField>(
-            trace.trace.rows(), &program_data.memory_layout,
-            program_data.ram.min_bytecode_address, program_data.ram.bytecode_words.len(),
+            trace.trace.rows(),
+            &program_data.memory_layout,
+            program_data.ram.min_bytecode_address,
+            program_data.ram.bytecode_words.len(),
             max_trace_length,
-        ).expect("inner proof configuration");
+        )
+        .expect("inner proof configuration");
         let prover_preprocessing = match bytecode_chunk_count {
             Some(chunks) => preprocessing::preprocess_committed(
-                &schedule_artifacts, program_data.as_ref().clone(), &config, chunks,
+                &schedule_artifacts,
+                program_data.as_ref().clone(),
+                &config,
+                chunks,
             ),
             None => preprocessing::preprocess_full(
-                &schedule_artifacts, program_data.as_ref().clone(), &config,
+                &schedule_artifacts,
+                program_data.as_ref().clone(),
+                &config,
             ),
-        }.expect("packed preprocessing");
+        }
+        .expect("packed preprocessing");
         let public_io = trace.device.clone();
         let witness = TraceBackend::new(
             JoltVmWitnessConfig::new(
-                config.trace_length.ilog2() as usize, config.ram_K, config.one_hot_config,
+                config.trace_length.ilog2() as usize,
+                config.ram_K,
+                config.one_hot_config,
             ),
             JoltVmWitnessInputs::new(&jolt_program, &program_data, trace),
         );
@@ -494,8 +517,14 @@ fn collect_guest_proofs(
         let witness = witness.with_field_inline().expect("field witness");
         let now = Instant::now();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
-            &JoltAkitaBackend::optimized(), &prover_preprocessing, &config, None, &witness, &public_io,
-        ).expect("packed proof");
+            &JoltAkitaBackend::optimized(),
+            &prover_preprocessing,
+            &config,
+            None,
+            &witness,
+            &public_io,
+        )
+        .expect("packed proof");
         info!("  Packed prove time: {:.3}s", now.elapsed().as_secs_f64());
         let mut preprocessing = prover_preprocessing.verifier;
         // The guest's setup is a trusted constant: carry the expanded backend
@@ -1040,13 +1069,20 @@ fn run_recursion_proof(
             }
             #[cfg(not(feature = "akita"))]
             {
-                let preprocessing = preprocess_guest_prover(
-                    &mut program, memory_config, max_trace_length, None,
-                );
+                let preprocessing =
+                    preprocess_guest_prover(&mut program, memory_config, max_trace_length, None);
                 let verifier = jolt_sdk::verifier_preprocessing_from_prover(&preprocessing);
                 let (proof, io_device): (RV64IMACProof, _) = jolt_sdk::prove_program(
-                    &program, &preprocessing, &input_bytes, &[], &[], None, None, None,
-                ).expect("outer recursion proof");
+                    &program,
+                    &preprocessing,
+                    &input_bytes,
+                    &[],
+                    &[],
+                    None,
+                    None,
+                    None,
+                )
+                .expect("outer recursion proof");
                 jolt_sdk::jolt_verifier::verify::<
                     jolt_sdk::VerifierField,
                     jolt_sdk::VerifierPCS,

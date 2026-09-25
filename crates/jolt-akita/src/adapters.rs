@@ -22,8 +22,7 @@ use akita_prover::{
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_serialization::{Compress, Validate};
 use akita_types::{
-    AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
-    AkitaExpandedSetup,
+    AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape, AkitaExpandedSetup,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };

@@ -3,11 +3,10 @@
 //! On a RISC-V guest built with the `field-inline-guest` feature, the ring
 //! operations of the FR-capable fields ([`crate::Fr`], [`Fp128`]) execute as
 //! field-inline instructions instead of software limb arithmetic: operands
-//! enter the FR register file straight from memory (`FIELD_LOAD_WORD` for the
-//! top limb, `FIELD_LOAD_WORD_HI` folding each lower limb in radix 2^64), the
+//! enter a cleared register through `FIELD_LOAD_ACCUMULATE_FROM_MEMORY`, the
 //! operation runs as one instruction, and the result leaves through
 //! `FIELD_ADVICE_LIMB` (one range-bound low limb per row, the quotient staying
-//! in the register file) closed by `FIELD_STORE_TO_X`. These relations bind
+//! in the register file) closed by `FIELD_ASSERT_ZERO`. These relations bind
 //! the result modulo the field characteristic. The field wrappers check
 //! that the returned integer is below the modulus before using it.
 //!
@@ -21,22 +20,17 @@
 #[cfg(target_arch = "riscv64")]
 use core::sync::atomic::{AtomicBool, Ordering};
 
-/// The custom-0 opcode the tracer dispatches field-inline words on.
-pub const OPCODE: u32 = 0x7b;
-pub const FUNCT3_ADD: u32 = 0;
-pub const FUNCT3_SUB: u32 = 1;
-pub const FUNCT3_MUL: u32 = 2;
-pub const FUNCT3_INV: u32 = 3;
-pub const FUNCT3_ASSERT_EQ: u32 = 4;
-pub const FUNCT3_LOAD_FROM_X: u32 = 5;
-pub const FUNCT3_STORE_TO_X: u32 = 6;
-pub const FUNCT3_LOAD_IMM: u32 = 7;
-/// funct7 of `FIELD_ADVICE_LIMB` (shares `FIELD_STORE_TO_X`'s funct3).
-pub const FUNCT7_ADVICE_LIMB: u32 = 1;
-/// funct7 of the memory-sourced loads: the family bit, the high-word bit, and
-/// the word offset (see `jolt_riscv::field_inline_load_word_funct7`).
-pub const FUNCT7_LOAD_WORD_FAMILY: u32 = 0x40;
-pub const FUNCT7_LOAD_WORD_HIGH: u32 = 0x20;
+use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
+
+pub const OPCODE: u32 = FIELD_INLINE_OPCODE as u32;
+pub const FUNCT3_ADD: u32 = FieldInlineOp::Add.funct3() as u32;
+pub const FUNCT3_SUB: u32 = FieldInlineOp::Sub.funct3() as u32;
+pub const FUNCT3_MUL: u32 = FieldInlineOp::Mul.funct3() as u32;
+pub const FUNCT3_INV: u32 = FieldInlineOp::Inv.funct3() as u32;
+pub const FUNCT3_ASSERT_EQ: u32 = FieldInlineOp::AssertEq.funct3() as u32;
+pub const FUNCT3_LOAD_ACCUMULATE: u32 = FieldInlineOp::LoadAccumulateFromMemory.funct3() as u32;
+pub const FUNCT3_ADVICE_LIMB: u32 = FieldInlineOp::AdviceLimb.funct3() as u32;
+pub const FUNCT3_LOAD_IMM: u32 = FieldInlineOp::LoadImm.funct3() as u32;
 
 #[cfg(target_arch = "riscv64")]
 const fn r_word(funct3: u32, rd: u32, rs1: u32, rs2: u32) -> u32 {
@@ -111,23 +105,18 @@ mod emit {
         };
     }
 
-    /// One memory-sourced load: `fr[dst] = [fr[dst]·2^64 +] mem[base + 8·offset]`.
-    /// The word is built from run-time register numbers and offsets, so it
-    /// goes through a small match on the destination and limb position.
+    /// Accumulate one word into a destination previously cleared by `clear`.
     #[inline(always)]
-    pub fn load_word(dst: u32, high: bool, offset: usize, base: *const u64) {
+    pub fn load_accumulate(dst: u32, offset: usize, base: *const u64) {
         macro_rules! word {
-            ($rd:expr, $high:expr, $offset:expr) => {
-                // SAFETY: one field-inline load from the live limb pointer.
-                // The integer destination is scratch; the field destination
-                // remains fixed while LLVM allocates the address register.
+            ($rd:expr, $offset:expr) => {
+                // SAFETY: the pointer addresses a live limb; the integer output is scratch.
                 unsafe {
                     core::arch::asm!(
                         ".insn r {opcode}, {funct3}, {funct7}, {scratch}, {base}, x{field}",
                         opcode = const OPCODE,
-                        funct3 = const FUNCT3_LOAD_FROM_X,
-                        funct7 = const FUNCT7_LOAD_WORD_FAMILY
-                            | if $high { FUNCT7_LOAD_WORD_HIGH } else { 0 } | $offset,
+                        funct3 = const FUNCT3_LOAD_ACCUMULATE,
+                        funct7 = const jolt_riscv::field_inline_load_accumulate_from_memory_funct7($offset),
                         field = const $rd,
                         base = in(reg) base,
                         scratch = lateout(reg) _,
@@ -138,15 +127,12 @@ mod emit {
         }
         macro_rules! limbs {
             ($rd:expr) => {
-                match (high, offset) {
-                    (false, 0) => word!($rd, false, 0),
-                    (false, 1) => word!($rd, false, 1),
-                    (false, 2) => word!($rd, false, 2),
-                    (false, _) => word!($rd, false, 3),
-                    (true, 0) => word!($rd, true, 0),
-                    (true, 1) => word!($rd, true, 1),
-                    (true, 2) => word!($rd, true, 2),
-                    (true, _) => word!($rd, true, 3),
+                match offset {
+                    0 => word!($rd, 0),
+                    1 => word!($rd, 1),
+                    2 => word!($rd, 2),
+                    3 => word!($rd, 3),
+                    _ => unreachable!("field limb offset"),
                 }
             };
         }
@@ -154,7 +140,19 @@ mod emit {
             REG_RINV => limbs!(REG_RINV),
             REG_R2 => limbs!(REG_R2),
             REG_A => limbs!(REG_A),
-            _ => limbs!(REG_B),
+            REG_B => limbs!(REG_B),
+            _ => unreachable!("field load destination"),
+        }
+    }
+
+    #[inline(always)]
+    pub fn clear(dst: u32) {
+        match dst {
+            REG_RINV => fixed!(i_word(FUNCT3_LOAD_IMM, REG_RINV, 0)),
+            REG_R2 => fixed!(i_word(FUNCT3_LOAD_IMM, REG_R2, 0)),
+            REG_A => fixed!(i_word(FUNCT3_LOAD_IMM, REG_A, 0)),
+            REG_B => fixed!(i_word(FUNCT3_LOAD_IMM, REG_B, 0)),
+            _ => unreachable!("field load destination"),
         }
     }
 
@@ -170,8 +168,8 @@ mod emit {
                 unsafe {
                     core::arch::asm!(
                         ".insn r {opcode}, {funct3}, {funct7}, {low}, x{src}, x{quotient}",
-                        opcode = const OPCODE, funct3 = const FUNCT3_STORE_TO_X,
-                        funct7 = const FUNCT7_ADVICE_LIMB,
+                        opcode = const OPCODE, funct3 = const FUNCT3_ADVICE_LIMB,
+                        funct7 = const match FieldInlineOp::AdviceLimb.funct7() { Some(value) => value, None => panic!("advice encoding") },
                         src = const $src, quotient = const $quotient,
                         low = lateout(reg) low, options(nostack, nomem),
                     );
@@ -196,30 +194,24 @@ mod emit {
         }
     }
 
-    /// Read `fr[src]` below 2^64 (the last quotient of a readout).
+    /// Close the limb decomposition by constraining the remaining quotient to zero.
     #[inline(always)]
-    pub fn store_to_x(src: u32) -> u64 {
+    pub fn assert_zero(src: u32) {
         macro_rules! word {
-            ($src:expr) => {{
-                let value: u64;
-                // SAFETY: one field-inline word, with a compiler-allocated integer output.
-                unsafe {
-                    core::arch::asm!(
-                        ".insn r {opcode}, {funct3}, 0, {value}, x{src}, x0",
-                        opcode = const OPCODE, funct3 = const FUNCT3_STORE_TO_X,
-                        src = const $src, value = lateout(reg) value,
-                        options(nostack, nomem),
-                    );
-                }
-                value
-            }};
+            ($src:expr) => {
+                fixed!(
+                    r_word(FieldInlineOp::AssertZero.funct3() as u32, 0, $src, 0)
+                        | ((match FieldInlineOp::AssertZero.funct7() {
+                            Some(value) => value as u32,
+                            None => panic!("zero assertion encoding"),
+                        }) << 25)
+                );
+            };
         }
         match src {
-            REG_OUT => word!(REG_OUT),
-            REG_ACC => word!(REG_ACC),
-            REG_SUM => word!(REG_SUM),
             REG_SCRATCH_A => word!(REG_SCRATCH_A),
-            _ => word!(REG_SCRATCH_B),
+            REG_SCRATCH_B => word!(REG_SCRATCH_B),
+            _ => unreachable!("readout quotient register"),
         }
     }
 
@@ -312,16 +304,13 @@ mod guest {
 
     static READY: AtomicBool = AtomicBool::new(false);
 
-    /// Load `limbs` (little-endian radix 2^64) into `dst` straight from
-    /// memory: the top limb by `FIELD_LOAD_WORD`, each lower limb folded in by
-    /// `FIELD_LOAD_WORD_HI` (a load and the Horner step in one row). One row
-    /// per limb instead of the bridge's three.
+    /// Horner ingress starts at zero, then accumulates limbs from most significant to least.
     #[inline(always)]
     fn load<const N: usize>(dst: u32, limbs: &[u64; N]) {
-        let base = limbs.as_ptr();
-        emit::load_word(dst, false, N - 1, base);
-        for i in (0..N - 1).rev() {
-            emit::load_word(dst, true, i, base);
+        assert!(N > 0 && N <= 4, "supported field limb count");
+        emit::clear(dst);
+        for i in (0..N).rev() {
+            emit::load_accumulate(dst, i, limbs.as_ptr());
         }
     }
 
@@ -335,15 +324,13 @@ mod guest {
         READY.store(true, Ordering::Relaxed);
     }
 
-    /// Read the `N`-limb result out of `src`: `N − 1` splits peel the low
-    /// limbs (quotients alternating through the two scratch registers), and
-    /// the last quotient, below 2^64, leaves through the store bridge.
+    /// Read all `N` limbs, then require the final quotient to vanish.
     /// The caller must reject integers at or above the active field modulus.
     #[inline(always)]
     fn read_out<const N: usize>(src: u32) -> [u64; N] {
         let mut limbs = [0u64; N];
         let mut current = src;
-        for limb in limbs.iter_mut().take(N - 1) {
+        for limb in limbs.iter_mut() {
             let quotient = if current == REG_SCRATCH_A {
                 REG_SCRATCH_B
             } else {
@@ -352,7 +339,7 @@ mod guest {
             *limb = emit::advice_limb(current, quotient);
             current = quotient;
         }
-        limbs[N - 1] = emit::store_to_x(current);
+        emit::assert_zero(current);
         limbs
     }
 

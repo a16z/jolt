@@ -8,7 +8,6 @@
 use std::path::PathBuf;
 
 use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
-use akita_planner::emit::MaterializationDiagnostics;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
@@ -493,11 +492,9 @@ mod field_inc_limbs {
         );
     }
 
-    /// A field-inline build supports both active and inactive traces. Each
-    /// advice combination needs both shapes; the limb-only row covers an
-    /// active trace without advice. The base catalog owns the empty shape.
+    /// Field-inline commits a limb object even when its contents are zero.
     #[test]
-    fn fr_rows_cover_active_and_inactive_advice_combinations() {
+    fn field_inline_rows_append_the_limb_group_to_every_advice_combination() {
         let dense = dense_catalog();
         let base = one_hot_catalog(AKITA_ONE_HOT_K16);
         let params = law_derived_params(AKITA_ONE_HOT_K16);
@@ -513,17 +510,13 @@ mod field_inc_limbs {
             AKITA_ONE_HOT_K16,
             final_num_vars,
         )
-        .expect("FR-composed provisioning must plan every combination");
+        .expect("provisioning all advice combinations");
         let limb = limb_profile(&dense, params, final_num_vars);
         let untrusted_profile =
-            dense_precommit_profile(&dense, PolynomialGroupLayout::new(trusted + 1, 1))
-                .expect("untrusted advice profile");
-        let trusted_profile = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
-            .expect("trusted advice profile");
+            dense_precommit_profile(&dense, PolynomialGroupLayout::new(trusted + 1, 1)).unwrap();
+        let trusted_profile =
+            dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP).unwrap();
         let expected = [
-            vec![untrusted_profile],
-            vec![trusted_profile],
-            vec![untrusted_profile, trusted_profile],
             vec![limb],
             vec![untrusted_profile, limb],
             vec![trusted_profile, limb],
