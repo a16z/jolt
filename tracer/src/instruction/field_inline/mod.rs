@@ -32,29 +32,12 @@ use jolt_field::Prime128OffsetA7F7;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_program::field_inline::FieldEncodedValue;
 
-use super::format::format_field_inline::FormatFieldInline;
-use crate::emulator::cpu::Cpu;
-
 // The tracer and FieldValueEncoding::ACTIVE select the same proof field:
 // fp128 for Akita builds, BN254 Fr for Dory builds.
 #[cfg(not(feature = "fp128-field-inline"))]
 type ProofField = Fr;
 #[cfg(feature = "fp128-field-inline")]
 type ProofField = Prime128OffsetA7F7;
-
-fn execute_binary<F: CanonicalEncoding>(
-    operands: FormatFieldInline,
-    cpu: &mut Cpu,
-    f: impl FnOnce(F, F) -> F,
-) {
-    let rs1_register = operands.rs1.unwrap_or(0);
-    let rs2_register = operands.rs2.unwrap_or(0);
-    let rd_register = operands.rd.unwrap_or(0);
-    let rs1_value = cpu.field_registers.read(rs1_register);
-    let rs2_value = cpu.field_registers.read(rs2_register);
-    let post_value = encode_field(f(decode_field(rs1_value), decode_field(rs2_value)));
-    cpu.field_registers.write(rd_register, post_value);
-}
 
 fn accumulate_word<F: Field + CanonicalEncoding>(
     previous: FieldEncodedValue,

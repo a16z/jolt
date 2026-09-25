@@ -10,7 +10,7 @@ use crate::{
     },
 };
 
-use super::{execute_binary, ProofField};
+use super::{decode_field, encode_field, ProofField};
 
 declare_riscv_instr!(
     name   = FIELD_MUL,
@@ -23,7 +23,15 @@ declare_riscv_instr!(
 
 impl FIELD_MUL {
     fn exec(&self, cpu: &mut Cpu, _: &mut <FIELD_MUL as RISCVInstruction>::RAMAccess) {
-        execute_binary::<ProofField>(self.operands, cpu, |left, right| left * right);
+        let rs1_register = self.operands.rs1.unwrap_or(0);
+        let rs2_register = self.operands.rs2.unwrap_or(0);
+        let rd_register = self.operands.rd.unwrap_or(0);
+        let rs1_value = cpu.field_registers.read(rs1_register);
+        let rs2_value = cpu.field_registers.read(rs2_register);
+        let post_value = encode_field(
+            decode_field::<ProofField>(rs1_value) * decode_field::<ProofField>(rs2_value),
+        );
+        cpu.field_registers.write(rd_register, post_value);
     }
 }
 
