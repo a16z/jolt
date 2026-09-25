@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use super::{
     normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
 };
-use jolt_riscv::{field_inline_load_accumulate_from_memory_offset, FieldInlineOp};
+use jolt_riscv::{
+    field_inline_load_accumulate_from_memory_offset, field_inline_source_op, FieldInlineOp,
+    SourceInstructionKind,
+};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FormatFieldInline {
@@ -39,6 +42,13 @@ impl InstructionRegisterState for RegisterStateFormatFieldInline {
 
 impl InstructionFormat for FormatFieldInline {
     type RegisterState = RegisterStateFormatFieldInline;
+
+    fn from_source(operands: NormalizedOperands, kind: SourceInstructionKind) -> Self {
+        Self {
+            op: field_inline_source_op(kind),
+            ..operands.into()
+        }
+    }
 
     fn parse(word: u32) -> Self {
         let op = FieldInlineOp::from_word(word);

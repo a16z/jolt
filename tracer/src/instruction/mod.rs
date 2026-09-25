@@ -2058,7 +2058,10 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     fn trace_one(cpu: &mut Cpu, word: u32) -> Cycle {
-        let instruction = Instruction::decode(word, 0x8000_0000, false).unwrap();
+        let decoded = Instruction::decode(word, 0x8000_0000, false).unwrap();
+        let instruction =
+            Instruction::try_from_source_instruction(decoded.source_instruction()).unwrap();
+        assert_eq!(instruction, decoded);
         let mut trace = Vec::new();
         instruction.trace(cpu, Some(&mut trace));
         assert_eq!(trace.len(), 1);

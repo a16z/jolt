@@ -5,11 +5,17 @@ macro_rules! declare_riscv_instr {
       mask    = $mask:expr,
       match   = $match_:expr,
       format  = $format:ty,
-      ram     = $ram:ty $(,)?
+      ram     = $ram:ty $(, { $($extra:item)* })? $(,)?
   ) => {
-        declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram);
+        $crate::declare_riscv_instr!(@inner $name, $mask, $match_, $format, $ram $(, { $($extra)* })?);
     };
-    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty) => {
+    (@source_kind $name:ident) => {
+        match ::jolt_riscv::SourceInstructionKind::from_name(stringify!($name)) {
+            Some(kind) => kind,
+            None => unreachable!("unknown tracer instruction source kind"),
+        }
+    };
+    (@inner $name:ident, $mask:expr, $match_:expr, $format:ty, $ram:ty $(, { $($extra:item)* })?) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
@@ -32,10 +38,7 @@ macro_rules! declare_riscv_instr {
             }
 
             fn source_kind(&self) -> ::jolt_riscv::SourceInstructionKind {
-                match ::jolt_riscv::SourceInstructionKind::from_name(stringify!($name)) {
-                    Some(kind) => kind,
-                    None => unreachable!("unknown tracer instruction source kind"),
-                }
+                $crate::declare_riscv_instr!(@source_kind $name)
             }
 
             fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self {
@@ -77,13 +80,18 @@ macro_rules! declare_riscv_instr {
             fn execute(&self, cpu: &mut $crate::emulator::cpu::Cpu, ram: &mut Self::RAMAccess) {
                 self.exec(cpu, ram)
             }
+
+            $($($extra)*)?
         }
 
         impl From<$crate::instruction::SourceInstructionRow> for $name {
             fn from(row: $crate::instruction::SourceInstructionRow) -> Self {
                 Self {
                     address: row.address as u64,
-                    operands: row.operands.into(),
+                    operands: <$format as $crate::instruction::format::InstructionFormat>::from_source(
+                        row.operands,
+                        $crate::declare_riscv_instr!(@source_kind $name),
+                    ),
                     virtual_sequence_remaining: None,
                     is_first_in_sequence: false,
                     is_compressed: row.is_compressed,

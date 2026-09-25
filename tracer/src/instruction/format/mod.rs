@@ -1,5 +1,6 @@
 use crate::emulator::cpu::Cpu;
 pub use jolt_riscv::NormalizedOperands;
+use jolt_riscv::SourceInstructionKind;
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
@@ -27,6 +28,10 @@ pub trait InstructionFormat:
     type RegisterState: InstructionRegisterState + PartialEq;
 
     fn parse(word: u32) -> Self;
+    /// Restore any format state determined by the source instruction kind.
+    fn from_source(operands: NormalizedOperands, _kind: SourceInstructionKind) -> Self {
+        operands.into()
+    }
     fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu);
     #[cfg(any(feature = "test-utils", test))]

@@ -80,8 +80,9 @@ gate's removal.
 Everything above the tracer is generic over `F`. The concrete work:
 
 - Tracer genericization: `decode_field`/`encode_field` in
-  `tracer/src/instruction/field_inline.rs` are pinned to BN254 `Fr`;
-  parameterize over the active `F` (~150 LOC, per the v2-port estimate).
+  `tracer/src/instruction/field_inline/mod.rs` are generic over the active
+  proof field: BN254 `Fr` by default, or `Prime128OffsetA7F7` with
+  `fp128-field-inline`.
 - Encoding version: `FieldValueEncoding` gains a two-limb 16-byte variant
   beside `BN254_SCALAR_CANONICAL`; `FieldInlineBytecodeMetadata.value_encoding`
   and the profile fingerprint already version this — a proof/preprocessing
