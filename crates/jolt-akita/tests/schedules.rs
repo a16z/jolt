@@ -513,9 +513,10 @@ mod field_inc_limbs {
         .expect("provisioning all advice combinations");
         let limb = limb_profile(&dense, params, final_num_vars);
         let untrusted_profile =
-            dense_precommit_profile(&dense, PolynomialGroupLayout::new(trusted + 1, 1)).unwrap();
-        let trusted_profile =
-            dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP).unwrap();
+            dense_precommit_profile(&dense, PolynomialGroupLayout::new(trusted + 1, 1))
+                .expect("untrusted advice profile");
+        let trusted_profile = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
+            .expect("trusted advice profile");
         let expected = [
             vec![limb],
             vec![untrusted_profile, limb],
