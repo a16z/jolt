@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use akita_config::{SetupRequirements, TrustedScheduleCatalog};
+use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
@@ -492,10 +492,7 @@ mod field_inc_limbs {
         );
     }
 
-    /// With both advice kinds declared, every advice presence combination is
-    /// provisioned with the field-inline limb profile as its last group. A
-    /// prover with field-inline enabled commits the limb group on every
-    /// proof, so no row without it is constructible.
+    /// Field-inline commits a limb object even when its contents are zero.
     #[test]
     fn field_inline_rows_append_the_limb_group_to_every_advice_combination() {
         let dense = dense_catalog();
@@ -513,11 +510,55 @@ mod field_inc_limbs {
             AKITA_ONE_HOT_K16,
             final_num_vars,
         )
-        .expect("provisioning with field-inline must plan every combination");
-        assert_eq!(rows.rows().len(), 4);
+        .expect("provisioning all advice combinations");
         let limb = limb_profile(&dense, params, final_num_vars);
-        for row in rows.rows() {
-            assert_eq!(row.profiles().precommitteds.last(), Some(&limb));
+        let untrusted_profile =
+            dense_precommit_profile(&dense, PolynomialGroupLayout::new(trusted + 1, 1))
+                .expect("untrusted advice profile");
+        let trusted_profile = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
+            .expect("trusted advice profile");
+        let expected = [
+            vec![limb],
+            vec![untrusted_profile, limb],
+            vec![trusted_profile, limb],
+            vec![untrusted_profile, trusted_profile, limb],
+        ];
+        assert_eq!(rows.rows().len(), expected.len());
+        for combination in expected {
+            assert!(rows
+                .rows()
+                .any(|row| row.profiles().precommitteds == combination));
         }
     }
+}
+
+#[test]
+fn prepared_binary_catalogs_preserve_identity_and_config_binding() {
+    fn check<Cfg: CommitmentConfig>(catalog: ValidatedScheduleCatalog) {
+        let binary = catalog.to_artifact_binary().expect("prepare catalog");
+        let loaded = TrustedScheduleCatalog::<Cfg>::from_trusted_artifact_binary(&binary)
+            .expect("load prepared catalog");
+        assert_eq!(loaded.catalog_digest(), catalog.catalog_digest());
+        assert_eq!(
+            loaded.to_artifact_bytes().expect("JSON"),
+            catalog.to_artifact_bytes().expect("JSON")
+        );
+        assert!(TrustedScheduleCatalog::<Cfg>::from_trusted_artifact_binary(
+            &binary[..binary.len() - 1]
+        )
+        .is_err());
+        let mut trailing = binary;
+        trailing.push(0);
+        assert!(TrustedScheduleCatalog::<Cfg>::from_trusted_artifact_binary(&trailing).is_err());
+    }
+    let dense = dense_catalog();
+    assert!(
+        TrustedScheduleCatalog::<JoltOneHotK16>::from_trusted_artifact_binary(
+            &dense.to_artifact_binary().expect("prepare dense catalog")
+        )
+        .is_err()
+    );
+    check::<JoltDenseBounded>(dense);
+    check::<JoltOneHotK16>(one_hot_catalog(AKITA_ONE_HOT_K16));
+    check::<JoltOneHotK256>(one_hot_catalog(AKITA_ONE_HOT_K256));
 }

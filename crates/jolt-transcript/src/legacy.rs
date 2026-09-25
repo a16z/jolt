@@ -128,10 +128,17 @@ pub trait AppendToTranscript {
 /// Big-endian field element absorption used by the deployed proof format.
 impl<F: CanonicalBytes> AppendToTranscript for F {
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        let mut buf = vec![0u8; F::NUM_BYTES];
-        self.to_bytes_le(&mut buf);
+        let mut stack = [0u8; 32];
+        let mut heap = Vec::new();
+        let buf = if let Some(buf) = stack.get_mut(..F::NUM_BYTES) {
+            buf
+        } else {
+            heap.resize(F::NUM_BYTES, 0);
+            &mut heap
+        };
+        self.to_bytes_le(buf);
         buf.reverse();
-        transcript.append_bytes(&buf);
+        transcript.append_bytes(buf);
     }
 }
 
@@ -281,11 +288,21 @@ where
         // `append_bytes(a) ; append_bytes(b)` distinct from
         // `append_bytes(a || b)`.
         const APPEND_MARKER: u8 = 0x9B;
-        let mut buf = Vec::with_capacity(9 + bytes.len());
-        buf.push(APPEND_MARKER);
-        buf.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-        buf.extend_from_slice(bytes);
-        let _ = self.sponge.absorb(&buf);
+        let mut stack = [0u8; 128];
+        let mut heap = Vec::new();
+        let len = 9 + bytes.len();
+        let buf = if let Some(buf) = stack.get_mut(..len) {
+            buf
+        } else {
+            heap.resize(len, 0);
+            &mut heap
+        };
+        let (marker, rest) = buf.split_at_mut(1);
+        marker.copy_from_slice(&[APPEND_MARKER]);
+        let (length, body) = rest.split_at_mut(8);
+        length.copy_from_slice(&(bytes.len() as u64).to_le_bytes());
+        body.copy_from_slice(bytes);
+        let _ = self.sponge.absorb(buf);
     }
 
     fn challenge(&mut self) -> F {

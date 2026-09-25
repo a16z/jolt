@@ -2,6 +2,13 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
+    let embedded_bytecode_path = Path::new("src/embedded_bytecode.rs");
+    if !embedded_bytecode_path.exists() {
+        fs::write(embedded_bytecode_path,
+            "use jolt_riscv::JoltInstructionRow;\npub static EMBEDDED_BYTECODE: &[JoltInstructionRow] = &[];\n").unwrap();
+    }
+    println!("cargo:rerun-if-changed=src/embedded_bytecode.rs");
+
     let embedded_bytes_path = Path::new("src/embedded_bytes.rs");
 
     if !embedded_bytes_path.exists() {

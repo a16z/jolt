@@ -59,6 +59,29 @@ pub unsafe extern "C" fn trap_handler(regs: *mut u8) {
                 zeroos::debug::writeln!("[syscall] {}", zeroos::os::linux::syscall_name(nr));
             }
 
+            // clock_gettime (riscv64 nr 113): the zkVM has no clock, so report a
+            // zero timespec rather than ENOSYS — std's `Instant::now` aborts on
+            // failure, and verifier code may take timestamps for diagnostics.
+            // write(2) to stdout/stderr (riscv64 nr 64): route the bytes to the
+            // host console, so std guests' `println!` and panic messages reach
+            // the tracer instead of failing with ENOSYS and aborting silently.
+            if (*regs).a7 == 64 && ((*regs).a0 == 1 || (*regs).a0 == 2) {
+                let bytes = core::slice::from_raw_parts((*regs).a1 as *const u8, (*regs).a2);
+                for &byte in bytes {
+                    jolt_platform::putchar(byte);
+                }
+                (*regs).a0 = (*regs).a2;
+                return;
+            }
+            if (*regs).a7 == 113 {
+                let ts = (*regs).a1 as *mut u64;
+                if !ts.is_null() {
+                    ts.write(0);
+                    ts.add(1).write(0);
+                }
+                (*regs).a0 = 0;
+                return;
+            }
             let ret = zeroos::foundation::kfn::trap::ksyscall(
                 (*regs).a0,
                 (*regs).a1,

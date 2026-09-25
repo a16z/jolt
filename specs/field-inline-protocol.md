@@ -880,9 +880,9 @@ the field arithmetic relation: field values remain native elements of `F`.
 
 ## Memory-Sourced Loads And Limb Readout
 
-Memory-sourced loads move one word per VM row into the field-register file.
-Limb advice provides bounded integer outputs for field values; callers that
-need canonical readout must additionally check the reconstructed integer.
+Memory ingress accumulates each 64-bit word into a destination initialized to zero.
+Result egress uses bounded limb advice followed by a zero assertion on the final
+quotient and a guest integer canonicality check.
 
 `FIELD_LOAD_ACCUMULATE_FROM_MEMORY field_rd <- field_rd · 2^64 + mem[x_rs1 + 8·offset]`
 is, to the RV64 rows, an `LD` into a scratch x-register: it carries the `Load` circuit

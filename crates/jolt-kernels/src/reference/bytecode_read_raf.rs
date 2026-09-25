@@ -58,6 +58,8 @@ use crate::ProverInputs;
 use jolt_claims::protocols::field_inline::{
     geometry::bytecode as field_inline_bytecode, FIELD_REGISTERS_LOG_K,
 };
+#[cfg(not(feature = "field-inline"))]
+use jolt_claims::protocols::jolt::geometry::bytecode::challenge_pow;
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     bytecode_ra, read_raf_stage_values, BytecodeReadRafDimensions, BytecodeReadRafStageValueInputs,
     LATTICE_FUSED_INC_STAGES,
@@ -70,7 +72,9 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 #[cfg(not(feature = "field-inline"))]
-use jolt_claims::protocols::jolt::{BytecodeReadRafPublic, JoltDerivedId};
+use jolt_claims::protocols::jolt::{
+    BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltDerivedId,
+};
 use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
 #[cfg(not(feature = "field-inline"))]
 use jolt_claims::{Source, SymbolicSumcheck};
@@ -146,7 +150,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>> for Referenc
             stage3_gammas: &stage_gammas[2],
             stage4_gammas: &stage_gammas[3],
             stage5_gammas: &stage_gammas[4],
-        });
+        })
+        .collect::<Vec<_>>();
         // The PC pushforward source: the per-cycle bytecode indices,
         // collected as typed bundles off the witness plane's row source.
         let rows: Vec<BytecodeReadRafWitness> =
@@ -690,6 +695,31 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
                 JoltDerivedId::from(BytecodeReadRafPublic::Entry),
                 Polynomial::new(entry_cycle),
             );
+            // The batching-challenge powers the anchor expression folds
+            // under: constant tables.
+            for term in &relation.symbolic().output_expression::<F>().terms {
+                for factor in &term.factors {
+                    let Source::Derived(JoltDerivedId::BytecodeReadRaf(
+                        BytecodeReadRafPublic::ChallengePow {
+                            challenge: BytecodeReadRafChallenge::Gamma,
+                            exponent,
+                        },
+                    )) = factor
+                    else {
+                        continue;
+                    };
+                    let _ = derived_tables.insert(
+                        JoltDerivedId::from(BytecodeReadRafPublic::ChallengePow {
+                            challenge: BytecodeReadRafChallenge::Gamma,
+                            exponent: *exponent,
+                        }),
+                        Polynomial::new(vec![
+                            challenge_pow(inputs.challenges.gamma, *exponent);
+                            cycles
+                        ]),
+                    );
+                }
+            }
 
             Ok(Box::new(NaiveSumcheckProver::new(
                 &inputs,

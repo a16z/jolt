@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use jolt_field::Ring;
 
 use crate::{Expr, Source, SumcheckDomain};
@@ -69,19 +71,19 @@ pub trait SymbolicSumcheck {
     /// holds because the output check constrains every produced opening (an
     /// unconstrained produced opening would be unsound). The field `F` only
     /// instantiates the expression — the ids are field-independent.
-    fn expected_output_openings<F: Ring>(&self) -> std::collections::BTreeSet<Self::OpeningId>
+    fn expected_output_openings<F: Ring>(&self) -> BTreeSet<Self::OpeningId>
     where
         Self::OpeningId: Ord,
     {
-        self.output_expression::<F>()
-            .terms
-            .into_iter()
-            .flat_map(|term| term.factors)
-            .filter_map(|factor| match factor {
-                Source::Opening(id) => Some(id),
-                _ => None,
-            })
-            .collect()
+        let mut openings = BTreeSet::new();
+        for term in self.output_expression::<F>().terms {
+            for factor in term.factors {
+                if let Source::Opening(id) = factor {
+                    let _ = openings.insert(id);
+                }
+            }
+        }
+        openings
     }
 }
 

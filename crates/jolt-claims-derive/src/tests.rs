@@ -52,7 +52,7 @@ fn canonical_order_follows_field_declaration_order() {
         "CircuitFlags::VirtualInstruction",
         "JoltVirtualPolynomial::LookupTableFlag",
         "JoltCommittedPolynomial::RamInc",
-        "trusted_advice",
+        "JoltOpeningId::TrustedAdvice",
     ]
     .iter()
     .map(|needle| {

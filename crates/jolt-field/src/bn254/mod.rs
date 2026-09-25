@@ -11,8 +11,11 @@ mod mont;
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
-use ark_ff::{BigInteger, PrimeField, UniformRand};
+use ark_bn254::{Fq as ArkFq, Fr as ArkFr};
+use ark_ff::{BigInt, BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
+#[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
+use {ark_ff::Fp, core::marker::PhantomData};
 
 macro_rules! from_primitives {
     ($ty:ident: $via:ident[$($prim:ty),*]) => {
@@ -74,10 +77,10 @@ macro_rules! wrap_bn254 {
         }
 
         $crate::impl_ring_ops!(impl[] $ty {
-            add(a, b): $ty(a.0 + b.0),
-            sub(a, b): $ty(a.0 - b.0),
-            mul(a, b): $ty(a.0 * b.0),
-            neg(a): $ty(-a.0),
+            add(a, b): <$ty as $crate::bn254::InlineArith>::add(a, b),
+            sub(a, b): <$ty as $crate::bn254::InlineArith>::sub(a, b),
+            mul(a, b): <$ty as $crate::bn254::InlineArith>::mul(a, b),
+            neg(a): <$ty as $crate::bn254::InlineArith>::neg(a),
             zero: $ty(<$inner as ::num_traits::Zero>::zero()),
             one: $ty(<$inner as ::num_traits::One>::one()),
         });
@@ -101,7 +104,7 @@ macro_rules! wrap_bn254 {
         impl Field for $ty {
             #[inline]
             fn inverse(&self) -> Option<Self> {
-                <$inner as ark_ff::Field>::inverse(&self.0).map($ty)
+                <$ty as $crate::bn254::InlineArith>::inverse(*self)
             }
 
             #[inline]
@@ -249,17 +252,17 @@ macro_rules! wrap_bn254 {
 wrap_bn254!(
     /// BN254 scalar field element (`#[repr(transparent)]` over `ark_bn254::Fr`).
     Fr,
-    ark_bn254::Fr,
+    ArkFr,
     accumulators(WideAccumulator, FrSmallScalarAccumulator, FrSignedProductAccumulator),
-    challenge(low, high): ark_bn254::Fr::from_bigint_unchecked(ark_ff::BigInt::new([0, 0, low, high]))
+    challenge(low, high): ArkFr::from_bigint_unchecked(BigInt::new([0, 0, low, high]))
 );
 
 wrap_bn254!(
     /// BN254 base field element (`#[repr(transparent)]` over `ark_bn254::Fq`).
     Fq,
-    ark_bn254::Fq,
+    ArkFq,
     accumulators(NaiveAccumulator<Fq>, NaiveAccumulator<Fq>, NaiveAccumulator<Fq>),
-    challenge(low, high): ark_bn254::Fq::from_bigint(ark_ff::BigInt::new([0, 0, low, high]))
+    challenge(low, high): ArkFq::from_bigint(BigInt::new([0, 0, low, high]))
 );
 
 impl Ring for Fr {
@@ -359,5 +362,124 @@ impl Ring for Fq {
     #[inline]
     fn square(&self) -> Self {
         Fq(ark_ff::Field::square(&self.0))
+    }
+}
+
+/// The ring-op bodies behind the `impl_field!` arithmetic: native arkworks
+/// for `Fq` always, and for `Fr` unless the `field-inline-guest` feature
+/// routes it through the hinted field-inline path (`crate::fr_inline`).
+pub trait InlineArith: Sized {
+    fn add(a: Self, b: Self) -> Self;
+    fn sub(a: Self, b: Self) -> Self;
+    fn mul(a: Self, b: Self) -> Self;
+    fn neg(a: Self) -> Self;
+    fn inverse(a: Self) -> Option<Self>;
+}
+
+impl InlineArith for Fq {
+    #[inline(always)]
+    fn add(a: Self, b: Self) -> Self {
+        Fq(a.0 + b.0)
+    }
+    #[inline(always)]
+    fn sub(a: Self, b: Self) -> Self {
+        Fq(a.0 - b.0)
+    }
+    #[inline(always)]
+    fn mul(a: Self, b: Self) -> Self {
+        Fq(a.0 * b.0)
+    }
+    #[inline(always)]
+    fn neg(a: Self) -> Self {
+        Fq(-a.0)
+    }
+    #[inline(always)]
+    fn inverse(a: Self) -> Option<Self> {
+        <ark_bn254::Fq as ark_ff::Field>::inverse(&a.0).map(Fq)
+    }
+}
+
+#[cfg(not(all(feature = "field-inline-guest", target_arch = "riscv64")))]
+impl InlineArith for Fr {
+    #[inline(always)]
+    fn add(a: Self, b: Self) -> Self {
+        Fr(a.0 + b.0)
+    }
+    #[inline(always)]
+    fn sub(a: Self, b: Self) -> Self {
+        Fr(a.0 - b.0)
+    }
+    #[inline(always)]
+    fn mul(a: Self, b: Self) -> Self {
+        Fr(a.0 * b.0)
+    }
+    #[inline(always)]
+    fn neg(a: Self) -> Self {
+        Fr(-a.0)
+    }
+    #[inline(always)]
+    fn inverse(a: Self) -> Option<Self> {
+        <ArkFr as ark_ff::Field>::inverse(&a.0).map(Fr)
+    }
+}
+
+/// The guest field path: raw Montgomery limbs in, checked Montgomery limbs out
+/// (see `crate::fr_inline` for the representation argument).
+#[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
+impl Fr {
+    #[inline(always)]
+    fn from_inline_limbs(limbs: [u64; 4]) -> Self {
+        let raw = BigInt(limbs);
+        // Montgomery storage is also canonical: allowing f + p breaks limb operations.
+        assert!(raw < ArkFr::MODULUS, "noncanonical field-inline result");
+        Fr(Fp(raw, PhantomData))
+    }
+}
+
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+impl InlineArith for Fr {
+    fn add(a: Self, b: Self) -> Self {
+        Fr::from_inline_limbs(crate::fr_inline::add(&a.inner_limbs(), &b.inner_limbs()))
+    }
+    fn sub(a: Self, b: Self) -> Self {
+        Fr::from_inline_limbs(crate::fr_inline::sub(&a.inner_limbs(), &b.inner_limbs()))
+    }
+    fn mul(a: Self, b: Self) -> Self {
+        Fr::from_inline_limbs(crate::fr_inline::mul(
+            &a.inner_limbs(),
+            &b.inner_limbs(),
+            true,
+        ))
+    }
+    fn neg(a: Self) -> Self {
+        Fr::from_inline_limbs(crate::fr_inline::neg(&a.inner_limbs()))
+    }
+    fn inverse(a: Self) -> Option<Self> {
+        if a.inner_limbs() == [0; 4] {
+            return None;
+        }
+        Some(Fr::from_inline_limbs(crate::fr_inline::inv(
+            &a.inner_limbs(),
+            true,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod inline_readout_tests {
+    use super::*;
+
+    #[test]
+    fn inline_readout_accepts_canonical_boundaries() {
+        assert_eq!(Fr::from_inline_limbs([0; 4]).inner_limbs(), [0; 4]);
+        let mut largest = ArkFr::MODULUS.0;
+        largest[0] -= 1;
+        assert_eq!(Fr::from_inline_limbs(largest).inner_limbs(), largest);
+    }
+
+    #[test]
+    #[should_panic(expected = "noncanonical field-inline result")]
+    fn inline_readout_rejects_modulus_as_zero() {
+        let _ = Fr::from_inline_limbs(ArkFr::MODULUS.0);
     }
 }

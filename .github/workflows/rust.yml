@@ -195,6 +195,11 @@ jobs:
           --features host,field-inline
           --
           -D warnings
+      # Recursion's non-default host paths are not selected by workspace checks.
+      - name: cargo clippy -p recursion --features field-inline
+        run: cargo clippy -p recursion --all-targets --features field-inline -- -D warnings
+      - name: cargo clippy -p recursion --features akita,field-inline,ntt-inline
+        run: cargo clippy -p recursion --all-targets --features akita,field-inline,ntt-inline -- -D warnings
 
   machete:
     runs-on: ubuntu-latest
@@ -465,12 +470,13 @@ jobs:
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     name: Test jolt-prover (packed field-inline matrix and e2e)
     steps:
       - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: rust-src
+          components: rust-src,llvm-tools-preview
           cache: false
       - uses: Swatinem/rust-cache@v2
         with:
@@ -513,6 +519,81 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
+      - name: Build current recursion acceptance tool
+        timeout-minutes: 15
+        run: |
+          CARGO_BUILD_JOBS=1 cargo build --locked --profile ci -p recursion --bin recursion --features akita,field-inline,ntt-inline
+          mkdir "$RUNNER_TEMP/recursion-acceptance"
+          sha256sum Cargo.lock > "$RUNNER_TEMP/recursion-acceptance/lock.sha256"
+          git rev-parse HEAD > "$RUNNER_TEMP/recursion-acceptance/source-head.txt"
+          sha256sum "$(command -v jolt)" target/ci/recursion > "$RUNNER_TEMP/recursion-acceptance/host-binaries.sha256"
+      - name: Check canonical verifier output decoding
+        timeout-minutes: 15
+        run: >-
+          CARGO_BUILD_JOBS=1 cargo nextest run --locked --cargo-profile ci
+          -p recursion --bin recursion --features akita,field-inline,ntt-inline
+          --test-threads 1 --retries 0
+          -E 'test(=tests::verifier_output_accepts_canonical_compact_and_word_padded_values) | test(=tests::verifier_output_rejects_malformed_encoding_and_padding)'
+      - name: Generate and retain actual Akita verifier guest
+        timeout-minutes: 15
+        env:
+          CARGO_BUILD_JOBS: 1
+          CARGO_NET_OFFLINE: true
+          JOLT_BACKTRACE: "1"
+        run: |
+          export JOLT_PATH="$(command -v jolt)"
+          target/ci/recursion generate --example fibonacci --proofs 1 --workdir "$RUNNER_TEMP/recursion-acceptance/proofs"
+          target/ci/recursion prepare-guest --example fibonacci --workdir "$RUNNER_TEMP/recursion-acceptance/proofs" --output "$RUNNER_TEMP/recursion-acceptance/accepted"
+          sha256sum -c "$RUNNER_TEMP/recursion-acceptance/lock.sha256"
+      - name: Inspect retained guest memory routines
+        run: |
+          llvm_bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+          "$llvm_bin/llvm-objdump" -d --no-show-raw-insn --disassemble-symbols=memset "$RUNNER_TEMP/recursion-acceptance/accepted/guest.elf" > "$RUNNER_TEMP/recursion-acceptance/memset.asm"
+          "$llvm_bin/llvm-objdump" -d --no-show-raw-insn --disassemble-symbols=memcpy "$RUNNER_TEMP/recursion-acceptance/accepted/guest.elf" > "$RUNNER_TEMP/recursion-acceptance/memcpy.asm"
+          python3 - <<'PY'
+          import os, pathlib, re
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'recursion-acceptance'
+          memset = (root / 'memset.asm').read_text()
+          memcpy = (root / 'memcpy.asm').read_text()
+          assert '<memset>:' in memset and '<memcpy>:' in memcpy, 'missing memory routine symbols'
+          instructions = [line for line in memset.splitlines() if re.match(r'^\s*[0-9a-f]+:\s', line)]
+          assert instructions, 'empty memset disassembly'
+          assert not any(re.search(r'\b(call|tail|jal|jalr)\b|<memset>\s*$', line) for line in instructions), 'memset is not a leaf; inspect possible recursive lowering'
+          PY
+          sha256sum "$RUNNER_TEMP/recursion-acceptance/accepted/guest.elf" "$RUNNER_TEMP/recursion-acceptance/accepted/execution.bin" > "$RUNNER_TEMP/recursion-acceptance/accepted.sha256"
+      - name: Execute retained Akita guest acceptance
+        timeout-minutes: 15
+        run: |
+          sha256sum -c "$RUNNER_TEMP/recursion-acceptance/accepted.sha256"
+          target/ci/recursion execute-prepared --directory "$RUNNER_TEMP/recursion-acceptance/accepted" --expect accept
+          sha256sum -c "$RUNNER_TEMP/recursion-acceptance/accepted.sha256"
+      - name: Prepare typed invalid opening with the same guest ELF
+        timeout-minutes: 15
+        env:
+          CARGO_BUILD_JOBS: 1
+          CARGO_NET_OFFLINE: true
+          JOLT_BACKTRACE: "1"
+        run: |
+          export JOLT_PATH="$(command -v jolt)"
+          target/ci/recursion tamper-opening --example fibonacci --workdir "$RUNNER_TEMP/recursion-acceptance/proofs" --output "$RUNNER_TEMP/recursion-acceptance/invalid-proofs"
+          target/ci/recursion prepare-guest --example fibonacci --workdir "$RUNNER_TEMP/recursion-acceptance/invalid-proofs" --output "$RUNNER_TEMP/recursion-acceptance/rejected"
+          cmp "$RUNNER_TEMP/recursion-acceptance/accepted/guest.elf" "$RUNNER_TEMP/recursion-acceptance/rejected/guest.elf"
+          sha256sum -c "$RUNNER_TEMP/recursion-acceptance/lock.sha256"
+          sha256sum "$RUNNER_TEMP/recursion-acceptance/rejected/guest.elf" "$RUNNER_TEMP/recursion-acceptance/rejected/execution.bin" > "$RUNNER_TEMP/recursion-acceptance/rejected.sha256"
+      - name: Execute retained Akita guest rejection
+        timeout-minutes: 15
+        run: |
+          sha256sum -c "$RUNNER_TEMP/recursion-acceptance/rejected.sha256"
+          target/ci/recursion execute-prepared --directory "$RUNNER_TEMP/recursion-acceptance/rejected" --expect reject
+          sha256sum -c "$RUNNER_TEMP/recursion-acceptance/rejected.sha256"
+      - name: Retain guest acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: recursion-guest-acceptance
+          path: ${{ runner.temp }}/recursion-acceptance
+          retention-days: 7
+
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest

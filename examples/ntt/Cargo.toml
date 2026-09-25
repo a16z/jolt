@@ -1,0 +1,10 @@
+[package]
+name = "ntt-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+guest = { package = "ntt-guest", path = "guest" }
+jolt-sdk = { workspace = true, features = ["host"] }
+jolt-inlines-ntt = { workspace = true, features = ["host"] }
+tracing-subscriber.workspace = true

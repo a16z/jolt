@@ -72,6 +72,24 @@ where
         instruction_ra_claims.rounds(),
         inc_claims.rounds(),
     )?;
+    for term in booleanity_claims.output_expression::<PCS::Field>().terms {
+        for factor in term.factors {
+            if let Source::Derived(
+                id @ JoltDerivedId::Booleanity(BooleanityPublic::GammaPow { exponent }),
+            ) = factor
+            {
+                if !values.has_public(id.into()) {
+                    values.public(
+                        id,
+                        jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow(
+                            input.stage6a.challenges.booleanity.gamma,
+                            exponent,
+                        ),
+                    )?;
+                }
+            }
+        }
+    }
     if let Some(layout) = trusted_layout {
         add_advice_cycle_publics(input, values, layout, JoltAdviceKind::Trusted)?;
     }
@@ -259,8 +277,10 @@ mod field_inline_tests {
                 VerifierPublicId::Challenge(id) => {
                     challenges.resolve_challenge(id).unwrap_or_else(|| fr(0))
                 }
-                VerifierPublicId::Jolt(_)
-                | VerifierPublicId::SpartanOuter(_)
+                VerifierPublicId::Jolt(id) => relation
+                    .derive_input_term(id, &challenges)
+                    .unwrap_or_else(|_| fr(0)),
+                VerifierPublicId::SpartanOuter(_)
                 | VerifierPublicId::FieldInline(_)
                 | VerifierPublicId::FieldInlineChallenge(_) => fr(0),
             },
