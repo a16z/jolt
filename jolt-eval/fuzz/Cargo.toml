@@ -13,6 +13,11 @@ ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
 
+# Same reason as the root workspace: spongefish before 4ee5f2b2 hashed its
+# squeeze counters at pointer width; the Akita crates pin that rev.
+[patch."https://github.com/arkworks-rs/spongefish"]
+spongefish = { git = "https://github.com/0xAndoroid/spongefish", rev = "4ee5f2b22a6ef628f7b6e162ab72cc285b9a850e" }
+
 [package.metadata]
 cargo-fuzz = true
 

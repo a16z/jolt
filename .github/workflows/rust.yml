@@ -193,6 +193,15 @@ jobs:
       # a library crate.
       - name: Build Wasm
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p jolt-prover -p jolt-platform --features jolt-platform/random --release --target wasm32-unknown-unknown
+      # Transcript sponges must derive the same challenges on 32-bit and 64-bit
+      # targets: the Akita opening prover/verifier replay them across wasm32
+      # and native. Nothing else in CI executes Rust tests on a 32-bit target,
+      # so the pinned known-vector tests run here under wasmtime (#1913).
+      - name: Install wasm32-wasip1 target
+        run: rustup target add wasm32-wasip1
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - name: Test transcript known vectors on wasm32
+        run: CARGO_TARGET_WASM32_WASIP1_RUNNER=wasmtime cargo test -p jolt-transcript --target wasm32-wasip1 --features bn254,transcript-blake2b,transcript-keccak
 
   test-prover:
     runs-on: ubuntu-latest
