@@ -11,9 +11,7 @@ use rayon::prelude::*;
 
 use crate::bundle::WitnessBundle;
 use crate::witnesses::WitnessEnv;
-use crate::{BundleSource, WitnessChunk, WitnessError, WitnessRow, JOLT_VM_LABEL};
-#[cfg(feature = "field-inline")]
-use jolt_program::execution::TraceRow as CapturedTraceRow;
+use crate::{WitnessError, JOLT_VM_LABEL};
 
 /// One consumer of a bundle stream. `Option<C>` is also a consumer:
 /// membership in a set is static, presence is runtime.
@@ -49,7 +47,8 @@ impl<C: StreamConsumer> StreamConsumer for Option<C> {
 pub trait ConsumerSet {
     fn consume_chunk(
         &mut self,
-        chunk: WitnessChunk<'_>,
+        rows: &[TraceRow],
+        next_after: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<(), WitnessError>;
 }
@@ -61,7 +60,8 @@ const PAR_EXTRACT_THRESHOLD: usize = 128;
 
 fn deliver<C: StreamConsumer>(
     consumer: &mut C,
-    chunk: WitnessChunk<'_>,
+    rows: &[TraceRow],
+    next_after: Option<&TraceRow>,
     env: &WitnessEnv<'_>,
 ) -> Result<(), WitnessError> {
     if !consumer.is_active() {
@@ -70,31 +70,22 @@ fn deliver<C: StreamConsumer>(
     // Extraction is pure per cycle window, so buffers extract in parallel;
     // chunk order (the consumer's contract) is unchanged.
     let extract = |(index, row): (usize, &TraceRow)| {
-        C::Witness::from_row(
-            chunk.view(index, row),
-            chunk.row(index + 1).or(chunk.next_after),
-            env,
-        )
+        C::Witness::from_row(row, rows.get(index + 1).or(next_after), env)
     };
     #[cfg(feature = "parallel")]
-    let bundles: Vec<C::Witness> = if chunk.rows.len() >= PAR_EXTRACT_THRESHOLD {
-        chunk
-            .rows
-            .par_iter()
+    let bundles: Vec<C::Witness> = if rows.len() >= PAR_EXTRACT_THRESHOLD {
+        rows.par_iter()
             .enumerate()
             .map(extract)
             .collect::<Result<_, _>>()?
     } else {
-        chunk
-            .rows
-            .iter()
+        rows.iter()
             .enumerate()
             .map(extract)
             .collect::<Result<_, _>>()?
     };
     #[cfg(not(feature = "parallel"))]
-    let bundles: Vec<C::Witness> = chunk
-        .rows
+    let bundles: Vec<C::Witness> = rows
         .iter()
         .enumerate()
         .map(extract)
@@ -108,10 +99,11 @@ macro_rules! consumer_set_tuple {
         impl<$($name: StreamConsumer),+> ConsumerSet for ($($name,)+) {
             fn consume_chunk(
                 &mut self,
-                chunk: WitnessChunk<'_>,
+                rows: &[TraceRow],
+                next_after: Option<&TraceRow>,
                 env: &WitnessEnv<'_>,
             ) -> Result<(), WitnessError> {
-                $(deliver(&mut self.$index, chunk, env)?;)+
+                $(deliver(&mut self.$index, rows, next_after, env)?;)+
                 Ok(())
             }
         }
@@ -131,7 +123,7 @@ consumer_set_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, G: 5, H: 6, I: 7);
 /// lookahead row following it (`None` only at the end of the cycle domain),
 /// and the extraction environment.
 pub type ChunkVisitor<'a> =
-    dyn FnMut(WitnessChunk<'_>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
+    dyn FnMut(&[TraceRow], Option<&TraceRow>, &WitnessEnv<'_>) -> Result<(), WitnessError> + 'a;
 
 /// Sequential row access, with an optional random-access fast path.
 pub trait RowSource {
@@ -157,8 +149,6 @@ pub struct RandomAccessRows {
     cycles: usize,
     preprocessing: Arc<JoltProgramPreprocessing>,
     padding: TraceRow,
-    #[cfg(feature = "field-inline")]
-    field_rows: Option<Arc<Vec<CapturedTraceRow>>>,
 }
 
 impl RandomAccessRows {
@@ -181,8 +171,6 @@ impl RandomAccessRows {
             cycles,
             preprocessing,
             padding: TraceRow::default(),
-            #[cfg(feature = "field-inline")]
-            field_rows: None,
         })
     }
 
@@ -191,100 +179,13 @@ impl RandomAccessRows {
         self.cycles
     }
 
-    /// Attaches capture storage only after the field witness backend validates it.
-    #[cfg(feature = "field-inline")]
-    pub(crate) fn with_field_inline(mut self, rows: Arc<Vec<CapturedTraceRow>>) -> Self {
-        self.field_rows = Some(rows);
-        self
-    }
-
-    /// Borrows a cycle, including padding inside the configured domain.
-    pub fn row(&self, index: usize) -> Option<WitnessRow<'_>> {
-        if index >= self.cycles {
-            return None;
-        }
-        let view = WitnessRow::new(index, self.rows.get(index).unwrap_or(&self.padding));
-        #[cfg(feature = "field-inline")]
-        let view = match &self.field_rows {
-            Some(rows) => {
-                view.with_field_inline(rows.get(index).and_then(|row| row.field_inline.as_deref()))
-            }
-            None => view,
-        };
-        Some(view)
-    }
-
     /// Extracts one bundle with padding and one-row lookahead semantics.
     #[inline]
     pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {
-        let current = self
-            .row(index)
-            .ok_or_else(|| WitnessError::InvalidDimensions {
-                label: JOLT_VM_LABEL,
-                reason: format!("cycle {index} exceeds the domain of {} cycles", self.cycles),
-            })?;
-        B::from_row(
-            current,
-            self.row(index + 1),
-            &WitnessEnv::new(&self.preprocessing),
-        )
-    }
-
-    fn chunk<'a>(&'a self, start: usize, rows: &'a [TraceRow]) -> WitnessChunk<'a> {
-        let chunk = WitnessChunk::new(start, rows, self.row(start + rows.len()));
-        #[cfg(feature = "field-inline")]
-        let chunk = match &self.field_rows {
-            Some(field_rows) => chunk.with_field_rows(
-                &field_rows
-                    [start.min(field_rows.len())..(start + rows.len()).min(field_rows.len())],
-            ),
-            None => chunk,
-        };
-        chunk
-    }
-}
-
-impl RowSource for RandomAccessRows {
-    fn random_access(&self) -> Option<RandomAccessRows> {
-        Some(self.clone())
-    }
-
-    fn visit_chunks(
-        &self,
-        range: Range<usize>,
-        chunk_size: usize,
-        visitor: &mut ChunkVisitor<'_>,
-    ) -> Result<(), WitnessError> {
-        if chunk_size == 0 || range.start > range.end || range.end > self.cycles {
-            return Err(WitnessError::InvalidDimensions {
-                label: JOLT_VM_LABEL,
-                reason: format!(
-                    "invalid chunk size {chunk_size} or cycle range [{}, {}) for {} cycles",
-                    range.start, range.end, self.cycles
-                ),
-            });
-        }
-        let env = WitnessEnv::new(&self.preprocessing);
-        let mut position = range.start;
-        while position < range.end {
-            let chunk_end = position.saturating_add(chunk_size).min(range.end);
-            if chunk_end <= self.rows.len() {
-                visitor(self.chunk(position, &self.rows[position..chunk_end]), &env)?;
-            } else {
-                let mut rows = Vec::with_capacity(chunk_end - position);
-                rows.extend_from_slice(&self.rows[position.min(self.rows.len())..]);
-                rows.resize(chunk_end - position, TraceRow::default());
-                visitor(self.chunk(position, &rows), &env)?;
-            }
-            position = chunk_end;
-        }
-        Ok(())
-    }
-}
-
-impl BundleSource for RandomAccessRows {
-    fn bundles<B: WitnessBundle + Clone + Send + Sync>(&self) -> Result<Vec<B>, WitnessError> {
-        collect_bundles(self, self.cycles)
+        let current = self.rows.get(index).unwrap_or(&self.padding);
+        let next =
+            (index + 1 < self.cycles).then(|| self.rows.get(index + 1).unwrap_or(&self.padding));
+        B::from_row(current, next, &WitnessEnv::new(&self.preprocessing))
     }
 }
 
@@ -307,13 +208,13 @@ pub fn stream_witnesses<S: RowSource + ?Sized, C: ConsumerSet>(
             reason: "pass chunk size must be nonzero".to_owned(),
         });
     }
-    source.visit_chunks(range, chunk_size, &mut |chunk, env| {
-        consumers.consume_chunk(chunk, env)
+    source.visit_chunks(range, chunk_size, &mut |rows, next_after, env| {
+        consumers.consume_chunk(rows, next_after, env)
     })
 }
 
 /// The chunk size of a single-consumer bundle-collection pass.
-pub(crate) const BUNDLE_PASS_CHUNK: usize = 1 << 12;
+const BUNDLE_PASS_CHUNK: usize = 1 << 12;
 
 /// Materialize one bundle type over `0..cycles` from a row source. The
 /// object-safe counterpart of [`crate::BundleSource::bundles`] — `&dyn
@@ -387,24 +288,19 @@ mod tests {
     /// boundaries are observable.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct WindowBundle {
-        cycle: usize,
-        next_cycle: Option<usize>,
         pc: UnexpandedPc,
         next_pc: NextUnexpandedPc,
     }
 
     impl WitnessBundle for WindowBundle {
-        type PolynomialId = JoltPolynomialId;
         fn from_row(
-            row: WitnessRow<'_>,
-            next: Option<WitnessRow<'_>>,
+            row: &TraceRow,
+            next: Option<&TraceRow>,
             env: &WitnessEnv<'_>,
         ) -> Result<Self, WitnessError> {
             Ok(Self {
-                cycle: row.cycle,
-                next_cycle: next.map(|row| row.cycle),
-                pc: UnexpandedPc::extract(row.row, next.map(|row| row.row), env)?,
-                next_pc: NextUnexpandedPc::extract(row.row, next.map(|row| row.row), env)?,
+                pc: UnexpandedPc::extract(row, next, env)?,
+                next_pc: NextUnexpandedPc::extract(row, next, env)?,
             })
         }
 
@@ -420,10 +316,9 @@ mod tests {
     static EXTRACTIONS: AtomicUsize = AtomicUsize::new(0);
 
     impl WitnessBundle for CountingBundle {
-        type PolynomialId = JoltPolynomialId;
         fn from_row(
-            _row: WitnessRow<'_>,
-            _next: Option<WitnessRow<'_>>,
+            _row: &TraceRow,
+            _next: Option<&TraceRow>,
             _env: &WitnessEnv<'_>,
         ) -> Result<Self, WitnessError> {
             let _ = EXTRACTIONS.fetch_add(1, Ordering::Relaxed);
@@ -454,30 +349,6 @@ mod tests {
             let expected = whole.get(index + 1).map_or(0, |next| next.pc.0);
             assert_eq!(bundle.next_pc.0, expected);
         }
-    }
-
-    #[test]
-    fn subranges_keep_absolute_cycles_and_lookahead_through_padding() {
-        with_sample_backend(|backend| {
-            for chunk_size in [1, 2, 3] {
-                let mut consumers = (CollectBundles::<WindowBundle>::default(),);
-                stream_witnesses(backend, 1..3, chunk_size, &mut consumers).unwrap();
-                let rows = consumers.0.into_rows();
-                assert_eq!(rows.iter().map(|row| row.cycle).collect::<Vec<_>>(), [1, 2]);
-                assert_eq!(
-                    rows.iter().map(|row| row.next_cycle).collect::<Vec<_>>(),
-                    [Some(2), Some(3)]
-                );
-                assert_eq!(rows[1].pc.0, 0);
-                assert_eq!(rows[1].next_pc.0, 0);
-            }
-            let access = backend.random_access().unwrap();
-            let last = access.window::<WindowBundle>(3).unwrap();
-            assert_eq!(last.cycle, 3);
-            assert_eq!(last.next_cycle, None);
-            assert!(access.window::<WindowBundle>(4).is_err());
-            assert!(backend.visit_chunks(0..4, 0, &mut |_, _| Ok(())).is_err());
-        });
     }
 
     #[test]

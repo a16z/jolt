@@ -94,21 +94,17 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         impl ::jolt_witness::WitnessBundle for #name {
-            type PolynomialId = ::jolt_witness::__private::JoltPolynomialId;
-
             fn from_row(
-                row: ::jolt_witness::WitnessRow<'_>,
-                next: ::core::option::Option<::jolt_witness::WitnessRow<'_>>,
+                row: &::jolt_witness::__private::TraceRow,
+                next: ::core::option::Option<&::jolt_witness::__private::TraceRow>,
                 env: &::jolt_witness::witnesses::WitnessEnv<'_>,
             ) -> ::core::result::Result<Self, ::jolt_witness::WitnessError> {
-                let row = row.row;
-                let next = next.map(|view| view.row);
                 ::core::result::Result::Ok(Self {
                     #(#from_row_fields,)*
                 })
             }
 
-            fn annotated_ids() -> ::std::vec::Vec<Self::PolynomialId> {
+            fn annotated_ids() -> ::std::vec::Vec<::jolt_witness::__private::JoltPolynomialId> {
                 ::std::vec![#(#id_exprs),*]
             }
         }

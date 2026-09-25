@@ -36,8 +36,9 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage3::registers_claim_reduction::{
     RegistersClaimReduction, RegistersClaimReductionOutputClaims,
 };
+use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError, WitnessRow};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -53,14 +54,11 @@ use crate::{
 struct RegisterValuesRow([u64; 3]);
 
 impl WitnessBundle for RegisterValuesRow {
-    type PolynomialId = JoltPolynomialId;
-
     fn from_row(
-        row: WitnessRow<'_>,
-        _next: Option<WitnessRow<'_>>,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let row = row.row;
         Ok(Self([
             row.rd_write_value(),
             row.rs1_value(),
@@ -68,7 +66,7 @@ impl WitnessBundle for RegisterValuesRow {
         ]))
     }
 
-    fn annotated_ids() -> Vec<Self::PolynomialId> {
+    fn annotated_ids() -> Vec<JoltPolynomialId> {
         Vec::new()
     }
 }

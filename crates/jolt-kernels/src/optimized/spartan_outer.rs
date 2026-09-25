@@ -88,7 +88,7 @@ use jolt_witness::witnesses::{
     RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
     RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
-use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError, WitnessRow};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -153,16 +153,12 @@ struct SpartanOuterRow {
 }
 
 impl WitnessBundle for SpartanOuterRow {
-    type PolynomialId = JoltPolynomialId;
-
     #[inline]
     fn from_row(
-        row: WitnessRow<'_>,
-        next: Option<WitnessRow<'_>>,
+        row: &TraceRow,
+        next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let row = row.row;
-        let next = next.map(|view| view.row);
         let circuit_flags = row.circuit_flags();
         let instruction_flags = row.instruction_flags();
         let (
@@ -223,7 +219,7 @@ impl WitnessBundle for SpartanOuterRow {
         })
     }
 
-    fn annotated_ids() -> Vec<Self::PolynomialId> {
+    fn annotated_ids() -> Vec<JoltPolynomialId> {
         SPARTAN_OUTER_R1CS_INPUTS
             .into_iter()
             .map(JoltPolynomialId::Virtual)

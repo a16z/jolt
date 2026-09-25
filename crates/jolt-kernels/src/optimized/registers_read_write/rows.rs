@@ -5,11 +5,12 @@ use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_field::JoltField;
 #[cfg(feature = "parallel")]
 use jolt_utils::FirstErrorLatch;
+use jolt_witness::__private::TraceRow;
 use jolt_witness::witnesses::WitnessEnv;
 #[cfg(feature = "parallel")]
 use jolt_witness::RandomAccessRows;
 use jolt_witness::{
-    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError, WitnessRow,
+    stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBundle, WitnessError,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -30,14 +31,12 @@ pub(crate) struct RegisterCycleRow {
 }
 
 impl WitnessBundle for RegisterCycleRow {
-    type PolynomialId = JoltPolynomialId;
-
+    // The hidden re-export avoids a jolt-program dependency.
     fn from_row(
-        row: WitnessRow<'_>,
-        _next: Option<WitnessRow<'_>>,
+        row: &TraceRow,
+        _next: Option<&TraceRow>,
         _env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError> {
-        let row = row.row;
         let cycle = Self {
             rs1: row.rs1_index().map(|register| (register, row.rs1_value())),
             rs2: row.rs2_index().map(|register| (register, row.rs2_value())),
@@ -66,7 +65,7 @@ impl WitnessBundle for RegisterCycleRow {
         Ok(cycle)
     }
 
-    fn annotated_ids() -> Vec<Self::PolynomialId> {
+    fn annotated_ids() -> Vec<JoltPolynomialId> {
         Vec::new()
     }
 }
@@ -297,7 +296,7 @@ mod tests {
         };
         let env = WitnessEnv::new(&preprocessing);
 
-        let error = RegisterCycleRow::from_row(WitnessRow::new(0, &row), None, &env).unwrap_err();
+        let error = RegisterCycleRow::from_row(&row, None, &env).unwrap_err();
         assert!(matches!(
             error,
             WitnessError::InvalidWitnessData { reason, .. }

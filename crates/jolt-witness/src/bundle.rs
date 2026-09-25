@@ -1,7 +1,10 @@
 //! Consumer bundles: a consumer's witness data flow, stated as a type.
 
+use jolt_claims::protocols::jolt::JoltPolynomialId;
+use jolt_riscv::JoltTraceRow as TraceRow;
+
 use crate::witnesses::WitnessEnv;
-use crate::{WitnessError, WitnessRow};
+use crate::WitnessError;
 
 pub use jolt_witness_derive::WitnessBundle;
 
@@ -11,21 +14,18 @@ pub use jolt_witness_derive::WitnessBundle;
 /// fields to jolt-claims ids (unannotated fields are consumer facts with no
 /// protocol id).
 pub trait WitnessBundle: Sized {
-    /// Polynomial vocabulary for this bundle's annotated columns.
-    type PolynomialId;
-
     /// The trace-backend constructor, composing the field extractors over
     /// one cycle window.
     fn from_row(
-        row: WitnessRow<'_>,
-        next: Option<WitnessRow<'_>>,
+        row: &TraceRow,
+        next: Option<&TraceRow>,
         env: &WitnessEnv<'_>,
     ) -> Result<Self, WitnessError>;
 
-    /// The jolt-claims ids of the annotated fields, in declaration order.
-    /// Consumers can check these against the backend's servable set before
-    /// witness generation.
-    fn annotated_ids() -> Vec<Self::PolynomialId>;
+    /// The jolt-claims ids of the annotated fields, in declaration order —
+    /// the stage-0 validation input (checked against the backend's servable
+    /// set before witness generation).
+    fn annotated_ids() -> Vec<JoltPolynomialId>;
 }
 
 #[cfg(test)]

@@ -31,7 +31,6 @@ pub mod witnesses;
 mod bundle;
 mod consumer;
 mod error;
-mod row;
 mod shape;
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -48,7 +47,6 @@ pub use consumer::{
     RowSource, StreamConsumer,
 };
 pub use error::WitnessError;
-pub use row::{WitnessChunk, WitnessRow};
 pub use shape::{PolynomialEncoding, Shape};
 
 #[doc(hidden)]
