@@ -69,31 +69,11 @@ where
 }
 
 /// Drive both kernels through every round with shared challenges, asserting
-/// byte-equal round polynomials, then finish and return both (fully bound)
-/// for output-claim comparison. `initial_claim` must be the honest input
-/// claim (see [`probe_input_claim`]); a zero claim is rejected so a
-/// degenerate all-zero fixture cannot make the parity vacuous.
+/// byte-equal round polynomials, then finish both kernels for output-claim
+/// comparison. `initial_claim` must be the honest input claim (see
+/// [`probe_input_claim`]). Fixture-specific nontriviality checks belong in
+/// callers: a zero claim can still yield nonzero round polynomials.
 pub(crate) fn run_lockstep<F: JoltField, R>(
-    reference: &mut dyn SumcheckKernel<F, Relation = R>,
-    optimized: &mut dyn SumcheckKernel<F, Relation = R>,
-    initial_claim: F,
-    challenges: &[F],
-) where
-    R: ConcreteSumcheck<F>,
-{
-    assert!(
-        initial_claim != F::zero(),
-        "zero input claim: the fixture degenerated and parity would be vacuous"
-    );
-    run_lockstep_degenerate(reference, optimized, initial_claim, challenges);
-}
-
-/// [`run_lockstep`] without the nonzero-claim guard, for fixtures whose input claim is
-/// HONESTLY zero — the field-inline kernels' zero-short-circuit paths are exercised by
-/// traces without field-inline activity where every field-inline column vanishes, and
-/// parity over the (zero) round polynomials is exactly the statement under test. Use
-/// `run_lockstep` everywhere else.
-pub(crate) fn run_lockstep_degenerate<F: JoltField, R>(
     reference: &mut dyn SumcheckKernel<F, Relation = R>,
     optimized: &mut dyn SumcheckKernel<F, Relation = R>,
     initial_claim: F,

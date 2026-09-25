@@ -259,9 +259,7 @@ mod tests {
         inactive_field_register_fixture, structured_field_register_fixture,
         FieldRegisterTraceFixture,
     };
-    use crate::optimized::parity::{
-        probe_input_claim, run_lockstep, run_lockstep_degenerate, synthetic_point,
-    };
+    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::ReferenceBackend;
 
     enum IndexSource {
@@ -337,25 +335,19 @@ mod tests {
                     claim != Fr::from_u64(0),
                     "fixture with field-inline activity degenerated"
                 );
-                run_lockstep(
-                    reference.as_mut(),
-                    optimized.as_mut(),
-                    claim,
-                    &round_challenges,
-                );
             } else {
                 assert_eq!(
                     claim,
                     Fr::from_u64(0),
                     "claim without field-inline activity must be zero"
                 );
-                run_lockstep_degenerate(
-                    reference.as_mut(),
-                    optimized.as_mut(),
-                    claim,
-                    &round_challenges,
-                );
             }
+            run_lockstep(
+                reference.as_mut(),
+                optimized.as_mut(),
+                claim,
+                &round_challenges,
+            );
             assert_eq!(
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap()
