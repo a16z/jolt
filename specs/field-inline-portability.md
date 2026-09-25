@@ -4,25 +4,22 @@
 |-------|-------|
 | Author(s) | Markos Georghiades, Claude |
 | Created | 2026-08-19 |
-| Status | implemented (both axes landed; see the status notes below) |
-| PR | TBD |
+| Status | implemented |
+| PR | #1808 |
 
 ## Purpose
 
-Field-inline v1 is implemented end-to-end on the modular stack for the
-homomorphic (Dory) commitment axis over BN254 Fr (see the status note in
-[field-inline-protocol.md](field-inline-protocol.md)). Two upgrades are
-anticipated by pending work: the Akita packed commitment mode moving to the
-modular prover (#1718, #1732), and Jolt moving to a 128-bit base field. This
-spec settles both upgrade designs now so the later PRs land against a decided
-plan instead of re-deriving it.
+Field-inline runs on the modular stack with Dory over BN254 Fr and Akita over
+fp128. Both commitment modes commit the full `FieldRdInc` polynomial and open
+the reduced claim produced by stage 6b. This spec describes the Akita dense
+commitment and the field-specific tracer encoding.
 
 ## Scope
 
 ```text
 in scope:
   packed (Akita) treatment of the field-inline committed surface
-  instantiating field-inline over a smaller base field (e.g. fp128)
+  instantiating field-inline over fp128
 out of scope:
   extension-field sumcheck soundness (base fields ONLY: field registers hold
     elements of the sumcheck field F itself; any base/extension split is a
@@ -31,181 +28,106 @@ out of scope:
   zk over the packed axis (akita x zk stays mutually exclusive)
 ```
 
-## Invariants that carry unchanged
+## Shared invariants
 
-- Native-field invariant: q = modulus(F). Field-inline accelerates whatever
-  field the proof runs over; FMUL stays one guarded row plus one product lane,
-  no quotient witnesses, under every instantiation in scope.
+- Native-field invariant: q = modulus(F). Field-inline accelerates the field
+  used by the proof. Field multiplication remains one guarded constraint row
+  plus one product lane, without quotient witnesses.
 - The Twist memory-checking identities (`crates/jolt-claims/src/twist/`) are
-  representation-agnostic; both upgrades reuse them verbatim.
-- Field-register RA/WA/Val remain virtual and bytecode-anchored — no packed
-  one-hot obligations arise from field-inline on any axis.
-- The composition seams (per-stage `field_inline` modules, boundary whitelist
-  tests, `suppress_field_operand_slots`) are commitment- and field-agnostic.
+  representation-agnostic and shared by both commitment modes.
+- Field-register RA/WA/Val remain virtual and bytecode-anchored. Field-inline
+  adds no packed one-hot commitments.
+- `FieldRegistersIncClaimReduction` reduces the read/write and value-evaluation
+  claims to one opening of `FieldRdInc`, with the same relation in both modes.
 
-## Axis 1: packed (Akita) FieldRdInc
+## Akita commitment to FieldRdInc
 
-`FieldRdInc` is the extension's only committed polynomial. The packed mode's
-inc machinery (balanced digits + carry + booleanity-style digit checks, per
-the digit-zero work in #1731) requires small values; a field delta
-(post − pre mod p) has no small representation. Design:
+`FieldRdInc` is the extension's only committed polynomial. Each entry is a
+field-register delta, `post - pre` in fp128, and can occupy the full field.
+The Akita commitment uses the full-width `Dense` configuration, whose
+internal digit decomposition supports arbitrary fp128 values. Jolt supplies
+one field value per cycle; it does not split increments into external limb
+columns or carry separate limb evaluations in the proof.
+
+Only the field-increment object uses the full-width configuration. Advice
+and committed-program objects retain their existing bounded configurations
+and digit policies. The joint opening selects the configuration for each
+object's role; it does not widen those objects' value bounds.
+
+The field-increment polynomial is an independent dense object, committed in
+stage 0 under a transparent setup and opened in the same heterogeneous batch
+as the advice and one-hot trace objects. Its `PrecommittedRole` has order 2
+and transcript label `field_inc`; the batch order is:
 
 ```text
-commit:   the limb columns of FieldRdInc's canonical representative —
-          limb_i in u64, i in 0..L (L = 4 for a 254-bit F, L = 2 for fp128)
-each limb column is RdInc-shaped and rides the existing balanced-digit
-          machinery verbatim; digit smallness enforcement doubles as the
-          limb range check (limb_i < 2^64)
-recompose: FieldRdInc = sum_i limb_i * 2^(64 i)   — one linear identity over F
-          (exact: the canonical representative is < p, so no carries and no
-          modular wraparound in the recomposition)
-virtual:  full-width FieldRdInc becomes a virtual polynomial; every Twist
-          relation consumes it unchanged
-openings: the final opening opens the limb columns; the FieldRdInc claim is
-          reconstructed linearly via the existing stage-8 reconstruction
-          machinery (the pattern akita already uses for fused-inc cells)
-reduction: FieldRegistersIncClaimReduction consumes the recomposed virtual
-          instead of a committed opening (wiring change only)
+[UntrustedAdvice, TrustedAdvice, FieldInc, OneHotTrace]
 ```
 
-Implementation-time checks (not design questions): lattice norm-budget
-headroom for L limb columns; the reconstruction ordering in stage 8's packed
-path. The `field-inline x akita` compile error in
-`crates/jolt-verifier/src/config.rs` is removed only in the PR that lands
-this design with accept/tamper fixtures — same discipline as the verifier
-gate's removal.
+The role places a trace-derived object in the PCS batch; its presence does
+not mean that field increments are fixed during program preprocessing.
 
-## Axis 2: 128-bit base-field instantiation
+`FieldIncLayout` in `crates/jolt-claims/src/protocols/field_inline/lattice/`
+owns the physical arity, layout digest, and opening-point padding. For a
+trace with `log_T` variables, the physical arity is the larger of `log_T` and
+the dense schedule floor. The prover pads the evaluations with zeros to that
+arity. The verifier prepends zero coordinates to the reduced opening point,
+selecting the original trace polynomial without changing its evaluation.
 
-Everything above the tracer is generic over `F`. The concrete work:
+In stage 8, the stage-6b claim `(v, r)` becomes a single dense opening at the
+padded point with value `v`. The PCS binds it directly to the field-increment
+commitment. There is no limb recomposition identity, selector challenge, or
+additional reconstruction sumcheck. Prover and verifier share this claim
+construction in `jolt-verifier/src/stages/stage8/packed.rs`.
 
-- Tracer genericization: `decode_field`/`encode_field` in
-  `tracer/src/instruction/field_inline/mod.rs` are generic over the active
-  proof field: BN254 `Fr` by default, or `Prime128OffsetA7F7` with
-  `fp128-field-inline`.
-- Encoding version: `FieldValueEncoding` gains a two-limb 16-byte variant
-  beside `BN254_SCALAR_CANONICAL`; `FieldInlineBytecodeMetadata.value_encoding`
-  and the profile fingerprint already version this — a proof/preprocessing
-  built under one encoding rejects under another fail-closed.
-- Bridge economics improve: a full-width load uses one zero initialization
-  and two `FIELD_LOAD_ACCUMULATE_FROM_REGISTER` instructions, high limb first.
-  Each accumulation computes `old_destination * 2^64 + limb` in the field.
-  Canonical readout uses two in-place `FIELD_ADVICE_LIMB` instructions,
+The commitment is required on every Akita proof with field-inline enabled,
+including traces that execute no field instructions. An all-zero polynomial
+is legal because the dense schedule depends on shape rather than content.
+The verifier rejects an absent commitment, incompatible layout metadata,
+and duplicate field-increment roles in the final batch.
+
+The schedule registry provisions the full-width dense object at the canonical
+physical arity and includes it in every field-inline batch profile, alongside
+each supported advice subset. Layout and schedule provisioning tests pin the
+same sizing law on both sides of the PCS boundary.
+
+## Field-specific execution encoding
+
+Akita proves over fp128. Its feature chain selects the tracer's `ProofField`
+as `jolt_field::Prime128OffsetA7F7` and `FieldValueEncoding::ACTIVE` as
+`TWO_LIMB_128_CANONICAL`. Dory uses BN254 Fr with
+`BN254_SCALAR_CANONICAL`. The tracer's `decode_field` and `encode_field` in
+`tracer/src/instruction/field_inline/mod.rs` operate on the selected field.
+
+The encoding is recorded in `FieldInlineBytecodeMetadata` and the instruction
+profile fingerprint. A proof or preprocessing artifact using a different
+encoding is rejected by the metadata equality check. Field-inline guests
+are therefore configuration-specific.
+
+Guest ingress and readout still use u64 limbs because the integer register
+file is RV64; these instruction operands are independent of the commitment
+representation:
+
+- A full fp128 load uses zero initialization followed by two
+  `FIELD_LOAD_ACCUMULATE_FROM_REGISTER` instructions, high limb first. Each
+  accumulation computes `old_destination * 2^64 + limb` in the field.
+- Canonical readout uses two in-place `FIELD_ADVICE_LIMB` instructions,
   `FIELD_ASSERT_ZERO` on the remaining quotient, and an integer check that
   the emitted value is below the modulus. Accumulating the emitted limbs
   high-to-low restores the consumed source without a scratch field register.
-- Generator budget: `MAX_BLINDFOLD_GENERATORS` is cfg-keyed today (32 without
-  field-inline, 64 with it); the composed uniskip degrees do not change with
-  the field, so no further action.
-- Expectation reset (documentation, not protocol): software two-limb field
-  multiplication costs tens of cycles, so the per-op native speedup drops from
-  ~190x (BN254) to ~20-40x; the pinned-slot SDK matters relatively more.
 
-## Ordering against pending PRs
+## Validation
 
-#1718/#1732 (akita -> modular prover) touch the same seams as the landed
-field-inline work (kernel backend slots, stage-0 commit path, stage-6b/8
-per-mode test fixtures). The axes are compile-disjoint, so all conflicts are
-textual adjacency, arbitrated by the boundary tests and both ratchets.
-Recommended order: merge the field-inline branch first; the packed-FieldRdInc
-slice (Axis 1) lands after #1718, as one slice-sized unit; the base-field
-slice (Axis 2) lands with or after the field switch itself.
+`crates/jolt-prover/tests/akita_field_inline_e2e.rs` exercises:
 
-## Implementation steps
+- The `field-ops` guest on reference and optimized kernels, with identical
+  proofs combining bounded advice and field increments whose centered
+  representatives exceed 64 bits.
+- `muldiv` with no field operations, an all-zero `FieldRdInc` commitment, and
+  identical proofs on both backends.
+- Rejection after changing the reduced increment claim, commitment layout
+  digest, or joint opening proof, stripping the commitment, or duplicating
+  the field-increment role in the batch.
 
-1. Axis 1 after #1718 merges: limb-column commit + digit rides + recomposition
-   identity + stage-8 reconstruction + inc-reduction rewiring; accept/tamper
-   fixtures on the packed path; remove the compile error last.
-   Review gate: akita byte-identity without field-inline; packed field-inline
-   fixtures accept/tamper.
-2. Axis 2 with the field switch: tracer parameterization + encoding variant +
-   bridge fixture updates; the eq-MLE guest re-fixtured under the new
-   encoding.
-   Review gate: encoding-mismatch proofs reject fail-closed; e2e both modes.
-
-## Status (2026-08-26): both axes landed under the fp128 ruling
-
-The fp128 switch decision came down as a ruling: the packed (akita) axis
-proves exclusively over fp128, and no BN254 akita configuration will ever
-exist. Field-inline execution is therefore configuration-selected — the akita
-feature chain repoints the tracer's `ProofField` to
-`jolt_field::Prime128OffsetA7F7` and `FieldValueEncoding::ACTIVE` to
-`TWO_LIMB_128_CANONICAL` (inert while field-inline is off); Dory keeps BN254
-Fr. Field-inline guests are configuration-specific, and cross-configuration
-proofs reject fail-closed on the metadata encoding-equality gate (intended
-behavior; the jolt-program encoding-mismatch unit test rejects the foreign
-encoding in whichever configuration it compiles under, and CI runs it with
-`fp128-field-inline` both off and on).
-
-Everything above is implemented; the `field-inline x akita` compile error is
-removed. Axis 1 as landed, with two dispositions the design left open:
-
-- `FieldRegistersIncClaimReduction` stays a stage-6b member unchanged; on the
-  packed axis its reduced claim feeds a stage-8 reconstruction member
-  (`FieldIncLimbReconstruction`: per-column booleanity legs at a fresh
-  reference point plus the balanced-digit decode leg) instead of the
-  homomorphic RLC splice (`stage8/field_inline.rs` stays homomorphic-only;
-  the packed seam is `stage8/field_inline_packed.rs` on both fronts).
-- The limb object's presence is claim-gated: `FieldRdInc` identically zero
-  means every limb column is empty, and the catalogued Akita fold schedules
-  cannot open an all-zero one-hot object — so the object (commitment +
-  opening) exists exactly when the stage-6b reduced `FieldRdInc` claim is
-  nonzero, enforced both ways fail-closed at the stage-8 opening
-  (Schwartz-Zippel over the reduction chain; the reconstruction member
-  itself always runs).
-
-Review gates met: akita byte-identity without field-inline (the legacy
-byte-diff ratchets), dory identity with field-inline (the dory e2e's
-reference/optimized wire equality), and the packed accept/tamper suite
-(`jolt-prover/tests/akita_field_inline_e2e.rs`: eq-MLE re-fixtured at the
-16-byte encoding via host-side fp128 evaluation, muldiv with no field
-operations and the object absent, and five rejected tampers). The packed
-reconstruction kernel is the naive reference tier on both backends; a sparse
-optimized kernel is the noted follow-up.
-
-## Status (2026-08-27): packed axis re-landed on dense-group batching
-
-Upstream #1798 replaced the byte one-hot advice objects with dense u64-word
-commitments opened through one heterogeneous batch; the packed `FieldRdInc`
-treatment is re-landed on that mechanism, superseding the one-hot limb
-columns, the `FieldIncLimbReconstruction` member, and the claim-gated limb
-object above. The `field-inline x akita` compile error is removed again. The
-fp128 ruling, the limb decomposition facts
-(`canonical_limbs`/`limb_place_value`), and the Axis 2 encoding gates are
-unchanged. The dense-group design:
-
-- One independent dense precommitted group carries `FieldRdInc`'s two
-  canonical u64 limb-word columns (fp128, L = 2), prefix-packed at `log_T`
-  through the shared dense schedule floor
-  (`protocols/field_inline/lattice/packing.rs`), committed in stage 0 beside
-  advice under a transparent setup, and opened in the SAME native
-  heterogeneous batch. Its frozen `PrecommittedRole` is order 2, transcript
-  label `field_inc_limbs`: the canonical batch order is
-  `[UntrustedAdvice, TrustedAdvice, FieldIncLimbs, OneHotTrace]`.
-- The stage-6b reduced `FieldRdInc` claim `(v, r)` binds to the group by ONE
-  explicit verifier equality BEFORE the packing reduction:
-  `v == e0 + 2^64 * e1` over the proof-carried limb evaluations at `r`
-  (typed `FieldIncLimbRecompositionMismatch` reject), which the batch then
-  binds to the committed columns through the selector-reduced physical
-  claim. No reconstruction sumcheck member, no booleanity legs.
-- Presence is never claim-gated: on a packed build with field-inline enabled,
-  the group is ALWAYS present (all-zero content is legal — dense schedules are keyed by
-  `(num_vars, num_polys)` shape, never content). Proof validation requires the
-  limb commitment, and stage 8 directly requires both the commitment and limb
-  claims, returning `MissingProofPayload` if either is absent.
-- Provisioning: `PrecommittedScheduleParams` carries the field-inline limb
-  arity line (`jolt-akita` `FieldIncLimbScheduleParams`, law-derived data
-  pinned to the jolt-claims packing law by the registry's field-inline
-  provisioning tests). The grouped schedule registry enumerates only
-  combinations that include the limb group — every advice subset (including
-  advice-absent) with the setup arity's limb profile as the first mandatory
-  group (ahead of any direct committed-program objects), planned under the
-  same u64-bounded dense fold policy as advice.
-
-Review gates met: akita and dory byte-identity without field-inline (the
-byte-diff ratchets), unchanged dory fixtures with field-inline, and the packed
-accept/tamper suite (`jolt-prover/tests/akita_field_inline_e2e.rs`: eq-MLE
-accepted on both kernel backends with wire equality, muldiv with no field
-operations accepted with the group present and all-zero, and the tamper matrix
-— limb-evaluation offset, layout-digest flip, batch-proof mutation, stripped
-group, spurious second group with the field-inline role — all rejected).
+The shared guest acceptance matrix runs field-inline in clear Dory, ZK Dory,
+and Akita modes. Encoding-mismatch tests run under both tracer field
+configurations.

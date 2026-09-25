@@ -31,7 +31,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info_span;
 
-use crate::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use crate::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK256};
 use crate::schedule_registry::PrecommittedScheduleParams;
 use crate::trace_onehot::TracePackedOneHot;
 
@@ -51,7 +51,7 @@ const _: () = assert!(
 pub const AKITA_ONE_HOT_K16: usize = 16;
 pub const AKITA_ONE_HOT_K256: usize = 256;
 
-/// Runtime bytes for Jolt's three base schedule families.
+/// Runtime bytes for Jolt's four base schedule families.
 ///
 /// These bytes are ordinary input data. They are intentionally neither
 /// generated Rust nor embedded with `include_bytes!`.
@@ -59,6 +59,7 @@ pub const AKITA_ONE_HOT_K256: usize = 256;
 #[serde(deny_unknown_fields)]
 pub struct AkitaScheduleArtifacts {
     dense: Vec<u8>,
+    full_dense: Vec<u8>,
     one_hot_k16: Vec<u8>,
     one_hot_k256: Vec<u8>,
 }
@@ -66,9 +67,15 @@ pub struct AkitaScheduleArtifacts {
 impl AkitaScheduleArtifacts {
     const DIRECTORY_ENV: &'static str = "JOLT_AKITA_SCHEDULE_DIR";
 
-    pub fn new(dense: Vec<u8>, one_hot_k16: Vec<u8>, one_hot_k256: Vec<u8>) -> Self {
+    pub fn new(
+        dense: Vec<u8>,
+        full_dense: Vec<u8>,
+        one_hot_k16: Vec<u8>,
+        one_hot_k256: Vec<u8>,
+    ) -> Self {
         Self {
             dense,
+            full_dense,
             one_hot_k16,
             one_hot_k256,
         }
@@ -88,6 +95,7 @@ impl AkitaScheduleArtifacts {
         };
         Ok(Self::new(
             read(JoltDenseBounded::schedule_family_name())?,
+            read(JoltDenseFull::schedule_family_name())?,
             read(JoltOneHotK16::schedule_family_name())?,
             read(JoltOneHotK256::schedule_family_name())?,
         ))
@@ -117,7 +125,7 @@ impl AkitaScheduleArtifacts {
     /// [`Self::packaged_directory`].
     ///
     /// The handle is what is shared, not the bytes: every call re-reads the
-    /// three `.aks` files, so hosts still load once at preprocessing and pass
+    /// four `.aks` files, so hosts still load once at preprocessing and pass
     /// the bundle to each setup. Callers that must compare setup provenance
     /// keep their own handle rather than calling this twice — the packed
     /// prover's advice guards test bundle identity with `Arc::ptr_eq`.
@@ -142,6 +150,17 @@ impl AkitaScheduleArtifacts {
     pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
         TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(&self.dense)
             .map(|catalog| catalog.catalog().clone())
+    }
+
+    pub fn full_dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
+        TrustedScheduleCatalog::<JoltDenseFull>::from_artifact_bytes(&self.full_dense)
+            .map(|catalog| catalog.catalog().clone())
+    }
+
+    pub(crate) fn full_dense_scheme(
+        &self,
+    ) -> Result<AkitaCommitmentScheme<JoltDenseFull>, AkitaError> {
+        AkitaCommitmentScheme::<JoltDenseFull>::from_schedule_artifact(&self.full_dense)
     }
 
     pub fn one_hot_catalog(
@@ -314,8 +333,8 @@ pub struct AkitaSetupParams {
     pub(crate) flavor: AkitaSetupFlavor,
     /// Recipe for the dynamic grouped rows accepted by this setup.
     ///
-    /// Replaying serialized setup parameters intentionally reruns guided
-    /// preprocessing. Verifier transport serializes [`AkitaVerifierSetup`]
+    /// Replaying serialized setup parameters intentionally reruns schedule
+    /// planning. Verifier transport serializes [`AkitaVerifierSetup`]
     /// instead, which contains the finalized catalog and never replans.
     #[serde(default, rename = "advice_schedule")]
     pub(crate) precommitted_schedule: Option<PrecommittedScheduleParams>,

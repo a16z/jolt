@@ -1,15 +1,11 @@
 //! Packed (Akita) field-inline parity and tamper tests over fp128.
 //!
-//! Parity and limb-group invariants: the eq-MLE guest (every shipped field-inline
-//! instruction family, a live `FieldRdInc` column) and the field-inline muldiv
-//! (zero field-inline instructions, `FieldRdInc` identically zero, the limb group PRESENT with all-zero
-//! content — the always-present rule, pinning the all-zero dense open), each
-//! over both kernel backends with wire equality. Guest acceptance across modes
-//! lives in `e2e_matrix.rs`; all suites share guest preparation.
-//! Tamper (all must reject): a limb-evaluation offset (the stage-8 linear
-//! recomposition check), a limb-commitment layout-digest byte flip, a
-//! batch-proof mutation, the limb group stripped from the proof, and a
-//! spurious second field-inline-role group in the heterogeneous batch statement.
+//! Both kernel backends prove the field-ops guest with full-width `FieldRdInc`
+//! values and muldiv with an identically zero `FieldRdInc`, producing identical
+//! wire objects. The field-increment commitment is present in both cases.
+//! Guest acceptance across modes lives in `e2e_matrix.rs`.
+//! Tamper cases cover the reduced increment claim, commitment layout digest,
+//! batched opening proof, missing commitment, and duplicate batch role.
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -30,6 +26,7 @@ mod support;
 )]
 mod clear {
     use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
@@ -38,8 +35,6 @@ mod clear {
     use jolt_prover::akita::JoltAkitaBackend;
     use jolt_prover::ProverConfig;
     use jolt_verifier::proof::JoltProofClaims;
-    use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
-    use jolt_verifier::VerifierError;
     use jolt_witness::field_inline::FieldInlineWitnessOracle;
     use serde_json::Value;
 
@@ -59,16 +54,16 @@ mod clear {
         ]
     }
 
-    struct LimbFixture {
+    struct IncFixture {
         log_t: usize,
         rd_inc: Vec<AkitaField>,
     }
 
-    fn collect_limbs(
+    fn collect_inc(
         config: &ProverConfig,
         oracle: &dyn FieldInlineWitnessOracle<AkitaField>,
-    ) -> LimbFixture {
-        LimbFixture {
+    ) -> IncFixture {
+        IncFixture {
             log_t: config.trace_length.ilog2() as usize,
             rd_inc: oracle
                 .oracle_table(FieldInlinePolynomialId::Committed(
@@ -78,60 +73,48 @@ mod clear {
         }
     }
 
-    /// Commit the honest limb-word polynomial under `digest` through the real
-    /// dense commit path, returning the commitment a tamper splices into a
-    /// proof (same content, mutated identity).
-    fn commit_limb_words_with_digest(fixture: &LimbFixture, digest: [u8; 32]) -> AkitaCommitment {
-        use jolt_claims::protocols::field_inline::lattice::canonical_limbs;
+    /// Commit the honest increment polynomial under a supplied layout digest.
+    fn commit_inc_with_digest(fixture: &IncFixture, digest: [u8; 32]) -> AkitaCommitment {
         use jolt_openings::TransparentObjectSetup;
         use jolt_poly::Polynomial;
-        use jolt_verifier::stages::stage8::field_inline_packed::limb_plan;
 
-        let log_t = fixture.log_t;
-        let plan = limb_plan::<AkitaField>(log_t).expect("canonical limb plan");
-        let mut evaluations =
-            vec![AkitaField::from_u64(0); 1usize << plan.packing().packed_num_vars()];
-        for (cycle, value) in fixture.rd_inc.iter().enumerate() {
-            for (limb, word) in canonical_limbs(value).into_iter().enumerate() {
-                evaluations[(limb << log_t) | cycle] = AkitaField::from_u64(word);
-            }
-        }
+        let layout = FieldIncLayout::new(fixture.log_t);
+        let mut evaluations = fixture.rd_inc.clone();
+        evaluations.resize(1usize << layout.num_vars(), AkitaField::from_u64(0));
         let polynomial = Polynomial::new(evaluations);
-        let (setup, _) = <AkitaScheme as TransparentObjectSetup>::transparent_object_setup(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
-            plan.packing().packed_num_vars(),
-            digest,
-        )
-        .expect("transparent limb setup");
-        let (commitment, _hint) = <AkitaScheme as CommitmentScheme>::commit(&polynomial, &setup)
-            .expect("forged limb commit");
+        let (commitment, _hint) =
+            <AkitaScheme as TransparentObjectSetup>::commit_full_width_object(
+                &AkitaScheduleArtifacts::shared_from_default_directory(),
+                &polynomial,
+                digest,
+            )
+            .expect("full-width field-increment commit");
         commitment
-    }
-
-    fn clear_limb_claims(proof: &Proof) -> &FieldIncLimbClaims<AkitaField> {
-        let JoltProofClaims::Clear(claims) = &proof.claims else {
-            panic!("packed proofs carry clear claims");
-        };
-        claims
-            .field_inc_limbs
-            .as_ref()
-            .expect("packed field-inline proofs carry the limb claims")
     }
 
     /// Both backends' packed field-inline proofs must verify AND be equal wire objects.
     #[test]
     fn akita_field_inline_field_ops_backends_have_identical_proofs() {
+        let mut case = field_ops();
+        // Exercise a joint opening with both bounded advice and full-width increments.
+        case.untrusted_advice = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
-            let (output, ()) = akita::prove(&field_ops(), backend(), |_, _| ());
+            let (output, inc) = akita::prove(&case, backend(), collect_inc);
             assert!(
-                output.proof.field_inc_limbs_commitment.is_some(),
-                "packed field-inline proofs must carry the limb-group commitment ({label})",
+                output.proof.untrusted_advice_commitment.is_some(),
+                "the mixed batch must include bounded advice ({label})",
             );
-            assert_eq!(
-                clear_limb_claims(&output.proof).limbs.len(),
-                2,
-                "fp128 decomposes FieldRdInc into two u64 limbs ({label})",
+            assert!(
+                output.proof.field_inc_commitment.is_some(),
+                "packed field-inline proofs must carry the field-increment commitment ({label})",
+            );
+            assert!(
+                inc.rd_inc.iter().any(|value| {
+                    value.to_canonical_u128() > u128::from(u64::MAX)
+                        && (-*value).to_canonical_u128() > u128::from(u64::MAX)
+                }),
+                "the guest must exercise increments outside the bounded dense envelope ({label})",
             );
             akita::verify_full(
                 &output.verifier_preprocessing,
@@ -149,30 +132,28 @@ mod clear {
         );
     }
 
-    /// The uniform-shape degenerate case: a field-inline guest executing zero
-    /// field-inline instructions — `FieldRdInc` identically zero, every limb word zero
-    /// — still proves and verifies with the limb group PRESENT (all-zero
-    /// content is legal: dense schedules are keyed by shape, never content).
-    /// This pins the all-zero dense open.
+    /// Dense schedules depend on shape, so an inactive field register file
+    /// still carries a commitment and opens its all-zero increment polynomial.
     #[test]
-    fn akita_field_inline_muldiv_backends_have_identical_zero_limb_proofs() {
+    fn akita_field_inline_muldiv_backends_have_identical_zero_inc_proofs() {
         let mut proofs = Vec::new();
         for (label, backend) in backends() {
-            let (output, limbs) = akita::prove(&muldiv(), backend(), collect_limbs);
-            assert!(limbs
+            let (output, inc) = akita::prove(&muldiv(), backend(), collect_inc);
+            assert!(inc
                 .rd_inc
                 .iter()
                 .all(|value| *value == AkitaField::from_u64(0)));
             assert!(
-                output.proof.field_inc_limbs_commitment.is_some(),
-                "a zero FieldRdInc still commits its limb group ({label})",
+                output.proof.field_inc_commitment.is_some(),
+                "a zero FieldRdInc still carries its commitment ({label})",
             );
-            assert!(
-                clear_limb_claims(&output.proof)
-                    .limbs
-                    .iter()
-                    .all(|limb| *limb == AkitaField::from_u64(0)),
-                "an all-zero group opens to all-zero limb evaluations ({label})",
+            let JoltProofClaims::Clear(claims) = &output.proof.claims else {
+                panic!("packed proofs carry clear claims");
+            };
+            assert_eq!(
+                claims.stage6b.field_registers_inc_claim_reduction.rd_inc,
+                AkitaField::from_u64(0),
+                "an all-zero polynomial opens to zero ({label})",
             );
             akita::verify_full(
                 &output.verifier_preprocessing,
@@ -194,8 +175,7 @@ mod clear {
     /// clones, every one rejected.
     #[test]
     fn akita_field_inline_tampered_proofs_are_rejected() {
-        let (output, limbs) =
-            akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_limbs);
+        let (output, inc) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), collect_inc);
         akita::verify_full(
             &output.verifier_preprocessing,
             &output.public_io,
@@ -204,50 +184,42 @@ mod clear {
         .expect("base proof must verify before tampering");
         let one = AkitaField::from_u64(1);
 
-        // The honest limb polynomial under a corrupted layout digest, through
-        // the real commit path. The digest is part of the commitment's
-        // absorbed identity, so the stage-0 transcript already diverges; the
-        // stage-8 metadata gate is the backstop that pins the digest to the
-        // canonical plan even off-transcript. Either layer rejects.
+        // Bind the layout identity independently of the committed values.
         let wrong_digest_commitment = {
             let honest = output
                 .proof
-                .field_inc_limbs_commitment
+                .field_inc_commitment
                 .as_ref()
-                .expect("packed field-inline proofs carry the limb-group commitment");
+                .expect("packed field-inline proofs carry the field-increment commitment");
             let digest = GroupCommitmentMetadata::layout_digest(honest);
             // The forgery path reproduces the prover's commit exactly under
             // the honest digest, so the flipped-digest commitment below
             // differs from the honest one only in the digest.
             assert_eq!(
-                &commit_limb_words_with_digest(&limbs, digest),
+                &commit_inc_with_digest(&inc, digest),
                 honest,
-                "the test's limb commit must reproduce the prover's under the honest digest",
+                "the test's increment commit must reproduce the prover's under the honest digest",
             );
             let mut digest = digest;
             digest[0] ^= 0x01;
-            commit_limb_words_with_digest(&limbs, digest)
+            commit_inc_with_digest(&inc, digest)
         };
 
         type Tamper = (&'static str, Box<dyn Fn(&mut Proof)>);
         let tampers: Vec<Tamper> = vec![
             (
-                "limb evaluation offset (linear recomposition check)",
+                "reduced field-increment claim offset",
                 Box::new(move |proof| {
                     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
                         panic!("clear proof expected");
                     };
-                    let limbs = claims
-                        .field_inc_limbs
-                        .as_mut()
-                        .expect("packed field-inline proof carries limb claims");
-                    *limbs.limbs.first_mut().expect("two limbs") += one;
+                    claims.stage6b.field_registers_inc_claim_reduction.rd_inc += one;
                 }),
             ),
             (
-                "limb commitment layout-digest byte flip",
+                "field-increment commitment layout-digest byte flip",
                 Box::new(move |proof| {
-                    proof.field_inc_limbs_commitment = Some(wrong_digest_commitment.clone());
+                    proof.field_inc_commitment = Some(wrong_digest_commitment.clone());
                 }),
             ),
             (
@@ -268,22 +240,9 @@ mod clear {
                 }),
             ),
             (
-                "limb group stripped from the proof",
+                "field-increment commitment stripped from the proof",
                 Box::new(|proof| {
-                    proof.field_inc_limbs_commitment = None;
-                    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-                        panic!("clear proof expected");
-                    };
-                    claims.field_inc_limbs = None;
-                }),
-            ),
-            (
-                "limb claims stripped while the commitment stays",
-                Box::new(|proof| {
-                    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-                        panic!("clear proof expected");
-                    };
-                    claims.field_inc_limbs = None;
+                    proof.field_inc_commitment = None;
                 }),
             ),
         ];
@@ -296,37 +255,14 @@ mod clear {
                 "tampered packed field-inline proof must be rejected: {name}",
             );
         }
-
-        // The limb-evaluation offset must reject through the linear
-        // recomposition check specifically, not some later transcript
-        // divergence.
-        let mut offset_limb = output.proof.clone();
-        {
-            let JoltProofClaims::Clear(claims) = &mut offset_limb.claims else {
-                panic!("clear proof expected");
-            };
-            let limbs = claims
-                .field_inc_limbs
-                .as_mut()
-                .expect("packed field-inline proof carries limb claims");
-            *limbs.limbs.first_mut().expect("two limbs") += one;
-        }
-        assert!(matches!(
-            akita::verify_full(
-                &output.verifier_preprocessing,
-                &output.public_io,
-                &offset_limb
-            ),
-            Err(VerifierError::FieldIncLimbRecompositionMismatch)
-        ));
     }
 
     /// A spurious second field-inline-role group in the heterogeneous batch statement
     /// must be rejected by the strictly-ascending role order — the layer that
     /// makes the verifier-assembled single field-inline entry canonical.
     #[test]
-    fn akita_field_inline_duplicate_limb_group_is_rejected() {
-        use jolt_claims::protocols::field_inline::lattice::field_inc_limbs_precommitted_role;
+    fn akita_field_inline_duplicate_inc_group_is_rejected() {
+        use jolt_claims::protocols::field_inline::lattice::field_inc_precommitted_role;
         use jolt_openings::{GroupOpeningClaim, PrecommittedClaim};
         use jolt_prover::akita::preprocessing::AkitaTranscript;
         use jolt_transcript::Transcript;
@@ -334,12 +270,12 @@ mod clear {
         let (output, ()) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), |_, _| ());
         let commitment = output
             .proof
-            .field_inc_limbs_commitment
+            .field_inc_commitment
             .clone()
-            .expect("packed field-inline proofs carry the limb-group commitment");
+            .expect("packed field-inline proofs carry the field-increment commitment");
         let point = vec![AkitaField::from_u64(3); GroupCommitmentMetadata::num_vars(&commitment)];
         let field_claim = PrecommittedClaim::new(
-            field_inc_limbs_precommitted_role(),
+            field_inc_precommitted_role(),
             GroupOpeningClaim::new(commitment, point, vec![AkitaField::from_u64(0)]),
         );
         let main = GroupOpeningClaim::new(

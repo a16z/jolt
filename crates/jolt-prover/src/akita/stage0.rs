@@ -17,7 +17,7 @@ use jolt_verifier::{
 use jolt_witness::JoltWitnessPlane;
 
 #[cfg(feature = "field-inline")]
-use super::field_inline::FieldIncLimbsObject;
+use super::field_inline::FieldIncObject;
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
@@ -31,9 +31,9 @@ where
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
-    /// The field-inline limb group, committed on every packed field-inline proof.
+    /// The field increment polynomial, committed on every packed field-inline proof.
     #[cfg(feature = "field-inline")]
-    pub field_inc_limbs: FieldIncLimbsObject<PCS>,
+    pub field_inc: FieldIncObject<PCS>,
 }
 
 /// Validate inputs, commit the packed objects, and seed the transcript.
@@ -158,13 +158,13 @@ where
         None
     };
     #[cfg(feature = "field-inline")]
-    let field_inc_limbs = super::field_inline::commit_field_inc_limbs::<F, PCS>(
+    let field_inc = super::field_inline::commit_field_inc::<F, PCS>(
         PCS::transparent_setup_context(&preprocessing.pcs_setup),
         log_t,
         witness,
     )?;
 
-    // Canonical public batch order: advice, (field-inline) the field-inline limb group,
+    // Canonical public batch order: advice, (field-inline) the field increment polynomial,
     // then the direct committed-program objects, then OneHotTrace.
     let mut precommitted: Vec<(PrecommittedRole, &PCS::Output, &PCS::OpeningHint)> =
         untrusted_advice
@@ -187,9 +187,9 @@ where
             .collect();
     #[cfg(feature = "field-inline")]
     precommitted.push((
-        jolt_claims::protocols::field_inline::lattice::field_inc_limbs_precommitted_role(),
-        &field_inc_limbs.commitment,
-        &field_inc_limbs.hint,
+        jolt_claims::protocols::field_inline::lattice::field_inc_precommitted_role(),
+        &field_inc.commitment,
+        &field_inc.hint,
     ));
     if let Some(program) = preprocessing
         .committed_program
@@ -252,7 +252,7 @@ where
         untrusted_advice.as_ref().map(|object| &object.commitment),
         trusted_advice.map(|object| &object.commitment),
         #[cfg(feature = "field-inline")]
-        Some(&field_inc_limbs.commitment),
+        Some(&field_inc.commitment),
         preprocessing
             .verifier
             .program
@@ -268,6 +268,6 @@ where
         hint,
         untrusted_advice,
         #[cfg(feature = "field-inline")]
-        field_inc_limbs,
+        field_inc,
     })
 }

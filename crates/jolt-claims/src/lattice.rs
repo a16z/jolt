@@ -68,11 +68,12 @@ impl BalancedIncChunking {
     }
 }
 
-/// Minimum physical arity of a bounded-dense commitment object (advice words,
-/// program bytecode/image, field-inline limb words). Akita's dense DP planner admits no
+/// Minimum physical arity of a dense commitment object (advice, program data,
+/// or field-register increments). Akita's bounded-dense DP planner admits no
 /// fold schedule below 2^13 coefficients for these single-polynomial groups;
 /// one variable of headroom over the current floor absorbs upstream
-/// repricing. [`min_dense_slot_capacity`] pads slot capacity — never column
+/// repricing; full-width field increments use the same floor.
+/// [`min_dense_slot_capacity`] pads slot capacity — never column
 /// arity — up to this bound, so claim reduction is unchanged. Like any unused
 /// slot, the padding is unconstrained committed data whose contribution to
 /// the single reduced opening is zero w.h.p. under the sampled selector;

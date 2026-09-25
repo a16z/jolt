@@ -13,7 +13,7 @@ use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
     FoldSchedule, PolynomialGroupLayout,
 };
-use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
 use jolt_akita::schedule_registry::{
     dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
 };
@@ -30,6 +30,12 @@ fn artifacts() -> AkitaScheduleArtifacts {
 
 fn dense_catalog() -> ValidatedScheduleCatalog {
     artifacts().dense_catalog().expect("dense catalog")
+}
+
+fn full_dense_catalog() -> ValidatedScheduleCatalog {
+    artifacts()
+        .full_dense_catalog()
+        .expect("full-width dense catalog")
 }
 
 fn one_hot_catalog(one_hot_k: usize) -> ValidatedScheduleCatalog {
@@ -139,10 +145,15 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let key = trusted_advice_grouped_key(&dense);
     assert!(base.resolve_key(&key).is_err());
 
-    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256, JoltDenseBounded>(
+    let rows = jolt_akita::schedule_registry::provision_precommitted_for_k(
+        &dense,
+        &full_dense_catalog(),
         &base,
-        std::slice::from_ref(&key.precommitteds),
-        [key.final_group.num_vars()],
+        None,
+        Some(TRUSTED_ADVICE_GROUP.num_vars()),
+        &[],
+        AKITA_ONE_HOT_K256,
+        key.final_group.num_vars(),
     )
     .expect("preprocessing must adapt the production grouped row");
     assert_eq!(rows.rows().len(), 1);
@@ -174,10 +185,15 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
         RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES - 1,
         RECURSIVE_TRACE_LOG_T_CUTOVER + K16_PACKING_VARIABLES,
     ] {
-        let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK16, JoltDenseBounded>(
+        let rows = jolt_akita::schedule_registry::provision_precommitted_for_k(
+            &dense,
+            &full_dense_catalog(),
             &base,
-            &[vec![precommit]],
-            [final_num_vars],
+            None,
+            Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+            &[],
+            AKITA_ONE_HOT_K16,
+            final_num_vars,
         )
         .expect("adapt the grouped K=16 row");
         let setup_catalog =
@@ -199,10 +215,15 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
     let dense = dense_catalog();
     let base = one_hot_catalog(AKITA_ONE_HOT_K256);
     let key = trusted_advice_grouped_key(&dense);
-    let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256, JoltDenseBounded>(
+    let rows = jolt_akita::schedule_registry::provision_precommitted_for_k(
+        &dense,
+        &full_dense_catalog(),
         &base,
-        std::slice::from_ref(&key.precommitteds),
-        [key.final_group.num_vars()],
+        None,
+        Some(TRUSTED_ADVICE_GROUP.num_vars()),
+        &[],
+        AKITA_ONE_HOT_K256,
+        key.final_group.num_vars(),
     )
     .expect("adapt grouped row");
     let setup_catalog =
@@ -257,12 +278,11 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
     let base = one_hot_catalog(AKITA_ONE_HOT_K16);
     let error = jolt_akita::schedule_registry::provision_precommitted_for_k(
         &dense,
+        &full_dense_catalog(),
         &base,
         None,
         Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
         &[],
-        #[cfg(feature = "field-inline")]
-        None,
         AKITA_ONE_HOT_K16,
         K16_NUM_VARS.0 - 1,
     )
@@ -276,7 +296,8 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
 /// reverse-inclusion sweep rules out stale or duplicated entries.
 #[test]
 fn emit_specs_and_checked_in_catalogs_agree_exactly() {
-    let [k16_spec, k256_spec, _dense_spec] = family_specs(PathBuf::new()).expect("emit specs");
+    let [k16_spec, k256_spec, dense_spec, full_dense_spec] =
+        family_specs(PathBuf::new()).expect("emit specs");
     let cases = [
         (
             k16_spec,
@@ -287,6 +308,12 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
             k256_spec,
             "jolt-fp128-onehot-k256",
             one_hot_catalog(AKITA_ONE_HOT_K256),
+        ),
+        (dense_spec, "jolt-fp128-dense-bounded", dense_catalog()),
+        (
+            full_dense_spec,
+            "jolt-fp128-dense-full",
+            full_dense_catalog(),
         ),
     ];
     for (spec, family_name, catalog) in cases {
@@ -320,38 +347,29 @@ fn emit_specs_and_checked_in_catalogs_agree_exactly() {
     }
 }
 
-/// The field-inline limb group's provisioning pins: the carried arity line
-/// equals the jolt-claims packing law, every reachable final arity plans and
-/// resolves its row, and the limb group closes every advice combination.
+/// Full-width field increments must compose with the trace and every
+/// combination of bounded advice objects.
 #[cfg(feature = "field-inline")]
-mod field_inc_limbs {
+mod field_inc {
     #![expect(
         clippy::panic,
         reason = "pin tests attribute a failing arity in the panic message"
     )]
 
     use akita_config::CommitmentConfig;
-    use akita_schedules::ValidatedScheduleCatalog;
-    use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams, PolynomialGroupLayout};
+    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
     use jolt_akita::schedule_registry::{
         dense_precommit_profile, extend_catalog, provision_precommitted_for_k,
         FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
     };
     use jolt_akita::schedules::emit::{K16_NUM_VARS, K256_NUM_VARS};
-    use jolt_akita::{
-        AkitaField, FieldIncLimbScheduleParams, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
-    };
-    use jolt_claims::lattice::MIN_DENSE_OBJECT_NUM_VARS;
-    use jolt_claims::protocols::field_inline::lattice::{
-        field_inc_limb_count, FieldIncLimbPackingPlan, FieldIncLimbShape,
-    };
+    use jolt_akita::{DensePrecommitLayout, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+    use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
     use jolt_claims::protocols::jolt::lattice::packing::one_hot_trace_column_capacity;
 
-    use super::{dense_catalog, one_hot_catalog};
+    use super::{dense_catalog, full_dense_catalog, one_hot_catalog};
 
-    /// The packed trace's arity overhead over its own `log_T`: the chunk plus
-    /// selector variables, constant per K.
     fn trace_arity_overhead(one_hot_k: usize) -> usize {
         let log_k_chunk = one_hot_k.ilog2() as usize;
         log_k_chunk
@@ -360,94 +378,27 @@ mod field_inc_limbs {
                 .ilog2() as usize
     }
 
-    /// The production caller's derivation of the field-inline arity line
-    /// from the jolt-claims laws: the packed trace's arity overhead over
-    /// `log_T` and the limb plan's floor/selector geometry.
-    fn law_derived_params(one_hot_k: usize) -> FieldIncLimbScheduleParams {
-        let limbs = field_inc_limb_count::<AkitaField>();
-        FieldIncLimbScheduleParams::new(
-            trace_arity_overhead(one_hot_k),
-            MIN_DENSE_OBJECT_NUM_VARS,
-            limbs.next_power_of_two().ilog2() as usize,
-        )
-    }
-
-    fn limb_profile(
-        dense: &ValidatedScheduleCatalog,
-        params: FieldIncLimbScheduleParams,
-        final_num_vars: usize,
-    ) -> GroupCommitPhaseParams {
-        dense_precommit_profile(
-            dense,
-            PolynomialGroupLayout::new(
-                params
-                    .physical_num_vars(final_num_vars)
-                    .expect("reachable arity"),
-                1,
-            ),
-        )
-        .expect("limb profile resolves in the dense catalog")
-    }
-
-    /// The carried arity line must equal the jolt-claims packing law at every
-    /// final arity, in both K regimes.
-    #[test]
-    fn carried_arity_line_matches_the_packing_law() {
-        let limbs = field_inc_limb_count::<AkitaField>();
-        assert_eq!(limbs, 2, "fp128 decomposes into two u64 limbs");
-        for (one_hot_k, (min, max)) in [
-            (AKITA_ONE_HOT_K16, K16_NUM_VARS),
-            (AKITA_ONE_HOT_K256, K256_NUM_VARS),
-        ] {
-            let params = law_derived_params(one_hot_k);
-            for final_num_vars in min..=max {
-                let carried = params.physical_num_vars(final_num_vars);
-                let expected = final_num_vars
-                    .checked_sub(trace_arity_overhead(one_hot_k))
-                    .map(|log_t| {
-                        FieldIncLimbPackingPlan::new(&FieldIncLimbShape { limbs, log_t })
-                            .expect("limb packing plan")
-                            .packing()
-                            .packed_num_vars()
-                    });
-                assert_eq!(
-                    carried, expected,
-                    "K={one_hot_k} final arity {final_num_vars}: carried arity diverges from \
-                     the packing law"
-                );
-            }
-        }
-    }
-
-    /// The prover pads packed traces to `MIN_PADDED_TRACE_LENGTH`
-    /// (jolt-prover, `1 << 12` on akita builds), so the smallest reachable
-    /// field-inline final arity is `overhead + 12`.
+    /// The prover pads Akita traces to at least 2^12 cycles.
     const PROVER_MIN_LOG_T: usize = 12;
 
-    /// Every reachable final arity of the K catalog provisions its own
-    /// field-inline row (production provisions the setup's single final
-    /// arity) that resolves
-    /// through the frozen setup catalog. Doubles as the norm-budget check:
-    /// the rows plan under the same u64-bounded dense fold policy advice
-    /// uses, so a planned row means the limb words fit that budget. Arities
-    /// below the prover's trace floor are unreachable and not swept (the
-    /// dense catalog need not carry their limb layouts).
     fn field_inline_rows_plan_and_resolve_at_every_arity<Cfg: CommitmentConfig>(
         one_hot_k: usize,
         (declared_min, ceiling): (usize, usize),
     ) {
         let dense = dense_catalog();
+        let full_dense = full_dense_catalog();
         let base = one_hot_catalog(one_hot_k);
-        let params = law_derived_params(one_hot_k);
-        let reachable_min = (trace_arity_overhead(one_hot_k) + PROVER_MIN_LOG_T).max(declared_min);
+        let overhead = trace_arity_overhead(one_hot_k);
+        let reachable_min = (overhead + PROVER_MIN_LOG_T).max(declared_min);
         for final_num_vars in reachable_min..=ceiling {
+            let layout = FieldIncLayout::new(final_num_vars - overhead);
             let rows = provision_precommitted_for_k(
                 &dense,
+                &full_dense,
                 &base,
                 None,
                 None,
-                &[],
-                Some(params),
+                &[DensePrecommitLayout::FullWidth { num_vars: layout.num_vars() }],
                 one_hot_k,
                 final_num_vars,
             )
@@ -463,7 +414,11 @@ mod field_inc_limbs {
             );
             let key = AkitaScheduleLookupKey {
                 final_group: PolynomialGroupLayout::new(final_num_vars, 1),
-                precommitteds: vec![limb_profile(&dense, params, final_num_vars)],
+                precommitteds: vec![dense_precommit_profile(
+                    &full_dense,
+                    PolynomialGroupLayout::new(layout.num_vars(), 1),
+                )
+                .expect("field increment profile")],
             };
             let setup_catalog =
                 extend_catalog::<Cfg>(&base, &rows).expect("freeze the field-inline setup catalog");
@@ -492,32 +447,80 @@ mod field_inc_limbs {
         );
     }
 
-    /// With both advice kinds declared, every advice presence combination is
-    /// provisioned with the field-inline limb profile as its last group. A
-    /// prover with field-inline enabled commits the limb group on every
-    /// proof, so no row without it is constructible.
     #[test]
-    fn field_inline_rows_append_the_limb_group_to_every_advice_combination() {
+    fn full_width_replanning_is_limited_to_one_inc_and_two_advice_groups() {
+        let full = DensePrecommitLayout::FullWidth { num_vars: 30 };
         let dense = dense_catalog();
+        let full_dense = full_dense_catalog();
+        let base = one_hot_catalog(AKITA_ONE_HOT_K256);
+        for layouts in [
+            vec![
+                DensePrecommitLayout::Bounded { num_vars: 14 },
+                DensePrecommitLayout::Bounded { num_vars: 15 },
+                DensePrecommitLayout::Bounded { num_vars: 16 },
+                full,
+            ],
+            vec![full, full],
+        ] {
+            assert!(
+                provision_precommitted_for_k(
+                    &dense,
+                    &full_dense,
+                    &base,
+                    None,
+                    None,
+                    &layouts,
+                    AKITA_ONE_HOT_K256,
+                    43,
+                )
+                .is_err(),
+                "unsupported batch shapes must retain the guided-planning rejection"
+            );
+        }
+    }
+
+    #[test]
+    fn field_inline_rows_append_the_inc_group_to_every_advice_combination() {
+        let dense = dense_catalog();
+        let full_dense = full_dense_catalog();
         let base = one_hot_catalog(AKITA_ONE_HOT_K16);
-        let params = law_derived_params(AKITA_ONE_HOT_K16);
         let final_num_vars = FIXTURE_K16_FINAL_NUM_VARS.1;
+        let layout = FieldIncLayout::new(final_num_vars - trace_arity_overhead(AKITA_ONE_HOT_K16));
         let trusted = FIXTURE_TRUSTED_ADVICE_GROUP.num_vars();
         let rows = provision_precommitted_for_k(
             &dense,
+            &full_dense,
             &base,
             Some(trusted + 1),
             Some(trusted),
-            &[],
-            Some(params),
+            &[DensePrecommitLayout::FullWidth {
+                num_vars: layout.num_vars(),
+            }],
             AKITA_ONE_HOT_K16,
             final_num_vars,
         )
         .expect("provisioning with field-inline must plan every combination");
         assert_eq!(rows.rows().len(), 4);
-        let limb = limb_profile(&dense, params, final_num_vars);
+        let inc = dense_precommit_profile(
+            &full_dense,
+            PolynomialGroupLayout::new(layout.num_vars(), 1),
+        )
+        .expect("field increment profile");
         for row in rows.rows() {
-            assert_eq!(row.profiles().precommitteds.last(), Some(&limb));
+            assert_eq!(row.profiles().precommitteds.last(), Some(&inc));
+        }
+        let catalog =
+            extend_catalog::<JoltOneHotK16>(&base, &rows).expect("freeze grouped catalog");
+        for num_vars in [trusted, trusted + 1] {
+            let widened_advice =
+                dense_precommit_profile(&full_dense, PolynomialGroupLayout::new(num_vars, 1))
+                    .expect("full-width advice-shaped profile");
+            assert!(catalog
+                .resolve_key(&AkitaScheduleLookupKey {
+                    final_group: PolynomialGroupLayout::new(final_num_vars, 1),
+                    precommitteds: vec![widened_advice, inc],
+                })
+                .is_err());
         }
     }
 }

@@ -148,6 +148,14 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 
+    /// Commit an arbitrary field-valued object for a later native group-batch opening.
+    /// Its source bound is independent of the default object setup's bound.
+    fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
+        context: &Self::SetupContext,
+        poly: &P,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
+
     /// Return the immutable context that admitted `setup`, for objects created
     /// later in the same preprocessing/proving run.
     fn transparent_setup_context(setup: &Self::ProverSetup) -> &Self::SetupContext;

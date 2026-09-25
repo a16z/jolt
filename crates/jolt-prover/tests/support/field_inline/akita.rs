@@ -23,7 +23,7 @@ pub struct ProveOutput {
 }
 
 /// Prepare and prove a guest case with the modular packed prover. The grouped
-/// setup includes the field-inline limb group, including all-zero traces.
+/// setup includes the full-width field increment commitment, including all-zero traces.
 /// The callback inspects the attached witness before proving.
 pub fn prove<D>(
     case: &GuestCase,
@@ -47,10 +47,13 @@ pub fn prove<D>(
     .expect("derive config");
 
     let log_t = config.trace_length.ilog2() as usize;
-    let prover_preprocessing = akita::preprocessing::preprocess_full(
+    let untrusted_advice = !case.untrusted_advice.is_empty();
+    let prover_preprocessing = akita::preprocessing::preprocess_full_with_advice(
         &AkitaScheduleArtifacts::shared_from_default_directory(),
         program_preprocessing,
         &config,
+        untrusted_advice,
+        false,
     )
     .expect("field-inline packed preprocessing");
 
@@ -66,7 +69,8 @@ pub fn prove<D>(
         .program_arc()
         .expect("full program preprocessing");
     let witness = TraceBackend::new(
-        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
+        JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config)
+            .include_untrusted_advice(untrusted_advice),
         JoltVmWitnessInputs::new(&program, &program_preprocessing, padded_output),
     )
     .with_field_inline()

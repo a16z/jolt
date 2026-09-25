@@ -9,10 +9,7 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
-# Field-inline protocol composition on the packed axis: extends the
-# provisioned grouped-schedule params with the always-present limb-group
-# profile. Selected by jolt-prover's `field-inline` feature; off keeps
-# provisioning and the serialized setup params byte-identical to base.
+# Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 profiling = []
 
@@ -48,8 +45,7 @@ bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }
-# The field-inline provisioning pin test holds the registry's carried arity
-# line to the jolt-claims packing law across the whole swept range. No
+# Schedule tests use the canonical field-increment and trace layouts. No
 # features: an akita edge here would leak into workspace-wide unification and
 # flip jolt-claims' packed-mode geometry for every `--all` lane.
 jolt-claims = { workspace = true }

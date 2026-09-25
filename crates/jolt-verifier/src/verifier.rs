@@ -547,8 +547,8 @@ where
     // A build with field-inline enabled proves every guest under the composed protocol, so the
     // field-inline committed payload is unconditionally required (absence means a producer
     // without field-inline semantics — reject before any stage logic). On the packed axis the
-    // field-increment limb-group slot is equally unconditional: presence is never claim-gated
-    // (an all-zero group still commits), and stage 8 requires both the commitment and claims.
+    // field-increment commitment slot is equally unconditional: presence is never claim-gated
+    // (an all-zero group still commits).
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     if proof.commitments.field_inline.is_none() {
         return Err(VerifierError::MissingProofPayload {
@@ -556,9 +556,9 @@ where
         });
     }
     #[cfg(all(feature = "field-inline", feature = "akita"))]
-    if proof.field_inc_limbs_commitment.is_none() {
+    if proof.field_inc_commitment.is_none() {
         return Err(VerifierError::MissingProofPayload {
-            field: "field_inc_limbs_commitment",
+            field: "field_inc_commitment",
         });
     }
 
@@ -739,7 +739,7 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
-        proof.field_inc_limbs_commitment.as_ref(),
+        proof.field_inc_commitment.as_ref(),
         preprocessing
             .program
             .committed()
@@ -749,14 +749,14 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
 }
 
 /// Absorbs the packed commitment objects in canonical object order: `OneHotTrace`, untrusted
-/// advice, trusted advice, the field-increment limb group (field-inline builds), then direct
+/// advice, trusted advice, the field-increment commitment (field-inline builds), then direct
 /// bytecode chunks and program image. Shared verbatim by the packed prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_packed_commitments<C, T>(
     one_hot_trace: &C,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
-    #[cfg(feature = "field-inline")] field_inc_limbs_commitment: Option<&C>,
+    #[cfg(feature = "field-inline")] field_inc_commitment: Option<&C>,
     direct_program_commitments: &[C],
     transcript: &mut T,
 ) where
@@ -771,8 +771,8 @@ pub fn absorb_packed_commitments<C, T>(
         append_length_prefixed(transcript, b"trusted_advice", commitment);
     }
     #[cfg(feature = "field-inline")]
-    if let Some(commitment) = field_inc_limbs_commitment {
-        append_length_prefixed(transcript, b"field_inc_limbs", commitment);
+    if let Some(commitment) = field_inc_commitment {
+        append_length_prefixed(transcript, b"field_inc", commitment);
     }
     absorb_packed_program_commitments(direct_program_commitments, transcript);
 }
@@ -1215,8 +1215,6 @@ mod tests {
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
     use crate::stages::stage1::outputs::Stage1OutputClaims;
     use crate::stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims};
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    use crate::stages::stage8::field_inline_packed::FieldIncLimbClaims;
     #[cfg(feature = "field-inline")]
     use crate::stages::{
         stage2::outputs::FieldRegistersClaimReductionOutputClaims,
@@ -1588,7 +1586,7 @@ mod tests {
             joint_opening_proof: (),
             untrusted_advice_commitment: None,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs_commitment: Some(TestCommitment),
+            field_inc_commitment: Some(TestCommitment),
             claims,
             trace_length: 1,
             ram_K: 4,
@@ -1638,10 +1636,6 @@ mod tests {
 
         JoltProofClaims::Clear(ClearProofClaims {
             stage1: Stage1OutputClaims::new(zero, empty_spartan_outer_claims()),
-            #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs: Some(
-                FieldIncLimbClaims { limbs: vec![zero] },
-            ),
             stage2: Stage2OutputClaims::new(
                 zero,
                 Stage2BatchOutputClaims {

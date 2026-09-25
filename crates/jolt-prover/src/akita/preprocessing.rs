@@ -1,18 +1,12 @@
 use std::sync::Arc;
 
-#[cfg(feature = "field-inline")]
-use jolt_akita::FieldIncLimbScheduleParams;
 use jolt_akita::{
     AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
-    AkitaVerifierSetup, PrecommittedScheduleParams,
+    AkitaVerifierSetup, DensePrecommitLayout, PrecommittedScheduleParams,
 };
 #[cfg(feature = "field-inline")]
-use jolt_claims::lattice::MIN_DENSE_OBJECT_NUM_VARS;
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::lattice::field_inc_limb_count;
+use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
 use jolt_claims::protocols::jolt::lattice::advice_packing_plan;
-#[cfg(feature = "field-inline")]
-use jolt_claims::protocols::jolt::lattice::packing::one_hot_trace_column_capacity;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
@@ -71,9 +65,9 @@ pub fn preprocess_full_with_advice(
 }
 
 /// The grouped packed setup: the canonical `OneHotTrace` object plus every
-/// precommitted object (advice, then direct program objects) opened in one
-/// batch. Building it provisions the grouped schedule rows that commit,
-/// prove, and verify later resolve without planning.
+/// auxiliary object (advice, field increments, then direct program objects)
+/// opened in one batch. Building it provisions the grouped schedule rows that
+/// commit, prove, and verify later resolve without planning.
 fn grouped_setup(
     schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
     program: &JoltProgramPreprocessing,
@@ -112,28 +106,33 @@ pub(crate) fn grouped_setup_params(
     let trusted_physical_vars = trusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Trusted))
         .transpose()?;
+    let mut mandatory_dense_layouts = Vec::with_capacity(
+        usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
+    );
+    #[cfg(feature = "field-inline")]
+    mandatory_dense_layouts.push(DensePrecommitLayout::FullWidth {
+        num_vars: FieldIncLayout::new(config.trace_length.ilog2() as usize).num_vars(),
+    });
+    mandatory_dense_layouts.extend(
+        direct_program_physical_vars
+            .iter()
+            .map(|&num_vars| DensePrecommitLayout::Bounded { num_vars }),
+    );
     let precommitted_count = usize::from(untrusted_physical_vars.is_some())
         + usize::from(trusted_physical_vars.is_some())
-        + direct_program_physical_vars.len();
-    let precommitted_schedule =
-        (precommitted_count > 0 || cfg!(feature = "field-inline")).then(|| {
-            PrecommittedScheduleParams::new(
-                untrusted_physical_vars,
-                trusted_physical_vars,
-                shape.num_vars,
-            )
-            .with_direct_program_physical_arities(direct_program_physical_vars.to_vec())
-        });
-    #[cfg(feature = "field-inline")]
-    let precommitted_schedule = precommitted_schedule
-        .map(|schedule| {
-            field_inc_limb_schedule(one_hot_k).map(|limbs| schedule.with_field_inc_limbs(limbs))
-        })
-        .transpose()?;
+        + mandatory_dense_layouts.len();
+    let precommitted_schedule = (precommitted_count > 0).then(|| {
+        PrecommittedScheduleParams::new(
+            untrusted_physical_vars,
+            trusted_physical_vars,
+            shape.num_vars,
+        )
+        .with_mandatory_dense_layouts(mandatory_dense_layouts)
+    });
     let params = AkitaSetupParams::one_hot_only_grouped(
         shape.num_vars,
         shape.num_polys,
-        shape.num_polys + precommitted_count + usize::from(cfg!(feature = "field-inline")),
+        shape.num_polys + precommitted_count,
         layout_digest,
         one_hot_k,
         precommitted_schedule,
@@ -276,23 +275,4 @@ fn validate_trace_order(config: &ProverConfig) -> Result<(), PreprocessingError>
         });
     }
     Ok(())
-}
-
-#[cfg(feature = "field-inline")]
-fn field_inc_limb_schedule(
-    one_hot_k: usize,
-) -> Result<FieldIncLimbScheduleParams, PreprocessingError> {
-    let log_k_chunk = one_hot_k.ilog2() as usize;
-    let capacity = one_hot_trace_column_capacity(log_k_chunk).map_err(|error| {
-        PreprocessingError::InvalidConfiguration {
-            reason: error.to_string(),
-        }
-    })?;
-    Ok(FieldIncLimbScheduleParams::new(
-        log_k_chunk + capacity.ilog2() as usize,
-        MIN_DENSE_OBJECT_NUM_VARS,
-        field_inc_limb_count::<AkitaField>()
-            .next_power_of_two()
-            .ilog2() as usize,
-    ))
 }

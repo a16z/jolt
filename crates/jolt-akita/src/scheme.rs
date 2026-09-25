@@ -547,7 +547,12 @@ impl CommitmentScheme for AkitaScheme {
                 .map_or_else(
                     || Ok(base.clone()),
                     |precommitted| {
-                        precommitted.extend_catalog(&dense_catalog, &base, params.one_hot_k)
+                        precommitted.extend_catalog(
+                            &dense_catalog,
+                            &artifacts.full_dense_catalog()?,
+                            &base,
+                            params.one_hot_k,
+                        )
                     },
                 )
                 .map_err(invalid_setup)?;
@@ -803,6 +808,41 @@ impl TransparentObjectSetup for AkitaScheme {
         ))
     }
 
+    fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
+        context: &Self::SetupContext,
+        poly: &P,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let scheme = context.full_dense_scheme().map_err(invalid_setup)?;
+        let num_vars = poly.num_vars();
+        let dense = vec![AkitaBackendDensePoly::from_field_evals(
+            num_vars,
+            akita_ordered_evaluations(poly)?,
+        )
+        .map_err(akita_error)?];
+        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+            let setup = scheme.setup_prover(num_vars, 1)?;
+            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup)?;
+            let stack = backend_stack(&setup, &prepared)
+                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
+            scheme.commit(
+                &setup,
+                dense.as_slice(),
+                stack.commitment(),
+                GroupContext::scheduler_without_precommitted_groups(),
+            )
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
+        Self::package_commitment(
+            layout_digest,
+            num_vars,
+            backend_commitment,
+            backend_hint,
+            AkitaHintPolynomials::Dense(dense.into()),
+        )
+    }
+
     fn transparent_setup_context(setup: &Self::ProverSetup) -> &Self::SetupContext {
         &setup.schedule_artifacts
     }
@@ -910,6 +950,18 @@ mod tests {
     use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
+
+    #[test]
+    fn full_width_objects_do_not_widen_bounded_dense_commitments() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (bounded, _) = AkitaScheme::transparent_object_setup(&artifacts, 14, [7; 32]).unwrap();
+        let polynomial = Polynomial::new(vec![AkitaField::pow2(80); 1 << 14]);
+        assert!(AkitaScheme::commit(&polynomial, &bounded).is_err());
+        let (commitment, hint) =
+            AkitaScheme::commit_full_width_object(&artifacts, &polynomial, [7; 32]).unwrap();
+        assert_eq!(commitment, hint.commitment);
+        assert_eq!(commitment.num_vars, polynomial.num_vars());
+    }
 
     #[test]
     fn setup_key_transcript_binds_backend_shape() {
@@ -1227,6 +1279,11 @@ mod tests {
         );
         let alternate_artifacts = Arc::new(AkitaScheduleArtifacts::new(
             reduced_catalog.to_artifact_bytes().unwrap(),
+            artifacts
+                .full_dense_catalog()
+                .unwrap()
+                .to_artifact_bytes()
+                .unwrap(),
             artifacts
                 .one_hot_catalog(AKITA_ONE_HOT_K16)
                 .unwrap()

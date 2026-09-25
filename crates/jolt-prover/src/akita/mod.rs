@@ -22,8 +22,7 @@ use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
-/// The packed field-inline seam (limb-group commit and batch entry); the sibling of
-/// the verifier's `stage8::field_inline_packed`.
+/// The field increment commitment used by the packed path.
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
 pub mod preprocessing;
@@ -106,7 +105,7 @@ where
     ) -> Result<Vec<FieldInlineWitnessCommitment<PCS>>, KernelError<F>> {
         Err(KernelError::Unsupported {
             reason:
-                "the packed (Akita) path commits the field-inline limb group in its own stage 0; \
+                "the packed (Akita) path commits the field increment polynomial in its own stage 0; \
                      the streaming field-inline commit slot is unreachable",
         })
     }

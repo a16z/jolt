@@ -12,8 +12,6 @@ use jolt_verifier::stages::stage4::FieldRegistersReadWriteOutputClaims;
 use jolt_verifier::stages::stage5::FieldRegistersValEvaluationOutputClaims;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims;
-#[cfg(all(feature = "akita", feature = "field-inline"))]
-use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbClaims;
 use jolt_verifier::{
     proof::ClearProofClaims,
     stages::stage1::outputs::{Stage1BatchOutputClaims, Stage1OutputClaims},
@@ -1159,22 +1157,12 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
     ),
     #[cfg(feature = "field-inline")]
     checked_standard(
-        "stage8.claims.field_inc_limbs",
-        "claims.field_inc_limbs.limbs",
-        VerifierPhase::Stage8Openings,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the packed field-inline e2e (jolt-prover akita_field_inline_e2e) offsets a limb evaluation; \
-         the stage-8 linear recomposition check rejects it",
-    ),
-    #[cfg(feature = "field-inline")]
-    checked_standard(
-        "proof.field_inc_limbs_commitment",
-        "proof.field_inc_limbs_commitment",
+        "proof.field_inc_commitment",
+        "proof.field_inc_commitment",
         VerifierPhase::Stage8Openings,
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "the packed field-inline e2e flips the limb commitment's layout-digest byte, mutates the batch \
+        "the packed field-inline e2e flips the field increment commitment's layout-digest byte, mutates the batch \
          proof, and strips the group; each rejects",
     ),
 ];
@@ -1256,7 +1244,7 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.joint_opening_proof",
         "proof.untrusted_advice_commitment",
         #[cfg(all(feature = "akita", feature = "field-inline"))]
-        "proof.field_inc_limbs_commitment",
+        "proof.field_inc_commitment",
         "proof.claims",
         "proof.trace_length",
         "proof.ram_K",
@@ -1435,10 +1423,7 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
         VerifierError::MissingProofPayload { field } => match *field {
-            "commitments.field_inline" | "field_inc_limbs_commitment" => {
-                Some(VerifierPhase::Preamble)
-            }
-            "claims.field_inc_limbs" => Some(VerifierPhase::Stage8Openings),
+            "commitments.field_inline" | "field_inc_commitment" => Some(VerifierPhase::Preamble),
             _ => None,
         },
         VerifierError::StageClaimSumcheckFailed { stage, .. }
@@ -1473,8 +1458,6 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::FinalOpeningVerificationFailed { .. } => {
             Some(VerifierPhase::Stage8Openings)
         }
-        #[cfg(all(feature = "akita", feature = "field-inline"))]
-        VerifierError::FieldIncLimbRecompositionMismatch => Some(VerifierPhase::Stage8Openings),
         VerifierError::BlindFoldConstructionFailed { .. }
         | VerifierError::BlindFoldVerificationFailed { .. } => Some(VerifierPhase::Zk),
         VerifierError::ProtocolAxisUnimplemented { .. }
@@ -1693,8 +1676,6 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
     let optional = fill_optionals.then_some(zero);
 
     ClearProofClaims {
-        #[cfg(all(feature = "akita", feature = "field-inline"))]
-        field_inc_limbs: fill_optionals.then(|| FieldIncLimbClaims { limbs: vec![zero] }),
         stage1: Stage1OutputClaims::new(
             zero,
             Stage1BatchOutputClaims {

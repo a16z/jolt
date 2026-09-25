@@ -19,8 +19,6 @@ use jolt_openings::{CommitmentScheme, EvaluationClaim, GroupOpeningClaim, Precom
 use jolt_poly::Point;
 use jolt_transcript::{AppendToTranscript, Transcript};
 
-#[cfg(feature = "field-inline")]
-use super::field_inline_packed::FieldIncLimbClaims;
 use super::precommitted::precommitted_final_openings;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
@@ -29,6 +27,8 @@ use crate::stages::stage7::outputs::Stage7ClearOutput;
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::stages::PrecommittedSchedule;
 use crate::VerifierError;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::lattice::{field_inc_precommitted_role, FieldIncLayout};
 
 fn batch_failed(reason: impl ToString) -> VerifierError {
     VerifierError::FinalOpeningBatchFailed {
@@ -89,9 +89,7 @@ where
     Ok(())
 }
 
-/// The commitment half of the precommitted metadata gate, shared with the field-inline limb
-/// seam (whose canonical plan is verifier-derived, so it hands over its digest and arity
-/// rather than a `PrefixPackedObjectPlan`).
+/// Validate the layout identity and shape of an independently committed object.
 fn validate_precommitted_commitment_metadata<C>(
     commitment: &C,
     layout_digest: [u8; 32],
@@ -185,6 +183,34 @@ fn advice_object<'a, PCS: CommitmentScheme>(
     Ok(Some(ResolvedObject { plan, commitment }))
 }
 
+/// Bind the existing stage-6b reduced claim directly to the full-field commitment.
+/// Shared by the prover and verifier so they consume the same claim and point.
+#[cfg(feature = "field-inline")]
+pub fn field_inc_claim<F: JoltField, C: Clone>(
+    commitment: &C,
+    stage6b: &Stage6bClearOutput<F>,
+) -> Result<PrecommittedClaim<F, C>, VerifierError> {
+    let cycle_point = stage6b.output_points.field_registers_inc_opening_point();
+    let point = FieldIncLayout::new(cycle_point.len())
+        .opening_point(cycle_point)
+        .map_err(|error| VerifierError::FinalOpeningBatchFailed {
+            reason: error.to_string(),
+        })?;
+    Ok(PrecommittedClaim::new(
+        field_inc_precommitted_role(),
+        GroupOpeningClaim::new(
+            commitment.clone(),
+            point,
+            vec![
+                stage6b
+                    .output_values
+                    .field_registers_inc_claim_reduction
+                    .rd_inc,
+            ],
+        ),
+    ))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the stage inputs are passed separately by the verifier driver"
@@ -196,10 +222,7 @@ pub fn verify<PCS, VC, T>(
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    #[cfg(feature = "field-inline")] field_inc_limbs_commitment: Option<&PCS::Output>,
-    #[cfg(feature = "field-inline")] field_inc_limbs_claims: Option<
-        &FieldIncLimbClaims<PCS::Field>,
-    >,
+    #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
     proof: &PCS::Proof,
     transcript: &mut T,
     schedule: &PrecommittedSchedule,
@@ -215,7 +238,7 @@ where
     T: Transcript<Challenge = PCS::Field>,
 {
     // Precommitted objects precede the OneHotTrace group in canonical role order: advice,
-    // (field-inline) the always-present field-increment limb group, then the direct
+    // (field-inline) the always-present field-increment commitment, then the direct
     // committed-program objects. Optional objects join exactly when their direct final
     // reductions exist; presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
@@ -314,25 +337,16 @@ where
     }
     #[cfg(feature = "field-inline")]
     {
-        use super::field_inline_packed;
-        let (commitment, claims) = field_inline_packed::resolve_proof_slots(
-            field_inc_limbs_commitment,
-            field_inc_limbs_claims,
-        )?;
-        let limb_plan =
-            field_inline_packed::limb_plan::<PCS::Field>(formula_dimensions.trace.log_t())?;
+        let commitment = field_inc_commitment.ok_or(VerifierError::MissingProofPayload {
+            field: "field_inc_commitment",
+        })?;
+        let layout = FieldIncLayout::new(formula_dimensions.trace.log_t());
         validate_precommitted_commitment_metadata(
             commitment,
-            limb_plan.layout_digest(),
-            limb_plan.packing().packed_num_vars(),
+            layout.layout_digest(),
+            layout.num_vars(),
         )?;
-        precommitted.push(field_inline_packed::reduced_precommitted_claim(
-            &limb_plan,
-            commitment,
-            claims,
-            field_inline_packed::reduced_field_rd_inc(stage6b),
-            transcript,
-        )?);
+        precommitted.push(field_inc_claim(commitment, stage6b)?);
     }
 
     if let Some(committed) = committed {

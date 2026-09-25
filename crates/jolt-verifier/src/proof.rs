@@ -1,7 +1,5 @@
 //! Verifier-owned proof model types.
 
-#[cfg(all(feature = "akita", feature = "field-inline"))]
-use crate::stages::stage8::field_inline_packed::FieldIncLimbClaims;
 use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
@@ -57,14 +55,12 @@ pub struct JoltProof<
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
-    /// The packed field-increment limb-group commitment (`FieldRdInc`'s u64 limb-word columns
-    /// as one dense precommitted group). Present on every packed field-inline proof — all-zero
-    /// content is legal, presence is not claim-gated. Carried as an `Option` because producers
-    /// without field-inline semantics (the legacy packed converter) construct this type; their
-    /// proofs fail the protocol-config gate before the slot is read, and the stage-8 resolve
-    /// rejects a missing payload fail-closed for everything else.
+    /// Direct commitment to the full field-register increment polynomial.
+    /// Required for every Akita field-inline proof, including an all-zero trace.
+    /// Producers without field-inline semantics leave this absent and are rejected
+    /// by the protocol-config gate when field-inline is required.
     #[cfg(all(feature = "akita", feature = "field-inline"))]
-    pub field_inc_limbs_commitment: Option<PCS::Output>,
+    pub field_inc_commitment: Option<PCS::Output>,
     pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
     pub ram_K: usize,
@@ -81,7 +77,7 @@ where
     /// Assemble a proof without a field-inline payload. Producers with no field-inline
     /// semantics (the legacy converters) build through here so they never name the
     /// feature-gated slots; the modular provers with field-inline enabled attach theirs with
-    /// [`Self::with_field_inc_limbs_commitment`].
+    /// [`Self::with_field_inc_commitment`].
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per proof component, mirroring the wire struct"
@@ -106,7 +102,7 @@ where
             joint_opening_proof,
             untrusted_advice_commitment,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs_commitment: None,
+            field_inc_commitment: None,
             claims,
             trace_length,
             ram_K: ram_k,
@@ -116,11 +112,10 @@ where
         }
     }
 
-    /// Attach the packed field-increment limb-group commitment (every packed field-inline
-    /// proof carries one).
+    /// Attach the direct field-increment commitment required by Akita field-inline proofs.
     #[cfg(all(feature = "akita", feature = "field-inline"))]
-    pub fn with_field_inc_limbs_commitment(mut self, commitment: PCS::Output) -> Self {
-        self.field_inc_limbs_commitment = Some(commitment);
+    pub fn with_field_inc_commitment(mut self, commitment: PCS::Output) -> Self {
+        self.field_inc_commitment = Some(commitment);
         self
     }
 }
@@ -155,7 +150,7 @@ where
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs_commitment: self.field_inc_limbs_commitment,
+            field_inc_commitment: self.field_inc_commitment,
             claims,
             trace_length: self.trace_length,
             ram_K: self.ram_K,
@@ -271,16 +266,10 @@ pub struct ClearProofClaims<F: JoltField> {
     pub stage6a: Stage6aOutputClaims<F>,
     pub stage6b: Stage6bOutputClaims<F>,
     pub stage7: Stage7OutputClaims<F>,
-    /// The field-increment limb-group evaluations at the stage-6b reduced `FieldRdInc` point.
-    /// Present on every packed field-inline proof (see
-    /// [`JoltProof::field_inc_limbs_commitment`] for the `Option` rationale).
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    pub field_inc_limbs: Option<FieldIncLimbClaims<F>>,
 }
 
 impl<F: JoltField> ClearProofClaims<F> {
-    /// Assemble the clear claims without a field-inline payload; see
-    /// [`JoltProof::new`] for who builds through here.
+    /// Assemble the clear claims from the stage outputs.
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per stage, mirroring the wire struct"
@@ -304,8 +293,6 @@ impl<F: JoltField> ClearProofClaims<F> {
             stage6a,
             stage6b,
             stage7,
-            #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs: None,
         }
     }
 }
