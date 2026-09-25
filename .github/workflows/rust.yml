@@ -451,6 +451,9 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
 
+      - name: Guest function selection invalidates cached builds
+        run: python3 jolt-sdk/tests/guest_function_cache.py
+
       - name: Use the `jolt` binary to generate code
         run: jolt new sample_project
 
