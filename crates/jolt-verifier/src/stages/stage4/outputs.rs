@@ -100,7 +100,7 @@ impl<F: JoltField> Stage4OutputClaims<F> {
             .chain(self.registers_read_write.opening_values())
             .collect();
         #[cfg(feature = "field-inline")]
-        super::field_inline::splice_read_write_values(&mut values, self);
+        values.extend(self.field_registers_read_write.opening_values());
         values.extend([ram.ram_ra, ram.ram_inc]);
         values
     }
