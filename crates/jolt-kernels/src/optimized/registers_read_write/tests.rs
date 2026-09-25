@@ -100,6 +100,16 @@ fn parity_past_lut_saturation() {
 }
 
 #[test]
+fn parity_address_first_across_chunk_boundaries_and_padding() {
+    run_parity_with_phases(
+        structured_fixture((1 << 13) + 17),
+        14,
+        37,
+        &[(0, REGISTER_ADDRESS_BITS)],
+    );
+}
+
+#[test]
 fn parity_minimal_padded_trace() {
     // Three real cycles padded to four: exercises the padding rows and
     // registers that are never touched.
