@@ -25,7 +25,7 @@ use jolt_poly::{try_eq_mle, LtPolynomial};
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
-use super::{SourceValues, VerifierOpeningId};
+use super::{ComposedOpeningId, SourceValues};
 use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::preprocessing::ProgramPreprocessing;
 use crate::stages::field_inline_bytecode::field_inline_stage_gamma_powers;
@@ -59,10 +59,10 @@ pub(super) fn point_suffix<F: JoltField>(
 }
 
 /// The five field value/product openings following the common stage-1 columns.
-pub(super) fn stage1_appended_opening_ids() -> impl Iterator<Item = VerifierOpeningId> {
+pub(super) fn stage1_appended_opening_ids() -> impl Iterator<Item = ComposedOpeningId> {
     field_spartan_geometry::outer_output_openings()
         .into_iter()
-        .map(VerifierOpeningId::from)
+        .map(ComposedOpeningId::from)
 }
 
 /// The stage-2 field-inline claim-reduction member and its baked publics: its `EqSpartan` is
@@ -98,10 +98,10 @@ pub(super) fn stage2_claim_reduction<F: JoltField, C>(
 }
 
 /// The field-inline portion of the product member's canonical output rows.
-pub(super) fn stage2_product_opening_ids() -> impl Iterator<Item = VerifierOpeningId> {
+pub(super) fn stage2_product_opening_ids() -> impl Iterator<Item = ComposedOpeningId> {
     jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings()
         .into_iter()
-        .map(VerifierOpeningId::from)
+        .map(ComposedOpeningId::from)
 }
 
 /// The stage-4 field-register read/write member and its baked publics: shape from the
@@ -142,10 +142,10 @@ pub(super) fn stage4_read_write<F: JoltField>(
 
 /// The five field-register read/write rows, spliced after the register openings and before
 /// `ram_ra`/`ram_inc` — the clear absorb order.
-pub(super) fn stage4_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
+pub(super) fn stage4_output_ids() -> impl Iterator<Item = ComposedOpeningId> {
     field_registers_geometry::read_write_checking_output_openings()
         .into_iter()
-        .map(VerifierOpeningId::from)
+        .map(ComposedOpeningId::from)
 }
 
 /// The stage-5 field-register value-evaluation member (declared last, no instance challenge)
@@ -178,10 +178,10 @@ pub(super) fn stage5_val_evaluation<F: JoltField>(
 /// The two field-register value-evaluation rows, after the ordinary register value-evaluation
 /// outputs — the clear absorb order (the field-inline member is declared last, so the
 /// generated absorb appends them at the tail).
-pub(super) fn stage5_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
+pub(super) fn stage5_output_ids() -> impl Iterator<Item = ComposedOpeningId> {
     field_registers_geometry::val_evaluation_output_openings()
         .into_iter()
-        .map(VerifierOpeningId::from)
+        .map(ComposedOpeningId::from)
 }
 
 /// Derive field-register accesses from the bytecode and add their stage-value
@@ -314,8 +314,8 @@ pub(super) fn stage6b_inc_publics<F: JoltField>(
 /// The reduced field-inline `FieldRdInc` row, after the ordinary increment-reduction outputs
 /// and before the optional advice cycle phases — the clear absorb order
 /// (`stage6b_opening_values`).
-pub(super) fn stage6b_inc_output_ids() -> impl Iterator<Item = VerifierOpeningId> {
+pub(super) fn stage6b_inc_output_ids() -> impl Iterator<Item = ComposedOpeningId> {
     field_claim_reductions::increments::claim_reduction_output_openings()
         .into_iter()
-        .map(VerifierOpeningId::from)
+        .map(ComposedOpeningId::from)
 }

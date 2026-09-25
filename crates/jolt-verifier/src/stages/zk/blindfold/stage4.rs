@@ -166,8 +166,8 @@ fn stage4_output_ids<F: JoltField>(
     untrusted_advice: bool,
     trusted_advice: bool,
     program_image: bool,
-) -> Vec<VerifierOpeningId> {
-    let mut output_ids: Vec<VerifierOpeningId> = Vec::new();
+) -> Vec<ComposedOpeningId> {
+    let mut output_ids: Vec<ComposedOpeningId> = Vec::new();
     if untrusted_advice {
         output_ids.push(ram::val_check_advice_opening(JoltAdviceKind::Untrusted).into());
     }
@@ -265,16 +265,16 @@ mod tests {
 
         for (id, expected) in output_ids.iter().zip(clear_values) {
             let resolved = match id {
-                VerifierOpeningId::Jolt(id) => claims
+                ComposedOpeningId::Jolt(id) => claims
                     .registers_read_write
                     .resolve_output(id)
                     .or_else(|| claims.ram_val_check.resolve_output(id)),
                 #[cfg(feature = "field-inline")]
-                VerifierOpeningId::FieldInline(id) => {
+                ComposedOpeningId::FieldInline(id) => {
                     claims.field_registers_read_write.resolve_output(id)
                 }
                 #[cfg(not(feature = "field-inline"))]
-                VerifierOpeningId::FieldInline(_) => None,
+                ComposedOpeningId::FieldInline(_) => None,
             };
             assert_eq!(
                 resolved,

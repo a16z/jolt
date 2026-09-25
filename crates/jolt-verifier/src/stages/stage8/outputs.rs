@@ -3,7 +3,7 @@ use jolt_field::JoltField;
 use jolt_openings::VerifierOpeningClaim;
 use jolt_poly::{Point, HIGH_TO_LOW};
 
-use crate::stages::ids::VerifierOpeningId;
+use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[cfg(not(feature = "akita"))]
 #[derive(Clone, Debug)]
@@ -12,7 +12,7 @@ pub struct Stage8ClearOutput<F: JoltField, C> {
     /// Composite ids: the batch is jolt-only with field-inline disabled, and carries the
     /// spliced `FieldRdInc` entry under `field-inline` (mixed final opening ids, per the
     /// spec's stage-8 field-inline order).
-    pub opening_ids: Vec<VerifierOpeningId>,
+    pub opening_ids: Vec<ComposedOpeningId>,
     pub constraint_coefficients: Vec<F>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
     pub joint_claim: F,
@@ -22,7 +22,7 @@ pub struct Stage8ClearOutput<F: JoltField, C> {
 #[derive(Clone, Debug)]
 pub struct Stage8ZkOutput<F: JoltField, C, H> {
     /// Composite ids (see [`Stage8ClearOutput::opening_ids`]).
-    pub opening_ids: Vec<VerifierOpeningId>,
+    pub opening_ids: Vec<ComposedOpeningId>,
     pub constraint_coefficients: Vec<F>,
     pub pcs_opening_point: Point<HIGH_TO_LOW, F>,
     pub joint_commitment: C,

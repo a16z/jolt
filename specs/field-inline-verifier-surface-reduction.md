@@ -27,8 +27,9 @@ transcript byte, and fixture stays identical in every mode.
   is itself a wire change, so a refactor that needs one has violated this spec.
 - The formula-pin tests are the independent ground truth for every derived
   formula; they are not rewritten to match the refactor.
-- Protocol separation stands: jolt-claims protocol modules stay
-  import-disjoint; jolt-verifier keeps one visible `cfg(feature =
+- Protocol separation stands: the `jolt-claims::protocols::{jolt, field_inline}`
+  families stay import-disjoint; the sibling `composed` module owns their
+  combined symbolic relations and claims. jolt-verifier keeps one visible `cfg(feature =
   "field-inline")` divergence point per stage (compressed from a seam module
   to a registration line, not removed); the boundary tests keep enforcing
   both, with caps retightened to the new (smaller) counts.
@@ -60,9 +61,11 @@ transcript byte, and fixture stays identical in every mode.
    executor. The cfg'd line per stage preserves the visible divergence the
    architecture ruling requires.
 4. **Consume composed geometry instead of re-deriving it.** The field-inline
-   extensions in `outer_remainder` / `product_remainder` / `product_uniskip` read the
-   feature-aware jolt-r1cs tables (`spartan_outer_opening_columns`, lane
-   tables) rather than carrying their own composition arithmetic.
+   extensions in `outer_remainder` / `product_remainder` / `product_uniskip`
+   consume product sizing from `jolt-claims::protocols::composed::geometry` and
+   the selected R1CS tables (`spartan_outer_opening_columns`, lane tables) from
+   jolt-r1cs. The combined symbolic relations live in the sibling `composed`
+   module; the verifier supplies concrete evaluation and stage wiring.
 5. **Use canonical bytecode rows.** Field operation flags now use `CircuitFlags`,
    and field-register operands are projected from the instruction's existing
    operand slots. The side table, conversion, and duplicate flag fold are removed;
@@ -120,6 +123,18 @@ deviations (wire changes, not refactors). The only surviving crumb is a
 ~40-line micro-helper harvest in the seams, excluded because its largest
 item relocates an absorb call site and forces an FS-inventory re-bless for
 single-digit savings.
+
+## Follow-up boundary change (2026-09-25)
+
+The `jolt` and `field_inline` protocol families remain separate, but their
+composition is protocol algebra and now belongs to
+`jolt-claims::protocols::composed`. That module owns the combined opening ID,
+claim carriers, four symbolic sumcheck implementations, and product-sizing
+constants. The verifier retains concrete evaluation, upstream stage wiring,
+and transcript handling. Architecture tests enforce the dependency direction
+and prevent symbolic relation implementations from returning to the verifier.
+This supersedes the earlier restriction that all composition had to occur in
+jolt-verifier; the historical line-count outcome above predates this move.
 
 ## Open questions
 

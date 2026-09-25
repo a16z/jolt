@@ -886,7 +886,7 @@ pub(crate) mod twins {
                     &stage5.clear_output.output_values,
                 ),
             };
-        use jolt_verifier::stages::composed::ComposedClaims;
+        use jolt_claims::protocols::composed::ComposedClaims;
         let base_input_values = ComposedClaims {
             base: base_input_values,
             field_inline: field_inline_bytecode_read_raf_address_phase_input_values_from_upstream(

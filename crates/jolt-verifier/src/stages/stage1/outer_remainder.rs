@@ -20,12 +20,12 @@
 //! as its input claim.
 
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::ComposedClaims;
+use jolt_claims::protocols::composed::ComposedClaims;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
 
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::{
+use jolt_claims::protocols::composed::{
     OuterInputs as SelectedInputs, OuterOutputs as SelectedOutputs,
     OuterRemainder as SelectedSymbolic,
 };

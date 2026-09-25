@@ -5,7 +5,7 @@
 //! shared Twist identities (`crate::twist`) with them; that module owns
 //! the algebra. `protocols::jolt` is a completely separate protocol family —
 //! the two protocol modules never import each other (field-inline ids never enter the
-//! jolt namespace), and their composition happens only in `jolt-verifier`
+//! jolt namespace), and their algebra is combined in `protocols::composed`
 //! (pinned by the `protocol_modules_are_import_disjoint` boundary test).
 
 pub mod geometry;

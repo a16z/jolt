@@ -1,5 +1,5 @@
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::ComposedClaims;
+use jolt_claims::protocols::composed::ComposedClaims;
 
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;

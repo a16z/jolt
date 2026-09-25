@@ -33,7 +33,7 @@ use crate::VerifierError;
 /// Re-exported for the `#[derive(SumcheckBatch)]`-generated batch-wide alias
 /// resolver, whose closure is typed at the composite id so members from any
 /// protocol family can chain into it.
-pub use crate::stages::ids::VerifierOpeningId;
+pub use jolt_claims::protocols::composed::ComposedOpeningId;
 
 /// Transcript-side companion to [`OutputClaims`]: append a relation's produced
 /// openings to the Fiat-Shamir transcript in canonical order.
@@ -107,7 +107,7 @@ where
     SumcheckOutputClaims<F, Self>: OutputClaims<F, OpeningIdOf<F, Self>>,
     ConcreteSumcheckChallenges<F, Self>: SumcheckChallenges<F, ChallengeIdOf<F, Self>>,
     RelationIdOf<F, Self>: Debug + Copy,
-    OpeningIdOf<F, Self>: Copy + Ord + Debug + Into<VerifierOpeningId>,
+    OpeningIdOf<F, Self>: Copy + Ord + Debug + Into<ComposedOpeningId>,
     DerivedIdOf<F, Self>: Copy + Debug + Into<VerifierDerivedId>,
     ChallengeIdOf<F, Self>: Copy + Debug + Into<VerifierChallengeId>,
 {
@@ -410,13 +410,13 @@ where
 /// families. Called by the generated `validate_aliases` per member.
 pub fn resolve_member_opening<F, I>(
     claims: &SumcheckOutputClaims<F, I>,
-    id: &VerifierOpeningId,
+    id: &ComposedOpeningId,
 ) -> Option<F>
 where
     F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
-    OpeningIdOf<F, I>: TryFrom<VerifierOpeningId>,
+    OpeningIdOf<F, I>: TryFrom<ComposedOpeningId>,
 {
     let native = OpeningIdOf::<F, I>::try_from(*id).ok()?;
     claims.resolve_output(&native)
@@ -437,13 +437,13 @@ pub fn validate_member_aliases<F, I>(
     // declaring member's own family (`aliased_output_openings` returns its
     // family's ids on both sides), so cross-family aliasing remains
     // unrepresentable at the declaration level.
-    resolve_source: impl Fn(&VerifierOpeningId) -> Option<F>,
+    resolve_source: impl Fn(&ComposedOpeningId) -> Option<F>,
 ) -> Result<(), VerifierError>
 where
     F: JoltField,
     I: ConcreteSumcheck<F>,
     SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
-    OpeningIdOf<F, I>: Copy + Into<VerifierOpeningId>,
+    OpeningIdOf<F, I>: Copy + Into<ComposedOpeningId>,
     RelationIdOf<F, I>: Debug,
 {
     for (aliased, source) in I::aliased_output_openings() {

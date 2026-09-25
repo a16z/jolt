@@ -20,13 +20,12 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_blindfold::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-};
+use jolt_r1cs::constraints::jolt::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use jolt_transcript::{AppendToTranscript, Label, Transcript};
 use jolt_verifier::proof::JoltProof;
@@ -291,11 +290,7 @@ where
 mod tests {
     use super::*;
 
-    /// The stage table's uni-skip domains are the composed jolt-r1cs
-    /// constants. Without field-inline they equal the jolt-claims RV64-only constants (the
-    /// table's previous source — this pins the swap as byte-neutral); with field-inline enabled
-    /// they are the field-inline-extended composed domains, which the RV64-only
-    /// constants no longer match.
+    /// The stage table follows the composed geometry, including field-inline lanes when enabled.
     #[test]
     fn stage_domains_use_the_composed_uniskip_constants() {
         use jolt_claims::protocols::jolt::geometry::dimensions::{
@@ -330,7 +325,7 @@ mod tests {
         }
         #[cfg(feature = "field-inline")]
         {
-            use jolt_r1cs::constraints::jolt::{
+            use jolt_claims::protocols::composed::geometry::{
                 SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_FIELD_INLINE_LANES,
             };
             assert_eq!(

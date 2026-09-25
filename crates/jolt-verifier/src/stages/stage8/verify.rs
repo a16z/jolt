@@ -5,8 +5,6 @@ use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
-#[cfg(not(feature = "akita"))]
-use crate::stages::ids::VerifierOpeningId;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
@@ -18,6 +16,8 @@ use crate::{
     verifier::CheckedInputs,
     VerifierError,
 };
+#[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltOpeningId;
@@ -51,11 +51,11 @@ use jolt_transcript::{AppendToTranscript, Transcript};
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
-/// [`batch_entries`] wiring. The id is the composite [`VerifierOpeningId`] so
+/// [`batch_entries`] wiring. The id is the composite [`ComposedOpeningId`] so
 /// the composed plan can carry the field-inline entry alongside the jolt ones
 /// (under `field-inline`, spliced by the stage-8 `field_inline` seam).
 pub struct Stage8BatchEntry<'a, F: JoltField, C> {
-    pub id: VerifierOpeningId,
+    pub id: ComposedOpeningId,
     pub commitment: &'a C,
     /// `None` in ZK mode, where opening claims stay committed.
     pub opening_claim: Option<F>,
@@ -166,7 +166,7 @@ where
         )?;
         entries
     };
-    let opening_ids: Vec<VerifierOpeningId> = entries.iter().map(|entry| entry.id).collect();
+    let opening_ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
     if checked.zk {
         let gamma_powers = transcript.challenge_scalar_powers(entries.len());
@@ -505,7 +505,7 @@ fn require_commitment_layout<C>(
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::stages::ids::VerifierOpeningId;
+    use jolt_claims::protocols::composed::ComposedOpeningId;
     use jolt_claims::protocols::jolt::geometry::committed_openings::{
         final_opening_id, final_opening_polynomial_order,
     };
@@ -530,7 +530,7 @@ mod tests {
             .collect()
     }
 
-    fn jolt_id(polynomial: JoltCommittedPolynomial) -> VerifierOpeningId {
+    fn jolt_id(polynomial: JoltCommittedPolynomial) -> ComposedOpeningId {
         final_opening_id(polynomial).into()
     }
 
@@ -538,12 +538,12 @@ mod tests {
     /// lifted into composite ids — no extra entries, unchanged order.
     #[test]
     fn base_final_opening_plan_is_the_jolt_order() {
-        let expected: Vec<VerifierOpeningId> =
+        let expected: Vec<ComposedOpeningId> =
             final_opening_polynomial_order(layout(), true, true, None)
                 .into_iter()
                 .map(jolt_id)
                 .collect();
-        let ids: Vec<VerifierOpeningId> = base_entries(true)
+        let ids: Vec<ComposedOpeningId> = base_entries(true)
             .into_iter()
             .map(|entry| entry.id)
             .collect();
@@ -578,7 +578,7 @@ mod tests {
         )
         .unwrap();
 
-        let ids: Vec<VerifierOpeningId> = entries.iter().map(|entry| entry.id).collect();
+        let ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
         let expected = vec![
             jolt_id(JoltCommittedPolynomial::RamInc),
             jolt_id(JoltCommittedPolynomial::RdInc),

@@ -10,6 +10,9 @@
 //! slots.
 
 use common::jolt_device::JoltDevice;
+use jolt_claims::protocols::composed::geometry::{
+    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
@@ -21,9 +24,6 @@ use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_r1cs::constraints::jolt::{
-    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-};
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
@@ -574,9 +574,7 @@ mod field_inline_zk {
 mod tests {
     use super::*;
 
-    /// Without field-inline, the composed jolt-r1cs product uni-skip constants equal the
-    /// jolt-claims RV64-only constants this recipe previously passed — the
-    /// swap is byte-neutral.
+    /// Without field-inline, the composed product geometry matches the RV64-only relation.
     #[cfg(not(feature = "field-inline"))]
     #[test]
     fn product_uniskip_constants_match_the_rv64_only_values() {

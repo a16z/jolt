@@ -1,6 +1,6 @@
 #[cfg(feature = "field-inline")]
 #[cfg(test)]
-use crate::stages::composed::ComposedClaims;
+use jolt_claims::protocols::composed::ComposedClaims;
 
 use super::*;
 
@@ -98,13 +98,13 @@ where
         add_program_image_reduction_cycle_publics(input, values, layout)?;
     }
 
-    let mut address_phase_output_ids: Vec<VerifierOpeningId> =
+    let mut address_phase_output_ids: Vec<ComposedOpeningId> =
         vec![bytecode::bytecode_read_raf_address_phase_opening().into()];
     if bytecode_reduction_layout.is_some() {
         address_phase_output_ids.extend(
             (0..bytecode_reduction::NUM_BYTECODE_VAL_STAGES)
                 .map(bytecode_reduction::bytecode_val_stage_opening)
-                .map(VerifierOpeningId::from),
+                .map(ComposedOpeningId::from),
         );
     }
     address_phase_output_ids.push(booleanity::booleanity_address_phase_opening().into());
@@ -139,7 +139,7 @@ mod field_inline_tests {
     use crate::stages::stage6a::bytecode_read_raf::{
         BytecodeReadRafAddressPhase, BytecodeReadRafAddressPhaseInputClaims, BytecodeStagePoints,
     };
-    use crate::stages::stage6a::field_inline::FieldInlineBytecodeReadRafInputs;
+    use jolt_claims::protocols::composed::FieldInlineBytecodeReadRafInputs;
     use jolt_claims::protocols::field_inline::{
         FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
     };
@@ -235,10 +235,10 @@ mod field_inline_tests {
         };
         let lowered = lowered_expr.evaluate(
             |id| match id {
-                VerifierOpeningId::Jolt(id) => {
+                ComposedOpeningId::Jolt(id) => {
                     inputs.resolve_input(&(*id).into()).unwrap_or_else(|| fr(0))
                 }
-                VerifierOpeningId::FieldInline(id) => resolve_field_inline(id),
+                ComposedOpeningId::FieldInline(id) => resolve_field_inline(id),
             },
             |_| fr(0),
             |id| match id {

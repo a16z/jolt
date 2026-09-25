@@ -7,11 +7,11 @@
 
 use std::fmt::Debug;
 
+use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::JoltDerivedId;
 use jolt_claims::MissingOpeningValue;
 use jolt_field::{Field, JoltField};
 use jolt_sumcheck::ProveRounds;
-use jolt_verifier::stages::ids::VerifierOpeningId;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -33,7 +33,7 @@ pub enum SumcheckKernelError<F: Field> {
     Verifier(#[from] VerifierError),
 
     #[error(transparent)]
-    MissingOpeningValue(MissingOpeningValue<VerifierOpeningId>),
+    MissingOpeningValue(MissingOpeningValue<ComposedOpeningId>),
 
     /// Final values were requested before every round was bound.
     #[error("final table values requested with {remaining} unbound rounds")]
@@ -148,7 +148,7 @@ where
     pub challenges: &'a ConcreteSumcheckChallenges<F, R>,
 }
 
-impl<F: Field, O: Debug + Into<VerifierOpeningId>> From<MissingOpeningValue<O>>
+impl<F: Field, O: Debug + Into<ComposedOpeningId>> From<MissingOpeningValue<O>>
     for SumcheckKernelError<F>
 {
     fn from(error: MissingOpeningValue<O>) -> Self {

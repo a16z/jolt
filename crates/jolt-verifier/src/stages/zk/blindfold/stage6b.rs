@@ -139,7 +139,7 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
     untrusted_layout: Option<&AdviceClaimReductionLayout>,
     bytecode_reduction_layout: Option<&BytecodeClaimReductionLayout>,
     program_image_reduction_layout: Option<&ProgramImageClaimReductionLayout>,
-) -> (Vec<VerifierOpeningId>, Vec<OpeningAlias<VerifierOpeningId>>) {
+) -> (Vec<ComposedOpeningId>, Vec<OpeningAlias<ComposedOpeningId>>) {
     let (mut output_ids, aliases) = stage6_cycle_output_openings_and_aliases(
         formula_dimensions,
         bytecode_ra_opening_points,
@@ -175,7 +175,7 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
         }
         .canonical_order()
         .into_iter()
-        .map(VerifierOpeningId::from),
+        .map(ComposedOpeningId::from),
     );
     // The reduced field-inline `FieldRdInc` row, after the ordinary increment-reduction
     // outputs and before the optional advice cycle phases — the clear absorb order
@@ -186,14 +186,14 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
         output_ids.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Trusted, layout.dimensions())
                 .into_iter()
-                .map(VerifierOpeningId::from),
+                .map(ComposedOpeningId::from),
         );
     }
     if let Some(layout) = untrusted_layout {
         output_ids.extend(
             advice::cycle_phase_output_openings(JoltAdviceKind::Untrusted, layout.dimensions())
                 .into_iter()
-                .map(VerifierOpeningId::from),
+                .map(ComposedOpeningId::from),
         );
     }
     if let Some(layout) = bytecode_reduction_layout {
@@ -203,14 +203,14 @@ fn stage6b_output_ids_and_aliases<F: JoltField>(
                 layout.chunk_count(),
             )
             .into_iter()
-            .map(VerifierOpeningId::from),
+            .map(ComposedOpeningId::from),
         );
     }
     if let Some(layout) = program_image_reduction_layout {
         output_ids.extend(
             program_image::cycle_phase_output_openings(layout.dimensions())
                 .into_iter()
-                .map(VerifierOpeningId::from),
+                .map(ComposedOpeningId::from),
         );
     }
     (output_ids, aliases)
@@ -224,7 +224,7 @@ fn stage6_cycle_output_openings_and_aliases<F: JoltField>(
     formula_dimensions: JoltFormulaDimensions,
     bytecode_ra_opening_points: &[Vec<F>],
     booleanity_opening_point: &[F],
-) -> (Vec<VerifierOpeningId>, Vec<OpeningAlias<VerifierOpeningId>>) {
+) -> (Vec<ComposedOpeningId>, Vec<OpeningAlias<ComposedOpeningId>>) {
     let bytecode_output_openings =
         bytecode::read_raf_output_openings(formula_dimensions.bytecode_read_raf);
     let booleanity_output_openings =
@@ -375,7 +375,7 @@ mod tests {
 
         for (id, expected) in output_ids.iter().zip(clear_values) {
             let resolved = match id {
-                VerifierOpeningId::Jolt(id) => claims
+                ComposedOpeningId::Jolt(id) => claims
                     .bytecode_read_raf
                     .resolve_output(id)
                     .or_else(|| claims.booleanity.resolve_output(id))
@@ -384,11 +384,11 @@ mod tests {
                     .or_else(|| claims.instruction_ra_virtualization.resolve_output(id))
                     .or_else(|| claims.inc_claim_reduction.resolve_output(id)),
                 #[cfg(feature = "field-inline")]
-                VerifierOpeningId::FieldInline(id) => claims
+                ComposedOpeningId::FieldInline(id) => claims
                     .field_registers_inc_claim_reduction
                     .resolve_output(id),
                 #[cfg(not(feature = "field-inline"))]
-                VerifierOpeningId::FieldInline(_) => None,
+                ComposedOpeningId::FieldInline(_) => None,
             };
             assert_eq!(
                 resolved,
@@ -558,13 +558,13 @@ mod field_inline_tests {
         let openings = bytecode::read_raf_output_openings(dimensions);
         let lowered = map_expr(symbolic.output_expression::<Fr>()).evaluate(
             |id| match id {
-                VerifierOpeningId::Jolt(id) => openings
+                ComposedOpeningId::Jolt(id) => openings
                     .bytecode_ra
                     .iter()
                     .zip(&output_values.bytecode_ra)
                     .find(|(opening_id, _)| *opening_id == id)
                     .map_or_else(|| fr(0), |(_, value)| *value),
-                VerifierOpeningId::FieldInline(_) => fr(0),
+                ComposedOpeningId::FieldInline(_) => fr(0),
             },
             |_| fr(0),
             |id| match id {

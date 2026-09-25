@@ -55,6 +55,9 @@
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
 use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
+use jolt_claims::protocols::composed::geometry::{
+    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
 #[cfg(not(feature = "field-inline"))]
@@ -114,7 +117,6 @@ use jolt_program::preprocess::PublicIoMemory;
 use jolt_r1cs::constraints::jolt::{
     JoltSpartanOuterPublic, JoltSpartanOuterRemainder, JoltSpartanOuterRemainderChallenges,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
@@ -140,13 +142,13 @@ mod stage6a;
 mod stage6b;
 mod stage7;
 
-/// The lowering's opening-id type: the composite [`VerifierOpeningId`], so hidden witness rows
+/// The lowering's opening-id type: the composite [`ComposedOpeningId`], so hidden witness rows
 /// from either protocol family (jolt, field-inline) live in one claim-source namespace. Builds
 /// without field-inline construct only `Jolt`-wrapped ids, so the layout is unchanged.
-use crate::stages::ids::VerifierOpeningId;
+use jolt_claims::protocols::composed::ComposedOpeningId;
 
-type Builder<F, C> = BlindFoldProtocolBuilder<F, VerifierOpeningId, C, VerifierPublicId>;
-type VerifierExpr<F> = Expr<F, VerifierOpeningId, VerifierPublicId>;
+type Builder<F, C> = BlindFoldProtocolBuilder<F, ComposedOpeningId, C, VerifierPublicId>;
+type VerifierExpr<F> = Expr<F, ComposedOpeningId, VerifierPublicId>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VerifierPublicId {
@@ -213,7 +215,7 @@ where
 {
     let mut values = SourceValues::default();
     let mut builder = BlindFoldProtocol::<PCS::Field, VC::Output>::builder::<
-        VerifierOpeningId,
+        ComposedOpeningId,
         VerifierPublicId,
         usize,
     >();
@@ -260,8 +262,8 @@ fn add_batched_stage<F, C>(
     consistency: &BatchedCommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<VerifierOpeningId>,
-    aliases: Vec<OpeningAlias<VerifierOpeningId>>,
+    opening_ids: Vec<ComposedOpeningId>,
+    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
 ) -> Result<Builder<F, C>, VerifierError>
 where
     F: JoltField,
@@ -334,8 +336,8 @@ fn add_stage<F, C>(
     consistency: CommittedSumcheckConsistency<F, C>,
     output_claims: &CommittedOutputClaimOutput<C>,
     values: &SourceValues<F>,
-    opening_ids: Vec<VerifierOpeningId>,
-    aliases: Vec<OpeningAlias<VerifierOpeningId>>,
+    opening_ids: Vec<ComposedOpeningId>,
+    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
     input_claim: VerifierExpr<F>,
     output_claim: VerifierExpr<F>,
 ) -> Result<Builder<F, C>, VerifierError>
@@ -380,7 +382,7 @@ fn relation_claim<F, S>(relation: &S) -> (usize, VerifierExpr<F>, VerifierExpr<F
 where
     F: JoltField,
     S: SymbolicSumcheck,
-    S::OpeningId: Into<VerifierOpeningId>,
+    S::OpeningId: Into<ComposedOpeningId>,
     S::DerivedId: Into<VerifierPublicId>,
     S::ChallengeId: Into<VerifierPublicId>,
 {
@@ -407,7 +409,7 @@ fn scale_expr<F: JoltField>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr
 fn map_expr<F, O, P, C>(expr: Expr<F, O, P, C>) -> VerifierExpr<F>
 where
     F: JoltField,
-    O: Into<VerifierOpeningId>,
+    O: Into<ComposedOpeningId>,
     P: Into<VerifierPublicId>,
     C: Into<VerifierPublicId>,
 {
@@ -432,14 +434,14 @@ where
 }
 
 /// Lift a jolt-typed opening-id list into the composite id space.
-fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<VerifierOpeningId> {
+fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<ComposedOpeningId> {
     ids.into_iter().map(Into::into).collect()
 }
 
 /// Lift jolt-typed `(aliased, source)` pairs into composite [`OpeningAlias`] rows.
-fn composite_aliases<O: Into<VerifierOpeningId>>(
+fn composite_aliases<O: Into<ComposedOpeningId>>(
     pairs: impl IntoIterator<Item = (O, O)>,
-) -> Vec<OpeningAlias<VerifierOpeningId>> {
+) -> Vec<OpeningAlias<ComposedOpeningId>> {
     pairs
         .into_iter()
         .map(|(aliased, source)| OpeningAlias::new(aliased.into(), source.into()))
@@ -469,8 +471,8 @@ where
 {
     map_expr(expr).evaluate(
         |id| match id {
-            VerifierOpeningId::Jolt(id) => opening(id),
-            VerifierOpeningId::FieldInline(_) => {
+            ComposedOpeningId::Jolt(id) => opening(id),
+            ComposedOpeningId::FieldInline(_) => {
                 unreachable!("Jolt expressions do not contain field-inline openings")
             }
         },
@@ -1497,10 +1499,10 @@ mod field_inline_relation_parity {
         };
         let lowered_input = lowered_input_expr.evaluate(
             |id| match id {
-                VerifierOpeningId::FieldInline(id) => {
+                ComposedOpeningId::FieldInline(id) => {
                     inputs.resolve_input(id).unwrap_or_else(Fr::zero)
                 }
-                VerifierOpeningId::Jolt(_) => Fr::zero(),
+                ComposedOpeningId::Jolt(_) => Fr::zero(),
             },
             |_| Fr::zero(),
             resolve_challenge,
@@ -1512,10 +1514,10 @@ mod field_inline_relation_parity {
             .unwrap();
         let lowered_output = lowered_output_expr.evaluate(
             |id| match id {
-                VerifierOpeningId::FieldInline(id) => {
+                ComposedOpeningId::FieldInline(id) => {
                     outputs.resolve_output(id).unwrap_or_else(Fr::zero)
                 }
-                VerifierOpeningId::Jolt(_) => Fr::zero(),
+                ComposedOpeningId::Jolt(_) => Fr::zero(),
             },
             |_| Fr::zero(),
             resolve_challenge,

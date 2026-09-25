@@ -10,11 +10,11 @@
 //! Under the `akita` feature the symbolic swaps to the lattice address phase,
 //! whose input fold additionally consumes the four reduced `Inc` claims
 
-#[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
-use crate::stages::composed::ComposedClaims;
-#[cfg(feature = "field-inline")]
-use crate::stages::composed::ReadRafAddressPhase as ComposedReadRafAddressPhase;
 use crate::stages::relations::SumcheckOutputPoints;
+#[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
+use jolt_claims::protocols::composed::ComposedClaims;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::ReadRafAddressPhase as ComposedReadRafAddressPhase;
 #[cfg(not(feature = "akita"))]
 use relations::bytecode::ReadRafAddressPhase as BaseAddressPhaseSymbolic;
 use std::collections::BTreeSet;
@@ -480,8 +480,8 @@ mod tests {
     reason = "test code indexes its own fixed-size fixtures and uses plain arithmetic on fixture data"
 )]
 mod field_inline_tests {
-    use super::super::field_inline::FieldInlineBytecodeReadRafInputs;
     use super::*;
+    use jolt_claims::protocols::composed::FieldInlineBytecodeReadRafInputs;
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_claims::{InputClaims as _, SumcheckChallenges as _};
     use jolt_field::{Fr, Ring};

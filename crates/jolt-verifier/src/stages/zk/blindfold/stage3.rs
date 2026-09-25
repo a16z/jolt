@@ -130,7 +130,7 @@ where
         .canonical_order()
         .into_iter()
         .filter(|id| !aliased_targets.contains(id))
-        .map(VerifierOpeningId::from),
+        .map(ComposedOpeningId::from),
     );
     output_ids.extend(
         relations::claim_reductions::registers::RegistersClaimReductionOutputClaims::<PCS::Field> {
@@ -141,7 +141,7 @@ where
         .canonical_order()
         .into_iter()
         .filter(|id| !aliased_targets.contains(id))
-        .map(VerifierOpeningId::from),
+        .map(ComposedOpeningId::from),
     );
     let aliases = composite_aliases(alias_pairs);
     add_batched_stage(

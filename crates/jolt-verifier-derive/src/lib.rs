@@ -814,7 +814,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // aliased values get consumed), so declaring a pair on a relation enforces it
     // everywhere: the check cannot be skipped by a stage.
     //
-    // The resolver closure is keyed by the composite `VerifierOpeningId` and each
+    // The resolver closure is keyed by the composite `ComposedOpeningId` and each
     // member's arm downcasts to its own family (`relations::resolve_member_opening`),
     // so a batch may mix protocol families; alias pairs themselves stay
     // family-local (see `relations::validate_member_aliases`).
@@ -868,7 +868,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 &self,
                 output_values: &#output_claims_name<#f>,
             ) -> ::core::result::Result<(), #krate::VerifierError> {
-                let __resolve = |__id: &#relations::VerifierOpeningId| {
+                let __resolve = |__id: &#relations::ComposedOpeningId| {
                     ::core::option::Option::<#f>::None
                         #(#resolve_arms)*
                 };

@@ -1537,9 +1537,8 @@ mod tests {
     #[cfg(feature = "field-inline")]
     #[test]
     fn blindfold_generator_budget_covers_the_composed_uniskip_rounds() {
-        use jolt_r1cs::constraints::jolt::{
-            SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
-        };
+        use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE;
+        use jolt_r1cs::constraints::jolt::SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE;
 
         const {
             assert!(MAX_BLINDFOLD_GENERATORS > SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE);

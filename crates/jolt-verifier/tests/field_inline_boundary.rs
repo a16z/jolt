@@ -1,6 +1,6 @@
 //! Structural guards for the verifier composition boundary. Protocol-family
 //! import disjointness is checked in jolt-claims; composed expression coverage
-//! is checked by stages::composed's typed contract test.
+//! is checked by jolt-claims' composed module's typed contract test.
 
 #![expect(clippy::expect_used, reason = "test-only source-tree inspection")]
 

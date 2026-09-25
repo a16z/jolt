@@ -203,7 +203,7 @@ impl ColumnKind {
 /// A committed-column id at the commit-kernel seam: the jolt family always,
 /// the field-inline family under the composed protocol. Kernel-local
 /// composite — the jolt-claims id namespaces stay disjoint (the same pattern
-/// as jolt-verifier's `VerifierOpeningId`).
+/// as jolt-claims' `ComposedOpeningId`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommittedColumnId {
     Jolt(JoltCommittedPolynomial),

@@ -9,11 +9,12 @@
 //! relation consumes that uni-skip's reduced opening as its input claim.
 
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::ComposedClaims;
+use jolt_claims::protocols::composed::ComposedClaims;
 use std::collections::BTreeSet;
 
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::{
+use jolt_claims::protocols::composed::{
     ProductInputs as SelectedInputs, ProductOutputs as SelectedOutputs,
     ProductRemainder as SelectedSymbolic,
 };
@@ -37,7 +38,6 @@ use jolt_poly::{
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     try_eq_mle,
 };
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;

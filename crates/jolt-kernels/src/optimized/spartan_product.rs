@@ -12,12 +12,15 @@
 //! Lagrange selectors, so one integer pipeline serves every node.
 
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
+use jolt_claims::protocols::composed::ComposedOpeningId;
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::ids::VerifierOpeningId;
+use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
 use jolt_verifier::stages::relations::OpeningIdOf;
 use std::collections::BTreeMap;
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_BASE_LANES;
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::product::{
     composed_remainder_factor_contributions, FieldProductLaneFactors,
@@ -35,12 +38,6 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
-// The COMPOSED jolt-r1cs lane domain (feature-aware): 3 rv64 lanes without
-// field-inline, the field-inline-extended 5-lane domain under `field-inline` — the same
-// source the reference kernel folds with.
-#[cfg(feature = "field-inline")]
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -747,7 +744,7 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
             .chain(
                 selected_product_remainder_output_openings()
                     .into_iter()
-                    .map(VerifierOpeningId::from)
+                    .map(ComposedOpeningId::from)
                     .zip(self.field_claimed_inputs(&weights)),
             )
             .collect();
@@ -796,6 +793,8 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     #[cfg(feature = "field-inline")]
+    use jolt_claims::protocols::composed::{ComposedClaims, FieldProductUniskipInputs};
+    #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::{
         FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
     };
@@ -804,8 +803,6 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::{CanonicalBytes, Fr, Ring};
     use jolt_program::execution::OwnedTrace;
-    #[cfg(feature = "field-inline")]
-    use jolt_verifier::stages::composed::{ComposedClaims, FieldProductUniskipInputs};
     use jolt_verifier::stages::stage2::product_remainder::product_remainder_input_values_from_uniskip_output;
     use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
     use jolt_witness::testing::with_sample_backend;

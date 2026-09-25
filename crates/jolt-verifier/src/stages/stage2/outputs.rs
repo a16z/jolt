@@ -632,7 +632,7 @@ mod tests {
 #[cfg(feature = "field-inline")]
 mod canonical_batch {
     use super::*;
-    use crate::stages::composed::ProductOutputs;
+    use jolt_claims::protocols::composed::ProductOutputs;
     use serde::ser::SerializeStruct;
     use serde::{Deserializer, Serializer};
 

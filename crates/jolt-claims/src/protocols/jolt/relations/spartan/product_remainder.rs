@@ -66,7 +66,7 @@ impl ProductRemainder {
     /// (`Σ_i product_weight(i) · left_i`). Exposed separately from
     /// [`output_expression`](SymbolicSumcheck::output_expression) — which is
     /// `tau_kernel · left · right` built from these factors — so the
-    /// composed verifier can extend each factor with the field-inline lanes'
+    /// composed relation can extend each factor with the field-inline lanes'
     /// contributions without restating the ordinary lane table.
     pub fn left_factor_expression<F: Ring>(&self) -> JoltExpr<F> {
         product_weight(0) * opening(left_instruction_input_product())

@@ -17,13 +17,16 @@
 //! member is the composed kernel at the bottom of this file.
 
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
+use jolt_claims::protocols::composed::ComposedOpeningId;
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::ids::VerifierOpeningId;
+use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
 use std::collections::BTreeMap;
 
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
 use allocative::{Allocative, Key, Visitor};
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_BASE_LANES;
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::product::{
     composed_remainder_factor_contributions, FieldProductLaneFactors,
@@ -43,12 +46,6 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
-// The COMPOSED jolt-r1cs lane domain (feature-aware): identical to the jolt-claims
-// RV64-only constant without field-inline, the field-inline-extended 5-lane domain
-// under `field-inline` — the shape the composed verifier checks.
-#[cfg(feature = "field-inline")]
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_BASE_LANES;
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
@@ -543,10 +540,10 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
         let field_ids = selected_product_remainder_output_openings();
         SumcheckOutputClaims::<F, ProductRemainder<F>>::from_opening_values(|id| {
             match id {
-                VerifierOpeningId::Jolt(id) => {
+                ComposedOpeningId::Jolt(id) => {
                     self.opening_tables.get(id).map(|table| table.evals()[0])
                 }
-                VerifierOpeningId::FieldInline(id) => field_ids
+                ComposedOpeningId::FieldInline(id) => field_ids
                     .iter()
                     .position(|candidate| candidate == id)
                     .map(|position| self.field_inline_tables[position].evals()[0]),

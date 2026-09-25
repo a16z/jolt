@@ -4,7 +4,8 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_riscv::JoltInstructionKind;
 
 use crate::config::JoltProtocolConfig;
-use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId, VerifierOpeningId};
+use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
+use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
@@ -45,10 +46,10 @@ pub enum VerifierError {
     UnexpectedOpeningClaims,
 
     #[error("missing opening claim scalar {id:?}")]
-    MissingOpeningClaim { id: VerifierOpeningId },
+    MissingOpeningClaim { id: ComposedOpeningId },
 
     #[error("unexpected opening claim scalar {id:?}")]
-    UnexpectedOpeningClaim { id: VerifierOpeningId },
+    UnexpectedOpeningClaim { id: ComposedOpeningId },
 
     #[error("vector commitment setup is missing from verifier preprocessing")]
     MissingVectorCommitmentSetup,
@@ -92,8 +93,8 @@ pub enum VerifierError {
     #[error("stage {stage} opening inputs {left:?} and {right:?} must have the same evaluation")]
     StageClaimOpeningMismatch {
         stage: String,
-        left: VerifierOpeningId,
-        right: VerifierOpeningId,
+        left: ComposedOpeningId,
+        right: ComposedOpeningId,
     },
 
     #[error("stage {stage} sumcheck verification failed: {reason}")]

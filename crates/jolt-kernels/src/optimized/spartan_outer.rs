@@ -40,9 +40,9 @@
 #[cfg(feature = "field-inline")]
 use core::cmp::Ordering;
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
+use jolt_claims::protocols::composed::ComposedOpeningId;
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::ids::VerifierOpeningId;
+use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
 use jolt_verifier::stages::relations::OpeningIdOf;
 use std::collections::BTreeMap;
 
@@ -1360,7 +1360,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
             .chain(
                 field_outer_output_openings()
                     .into_iter()
-                    .map(VerifierOpeningId::from)
+                    .map(ComposedOpeningId::from)
                     .zip(self.field_claimed_inputs(&weights)),
             )
             .collect();

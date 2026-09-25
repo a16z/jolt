@@ -3,8 +3,9 @@
 //!
 //! The architectural rule: `protocols/jolt` and `protocols/field_inline` are
 //! separate protocol families. They share algebra through the id-free framework
-//! modules and compose only in `jolt-verifier`: neither protocol module may import
-//! the other. Both families compile unconditionally. The common Jolt flag carriers
+//! modules and compose in the sibling `protocols/composed`: neither protocol
+//! family may import the other or its composition. Both families compile
+//! unconditionally. The common Jolt flag carriers
 //! and their geometry mirror the feature-gated ISA flags in `jolt-riscv`; this does
 //! not introduce field-register protocol ids into the Jolt protocol.
 
@@ -101,7 +102,7 @@ fn src_dir() -> PathBuf {
 
 /// Neither protocol module imports (or otherwise names, outside comments and
 /// strings) the other: the only sanctioned sharing is the id-free
-/// `twist` algebra, and composition happens only in `jolt-verifier`.
+/// `twist` algebra, and composition belongs to the sibling `composed` module.
 #[test]
 fn protocol_modules_are_import_disjoint() {
     let mut violations = Vec::new();
@@ -123,10 +124,65 @@ fn protocol_modules_are_import_disjoint() {
             ));
         }
     }
+    for family in ["jolt", "field_inline"] {
+        for file in rust_sources(&src_dir().join("protocols").join(family)) {
+            let code = code_text(&file);
+            let names_composed_module = code.match_indices("::").any(|(separator, _)| {
+                code.get(..separator).is_some_and(|prefix| {
+                    prefix
+                        .trim_end()
+                        .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+                        .next()
+                        == Some("composed")
+                })
+            });
+            if names_composed_module {
+                violations.push(format!(
+                    "{} references the composed protocol module",
+                    file.display()
+                ));
+            }
+        }
+    }
     assert!(
         violations.is_empty(),
         "protocol modules must stay import-disjoint (share algebra via \
-         twist, compose in jolt-verifier):\n{}",
+         twist, compose in protocols::composed):\n{}",
+        violations.join("\n")
+    );
+}
+
+/// The verifier consumes symbolic relations; their definitions and dependencies
+/// must stay below the verifier and R1CS crates.
+#[test]
+fn symbolic_relations_stay_in_claims() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest =
+        fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("claims manifest is readable");
+    for dependency in ["jolt-verifier", "jolt-r1cs"] {
+        assert!(
+            !manifest.lines().any(|line| line
+                .split('#')
+                .next()
+                .is_some_and(|code| code.contains(dependency))),
+            "jolt-claims must not depend on {dependency}"
+        );
+    }
+
+    let mut violations = Vec::new();
+    for file in rust_sources(&manifest_dir.join("../jolt-verifier/src")) {
+        let code = code_text(&file);
+        let mut tokens = code.split_whitespace().peekable();
+        while let Some(token) = tokens.next() {
+            if token.ends_with("SymbolicSumcheck") && tokens.peek() == Some(&"for") {
+                violations.push(file.display().to_string());
+                break;
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "SymbolicSumcheck implementations belong in jolt-claims:\n{}",
         violations.join("\n")
     );
 }
@@ -173,9 +229,10 @@ fn lattice_algebra_references_no_protocol_module() {
 
 /// Field-register relations and shared algebra remain unconditional. The three
 /// ordinary Jolt flag carriers mirror `jolt-riscv::CircuitFlags`, whose field
-/// instruction variants exist only with the `field-inline` ISA feature.
+/// instruction variants exist only with the `field-inline` ISA feature. The
+/// sibling composed module selects the active protocol geometry.
 #[test]
-fn field_inline_feature_gates_are_confined_to_common_flag_carriers() {
+fn field_inline_feature_gates_are_confined_to_flag_carriers_and_composition() {
     let source_dir = src_dir();
     let flag_carriers = [
         "protocols/jolt/geometry/spartan.rs",
@@ -187,13 +244,16 @@ fn field_inline_feature_gates_are_confined_to_common_flag_carriers() {
     let mut violations = Vec::new();
     for file in rust_sources(&source_dir) {
         let source = fs::read_to_string(&file).expect("source file is readable");
-        if source.contains("feature = \"field-inline\"") && !flag_carriers.contains(&file) {
+        if source.contains("feature = \"field-inline\"")
+            && !flag_carriers.contains(&file)
+            && !file.starts_with(source_dir.join("protocols/composed"))
+        {
             violations.push(file.display().to_string());
         }
     }
     assert!(
         violations.is_empty(),
-        "field-inline feature gates belong only in the common ISA flag carriers:\n{}",
+        "field-inline feature gates belong only in common ISA flag carriers and composition:\n{}",
         violations.join("\n")
     );
 }

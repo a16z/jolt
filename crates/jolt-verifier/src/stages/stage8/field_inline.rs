@@ -9,8 +9,8 @@ use jolt_field::JoltField;
 
 use super::Stage8BatchEntry;
 use crate::proof::JoltCommitments;
-use crate::stages::ids::VerifierOpeningId;
 use crate::VerifierError;
+use jolt_claims::protocols::composed::ComposedOpeningId;
 
 /// The field-inline commitment payload is part of the expected layout: the composed final
 /// opening cannot assemble without the `FieldRdInc` commitment.
@@ -47,7 +47,7 @@ where
             .ok_or(VerifierError::MissingProofPayload {
                 field: "commitments.field_inline",
             })?;
-    let rd_inc_id: VerifierOpeningId = JoltOpeningId::committed(
+    let rd_inc_id: ComposedOpeningId = JoltOpeningId::committed(
         JoltCommittedPolynomial::RdInc,
         JoltRelationId::IncClaimReduction,
     )

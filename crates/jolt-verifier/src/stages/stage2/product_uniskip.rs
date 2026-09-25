@@ -14,12 +14,13 @@
 //! `derive_input_term` rather than `derive_output_term`.
 
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::ComposedClaims;
+use jolt_claims::protocols::composed::ComposedClaims;
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::FieldProductUniskipInputs;
+use jolt_claims::protocols::composed::FieldProductUniskipInputs;
 
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 #[cfg(feature = "field-inline")]
-use crate::stages::composed::{
+use jolt_claims::protocols::composed::{
     ProductUniskip as SelectedSymbolic, UniskipInputs as SelectedInputs,
     UniskipOutputs as SelectedOutputs,
 };
@@ -38,7 +39,6 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::{NoChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::lagrange::centered_lagrange_evals;
-use jolt_r1cs::constraints::jolt::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage1::Stage1ClearOutput;

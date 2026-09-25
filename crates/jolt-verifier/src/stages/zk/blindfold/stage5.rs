@@ -192,8 +192,8 @@ where
 /// `Stage5Sumchecks` member-declaration absorb).
 fn stage5_output_ids<F: JoltField>(
     instruction_output_openings: InstructionReadRafOutputOpenings,
-) -> Vec<VerifierOpeningId> {
-    let mut output_ids: Vec<VerifierOpeningId> =
+) -> Vec<ComposedOpeningId> {
+    let mut output_ids: Vec<ComposedOpeningId> =
         composite_ids(instruction_output_openings.lookup_table_flags);
     output_ids.extend(composite_ids(instruction_output_openings.instruction_ra));
     output_ids.push(instruction_output_openings.instruction_raf_flag.into());
@@ -290,17 +290,17 @@ mod tests {
         assert_eq!(output_ids.len(), clear_values.len());
         for (id, expected) in output_ids.iter().zip(clear_values) {
             let resolved = match id {
-                VerifierOpeningId::Jolt(id) => claims
+                ComposedOpeningId::Jolt(id) => claims
                     .instruction_read_raf
                     .resolve_output(id)
                     .or_else(|| claims.ram_ra_claim_reduction.resolve_output(id))
                     .or_else(|| claims.registers_val_evaluation.resolve_output(id)),
                 #[cfg(feature = "field-inline")]
-                VerifierOpeningId::FieldInline(id) => {
+                ComposedOpeningId::FieldInline(id) => {
                     claims.field_registers_val_evaluation.resolve_output(id)
                 }
                 #[cfg(not(feature = "field-inline"))]
-                VerifierOpeningId::FieldInline(_) => None,
+                ComposedOpeningId::FieldInline(_) => None,
             };
             assert_eq!(
                 resolved,

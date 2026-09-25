@@ -1,152 +1,32 @@
-//! Composition of protocol-local claims and expressions at the verifier boundary.
+//! Symbolic relations composing ordinary Jolt with field-inline constraints.
 
-use super::ids::VerifierOpeningId;
-use super::stage6a::field_inline::FieldInlineBytecodeReadRafInputs;
-use jolt_claims::protocols::field_inline::geometry::{
-    product as field_product, spartan as field_spartan,
+use super::claims::{
+    ComposedClaims, ComposedExpr, FieldInlineBytecodeReadRafInputs, OuterInputs, OuterOutputs,
+    ProductInputs, ProductOutputs, UniskipInputs, UniskipOutputs,
 };
-use jolt_claims::protocols::field_inline::relations::{
-    product::FieldRegistersProductOutputClaims, spartan::FieldRegistersSpartanOuterOutputClaims,
-};
-use jolt_claims::protocols::field_inline::FieldInlineOpeningId;
-use jolt_claims::protocols::field_inline::FieldInlineRelationId;
-use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
-use jolt_claims::protocols::jolt::geometry::spartan::{
-    self, SpartanOuterDimensions, SpartanProductDimensions,
-};
-use jolt_claims::protocols::jolt::relations::spartan as base;
-use jolt_claims::protocols::jolt::BytecodeReadRafChallenge;
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
-use jolt_claims::protocols::jolt::{
-    JoltRelationId, SpartanOuterPublic, SpartanProductVirtualizationPublic,
-};
-use jolt_claims::{derived, opening, NoChallenges, SumcheckDomain, SymbolicSumcheck};
-use jolt_claims::{Expr, InputClaims, MissingOpeningValue, OutputClaims, Source, Term};
-use jolt_field::JoltField;
-use jolt_field::Ring;
-use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
-use jolt_r1cs::constraints::jolt::{
+use super::geometry::{
     SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
     SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
-use serde::{Deserialize, Serialize};
-use std::ops::{Deref, DerefMut};
-
-/// Claims from the base protocol followed by the extension's claims. The two
-/// namespaces stay disjoint; only this verifier-owned carrier resolves both.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub struct ComposedClaims<B, E = EmptyClaims> {
-    pub base: B,
-    pub field_inline: E,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub struct EmptyClaims;
-
-impl<B, E: Default> From<B> for ComposedClaims<B, E> {
-    fn from(base: B) -> Self {
-        Self {
-            base,
-            field_inline: E::default(),
-        }
-    }
-}
-
-impl<B, E> Deref for ComposedClaims<B, E> {
-    type Target = B;
-    fn deref(&self) -> &B {
-        &self.base
-    }
-}
-
-impl<B, E> DerefMut for ComposedClaims<B, E> {
-    fn deref_mut(&mut self) -> &mut B {
-        &mut self.base
-    }
-}
-
-impl<F: JoltField> InputClaims<F, FieldInlineOpeningId> for EmptyClaims {
-    fn canonical_order(&self) -> Vec<FieldInlineOpeningId> {
-        Vec::new()
-    }
-    fn resolve_input(&self, _: &FieldInlineOpeningId) -> Option<F> {
-        None
-    }
-}
-impl<F: JoltField> OutputClaims<F, FieldInlineOpeningId> for EmptyClaims {
-    fn canonical_order(&self) -> Vec<FieldInlineOpeningId> {
-        Vec::new()
-    }
-    fn resolve_output(&self, _: &FieldInlineOpeningId) -> Option<F> {
-        None
-    }
-    fn from_opening_values(
-        _: impl FnMut(&FieldInlineOpeningId) -> Option<F>,
-    ) -> Result<Self, MissingOpeningValue<FieldInlineOpeningId>> {
-        Ok(Self)
-    }
-}
-
-impl<F: JoltField, B: InputClaims<F>, E: InputClaims<F, FieldInlineOpeningId>>
-    InputClaims<F, VerifierOpeningId> for ComposedClaims<B, E>
-{
-    fn canonical_order(&self) -> Vec<VerifierOpeningId> {
-        self.base
-            .canonical_order()
-            .into_iter()
-            .map(VerifierOpeningId::from)
-            .chain(
-                self.field_inline
-                    .canonical_order()
-                    .into_iter()
-                    .map(VerifierOpeningId::from),
-            )
-            .collect()
-    }
-    fn resolve_input(&self, id: &VerifierOpeningId) -> Option<F> {
-        match id {
-            VerifierOpeningId::Jolt(id) => self.base.resolve_input(id),
-            VerifierOpeningId::FieldInline(id) => self.field_inline.resolve_input(id),
-        }
-    }
-}
-impl<F: JoltField, B: OutputClaims<F>, E: OutputClaims<F, FieldInlineOpeningId>>
-    OutputClaims<F, VerifierOpeningId> for ComposedClaims<B, E>
-{
-    fn canonical_order(&self) -> Vec<VerifierOpeningId> {
-        self.base
-            .canonical_order()
-            .into_iter()
-            .map(VerifierOpeningId::from)
-            .chain(
-                self.field_inline
-                    .canonical_order()
-                    .into_iter()
-                    .map(VerifierOpeningId::from),
-            )
-            .collect()
-    }
-    fn resolve_output(&self, id: &VerifierOpeningId) -> Option<F> {
-        match id {
-            VerifierOpeningId::Jolt(id) => self.base.resolve_output(id),
-            VerifierOpeningId::FieldInline(id) => self.field_inline.resolve_output(id),
-        }
-    }
-    fn from_opening_values(
-        mut resolve: impl FnMut(&VerifierOpeningId) -> Option<F>,
-    ) -> Result<Self, MissingOpeningValue<VerifierOpeningId>> {
-        Ok(Self {
-            base: B::from_opening_values(|id| resolve(&(*id).into()))
-                .map_err(|e| MissingOpeningValue { id: e.id.into() })?,
-            field_inline: E::from_opening_values(|id| resolve(&(*id).into()))
-                .map_err(|e| MissingOpeningValue { id: e.id.into() })?,
-        })
-    }
-}
-
-pub type ComposedExpr<F> = Expr<F, VerifierOpeningId, JoltDerivedId, JoltChallengeId>;
+use super::ComposedOpeningId;
+use crate::protocols::field_inline::geometry::{
+    product as field_product, spartan as field_spartan,
+};
+use crate::protocols::field_inline::{
+    FieldInlineOpeningId, FieldInlineRelationId, FieldInlineVirtualPolynomial,
+};
+use crate::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
+use crate::protocols::jolt::geometry::spartan::{
+    self, SpartanOuterDimensions, SpartanProductDimensions,
+};
+use crate::protocols::jolt::relations::spartan as base;
+use crate::protocols::jolt::{
+    BytecodeReadRafChallenge, JoltChallengeId, JoltDerivedId, JoltOpeningId, JoltRelationId,
+    SpartanOuterPublic, SpartanProductVirtualizationPublic,
+};
+use crate::{derived, opening, Expr, NoChallenges, Source, SumcheckDomain, SymbolicSumcheck, Term};
+use jolt_field::Ring;
+use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 
 fn lift<F>(expr: Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>) -> ComposedExpr<F> {
     Expr {
@@ -169,25 +49,6 @@ fn lift<F>(expr: Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>) -> Comp
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
-#[protocol(field_inline)]
-pub struct FieldProductUniskipInputs<C> {
-    #[opening(FieldProduct, from = FieldRegistersSpartanOuter)]
-    pub product: C,
-    #[opening(FieldInvProduct, from = FieldRegistersSpartanOuter)]
-    pub inv_product: C,
-}
-
-pub type OuterInputs<C> = ComposedClaims<base::OuterRemainderInputClaims<C>>;
-pub type OuterOutputs<C> =
-    ComposedClaims<base::OuterRemainderOutputClaims<C>, FieldRegistersSpartanOuterOutputClaims<C>>;
-pub type ProductInputs<C> = ComposedClaims<base::ProductRemainderInputClaims<C>>;
-pub type ProductOutputs<C> =
-    ComposedClaims<base::ProductRemainderOutputClaims<C>, FieldRegistersProductOutputClaims<C>>;
-pub type UniskipInputs<C> =
-    ComposedClaims<base::ProductUniskipInputClaims<C>, FieldProductUniskipInputs<C>>;
-pub type UniskipOutputs<C> = ComposedClaims<base::ProductUniskipOutputClaims<C>>;
-
 #[derive(Clone)]
 pub struct OuterRemainder {
     shape: SpartanOuterDimensions,
@@ -195,7 +56,7 @@ pub struct OuterRemainder {
 
 impl SymbolicSumcheck for OuterRemainder {
     type RelationId = JoltRelationId;
-    type OpeningId = VerifierOpeningId;
+    type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanOuterDimensions;
@@ -238,7 +99,7 @@ pub struct ProductUniskip {
 }
 impl SymbolicSumcheck for ProductUniskip {
     type RelationId = JoltRelationId;
-    type OpeningId = VerifierOpeningId;
+    type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanProductDimensions;
@@ -290,7 +151,7 @@ pub struct ProductRemainder {
 }
 impl SymbolicSumcheck for ProductRemainder {
     type RelationId = JoltRelationId;
-    type OpeningId = VerifierOpeningId;
+    type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = SpartanProductDimensions;
@@ -349,7 +210,7 @@ where
     >,
 {
     type RelationId = JoltRelationId;
-    type OpeningId = VerifierOpeningId;
+    type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
     type ChallengeId = JoltChallengeId;
     type Shape = BytecodeReadRafDimensions;
@@ -380,10 +241,8 @@ where
 
 impl<B> ReadRafAddressPhase<B> {
     fn bytecode_input_extension_expr<F: Ring>() -> ComposedExpr<F> {
-        use jolt_claims::protocols::field_inline::FieldInlineVirtualPolynomial;
-
         let gamma_public = |challenge: BytecodeReadRafChallenge| -> ComposedExpr<F> {
-            jolt_claims::challenge(JoltChallengeId::from(challenge))
+            crate::challenge(JoltChallengeId::from(challenge))
         };
         let gamma = gamma_public(BytecodeReadRafChallenge::Gamma);
         let stage4_gamma = gamma_public(BytecodeReadRafChallenge::Stage4Gamma);
@@ -430,7 +289,9 @@ impl<B> ReadRafAddressPhase<B> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test fixtures")]
 mod tests {
+    use super::super::claims::FieldProductUniskipInputs;
     use super::*;
+    use crate::{InputClaims, OutputClaims};
     use jolt_field::Fr;
     use std::collections::BTreeSet;
 
@@ -505,7 +366,7 @@ mod tests {
             bytecode_inputs
                 .canonical_order()
                 .into_iter()
-                .map(VerifierOpeningId::from)
+                .map(ComposedOpeningId::from)
                 .collect::<BTreeSet<_>>(),
             extension_ids
         );

@@ -17,10 +17,9 @@ use super::field_constraints;
 #[cfg(feature = "field-inline")]
 use super::field_constraints::{
     NUM_CONSTRAINTS_PER_CYCLE as FIELD_NUM_CONSTRAINTS_PER_CYCLE,
-    NUM_EQ_CONSTRAINTS as FIELD_NUM_EQ_CONSTRAINTS, NUM_FIELD_COLUMNS,
-    NUM_PRODUCT_CONSTRAINTS as FIELD_NUM_PRODUCT_CONSTRAINTS, ROW_ADVICE_LIMB, ROW_ASSERT_EQ,
-    ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB, ROW_LOAD_ACCUMULATE_FROM_MEMORY,
-    ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
+    NUM_EQ_CONSTRAINTS as FIELD_NUM_EQ_CONSTRAINTS, NUM_FIELD_COLUMNS, ROW_ADVICE_LIMB,
+    ROW_ASSERT_EQ, ROW_ASSERT_ZERO, ROW_FADD, ROW_FINV, ROW_FMUL, ROW_FSUB,
+    ROW_LOAD_ACCUMULATE_FROM_MEMORY, ROW_LOAD_ACCUMULATE_FROM_REGISTER, ROW_LOAD_IMM,
 };
 use super::rv64::NUM_EQ_CONSTRAINTS as RV64_NUM_EQ_CONSTRAINTS;
 
@@ -59,18 +58,6 @@ pub const SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE: usize =
 pub const SPARTAN_OUTER_REMAINDER_DEGREE: usize = 3;
 pub const SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT: usize =
     SPARTAN_OUTER_ROW_COUNT - SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
-pub const SPARTAN_PRODUCT_BASE_LANES: usize = 3;
-
-#[cfg(feature = "field-inline")]
-pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = FIELD_NUM_PRODUCT_CONSTRAINTS;
-
-#[cfg(not(feature = "field-inline"))]
-pub const SPARTAN_PRODUCT_FIELD_INLINE_LANES: usize = 0;
-
-pub const SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE: usize =
-    SPARTAN_PRODUCT_BASE_LANES + SPARTAN_PRODUCT_FIELD_INLINE_LANES;
-pub const SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE: usize =
-    3 * (SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE - 1);
 
 #[cfg(not(feature = "field-inline"))]
 pub const SPARTAN_OUTER_FIRST_GROUP_ROWS: [usize; SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE] =
@@ -368,11 +355,17 @@ mod tests {
         V_FIELD_INV_PRODUCT, V_FIELD_PRODUCT, V_FIELD_RD_VALUE, V_FIELD_RS1_VALUE,
         V_FIELD_RS2_VALUE,
     };
+    #[cfg(feature = "claim-lowering")]
+    use super::rv64::NUM_PRODUCT_CONSTRAINTS;
     #[cfg(feature = "field-inline")]
     use super::rv64::{flag_column, V_CONST, V_IMM, V_RD_WRITE_VALUE, V_RS1_VALUE};
     use super::*;
     #[cfg(feature = "field-inline")]
     use crate::SparseRow;
+    #[cfg(feature = "claim-lowering")]
+    use jolt_claims::protocols::composed::geometry::{
+        SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+    };
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::{
         geometry::spartan::{
@@ -398,6 +391,14 @@ mod tests {
         assert_eq!(composed.a, rv64.a);
         assert_eq!(composed.b, rv64.b);
         assert_eq!(composed.c, rv64.c);
+        #[cfg(feature = "claim-lowering")]
+        {
+            assert_eq!(SPARTAN_PRODUCT_BASE_LANES, NUM_PRODUCT_CONSTRAINTS);
+            assert_eq!(
+                composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
+                SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
+            );
+        }
     }
 
     #[cfg(not(feature = "field-inline"))]
@@ -433,6 +434,11 @@ mod tests {
 
         assert_eq!(composed.num_constraints, NUM_CONSTRAINTS_PER_CYCLE);
         assert_eq!(composed.num_vars, NUM_VARS_PER_CYCLE);
+        assert_eq!(SPARTAN_PRODUCT_BASE_LANES, NUM_PRODUCT_CONSTRAINTS);
+        assert_eq!(
+            composed.num_constraints - SPARTAN_OUTER_ROW_COUNT,
+            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE
+        );
     }
 
     #[cfg(feature = "field-inline")]
@@ -582,7 +588,7 @@ mod tests {
     fn composed_lane_helpers_match_field_product_constraint_rows() {
         use jolt_claims::protocols::field_inline::geometry::product::{
             composed_remainder_factor_contributions, composed_uniskip_input_contribution,
-            FieldProductLaneFactors, FieldProductLaneInputs,
+            selected_product_lanes, FieldProductLaneFactors, FieldProductLaneInputs,
         };
 
         let mut z = vec![Fr::zero(); FIELD_NUM_VARS_PER_CYCLE];
@@ -612,6 +618,7 @@ mod tests {
             .map(Fr::from_u64)
             .collect::<Vec<_>>();
         let lane_rows = [ROW_FIELD_PRODUCT, ROW_FIELD_INV_PRODUCT];
+        assert_eq!(lane_rows.len(), selected_product_lanes().len());
         let weighted = |rows_of: &dyn Fn(usize) -> Fr| {
             lane_rows
                 .iter()

@@ -14,17 +14,22 @@ Implemented end-to-end on the modular stack (`jolt-prover` proves and
 The legacy prover keeps this axis disabled.
 
 The composed outer, product, and bytecode address-phase relations live in
-`jolt-verifier/src/stages/composed.rs`. Their typed inputs and outputs name
-both protocol families, and their symbolic expressions are the source for
-clear verification and BlindFold lowering. Kernels return these typed outputs
-directly through the regular batch interface.
+`jolt-claims::protocols::composed`. That sibling module owns `ComposedOpeningId`,
+`ComposedClaims`, the four `SymbolicSumcheck` implementations, and the selected
+product geometry. Its typed inputs and outputs name both protocol families;
+its symbolic expressions are the source for clear verification and BlindFold
+lowering. The verifier owns concrete evaluation, upstream stage wiring, and
+transcript handling. Kernels return the typed outputs directly through the
+regular batch interface.
 
-The `jolt-claims` protocol modules remain import-disjoint and compile in both
-feature configurations. Field operation flags belong to the common Jolt ISA:
+The `jolt-claims::protocols::{jolt, field_inline}` families remain import-disjoint
+and compile in both feature configurations. Neither imports `composed`; the
+sibling module imports both. Field operation flags belong to the common Jolt ISA:
 its Spartan input geometry, outer output claims, and bytecode read-RAF input
 claims follow the feature-gated `CircuitFlags` variants in `jolt-riscv`. Those
-three carriers contain the corresponding feature gates; the field-register
-protocol definitions and shared algebra remain unconditional.
+three carriers contain the corresponding feature gates. The sibling `composed`
+module selects the active protocol geometry; the field-register protocol
+definitions and shared algebra remain unconditional.
 
 Stage 2 absorbs and commits each field-inline product opening once. The
 field-register claim reduction uses the existing opening-alias mechanism. Its
@@ -437,8 +442,9 @@ field-register RA/WA claims that are only self-consistent under
 
 ### Stage 2 Composition
 
-The selected product uniskip geometry lives with the selected R1CS constants in
-`jolt-r1cs::constraints::jolt`:
+The selected product uniskip geometry lives in
+`jolt-claims::protocols::composed::geometry`. The R1CS layout, kernels, and
+verifier consume these shared lane counts and first-round sizing constants:
 
 ```text
 Field-inline disabled:
@@ -953,17 +959,22 @@ jolt-claims::protocols::jolt:
 jolt-claims::protocols::field_inline:
   Spartan outer opening semantics local to field-inline
 
+jolt-claims::protocols::composed:
+  selected opening carriers, symbolic relations, and product geometry
+
 jolt-r1cs::constraints::jolt:
-  selected R1CS column layout and field-inline column remapping
+  selected R1CS column layout and constraint coefficients
 
 jolt-verifier::stages::stage1:
-  selected composition of openings, public coefficients, and expected claim
+  concrete evaluation, upstream claim wiring, and transcript handling
 ```
 
-`jolt-claims` should not define a mixed selected Spartan protocol. It should
-only expose the Spartan opening order for wires local to field-inline. The
-selected verifier then appends those openings after the ordinary RV64 openings
-when field inline is enabled.
+The protocol families expose their own Spartan openings. The sibling
+`composed` module appends field-inline openings after the ordinary RV64
+openings when field inline is enabled and defines the symbolic relation over
+the combined claims. `jolt-claims` depends on neither `jolt-r1cs` nor
+`jolt-verifier`; concrete verification supplies R1CS coefficients to the
+symbolic relation.
 
 The selected R1CS layout uses the ordinary RV64 `Rs1Value`, `RdWriteValue`,
 `Imm`, and `OpFlags(CircuitFlags::Field*)` columns directly. Their openings
@@ -978,11 +989,10 @@ FieldProduct
 FieldInvProduct
 ```
 
-`jolt-verifier` should compute the selected Spartan outer expected claim using
-a helper in `jolt-r1cs::constraints::jolt`, analogous to the RV64-only helper
-but parameterized by the selected equality constraints, selected row weights,
-and selected opening columns. Without field-inline, this must reduce exactly
-to the ordinary RV64 helper.
+`jolt-verifier` evaluates the selected Spartan outer symbolic relation using
+the selected equality constraints, row weights, and opening columns from
+`jolt-r1cs::constraints::jolt`. Without field inline, the composed relation
+reduces to the ordinary RV64 relation.
 
 This stage-1 change must land for both verifier modes:
 
@@ -1007,17 +1017,17 @@ claim shape mismatch or fail to bind the extra field-inline stage-1 claims.
 
 ## `jolt-claims` Layout
 
-Field inline should be its own `jolt-claims` protocol module. Describing the
-field register-file Twist semantics is protocol logic distinct from base Jolt,
-even though `jolt-verifier` later composes the resulting claims into the same
-linear verifier flow as ordinary Jolt stages.
+Field inline has its own `jolt-claims` protocol module. Describing the field
+register-file Twist semantics is protocol logic distinct from base Jolt. The
+sibling `protocols::composed` module owns relations that combine the two
+families; the verifier places those relations in its stage flow.
 
 The module should mirror the organization of `protocols::jolt` instead of
 inventing a separate component hierarchy. The main v1 `jolt-claims` work is to
 describe the field register-file Twist memory-checking formulas, field-native
 product formula, and Spartan opening metadata local to field-inline.
-Composition with the ordinary Jolt Spartan opening list happens later in
-`jolt-verifier`.
+Composition with the ordinary Jolt Spartan opening list lives in
+`protocols::composed`, alongside the combined opening ID and claim carriers.
 
 Target layout:
 
@@ -1054,9 +1064,10 @@ field registers:
 Inside `protocols::field_inline`, `registers` means field registers. The formulas
 should use the same generic claim-expression machinery as `protocols::jolt`,
 but with field-inline-specific relation IDs, challenge IDs, opening IDs, and
-dimension types. `jolt-verifier` owns the composition step that batches these
-field-inline claims into the appropriate verifier stages alongside ordinary
-Jolt claims.
+dimension types. `protocols::composed` imports both families to define the
+combined symbolic relations. `jolt-verifier` batches the resulting claims into
+the appropriate verifier stages and implements concrete evaluation without
+owning any `SymbolicSumcheck` implementation.
 
 Initial protocol IDs:
 
@@ -1294,7 +1305,8 @@ Each step should be reviewed before continuing to the next.
    - Add field-register relation IDs, challenge IDs, opening IDs, dimensions, and
      opening helpers in a layout that mirrors `protocols::jolt`.
    - Keep the module focused on field-register Twist protocol semantics.
-     Composition with ordinary Jolt happens in `jolt-verifier`.
+     Composition with ordinary Jolt lives in the sibling
+     `jolt-claims::protocols::composed` module.
    - Review gate: API shape mirrors ordinary registers and does not expose
      non-native modulus configuration.
 
@@ -1343,7 +1355,8 @@ Each step should be reviewed before continuing to the next.
      reuses the RV64 constant, `Rs1Value`, `RdWriteValue`, and `Imm` columns for
      bridge rows, then appends columns local to field-inline after the RV64 layout.
    - Stage 1 selected Spartan outer composition: compose ordinary Jolt Spartan
-     openings with field-inline Spartan openings in `jolt-verifier`. Reused
+     openings with field-inline Spartan openings in
+     `jolt-claims::protocols::composed`. Reused
      bridge columns use ordinary Jolt openings; only columns local to
      field-inline are appended as field-inline openings.
      This slice must update both transparent verification and the ZK/BlindFold

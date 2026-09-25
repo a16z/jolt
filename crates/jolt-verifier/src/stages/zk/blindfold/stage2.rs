@@ -1,11 +1,11 @@
-#[cfg(all(test, feature = "field-inline"))]
-use crate::stages::composed::ComposedClaims;
-#[cfg(all(test, feature = "field-inline"))]
-use crate::stages::composed::FieldProductUniskipInputs;
-#[cfg(all(test, feature = "field-inline"))]
-use crate::stages::composed::ProductInputs;
 #[cfg(feature = "field-inline")]
 use crate::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
+#[cfg(all(test, feature = "field-inline"))]
+use jolt_claims::protocols::composed::ComposedClaims;
+#[cfg(all(test, feature = "field-inline"))]
+use jolt_claims::protocols::composed::FieldProductUniskipInputs;
+#[cfg(all(test, feature = "field-inline"))]
+use jolt_claims::protocols::composed::ProductInputs;
 use std::collections::BTreeSet;
 
 use super::*;
@@ -256,7 +256,7 @@ where
 /// reduction's aliased ids elided (absorbed once via their product-remainder sources).
 /// Canonical output rows in member order, excluding aliased reduction claims.
 fn stage2_output_ids_and_aliases<F: JoltField>(
-) -> (Vec<VerifierOpeningId>, Vec<OpeningAlias<VerifierOpeningId>>) {
+) -> (Vec<ComposedOpeningId>, Vec<OpeningAlias<ComposedOpeningId>>) {
     let product_order = ProductRemainderOutputClaims::<F> {
         left_instruction_input: F::zero(),
         right_instruction_input: F::zero(),
@@ -287,7 +287,7 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
         <InstructionClaimReduction<F> as ConcreteSumcheck<F>>::aliased_output_openings();
     let aliased_targets: BTreeSet<_> = alias_pairs.iter().map(|(aliased, _)| *aliased).collect();
 
-    let mut output_ids: Vec<VerifierOpeningId> = composite_ids(
+    let mut output_ids: Vec<ComposedOpeningId> = composite_ids(
         RamReadWriteOutputClaims::<F> {
             val: F::zero(),
             ra: F::zero(),
@@ -302,7 +302,7 @@ fn stage2_output_ids_and_aliases<F: JoltField>(
         instruction_outputs
             .into_iter()
             .filter(|id| !aliased_targets.contains(id))
-            .map(VerifierOpeningId::from),
+            .map(ComposedOpeningId::from),
     );
     output_ids.extend(composite_ids(
         RamRafEvaluationOutputClaims::<F> { ram_ra: F::zero() }.canonical_order(),
@@ -466,9 +466,9 @@ mod tests {
             rs2_value: fr(202),
             rd_value: fr(203),
         };
-        let resolve = |id: &VerifierOpeningId| -> Option<Fr> {
+        let resolve = |id: &ComposedOpeningId| -> Option<Fr> {
             match id {
-                VerifierOpeningId::Jolt(id) => claims
+                ComposedOpeningId::Jolt(id) => claims
                     .ram_read_write
                     .resolve_output(id)
                     .or_else(|| claims.product_remainder.resolve_output(&(*id).into()))
@@ -476,12 +476,12 @@ mod tests {
                     .or_else(|| claims.ram_raf_evaluation.resolve_output(id))
                     .or_else(|| claims.ram_output_check.resolve_output(id)),
                 #[cfg(feature = "field-inline")]
-                VerifierOpeningId::FieldInline(id) => claims
+                ComposedOpeningId::FieldInline(id) => claims
                     .field_registers_claim_reduction
                     .resolve_output(id)
                     .or_else(|| appendage.resolve_output(id)),
                 #[cfg(not(feature = "field-inline"))]
-                VerifierOpeningId::FieldInline(_) => None,
+                ComposedOpeningId::FieldInline(_) => None,
             }
         };
 
@@ -553,7 +553,7 @@ mod tests {
         let lowered_expr = selected_product_uniskip_input_expr::<Fr>(&weights).unwrap();
         let lowered = lowered_expr.evaluate(
             |id| match id {
-                VerifierOpeningId::Jolt(id) => {
+                ComposedOpeningId::Jolt(id) => {
                     if *id == product_outer_opening() {
                         inputs.product
                     } else if *id == product_should_branch_outer_opening() {
@@ -564,7 +564,7 @@ mod tests {
                         fr(0)
                     }
                 }
-                VerifierOpeningId::FieldInline(id) => {
+                ComposedOpeningId::FieldInline(id) => {
                     if *id == outer_opening(FieldInlineVirtualPolynomial::FieldProduct) {
                         field_product
                     } else if *id == outer_opening(FieldInlineVirtualPolynomial::FieldInvProduct) {
@@ -653,10 +653,10 @@ mod tests {
             selected_product_remainder_output_expr::<Fr>(&weights, tau_kernel).unwrap();
         let lowered = lowered_expr.evaluate(
             |id| match id {
-                VerifierOpeningId::Jolt(id) => outputs
+                ComposedOpeningId::Jolt(id) => outputs
                     .resolve_output(&(*id).into())
                     .unwrap_or_else(|| fr(0)),
-                VerifierOpeningId::FieldInline(id) => {
+                ComposedOpeningId::FieldInline(id) => {
                     appendage.resolve_output(id).unwrap_or_else(|| fr(0))
                 }
             },

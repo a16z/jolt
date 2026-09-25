@@ -140,7 +140,7 @@ where
         output_ids.extend(
             (0..layout.chunk_count())
                 .map(bytecode_reduction::final_bytecode_chunk_opening)
-                .map(VerifierOpeningId::from),
+                .map(ComposedOpeningId::from),
         );
     }
     if let Some(claim) = program_image_reduction_claims {

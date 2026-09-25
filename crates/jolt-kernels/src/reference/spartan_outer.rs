@@ -19,9 +19,9 @@
 //! `jolt-prover` stage recipe.
 
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
+use jolt_claims::protocols::composed::ComposedOpeningId;
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::ids::VerifierOpeningId;
+use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
 use std::collections::BTreeMap;
 
 #[cfg(all(feature = "allocative", feature = "field-inline"))]
@@ -603,11 +603,11 @@ impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
             .ordinary_ids
             .iter()
             .copied()
-            .map(VerifierOpeningId::from)
+            .map(ComposedOpeningId::from)
             .chain(
                 field_outer_output_openings()
                     .into_iter()
-                    .map(VerifierOpeningId::from),
+                    .map(ComposedOpeningId::from),
             );
         let claims: BTreeMap<_, _> = ids
             .zip(self.column_tables.iter().map(|table| table.evals()[0]))

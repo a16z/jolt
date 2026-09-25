@@ -15,7 +15,7 @@
 //! rows — both fetched inside `prepare`, never staged here.
 
 #[cfg(feature = "field-inline")]
-use jolt_verifier::stages::composed::ComposedClaims;
+use jolt_claims::protocols::composed::ComposedClaims;
 
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;

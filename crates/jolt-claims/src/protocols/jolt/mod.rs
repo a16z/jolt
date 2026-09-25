@@ -5,7 +5,7 @@
 //! Twist identities (`crate::twist`) with them; that module owns the
 //! algebra. `protocols::field_inline` is a completely separate protocol family
 //! — the two protocol modules never import each other, and their composition
-//! happens only in `jolt-verifier` (pinned by the
+//! belongs to the sibling `protocols::composed` module (pinned by the
 //! `protocol_modules_are_import_disjoint` boundary test).
 
 pub mod geometry;

@@ -117,9 +117,9 @@ where
 /// absorb/commit order.
 pub(super) fn stage1_spartan_outer_opening_ids(
     dimensions: &SpartanOuterDimensions,
-) -> Vec<VerifierOpeningId> {
+) -> Vec<ComposedOpeningId> {
     #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-    let mut opening_ids: Vec<VerifierOpeningId> = dimensions
+    let mut opening_ids: Vec<ComposedOpeningId> = dimensions
         .variables()
         .iter()
         .copied()
@@ -181,7 +181,7 @@ mod tests {
         #[cfg(feature = "field-inline")]
         assert_eq!(ids.len(), 50);
 
-        let ordinary: Vec<VerifierOpeningId> = dimensions
+        let ordinary: Vec<ComposedOpeningId> = dimensions
             .variables()
             .iter()
             .copied()
@@ -190,10 +190,10 @@ mod tests {
         assert_eq!(ids.get(..ordinary.len()), Some(ordinary.as_slice()));
         #[cfg(feature = "field-inline")]
         {
-            let appended: Vec<VerifierOpeningId> =
+            let appended: Vec<ComposedOpeningId> =
                 jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings()
                     .into_iter()
-                    .map(VerifierOpeningId::from)
+                    .map(ComposedOpeningId::from)
                     .collect();
             assert_eq!(ids.get(ordinary.len()..), Some(appended.as_slice()));
         }
@@ -226,7 +226,7 @@ mod tests {
         let factored = formula.expected_output_claim(&openings).unwrap();
 
         let publics = formula.public_coefficients();
-        let opening_values: BTreeMap<VerifierOpeningId, Fr> = opening_ids
+        let opening_values: BTreeMap<ComposedOpeningId, Fr> = opening_ids
             .iter()
             .copied()
             .zip(openings.iter().copied())
