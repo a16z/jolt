@@ -57,7 +57,12 @@ pub fn decode_instruction(
         0b0011011 => decode_op_imm_32(word)?,
         0b0110011 => decode_op(word)?,
         0b0111011 => decode_op_32(word)?,
-        0b0001111 => SourceInstructionKind::FENCE,
+        // Zifencei's FENCE.I (funct3 = 001) shares MISC-MEM with FENCE but is
+        // outside RV64IMAC, and funct3 >= 2 is reserved.
+        0b0001111 => match funct3(word) {
+            0b000 => SourceInstructionKind::FENCE,
+            _ => return invalid("invalid MISC-MEM funct3"),
+        },
         0b0101111 => decode_amo(word)?,
         0b1110011 => decode_system(word)?,
         0b0001011 | 0b0101011 => SourceInstructionKind::Inline,
@@ -982,6 +987,32 @@ mod tests {
         assert_eq!(instruction.row().operands.rd, Some(1));
         assert_eq!(instruction.row().operands.rs1, Some(2));
         assert_eq!(instruction.row().operands.rs2, Some(3));
+    }
+
+    /// MISC-MEM carries `fence` (funct3 = 000) only. Zifencei's `fence.i`
+    /// (funct3 = 001) is outside RV64IMAC and funct3 >= 2 is reserved, so
+    /// neither may enter the program image as a no-op `FENCE` row.
+    #[test]
+    fn misc_mem_decodes_only_fence() {
+        let fence = decode_instruction(0x0ff0_000f, 0x8000_0000, false, RV64IMAC_JOLT);
+        assert!(
+            matches!(
+                fence.as_ref().map(SourceInstruction::kind),
+                Ok(SourceInstructionKind::FENCE)
+            ),
+            "{fence:?}"
+        );
+
+        for funct3 in 1..8 {
+            let word = (funct3 << 12) | 0x0000_000f;
+            assert!(
+                matches!(
+                    decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT),
+                    Err(ProgramError::MalformedImage("invalid MISC-MEM funct3"))
+                ),
+                "MISC-MEM funct3={funct3:03b} must be rejected"
+            );
+        }
     }
 
     #[cfg(not(feature = "field-inline"))]
