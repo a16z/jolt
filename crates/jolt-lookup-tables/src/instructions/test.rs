@@ -6,39 +6,41 @@ use std::fmt::Debug;
 use jolt_riscv::{Flags, InstructionFlags, JoltCycle, JoltInstructionRowData};
 use rand::prelude::*;
 use tracer::emulator::{cpu::Cpu, terminal::DummyTerminal};
-use tracer::instruction::format::{InstructionFormat, InstructionRegisterState};
-use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVTrace};
+use tracer::instruction::{jal::JAL, jalr::JALR, Cycle, RISCVCycle, RISCVInstruction, RISCVTrace};
 
 use crate::{InstructionLookupTable, LookupQuery, XLEN};
 
+/// Generate a cycle together with the register state needed to replay it.
 pub trait RandomLookupCycle: JoltCycle {
     fn random(rng: &mut StdRng) -> Self;
+    fn initialize_cpu(&self, cpu: &mut Cpu);
 }
 
 impl<T> RandomLookupCycle for RISCVCycle<T>
 where
-    T: tracer::instruction::RISCVInstruction + JoltInstructionRowData,
+    T: RISCVInstruction + JoltInstructionRowData,
 {
     fn random(rng: &mut StdRng) -> Self {
-        let instruction = T::random(rng);
-        let concrete: tracer::instruction::Instruction = instruction.into();
-        let source_instruction = concrete.source_instruction();
-        let register_state =
-            <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
-                rng,
-                &source_instruction.row().operands,
-            );
-        Self {
-            instruction,
-            register_state,
-            ram_access: T::RAMAccess::default(),
-        }
+        T::random_cycle(rng)
     }
-}
 
-pub fn random_cycles<C: RandomLookupCycle>() -> impl Iterator<Item = C> {
-    let mut rng = StdRng::seed_from_u64(12345);
-    (0..10_000).map(move |_| C::random(&mut rng))
+    #[expect(
+        clippy::unwrap_used,
+        reason = "register values require corresponding operands"
+    )]
+    fn initialize_cpu(&self, cpu: &mut Cpu) {
+        let operands = self.instruction.jolt_instruction_row().operands;
+        if let Some((pre, _)) = self.rd_vals() {
+            cpu.write_register(operands.rd.unwrap() as usize, pre as i64);
+        }
+        if let Some(value) = self.rs1_val() {
+            cpu.write_register(operands.rs1.unwrap() as usize, value as i64);
+        }
+        if let Some(value) = self.rs2_val() {
+            cpu.write_register(operands.rs2.unwrap() as usize, value as i64);
+        }
+        T::initialize_test_cpu(self, cpu);
+    }
 }
 
 /// Internal helper for [`materialize_entry_test!`]. The macro picks up the
@@ -50,13 +52,14 @@ pub fn random_cycles<C: RandomLookupCycle>() -> impl Iterator<Item = C> {
 pub fn materialize_entry_test_fn<T, C, I>(
     cycle_wrapper: impl Fn(C) -> T,
     instr_wrapper: impl Fn(C::Instruction) -> I,
-    cycles: impl IntoIterator<Item = C>,
 ) where
     T: LookupQuery<XLEN> + Debug,
-    C: JoltCycle,
+    C: RandomLookupCycle,
     I: InstructionLookupTable<XLEN>,
 {
-    for raw in cycles {
+    let mut rng = StdRng::seed_from_u64(12345);
+    for _ in 0..10_000 {
+        let raw: C = RandomLookupCycle::random(&mut rng);
         let table = instr_wrapper(raw.instruction()).lookup_table().unwrap();
         let cycle: T = cycle_wrapper(raw);
         assert_eq!(
@@ -86,13 +89,14 @@ pub fn materialize_entry_test_fn<T, C, I>(
 pub fn instruction_inputs_match_constraint_fn<C, T, I>(
     cycle_wrapper: impl Fn(C) -> T,
     instr_wrapper: impl Fn(C::Instruction) -> I,
-    cycles: impl IntoIterator<Item = C>,
 ) where
-    C: JoltCycle,
+    C: RandomLookupCycle,
     T: LookupQuery<XLEN> + Debug,
     I: JoltInstructionRowData + Flags,
 {
-    for raw in cycles {
+    let mut rng = StdRng::seed_from_u64(12345);
+    for _ in 0..10_000 {
+        let raw: C = RandomLookupCycle::random(&mut rng);
         let instr = raw.instruction();
         let normalized = instr.jolt_instruction_row();
         let unexpanded_pc = normalized.address as u64;
@@ -139,37 +143,27 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
 /// `C: Copy` lets us print the failing cycle in the assert message after it
 /// has been moved into the wrapper.
 #[doc(hidden)]
-#[expect(clippy::unwrap_used)]
 #[expect(
     clippy::panic,
     reason = "deliberate guard against silent passes; see body"
 )]
-pub fn lookup_output_matches_trace_test_fn<C, T>(
-    cycle_wrapper: impl Fn(C) -> T,
-    cycles: impl IntoIterator<Item = C>,
-    initialize_cpu: impl Fn(&C, &mut Cpu),
-) where
-    C: JoltCycle + Copy + Debug,
+pub fn lookup_output_matches_trace_test_fn<C, T>(cycle_wrapper: impl Fn(C) -> T)
+where
+    C: RandomLookupCycle + Copy + Debug,
     C::Instruction: RISCVTrace + 'static,
     RISCVCycle<C::Instruction>: Into<Cycle>,
     T: LookupQuery<XLEN>,
 {
-    for raw in cycles {
+    let mut rng = StdRng::seed_from_u64(12345);
+    for _ in 0..10_000 {
+        let raw: C = RandomLookupCycle::random(&mut rng);
         let instr = raw.instruction();
         let normalized = instr.jolt_instruction_row();
-        let rs1_idx = normalized.operands.rs1;
-        let rs2_idx = normalized.operands.rs2;
         let rd_idx = normalized.operands.rd;
 
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
-        if let Some(rs1_val) = raw.rs1_val() {
-            cpu.write_register(rs1_idx.unwrap() as usize, rs1_val as i64);
-        }
-        if let Some(rs2_val) = raw.rs2_val() {
-            cpu.write_register(rs2_idx.unwrap() as usize, rs2_val as i64);
-        }
+        raw.initialize_cpu(&mut cpu);
 
-        initialize_cpu(&raw, &mut cpu);
         instr.trace(&mut cpu, None);
 
         let wrapped: T = cycle_wrapper(raw);
@@ -209,8 +203,6 @@ pub fn lookup_output_matches_trace_test_fn<C, T>(
 /// batch of random cycles. Pass the Jolt instruction newtype and the tracer
 /// instruction path; the macro builds the `Foo<RISCVCycle<TracerType>>` /
 /// `RISCVCycle<TracerType>` type pair.
-/// Pass `cycles = iterator` to supply instruction-specific fixtures instead
-/// of the default seeded random cycles.
 ///
 /// ```ignore
 /// materialize_entry_test!(Add, tracer::instruction::add::ADD);
@@ -218,25 +210,17 @@ pub fn lookup_output_matches_trace_test_fn<C, T>(
 #[macro_export]
 macro_rules! materialize_entry_test {
     ($jolt:ident, $tracer:path $(,)?) => {
-        $crate::materialize_entry_test!(
-            $jolt,
-            $tracer,
-            cycles = $crate::instructions::test::random_cycles()
-        )
-    };
-    ($jolt:ident, $tracer:path, cycles = $cycles:expr $(,)?) => {
         $crate::instructions::test::materialize_entry_test_fn::<
             $jolt<tracer::instruction::RISCVCycle<$tracer>>,
             tracer::instruction::RISCVCycle<$tracer>,
             $jolt<$tracer>,
-        >($jolt, $jolt, $cycles)
+        >($jolt, $jolt)
     };
 }
 
 /// Fuzz-check that an instruction's `LookupQuery::to_instruction_inputs`
 /// matches the instruction-input R1CS constraint (see
 /// [`instruction_inputs_match_constraint_fn`] for the formula).
-/// Pass `cycles = iterator` to supply instruction-specific fixtures.
 ///
 /// ```ignore
 /// instruction_inputs_match_constraint_test!(Add, tracer::instruction::add::ADD);
@@ -244,18 +228,11 @@ macro_rules! materialize_entry_test {
 #[macro_export]
 macro_rules! instruction_inputs_match_constraint_test {
     ($jolt:ident, $tracer:path $(,)?) => {
-        $crate::instruction_inputs_match_constraint_test!(
-            $jolt,
-            $tracer,
-            cycles = $crate::instructions::test::random_cycles()
-        )
-    };
-    ($jolt:ident, $tracer:path, cycles = $cycles:expr $(,)?) => {
         $crate::instructions::test::instruction_inputs_match_constraint_fn::<
             tracer::instruction::RISCVCycle<$tracer>,
             $jolt<tracer::instruction::RISCVCycle<$tracer>>,
             $jolt<$tracer>,
-        >($jolt, $jolt, $cycles)
+        >($jolt, $jolt)
     };
 }
 
@@ -264,9 +241,6 @@ macro_rules! instruction_inputs_match_constraint_test {
 /// executing the instruction. Pass the Jolt instruction newtype and the
 /// tracer instruction path; the macro builds the
 /// `Foo<RISCVCycle<TracerType>>` / `RISCVCycle<TracerType>` type pair.
-/// Pass `cycles = iterator, initialize = callback` for custom fixtures and
-/// CPU setup. The callback receives `(&cycle, &mut cpu)` after ordinary
-/// source registers are initialized and before the instruction executes.
 ///
 /// ```ignore
 /// lookup_output_matches_trace_test!(Add, tracer::instruction::add::ADD);
@@ -274,17 +248,9 @@ macro_rules! instruction_inputs_match_constraint_test {
 #[macro_export]
 macro_rules! lookup_output_matches_trace_test {
     ($jolt:ident, $tracer:path $(,)?) => {
-        $crate::lookup_output_matches_trace_test!(
-            $jolt,
-            $tracer,
-            cycles = $crate::instructions::test::random_cycles(),
-            initialize = |_, _| {}
-        )
-    };
-    ($jolt:ident, $tracer:path, cycles = $cycles:expr, initialize = $initialize:expr $(,)?) => {
         $crate::instructions::test::lookup_output_matches_trace_test_fn::<
             tracer::instruction::RISCVCycle<$tracer>,
             $jolt<tracer::instruction::RISCVCycle<$tracer>>,
-        >($jolt, $cycles, $initialize)
+        >($jolt)
     };
 }

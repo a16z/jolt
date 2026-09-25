@@ -184,6 +184,8 @@ use format::{InstructionFormat, InstructionRegisterState, NormalizedOperands};
 pub use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{JoltInstructionKind, SourceInlineKey, SourceInstructionKind, RV64IMAC_JOLT};
 pub use jolt_riscv::{SourceInstruction, SourceInstructionRow};
+#[cfg(any(feature = "test-utils", test))]
+use rand::rngs::StdRng;
 
 pub mod format;
 
@@ -439,10 +441,31 @@ pub trait RISCVInstruction: std::fmt::Debug + Sized + Copy + Into<Instruction> {
     fn source_kind(&self) -> SourceInstructionKind;
     fn new(word: u32, address: u64, validate: bool, compressed: bool) -> Self;
     #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng) -> Self {
+    fn random(rng: &mut StdRng) -> Self {
         use rand::RngCore;
         Self::new(rng.next_u32(), rng.next_u64(), false, false)
     }
+
+    #[cfg(any(feature = "test-utils", test))]
+    fn random_cycle(rng: &mut StdRng) -> RISCVCycle<Self> {
+        let instruction = Self::random(rng);
+        let concrete: Instruction = instruction.into();
+        let source_instruction = concrete.source_instruction();
+        let register_state =
+            <<Self::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
+                rng,
+                &source_instruction.row().operands,
+            );
+        RISCVCycle {
+            instruction,
+            register_state,
+            ram_access: Self::RAMAccess::default(),
+        }
+    }
+
+    /// Restore instruction-specific fixture state before the shared test harness executes it.
+    #[cfg(any(feature = "test-utils", test))]
+    fn initialize_test_cpu(_cycle: &RISCVCycle<Self>, _cpu: &mut Cpu) {}
 
     fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess);
 
@@ -640,7 +663,7 @@ macro_rules! define_rv64imac_enums {
             /// Used by fuzz tests that need to iterate all
             /// instruction variants via `Cycle::iter()`.
             #[cfg(any(feature = "test-utils", test))]
-            pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
+            pub fn random(&self, rng: &mut StdRng) -> Self {
                 match self {
                     Cycle::NoOp => Cycle::NoOp,
                     $(
@@ -2002,20 +2025,8 @@ pub struct RISCVCycle<T: RISCVInstruction> {
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
     #[cfg(any(feature = "test-utils", test))]
-    pub fn random(&self, rng: &mut rand::rngs::StdRng) -> Self {
-        let instruction = T::random(rng);
-        let concrete: Instruction = instruction.into();
-        let source_instruction = concrete.source_instruction();
-        let register_state =
-            <<T::Format as InstructionFormat>::RegisterState as InstructionRegisterState>::random(
-                rng,
-                &source_instruction.row().operands,
-            );
-        Self {
-            instruction,
-            ram_access: Default::default(),
-            register_state,
-        }
+    pub fn random(&self, rng: &mut StdRng) -> Self {
+        T::random_cycle(rng)
     }
 }
 

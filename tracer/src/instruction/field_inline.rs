@@ -15,11 +15,15 @@ use jolt_program::field_inline::{
 use jolt_riscv::{FieldInlineOp, SourceInstructionKind};
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(feature = "test-utils", test))]
+use super::RISCVCycle;
 use super::{
     format::{format_field_inline::FormatFieldInline, InstructionFormat},
     RAMAccess, RAMRead, RISCVInstruction, RISCVTrace,
 };
 use crate::emulator::cpu::Cpu;
+#[cfg(any(feature = "test-utils", test))]
+use rand::rngs::StdRng;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FieldInlineCycleData {
@@ -35,7 +39,7 @@ impl From<FieldInlineCycleData> for RAMAccess {
 }
 
 macro_rules! field_instruction {
-    ($name:ident, $op:expr, $source_kind:expr) => {
+    ($name:ident, $op:expr, $source_kind:expr $(, { $($extra:item)* })?) => {
         #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
         pub struct $name {
             pub address: u64,
@@ -73,6 +77,8 @@ macro_rules! field_instruction {
             fn execute(&self, cpu: &mut Cpu, ram_access: &mut Self::RAMAccess) {
                 *ram_access = execute_field_inline($op, self.operands, cpu);
             }
+
+            $($($extra)*)?
         }
 
         impl RISCVTrace for $name {}
@@ -126,7 +132,18 @@ field_instruction!(
 field_instruction!(
     FIELD_STORE_TO_REGISTER,
     FieldInlineOp::StoreToRegister,
-    SourceInstructionKind::FIELD_STORE_TO_REGISTER
+    SourceInstructionKind::FIELD_STORE_TO_REGISTER,
+    {
+        #[cfg(any(feature = "test-utils", test))]
+        fn random_cycle(rng: &mut StdRng) -> RISCVCycle<Self> {
+            test_support::random_cycle(rng)
+        }
+
+        #[cfg(any(feature = "test-utils", test))]
+        fn initialize_test_cpu(cycle: &RISCVCycle<Self>, cpu: &mut Cpu) {
+            test_support::initialize_cpu(cycle, cpu);
+        }
+    }
 );
 field_instruction!(
     FIELD_LOAD_IMM,
@@ -141,7 +158,18 @@ field_instruction!(
 field_instruction!(
     FIELD_ADVICE_LIMB,
     FieldInlineOp::AdviceLimb,
-    SourceInstructionKind::FIELD_ADVICE_LIMB
+    SourceInstructionKind::FIELD_ADVICE_LIMB,
+    {
+        #[cfg(any(feature = "test-utils", test))]
+        fn random_cycle(rng: &mut StdRng) -> RISCVCycle<Self> {
+            test_support::random_cycle(rng)
+        }
+
+        #[cfg(any(feature = "test-utils", test))]
+        fn initialize_test_cpu(cycle: &RISCVCycle<Self>, cpu: &mut Cpu) {
+            test_support::initialize_cpu(cycle, cpu);
+        }
+    }
 );
 
 // The proof field the tracer executes over — the single selection point:
@@ -534,11 +562,176 @@ fn encode_field<F: CanonicalEncoding>(value: F) -> FieldEncodedValue {
     encoded
 }
 
-#[cfg(test)]
-mod tests {
-    use jolt_field::{CanonicalBytes, Ring};
+#[cfg(any(feature = "test-utils", test))]
+mod test_support {
+    use common::constants::RISCV_REGISTER_COUNT;
+    use jolt_field::Ring;
+    use jolt_riscv::FIELD_REGISTER_COUNT;
+    use rand::{Rng, RngCore};
 
     use super::*;
+    use crate::instruction::format::format_field_inline::RegisterStateFormatFieldInline;
+
+    pub(super) fn random_cycle<I>(rng: &mut StdRng) -> RISCVCycle<I>
+    where
+        I: RISCVInstruction<Format = FormatFieldInline, RAMAccess = FieldInlineCycleData>,
+    {
+        let op = FieldInlineOp::from_word(I::MATCH).expect("field-inline instruction");
+        let x_register = rng.gen_range(1..RISCV_REGISTER_COUNT);
+        let field_register = rng.gen_range(0..FIELD_REGISTER_COUNT);
+        let source = if op == FieldInlineOp::AdviceLimb {
+            ProofField::random(rng)
+        } else {
+            ProofField::from_u64(rng.next_u64())
+        };
+        let field_value = encode_field(source);
+        let mut low = [0u8; 8];
+        low.copy_from_slice(&field_value.bytes_le[..8]);
+        let x_value = u64::from_le_bytes(low);
+        let field_write = (op == FieldInlineOp::AdviceLimb).then(|| {
+            let register = rng.gen_range(0..FIELD_REGISTER_COUNT);
+            let pre_value = if register == field_register {
+                field_value
+            } else {
+                encode_field(ProofField::random(rng))
+            };
+            let mut post_value = FieldEncodedValue::zero();
+            post_value.bytes_le[..FieldEncodedValue::BYTE_LEN as usize - 8]
+                .copy_from_slice(&field_value.bytes_le[8..]);
+            FieldRegisterWrite {
+                register,
+                pre_value,
+                post_value,
+            }
+        });
+        let word = op.instruction_match()
+            | (u32::from(x_register) << 7)
+            | (u32::from(field_register) << 15)
+            | field_write.map_or(0, |write| u32::from(write.register) << 20);
+        RISCVCycle {
+            instruction: I::new(word, rng.next_u64() & !3, false, false),
+            register_state: RegisterStateFormatFieldInline {
+                rs1: None,
+                rd_pre: Some(!x_value),
+                rd_post: Some(x_value),
+            },
+            ram_access: FieldInlineCycleData {
+                trace: Some(FieldInlineTraceData {
+                    op: Some(op),
+                    rs1: Some(FieldRegisterRead {
+                        register: field_register,
+                        value: field_value,
+                    }),
+                    rd: field_write,
+                    bridge: Some(FieldInlineBridge::StoreToRegister {
+                        field_register,
+                        field_value,
+                        x_register,
+                        x_value,
+                    }),
+                    ..Default::default()
+                }),
+                ram_read: None,
+            },
+        }
+    }
+
+    pub(super) fn initialize_cpu<I>(cycle: &RISCVCycle<I>, cpu: &mut Cpu)
+    where
+        I: RISCVInstruction<Format = FormatFieldInline, RAMAccess = FieldInlineCycleData>,
+    {
+        let trace = cycle
+            .ram_access
+            .trace
+            .expect("field lookup fixture payload");
+        if let Some(write) = trace.rd {
+            cpu.field_registers.write(write.register, write.pre_value);
+        }
+        for read in [trace.rs1, trace.rs2].into_iter().flatten() {
+            cpu.field_registers.write(read.register, read.value);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use common::constants::RISCV_REGISTER_COUNT;
+    use jolt_field::{CanonicalBytes, Ring};
+    use jolt_riscv::FIELD_REGISTER_COUNT;
+    use rand::SeedableRng;
+
+    use super::*;
+    use crate::emulator::terminal::DummyTerminal;
+    use crate::instruction::Cycle;
+
+    fn assert_random_lookup_cycles<I>(op: FieldInlineOp)
+    where
+        I: RISCVTrace<Format = FormatFieldInline, RAMAccess = FieldInlineCycleData>,
+        RISCVCycle<I>: Into<Cycle>,
+    {
+        let mut rng = StdRng::seed_from_u64(12345);
+        let mut saw_alias = false;
+        let mut saw_wide_source = false;
+        for _ in 0..512 {
+            let cycle = I::random_cycle(&mut rng);
+            let operands = cycle.instruction.operands();
+            assert_eq!(operands.op, Some(op));
+            assert!((1..RISCV_REGISTER_COUNT).contains(&operands.rd.unwrap()));
+            let trace = cycle.ram_access.trace.unwrap();
+            let source = trace.rs1.unwrap();
+            assert_eq!(operands.rs1, Some(source.register));
+            assert!(source.register < FIELD_REGISTER_COUNT);
+            let source_value =
+                ProofField::from_bytes_le_checked(&source.value.bytes_le[..ProofField::NUM_BYTES])
+                    .unwrap();
+            assert!(source.value.bytes_le[ProofField::NUM_BYTES..]
+                .iter()
+                .all(|byte| *byte == 0));
+            saw_wide_source |= source_value.to_u64_checked().is_none();
+            if let Some(write) = trace.rd {
+                assert_eq!(operands.rs2, Some(write.register));
+                assert!(write.register < FIELD_REGISTER_COUNT);
+                if write.register == source.register {
+                    saw_alias = true;
+                    assert_eq!(write.pre_value, source.value);
+                }
+            }
+
+            let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+            cpu.write_register(
+                usize::from(operands.rd.unwrap()),
+                cycle.register_state.rd_pre.unwrap() as i64,
+            );
+            I::initialize_test_cpu(&cycle, &mut cpu);
+            assert_eq!(cpu.field_registers.read(source.register), source.value);
+            if let Some(write) = trace.rd {
+                assert_eq!(cpu.field_registers.read(write.register), write.pre_value);
+            }
+            let mut replay = Vec::new();
+            cycle.instruction.trace(&mut cpu, Some(&mut replay));
+            assert_eq!(replay.len(), 1);
+            let expected: Cycle = cycle.into();
+            assert_eq!(replay[0], expected);
+        }
+        if op == FieldInlineOp::AdviceLimb {
+            assert!(
+                saw_alias,
+                "advice fixtures must exercise source/quotient aliasing"
+            );
+            assert!(
+                saw_wide_source,
+                "advice fixtures must exercise full-width sources"
+            );
+        } else {
+            assert!(!saw_wide_source, "store fixtures must fit an x-register");
+        }
+    }
+
+    #[test]
+    fn randomized_lookup_cycles_have_canonical_replayable_field_state() {
+        assert_random_lookup_cycles::<FIELD_STORE_TO_REGISTER>(FieldInlineOp::StoreToRegister);
+        assert_random_lookup_cycles::<FIELD_ADVICE_LIMB>(FieldInlineOp::AdviceLimb);
+    }
 
     /// Encode/decode roundtrip over the build's ProofField, including values
     /// above 2^64 (multi-limb) and the buffer-width contract a narrower field
