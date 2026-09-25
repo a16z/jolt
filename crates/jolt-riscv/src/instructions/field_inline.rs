@@ -42,9 +42,8 @@ jolt_instruction!(
 );
 
 jolt_instruction!(
-    /// Load a 64-bit word from memory and fold it in: field register
-    /// `rs2` becomes `2^64 · rs2 + word`, the word again an `LD` into the
-    /// scratch x-register `rd`.
+    /// Load a 64-bit word into integer register `rd` using the ordinary RV64
+    /// load constraints, and update field register `rs2` to `2^64 · rs2 + word`.
     FieldLoadAccumulateFromMemory,
     circuit flags: [Load],
     instruction flags: []
@@ -53,7 +52,8 @@ jolt_instruction!(
 jolt_instruction!(
     /// Supply a range-checked advice limb in x-register `rd`, with
     /// `field_rs1 = rd + 2^64 · field_rs2` in the proof field. Canonical integer
-    /// readout requires a guest range check after the final store.
+    /// readout requires a zero assertion on the final quotient and an integer
+    /// check that the reconstructed value is below the field modulus.
     FieldAdviceLimb,
     circuit flags: [Advice, WriteLookupOutputToRD],
     instruction flags: []

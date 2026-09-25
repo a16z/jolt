@@ -220,8 +220,8 @@ impl FieldInlineBytecodeRow {
         let Some(shape) = field_inline_operand_shape(row.instruction_kind) else {
             return Ok(Self::default());
         };
-        // The field destination rides the `rs2` slot when the `rd` slot names
-        // a scratch x-register (the memory-sourced loads).
+        // Memory loads and limb advice use `rd` for the integer destination
+        // and `rs2` for the field destination.
         let (field_rd_slot, field_rd_name) = if shape.field_rd_in_rs2_slot {
             (row.operands.rs2, "rs2")
         } else {
@@ -244,23 +244,19 @@ impl FieldInlineBytecodeRow {
         } else {
             None
         };
-        let write_register = if matches!(
-            shape.op,
-            FieldInlineOp::LoadAccumulateFromMemory | FieldInlineOp::AdviceLimb
-        ) {
-            let register = x_register(row.operands.rd, "rd")?;
-            if register == 0 {
-                return Err(FieldInlineMetadataError::ZeroWriteRegister);
-            }
-            Some(register)
-        } else {
-            None
-        };
         let bridge_x_register = match shape.op {
-            FieldInlineOp::LoadAccumulateFromRegister | FieldInlineOp::LoadAccumulateFromMemory => {
-                Some(x_register(row.operands.rs1, "rs1")?)
+            FieldInlineOp::LoadAccumulateFromRegister => Some(x_register(row.operands.rs1, "rs1")?),
+            FieldInlineOp::LoadAccumulateFromMemory | FieldInlineOp::AdviceLimb => {
+                let write_register = x_register(row.operands.rd, "rd")?;
+                if write_register == 0 {
+                    return Err(FieldInlineMetadataError::ZeroWriteRegister);
+                }
+                Some(if shape.op == FieldInlineOp::LoadAccumulateFromMemory {
+                    x_register(row.operands.rs1, "rs1")?
+                } else {
+                    write_register
+                })
             }
-            FieldInlineOp::AdviceLimb => write_register,
             FieldInlineOp::Add
             | FieldInlineOp::Sub
             | FieldInlineOp::Mul
@@ -364,8 +360,9 @@ pub enum FieldInlineBridge {
         x_register: u8,
         x_value: u64,
     },
-    /// A memory-sourced load: the word read at `x_base + offset` was written
-    /// to the scratch `x_register` and folded into the field destination.
+    /// The word at `x[x_base] + offset` is written to integer register
+    /// `x_register` and accumulated into the field destination. The integer
+    /// write lets the ordinary RV64 load constraints bind the memory value.
     LoadAccumulateFromMemory {
         x_base: u8,
         x_register: u8,

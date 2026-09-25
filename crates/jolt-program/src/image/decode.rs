@@ -1038,7 +1038,10 @@ mod tests {
     fn assert_zero_decodes_only_a_field_source_and_rejects_retired_store() {
         let word = field_r_word(2, 6, 0, 3, 0);
         let instruction =
-            decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE).unwrap();
+            match decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE) {
+                Ok(instruction) => instruction,
+                Err(error) => panic!("field-inline zero assertion decode failed: {error:?}"),
+            };
         assert_eq!(instruction.kind(), SourceInstructionKind::FIELD_ASSERT_ZERO);
         assert_eq!(
             instruction.row().operands,
