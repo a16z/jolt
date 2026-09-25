@@ -548,8 +548,7 @@ where
     // field-inline committed payload is unconditionally required (absence means a producer
     // without field-inline semantics — reject before any stage logic). On the packed axis the
     // field-increment limb-group slot is equally unconditional: presence is never claim-gated
-    // (an all-zero group still commits), and the stage-8 resolve re-checks it against the
-    // schedule.
+    // (an all-zero group still commits), and stage 8 requires both the commitment and claims.
     #[cfg(all(feature = "field-inline", not(feature = "akita")))]
     if proof.commitments.field_inline.is_none() {
         return Err(VerifierError::MissingProofPayload {

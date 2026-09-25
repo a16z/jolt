@@ -190,9 +190,9 @@ unchanged. The dense-group design:
   claim. No reconstruction sumcheck member, no booleanity legs.
 - Presence is never claim-gated: on a packed build with field-inline enabled,
   the group is ALWAYS present (all-zero content is legal — dense schedules are keyed by
-  `(num_vars, num_polys)` shape, never content), enforced fail-closed both
-  ways between `PrecommittedSchedule.field_inc_limbs` (always scheduled) and
-  the proof's commitment/claims slots.
+  `(num_vars, num_polys)` shape, never content). Proof validation requires the
+  limb commitment, and stage 8 directly requires both the commitment and limb
+  claims, returning `MissingProofPayload` if either is absent.
 - Provisioning: `PrecommittedScheduleParams` carries the field-inline limb
   arity line (`jolt-akita` `FieldIncLimbScheduleParams`, law-derived data
   pinned to the jolt-claims packing law by the registry's field-inline

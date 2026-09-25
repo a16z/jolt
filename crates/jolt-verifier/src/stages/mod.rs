@@ -16,9 +16,6 @@ use jolt_field::JoltField;
 use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 
-#[cfg(all(feature = "akita", feature = "field-inline"))]
-use stage8::field_inline_packed::FieldIncLimbsScheduled;
-
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
@@ -135,12 +132,6 @@ pub struct PrecommittedSchedule {
     pub untrusted_advice: Option<AdviceClaimReductionLayout>,
     pub bytecode: Option<BytecodeClaimReductionLayout>,
     pub program_image: Option<ProgramImageClaimReductionLayout>,
-    /// The field-increment limb group's stage-8 presence source, mirroring the advice fields'
-    /// role for the packed resolve. Always `Some` on a packed build with field-inline enabled:
-    /// a prover with field-inline enabled commits the group on every proof, so absence is
-    /// never scheduled (the resolve rejects proof slots that disagree either way).
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    pub field_inc_limbs: Option<FieldIncLimbsScheduled>,
 }
 
 impl PrecommittedSchedule {
@@ -217,8 +208,6 @@ impl PrecommittedSchedule {
             untrusted_advice: layout(untrusted_max_advice_bytes)?,
             bytecode,
             program_image,
-            #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_limbs: Some(FieldIncLimbsScheduled),
         })
     }
 

@@ -267,8 +267,6 @@ mod field_inline_zk {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    #[cfg(feature = "akita")]
-    use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled;
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_verifier::stages::PrecommittedSchedule;
     use jolt_verifier::CheckedInputs;
@@ -345,8 +343,6 @@ mod field_inline_zk {
                 untrusted_advice: None,
                 bytecode: None,
                 program_image: None,
-                #[cfg(feature = "akita")]
-                field_inc_limbs: Some(FieldIncLimbsScheduled),
             },
         };
         let mut transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");

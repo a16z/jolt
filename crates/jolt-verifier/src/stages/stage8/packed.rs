@@ -316,7 +316,6 @@ where
     {
         use super::field_inline_packed;
         let (commitment, claims) = field_inline_packed::resolve_proof_slots(
-            schedule,
             field_inc_limbs_commitment,
             field_inc_limbs_claims,
         )?;

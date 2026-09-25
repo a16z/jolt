@@ -36,8 +36,6 @@ use jolt_riscv::{
     NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
 };
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
-#[cfg(feature = "akita")]
-use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled;
 use jolt_verifier::stages::PrecommittedSchedule;
 use jolt_verifier::CheckedInputs;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -399,8 +397,6 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
             untrusted_advice: None,
             bytecode: None,
             program_image: None,
-            #[cfg(feature = "akita")]
-            field_inc_limbs: Some(FieldIncLimbsScheduled),
         },
     }
 }

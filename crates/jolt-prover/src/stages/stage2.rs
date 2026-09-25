@@ -419,8 +419,6 @@ mod field_inline_zk {
     use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
     use jolt_verifier::stages::stage1::outputs::Stage1BatchSumchecks;
     use jolt_verifier::stages::stage2::field_inline as stage2_field_inline;
-    #[cfg(feature = "akita")]
-    use jolt_verifier::stages::stage8::field_inline_packed::FieldIncLimbsScheduled;
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_verifier::stages::PrecommittedSchedule;
     use jolt_verifier::CheckedInputs;
@@ -491,8 +489,6 @@ mod field_inline_zk {
                 untrusted_advice: None,
                 bytecode: None,
                 program_image: None,
-                #[cfg(feature = "akita")]
-                field_inc_limbs: Some(FieldIncLimbsScheduled),
             },
         };
         let mut transcript = Blake2bTranscript::new(b"stage2-field-inline-zk");

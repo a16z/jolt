@@ -7,8 +7,7 @@
 //!
 //! The group is ALWAYS present on a packed build with field-inline enabled (all-zero content
 //! is legal — dense schedules are keyed by shape, never content), so presence is not
-//! claim-gated: the schedule marker, the proof's commitment slot, and the proof's claims slot
-//! must all agree, fail-closed both ways.
+//! claim-gated: both the proof's commitment and limb claims are required.
 
 use jolt_claims::protocols::field_inline::lattice::{
     field_inc_limb_count, field_inc_limbs_precommitted_role, recompose_limbs,
@@ -20,7 +19,6 @@ use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
 
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
-use crate::stages::PrecommittedSchedule;
 use crate::VerifierError;
 
 fn batch_failed(reason: impl ToString) -> VerifierError {
@@ -28,13 +26,6 @@ fn batch_failed(reason: impl ToString) -> VerifierError {
         reason: reason.to_string(),
     }
 }
-
-/// The field-increment limb group's schedule marker: carried by [`PrecommittedSchedule`],
-/// always present on a packed build with field-inline enabled. The group's geometry is fully
-/// derived from `log_T` and the proof field ([`limb_plan`]), so the marker carries no data of
-/// its own.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FieldIncLimbsScheduled;
 
 /// The proof-carried field-increment limb-group evaluations at the stage-6b reduced
 /// `FieldRdInc` point, in little-endian limb order (fp128: two). The recomposition check and
@@ -56,30 +47,18 @@ pub fn limb_plan<F: JoltField>(log_t: usize) -> Result<FieldIncLimbPackingPlan, 
     .map_err(batch_failed)
 }
 
-/// Resolve the field-increment limb group's proof slots against the schedule marker,
-/// fail-closed both ways. Every arm except full agreement rejects: the marker is constructed
-/// on every field-inline schedule, so a missing marker means broken input validation, not a
-/// legal proof without field-inline.
+/// Requires the limb commitment and claims on every packed field-inline proof.
 pub fn resolve_proof_slots<'a, F, C>(
-    schedule: &PrecommittedSchedule,
     commitment: Option<&'a C>,
     claims: Option<&'a FieldIncLimbClaims<F>>,
 ) -> Result<(&'a C, &'a FieldIncLimbClaims<F>), VerifierError> {
-    match (schedule.field_inc_limbs, commitment, claims) {
-        (Some(FieldIncLimbsScheduled), Some(commitment), Some(claims)) => Ok((commitment, claims)),
-        (Some(FieldIncLimbsScheduled), None, _) => Err(VerifierError::MissingProofPayload {
-            field: "field_inc_limbs_commitment",
-        }),
-        (Some(FieldIncLimbsScheduled), Some(_), None) => Err(VerifierError::MissingProofPayload {
-            field: "claims.field_inc_limbs",
-        }),
-        (None, Some(_), _) | (None, _, Some(_)) => Err(batch_failed(
-            "field-increment limb payload supplied without a scheduled limb group",
-        )),
-        (None, None, None) => Err(batch_failed(
-            "a packed field-inline schedule must carry the field-increment limb group",
-        )),
-    }
+    let commitment = commitment.ok_or(VerifierError::MissingProofPayload {
+        field: "field_inc_limbs_commitment",
+    })?;
+    let claims = claims.ok_or(VerifierError::MissingProofPayload {
+        field: "claims.field_inc_limbs",
+    })?;
+    Ok((commitment, claims))
 }
 
 /// The stage-6b reduced `FieldRdInc` claim `(value, point)` the limb group
@@ -216,33 +195,28 @@ mod tests {
     }
 
     #[test]
-    fn resolve_rejects_every_presence_disagreement() {
-        let schedule = PrecommittedSchedule {
-            bytecode: None,
-            program_image: None,
-            field_inc_limbs: Some(FieldIncLimbsScheduled),
-        };
+    fn resolve_requires_both_proof_payloads() {
         let commitment = ();
         let claims = limbs();
-        assert!(resolve_proof_slots(&schedule, Some(&commitment), Some(&claims)).is_ok());
+        assert!(resolve_proof_slots(Some(&commitment), Some(&claims)).is_ok());
         assert!(matches!(
-            resolve_proof_slots::<Fr, ()>(&schedule, None, Some(&claims)),
+            resolve_proof_slots::<Fr, ()>(None, Some(&claims)),
             Err(VerifierError::MissingProofPayload {
                 field: "field_inc_limbs_commitment"
             })
         ));
         assert!(matches!(
-            resolve_proof_slots::<Fr, ()>(&schedule, Some(&commitment), None),
+            resolve_proof_slots::<Fr, ()>(Some(&commitment), None),
             Err(VerifierError::MissingProofPayload {
                 field: "claims.field_inc_limbs"
             })
         ));
 
-        let unscheduled = PrecommittedSchedule {
-            field_inc_limbs: None,
-            ..schedule
-        };
-        assert!(resolve_proof_slots(&unscheduled, Some(&commitment), Some(&claims)).is_err());
-        assert!(resolve_proof_slots::<Fr, ()>(&unscheduled, None, None).is_err());
+        assert!(matches!(
+            resolve_proof_slots::<Fr, ()>(None, None),
+            Err(VerifierError::MissingProofPayload {
+                field: "field_inc_limbs_commitment"
+            })
+        ));
     }
 }
