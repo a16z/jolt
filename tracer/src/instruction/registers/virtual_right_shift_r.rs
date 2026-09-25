@@ -77,26 +77,17 @@ impl<I, const MASK_WIDTH: usize> RegisterSnapshot<I> for RegisterStateVirtualRig
 where
     I: RISCVInstruction<Format = FormatVirtualRightShiftR<MASK_WIDTH>>,
 {
-    type Before = (u64, u64, u64);
-
-    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self::Before {
+    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self {
         let operands = instruction.operands();
-        (
-            normalize_register_value(cpu, operands.rs1 as usize),
-            normalize_register_value(cpu, operands.rs2 as usize),
-            normalize_register_value(cpu, operands.rd as usize),
-        )
+        let rd = normalize_register_value(cpu, operands.rd as usize);
+        Self {
+            rd: (rd, rd),
+            rs1: normalize_register_value(cpu, operands.rs1 as usize),
+            rs2: normalize_register_value(cpu, operands.rs2 as usize),
+        }
     }
 
-    fn capture_post(instruction: &I, before: Self::Before, cpu: &Cpu) -> Self {
-        let (rs1, rs2, rd_pre) = before;
-        Self {
-            rd: (
-                rd_pre,
-                normalize_register_value(cpu, instruction.operands().rd as usize),
-            ),
-            rs1,
-            rs2,
-        }
+    fn capture_post(&mut self, instruction: &I, cpu: &Cpu) {
+        self.rd.1 = normalize_register_value(cpu, instruction.operands().rd as usize);
     }
 }

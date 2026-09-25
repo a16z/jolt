@@ -9,6 +9,8 @@ use jolt_program::execution::{
     RamWrite as ProgramRamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError,
     TraceInputs, TraceOutput, TraceRow,
 };
+#[cfg(feature = "field-inline")]
+use jolt_program::field_inline::FieldInlineTraceData;
 use jolt_program::preprocess::BytecodePreprocessing;
 use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
 use rayon::prelude::*;
@@ -17,6 +19,8 @@ use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+#[cfg(feature = "field-inline")]
+use crate::instruction::RISCVCycle;
 use crate::instruction::{Cycle, RAMAccess};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 use crate::trace_row::{cycle_to_trace_row, CycleConversionError};
@@ -367,6 +371,28 @@ fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
         row
     };
     Ok(row)
+}
+
+#[cfg(feature = "field-inline")]
+impl Cycle {
+    pub fn field_inline_trace(&self) -> Option<FieldInlineTraceData> {
+        let register_state = match self {
+            Self::FIELD_ADD(RISCVCycle { register_state, .. })
+            | Self::FIELD_SUB(RISCVCycle { register_state, .. })
+            | Self::FIELD_MUL(RISCVCycle { register_state, .. })
+            | Self::FIELD_INV(RISCVCycle { register_state, .. })
+            | Self::FIELD_ASSERT_EQ(RISCVCycle { register_state, .. })
+            | Self::FIELD_ASSERT_ZERO(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_IMM(RISCVCycle { register_state, .. })
+            | Self::FIELD_ADVICE_LIMB(RISCVCycle { register_state, .. }) => register_state,
+            _ => return None,
+        };
+        let op =
+            jolt_riscv::field_inline_source_op(self.instruction().source_instruction().kind())?;
+        Some(register_state.to_field_inline_trace(op))
+    }
 }
 
 fn jolt_instruction_row(cycle: &Cycle) -> Result<JoltInstructionRow, TraceError> {

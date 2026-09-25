@@ -181,8 +181,6 @@ use crate::emulator::cpu::Cpu;
 use crate::utils::virtual_registers::{is_supported_csr, VirtualRegisterAllocator};
 use derive_more::From;
 use format::{InstructionFormat, NormalizedOperands};
-#[cfg(feature = "field-inline")]
-use jolt_program::field_inline::FieldInlineTraceData;
 pub use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{JoltInstructionKind, SourceInlineKey, SourceInstructionKind, RV64IMAC_JOLT};
 pub use jolt_riscv::{SourceInstruction, SourceInstructionRow};
@@ -486,9 +484,9 @@ where
         let mut ram_access = Self::RAMAccess::default();
         match trace {
             Some(trace_vec) => {
-                let before = Self::RegisterState::capture_pre(self, cpu);
+                let mut register_state = Self::RegisterState::capture_pre(self, cpu);
                 self.execute(cpu, &mut ram_access);
-                let register_state = Self::RegisterState::capture_post(self, before, cpu);
+                register_state.capture_post(self, cpu);
                 trace_vec.push(
                     RISCVCycle {
                         instruction: *self,
@@ -647,18 +645,6 @@ macro_rules! define_rv64imac_enums {
                         Cycle::$instr(cycle) => cycle.instruction.into(),
                     )*
                     Cycle::INLINE(cycle) => cycle.instruction.into(),
-                }
-            }
-
-            #[cfg(feature = "field-inline")]
-            pub fn field_inline_trace(&self) -> Option<jolt_program::field_inline::FieldInlineTraceData> {
-                match self {
-                    Cycle::NoOp => None,
-                    $(
-                        $(#[$meta])*
-                        Cycle::$instr(cycle) => cycle.field_inline_trace(),
-                    )*
-                    Cycle::INLINE(cycle) => cycle.field_inline_trace(),
                 }
             }
 
@@ -2027,11 +2013,6 @@ pub struct RISCVCycle<T: RISCVInstruction> {
 }
 
 impl<T: RISCVInstruction> RISCVCycle<T> {
-    #[cfg(feature = "field-inline")]
-    pub fn field_inline_trace(&self) -> Option<FieldInlineTraceData> {
-        T::RegisterState::field_inline_trace(&self.instruction, &self.register_state)
-    }
-
     #[cfg(any(feature = "test-utils", test))]
     pub fn random(&self, rng: &mut StdRng) -> Self {
         T::random_cycle(rng)

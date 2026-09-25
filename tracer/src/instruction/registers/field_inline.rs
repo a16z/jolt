@@ -18,25 +18,25 @@ use crate::{
 use super::{normalize_register_value, InstructionRegisterState, RegisterSnapshot};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum FieldAccess<W> {
+enum FieldAccess {
     Read(FieldRegisterRead),
     ReadPair {
         rs1: FieldRegisterRead,
         rs2: FieldRegisterRead,
     },
-    Write(W),
+    Write(FieldRegisterWrite),
     ReadWrite {
         rs1: FieldRegisterRead,
-        rd: W,
+        rd: FieldRegisterWrite,
     },
     BinaryWrite {
         rs1: FieldRegisterRead,
         rs2: FieldRegisterRead,
-        rd: W,
+        rd: FieldRegisterWrite,
     },
 }
 
-impl<W: Copy> FieldAccess<W> {
+impl FieldAccess {
     fn reads(self) -> (Option<FieldRegisterRead>, Option<FieldRegisterRead>) {
         match self {
             Self::Read(rs1) | Self::ReadWrite { rs1, .. } => (Some(rs1), None),
@@ -47,37 +47,26 @@ impl<W: Copy> FieldAccess<W> {
         }
     }
 
-    fn write(self) -> Option<W> {
+    fn write(self) -> Option<FieldRegisterWrite> {
         match self {
             Self::Write(rd) | Self::ReadWrite { rd, .. } | Self::BinaryWrite { rd, .. } => Some(rd),
             Self::Read(_) | Self::ReadPair { .. } => None,
         }
     }
-
-    fn map_write<V>(self, f: impl FnOnce(W) -> V) -> FieldAccess<V> {
-        match self {
-            Self::Read(rs1) => FieldAccess::Read(rs1),
-            Self::ReadPair { rs1, rs2 } => FieldAccess::ReadPair { rs1, rs2 },
-            Self::Write(rd) => FieldAccess::Write(f(rd)),
-            Self::ReadWrite { rs1, rd } => FieldAccess::ReadWrite { rs1, rd: f(rd) },
-            Self::BinaryWrite { rs1, rs2, rd } => FieldAccess::BinaryWrite {
-                rs1,
-                rs2,
-                rd: f(rd),
-            },
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum IntegerAccess<W> {
+enum IntegerAccess {
     None,
     Read(RegisterRead),
-    Write(W),
-    ReadWrite { rs1: RegisterRead, rd: W },
+    Write(RegisterWrite),
+    ReadWrite {
+        rs1: RegisterRead,
+        rd: RegisterWrite,
+    },
 }
 
-impl<W: Copy> IntegerAccess<W> {
+impl IntegerAccess {
     fn read(self) -> Option<RegisterRead> {
         match self {
             Self::Read(rs1) | Self::ReadWrite { rs1, .. } => Some(rs1),
@@ -85,33 +74,18 @@ impl<W: Copy> IntegerAccess<W> {
         }
     }
 
-    fn write(self) -> Option<W> {
+    fn write(self) -> Option<RegisterWrite> {
         match self {
             Self::Write(rd) | Self::ReadWrite { rd, .. } => Some(rd),
             Self::None | Self::Read(_) => None,
         }
     }
-
-    fn map_write<V>(self, f: impl FnOnce(W) -> V) -> IntegerAccess<V> {
-        match self {
-            Self::None => IntegerAccess::None,
-            Self::Read(rs1) => IntegerAccess::Read(rs1),
-            Self::Write(rd) => IntegerAccess::Write(f(rd)),
-            Self::ReadWrite { rs1, rd } => IntegerAccess::ReadWrite { rs1, rd: f(rd) },
-        }
-    }
-}
-
-/// Register inputs captured before execution, including every destination's old value.
-pub struct FieldInlineBefore {
-    field: FieldAccess<FieldRegisterRead>,
-    integer: IntegerAccess<RegisterRead>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisterStateFieldInline {
-    field: FieldAccess<FieldRegisterWrite>,
-    integer: IntegerAccess<RegisterWrite>,
+    field: FieldAccess,
+    integer: IntegerAccess,
 }
 
 impl Default for RegisterStateFieldInline {
@@ -147,13 +121,11 @@ impl InstructionRegisterState for RegisterStateFieldInline {
 impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
     for RegisterStateFieldInline
 {
-    type Before = FieldInlineBefore;
-
     #[expect(
         clippy::expect_used,
         reason = "Only field instructions select the field register snapshot"
     )]
-    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self::Before {
+    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self {
         let op = jolt_riscv::field_inline_source_op(instruction.source_kind())
             .expect("field snapshot requires a field instruction");
         let shape = jolt_riscv::field_inline_operand_shape_for_op(op);
@@ -175,6 +147,14 @@ impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
                 value: cpu.field_registers.read(register),
             }
         };
+        let write_field = |register| {
+            let before = read_field(register);
+            FieldRegisterWrite {
+                register: before.register,
+                pre_value: before.value,
+                post_value: before.value,
+            }
+        };
         let field = match (
             shape.reads_field_rs1,
             shape.reads_field_rs2,
@@ -185,15 +165,15 @@ impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
                 rs1: read_field(field_rs1),
                 rs2: read_field(operands.rs2),
             },
-            (false, false, true) => FieldAccess::Write(read_field(field_rd)),
+            (false, false, true) => FieldAccess::Write(write_field(field_rd)),
             (true, false, true) => FieldAccess::ReadWrite {
                 rs1: read_field(field_rs1),
-                rd: read_field(field_rd),
+                rd: write_field(field_rd),
             },
             (true, true, true) => FieldAccess::BinaryWrite {
                 rs1: read_field(field_rs1),
                 rs2: read_field(operands.rs2),
-                rd: read_field(field_rd),
+                rd: write_field(field_rd),
             },
             _ => panic!("unsupported field register operand shape"),
         };
@@ -202,45 +182,55 @@ impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
             register,
             value: normalize_register_value(cpu, usize::from(register)),
         };
+        let write_x = |register| {
+            let before = read_x(register);
+            RegisterWrite {
+                register: before.register,
+                pre_value: before.value,
+                post_value: before.value,
+            }
+        };
         let integer = match (x_operands.rs1, x_operands.rd) {
             (None, None) => IntegerAccess::None,
             (Some(rs1), None) => IntegerAccess::Read(read_x(rs1)),
-            (None, Some(rd)) => IntegerAccess::Write(read_x(rd)),
+            (None, Some(rd)) => IntegerAccess::Write(write_x(rd)),
             (Some(rs1), Some(rd)) => IntegerAccess::ReadWrite {
                 rs1: read_x(rs1),
-                rd: read_x(rd),
+                rd: write_x(rd),
             },
         };
-        FieldInlineBefore { field, integer }
+        Self { field, integer }
     }
 
-    fn capture_post(_instruction: &I, before: Self::Before, cpu: &Cpu) -> Self {
-        Self {
-            field: before.field.map_write(|before| FieldRegisterWrite {
-                register: before.register,
-                pre_value: before.value,
-                post_value: cpu.field_registers.read(before.register),
-            }),
-            integer: before.integer.map_write(|before| RegisterWrite {
-                register: before.register,
-                pre_value: before.value,
-                post_value: normalize_register_value(cpu, usize::from(before.register)),
-            }),
+    fn capture_post(&mut self, _instruction: &I, cpu: &Cpu) {
+        match &mut self.field {
+            FieldAccess::Write(rd)
+            | FieldAccess::ReadWrite { rd, .. }
+            | FieldAccess::BinaryWrite { rd, .. } => {
+                rd.post_value = cpu.field_registers.read(rd.register);
+            }
+            FieldAccess::Read(_) | FieldAccess::ReadPair { .. } => {}
+        }
+        match &mut self.integer {
+            IntegerAccess::Write(rd) | IntegerAccess::ReadWrite { rd, .. } => {
+                rd.post_value = normalize_register_value(cpu, usize::from(rd.register));
+            }
+            IntegerAccess::None | IntegerAccess::Read(_) => {}
         }
     }
+}
 
+impl RegisterStateFieldInline {
     #[expect(
         clippy::expect_used,
         reason = "The field instruction's completed capture supplies every required bridge operand"
     )]
-    fn field_inline_trace(instruction: &I, state: &Self) -> Option<FieldInlineTraceData> {
-        let op = jolt_riscv::field_inline_source_op(instruction.source_kind())
-            .expect("field snapshot requires a field instruction");
-        let (rs1, rs2) = state.field.reads();
-        let rd = state.field.write();
+    pub(crate) fn to_field_inline_trace(self, op: FieldInlineOp) -> FieldInlineTraceData {
+        let (rs1, rs2) = self.field.reads();
+        let rd = self.field.write();
         let bridge = match op {
             FieldInlineOp::LoadAccumulateFromRegister => {
-                let x_read = state.integer.read().expect("ingress reads an x-register");
+                let x_read = self.integer.read().expect("ingress reads an x-register");
                 Some(FieldInlineBridge::LoadAccumulateFromRegister {
                     x_register: x_read.register,
                     x_value: x_read.value,
@@ -248,8 +238,8 @@ impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
                 })
             }
             FieldInlineOp::LoadAccumulateFromMemory => {
-                let x_read = state.integer.read().expect("memory ingress reads a base");
-                let x_write = state
+                let x_read = self.integer.read().expect("memory ingress reads a base");
+                let x_write = self
                     .integer
                     .write()
                     .expect("memory ingress writes an x-register");
@@ -262,7 +252,7 @@ impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
             }
             FieldInlineOp::AdviceLimb => {
                 let field_read = rs1.expect("limb advice reads a field register");
-                let x_write = state
+                let x_write = self
                     .integer
                     .write()
                     .expect("limb advice writes an x-register");
@@ -281,12 +271,12 @@ impl<I: RISCVInstruction<Format = FormatFieldInline>> RegisterSnapshot<I>
             | FieldInlineOp::AssertZero
             | FieldInlineOp::LoadImm => None,
         };
-        Some(FieldInlineTraceData {
+        FieldInlineTraceData {
             op: Some(op),
             rs1,
             rs2,
             rd,
             bridge,
-        })
+        }
     }
 }

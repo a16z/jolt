@@ -24,11 +24,9 @@ impl<I> RegisterSnapshot<I> for RegisterStateFence
 where
     I: RISCVInstruction<Format = FormatFence>,
 {
-    type Before = ();
-
-    fn capture_pre(_instruction: &I, _cpu: &Cpu) {}
-
-    fn capture_post(_instruction: &I, _before: Self::Before, _cpu: &Cpu) -> Self {
+    fn capture_pre(_instruction: &I, _cpu: &Cpu) -> Self {
         Self {}
     }
+
+    fn capture_post(&mut self, _instruction: &I, _cpu: &Cpu) {}
 }

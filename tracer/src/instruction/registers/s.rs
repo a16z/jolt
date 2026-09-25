@@ -54,9 +54,7 @@ impl<I> RegisterSnapshot<I> for RegisterStateS
 where
     I: RISCVInstruction<Format = FormatS>,
 {
-    type Before = Self;
-
-    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self::Before {
+    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self {
         let operands = instruction.operands();
         Self {
             rs1: normalize_register_value(cpu, operands.rs1 as usize),
@@ -64,7 +62,5 @@ where
         }
     }
 
-    fn capture_post(_instruction: &I, before: Self::Before, _cpu: &Cpu) -> Self {
-        before
-    }
+    fn capture_post(&mut self, _instruction: &I, _cpu: &Cpu) {}
 }

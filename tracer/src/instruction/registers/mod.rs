@@ -1,6 +1,4 @@
 use crate::emulator::cpu::Cpu;
-#[cfg(feature = "field-inline")]
-use jolt_program::field_inline::FieldInlineTraceData;
 #[cfg(any(feature = "test-utils", test))]
 use jolt_riscv::NormalizedOperands;
 #[cfg(any(feature = "test-utils", test))]
@@ -56,14 +54,9 @@ pub(crate) fn normalize_register_value(cpu: &Cpu, reg: usize) -> u64 {
 }
 
 /// Capture register inputs before execution and complete the record afterwards.
+/// Destination post-values initially equal their pre-values; the trace driver
+/// must call `capture_post` before publishing the cycle.
 pub trait RegisterSnapshot<I: RISCVInstruction>: InstructionRegisterState {
-    type Before;
-
-    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self::Before;
-    fn capture_post(instruction: &I, before: Self::Before, cpu: &Cpu) -> Self;
-
-    #[cfg(feature = "field-inline")]
-    fn field_inline_trace(_instruction: &I, _state: &Self) -> Option<FieldInlineTraceData> {
-        None
-    }
+    fn capture_pre(instruction: &I, cpu: &Cpu) -> Self;
+    fn capture_post(&mut self, instruction: &I, cpu: &Cpu);
 }
