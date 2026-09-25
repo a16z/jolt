@@ -34,11 +34,7 @@ zk = ["jolt-prover/zk"]
 # The packed (lattice/Akita) commitment mode: one packed one-hot witness per
 # commitment object, co-batched reduction opening. Mutually exclusive with
 # `zk` — one PIOP per compiled verifier.
-akita = [
-  "jolt-prover/akita",
-  "jolt-claims/akita",
-  "tracer/fp128-field-inline",
-]
+akita = ["jolt-prover/akita", "jolt-claims/akita", "tracer/fp128-field-inline"]
 transcript-blake2b = [
   "jolt-transcript/bn254",
   "jolt-transcript/transcript-blake2b",

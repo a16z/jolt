@@ -27,5 +27,9 @@ rand_core = { workspace = true }
 [features]
 default = ["parallel", "claim-lowering"]
 claim-lowering = ["dep:jolt-claims"]
-field-inline = ["claim-lowering", "jolt-claims/field-inline", "jolt-riscv/field-inline"]
+field-inline = [
+  "claim-lowering",
+  "jolt-claims/field-inline",
+  "jolt-riscv/field-inline",
+]
 parallel = ["rayon", "jolt-poly/parallel"]

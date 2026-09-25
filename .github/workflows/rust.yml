@@ -177,7 +177,7 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features prover-fixtures,field-inline,zk
       - name: cargo clippy -p jolt-verifier --features prover-fixtures,field-inline
         run: cargo clippy -p jolt-verifier --all-targets --features prover-fixtures,field-inline
-      # The packed field-inline combination: the field-inline limb group rides the
+      # The packed field-inline combination: the full-width increment group rides the
       # dense-group heterogeneous batch beside advice.
       - name: cargo clippy -p jolt-verifier --features field-inline,akita
         run: cargo clippy -p jolt-verifier --all-targets --features field-inline,akita
@@ -505,8 +505,7 @@ jobs:
       # under this pair.
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
-      # The packed field-inline provisioning pins (the field-inline limb arity line against the
-      # packing law), and the verifier's packed field-inline fixture suite (the modular
+      # The packed field-inline provisioning checks and verifier fixture suite (the modular
       # packed prover's eq-MLE proof; legacy-generated akita fixtures pin the
       # field-inline axis disabled).
       - name: Run jolt-akita with field-inline
@@ -767,12 +766,6 @@ jobs:
             -p jolt-verifier -p jolt-witness -p jolt-kernels \
             -p jolt-program -p jolt-riscv -p jolt-lookup-tables \
             --features field-inline --no-tests=pass --cargo-quiet
-          # The packed chain's two-limb value encoding: the encoding-mismatch
-          # gate must reject the BN254 form here as it rejects the two-limb
-          # form above (the tracer's fp128 lane runs in the tracer job, which
-          # has the jolt CLI its guest-building tests need).
-          cargo nextest run -p jolt-program \
-            --features field-inline,fp128-field-inline --cargo-quiet
 
   # Join gate so the check name "Test modular crates" is stable regardless of
   # shard count.

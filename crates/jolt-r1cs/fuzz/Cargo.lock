@@ -510,6 +510,7 @@ dependencies = [
  "jolt-claims",
  "jolt-field",
  "jolt-poly",
+ "jolt-riscv",
  "num-traits",
  "serde",
  "thiserror",

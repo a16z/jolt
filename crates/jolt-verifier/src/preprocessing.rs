@@ -179,10 +179,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// encoding. Hashing the whole type binds every field the verifier trusts
     /// (mode, bytecode or its commitments, RAM image, memory layout, trace
     /// bound) without a hand-maintained field list, so a field added to any
-    /// preprocessing type enters the digest by construction. The flip side is
-    /// that cfg-gated fields enter it too: a prover and a separately built
-    /// verifier must agree on `jolt-program/field-inline` (adds a `Full`
-    /// field) and on the PCS (`Committed` carries PCS-specific fields).
+    /// preprocessing type enters the digest by construction. A prover and a
+    /// separately built verifier must agree on `field-inline` (selects the
+    /// domain tag) and on the PCS (`Committed` carries PCS-specific fields).
     pub(crate) fn digest(&self) -> Result<[u8; 32], VerifierError> {
         let encoded =
             bincode::serde::encode_to_vec(self, bincode::config::standard()).map_err(|error| {
