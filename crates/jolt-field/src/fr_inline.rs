@@ -205,7 +205,7 @@ mod emit {
                             Some(value) => value as u32,
                             None => panic!("zero assertion encoding"),
                         }) << 25)
-                );
+                )
             };
         }
         match src {
