@@ -322,13 +322,13 @@ macro_rules! for_each_jolt_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_ACCUMULATE_FROM_REGISTER => FieldLoadAccumulateFromRegister => (0x0105, "field.load_accumulate_from_register"),
                 #[cfg(feature = "field-inline")]
-                FIELD_ASSERT_ZERO => FieldAssertZero => (0x010b, "field.assert_zero"),
+                FIELD_ASSERT_ZERO => FieldAssertZero => (0x0106, "field.assert_zero"),
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => (0x0107, "field.load_imm"),
                 #[cfg(feature = "field-inline")]
-                FIELD_LOAD_ACCUMULATE_FROM_MEMORY => FieldLoadAccumulateFromMemory => (0x0109, "field.load_accumulate_from_memory"),
+                FIELD_LOAD_ACCUMULATE_FROM_MEMORY => FieldLoadAccumulateFromMemory => (0x0108, "field.load_accumulate_from_memory"),
                 #[cfg(feature = "field-inline")]
-                FIELD_ADVICE_LIMB => FieldAdviceLimb => (0x010a, "field.advice_limb"),
+                FIELD_ADVICE_LIMB => FieldAdviceLimb => (0x0109, "field.advice_limb"),
             ]
         }
     };

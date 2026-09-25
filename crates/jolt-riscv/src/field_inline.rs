@@ -15,10 +15,19 @@ pub const FIELD_REGISTER_LOG_K: u8 = 4;
 pub const FIELD_REGISTER_COUNT: u8 = 1 << FIELD_REGISTER_LOG_K;
 pub const FIELD_INLINE_OPCODE: u8 = 0x7b;
 pub const FIELD_INLINE_R_TYPE_FUNCT7: u8 = 0;
+pub const FIELD_INLINE_ADD_FUNCT3: u8 = 0;
+pub const FIELD_INLINE_SUB_FUNCT3: u8 = 1;
+pub const FIELD_INLINE_MUL_FUNCT3: u8 = 2;
+pub const FIELD_INLINE_INV_FUNCT3: u8 = 3;
+pub const FIELD_INLINE_ASSERT_EQ_FUNCT3: u8 = 4;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3: u8 = 5;
+pub const FIELD_INLINE_ASSERT_ZERO_FUNCT3: u8 = 6;
+pub const FIELD_INLINE_ASSERT_ZERO_FUNCT7: u8 = 2;
 pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u8 = 7;
 /// Memory accumulation shares `FIELD_LOAD_ACCUMULATE_FROM_REGISTER`'s funct3. Funct7
 /// bits 6..5 identify the family; bits 4..0 carry the word offset.
-pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3: u8 = 5;
+pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3: u8 =
+    FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3;
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7_FAMILY: u8 = 0x60;
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK: u8 = 0x1f;
 /// Bytes between consecutive word offsets of a memory-sourced load.
@@ -75,22 +84,22 @@ impl FieldInlineOp {
             Self::Inv => 3,
             Self::AssertEq => 4,
             Self::LoadAccumulateFromRegister => 5,
-            Self::AssertZero => 11,
+            Self::AssertZero => 6,
             Self::LoadImm => 7,
-            Self::LoadAccumulateFromMemory => 9,
-            Self::AdviceLimb => 10,
+            Self::LoadAccumulateFromMemory => 8,
+            Self::AdviceLimb => 9,
         }
     }
 
     pub const fn funct3(self) -> u8 {
         match self {
-            Self::Add => 0,
-            Self::Sub => 1,
-            Self::Mul => 2,
-            Self::Inv => 3,
-            Self::AssertEq => 4,
-            Self::LoadAccumulateFromRegister => 5,
-            Self::AssertZero => 6,
+            Self::Add => FIELD_INLINE_ADD_FUNCT3,
+            Self::Sub => FIELD_INLINE_SUB_FUNCT3,
+            Self::Mul => FIELD_INLINE_MUL_FUNCT3,
+            Self::Inv => FIELD_INLINE_INV_FUNCT3,
+            Self::AssertEq => FIELD_INLINE_ASSERT_EQ_FUNCT3,
+            Self::LoadAccumulateFromRegister => FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3,
+            Self::AssertZero => FIELD_INLINE_ASSERT_ZERO_FUNCT3,
             Self::LoadImm => FIELD_INLINE_LOAD_IMM_FUNCT3,
             Self::LoadAccumulateFromMemory => FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3,
             Self::AdviceLimb => FIELD_INLINE_ADVICE_LIMB_FUNCT3,
@@ -108,7 +117,7 @@ impl FieldInlineOp {
             | Self::Inv
             | Self::AssertEq
             | Self::LoadAccumulateFromRegister => Some(FIELD_INLINE_R_TYPE_FUNCT7),
-            Self::AssertZero => Some(2),
+            Self::AssertZero => Some(FIELD_INLINE_ASSERT_ZERO_FUNCT7),
             Self::LoadAccumulateFromMemory => {
                 Some(field_inline_load_accumulate_from_memory_funct7(0))
             }
@@ -144,10 +153,10 @@ impl FieldInlineOp {
             3 => Some(Self::Inv),
             4 => Some(Self::AssertEq),
             5 => Some(Self::LoadAccumulateFromRegister),
-            11 => Some(Self::AssertZero),
+            6 => Some(Self::AssertZero),
             7 => Some(Self::LoadImm),
-            9 => Some(Self::LoadAccumulateFromMemory),
-            10 => Some(Self::AdviceLimb),
+            8 => Some(Self::LoadAccumulateFromMemory),
+            9 => Some(Self::AdviceLimb),
             _ => None,
         }
     }
@@ -160,13 +169,17 @@ impl FieldInlineOp {
             return Some(Self::LoadAccumulateFromMemory);
         }
         match (funct7, funct3) {
-            (FIELD_INLINE_R_TYPE_FUNCT7, 0) => Some(Self::Add),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 1) => Some(Self::Sub),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 2) => Some(Self::Mul),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 3) => Some(Self::Inv),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 4) => Some(Self::AssertEq),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadAccumulateFromRegister),
-            (2, 6) => Some(Self::AssertZero),
+            (FIELD_INLINE_R_TYPE_FUNCT7, FIELD_INLINE_ADD_FUNCT3) => Some(Self::Add),
+            (FIELD_INLINE_R_TYPE_FUNCT7, FIELD_INLINE_SUB_FUNCT3) => Some(Self::Sub),
+            (FIELD_INLINE_R_TYPE_FUNCT7, FIELD_INLINE_MUL_FUNCT3) => Some(Self::Mul),
+            (FIELD_INLINE_R_TYPE_FUNCT7, FIELD_INLINE_INV_FUNCT3) => Some(Self::Inv),
+            (FIELD_INLINE_R_TYPE_FUNCT7, FIELD_INLINE_ASSERT_EQ_FUNCT3) => Some(Self::AssertEq),
+            (FIELD_INLINE_R_TYPE_FUNCT7, FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3) => {
+                Some(Self::LoadAccumulateFromRegister)
+            }
+            (FIELD_INLINE_ASSERT_ZERO_FUNCT7, FIELD_INLINE_ASSERT_ZERO_FUNCT3) => {
+                Some(Self::AssertZero)
+            }
             (FIELD_INLINE_ADVICE_LIMB_FUNCT7, FIELD_INLINE_ADVICE_LIMB_FUNCT3) => {
                 Some(Self::AdviceLimb)
             }
@@ -516,6 +529,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(feature = "serialization", expect(clippy::unwrap_used))]
 mod encoding_tests {
     use super::*;
 
@@ -553,7 +567,7 @@ mod encoding_tests {
     }
 
     #[test]
-    fn every_op_word_decodes_back_to_the_same_op() {
+    fn every_op_has_contiguous_tag_and_matching_word_decode() {
         const OPS: [FieldInlineOp; 10] = [
             FieldInlineOp::Add,
             FieldInlineOp::Sub,
@@ -566,7 +580,19 @@ mod encoding_tests {
             FieldInlineOp::LoadAccumulateFromMemory,
             FieldInlineOp::AdviceLimb,
         ];
-        for op in OPS {
+        for (tag, op) in (0u8..).zip(OPS) {
+            assert_eq!(op.tag(), tag);
+            assert_eq!(FieldInlineOp::from_tag(tag), Some(op));
+            #[cfg(feature = "serialization")]
+            {
+                let mut bytes = Vec::new();
+                op.serialize_compressed(&mut bytes).unwrap();
+                assert_eq!(bytes, [tag]);
+                assert_eq!(
+                    FieldInlineOp::deserialize_compressed(bytes.as_slice()).unwrap(),
+                    op
+                );
+            }
             let word = match op.funct7() {
                 Some(funct7) => r_type_word(op, funct7),
                 None => i_type_word(op.funct3(), 0x123),
@@ -574,23 +600,22 @@ mod encoding_tests {
             assert_eq!(FieldInlineOp::from_word(word), Some(op));
             assert_eq!(word & op.instruction_mask(), op.instruction_match());
         }
+        assert_eq!(FieldInlineOp::from_tag(10), None);
+        assert_eq!(FieldInlineOp::from_tag(u8::MAX), None);
     }
 
     #[test]
-    fn assert_zero_uses_new_encoding_and_retires_store_encoding() {
+    fn assert_zero_requires_its_funct7() {
         let word = 0x7b | (6 << 12) | (3 << 15) | (2 << 25);
         assert_eq!(
             FieldInlineOp::from_word(word),
             Some(FieldInlineOp::AssertZero)
         );
-        assert_eq!(FieldInlineOp::AssertZero.tag(), 11);
-        assert_eq!(FieldInlineOp::from_tag(11), Some(FieldInlineOp::AssertZero));
-        assert_eq!(FieldInlineOp::from_tag(6), None);
         assert_eq!(FieldInlineOp::from_word(word & !(0x7f << 25)), None);
     }
 
     #[test]
-    fn load_accumulate_from_memory_accepts_offsets_and_rejects_retired_loads() {
+    fn load_accumulate_from_memory_requires_its_offset_family() {
         let op = FieldInlineOp::LoadAccumulateFromMemory;
         for offset_words in 0..32 {
             let word = r_type_word(op, 0x60 | offset_words);
@@ -609,7 +634,6 @@ mod encoding_tests {
                 None
             );
         }
-        assert_eq!(FieldInlineOp::from_tag(8), None);
     }
 
     #[test]

@@ -2158,6 +2158,10 @@ mod tests {
             let tag = kind.tag();
             assert!(seen.insert(tag), "duplicate tag {tag:?} for {kind:?}");
             assert_eq!(JoltInstructionKind::from_tag(tag), Some(*kind));
+            #[cfg(feature = "field-inline")]
+            if let Some(op) = crate::field_inline_jolt_op(*kind) {
+                assert_eq!(tag, JoltInstructionTag(0x0100 + u16::from(op.tag())));
+            }
         }
     }
 

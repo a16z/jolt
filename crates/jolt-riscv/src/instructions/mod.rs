@@ -23,10 +23,9 @@ pub mod i;
 pub mod m;
 pub mod virt;
 
-use crate::{
-    JoltInstructionKind, JoltInstructionRow, NormalizedOperands, SourceInlineKey,
-    SourceInstructionKind, SourceInstructionRow,
-};
+use crate::{JoltInstructionKind, JoltInstructionRow, SourceInstructionKind, SourceInstructionRow};
+#[cfg(feature = "serialization")]
+use crate::{NormalizedOperands, SourceInlineKey};
 pub use assert::AssertEq;
 pub use assert::AssertHalfwordAlignment;
 pub use assert::AssertLte;
