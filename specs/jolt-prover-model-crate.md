@@ -543,7 +543,7 @@ FIELD_SUB
 FIELD_MUL
 FIELD_INV
 FIELD_ASSERT_EQ
-FIELD_STORE_TO_REGISTER
+FIELD_ASSERT_ZERO
 FIELD_LOAD_ACCUMULATE_FROM_MEMORY
 FIELD_ADVICE_LIMB
 ```
@@ -612,21 +612,36 @@ FIELD_LOAD_ACCUMULATE_FROM_REGISTER field[4], x10:
     FieldRdValue comes from the field register witness
     bridge row enforces FieldRdValue = 2^64 * FieldRs1Value + Rs1Value
 
-FIELD_STORE_TO_REGISTER x11, field[4]:
+FIELD_ADVICE_LIMB x11, field[4] -> field[4]:
   field trace:
-    read field[4]
+    read field[4], write the quotient to field[4]
   ordinary trace:
-    write x11
+    write a range-checked advice limb to x11
   witness:
     FieldRs1Value comes from the field register witness
+    FieldRdValue is the quotient
     RdWriteValue comes from the ordinary register witness
-    bridge row enforces RdWriteValue = encode_field_register(FieldRs1Value, F)
+    bridge row enforces FieldRs1Value = RdWriteValue + 2^64 * FieldRdValue
+
+FIELD_ASSERT_ZERO field[4]:
+  field trace:
+    read field[4], no write
+  witness:
+    IsFieldAssertZero * FieldRs1Value = 0
 ```
 
 Both x-register and memory ingress accumulate `old_destination * 2^64 + limb`
 modulo the proof-field modulus. Initialize the destination to zero with `FIELD_LOAD_IMM`
 before loading a new value, then process its limbs from most significant to
 least significant.
+
+Canonical readout consumes the source in place with `N` `FIELD_ADVICE_LIMB`
+instructions, checks its final quotient with `FIELD_ASSERT_ZERO`, and checks
+the emitted integer `L < p`. The relations alone establish equality modulo
+the proof-field modulus. To preserve the source, accumulate the emitted limbs
+high-to-low into that now-zero register; no scratch field register or reserved
+zero register is needed. Ergonomic `field_to`/`field_from` macros remain
+follow-up work in [#1934](https://github.com/a16z/jolt/issues/1934).
 
 Field inline v1 is native-field only: the field used by the Jolt proof and the
 field used by field-inline arithmetic are the same field. Prover code should not

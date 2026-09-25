@@ -42,14 +42,11 @@ field-inline programs remain unsupported. The verifier checks protocol and
 cheap input shapes before scanning full program metadata; stage 6a builds
 field-inline bytecode kernel geometry only on the prover path.
 
-The adversarial `fresh_store_lookup_proof_rejects_synchronized_wide_bridge_values`
-test bypasses the tracer and supplies `2^64 + 7` consistently to the store's
-field value, integer write, lookup operand, and claimed lookup output. The
-local bridge constraints hold. Fresh biased sumcheck messages pass every
-round check, but the concrete RangeCheck endpoint rejects them. The ZK build
-checks the recorded committed rounds against the production BlindFold R1CS;
-this is a binding test, not a complete forged VM/PCS proof. `u64::MAX` is the
-accepting control.
+Limb readout uses `FIELD_ADVICE_LIMB` repeatedly and checks the final quotient
+with `FIELD_ASSERT_ZERO`. The guest must also establish that the emitted
+integer is below the active field modulus when it needs a canonical encoding.
+The `field-ops` guest checks a pinned integer below both supported moduli and
+exercises readout and restoration in the same field register.
 
 ## Purpose
 
@@ -629,7 +626,7 @@ openings produced by earlier stages:
 
 ```text
 from stage 1 / selected Spartan outer:
-  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToRegister/LoadImm/
+  FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/AssertZero/LoadImm/
               LoadAccumulateFromMemory/AdviceLimb)
 
 from stage 4 / FieldRegistersReadWriteChecking:
@@ -658,7 +655,7 @@ preprocessed side table parallel to ordinary bytecode rows:
 
 ```text
 FieldInlineBytecodeRow:
-  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToRegister/LoadImm/
+  field op flags: Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/AssertZero/LoadImm/
                   LoadAccumulateFromMemory/AdviceLimb
   field operands: rd, rs1, rs2 as field register slots, each optional
 ```
@@ -674,7 +671,7 @@ RLCs instead of creating another bytecode relation:
 ```text
 Stage1Gamma powers:
   ordinary powers 0..(1 + NUM_CIRCUIT_FLAGS)
-  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/StoreToRegister/LoadImm/
+  then FieldOpFlag(Add/Sub/Mul/Inv/AssertEq/LoadAccumulateFromRegister/AssertZero/LoadImm/
                   LoadAccumulateFromMemory/AdviceLimb)
 
 Stage4Gamma powers:
@@ -773,7 +770,7 @@ selectors:
   IsFieldInv
   IsFieldAssertEq
   IsFieldLoadAccumulateFromRegister
-  IsFieldStoreToRegister
+  IsFieldAssertZero
   IsFieldLoadImm
   IsFieldLoadAccumulateFromMemory
   IsFieldAdviceLimb
@@ -814,8 +811,8 @@ x-register -> field-register:
   IsFieldLoadAccumulateFromRegister
     * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
-field-register -> x-register:
-  IsFieldStoreToRegister * (RdWriteValue - encode_field_register(FieldRs1Value, F)) = 0
+ASSERT_ZERO:
+  IsFieldAssertZero * FieldRs1Value = 0
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(Imm, F)) = 0
@@ -846,8 +843,8 @@ x-register -> field-register:
   IsFieldLoadAccumulateFromRegister
     * (FieldRdValue - 2^64 * FieldRs1Value - decode_x_register(Rs1Value, F)) = 0
 
-field-register -> x-register:
-  IsFieldStoreToRegister * (RdValue - encode_field_register(FieldRs1Value, F)) = 0
+field-register -> limb and quotient:
+  IsFieldAdviceLimb * (FieldRs1Value - RdWriteValue - 2^64 * FieldRdValue) = 0
 
 immediate/constant -> field-register:
   IsFieldLoadImm * (FieldRdValue - decode_immediate(imm, F)) = 0
@@ -864,28 +861,13 @@ the reconstructed integer is a canonical field representative.
 
 - `decode_x_register(Rs1Value, F) := Rs1Value` and
   `decode_immediate(imm, F) := imm`. Both inputs are bounded by the base
-  protocol (x-register values are written only by lookup outputs, loads,
-  jumps, and the range-bound store bridge below; `Imm` is a bytecode
-  constant), so these limb embeddings are exact.
-- `encode_field_register(FieldRs1Value, F) := FieldRs1Value`, range-bound
-  through the instruction lookup the way `VirtualAdvice` binds a
-  prover-supplied word. `FIELD_STORE_TO_REGISTER` carries the `Advice` and
-  `WriteLookupOutputToRD` circuit flags and the `RangeCheck` lookup table;
-  its lookup operand is the rd write value (non-interleaved, so the
-  committed lookup index is `RightLookupOperand` itself, bound exactly by
-  instruction read-RAF). Two field-inline rows pin the bridge:
-
-  ```text
-  IsFieldStoreToRegister * (RdWriteValue - FieldRs1Value) = 0
-  IsFieldStoreToRegister * (RightLookupOperand - FieldRs1Value) = 0
-  ```
-
-  With RV64 row 12 (`RdWriteValue = LookupOutput`) and
-  `LookupOutput = RangeCheck(RightLookupOperand) = RightLookupOperand mod 2^64`
-  this forces `FieldRs1Value = FieldRs1Value mod 2^64`: the store is
-  satisfiable exactly when the field value fits in 64 bits, which is the
-  condition under which the tracer executes it (wider values trap). Wide
-  values use the multi-instruction advice readout below.
+  protocol (x-register values come from lookup outputs, loads, and jumps;
+  `Imm` is a bytecode constant), so these limb embeddings are exact.
+- `FIELD_ADVICE_LIMB` carries the `Advice` and `WriteLookupOutputToRD`
+  circuit flags and the `RangeCheck` lookup table. RV64 row 12 equates
+  `RdWriteValue` with that bounded lookup output. The field-inline row
+  relates this limb and the field quotient to the source value; it does not
+  impose an integer bound on the field source or quotient.
 
 Full-width values use repeated accumulating ingress instructions or the
 advice readout below; each instruction still transfers one bounded u64 limb.
@@ -893,8 +875,8 @@ advice readout below; each instruction still transfers one bounded u64 limb.
 These rows depend on canonical encoding for the active `F: JoltField`. For a
 254-bit Jolt field, host/guest encodings may use four 64-bit limbs. For a
 128-bit Jolt field, they may use two 64-bit limbs. This affects ABI,
-advice-tape encoding, and bridge/load/store row shape. It does not change the
-field arithmetic relation: field values remain native elements of `F`.
+advice-tape encoding, and the number of ingress/readout rows. It does not change
+the field arithmetic relation: field values remain native elements of `F`.
 
 ## Memory-Sourced Loads And Limb Readout
 
@@ -910,7 +892,7 @@ Twist records the read, and the register Twist records the scratch write.
 The field-inline row equates the field destination with the word folded into
 the old destination, read back as `FieldRs1Value` (`2^64` is a constant of
 `F`). This has the same accumulation semantics as x-register ingress. The
-Spartan outer stays at 30 rows: a 16-node uni-skip domain would overflow the
+Spartan outer has 29 rows: a 16-node uni-skip domain would overflow the
 kernels' `i128` power sums. Encoding: opcode `0x7b`,
 `FIELD_LOAD_ACCUMULATE_FROM_REGISTER`'s funct3, funct7 `0x60 | offset` with bits 4..0
 holding the word offset; `rd` is the scratch x-register, `rs1` the x base,
@@ -925,19 +907,34 @@ and constrains `field_rs1 = x_rd + 2^64 · field_rs2` in the proof field. The
 bounds `x_rd`, but does not uniquely determine either output. The honest
 tracer chooses the canonical low limb and quotient; this choice is not a
 constraint. In particular, input zero also permits limb one with quotient
-`−1/2^64`. Encoding remains funct3 of `FIELD_STORE_TO_REGISTER`, funct7 `1`;
-`rd` is the x-register, `rs1` the field source, and `rs2` the quotient.
+`−1/2^64`. Encoding: opcode `0x7b`, funct3 `6`, funct7 `1`; `rd` is the
+x-register, `rs1` the field source, and `rs2` the quotient. Source and quotient
+may name the same field register, allowing the readout to consume it in place.
 
-A deterministic conversion requires `N − 1` advice limbs followed by
-`FIELD_STORE_TO_REGISTER` on the last quotient, **and** a guest integer check
-`Σ limb_i · 2^(64 i) < p`. The instruction relations establish equality
-modulo `p`; the integer check makes the representative unique. Without it,
-zero could be represented by the limbs of `p`, violating field wrappers'
-canonical storage invariant. Raw instruction users must check the reconstructed
-integer against the modulus whenever subsequent computation requires canonical
-limbs. The ISA supplies bounded limb advice, not a canonical conversion API.
-The composed field-inline e2e checks exercise the memory ingress and advice
-instructions against an independently pinned integer.
+`FIELD_ASSERT_ZERO field_rs1` checks `IsFieldAssertZero * FieldRs1Value = 0`
+without writing any field or integer register. Encoding: opcode `0x7b`,
+funct3 `6`, funct7 `2`, field-op tag `11`. The SDK emits zero in the unused
+`rd` and `rs2` fields; these operands are ignored by decoding and do not reserve
+a zero field register. Field register zero is an ordinary writable slot, like
+the other fifteen slots.
+
+A deterministic conversion requires `N` advice limbs followed by
+`FIELD_ASSERT_ZERO` on the final quotient, **and** a guest integer check
+`L = Σ limb_i · 2^(64 i) < p`. With final quotient zero, the instruction
+relations establish `source = L (mod p)`; the integer check makes the
+representative unique. Without it, zero could be represented by the limbs of
+`p`, violating field wrappers' canonical storage invariant. All `N` steps may
+reuse the source as the quotient destination. To preserve the source, after
+the zero check accumulate the emitted limbs back into that now-zero register
+from most significant to least significant. This needs no scratch field
+register or hardwired zero register.
+
+Raw instruction users must check `L < p` whenever subsequent computation
+requires canonical limbs. Equality with an independently pinned integer known
+to be below `p` also suffices, as in the `field-ops` memory/readout regression.
+The ISA supplies bounded limb advice and a zero assertion; ergonomic
+`field_to`/`field_from` macros remain follow-up work in
+[#1934](https://github.com/a16z/jolt/issues/1934).
 
 Stage 1 appends the two selector openings (`FieldOpFlag(LoadAccumulateFromMemory)`,
 `FieldOpFlag(AdviceLimb)`) after the eight base flags, in that order, and the
@@ -995,7 +992,7 @@ IsFieldMul
 IsFieldInv
 IsFieldAssertEq
 IsFieldLoadAccumulateFromRegister
-IsFieldStoreToRegister
+IsFieldAssertZero
 IsFieldLoadImm
 IsFieldLoadAccumulateFromMemory
 IsFieldAdviceLimb
@@ -1139,7 +1136,7 @@ pub enum FieldInlineOpFlag {
     Inv,
     AssertEq,
     LoadAccumulateFromRegister,
-    StoreToRegister,
+    AssertZero,
     LoadImm,
     LoadAccumulateFromMemory,
     AdviceLimb,
@@ -1354,21 +1351,19 @@ Each step should be reviewed before continuing to the next.
 
 4. Add `field_constraints`.
    - Implement `jolt-r1cs::constraints::field_constraints`.
-   - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, and bridge rows.
+   - Cover FADD, FSUB, FMUL, FINV, ASSERT_EQ, ASSERT_ZERO, and bridge rows.
    - Review gate: constraint tests prove native-field arithmetic and reject bad
      FieldProduct witnesses.
 
-5. Add conversion row semantics. **Landed** as the 64-bit identity bridge
-   with the `RangeCheck`-bound store ("Conversion Rows" above;
-   `field_constraints::ROW_STORE_TO_REGISTER_LOOKUP`).
-   - Define `decode_x_register`, `encode_field_register`, and immediate
-     encoding for the active `F`.
+5. Add conversion row semantics. **Landed** as 64-bit accumulating ingress
+   and `RangeCheck`-bound limb advice ("Conversion Rows" above).
+   - Define ingress and immediate encoding for the active `F`, and the
+     limb/quotient relation with a final `FIELD_ASSERT_ZERO` check.
    - Keep 128-bit and 254-bit handling as field-instantiation encoding, not
      non-native arithmetic.
-   - Review gate: bridge-row fixtures cover two-limb and four-limb field
-     encodings when both field instantiations exist (deferred with the
-     multi-limb bridge itself; the eq-MLE fixtures exercise the 64-bit
-     bridge on both fields).
+   - Review gate: fixtures exercise accumulating ingress on both fields;
+     readout checks an independently pinned integer below both moduli,
+     including in-place restoration from its emitted limbs.
 
 6. Wire verifier support one stage slice at a time.
    - Proof/config gate: require `proof.protocol.field_inline` to match the

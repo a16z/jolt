@@ -214,7 +214,7 @@ fn decode_field_inline(word: u32) -> Result<SourceInstructionKind, ProgramError>
         Some(FieldInlineOp::LoadAccumulateFromRegister) => {
             Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER)
         }
-        Some(FieldInlineOp::StoreToRegister) => Ok(SourceInstructionKind::FIELD_STORE_TO_REGISTER),
+        Some(FieldInlineOp::AssertZero) => Ok(SourceInstructionKind::FIELD_ASSERT_ZERO),
         Some(FieldInlineOp::LoadImm) => Ok(SourceInstructionKind::FIELD_LOAD_IMM),
         Some(FieldInlineOp::LoadAccumulateFromMemory) => {
             Ok(SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY)
@@ -306,8 +306,16 @@ fn operands(instruction_kind: SourceInstructionKind, word: u32) -> NormalizedOpe
         SourceInstructionKind::FIELD_ASSERT_EQ => format_field_binary_no_rd_operands(word),
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_INV
-        | SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER
-        | SourceInstructionKind::FIELD_STORE_TO_REGISTER => format_field_unary_operands(word),
+        | SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER => {
+            format_field_unary_operands(word)
+        }
+        #[cfg(feature = "field-inline")]
+        SourceInstructionKind::FIELD_ASSERT_ZERO => NormalizedOperands {
+            rd: None,
+            rs1: Some(rs1(word)),
+            rs2: None,
+            imm: 0,
+        },
         #[cfg(feature = "field-inline")]
         SourceInstructionKind::FIELD_LOAD_IMM => format_field_load_imm_operands(word),
         #[cfg(feature = "field-inline")]
@@ -1023,6 +1031,29 @@ mod tests {
                 "invalid field-inline encoding"
             ))
         ));
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn assert_zero_decodes_only_a_field_source_and_rejects_retired_store() {
+        let word = field_r_word(2, 6, 0, 3, 0);
+        let instruction =
+            decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT_FIELD_INLINE).unwrap();
+        assert_eq!(instruction.kind(), SourceInstructionKind::FIELD_ASSERT_ZERO);
+        assert_eq!(
+            instruction.row().operands,
+            NormalizedOperands {
+                rs1: Some(3),
+                ..Default::default()
+            }
+        );
+        assert!(decode_instruction(
+            field_r_word(0, 6, 1, 3, 0),
+            0x8000_0000,
+            false,
+            RV64IMAC_JOLT_FIELD_INLINE
+        )
+        .is_err());
     }
 
     #[cfg(not(feature = "field-inline"))]

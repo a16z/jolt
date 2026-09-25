@@ -464,11 +464,8 @@ impl SpartanOuterRow {
         // FMUL, FINV, LOAD_ACCUMULATE_FROM_MEMORY]: guards zero; magnitudes zero except FINV's
         // `inv_product − 1 = −1` and the load row's `field_rd − 2^64·field_rs1 −
         // RdWriteValue = −RdWriteValue`. Second group [ASSERT_EQ, LOAD_ACCUMULATE_FROM_REGISTER,
-        // STORE_TO_REGISTER, LOAD_IMM, STORE_TO_REGISTER_LOOKUP, ADVICE_LIMB]: guards zero;
-        // magnitudes `0`, `field_rd − 2^64·field_rs1 − Rs1Value = −Rs1Value`, `RdWriteValue − field_rs1
-        // = RdWriteValue`, `field_rd − Imm = −Imm`, `RightLookupOperand − field_rs1 =
-        // RightLookupOperand`, `field_rs1 − RdWriteValue − 2^64·field_rd =
-        // −RdWriteValue`.
+        // ASSERT_ZERO, LOAD_IMM, ADVICE_LIMB]: guards zero; magnitudes `0`,
+        // `−Rs1Value`, `0`, `−Imm`, and `−RdWriteValue`.
         #[cfg(feature = "field-inline")]
         {
             let rd_write_value = S192::from_u64(self.rd_write_value.0);
@@ -476,10 +473,8 @@ impl SpartanOuterRow {
             values.b_first[RV64_FIRST_GROUP_LEN + 4] = S192::zero() - rd_write_value;
             values.b_second[RV64_SECOND_GROUP_LEN + 1] =
                 S192::zero() - S192::from_u64(self.rs1_value.0);
-            values.b_second[RV64_SECOND_GROUP_LEN + 2] = rd_write_value;
             values.b_second[RV64_SECOND_GROUP_LEN + 3] = S192::zero() - imm;
-            values.b_second[RV64_SECOND_GROUP_LEN + 4] = right_lookup;
-            values.b_second[RV64_SECOND_GROUP_LEN + 5] = S192::zero() - rd_write_value;
+            values.b_second[RV64_SECOND_GROUP_LEN + 4] = S192::zero() - rd_write_value;
         }
 
         values
@@ -522,20 +517,16 @@ impl SpartanOuterRow {
         values.a_second[RV64_SECOND_GROUP_LEN] = flag(FieldInlineOpFlag::AssertEq);
         values.a_second[RV64_SECOND_GROUP_LEN + 1] =
             flag(FieldInlineOpFlag::LoadAccumulateFromRegister);
-        values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::StoreToRegister);
+        values.a_second[RV64_SECOND_GROUP_LEN + 2] = flag(FieldInlineOpFlag::AssertZero);
         values.a_second[RV64_SECOND_GROUP_LEN + 3] = flag(FieldInlineOpFlag::LoadImm);
         values.b_second[RV64_SECOND_GROUP_LEN] = field_row.rs1_value - field_row.rs2_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 1] = field_row.rd_value
             - limb_radix::<F>() * field_row.rs1_value
             - F::from_u64(self.rs1_value.0);
-        values.b_second[RV64_SECOND_GROUP_LEN + 2] =
-            F::from_u64(self.rd_write_value.0) - field_row.rs1_value;
+        values.b_second[RV64_SECOND_GROUP_LEN + 2] = field_row.rs1_value;
         values.b_second[RV64_SECOND_GROUP_LEN + 3] = field_row.rd_value - F::from_i128(self.imm.0);
-        values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::StoreToRegister);
+        values.a_second[RV64_SECOND_GROUP_LEN + 4] = flag(FieldInlineOpFlag::AdviceLimb);
         values.b_second[RV64_SECOND_GROUP_LEN + 4] =
-            F::from_u128(self.right_lookup_operand.0) - field_row.rs1_value;
-        values.a_second[RV64_SECOND_GROUP_LEN + 5] = flag(FieldInlineOpFlag::AdviceLimb);
-        values.b_second[RV64_SECOND_GROUP_LEN + 5] =
             field_row.rs1_value - rd_write_value - limb_radix::<F>() * field_row.rd_value;
         values
     }
@@ -654,7 +645,7 @@ struct SpartanOuterCarry<F: JoltField> {
     /// ~176 B × T row vector is the prover's peak allocation at large scale).
     rows: BundleStore<SpartanOuterRow>,
     /// The active field-inline cycles' composed column values, sparse and sorted by
-    /// cycle (the witness seam's direct walk — the 13 dense field-inline tables never
+    /// cycle (the witness seam's direct walk — the 15 dense field-inline tables never
     /// materialize).
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]

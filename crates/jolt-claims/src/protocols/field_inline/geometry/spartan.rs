@@ -14,7 +14,7 @@ pub const FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS: [FieldInlineVirtualPolynomial;
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::Inv),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AssertEq),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromRegister),
-    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::StoreToRegister),
+    FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AssertZero),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadImm),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::LoadAccumulateFromMemory),
     FieldInlineVirtualPolynomial::FieldOpFlag(FieldInlineOpFlag::AdviceLimb),
@@ -57,7 +57,7 @@ pub fn outer_output_openings() -> [FieldInlineOpeningId; FIELD_INLINE_SPARTAN_OU
             FieldInlineOpFlag::LoadAccumulateFromRegister,
         )),
         outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
-            FieldInlineOpFlag::StoreToRegister,
+            FieldInlineOpFlag::AssertZero,
         )),
         outer_opening(FieldInlineVirtualPolynomial::FieldOpFlag(
             FieldInlineOpFlag::LoadImm,

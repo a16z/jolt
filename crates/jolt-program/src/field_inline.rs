@@ -246,9 +246,7 @@ impl FieldInlineBytecodeRow {
         };
         let write_register = if matches!(
             shape.op,
-            FieldInlineOp::StoreToRegister
-                | FieldInlineOp::LoadAccumulateFromMemory
-                | FieldInlineOp::AdviceLimb
+            FieldInlineOp::LoadAccumulateFromMemory | FieldInlineOp::AdviceLimb
         ) {
             let register = x_register(row.operands.rd, "rd")?;
             if register == 0 {
@@ -262,12 +260,13 @@ impl FieldInlineBytecodeRow {
             FieldInlineOp::LoadAccumulateFromRegister | FieldInlineOp::LoadAccumulateFromMemory => {
                 Some(x_register(row.operands.rs1, "rs1")?)
             }
-            FieldInlineOp::StoreToRegister | FieldInlineOp::AdviceLimb => write_register,
+            FieldInlineOp::AdviceLimb => write_register,
             FieldInlineOp::Add
             | FieldInlineOp::Sub
             | FieldInlineOp::Mul
             | FieldInlineOp::Inv
             | FieldInlineOp::AssertEq
+            | FieldInlineOp::AssertZero
             | FieldInlineOp::LoadImm => None,
         };
         let immediate = if shape.has_immediate {
@@ -359,7 +358,7 @@ pub enum FieldInlineBridge {
         x_value: u64,
         field_value: FieldEncodedValue,
     },
-    StoreToRegister {
+    AdviceLimb {
         field_register: u8,
         field_value: FieldEncodedValue,
         x_register: u8,
@@ -458,7 +457,6 @@ mod tests {
     #[test]
     fn field_write_bridges_require_nonzero_integer_destinations() {
         for instruction_kind in [
-            Kind::FIELD_STORE_TO_REGISTER,
             Kind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
             Kind::FIELD_ADVICE_LIMB,
         ] {
@@ -476,6 +474,24 @@ mod tests {
             row.operands.rd = Some(3);
             assert!(FieldInlineBytecodeRow::from_instruction(&row).is_ok());
         }
+    }
+
+    #[test]
+    fn assert_zero_metadata_reads_only_its_field_source() {
+        let row = JoltInstructionRow {
+            instruction_kind: Kind::FIELD_ASSERT_ZERO,
+            operands: NormalizedOperands {
+                rs1: Some(3),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let metadata = FieldInlineBytecodeRow::from_instruction(&row).unwrap();
+        assert_eq!(metadata.op, Some(FieldInlineOp::AssertZero));
+        assert_eq!(metadata.rs1.unwrap().index(), 3);
+        assert_eq!(metadata.rs2, None);
+        assert_eq!(metadata.rd, None);
+        assert_eq!(metadata.bridge_x_register, None);
     }
 
     fn roundtrip(

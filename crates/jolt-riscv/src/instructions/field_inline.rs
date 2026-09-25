@@ -32,15 +32,8 @@ jolt_instruction!(
 );
 
 jolt_instruction!(
-    /// Bridge a field-register value into an ordinary x-register. The write
-    /// is range-bound through the instruction lookup like `VirtualAdvice`:
-    /// the rd value is the (non-interleaved) `RangeCheck` lookup operand and
-    /// the field-inline bridge rows pin both the operand and the write to
-    /// `FieldRs1Value`, so the store is satisfiable only when the field value
-    /// fits in 64 bits (`jolt-r1cs` `field_constraints`).
-    FieldStoreToRegister,
-    circuit flags: [Advice, WriteLookupOutputToRD],
-    instruction flags: []
+    /// Assert that a field register is zero without modifying either register file.
+    FieldAssertZero
 );
 
 jolt_instruction!(

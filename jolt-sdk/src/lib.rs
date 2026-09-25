@@ -39,14 +39,16 @@ pub const FIELD_INLINE_ASSERT_EQ_FUNCT3: u32 = 4;
 #[doc(hidden)]
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_REGISTER_FUNCT3: u32 = 5;
 #[doc(hidden)]
-pub const FIELD_INLINE_STORE_TO_REGISTER_FUNCT3: u32 = 6;
+pub const FIELD_INLINE_ASSERT_ZERO_FUNCT3: u32 = 6;
+#[doc(hidden)]
+pub const FIELD_INLINE_ASSERT_ZERO_FUNCT7: u32 = 2;
 #[doc(hidden)]
 pub const FIELD_INLINE_LOAD_IMM_FUNCT3: u32 = 7;
 
 /// Number of field registers the field-inline extension addresses.
 pub const FIELD_REGISTER_COUNT: u32 = 16;
-/// The x-register the bridge macros move values through (`a0`), pinned by the
-/// asm operand constraints of [`field_load_accumulate_from_register!`] / [`field_store_to_register!`].
+/// The x-register the ingress macro moves values through (`a0`), pinned by the
+/// asm operand constraints of [`field_load_accumulate_from_register!`].
 #[doc(hidden)]
 pub const FIELD_INLINE_BRIDGE_X_REGISTER: u32 = 10;
 
@@ -182,6 +184,20 @@ macro_rules! field_assert_eq {
     };
 }
 
+/// Asserts that field register `$rs1` is zero without changing it.
+#[macro_export]
+macro_rules! field_assert_zero {
+    ($rs1:literal) => {
+        $crate::__field_inline_word!($crate::field_inline_r_word(
+            $crate::FIELD_INLINE_ASSERT_ZERO_FUNCT7,
+            $crate::FIELD_INLINE_ASSERT_ZERO_FUNCT3,
+            0,
+            $crate::field_register($rs1),
+            0
+        ))
+    };
+}
+
 /// Updates field register `$rd` to `old_rd * 2^64 + value` modulo the proof field,
 /// appending one `u64` limb through the LoadAccumulateFromRegister bridge. Initialize
 /// `$rd` to zero with [`field_load_imm!`] before starting a new value; append
@@ -220,45 +236,6 @@ macro_rules! field_load_accumulate_from_register {
         #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
         {
             let _: u64 = $value;
-        }
-    }};
-}
-
-/// Reads field register `$rs1` back as a `u64` through the StoreToRegister bridge.
-/// The bridge is range-bound: the traced store traps, and the constraint
-/// system is unsatisfiable, unless the field value fits in 64 bits. Same
-/// single-asm-block rationale as [`field_load_accumulate_from_register!`]: the word writes
-/// `a0`, so the output constraint must live in the block that executes it.
-/// Host-architecture builds carry no field-inline semantics and evaluate to zero.
-#[macro_export]
-macro_rules! field_store_to_register {
-    ($rs1:literal) => {{
-        #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
-        {
-            const WORD: u32 = $crate::field_inline_r_word(
-                $crate::FIELD_INLINE_R_TYPE_FUNCT7,
-                $crate::FIELD_INLINE_STORE_TO_REGISTER_FUNCT3,
-                $crate::FIELD_INLINE_BRIDGE_X_REGISTER,
-                $crate::field_register($rs1),
-                0,
-            );
-            let out: u64;
-            // SAFETY: emits one fixed field-inline instruction word whose only
-            // register effect is writing a0, declared as the output. No memory
-            // is touched.
-            unsafe {
-                core::arch::asm!(
-                    ".word {word}",
-                    word = const WORD,
-                    lateout("x10") out,
-                    options(nostack),
-                );
-            }
-            out
-        }
-        #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
-        {
-            0u64
         }
     }};
 }

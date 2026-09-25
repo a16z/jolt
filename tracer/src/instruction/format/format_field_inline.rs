@@ -53,11 +53,7 @@ impl InstructionFormat for FormatFieldInline {
                 rs2: Some(rs2),
                 imm: 0,
             },
-            Some(
-                FieldInlineOp::Inv
-                | FieldInlineOp::LoadAccumulateFromRegister
-                | FieldInlineOp::StoreToRegister,
-            ) => Self {
+            Some(FieldInlineOp::Inv | FieldInlineOp::LoadAccumulateFromRegister) => Self {
                 op,
                 rd: Some(rd),
                 rs1: Some(rs1),
@@ -69,6 +65,13 @@ impl InstructionFormat for FormatFieldInline {
                 rd: None,
                 rs1: Some(rs1),
                 rs2: Some(rs2),
+                imm: 0,
+            },
+            Some(FieldInlineOp::AssertZero) => Self {
+                op,
+                rd: None,
+                rs1: Some(rs1),
+                rs2: None,
                 imm: 0,
             },
             Some(FieldInlineOp::LoadImm) => Self {
@@ -113,11 +116,7 @@ impl InstructionFormat for FormatFieldInline {
         }
         if matches!(
             self.op,
-            Some(
-                FieldInlineOp::StoreToRegister
-                    | FieldInlineOp::LoadAccumulateFromMemory
-                    | FieldInlineOp::AdviceLimb
-            )
+            Some(FieldInlineOp::LoadAccumulateFromMemory | FieldInlineOp::AdviceLimb)
         ) {
             if let Some(rd) = self.rd {
                 state.rd_pre = Some(normalize_register_value(cpu, rd as usize));
@@ -128,11 +127,7 @@ impl InstructionFormat for FormatFieldInline {
     fn capture_post_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
         if matches!(
             self.op,
-            Some(
-                FieldInlineOp::StoreToRegister
-                    | FieldInlineOp::LoadAccumulateFromMemory
-                    | FieldInlineOp::AdviceLimb
-            )
+            Some(FieldInlineOp::LoadAccumulateFromMemory | FieldInlineOp::AdviceLimb)
         ) {
             if let Some(rd) = self.rd {
                 state.rd_post = Some(normalize_register_value(cpu, rd as usize));

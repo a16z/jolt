@@ -3,7 +3,7 @@
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadAccumulateFromMemory,
+    FieldAdd, FieldAssertEq, FieldAssertZero, FieldInv, FieldLoadAccumulateFromMemory,
     FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul, FieldSub,
 };
 use jolt_riscv::{JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionRowData};
@@ -137,8 +137,7 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
-// The store bridge and limb advice use `RangeCheck`; other field-inline ops
-// have no lookup.
+// Only limb advice uses `RangeCheck`; other field-inline ops have no lookup.
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,
@@ -146,6 +145,7 @@ impl_field_inline_no_lookup!(
     FieldMul,
     FieldInv,
     FieldAssertEq,
+    FieldAssertZero,
     FieldLoadAccumulateFromRegister,
     FieldLoadImm,
     FieldLoadAccumulateFromMemory,

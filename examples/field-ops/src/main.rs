@@ -239,13 +239,13 @@ mod tests {
     /// The guest's static field-inline instruction budget: 2 accumulator seeds,
     /// 10 per coordinate pair (2 resets, 2 bridge accumulations, 3 muls, 2 subs,
     /// 1 add), 5 for the expected value (reset + 4 accumulations), the assert,
-    /// 5 for memory ingress and advice readout, 4 for inversion, and 4 for the
-    /// result value and StoreToRegister bridge.
-    const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 10 * PAIRS.len() + 5 + 1 + 5 + 4 + 4;
+    /// 11 for memory ingress, in-place readout and restoration, 4 for inversion,
+    /// and 5 for the result value, AdviceLimb and AssertZero.
+    const EXPECTED_FIELD_INLINE_CYCLES: usize = 2 + 10 * PAIRS.len() + 5 + 1 + 11 + 4 + 5;
 
     /// Commit-A scope: the guest builds and traces field-active — the tracer
-    /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or an
-    /// out-of-range StoreToRegister traps at trace time), so a completed trace
+    /// executes the field-inline semantics (a failed FIELD_ASSERT_EQ or
+    /// FIELD_ASSERT_ZERO traps at trace time), so a completed trace
     /// already pins the eq-MLE math. The full prove/verify e2e lives in
     /// jolt-prover's field_inline_e2e suite.
     #[test]
@@ -261,6 +261,6 @@ mod tests {
         let (output, _) =
             jolt::postcard::take_from_bytes::<u64>(&traced.trace_output.device.outputs)
                 .expect("decode output");
-        assert_eq!(output, 42, "the StoreToRegister bridge must return 42");
+        assert_eq!(output, 42, "the limb readout must return 42");
     }
 }

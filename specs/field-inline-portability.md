@@ -88,9 +88,11 @@ Everything above the tracer is generic over `F`. The concrete work:
   built under one encoding rejects under another fail-closed.
 - Bridge economics improve: a full-width load uses one zero initialization
   and two `FIELD_LOAD_ACCUMULATE_FROM_REGISTER` instructions, high limb first.
-  Each accumulation computes `old_destination * 2^64 + limb` in the field;
-  `FIELD_STORE_TO_REGISTER`'s range-restricted semantics (< 2^64, trap
-  otherwise) and `FIELD_LOAD_IMM` are unchanged.
+  Each accumulation computes `old_destination * 2^64 + limb` in the field.
+  Canonical readout uses two in-place `FIELD_ADVICE_LIMB` instructions,
+  `FIELD_ASSERT_ZERO` on the remaining quotient, and an integer check that
+  the emitted value is below the modulus. Accumulating the emitted limbs
+  high-to-low restores the consumed source without a scratch field register.
 - Generator budget: `MAX_BLINDFOLD_GENERATORS` is cfg-keyed today (32 without
   field-inline, 64 with it); the composed uniskip degrees do not change with
   the field, so no further action.

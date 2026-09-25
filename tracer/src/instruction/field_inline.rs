@@ -130,20 +130,9 @@ field_instruction!(
     SourceInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER
 );
 field_instruction!(
-    FIELD_STORE_TO_REGISTER,
-    FieldInlineOp::StoreToRegister,
-    SourceInstructionKind::FIELD_STORE_TO_REGISTER,
-    {
-        #[cfg(any(feature = "test-utils", test))]
-        fn random_cycle(rng: &mut StdRng) -> RISCVCycle<Self> {
-            test_support::random_cycle(rng)
-        }
-
-        #[cfg(any(feature = "test-utils", test))]
-        fn initialize_test_cpu(cycle: &RISCVCycle<Self>, cpu: &mut Cpu) {
-            test_support::initialize_cpu(cycle, cpu);
-        }
-    }
+    FIELD_ASSERT_ZERO,
+    FieldInlineOp::AssertZero,
+    SourceInstructionKind::FIELD_ASSERT_ZERO
 );
 field_instruction!(
     FIELD_LOAD_IMM,
@@ -162,12 +151,74 @@ field_instruction!(
     {
         #[cfg(any(feature = "test-utils", test))]
         fn random_cycle(rng: &mut StdRng) -> RISCVCycle<Self> {
-            test_support::random_cycle(rng)
+            use super::format::format_field_inline::RegisterStateFormatFieldInline;
+            use common::constants::RISCV_REGISTER_COUNT;
+            use jolt_riscv::FIELD_REGISTER_COUNT;
+            use rand::{Rng, RngCore};
+
+            let x_register = rng.gen_range(1..RISCV_REGISTER_COUNT);
+            let field_register = rng.gen_range(0..FIELD_REGISTER_COUNT);
+            let field_value = encode_field(ProofField::random(rng));
+            let mut low = [0u8; 8];
+            low.copy_from_slice(&field_value.bytes_le[..8]);
+            let x_value = u64::from_le_bytes(low);
+            let quotient_register = rng.gen_range(0..FIELD_REGISTER_COUNT);
+            let pre_value = if quotient_register == field_register {
+                field_value
+            } else {
+                encode_field(ProofField::random(rng))
+            };
+            let mut quotient = FieldEncodedValue::zero();
+            quotient.bytes_le[..FieldEncodedValue::BYTE_LEN as usize - 8]
+                .copy_from_slice(&field_value.bytes_le[8..]);
+            let word = Self::MATCH
+                | (u32::from(x_register) << 7)
+                | (u32::from(field_register) << 15)
+                | (u32::from(quotient_register) << 20);
+            RISCVCycle {
+                instruction: Self::new(word, rng.next_u64() & !3, false, false),
+                register_state: RegisterStateFormatFieldInline {
+                    rs1: None,
+                    rd_pre: Some(!x_value),
+                    rd_post: Some(x_value),
+                },
+                ram_access: FieldInlineCycleData {
+                    trace: Some(FieldInlineTraceData {
+                        op: Some(FieldInlineOp::AdviceLimb),
+                        rs1: Some(FieldRegisterRead {
+                            register: field_register,
+                            value: field_value,
+                        }),
+                        rd: Some(FieldRegisterWrite {
+                            register: quotient_register,
+                            pre_value,
+                            post_value: quotient,
+                        }),
+                        bridge: Some(FieldInlineBridge::AdviceLimb {
+                            field_register,
+                            field_value,
+                            x_register,
+                            x_value,
+                        }),
+                        ..Default::default()
+                    }),
+                    ram_read: None,
+                },
+            }
         }
 
         #[cfg(any(feature = "test-utils", test))]
         fn initialize_test_cpu(cycle: &RISCVCycle<Self>, cpu: &mut Cpu) {
-            test_support::initialize_cpu(cycle, cpu);
+            let trace = cycle
+                .ram_access
+                .trace
+                .expect("field advice fixture payload");
+            if let Some(write) = trace.rd {
+                cpu.field_registers.write(write.register, write.pre_value);
+            }
+            for read in [trace.rs1, trace.rs2].into_iter().flatten() {
+                cpu.field_registers.write(read.register, read.value);
+            }
         }
     }
 );
@@ -217,7 +268,7 @@ fn execute_over<F: Field + CanonicalEncoding>(
         FieldInlineOp::LoadAccumulateFromRegister => pure(
             execute_load_accumulate_from_register::<F>(op, operands, cpu),
         ),
-        FieldInlineOp::StoreToRegister => pure(execute_store_to_register::<F>(op, operands, cpu)),
+        FieldInlineOp::AssertZero => pure(execute_assert_zero::<F>(op, operands, cpu)),
         FieldInlineOp::LoadImm => pure(execute_load_imm(op, operands, cpu)),
         FieldInlineOp::LoadAccumulateFromMemory => {
             execute_load_accumulate_from_memory::<F>(op, operands, cpu)
@@ -236,8 +287,7 @@ fn execute_advice_limb<F: Field + CanonicalEncoding>(
     let field_register = operands.rs1.unwrap_or(0);
     let quotient_register = operands.rs2.unwrap_or(0);
     let x_register = operands.rd.unwrap_or(0);
-    // x0 discards the write the bridge row equates with the low limb (see
-    // `execute_store_to_register`).
+    // x0 discards the write constrained to equal the advised limb.
     assert!(
         x_register != 0,
         "FIELD_ADVICE_LIMB to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
@@ -265,7 +315,7 @@ fn execute_advice_limb<F: Field + CanonicalEncoding>(
             pre_value,
             post_value: quotient,
         }),
-        bridge: Some(FieldInlineBridge::StoreToRegister {
+        bridge: Some(FieldInlineBridge::AdviceLimb {
             field_register,
             field_value,
             x_register,
@@ -457,52 +507,22 @@ fn execute_load_accumulate_from_register<F: Field + CanonicalEncoding>(
     }
 }
 
-fn execute_store_to_register<F: CanonicalEncoding>(
+fn execute_assert_zero<F: Field + CanonicalEncoding>(
     op: FieldInlineOp,
     operands: FormatFieldInline,
     cpu: &mut Cpu,
 ) -> FieldInlineTraceData {
-    let field_register = operands.rs1.unwrap_or(0);
-    let x_register = operands.rd.unwrap_or(0);
-    // x0 discards the write, which the bridge row cannot express (it equates the
-    // x-register write with the field value); preprocessing rejects the same
-    // encoding, so trap at trace time like the other guest faults.
-    assert!(
-        x_register != 0,
-        "FIELD_STORE_TO_REGISTER to x0 at pc 0x{:x}: x0 discards the write, store to a real register",
+    let register = operands.rs1.unwrap_or(0);
+    let value = cpu.field_registers.read(register);
+    assert_eq!(
+        decode_field::<F>(value),
+        F::from_u64(0),
+        "FIELD_ASSERT_ZERO of nonzero field register {register} at pc 0x{:x}",
         cpu.read_pc(),
     );
-    let field_value = cpu.field_registers.read(field_register);
-    // StoreToRegister is a range-bound bridge: the instruction carries the advice
-    // lookup flags, so the constraint system pins the x-register write to
-    // `RangeCheck(FieldRs1Value)`, satisfiable only when the field value already
-    // fits in 64 bits (`jolt-r1cs` `field_constraints` module doc). A wider
-    // value has no proof, so trap here at trace time. Full-width extraction is
-    // the advice pattern's job (advice limbs + Horner + FIELD_ASSERT_EQ).
-    let x_value = decode_field::<F>(field_value)
-        .to_u64_checked()
-        .unwrap_or_else(|| {
-            panic!(
-                "FIELD_STORE_TO_REGISTER of a value wider than 64 bits at pc 0x{:x} (field register {}): \
-                 the store bridge only supports field values < 2^64; extract wide \
-                 values through the advice pattern instead",
-                cpu.read_pc(),
-                field_register,
-            )
-        });
-    cpu.write_register(x_register as usize, x_value as i64);
     FieldInlineTraceData {
         op: Some(op),
-        rs1: Some(FieldRegisterRead {
-            register: field_register,
-            value: field_value,
-        }),
-        bridge: Some(FieldInlineBridge::StoreToRegister {
-            field_register,
-            field_value,
-            x_register,
-            x_value,
-        }),
+        rs1: Some(FieldRegisterRead { register, value }),
         ..Default::default()
     }
 }
@@ -562,97 +582,6 @@ fn encode_field<F: CanonicalEncoding>(value: F) -> FieldEncodedValue {
     encoded
 }
 
-#[cfg(any(feature = "test-utils", test))]
-mod test_support {
-    use common::constants::RISCV_REGISTER_COUNT;
-    use jolt_field::Ring;
-    use jolt_riscv::FIELD_REGISTER_COUNT;
-    use rand::{Rng, RngCore};
-
-    use super::*;
-    use crate::instruction::format::format_field_inline::RegisterStateFormatFieldInline;
-
-    pub(super) fn random_cycle<I>(rng: &mut StdRng) -> RISCVCycle<I>
-    where
-        I: RISCVInstruction<Format = FormatFieldInline, RAMAccess = FieldInlineCycleData>,
-    {
-        let op = FieldInlineOp::from_word(I::MATCH).expect("field-inline instruction");
-        let x_register = rng.gen_range(1..RISCV_REGISTER_COUNT);
-        let field_register = rng.gen_range(0..FIELD_REGISTER_COUNT);
-        let source = if op == FieldInlineOp::AdviceLimb {
-            ProofField::random(rng)
-        } else {
-            ProofField::from_u64(rng.next_u64())
-        };
-        let field_value = encode_field(source);
-        let mut low = [0u8; 8];
-        low.copy_from_slice(&field_value.bytes_le[..8]);
-        let x_value = u64::from_le_bytes(low);
-        let field_write = (op == FieldInlineOp::AdviceLimb).then(|| {
-            let register = rng.gen_range(0..FIELD_REGISTER_COUNT);
-            let pre_value = if register == field_register {
-                field_value
-            } else {
-                encode_field(ProofField::random(rng))
-            };
-            let mut post_value = FieldEncodedValue::zero();
-            post_value.bytes_le[..FieldEncodedValue::BYTE_LEN as usize - 8]
-                .copy_from_slice(&field_value.bytes_le[8..]);
-            FieldRegisterWrite {
-                register,
-                pre_value,
-                post_value,
-            }
-        });
-        let word = op.instruction_match()
-            | (u32::from(x_register) << 7)
-            | (u32::from(field_register) << 15)
-            | field_write.map_or(0, |write| u32::from(write.register) << 20);
-        RISCVCycle {
-            instruction: I::new(word, rng.next_u64() & !3, false, false),
-            register_state: RegisterStateFormatFieldInline {
-                rs1: None,
-                rd_pre: Some(!x_value),
-                rd_post: Some(x_value),
-            },
-            ram_access: FieldInlineCycleData {
-                trace: Some(FieldInlineTraceData {
-                    op: Some(op),
-                    rs1: Some(FieldRegisterRead {
-                        register: field_register,
-                        value: field_value,
-                    }),
-                    rd: field_write,
-                    bridge: Some(FieldInlineBridge::StoreToRegister {
-                        field_register,
-                        field_value,
-                        x_register,
-                        x_value,
-                    }),
-                    ..Default::default()
-                }),
-                ram_read: None,
-            },
-        }
-    }
-
-    pub(super) fn initialize_cpu<I>(cycle: &RISCVCycle<I>, cpu: &mut Cpu)
-    where
-        I: RISCVInstruction<Format = FormatFieldInline, RAMAccess = FieldInlineCycleData>,
-    {
-        let trace = cycle
-            .ram_access
-            .trace
-            .expect("field lookup fixture payload");
-        if let Some(write) = trace.rd {
-            cpu.field_registers.write(write.register, write.pre_value);
-        }
-        for read in [trace.rs1, trace.rs2].into_iter().flatten() {
-            cpu.field_registers.write(read.register, read.value);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use common::constants::RISCV_REGISTER_COUNT;
@@ -664,18 +593,15 @@ mod tests {
     use crate::emulator::terminal::DummyTerminal;
     use crate::instruction::Cycle;
 
-    fn assert_random_lookup_cycles<I>(op: FieldInlineOp)
-    where
-        I: RISCVTrace<Format = FormatFieldInline, RAMAccess = FieldInlineCycleData>,
-        RISCVCycle<I>: Into<Cycle>,
-    {
+    #[test]
+    fn randomized_advice_cycles_have_canonical_replayable_field_state() {
         let mut rng = StdRng::seed_from_u64(12345);
         let mut saw_alias = false;
         let mut saw_wide_source = false;
         for _ in 0..512 {
-            let cycle = I::random_cycle(&mut rng);
+            let cycle = FIELD_ADVICE_LIMB::random_cycle(&mut rng);
             let operands = cycle.instruction.operands();
-            assert_eq!(operands.op, Some(op));
+            assert_eq!(operands.op, Some(FieldInlineOp::AdviceLimb));
             assert!((1..RISCV_REGISTER_COUNT).contains(&operands.rd.unwrap()));
             let trace = cycle.ram_access.trace.unwrap();
             let source = trace.rs1.unwrap();
@@ -702,7 +628,7 @@ mod tests {
                 usize::from(operands.rd.unwrap()),
                 cycle.register_state.rd_pre.unwrap() as i64,
             );
-            I::initialize_test_cpu(&cycle, &mut cpu);
+            FIELD_ADVICE_LIMB::initialize_test_cpu(&cycle, &mut cpu);
             assert_eq!(cpu.field_registers.read(source.register), source.value);
             if let Some(write) = trace.rd {
                 assert_eq!(cpu.field_registers.read(write.register), write.pre_value);
@@ -713,24 +639,14 @@ mod tests {
             let expected: Cycle = cycle.into();
             assert_eq!(replay[0], expected);
         }
-        if op == FieldInlineOp::AdviceLimb {
-            assert!(
-                saw_alias,
-                "advice fixtures must exercise source/quotient aliasing"
-            );
-            assert!(
-                saw_wide_source,
-                "advice fixtures must exercise full-width sources"
-            );
-        } else {
-            assert!(!saw_wide_source, "store fixtures must fit an x-register");
-        }
-    }
-
-    #[test]
-    fn randomized_lookup_cycles_have_canonical_replayable_field_state() {
-        assert_random_lookup_cycles::<FIELD_STORE_TO_REGISTER>(FieldInlineOp::StoreToRegister);
-        assert_random_lookup_cycles::<FIELD_ADVICE_LIMB>(FieldInlineOp::AdviceLimb);
+        assert!(
+            saw_alias,
+            "advice fixtures must exercise source/quotient aliasing"
+        );
+        assert!(
+            saw_wide_source,
+            "advice fixtures must exercise full-width sources"
+        );
     }
 
     /// Encode/decode roundtrip over the build's ProofField, including values

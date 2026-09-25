@@ -36,8 +36,9 @@ pub use assert::AssertValidUnsignedRemainder;
 pub use assert::AssertWordAlignment;
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldInv, FieldLoadAccumulateFromMemory,
-    FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul, FieldStoreToRegister, FieldSub,
+    FieldAdd, FieldAdviceLimb, FieldAssertEq, FieldAssertZero, FieldInv,
+    FieldLoadAccumulateFromMemory, FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul,
+    FieldSub,
 };
 pub use i::Add;
 pub use i::AddW;
@@ -455,7 +456,7 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     #[cfg(feature = "field-inline")]
     FieldLoadAccumulateFromRegister(FieldLoadAccumulateFromRegister<T>),
     #[cfg(feature = "field-inline")]
-    FieldStoreToRegister(FieldStoreToRegister<T>),
+    FieldAssertZero(FieldAssertZero<T>),
     #[cfg(feature = "field-inline")]
     FieldLoadImm(FieldLoadImm<T>),
     #[cfg(feature = "field-inline")]
@@ -683,7 +684,7 @@ impl_jolt_instructions_flags! {
     #[cfg(feature = "field-inline")]
     FieldLoadAccumulateFromRegister => FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
     #[cfg(feature = "field-inline")]
-    FieldStoreToRegister => FIELD_STORE_TO_REGISTER,
+    FieldAssertZero => FIELD_ASSERT_ZERO,
     #[cfg(feature = "field-inline")]
     FieldLoadImm => FIELD_LOAD_IMM,
     #[cfg(feature = "field-inline")]

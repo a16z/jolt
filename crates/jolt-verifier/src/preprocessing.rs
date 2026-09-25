@@ -169,9 +169,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// deployed verifier sees.
 #[cfg(not(feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v2";
-// Accumulating ingress changes the field-inline instruction and proof schemas.
+// AssertZero changes the field-inline instruction and proof schemas.
 #[cfg(feature = "field-inline")]
-const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v3";
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v4";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -322,8 +322,8 @@ mod tests {
     ];
     #[cfg(feature = "field-inline")]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
-        84, 207, 166, 21, 38, 96, 179, 244, 64, 246, 59, 246, 249, 194, 204, 57, 196, 148, 76, 225,
-        76, 151, 215, 73, 146, 189, 106, 44, 150, 199, 109, 113,
+        159, 42, 134, 60, 39, 247, 245, 208, 238, 170, 173, 95, 244, 160, 156, 28, 109, 117, 188,
+        154, 230, 116, 36, 200, 180, 252, 153, 10, 115, 166, 153, 245,
     ];
     #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
@@ -337,13 +337,13 @@ mod tests {
     ];
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        162, 146, 83, 205, 187, 102, 142, 240, 60, 254, 5, 208, 0, 64, 41, 117, 93, 148, 221, 201,
-        152, 57, 253, 195, 224, 8, 77, 137, 82, 212, 231, 26,
+        0, 72, 116, 160, 229, 41, 145, 135, 226, 34, 241, 30, 80, 26, 61, 54, 220, 22, 163, 234,
+        107, 31, 131, 129, 228, 86, 2, 27, 246, 131, 230, 230,
     ];
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
-        3, 184, 27, 109, 46, 217, 18, 137, 189, 228, 170, 104, 254, 191, 39, 158, 19, 108, 240,
-        246, 36, 221, 177, 255, 57, 114, 255, 45, 163, 132, 24, 163,
+        112, 61, 57, 19, 71, 57, 73, 5, 247, 181, 132, 5, 193, 60, 185, 70, 5, 91, 145, 43, 225,
+        187, 39, 204, 125, 158, 43, 193, 181, 227, 247, 78,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout

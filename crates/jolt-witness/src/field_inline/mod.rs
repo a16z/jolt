@@ -189,7 +189,7 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
             FieldInlineOpFlag::Inv,
             FieldInlineOpFlag::AssertEq,
             FieldInlineOpFlag::LoadAccumulateFromRegister,
-            FieldInlineOpFlag::StoreToRegister,
+            FieldInlineOpFlag::AssertZero,
             FieldInlineOpFlag::LoadImm,
             FieldInlineOpFlag::LoadAccumulateFromMemory,
             FieldInlineOpFlag::AdviceLimb,
@@ -681,6 +681,7 @@ fn validate_bridge(
             | FieldInlineOp::Mul
             | FieldInlineOp::Inv
             | FieldInlineOp::AssertEq
+            | FieldInlineOp::AssertZero
             | FieldInlineOp::LoadImm,
             bridge,
         ) => {
@@ -713,8 +714,8 @@ fn validate_bridge(
             Ok(())
         }
         (
-            FieldInlineOp::StoreToRegister | FieldInlineOp::AdviceLimb,
-            Some(FieldInlineBridge::StoreToRegister {
+            FieldInlineOp::AdviceLimb,
+            Some(FieldInlineBridge::AdviceLimb {
                 field_register,
                 field_value,
                 x_register,
@@ -729,7 +730,7 @@ fn validate_bridge(
             {
                 return Err(invalid_row(
                     index,
-                    "field-inline store bridge payload is inconsistent",
+                    "field-inline advice bridge payload is inconsistent",
                 ));
             }
             Ok(())
@@ -758,7 +759,6 @@ fn validate_bridge(
         }
         (
             FieldInlineOp::LoadAccumulateFromRegister
-            | FieldInlineOp::StoreToRegister
             | FieldInlineOp::LoadAccumulateFromMemory
             | FieldInlineOp::AdviceLimb,
             _,
@@ -994,16 +994,16 @@ mod tests {
                 ..FieldInlineTraceData::default()
             },
         );
-        let store = instruction(
-            JoltInstructionKind::FIELD_STORE_TO_REGISTER,
+        let advice = instruction(
+            JoltInstructionKind::FIELD_ADVICE_LIMB,
             3,
             Some(10),
             Some(1),
-            None,
+            Some(0),
             0,
         );
         let row3 = row_with_registers(
-            store,
+            advice,
             RegisterState {
                 rd: Some(RegisterWrite {
                     register: 10,
@@ -1013,12 +1013,17 @@ mod tests {
                 ..RegisterState::default()
             },
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToRegister),
+                op: Some(FieldInlineOp::AdviceLimb),
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(35),
                 }),
-                bridge: Some(FieldInlineBridge::StoreToRegister {
+                rd: Some(FieldRegisterWrite {
+                    register: 0,
+                    pre_value: enc(0),
+                    post_value: enc(0),
+                }),
+                bridge: Some(FieldInlineBridge::AdviceLimb {
                     field_register: 1,
                     field_value: enc(35),
                     x_register: 10,
@@ -1028,7 +1033,7 @@ mod tests {
             },
         );
         (
-            vec![load_rs1, load_rs2, mul, store],
+            vec![load_rs1, load_rs2, mul, advice],
             vec![row0, row1, row2, row3],
         )
     }
@@ -1255,16 +1260,16 @@ mod tests {
                 ..FieldInlineTraceData::default()
             },
         );
-        let store = instruction(
-            JoltInstructionKind::FIELD_STORE_TO_REGISTER,
+        let advice = instruction(
+            JoltInstructionKind::FIELD_ADVICE_LIMB,
             1,
             Some(6),
             Some(1),
-            None,
+            Some(0),
             0,
         );
         let row1 = row_with_registers(
-            store,
+            advice,
             RegisterState {
                 rd: Some(RegisterWrite {
                     register: 6,
@@ -1274,12 +1279,17 @@ mod tests {
                 ..RegisterState::default()
             },
             FieldInlineTraceData {
-                op: Some(FieldInlineOp::StoreToRegister),
+                op: Some(FieldInlineOp::AdviceLimb),
                 rs1: Some(FieldRegisterRead {
                     register: 1,
                     value: enc(11),
                 }),
-                bridge: Some(FieldInlineBridge::StoreToRegister {
+                rd: Some(FieldRegisterWrite {
+                    register: 0,
+                    pre_value: enc(0),
+                    post_value: enc(0),
+                }),
+                bridge: Some(FieldInlineBridge::AdviceLimb {
                     field_register: 1,
                     field_value: enc(11),
                     x_register: 6,
@@ -1289,7 +1299,7 @@ mod tests {
             },
         );
 
-        let bytecode = vec![load, store];
+        let bytecode = vec![load, advice];
         let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
         let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
         let witness = witness(&program, &preprocessing, vec![row0, row1], 2);

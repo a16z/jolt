@@ -1,4 +1,3 @@
-//! Field-inline bridges whose x-register writes use range-check lookups.
+//! Range-checked limb advice for field-inline readout.
 
 pub mod advice_limb;
-pub mod store_to_register;

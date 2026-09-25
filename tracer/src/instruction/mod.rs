@@ -67,9 +67,9 @@ use ecall::ECALL;
 use fence::FENCE;
 #[cfg(feature = "field-inline")]
 use field_inline::{
-    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_INV, FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
-    FIELD_LOAD_ACCUMULATE_FROM_REGISTER, FIELD_LOAD_IMM, FIELD_MUL, FIELD_STORE_TO_REGISTER,
-    FIELD_SUB,
+    FIELD_ADD, FIELD_ADVICE_LIMB, FIELD_ASSERT_EQ, FIELD_ASSERT_ZERO, FIELD_INV,
+    FIELD_LOAD_ACCUMULATE_FROM_MEMORY, FIELD_LOAD_ACCUMULATE_FROM_REGISTER, FIELD_LOAD_IMM,
+    FIELD_MUL, FIELD_SUB,
 };
 use jal::JAL;
 use jalr::JALR;
@@ -651,7 +651,7 @@ macro_rules! define_rv64imac_enums {
                     Cycle::FIELD_INV(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ASSERT_EQ(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(cycle) => cycle.ram_access.trace,
-                    Cycle::FIELD_STORE_TO_REGISTER(cycle) => cycle.ram_access.trace,
+                    Cycle::FIELD_ASSERT_ZERO(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_IMM(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(cycle) => cycle.ram_access.trace,
                     Cycle::FIELD_ADVICE_LIMB(cycle) => cycle.ram_access.trace,
@@ -996,7 +996,7 @@ fn is_field_inline_instruction(instruction: &Instruction) -> bool {
             | Instruction::FIELD_INV(_)
             | Instruction::FIELD_ASSERT_EQ(_)
             | Instruction::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(_)
-            | Instruction::FIELD_STORE_TO_REGISTER(_)
+            | Instruction::FIELD_ASSERT_ZERO(_)
             | Instruction::FIELD_LOAD_IMM(_)
             | Instruction::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(_)
             | Instruction::FIELD_ADVICE_LIMB(_)
@@ -1453,8 +1453,8 @@ impl Instruction {
                         FIELD_LOAD_ACCUMULATE_FROM_REGISTER::new(instr, address, true, compressed)
                             .into(),
                     ),
-                    Some(jolt_riscv::FieldInlineOp::StoreToRegister) => {
-                        Ok(FIELD_STORE_TO_REGISTER::new(instr, address, true, compressed).into())
+                    Some(jolt_riscv::FieldInlineOp::AssertZero) => {
+                        Ok(FIELD_ASSERT_ZERO::new(instr, address, true, compressed).into())
                     }
                     Some(jolt_riscv::FieldInlineOp::LoadImm) => {
                         Ok(FIELD_LOAD_IMM::new(instr, address, true, compressed).into())
@@ -2126,16 +2126,16 @@ mod tests {
         );
         assert_eq!(mul_trace.product, Some(FieldEncodedValue::from_u64(21)));
 
-        let store_cycle = trace_one(
+        let advice_cycle = trace_one(
             &mut cpu,
-            field_inline_word(FieldInlineOp::StoreToRegister, 10, 3, 0),
+            field_inline_word(FieldInlineOp::AdviceLimb, 10, 3, 4),
         );
-        assert_eq!(store_cycle.rs1_read(), None);
-        assert_eq!(store_cycle.rd_write(), Some((10, 0, 21)));
-        let store_trace = store_cycle.field_inline_trace().unwrap();
+        assert_eq!(advice_cycle.rs1_read(), None);
+        assert_eq!(advice_cycle.rd_write(), Some((10, 0, 21)));
+        let advice_trace = advice_cycle.field_inline_trace().unwrap();
         assert_eq!(
-            store_trace.bridge,
-            Some(FieldInlineBridge::StoreToRegister {
+            advice_trace.bridge,
+            Some(FieldInlineBridge::AdviceLimb {
                 field_register: 3,
                 field_value: FieldEncodedValue::from_u64(21),
                 x_register: 10,
@@ -2203,18 +2203,39 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    #[should_panic(expected = "FIELD_STORE_TO_REGISTER of a value wider than 64 bits")]
-    fn field_inline_store_of_wide_value_traps_at_trace_time() {
+    #[should_panic(expected = "FIELD_ASSERT_ZERO of nonzero field register")]
+    fn field_inline_assert_zero_rejects_nonzero_field_values() {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
-        // Build 2^64 in field register 1 by repeated squaring of 2, then attempt to store it.
-        trace_one(&mut cpu, field_inline_word(FieldInlineOp::LoadImm, 1, 0, 2));
-        for _ in 0..6 {
-            trace_one(&mut cpu, field_inline_word(FieldInlineOp::Mul, 1, 1, 1));
-        }
+        trace_one(&mut cpu, field_inline_word(FieldInlineOp::LoadImm, 1, 0, 1));
         trace_one(
             &mut cpu,
-            field_inline_word(FieldInlineOp::StoreToRegister, 10, 1, 0),
+            field_inline_word(FieldInlineOp::AssertZero, 0, 1, 0),
         );
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_inline_assert_zero_reads_without_writes() {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        cpu.write_register(3, 19);
+        let integer_registers = cpu.x;
+        let cycle = trace_one(
+            &mut cpu,
+            field_inline_word(FieldInlineOp::AssertZero, 0, 3, 0),
+        );
+        assert_eq!(cycle.rs1_read(), None);
+        assert_eq!(cycle.rs2_read(), None);
+        assert_eq!(cycle.rd_write(), None);
+        let trace = cycle.field_inline_trace().unwrap();
+        assert_eq!(trace.op, Some(FieldInlineOp::AssertZero));
+        assert_eq!(trace.rs1.unwrap().register, 3);
+        assert_eq!(trace.rs1.unwrap().value, FieldEncodedValue::zero());
+        assert_eq!(trace.rs2, None);
+        assert_eq!(trace.rd, None);
+        assert_eq!(trace.bridge, None);
+        assert_eq!(cpu.x, integer_registers);
+        assert_eq!(cpu.field_registers.read(3), FieldEncodedValue::zero());
+        assert!(Instruction::decode(0x7b | (6 << 12), 0x8000_0000, false).is_err());
     }
 
     #[cfg(feature = "field-inline")]

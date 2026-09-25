@@ -23,7 +23,7 @@ pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT7_FAMILY: u8 = 0x60;
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_OFFSET_MASK: u8 = 0x1f;
 /// Bytes between consecutive word offsets of a memory-sourced load.
 pub const FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE: u32 = 8;
-/// The limb split shares `FIELD_STORE_TO_REGISTER`'s funct3 under funct7 1.
+/// Limb advice and zero assertions share funct3 6 under distinct funct7 values.
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT3: u8 = 6;
 pub const FIELD_INLINE_ADVICE_LIMB_FUNCT7: u8 = 1;
 
@@ -52,7 +52,8 @@ pub enum FieldInlineOp {
     AssertEq,
     /// `field_rd = field_rd · 2^64 + x_rs1`.
     LoadAccumulateFromRegister,
-    StoreToRegister,
+    /// Assert that the source field register is zero without a destination.
+    AssertZero,
     LoadImm,
     /// `field_rd = field_rd · 2^64 + mem[x_rs1 + offset]`: the loaded word
     /// also lands in scratch x-register `rd`; field register `rs2` is both
@@ -60,7 +61,8 @@ pub enum FieldInlineOp {
     LoadAccumulateFromMemory,
     /// Supply a 64-bit advice limb `x_rd` with `field_rs1 = x_rd + 2^64 · field_rs2`.
     /// The tracer chooses the canonical low limb; the relation permits other
-    /// choices. A full readout needs a guest integer check below the modulus.
+    /// choices. A full readout needs a terminal zero assertion and a guest
+    /// integer check below the modulus.
     AdviceLimb,
 }
 
@@ -73,7 +75,7 @@ impl FieldInlineOp {
             Self::Inv => 3,
             Self::AssertEq => 4,
             Self::LoadAccumulateFromRegister => 5,
-            Self::StoreToRegister => 6,
+            Self::AssertZero => 11,
             Self::LoadImm => 7,
             Self::LoadAccumulateFromMemory => 9,
             Self::AdviceLimb => 10,
@@ -88,7 +90,7 @@ impl FieldInlineOp {
             Self::Inv => 3,
             Self::AssertEq => 4,
             Self::LoadAccumulateFromRegister => 5,
-            Self::StoreToRegister => 6,
+            Self::AssertZero => 6,
             Self::LoadImm => FIELD_INLINE_LOAD_IMM_FUNCT3,
             Self::LoadAccumulateFromMemory => FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_FUNCT3,
             Self::AdviceLimb => FIELD_INLINE_ADVICE_LIMB_FUNCT3,
@@ -105,8 +107,8 @@ impl FieldInlineOp {
             | Self::Mul
             | Self::Inv
             | Self::AssertEq
-            | Self::LoadAccumulateFromRegister
-            | Self::StoreToRegister => Some(FIELD_INLINE_R_TYPE_FUNCT7),
+            | Self::LoadAccumulateFromRegister => Some(FIELD_INLINE_R_TYPE_FUNCT7),
+            Self::AssertZero => Some(2),
             Self::LoadAccumulateFromMemory => {
                 Some(field_inline_load_accumulate_from_memory_funct7(0))
             }
@@ -142,7 +144,7 @@ impl FieldInlineOp {
             3 => Some(Self::Inv),
             4 => Some(Self::AssertEq),
             5 => Some(Self::LoadAccumulateFromRegister),
-            6 => Some(Self::StoreToRegister),
+            11 => Some(Self::AssertZero),
             7 => Some(Self::LoadImm),
             9 => Some(Self::LoadAccumulateFromMemory),
             10 => Some(Self::AdviceLimb),
@@ -164,7 +166,7 @@ impl FieldInlineOp {
             (FIELD_INLINE_R_TYPE_FUNCT7, 3) => Some(Self::Inv),
             (FIELD_INLINE_R_TYPE_FUNCT7, 4) => Some(Self::AssertEq),
             (FIELD_INLINE_R_TYPE_FUNCT7, 5) => Some(Self::LoadAccumulateFromRegister),
-            (FIELD_INLINE_R_TYPE_FUNCT7, 6) => Some(Self::StoreToRegister),
+            (2, 6) => Some(Self::AssertZero),
             (FIELD_INLINE_ADVICE_LIMB_FUNCT7, FIELD_INLINE_ADVICE_LIMB_FUNCT3) => {
                 Some(Self::AdviceLimb)
             }
@@ -303,19 +305,18 @@ impl FieldInlineOperandShape {
             | FieldInlineOp::Mul
             | FieldInlineOp::Inv
             | FieldInlineOp::AssertEq
-            | FieldInlineOp::StoreToRegister
+            | FieldInlineOp::AssertZero
             | FieldInlineOp::LoadImm
             | FieldInlineOp::AdviceLimb => None,
         };
         operands.rd = match self.op {
-            FieldInlineOp::StoreToRegister
-            | FieldInlineOp::LoadAccumulateFromMemory
-            | FieldInlineOp::AdviceLimb => operands.rd,
+            FieldInlineOp::LoadAccumulateFromMemory | FieldInlineOp::AdviceLimb => operands.rd,
             FieldInlineOp::Add
             | FieldInlineOp::Sub
             | FieldInlineOp::Mul
             | FieldInlineOp::Inv
             | FieldInlineOp::AssertEq
+            | FieldInlineOp::AssertZero
             | FieldInlineOp::LoadAccumulateFromRegister
             | FieldInlineOp::LoadImm => None,
         };
@@ -330,9 +331,9 @@ impl FieldInlineOperandShape {
             | FieldInlineOp::Mul
             | FieldInlineOp::Inv
             | FieldInlineOp::AssertEq
+            | FieldInlineOp::AssertZero
             | FieldInlineOp::LoadImm => true,
             FieldInlineOp::LoadAccumulateFromRegister
-            | FieldInlineOp::StoreToRegister
             | FieldInlineOp::LoadAccumulateFromMemory
             | FieldInlineOp::AdviceLimb => false,
         }
@@ -369,7 +370,7 @@ pub const fn field_inline_source_op(kind: crate::SourceInstructionKind) -> Optio
         SourceInstruction::FieldLoadAccumulateFromRegister(_) => {
             Some(FieldInlineOp::LoadAccumulateFromRegister)
         }
-        SourceInstruction::FieldStoreToRegister(_) => Some(FieldInlineOp::StoreToRegister),
+        SourceInstruction::FieldAssertZero(_) => Some(FieldInlineOp::AssertZero),
         SourceInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
         SourceInstruction::FieldLoadAccumulateFromMemory(_) => {
             Some(FieldInlineOp::LoadAccumulateFromMemory)
@@ -393,7 +394,7 @@ pub const fn field_inline_jolt_op(kind: crate::JoltInstructionKind) -> Option<Fi
         JoltInstruction::FieldLoadAccumulateFromRegister(_) => {
             Some(FieldInlineOp::LoadAccumulateFromRegister)
         }
-        JoltInstruction::FieldStoreToRegister(_) => Some(FieldInlineOp::StoreToRegister),
+        JoltInstruction::FieldAssertZero(_) => Some(FieldInlineOp::AssertZero),
         JoltInstruction::FieldLoadImm(_) => Some(FieldInlineOp::LoadImm),
         JoltInstruction::FieldLoadAccumulateFromMemory(_) => {
             Some(FieldInlineOp::LoadAccumulateFromMemory)
@@ -450,7 +451,7 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
             field_rd_in_rs2_slot: false,
             field_rs1_is_field_rd: true,
         },
-        FieldInlineOp::StoreToRegister => FieldInlineOperandShape {
+        FieldInlineOp::AssertZero => FieldInlineOperandShape {
             op,
             reads_field_rs1: true,
             reads_field_rs2: false,
@@ -568,7 +569,7 @@ mod encoding_tests {
             FieldInlineOp::Inv,
             FieldInlineOp::AssertEq,
             FieldInlineOp::LoadAccumulateFromRegister,
-            FieldInlineOp::StoreToRegister,
+            FieldInlineOp::AssertZero,
             FieldInlineOp::LoadImm,
             FieldInlineOp::LoadAccumulateFromMemory,
             FieldInlineOp::AdviceLimb,
@@ -581,6 +582,19 @@ mod encoding_tests {
             assert_eq!(FieldInlineOp::from_word(word), Some(op));
             assert_eq!(word & op.instruction_mask(), op.instruction_match());
         }
+    }
+
+    #[test]
+    fn assert_zero_uses_new_encoding_and_retires_store_encoding() {
+        let word = 0x7b | (6 << 12) | (3 << 15) | (2 << 25);
+        assert_eq!(
+            FieldInlineOp::from_word(word),
+            Some(FieldInlineOp::AssertZero)
+        );
+        assert_eq!(FieldInlineOp::AssertZero.tag(), 11);
+        assert_eq!(FieldInlineOp::from_tag(11), Some(FieldInlineOp::AssertZero));
+        assert_eq!(FieldInlineOp::from_tag(6), None);
+        assert_eq!(FieldInlineOp::from_word(word & !(0x7f << 25)), None);
     }
 
     #[test]

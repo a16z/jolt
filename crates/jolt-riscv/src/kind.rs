@@ -511,7 +511,7 @@ macro_rules! source_extension_for_marker {
     (FieldLoadAccumulateFromRegister) => {
         Some(SourceExtension::FieldInline)
     };
-    (FieldStoreToRegister) => {
+    (FieldAssertZero) => {
         Some(SourceExtension::FieldInline)
     };
     (FieldLoadImm) => {
@@ -1000,7 +1000,7 @@ macro_rules! source_side_effects_for_marker {
     (FieldLoadAccumulateFromRegister) => {
         true
     };
-    (FieldStoreToRegister) => {
+    (FieldAssertZero) => {
         true
     };
     (FieldLoadImm) => {
@@ -1300,7 +1300,7 @@ macro_rules! jolt_target_extension_for_marker {
     (FieldLoadAccumulateFromRegister) => {
         Some(JoltTargetExtension::FieldInline)
     };
-    (FieldStoreToRegister) => {
+    (FieldAssertZero) => {
         Some(JoltTargetExtension::FieldInline)
     };
     (FieldLoadImm) => {
@@ -1372,7 +1372,7 @@ macro_rules! jolt_side_effects_for_marker {
     (FieldLoadAccumulateFromRegister) => {
         true
     };
-    (FieldStoreToRegister) => {
+    (FieldAssertZero) => {
         true
     };
     (FieldLoadImm) => {

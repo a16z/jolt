@@ -316,16 +316,16 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
         },
     );
 
-    let store = instruction(
-        JoltInstructionKind::FIELD_STORE_TO_REGISTER,
+    let advice = instruction(
+        JoltInstructionKind::FIELD_ADVICE_LIMB,
         1,
         Some(6),
         Some(1),
-        None,
+        Some(0),
         0,
     );
-    let store_row = field_row_with_registers(
-        store,
+    let advice_row = field_row_with_registers(
+        advice,
         RegisterState {
             rd: Some(RegisterWrite {
                 register: 6,
@@ -335,12 +335,17 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
             ..RegisterState::default()
         },
         FieldInlineTraceData {
-            op: Some(FieldInlineOp::StoreToRegister),
+            op: Some(FieldInlineOp::AdviceLimb),
             rs1: Some(FieldRegisterRead {
                 register: 1,
                 value: enc(19),
             }),
-            bridge: Some(FieldInlineBridge::StoreToRegister {
+            rd: Some(FieldRegisterWrite {
+                register: 0,
+                pre_value: enc(0),
+                post_value: enc(0),
+            }),
+            bridge: Some(FieldInlineBridge::AdviceLimb {
                 field_register: 1,
                 field_value: enc(19),
                 x_register: 6,
@@ -350,10 +355,10 @@ fn public_bridge_rows_keep_x_register_and_field_register_witnesses_disjoint() {
         },
     );
 
-    let bytecode = vec![load, store];
+    let bytecode = vec![load, advice];
     let program = program(bytecode.clone(), RV64IMAC_JOLT_FIELD_INLINE);
     let preprocessing = preprocessing(bytecode, RV64IMAC_JOLT_FIELD_INLINE);
-    let witness = witness(&program, &preprocessing, vec![load_row, store_row], 2);
+    let witness = witness(&program, &preprocessing, vec![load_row, advice_row], 2);
     let provider = witness.field_inline_witness().unwrap();
 
     let ordinary = JoltWitnessOracle::<Fr>::oracle_table(

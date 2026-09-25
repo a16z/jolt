@@ -430,16 +430,20 @@ mod tests {
             }
         );
 
-        let store = crate::field_inline_operand_shape(JoltInstructionKind::FIELD_STORE_TO_REGISTER)
-            .unwrap();
-        assert!(store.reads_field_rs1);
-        assert!(!store.writes_field_rd);
-        assert!(!store.is_pure_field_op());
+        let assert_zero =
+            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_ASSERT_ZERO).unwrap();
+        assert!(assert_zero.reads_field_rs1);
+        assert!(!assert_zero.reads_field_rs2);
+        assert!(!assert_zero.writes_field_rd);
+        assert!(assert_zero.is_pure_field_op());
+        assert_eq!(
+            assert_zero.x_operands(operands),
+            NormalizedOperands::default()
+        );
         let write_operands = NormalizedOperands {
             rd: Some(5),
             ..NormalizedOperands::default()
         };
-        assert_eq!(store.x_operands(operands), write_operands);
 
         let load_memory = crate::field_inline_operand_shape(
             JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,

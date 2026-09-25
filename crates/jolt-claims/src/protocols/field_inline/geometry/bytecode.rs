@@ -15,7 +15,7 @@ pub const FIELD_INLINE_BYTECODE_STAGE1_FLAGS: [FieldInlineOpFlag; 10] = [
     FieldInlineOpFlag::Inv,
     FieldInlineOpFlag::AssertEq,
     FieldInlineOpFlag::LoadAccumulateFromRegister,
-    FieldInlineOpFlag::StoreToRegister,
+    FieldInlineOpFlag::AssertZero,
     FieldInlineOpFlag::LoadImm,
     FieldInlineOpFlag::LoadAccumulateFromMemory,
     FieldInlineOpFlag::AdviceLimb,
@@ -47,7 +47,7 @@ pub struct FieldInlineBytecodeFlags {
     pub inv: bool,
     pub assert_eq: bool,
     pub load_accumulate_from_register: bool,
-    pub store_to_register: bool,
+    pub assert_zero: bool,
     pub load_imm: bool,
     pub load_accumulate_from_memory: bool,
     pub advice_limb: bool,
@@ -62,7 +62,7 @@ impl FieldInlineBytecodeFlags {
             FieldInlineOpFlag::Inv => self.inv,
             FieldInlineOpFlag::AssertEq => self.assert_eq,
             FieldInlineOpFlag::LoadAccumulateFromRegister => self.load_accumulate_from_register,
-            FieldInlineOpFlag::StoreToRegister => self.store_to_register,
+            FieldInlineOpFlag::AssertZero => self.assert_zero,
             FieldInlineOpFlag::LoadImm => self.load_imm,
             FieldInlineOpFlag::LoadAccumulateFromMemory => self.load_accumulate_from_memory,
             FieldInlineOpFlag::AdviceLimb => self.advice_limb,
@@ -365,7 +365,7 @@ fn validate_operand_layout(
         FieldInlineOpFlag::LoadImm => {
             operands.rd.is_some() && operands.rs1.is_none() && operands.rs2.is_none()
         }
-        FieldInlineOpFlag::StoreToRegister => {
+        FieldInlineOpFlag::AssertZero => {
             operands.rd.is_none() && operands.rs1.is_some() && operands.rs2.is_none()
         }
         // The Horner step reads the accumulator it writes.
