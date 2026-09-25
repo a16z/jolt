@@ -121,9 +121,11 @@ Key abstractions:
 
 ### Acceptance Criteria
 
-- [ ] `cargo tree -p jolt-verifier -e normal` and `-e normal,build` contain no
-      `jolt-metal` and no `objc2*` crate. The same holds for `akita-verifier`
-      in Akita. CI enforces both checks.
+- [ ] The normal and build dependency graphs of `jolt-verifier` and
+      `jolt-field`, under `--all-features --target all`, contain no
+      `jolt-metal` and no `objc2*` crate
+      (`scripts/check-metal-isolation.sh`). The same holds for
+      `akita-verifier` in Akita. CI enforces both checks.
 - [ ] On `x86_64-unknown-linux-gnu`, `cargo clippy -p jolt-metal
       --all-targets -- -D warnings` passes with no Metal or `objc2` crate in
       the build graph.
@@ -162,19 +164,26 @@ implementation, not a refactor of the CPU code.
   - ring axioms on device outputs;
   - canonical form of all outputs;
   - accumulator reduction equals the sum of fully reduced products.
-- **Serialization.** GPU tests hold a process-wide lock, following the
-  `/tmp` flock in #1733. This avoids contention noise and makes hang
-  attribution possible.
+- **Serialization.** nextest runs each test in its own process, so GPU tests
+  take an exclusive file lock (`File::lock` on a file in the temp directory),
+  following the `/tmp` flock in #1733. This avoids contention noise and makes
+  hang attribution possible.
 - **Hang guard.** A test-only watchdog, following `hang_watchdog.rs` in #1848,
-  aborts with a diagnostic when a command buffer exceeds a bound. #1848
-  recorded four macOS kernel panics caused by GPU hangs, so validation-layer
-  runs come before any unvalidated performance run.
-- **No GPU in CI.** Until a Metal-capable runner exists, CI covers only the
-  non-macOS compile and the dependency-graph invariants.
-- **Local report.** `scripts/metal-report.sh` runs the full suite and the
-  benchmarks on a local Apple Silicon machine. It emits a report with the
-  device name, macOS version, GPU family, git SHA, test results, and
-  benchmark table. Every `jolt-metal` PR description includes that report.
+  aborts the test process with a diagnostic when one test holds the GPU for
+  more than two minutes. #1848 recorded four macOS kernel panics caused by
+  GPU hangs, so validation-layer runs come before any unvalidated
+  performance run.
+- **CI.** The Linux jobs build the uninhabited non-macOS backend and run the
+  dependency-graph check. A path-filtered macOS job lints the Objective-C
+  backend, probes the runner's device, and runs the GPU tests only when the
+  probe finds a supported device; otherwise it runs the host-only tests and
+  says so.
+- **Local report.** `scripts/metal-report.sh` runs the full suite on a local
+  Apple Silicon machine, once normally and once under the API and shader
+  validation layers. It emits a report with the device name, macOS version,
+  GPU family, git SHA, and test results. Benchmark tables join it with the
+  first benchmarks (step 2). Every `jolt-metal` PR description includes that
+  report.
 
 ### Performance
 
@@ -290,18 +299,26 @@ the consumer what it may do:
 | `Setup` | shader compile error; missing entry point; pipeline creation | construction (invariant 8) | choose the CPU backend; report it as a bug |
 | `Capacity` | buffer above `maxBufferLength`; working set above `recommendedMaxWorkingSetSize`; allocation returned nil | before encoding | re-plan or use the CPU for this job |
 | `Transient` | `Timeout` (2); `OutOfMemory` (8); `AccessRevoked` (4); `NotPermitted` (7) | after commit | retry or fall back at the consumer's granularity |
-| `Fault` | `PageFault` (3); `InvalidResource` (9); `StackOverflow` (12); `Internal` (1); an unknown code; a caught Objective-C exception; non-canonical read-back | after commit | treat as a kernel bug: never retry silently, fail loudly |
+| `Fault` | `PageFault` (3); `InvalidResource` (9); `StackOverflow` (12); `Internal` (1); an unknown code; a caught Objective-C exception; a dispatch whose bindings or grid do not match the kernel; an undeclared pipeline name; non-canonical read-back | before encoding (misuse) or after commit | treat as a bug: never retry silently, fail loudly |
 
 The numbers are `MTLCommandBufferError` codes from the macOS SDK header
 `MTLCommandBuffer.h`. `DeviceRemoved` (11) is deprecated because it "cannot
 occur on Apple Silicon", and `Memoryless` (10) applies only to render
 targets. Neither is mapped. After a command buffer ends in an error, the
 runtime reads `MTLCommandBuffer.error` and maps its code into these classes.
-Test and diagnostic builds create command buffers with
-`MTLCommandBufferErrorOptionEncoderExecutionStatus`, so a fault names the
-encoder that caused it. #1848 and
-Akita's `akita-metal` only compare the status to `Completed`, so they cannot
-tell a timeout from a page fault.
+A batch is one command buffer with one serial compute encoder, so Metal's
+per-encoder execution status cannot narrow a fault to a dispatch. Instead a
+`CommandBuffer` error lists the distinct pipelines the batch dispatched, in
+first-use order. A consumer that needs single-dispatch attribution, such as a
+diagnostic re-run, splits the batch. #1848 and Akita's `akita-metal` only
+compare the status to `Completed`, so they cannot tell a timeout from a page
+fault.
+
+Metal's shader validation layer does not change a command buffer's status:
+an out-of-bounds access is logged, the access is dropped, and the command
+buffer completes. It therefore never produces a `MetalError`. The local
+report sets `MTL_SHADER_VALIDATION_ABORT_ON_FAULT=1` so a validation fault
+fails the test that caused it.
 
 This crate does not decide fallback. The consumer spec (Akita's Metal
 backend) must decide:
@@ -354,13 +371,21 @@ this spec. The external contract is Akita's `akita-metal` on Akita `dev`,
 together with #1848.
 
 1. **Runtime.** Contents:
-   - `Device`, `ShaderLibrary` (source assembly, instantiation, eager
-     pipelines), `DeviceBuffer<T>`, `Batch`;
+   - `Device` and `DeviceLimits`;
+   - `LibrarySpec` (sources, plain kernels, and template instances over an
+     `MslType`, named by `host_name::<T>(template)`) and `ShaderLibrary`
+     (eager pipelines with reflected buffer arguments);
+   - `DeviceBuffer<T>` (`from_slice`, `zeroed`, and checked `read`);
+   - `Batch`, `Binding`, and `Grid`: every dispatch is checked against the
+     kernel's reflected signature before encoding;
    - `MetalError` / `ErrorClass` with `MTLCommandBufferError` mapping;
-   - non-macOS stubs;
-   - dependency-graph checks in Jolt CI.
+   - an uninhabited non-macOS backend;
+   - the dependency-graph check in Jolt CI, the macOS probe job, and the
+     local report script.
 
-   Tested with a `u32` vector-add kernel.
+   Tested with a vector-add template instantiated for `u32` and `u64`, plus
+   a byte-fill kernel for the read-back check. `MslType` is the seam that
+   `MetalField` extends in step 2.
 2. **`Fp128`.** Contents:
    - `fp128.h`: add, sub, neg, mul, square, `mul_u64`, `mul_i64`,
      `from_u64`, `from_i64`;
@@ -390,7 +415,7 @@ only the Command Line Tools installed.
   `static_assert` on a template parameter fails `newLibraryWithSource` with
   `MTLLibraryErrorDomain` code 3, so an invalid field instantiation is a
   `Setup` error. A small library compiled in about 220 ms; full-library
-  compile time will be measured in PR 1.
+  compile time will be measured with the `Fp128` library in step 2.
 - **Objective-C exceptions.** `objc2` 0.6 lets an uncaught exception unwind
   into Rust, which in practice aborts. `catch-all` wraps every send but
   panics on a caught exception. `exception::catch` returns a `Result`, and

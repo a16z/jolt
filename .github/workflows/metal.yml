@@ -1,0 +1,71 @@
+name: Metal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/metal.yml"
+      - "crates/jolt-metal/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/metal.yml"
+      - "crates/jolt-metal/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Metal runtime (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: clippy
+      - name: Install nextest
+        uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
+      # The Linux workspace jobs build only the uninhabited backend; this is
+      # the one CI build of the Objective-C backend.
+      - name: Lint the macOS backend
+        run: cargo clippy -p jolt-metal --all-targets -- -D warnings
+      # Hosted runners are virtual machines whose GPU may be below Apple
+      # family 7. The GPU tests then cannot run here, and their results come
+      # from the local report posted on the PR (crates/jolt-metal/README.md).
+      - name: Probe the device
+        id: probe
+        run: |
+          set +e
+          cargo run --quiet -p jolt-metal --example metal_probe | tee probe.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          { echo '```'; cat probe.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          case "$status" in
+            0) echo "gpu=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "gpu=false" >> "$GITHUB_OUTPUT"
+               echo "::notice title=Metal unavailable::GPU tests skipped on this runner; see the PR's local report" ;;
+            *) exit "$status" ;;
+          esac
+      - name: Run all tests, then again under the validation layers
+        if: steps.probe.outputs.gpu == 'true'
+        run: scripts/metal-report.sh | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Run host-only tests
+        if: steps.probe.outputs.gpu == 'false'
+        run: cargo nextest run -p jolt-metal --lib --cargo-quiet
