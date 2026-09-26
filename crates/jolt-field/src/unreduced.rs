@@ -86,13 +86,23 @@ pub trait WithCommitAccumulator: Unreduced {
     ///
     /// Every lane of a canonical element is non-negative, so a commitment
     /// source can hold its entries (and their negations) at half the bytes
-    /// of [`Unreduced::Wide`] and widen them only when adding. Each
-    /// [`add_commit_lanes`](Self::add_commit_lanes) counts as one unit-scale
-    /// addition against [`MAX_COMMIT_ACCUMULATIONS`](Self::MAX_COMMIT_ACCUMULATIONS).
+    /// of [`Unreduced::Wide`] and widen them only when adding. Adding the
+    /// lanes of one element into the lanes of one wide value, lane by lane,
+    /// counts as one unit-scale addition against
+    /// [`MAX_COMMIT_ACCUMULATIONS`](Self::MAX_COMMIT_ACCUMULATIONS).
     type CommitLanes: Copy + Default + Send + Sync + From<Self>;
 
-    /// `wide += Self::Wide::from(x)` for the element `x` whose lanes are `lanes`.
-    fn add_commit_lanes(wide: &mut Self::Wide, lanes: Self::CommitLanes);
+    /// The `u16` lanes of `lanes`, element by element.
+    ///
+    /// Element `i`'s lanes are entries `i·n..(i+1)·n` for the per-element
+    /// lane count `n`, which [`flatten_wide_mut`](Self::flatten_wide_mut)
+    /// shares, so a kernel can widen and add whole slices without per-element
+    /// shuffles.
+    fn flatten_commit_lanes(lanes: &[Self::CommitLanes]) -> &[u16];
+
+    /// The `i32` lanes of `wide`, element by element, in the layout of
+    /// [`flatten_commit_lanes`](Self::flatten_commit_lanes).
+    fn flatten_wide_mut(wide: &mut [Self::Wide]) -> &mut [i32];
 }
 
 /// Per-element multilinear bind: `even + r·(odd − even)` for a challenge

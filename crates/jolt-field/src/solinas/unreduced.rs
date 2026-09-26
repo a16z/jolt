@@ -113,15 +113,27 @@ commit_lanes! {
 const MAX_WIDE_LANE_ACCUMULATIONS: usize = (i32::MAX as usize) / (u16::MAX as usize);
 
 macro_rules! impl_commit_accumulator {
-    ($(impl[$($g:tt)*] $field:ty => $wide:ty, $lanes:ty;)*) => {$(
+    ($(impl[$($g:tt)*] $field:ty => $wide:ty, $lanes:ty, $n:literal;)*) => {$(
         impl<$($g)*> WithCommitAccumulator for $field {
             const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
             type CommitLanes = $lanes;
 
             #[inline(always)]
-            fn add_commit_lanes(wide: &mut $wide, lanes: $lanes) {
-                for (lane, digit) in wide.0.iter_mut().zip(lanes.0) {
-                    *lane += i32::from(digit);
+            fn flatten_commit_lanes(lanes: &[$lanes]) -> &[u16] {
+                // SAFETY: `$lanes` is `repr(C)` with the single field
+                // `[u16; $n]`, so it has that array's size and alignment and a
+                // slice of `len` values is `len · $n` initialized `u16`s. The
+                // result borrows `lanes`, whose length bounds the product.
+                unsafe { std::slice::from_raw_parts(lanes.as_ptr().cast(), lanes.len() * $n) }
+            }
+
+            #[inline(always)]
+            fn flatten_wide_mut(wide: &mut [$wide]) -> &mut [i32] {
+                // SAFETY: `$wide` is `repr(C)` with the single field
+                // `[i32; $n]`, as for `flatten_commit_lanes`; every `i32` is a
+                // valid lane, and the result holds the unique borrow of `wide`.
+                unsafe {
+                    std::slice::from_raw_parts_mut(wide.as_mut_ptr().cast(), wide.len() * $n)
                 }
             }
         }
@@ -129,9 +141,9 @@ macro_rules! impl_commit_accumulator {
 }
 
 impl_commit_accumulator! {
-    impl[const P: u32] Fp32<P> => Fp32x2i32, Fp32x2u16;
-    impl[const P: u64] Fp64<P> => Fp64x4i32, Fp64x4u16;
-    impl[const P: u128] Fp128<P> => Fp128x8i32, Fp128x8u16;
+    impl[const P: u32] Fp32<P> => Fp32x2i32, Fp32x2u16, 2;
+    impl[const P: u64] Fp64<P> => Fp64x4i32, Fp64x4u16, 4;
+    impl[const P: u128] Fp128<P> => Fp128x8i32, Fp128x8u16, 8;
 }
 
 macro_rules! product_accum {

@@ -56,8 +56,19 @@ fn commitment_accumulation_limit_is_the_exact_i32_lane_bound() {
     );
 }
 
-/// Commit lanes are the wide lanes at data width, and widening them into a
-/// wide accumulator matches adding the wide lift.
+/// Adds the flat lanes of `lanes` into the flat lanes of `wide`.
+fn add_flat_commit_lanes<F: WithCommitAccumulator>(wide: &mut [F::Wide], lanes: &[F::CommitLanes]) {
+    let digits = F::flatten_commit_lanes(lanes);
+    let wide = F::flatten_wide_mut(wide);
+    assert_eq!(wide.len(), digits.len());
+    for (lane, &digit) in wide.iter_mut().zip(digits) {
+        *lane += i32::from(digit);
+    }
+}
+
+/// Commit lanes are the wide lanes at data width, the flat views share one
+/// element-major layout, and widening flat lanes into wide accumulators
+/// matches adding the wide lifts.
 macro_rules! commit_lanes_suite {
     ($name:ident, $F:ty, $seed:expr) => {
         #[test]
@@ -68,15 +79,22 @@ macro_rules! commit_lanes_suite {
             let mut rng = ChaCha20Rng::seed_from_u64($seed);
             let mut values = vec![F::zero(), F::one(), -F::one()];
             values.extend((0..64).map(|_| <F as Ring>::from_u128(rng.gen())));
-            let mut acc = Wide::zero();
-            let mut sum = F::zero();
-            for x in values {
-                let lanes = Lanes::from(x);
-                assert_eq!(Wide::from(x).0, lanes.0.map(i32::from));
-                <F as WithCommitAccumulator>::add_commit_lanes(&mut acc, lanes);
-                sum += x;
+            let lanes: Vec<Lanes> = values.iter().map(|&x| Lanes::from(x)).collect();
+            let mut wide: Vec<Wide> = values.iter().map(|&x| Wide::from(x)).collect();
+            let digits = <F as WithCommitAccumulator>::flatten_commit_lanes(&lanes);
+            let expected: Vec<i32> = wide.iter().flat_map(|w| w.0).collect();
+            assert_eq!(
+                digits.iter().map(|&d| i32::from(d)).collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(
+                <F as WithCommitAccumulator>::flatten_wide_mut(&mut wide),
+                expected
+            );
+            add_flat_commit_lanes::<F>(&mut wide, &lanes);
+            for (acc, &x) in wide.into_iter().zip(&values) {
+                assert_eq!(<F as Unreduced>::reduce_wide(acc), x + x);
             }
-            assert_eq!(<F as Unreduced>::reduce_wide(acc), sum);
         }
     };
 }
@@ -91,13 +109,13 @@ commit_lanes_suite!(commit_lanes_match_wide_fp128, two::Prime128Offset275, 0xC2)
 fn commit_lanes_headroom_boundary_is_exact() {
     type F = two::Prime128Offset275;
     let limit = <F as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS;
-    let lanes = two::Fp128x8u16::from(-F::one());
-    let mut acc = two::Fp128x8i32([0; 8]);
+    let lanes = [two::Fp128x8u16::from(-F::one())];
+    let mut acc = [two::Fp128x8i32([0; 8])];
     for _ in 0..limit {
-        <F as WithCommitAccumulator>::add_commit_lanes(&mut acc, lanes);
+        add_flat_commit_lanes::<F>(&mut acc, &lanes);
     }
     let expect = -<F as Ring>::from_u64(limit as u64);
-    assert_eq!(<F as Unreduced>::reduce_wide(acc), expect);
+    assert_eq!(<F as Unreduced>::reduce_wide(acc[0]), expect);
 }
 
 /// 128×128 → 256-bit schoolbook multiply over 64-bit halves (independent of
