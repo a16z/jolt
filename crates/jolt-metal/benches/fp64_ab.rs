@@ -36,6 +36,18 @@
 //! - Ext2 multiply: `karatsuba`, `schoolbook`, `lazy` (generic over the base
 //!   field before Fp64-specific);
 //! - Ext2 square: `generic`, `lazy`.
+//!
+//! Rounds. Round 1 ran on the `cross` product and chose `rows`, which the
+//! branch then merged; round 2 reran every comparison on it and chose `mul`
+//! for the square and `lazy` for both Ext2 operations. Round 3 runs the
+//! Ext2 comparisons on the `mul` square and adds, under the same rule:
+//! - Fp64 square: `rows3`, the row-by-row schoolbook with the cross product
+//!   computed once (order: `mul`, `sqr3`, `rows3`);
+//! - Ext2 multiply and square: `dot2`, a base-field `dot2(x0, y0, x1, y1)`
+//!   (two products summed unreduced, reduced once, for any `C < 2^32`)
+//!   with `c0 = dot2(a0, b0, 2 a1, b1)`, `c1 = dot2(a0, b1, a1, b0)` and
+//!   `c0 = dot2(a0, a0, 2 a1, a1)` for the square (order: `karatsuba`,
+//!   `schoolbook`, `dot2`, `lazy`; `generic`, `dot2`, `lazy`).
 
 #[cfg(target_os = "macos")]
 #[expect(
@@ -114,6 +126,23 @@ mod metal {
         "inline Wide sqr_wide(ulong a) {",
         "inline Wide sqr_wide(ulong a) {\n    return mul_wide(a, a);\n}",
     );
+    const SQR_ROWS3: Patch = (
+        "jolt/field/fp64.h",
+        "inline Wide sqr_wide(ulong a) {",
+        "inline Wide sqr_wide(ulong a) {
+    uint a0 = uint(a), a1 = uint(a >> 32);
+    ulong m = ulong(a0) * a1;
+    ulong t = ulong(a0) * a0;
+    uint w0 = uint(t);
+    t = m + (t >> 32);
+    uint w1 = uint(t);
+    uint w2 = uint(t >> 32);
+    t = m + w1;
+    w1 = uint(t);
+    t = ulong(a1) * a1 + w2 + (t >> 32);
+    return Wide{(ulong(w1) << 32) | w0, t};
+}",
+    );
     const KARATSUBA: Patch = (
         "jolt/field/ext2.h",
         "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
@@ -130,6 +159,20 @@ mod metal {
         "jolt/field/ext2.h",
         "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
         "    friend Ext2 operator*(Ext2 a, Ext2 b) {\n        return ext2_ab_mul(a, b);\n    }",
+    );
+    const DOT2: Patch = (
+        "jolt/field/ext2.h",
+        "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
+        "    friend Ext2 operator*(Ext2 a, Ext2 b) {
+        return Ext2{dot2(a.c0, b.c0, mul_non_residue(a.c1), b.c1), dot2(a.c0, b.c1, a.c1, b.c0)};
+    }",
+    );
+    const SQUARE_DOT2: Patch = (
+        "jolt/field/ext2.h",
+        "    friend Ext2 square(Ext2 a) {",
+        "    friend Ext2 square(Ext2 a) {
+        return Ext2{dot2(a.c0, a.c0, mul_non_residue(a.c1), a.c1), (a.c0 + a.c0) * a.c1};
+    }",
     );
     const SQUARE_GENERIC: Patch = ("jolt/field/ext2.h", "    friend Ext2 square(Ext2 a) {", "");
     const SQUARE_LAZY: Patch = (
@@ -194,6 +237,41 @@ Ext2<Fp64<C>> ext2_ab_square(Ext2<Fp64<C>> a) {
     Wide p11 = sqr_wide(a.c1.word);
     ext2_ab::Wide3 c0 = ext2_ab::add(ext2_ab::add(ext2_ab::Wide3{p00.lo, p00.hi, 0u}, p11), p11);
     return Ext2<Fp64<C>>{Fp64<C>{ext2_ab::reduce3<C>(c0)}, (a.c0 + a.c0) * a.c1};
+}
+
+// x0 y0 + x1 y1, reduced once. The two products sum to below 2^129, so a
+// carry bit top joins the first fold: t2 <= C + C top <= 2C, and
+// fold2_canonicalize needs C (t2 + 1) <= p, which 2C + 1 < 2^32 gives
+// whenever C < 2^31. Larger offsets reduce each product.
+template <typename F>
+F dot2(F x0, F y0, F x1, F y1) {
+    return x0 * y0 + x1 * y1;
+}
+
+template <uint C>
+Fp64<C> dot2(Fp64<C> x0, Fp64<C> y0, Fp64<C> x1, Fp64<C> y1) {
+    using namespace fp64_detail;
+    if constexpr (C < (1u << 31)) {
+        Wide p = mul_wide(x0.word, y0.word);
+        Wide q = mul_wide(x1.word, y1.word);
+        ulong lo = p.lo + q.lo;
+        ulong h = p.hi + q.hi;
+        ulong top = h < p.hi ? 1ul : 0ul;
+        ulong hi = h + (lo < q.lo ? 1ul : 0ul);
+        top += hi < h ? 1ul : 0ul;
+        ulong u = ulong(uint(hi)) * C + uint(lo);
+        uint t0 = uint(u);
+        u = ulong(uint(hi >> 32)) * C + uint(lo >> 32) + (u >> 32);
+        ulong t = (u << 32) | t0;
+        ulong t2 = (u >> 32) + top * C;
+        ulong s = t + t2 * C;
+        bool overflow = s < t;
+        ulong r = s + C;
+        bool carry = r < s;
+        return Fp64<C>{(overflow || carry) ? r : s};
+    } else {
+        return x0 * y0 + x1 * y1;
+    }
 }
 } // namespace jolt
 ";
@@ -532,22 +610,25 @@ Ext2<Fp64<C>> ext2_ab_square(Ext2<Fp64<C>> a) {
             compare::<F>(&device, "Fp64 product", case, &product);
         }
         let square = [
-            variant::<F>(&device, "sqr3", &[SQR3]),
             variant::<F>(&device, "mul", &[SQR_MUL]),
+            variant::<F>(&device, "sqr3", &[SQR3]),
+            variant::<F>(&device, "rows3", &[SQR_ROWS3]),
         ];
         compare::<F>(&device, "Fp64 square", Case::Square, &square);
 
         let ext_mul = [
-            variant::<E>(&device, "karatsuba", &[KARATSUBA]),
-            variant::<E>(&device, "schoolbook", &[SCHOOLBOOK]),
-            variant::<E>(&device, "lazy", &[LAZY]),
+            variant::<E>(&device, "karatsuba", &[SQR_MUL, KARATSUBA]),
+            variant::<E>(&device, "schoolbook", &[SQR_MUL, SCHOOLBOOK]),
+            variant::<E>(&device, "dot2", &[SQR_MUL, DOT2]),
+            variant::<E>(&device, "lazy", &[SQR_MUL, LAZY]),
         ];
         for case in CASES {
             compare::<E>(&device, "Ext2 multiply", case, &ext_mul);
         }
         let ext_square = [
-            variant::<E>(&device, "generic", &[SQUARE_GENERIC]),
-            variant::<E>(&device, "lazy", &[SQUARE_LAZY]),
+            variant::<E>(&device, "generic", &[SQR_MUL, SQUARE_GENERIC]),
+            variant::<E>(&device, "dot2", &[SQR_MUL, SQUARE_DOT2]),
+            variant::<E>(&device, "lazy", &[SQR_MUL, SQUARE_LAZY]),
         ];
         compare::<E>(&device, "Ext2 square", Case::Square, &ext_square);
 
