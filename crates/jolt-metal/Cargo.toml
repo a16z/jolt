@@ -37,6 +37,10 @@ harness = false
 name = "limits"
 harness = false
 
+[[bench]]
+name = "fp64_ab"
+harness = false
+
 # Metal is linked only on macOS. On every other target this crate has no
 # Objective-C dependency and `Device::system_default` reports `Unavailable`.
 [target.'cfg(target_os = "macos")'.dependencies]
