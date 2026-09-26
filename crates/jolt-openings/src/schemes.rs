@@ -377,10 +377,17 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// The prover-side inputs are deliberately split into three parameters with
 /// distinct roles:
 ///
-/// - [`Statement`](Self::Statement) is the public input both sides agree on
-///   and bind to the transcript: the opening claims plus the commitments they
-///   refer to. Its shape is scheme-specific — [`HomomorphicBatch`] carries
-///   one commitment per claim.
+/// - [`Statement`](Self::Statement) is the public input both sides agree on:
+///   the opening claims plus the commitments they refer to. Its shape is
+///   scheme-specific — [`HomomorphicBatch`] carries one commitment per claim.
+///   The batch does not bind the commitments or the opening point itself; it
+///   absorbs at most the claimed values before drawing the batching challenge.
+///   The caller must have absorbed every commitment into `transcript` and
+///   derived the opening point from it before calling `prove_batch` or
+///   `verify_batch`, or the challenge is independent of the commitments and a
+///   prover can pick one after seeing it. In Jolt, `absorb_commitments` in
+///   `jolt-verifier` and the stage 1–7 sumcheck challenges pin this before
+///   stage 8.
 /// - [`Polynomials`](Self::Polynomials) are the borrowed prover-side
 ///   polynomial sources backing the statement; the verifier never sees them.
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
@@ -389,7 +396,9 @@ pub trait BatchOpeningScheme {
     type Field: JoltField;
     type ProverSetup;
     type VerifierSetup;
-    /// Public opening claims plus the commitments they refer to.
+    /// Public opening claims plus the commitments they refer to. Not
+    /// transcript-bound by the batch; see the trait docs for the caller's
+    /// obligation.
     type Statement;
     /// Borrowed prover-side polynomial sources backing the statement.
     type Polynomials<'a>
