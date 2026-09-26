@@ -161,7 +161,9 @@ pub type Prime64Offset59 = Fp64<{ pm(64, 59) as u64 }>;
 pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// Prime field for `2^128 − 2^32 + 22537` (`C = 0xFFFF_A7F7`): smooth
 /// multiplicative subgroup of order `2^3 · 3^7 = 17496` (pure radix-3
-/// subgroup `3^7 = 2187`). The default protocol prime.
+/// subgroup `3^7 = 2187`). The default protocol prime. Here `p ≡ 1 (mod 8)`,
+/// so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is
+/// a field: use it at extension degree 1.
 pub type Prime128OffsetA7F7 = Fp128<{ pm(128, 0xFFFF_A7F7) }>;
 
 /// Builds the balanced signed-digit table for `1 <= log_basis <= 6`.
