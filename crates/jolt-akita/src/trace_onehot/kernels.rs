@@ -8,9 +8,9 @@ use akita_prover::compute::{
 };
 use akita_prover::{
     cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup,
-    BatchDecomposeFoldOutcome, CommitInnerWitness, CpuBackend, CpuPreparedSetup,
-    DecomposeFoldWitness, ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
-    ExternalInnerCommitmentOperation, ExternalOperationIdentity,
+    CommitInnerWitness, CpuBackend, CpuPreparedSetup, DecomposeFoldWitness,
+    ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
+    ExternalInnerCommitmentOperation, ExternalOperationIdentity, RootPolyShape,
 };
 use akita_types::{dispatch_for_field, FpExtEncoding};
 #[expect(
@@ -22,7 +22,7 @@ use jolt_field::ExtField;
 use rayon::prelude::*;
 
 use super::commit::commit_packed;
-use super::decomposition::decompose_fold_packed;
+use super::decomposition::{decompose_fold_packed, DecomposeRotationMode};
 use super::opening::opening_fold_packed;
 use super::source::{TracePackedOneHot, TracePackedOneHotBatchView, TracePackedOneHotView};
 use super::traversal::coefficient_packing_partials_packed;
@@ -89,9 +89,14 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         decompose_fold_packed::<D>(
             source.source(),
             plan.challenges,
+            1,
             plan.num_positions_per_block,
             plan.num_digits,
-        )
+            DecomposeRotationMode::from_env()?,
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| AkitaError::InvalidInput("decompose fold returned no witness".to_string()))
     }
 }
 
@@ -103,23 +108,32 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
         _prepared: Option<&Self::PreparedSetup>,
         source: TracePackedOneHotBatchView<'_, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
+    ) -> Result<Vec<DecomposeFoldWitness<AkitaField>>, AkitaError> {
         let source = source.source();
-        match plan {
-            DecomposeFoldBatchPlan::Sparse {
-                challenges,
-                num_positions_per_block,
-                num_digits,
-                ..
-            } => Ok(BatchDecomposeFoldOutcome::Fused(
-                decompose_fold_packed::<D>(
-                    source,
-                    challenges,
-                    num_positions_per_block,
-                    num_digits,
-                )?,
-            )),
+        let DecomposeFoldBatchPlan::Sparse {
+            challenges,
+            num_chunks,
+            num_positions_per_block,
+            num_digits,
+            ..
+        } = plan;
+        if num_positions_per_block == 0 {
+            return Err(AkitaError::InvalidInput(
+                "batched decompose_fold requires positive block geometry".to_string(),
+            ));
         }
+        plan.validate_uniform_batch(std::iter::once(
+            RootPolyShape::<AkitaField, D>::num_ring_elems(source)
+                .div_ceil(num_positions_per_block),
+        ))?;
+        decompose_fold_packed::<D>(
+            source,
+            challenges,
+            num_chunks,
+            num_positions_per_block,
+            num_digits,
+            DecomposeRotationMode::from_env()?,
+        )
     }
 }
 

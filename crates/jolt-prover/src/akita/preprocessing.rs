@@ -105,7 +105,8 @@ fn grouped_setup(
         one_hot_k,
         precommitted_schedule,
         Arc::clone(schedule_artifacts),
-    );
+    )
+    .with_one_hot_chunk_profile(config.one_hot_chunk_profile);
     Ok(AkitaScheme::setup(params)?)
 }
 

@@ -14,7 +14,9 @@ mod support;
 mod akita_tests {
     use common::constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE;
     use common::jolt_device::JoltDevice;
-    use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_akita::{
+        AkitaCommitment, AkitaField, AkitaOneHotChunkProfile, AkitaScheduleArtifacts, AkitaScheme,
+    };
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, TracePolynomialOrder};
     use jolt_field::Ring;
     use jolt_program::execution::OwnedTrace;
@@ -252,6 +254,26 @@ mod akita_tests {
             assert!(proved.proof.untrusted_advice_commitment.is_some());
             verify(&proved).expect("advice proof must verify");
         }
+    }
+
+    #[test]
+    fn advice_e2e_akita_two_chunks() {
+        let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
+        let untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
+        let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
+        let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
+        let mut config = derive_config(&run);
+        config.one_hot_chunk_profile = AkitaOneHotChunkProfile::Two;
+        let proved = prove_guest(run, config, true, &trusted);
+        assert_eq!(
+            proved
+                .preprocessing
+                .verifier
+                .pcs_setup
+                .one_hot_chunk_profile(),
+            AkitaOneHotChunkProfile::Two
+        );
+        verify(&proved).expect("two-chunk grouped advice proof must verify");
     }
 
     #[test]

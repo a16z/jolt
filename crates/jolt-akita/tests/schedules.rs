@@ -7,21 +7,31 @@
 
 use std::path::PathBuf;
 
-use akita_config::{SetupRequirements, TrustedScheduleCatalog};
+use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey,
-    FoldSchedule, PolynomialGroupLayout,
+    ChunkedWitnessCfg, FoldSchedule, MultiChunkProfileId, PolynomialGroupLayout,
 };
-use jolt_akita::configs::{JoltDenseBounded, JoltOneHotK16, JoltOneHotK256};
+use jolt_akita::configs::{
+    JoltDenseBounded, JoltOneHotK16, JoltOneHotK16MultiChunk, JoltOneHotK16W2R2, JoltOneHotK16W4R2,
+    JoltOneHotK256, JoltOneHotK256MultiChunk, JoltOneHotK256W2R2, JoltOneHotK256W4R2,
+};
 use jolt_akita::schedule_registry::{
-    dense_precommit_profile, FIXTURE_K16_FINAL_NUM_VARS, FIXTURE_TRUSTED_ADVICE_GROUP,
+    dense_precommit_profile, PrecommittedScheduleParams, FIXTURE_K16_FINAL_NUM_VARS,
+    FIXTURE_TRUSTED_ADVICE_GROUP,
 };
 use jolt_akita::schedules::emit::{
     family_specs, keys, K16_NUM_VARS, K16_PACKING_VARIABLES, K256_NUM_VARS, K256_PACKING_VARIABLES,
     ONE_HOT_TRACE_NUM_POLYS, RECURSIVE_TRACE_LOG_T_CUTOVER,
 };
-use jolt_akita::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+use jolt_akita::{
+    AkitaOneHotChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+};
+use jolt_openings::{CommitmentScheme, OpeningsError};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn artifacts() -> AkitaScheduleArtifacts {
     AkitaScheduleArtifacts::from_directory(AkitaScheduleArtifacts::packaged_directory())
@@ -32,17 +42,61 @@ fn dense_catalog() -> ValidatedScheduleCatalog {
     artifacts().dense_catalog().expect("dense catalog")
 }
 
-fn one_hot_catalog(one_hot_k: usize) -> ValidatedScheduleCatalog {
+fn one_hot_catalog(one_hot_k: usize, profile: AkitaOneHotChunkProfile) -> ValidatedScheduleCatalog {
     artifacts()
-        .one_hot_catalog(one_hot_k)
+        .one_hot_catalog_for_profile(one_hot_k, profile)
         .expect("one-hot catalog")
+}
+
+#[test]
+fn three_file_directory_supports_single_profile() {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time after Unix epoch")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "jolt-akita-three-artifacts-{}-{suffix}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("temporary artifact directory");
+    for family in [
+        JoltDenseBounded::schedule_family_name(),
+        JoltOneHotK16::schedule_family_name(),
+        JoltOneHotK256::schedule_family_name(),
+    ] {
+        let name = format!("{family}.aks");
+        let _ = std::fs::copy(
+            AkitaScheduleArtifacts::packaged_directory().join(&name),
+            directory.join(&name),
+        )
+        .expect("copy original schedule artifact");
+    }
+
+    let loaded = AkitaScheduleArtifacts::from_directory(&directory)
+        .expect("original three-file directory must load");
+    let _ = loaded
+        .one_hot_catalog(AKITA_ONE_HOT_K16)
+        .expect("Single catalog must remain available");
+    let error = AkitaScheme::setup(
+        AkitaSetupParams::one_hot_only(16, 1, [3; 32], AKITA_ONE_HOT_K16, Arc::new(loaded))
+            .with_one_hot_chunk_profile(AkitaOneHotChunkProfile::Two),
+    )
+    .expect_err("selecting a missing companion catalog must fail setup");
+    assert!(matches!(error, OpeningsError::InvalidSetup(_)));
+    std::fs::remove_dir_all(directory).expect("remove temporary artifact directory");
 }
 
 #[test]
 fn catalogs_cover_every_reachable_one_hot_trace_shape() {
     for (catalog, num_vars) in [
-        (one_hot_catalog(AKITA_ONE_HOT_K16), K16_NUM_VARS),
-        (one_hot_catalog(AKITA_ONE_HOT_K256), K256_NUM_VARS),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single),
+            K16_NUM_VARS,
+        ),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single),
+            K256_NUM_VARS,
+        ),
     ] {
         let grid = keys(ONE_HOT_TRACE_NUM_POLYS, num_vars);
         assert!(!grid.is_empty());
@@ -51,8 +105,68 @@ fn catalogs_cover_every_reachable_one_hot_trace_shape() {
                 .resolve_key(&AkitaScheduleLookupKey::single(*key))
                 .expect("reachable scalar shape must resolve");
             assert!(resolved.profiles().precommitteds.is_empty());
+            assert_eq!(
+                resolved.schedule().root.params.witness_chunk,
+                ChunkedWitnessCfg::default_non_chunked()
+            );
+            assert!(resolved.schedule().recursive_folds.iter().all(|level| {
+                level.params.witness_chunk == ChunkedWitnessCfg::default_non_chunked()
+            }));
         }
         assert_eq!(catalog.len(), grid.len());
+    }
+}
+
+#[test]
+fn multi_chunk_catalogs_cover_every_supported_profile() {
+    for (profile, chunk_cfg, k16_family, k256_family) in [
+        (
+            AkitaOneHotChunkProfile::Two,
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W2R2),
+            JoltOneHotK16W2R2::schedule_family_name(),
+            JoltOneHotK256W2R2::schedule_family_name(),
+        ),
+        (
+            AkitaOneHotChunkProfile::Four,
+            ChunkedWitnessCfg::from_profile(MultiChunkProfileId::W4R2),
+            JoltOneHotK16W4R2::schedule_family_name(),
+            JoltOneHotK256W4R2::schedule_family_name(),
+        ),
+        (
+            AkitaOneHotChunkProfile::Eight,
+            ChunkedWitnessCfg::d64_production(),
+            JoltOneHotK16MultiChunk::schedule_family_name(),
+            JoltOneHotK256MultiChunk::schedule_family_name(),
+        ),
+    ] {
+        for (one_hot_k, num_vars, family_name) in [
+            (AKITA_ONE_HOT_K16, (16, K16_NUM_VARS.1), k16_family),
+            (AKITA_ONE_HOT_K256, (16, K256_NUM_VARS.1), k256_family),
+        ] {
+            let catalog = one_hot_catalog(one_hot_k, profile);
+            assert_eq!(catalog.family_name(), family_name);
+            let grid = keys(ONE_HOT_TRACE_NUM_POLYS, num_vars);
+            for key in &grid {
+                let schedule = catalog
+                    .resolve_key(&AkitaScheduleLookupKey::single(*key))
+                    .expect("reachable multi-chunk shape must resolve")
+                    .schedule();
+                assert_eq!(schedule.root.params.witness_chunk, chunk_cfg);
+                assert_eq!(
+                    schedule
+                        .recursive_folds
+                        .first()
+                        .expect("multi-chunk schedule must recursively fold")
+                        .params
+                        .witness_chunk,
+                    chunk_cfg
+                );
+                assert!(schedule.recursive_folds.iter().skip(1).all(|fold| {
+                    fold.params.witness_chunk == ChunkedWitnessCfg::default_non_chunked()
+                }));
+            }
+            assert_eq!(catalog.len(), grid.len());
+        }
     }
 }
 
@@ -76,8 +190,14 @@ fn uses_setup_offloading(schedule: &FoldSchedule) -> bool {
 #[test]
 fn one_hot_catalogs_switch_to_setup_offloading_at_the_trace_cutover() {
     for (catalog, packing_variables) in [
-        (one_hot_catalog(AKITA_ONE_HOT_K16), K16_PACKING_VARIABLES),
-        (one_hot_catalog(AKITA_ONE_HOT_K256), K256_PACKING_VARIABLES),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single),
+            K16_PACKING_VARIABLES,
+        ),
+        (
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single),
+            K256_PACKING_VARIABLES,
+        ),
     ] {
         let cutover_num_vars = RECURSIVE_TRACE_LOG_T_CUTOVER + packing_variables;
         assert!(!uses_setup_offloading(&scalar_schedule(
@@ -135,7 +255,7 @@ fn assert_adaptation_preserves_main_skeleton(
 #[test]
 fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K256);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single);
     let key = trusted_advice_grouped_key(&dense);
     assert!(base.resolve_key(&key).is_err());
 
@@ -167,7 +287,7 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
 #[test]
 fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single);
     let precommit = dense_precommit_profile(&dense, FIXTURE_TRUSTED_ADVICE_GROUP)
         .expect("trusted advice profile");
     for final_num_vars in [
@@ -197,7 +317,7 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
 #[test]
 fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K256);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single);
     let key = trusted_advice_grouped_key(&dense);
     let rows = jolt_akita::schedule_registry::provision::<JoltOneHotK256, JoltDenseBounded>(
         &base,
@@ -230,7 +350,7 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
 #[test]
 fn base_catalogs_contain_no_grouped_advice_rows() {
     let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16);
+    let base = one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single);
     assert!(base
         .rows()
         .all(|row| row.profiles().precommitteds.is_empty()));
@@ -253,17 +373,21 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
 
 #[test]
 fn grouped_provisioning_rejects_out_of_family_final_arity() {
-    let dense = dense_catalog();
-    let base = one_hot_catalog(AKITA_ONE_HOT_K16);
-    let error = jolt_akita::schedule_registry::provision_precommitted_for_k(
-        &dense,
-        &base,
+    let final_num_vars = K16_NUM_VARS.0 - 1;
+    let request = PrecommittedScheduleParams::new(
         None,
         Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
-        &[],
+        final_num_vars,
+    );
+    let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
+        final_num_vars,
+        1,
+        2,
+        [3; 32],
         AKITA_ONE_HOT_K16,
-        K16_NUM_VARS.0 - 1,
-    )
+        Some(request),
+        Arc::new(artifacts()),
+    ))
     .expect_err("a declared reachable arity outside the family must fail setup");
     assert!(error.to_string().contains("outside the supported range"));
 }
@@ -274,20 +398,47 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
 /// reverse-inclusion sweep rules out stale or duplicated entries.
 #[test]
 fn emit_specs_and_checked_in_catalogs_agree_exactly() {
-    let [k16_spec, k256_spec, _dense_spec] = family_specs(PathBuf::new()).expect("emit specs");
+    let specs = family_specs(PathBuf::new()).expect("emit specs");
     let cases = [
         (
-            k16_spec,
             "jolt-fp128-onehot-k16",
-            one_hot_catalog(AKITA_ONE_HOT_K16),
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Single),
         ),
         (
-            k256_spec,
             "jolt-fp128-onehot-k256",
-            one_hot_catalog(AKITA_ONE_HOT_K256),
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Single),
+        ),
+        (
+            "jolt-fp128-onehot-k16-w2r2",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Two),
+        ),
+        (
+            "jolt-fp128-onehot-k256-w2r2",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Two),
+        ),
+        (
+            "jolt-fp128-onehot-k16-w4r2",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Four),
+        ),
+        (
+            "jolt-fp128-onehot-k256-w4r2",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Four),
+        ),
+        (
+            "jolt-fp128-onehot-k16-multi-chunk",
+            one_hot_catalog(AKITA_ONE_HOT_K16, AkitaOneHotChunkProfile::Eight),
+        ),
+        (
+            "jolt-fp128-onehot-k256-multi-chunk",
+            one_hot_catalog(AKITA_ONE_HOT_K256, AkitaOneHotChunkProfile::Eight),
         ),
     ];
-    for (spec, family_name, catalog) in cases {
+    assert_eq!(specs.len(), cases.len() + 1);
+    assert_eq!(
+        specs.last().expect("dense emit spec").family_name,
+        JoltDenseBounded::schedule_family_name()
+    );
+    for (spec, (family_name, catalog)) in specs.iter().zip(cases) {
         assert_eq!(spec.family_name, family_name, "spec order regressed");
         assert!(
             spec.grouped_requests.is_empty(),

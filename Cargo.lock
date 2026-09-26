@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -117,7 +117,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-error",
  "akita-transcript",
@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -145,7 +145,7 @@ dependencies = [
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "thiserror 2.0.20",
 ]
@@ -153,7 +153,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -174,7 +174,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -186,7 +186,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "aes",
  "akita-algebra",
@@ -208,7 +208,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -220,7 +220,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "jolt-field",
  "thiserror 2.0.20",
@@ -229,7 +229,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-config",
  "akita-error",
@@ -243,7 +243,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -257,7 +257,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-serialization",
  "blake2 0.11.0",
@@ -268,7 +268,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -290,7 +290,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=252abb895046cc1d5b9955a26a2ad2318148ac26#252abb895046cc1d5b9955a26a2ad2318148ac26"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc#cdb2d8430d09db0fc8715c8af8c67f578bfcc5fc"
 dependencies = [
  "akita-algebra",
  "akita-challenges",

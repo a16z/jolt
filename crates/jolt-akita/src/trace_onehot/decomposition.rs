@@ -27,7 +27,7 @@ pub(super) enum DecomposeRotationMode {
 }
 
 impl DecomposeRotationMode {
-    fn from_env() -> Result<Self, AkitaError> {
+    pub(super) fn from_env() -> Result<Self, AkitaError> {
         match std::env::var("JOLT_AKITA_DECOMPOSE_MODE").as_deref() {
             Ok("compact") => Ok(Self::Compact),
             Ok("dense") => Ok(Self::Dense),
@@ -329,32 +329,6 @@ fn add_rotated_dense_rows<const D: usize>(
 }
 
 #[inline(always)]
-fn add_rotated_rows<const D: usize>(
-    dst: &mut [i32; D],
-    rotations: &PreparedRotations<D>,
-    prepared_block: usize,
-    coefficients: &[usize],
-) {
-    match rotations {
-        PreparedRotations::Compact(challenges) => {
-            let challenge = &challenges[prepared_block];
-            for &coefficient in coefficients {
-                add_rotated_compact(dst, challenge, coefficient);
-            }
-        }
-        PreparedRotations::Dense(rotated) => {
-            add_rotated_dense_rows(dst, rotated, prepared_block, coefficients);
-        }
-        PreparedRotations::Sparse(challenges) => {
-            let challenge = &challenges[prepared_block];
-            for &coefficient in coefficients {
-                add_rotated_sparse(dst, challenge, coefficient);
-            }
-        }
-    }
-}
-
-#[inline(always)]
 fn add_rotated_dense_contributions<const D: usize>(
     dst: &mut [i32; D],
     rotated: &[[i16; D]],
@@ -432,6 +406,57 @@ fn add_rotated_dense_contributions<const D: usize>(
     }
 }
 
+#[inline(always)]
+fn add_rotated_dense_chunked_contributions<const D: usize>(
+    dst: &mut [[i32; D]],
+    rotated: &[[i16; D]],
+    contributions: &[(usize, usize)],
+    chunk: impl Fn(usize) -> usize + Copy,
+    table_index: impl Fn(usize, usize) -> usize + Copy,
+) {
+    if dst.len() == 1 {
+        add_rotated_dense_contributions(&mut dst[0], rotated, contributions, table_index);
+        return;
+    }
+    let mut remaining = contributions;
+    while let Some(&(column, _)) = remaining.first() {
+        let chunk_index = chunk(column);
+        let run_len = remaining
+            .iter()
+            .take_while(|&&(column, _)| chunk(column) == chunk_index)
+            .count();
+        let (run, tail) = remaining.split_at(run_len);
+        add_rotated_dense_contributions(&mut dst[chunk_index], rotated, run, table_index);
+        remaining = tail;
+    }
+}
+
+#[inline(always)]
+fn add_rotated_rows<const D: usize>(
+    dst: &mut [i32; D],
+    rotations: &PreparedRotations<D>,
+    prepared_block: usize,
+    coefficients: &[usize],
+) {
+    match rotations {
+        PreparedRotations::Compact(challenges) => {
+            let challenge = &challenges[prepared_block];
+            for &coefficient in coefficients {
+                add_rotated_compact(dst, challenge, coefficient);
+            }
+        }
+        PreparedRotations::Dense(rotated) => {
+            add_rotated_dense_rows(dst, rotated, prepared_block, coefficients);
+        }
+        PreparedRotations::Sparse(challenges) => {
+            let challenge = &challenges[prepared_block];
+            for &coefficient in coefficients {
+                add_rotated_sparse(dst, challenge, coefficient);
+            }
+        }
+    }
+}
+
 fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[i8; D]) {
     debug_assert_eq!(table.len(), D);
     for (shift, row) in table.iter_mut().enumerate() {
@@ -445,58 +470,21 @@ fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[
     }
 }
 
-#[inline(always)]
-fn add_rotated_contributions<const D: usize>(
-    dst: &mut [i32; D],
-    contributions: &[(usize, usize)],
-    rotations: &PreparedRotations<D>,
-    trace_block: usize,
-    num_columns: usize,
-) {
-    match rotations {
-        PreparedRotations::Compact(challenges) => {
-            let mut sum = [0i32; D];
-            for &(column, coefficient) in contributions {
-                add_rotated_compact(
-                    &mut sum,
-                    &challenges[trace_block * num_columns + column],
-                    coefficient,
-                );
-            }
-            for (dst, value) in dst.iter_mut().zip(sum) {
-                *dst += value;
-            }
-        }
-        PreparedRotations::Dense(rotated) => {
-            add_rotated_dense_contributions(dst, rotated, contributions, |column, coefficient| {
-                ((trace_block * num_columns + column) * D) + coefficient
-            });
-        }
-        PreparedRotations::Sparse(challenges) => {
-            for &(column, coefficient) in contributions {
-                add_rotated_sparse(
-                    dst,
-                    &challenges[trace_block * num_columns + column],
-                    coefficient,
-                );
-            }
-        }
-    }
-}
-
-pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
+pub(super) fn decompose_fold_packed<const D: usize>(
     source: &TracePackedOneHot,
     challenges: &[SparseChallenge],
+    num_chunks: usize,
     num_positions: usize,
     num_digits: usize,
     rotation_mode: DecomposeRotationMode,
-) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
+) -> Result<Vec<DecomposeFoldWitness<AkitaField>>, AkitaError> {
     let _span = tracing::info_span!(
-        "TracePackedOneHot::decompose_fold",
+        "TracePackedOneHot::decompose_fold_batch",
         ring_dimension = D,
         rows = source.rows.num_rows(),
         columns = source.rows.num_columns(),
         column_capacity = source.column_capacity,
+        num_chunks,
         num_positions,
         num_digits,
     )
@@ -517,6 +505,13 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
     }
     for challenge in challenges {
         challenge.validate::<D>()?;
+    }
+    let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, num_chunks)?;
+    let mut block_chunks = vec![0usize; num_blocks];
+    for (chunk, range) in chunk_ranges.into_iter().enumerate() {
+        for block_chunk in &mut block_chunks[range] {
+            *block_chunk = chunk;
+        }
     }
     let blocks_per_column = (segment_rings >= num_positions).then(|| segment_rings / num_positions);
     let rotation_blocks = blocks_per_column.map_or(challenges.len(), |blocks_per_column| {
@@ -554,10 +549,10 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         let thread_balanced_chunk = num_positions
             .div_ceil(target_tasks)
             .next_multiple_of(row_alignment);
-        let cache_sized_chunk = (DECOMPOSE_POSITION_WORKING_SET_TARGET
-            / std::mem::size_of::<[i32; D]>())
-        .max(row_alignment)
-        .next_multiple_of(row_alignment);
+        let bytes_per_position = std::mem::size_of::<[i32; D]>().saturating_mul(num_chunks);
+        let cache_sized_chunk = (DECOMPOSE_POSITION_WORKING_SET_TARGET / bytes_per_position)
+            .max(row_alignment)
+            .next_multiple_of(row_alignment);
         let position_chunk = thread_balanced_chunk
             .min(cache_sized_chunk)
             .min(num_positions);
@@ -586,13 +581,17 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
             local_rotation_bytes,
         )
         .entered();
-        let mut compressed = vec![[0i32; D]; num_positions];
+        let compressed_len = num_positions.checked_mul(num_chunks).ok_or_else(|| {
+            AkitaError::InvalidInput("chunked decompose fold size overflow".to_string())
+        })?;
+        let mut compressed = vec![[0i32; D]; compressed_len];
         compressed
-            .par_chunks_mut(position_chunk)
+            .par_chunks_mut(position_chunk * num_chunks)
             .enumerate()
             .try_for_each(|(position_task, compressed)| {
                 let position_start = position_task * position_chunk;
-                let position_end = position_start + compressed.len();
+                let positions = compressed.len() / num_chunks;
+                let position_end = position_start + positions;
                 let mut local_rotations =
                     use_local_dense_rotations.then(|| vec![[0i16; D]; local_rotation_rows]);
                 for trace_block in 0..blocks_per_column {
@@ -620,9 +619,12 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                             ring_end,
                             |ring, selected_rows, committed_zero_masks| {
                                 let position = ring - trace_block * num_positions;
-                                let dst = &mut compressed[position - position_start];
                                 if rows_per_ring <= 4 {
                                     for column in 0..num_columns {
+                                        let block = column * blocks_per_column + trace_block;
+                                        let chunk = block_chunks[block];
+                                        let dst = &mut compressed
+                                            [(position - position_start) * num_chunks + chunk];
                                         let mut fixed_coefficients = [0usize; 4];
                                         let mut count = 0;
                                         for (row_offset, (row_indices, &committed_zero_mask)) in
@@ -649,6 +651,10 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                                     }
                                 } else {
                                     for column in 0..num_columns {
+                                        let block = column * blocks_per_column + trace_block;
+                                        let chunk = block_chunks[block];
+                                        let dst = &mut compressed
+                                            [(position - position_start) * num_chunks + chunk];
                                         coefficients.clear();
                                         for (row_offset, (row_indices, &committed_zero_mask)) in
                                             selected_rows
@@ -682,10 +688,12 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                             ring_end,
                             |ring, contributions| {
                                 let position = ring - trace_block * num_positions;
-                                add_rotated_dense_contributions(
-                                    &mut compressed[position - position_start],
+                                let dst_start = (position - position_start) * num_chunks;
+                                add_rotated_dense_chunked_contributions(
+                                    &mut compressed[dst_start..][..num_chunks],
                                     local_rotations,
                                     contributions,
+                                    |column| block_chunks[column * blocks_per_column + trace_block],
                                     |column, coefficient| column * D + coefficient,
                                 );
                             },
@@ -697,13 +705,32 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
                             ring_end,
                             |ring, contributions| {
                                 let position = ring - trace_block * num_positions;
-                                add_rotated_contributions(
-                                    &mut compressed[position - position_start],
-                                    contributions,
-                                    &rotations,
-                                    trace_block,
-                                    source.rows.num_columns(),
-                                );
+                                let dst_start = (position - position_start) * num_chunks;
+                                if let PreparedRotations::Dense(rotated) = &rotations {
+                                    add_rotated_dense_chunked_contributions(
+                                        &mut compressed[dst_start..][..num_chunks],
+                                        rotated,
+                                        contributions,
+                                        |column| {
+                                            block_chunks[column * blocks_per_column + trace_block]
+                                        },
+                                        |column, coefficient| {
+                                            ((trace_block * source.rows.num_columns() + column) * D)
+                                                + coefficient
+                                        },
+                                    );
+                                } else {
+                                    for &(column, coefficient) in contributions {
+                                        let block = column * blocks_per_column + trace_block;
+                                        let chunk = block_chunks[block];
+                                        add_rotated(
+                                            &mut compressed[dst_start + chunk],
+                                            &rotations,
+                                            trace_block * source.rows.num_columns() + column,
+                                            coefficient,
+                                        );
+                                    }
+                                }
                             },
                         )?;
                     }
@@ -720,13 +747,17 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
             dense_rotations = rotations.is_dense(),
         )
         .entered();
-        let mut compressed = vec![[0i32; D]; num_positions];
+        let compressed_len = num_positions.checked_mul(num_chunks).ok_or_else(|| {
+            AkitaError::InvalidInput("chunked decompose fold size overflow".to_string())
+        })?;
+        let mut compressed = vec![[0i32; D]; compressed_len];
         visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
             for &(column, coefficient) in contributions {
                 let global_ring = column * segment_rings + ring;
                 let block = global_ring / num_positions;
+                let chunk = block_chunks[block];
                 add_rotated(
-                    &mut compressed[global_ring % num_positions],
+                    &mut compressed[(global_ring % num_positions) * num_chunks + chunk],
                     &rotations,
                     block,
                     coefficient,
@@ -741,16 +772,15 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         num_digits,
     )
     .entered();
-    let expanded = if num_digits == 1 {
-        compressed
-    } else {
-        let mut expanded = Vec::with_capacity(num_positions.saturating_mul(num_digits));
-        for coeffs in compressed {
+    let mut expanded = (0..num_chunks)
+        .map(|_| Vec::with_capacity(num_positions.saturating_mul(num_digits)))
+        .collect::<Vec<_>>();
+    for position in compressed.chunks_exact(num_chunks) {
+        for (expanded, &coeffs) in expanded.iter_mut().zip(position) {
             expanded.push(coeffs);
             expanded.extend((1..num_digits).map(|_| [0i32; D]));
         }
-        expanded
-    };
+    }
     drop(_expand_span);
     let modulus = (-AkitaField::one()).to_canonical_u128() + 1;
     let _witness_span = tracing::info_span!(
@@ -759,22 +789,8 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         num_digits,
     )
     .entered();
-    Ok(build_decompose_fold_witness::<AkitaField, D>(
-        expanded, modulus,
-    ))
-}
-
-pub(super) fn decompose_fold_packed<const D: usize>(
-    source: &TracePackedOneHot,
-    challenges: &[SparseChallenge],
-    num_positions: usize,
-    num_digits: usize,
-) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
-    decompose_fold_packed_with_mode::<D>(
-        source,
-        challenges,
-        num_positions,
-        num_digits,
-        DecomposeRotationMode::from_env()?,
-    )
+    Ok(expanded
+        .into_iter()
+        .map(|expanded| build_decompose_fold_witness::<AkitaField, D>(expanded, modulus))
+        .collect())
 }

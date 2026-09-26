@@ -16,12 +16,12 @@ use std::sync::Arc;
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
     invalid_batch, invalid_setup, one_hot_polynomial, owned_one_hot_polynomial, serialize_akita,
-    transparent_zk_error, validate_one_hot_k, with_backend_pool, AkitaBackendCommitment,
-    AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint, AkitaBackendOneHotPoly,
-    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
-    AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor,
-    AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
+    transparent_zk_error, validate_one_hot_k, with_backend_pool, with_one_hot_scheme,
+    AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
+    AkitaHintPolynomials, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
+    AkitaScheduleArtifacts, AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts,
+    AkitaVerifierSetup, BackendVerifierCache, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -235,52 +235,25 @@ impl AkitaScheme {
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        let (backend_commitment, backend_hint) =
-            with_backend_pool(|| match (setup.one_hot_k(), profiles.as_ref()) {
-                (AKITA_ONE_HOT_K16, None) => setup
-                    .verifier
-                    .one_hot_k16_scheme()
-                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        stack.commitment(),
-                        GroupContext::scheduler_without_precommitted_groups(),
-                    ),
-                (AKITA_ONE_HOT_K16, Some(profiles)) => setup
-                    .verifier
-                    .one_hot_k16_scheme()
-                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        stack.commitment(),
-                        GroupContext::scheduler_with_precommitted_groups(profiles),
-                    ),
-                (AKITA_ONE_HOT_K256, None) => setup
-                    .verifier
-                    .one_hot_k256_scheme()
-                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        stack.commitment(),
-                        GroupContext::scheduler_without_precommitted_groups(),
-                    ),
-                (AKITA_ONE_HOT_K256, Some(profiles)) => setup
-                    .verifier
-                    .one_hot_k256_scheme()
-                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit(
-                        backend_prover_setup,
-                        std::slice::from_ref(&source),
-                        stack.commitment(),
-                        GroupContext::scheduler_with_precommitted_groups(profiles),
-                    ),
-                _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        let scheme = setup.verifier.one_hot_scheme()?;
+        let (backend_commitment, backend_hint) = with_backend_pool(|| {
+            with_one_hot_scheme!(scheme, |scheme| match profiles.as_ref() {
+                None => scheme.commit(
+                    backend_prover_setup,
+                    std::slice::from_ref(&source),
+                    stack.commitment(),
+                    GroupContext::scheduler_without_precommitted_groups(),
+                ),
+                Some(profiles) => scheme.commit(
+                    backend_prover_setup,
+                    std::slice::from_ref(&source),
+                    stack.commitment(),
+                    GroupContext::scheduler_with_precommitted_groups(profiles),
+                ),
             })
-            .map(split_commit_output)
-            .map_err(commit_failed)?;
+        })
+        .map(split_commit_output)
+        .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
             num_vars,
@@ -296,28 +269,14 @@ impl AkitaScheme {
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        with_backend_pool(|| match setup.one_hot_k() {
-            AKITA_ONE_HOT_K16 => setup
-                .verifier
-                .one_hot_k16_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit(
-                    backend_prover_setup,
-                    polynomials,
-                    stack.commitment(),
-                    GroupContext::scheduler_without_precommitted_groups(),
-                ),
-            AKITA_ONE_HOT_K256 => setup
-                .verifier
-                .one_hot_k256_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit(
-                    backend_prover_setup,
-                    polynomials,
-                    stack.commitment(),
-                    GroupContext::scheduler_without_precommitted_groups(),
-                ),
-            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        let scheme = setup.verifier.one_hot_scheme()?;
+        with_backend_pool(|| {
+            with_one_hot_scheme!(scheme, |scheme| scheme.commit(
+                backend_prover_setup,
+                polynomials,
+                stack.commitment(),
+                GroupContext::scheduler_without_precommitted_groups(),
+            ))
         })
         .map(split_commit_output)
         .map_err(commit_failed)
@@ -330,28 +289,14 @@ impl AkitaScheme {
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        with_backend_pool(|| match setup.one_hot_k() {
-            AKITA_ONE_HOT_K16 => setup
-                .verifier
-                .one_hot_k16_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit(
-                    backend_prover_setup,
-                    polynomials,
-                    stack.commitment(),
-                    GroupContext::scheduler_with_precommitted_groups(profiles),
-                ),
-            AKITA_ONE_HOT_K256 => setup
-                .verifier
-                .one_hot_k256_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit(
-                    backend_prover_setup,
-                    polynomials,
-                    stack.commitment(),
-                    GroupContext::scheduler_with_precommitted_groups(profiles),
-                ),
-            _ => unreachable!("the one-hot setup geometry was validated during setup"),
+        let scheme = setup.verifier.one_hot_scheme()?;
+        with_backend_pool(|| {
+            with_one_hot_scheme!(scheme, |scheme| scheme.commit(
+                backend_prover_setup,
+                polynomials,
+                stack.commitment(),
+                GroupContext::scheduler_with_precommitted_groups(profiles),
+            ))
         })
         .map(split_commit_output)
         .map_err(commit_failed)
@@ -525,6 +470,13 @@ impl CommitmentScheme for AkitaScheme {
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
+        if params.flavor == AkitaSetupFlavor::Dense
+            && params.one_hot_chunk_profile.num_chunks() != 1
+        {
+            return Err(OpeningsError::InvalidSetup(
+                "dense-only Akita setup cannot select one-hot witness chunking".to_owned(),
+            ));
+        }
         if params
             .precommitted_schedule
             .as_ref()
@@ -539,7 +491,7 @@ impl CommitmentScheme for AkitaScheme {
         let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
         let one_hot_schedule_artifact = || {
             let base = artifacts
-                .one_hot_catalog(params.one_hot_k)
+                .one_hot_catalog_for_profile(params.one_hot_k, params.one_hot_chunk_profile)
                 .map_err(invalid_setup)?;
             let catalog = params
                 .precommitted_schedule
@@ -547,7 +499,12 @@ impl CommitmentScheme for AkitaScheme {
                 .map_or_else(
                     || Ok(base.clone()),
                     |precommitted| {
-                        precommitted.extend_catalog(&dense_catalog, &base, params.one_hot_k)
+                        precommitted.extend_catalog(
+                            &dense_catalog,
+                            &base,
+                            params.one_hot_k,
+                            params.one_hot_chunk_profile,
+                        )
                     },
                 )
                 .map_err(invalid_setup)?;
@@ -573,6 +530,7 @@ impl CommitmentScheme for AkitaScheme {
             max_total_batch_polys: params.max_total_batch_polys,
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
+            one_hot_chunk_profile: params.one_hot_chunk_profile,
             schedule_artifacts,
             backend_cache: BackendVerifierCache::default(),
         };
@@ -904,8 +862,10 @@ mod tests {
     #![expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 
     use super::*;
-    use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
-    use crate::configs::JoltDenseBounded;
+    use crate::adapters::{
+        append_verifier_setup, AkitaBackendFlavor, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    };
+    use crate::configs::{AkitaOneHotChunkProfile, JoltDenseBounded};
     use akita_config::{policy_of, CommitmentConfig};
     use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
@@ -920,6 +880,7 @@ mod tests {
             max_total_batch_polys: 1,
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
+            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
                 dense: artifacts
                     .dense_catalog()
@@ -1000,13 +961,16 @@ mod tests {
         assert_eq!(verifier.default_layout_digest(), [4; 32]);
     }
 
-    fn one_hot_roundtrip(one_hot_k: usize) {
-        let num_vars = one_hot_k.ilog2() as usize + 8;
+    fn one_hot_roundtrip(one_hot_k: usize, profile: AkitaOneHotChunkProfile) {
+        let num_vars =
+            (one_hot_k.ilog2() as usize + 8).max(if profile.num_chunks() == 1 { 0 } else { 16 });
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
         let setup_params =
-            AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k, artifacts);
+            AkitaSetupParams::one_hot_only(num_vars, 1, [4; 32], one_hot_k, artifacts)
+                .with_one_hot_chunk_profile(profile);
         let (prover_setup, verifier_setup) = AkitaScheme::setup(setup_params).unwrap();
-        let indices = (0..256usize)
+        let row_count = 1usize << (num_vars - one_hot_k.ilog2() as usize);
+        let indices = (0..row_count)
             .map(|row| {
                 if row == 2 {
                     None
@@ -1067,12 +1031,26 @@ mod tests {
 
     #[test]
     fn one_hot_k16_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K16);
+        for profile in [
+            AkitaOneHotChunkProfile::Single,
+            AkitaOneHotChunkProfile::Two,
+            AkitaOneHotChunkProfile::Four,
+            AkitaOneHotChunkProfile::Eight,
+        ] {
+            one_hot_roundtrip(AKITA_ONE_HOT_K16, profile);
+        }
     }
 
     #[test]
     fn one_hot_k256_roundtrip() {
-        one_hot_roundtrip(AKITA_ONE_HOT_K256);
+        for profile in [
+            AkitaOneHotChunkProfile::Single,
+            AkitaOneHotChunkProfile::Two,
+            AkitaOneHotChunkProfile::Four,
+            AkitaOneHotChunkProfile::Eight,
+        ] {
+            one_hot_roundtrip(AKITA_ONE_HOT_K256, profile);
+        }
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup
@@ -1106,6 +1084,43 @@ mod tests {
     }
 
     #[test]
+    fn legacy_single_setup_keeps_its_transcript() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (_, setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+            16,
+            1,
+            [3; 32],
+            AKITA_ONE_HOT_K16,
+            artifacts,
+        ))
+        .unwrap();
+        let mut legacy_json = serde_json::to_value(&setup).unwrap();
+        assert!(legacy_json
+            .as_object_mut()
+            .unwrap()
+            .remove("one_hot_chunk_profile")
+            .is_some());
+        let legacy: AkitaVerifierSetup = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(
+            legacy.one_hot_chunk_profile(),
+            AkitaOneHotChunkProfile::Single
+        );
+
+        let mut current_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
+        append_verifier_setup(&mut current_transcript, &setup, AkitaBackendFlavor::OneHot).unwrap();
+        let mut legacy_transcript = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
+        append_verifier_setup(&mut legacy_transcript, &legacy, AkitaBackendFlavor::OneHot).unwrap();
+        assert_eq!(
+            legacy_transcript.state(),
+            [
+                101, 3, 31, 117, 58, 205, 115, 86, 217, 136, 6, 160, 110, 234, 45, 130, 211, 169,
+                20, 96, 242, 154, 76, 46, 77, 138, 49, 109, 187, 54, 107, 118,
+            ]
+        );
+        assert_eq!(current_transcript.state(), legacy_transcript.state());
+    }
+
+    #[test]
     fn serde_transported_recursive_grouped_setup_restores_its_schedule_rows() {
         use crate::schedule_registry::{PrecommittedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_PACKING_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
@@ -1126,23 +1141,23 @@ mod tests {
             AkitaScheduleArtifacts::shared_from_default_directory(),
         ))
         .unwrap();
-        let selection = verifier_setup
-            .one_hot_k16_scheme()
-            .unwrap()
-            .schedules()
-            .rows()
-            .find(|row| !row.profiles().precommitteds.is_empty())
-            .unwrap()
-            .selection();
+        let selection = with_one_hot_scheme!(verifier_setup.one_hot_scheme().unwrap(), |scheme| {
+            scheme
+                .schedules()
+                .rows()
+                .find(|row| !row.profiles().precommitteds.is_empty())
+                .unwrap()
+                .selection()
+        });
         let json = serde_json::to_string(&verifier_setup).unwrap();
 
         let transported: AkitaVerifierSetup = serde_json::from_str(&json).unwrap();
-        let resolved = transported
-            .one_hot_k16_scheme()
-            .unwrap()
-            .schedules()
-            .resolve_selection(selection)
-            .expect("transported grouped setup must carry its schedule row");
+        let resolved = with_one_hot_scheme!(transported.one_hot_scheme().unwrap(), |scheme| {
+            scheme
+                .schedules()
+                .resolve_selection(selection)
+                .expect("transported grouped setup must carry its schedule row")
+        });
         assert!(!resolved.profiles().precommitteds.is_empty());
         assert!(resolved
             .schedule()
