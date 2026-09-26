@@ -19,7 +19,8 @@
 //! element gives lanes in `[0, 2^16)`, so at least
 //! `⌊(2^31 − 1) / (2^16 − 1)⌋ = 32768` same-sign accumulations (or
 //! `k` accumulations scaled by `s` with `k·|s|·(2^16 − 1) < 2^31`) fit
-//! before any lane can overflow.
+//! before any lane can overflow. The same lanes stored as `u16`
+//! (`Fp*x*u16`) are the [`WithCommitAccumulator::CommitLanes`] form.
 //!
 //! The baseline's NEON intrinsic Add/Sub/Neg lane paths are dropped: LLVM
 //! auto-vectorizes the element-wise `[i32; N]` code to the identical
@@ -32,10 +33,10 @@ use crate::{
     Unreduced, WithCommitAccumulator,
 };
 
-/// Splits a canonical value into 16-bit digits stored one per `i32` lane.
+/// Splits a canonical value into its 16-bit digits, least significant first.
 #[inline(always)]
-fn split16<const N: usize>(v: u128) -> [i32; N] {
-    std::array::from_fn(|i| ((v >> (16 * i)) & 0xFFFF) as i32)
+fn split16<const N: usize>(v: u128) -> [u16; N] {
+    std::array::from_fn(|i| (v >> (16 * i)) as u16)
 }
 
 /// `Σᵢ laneᵢ · 2^{16i}` as a signed integer. Max magnitude for ≤ 4 lanes:
@@ -89,18 +90,60 @@ wide_lanes! {
     Fp128x8i32: 8;
 }
 
+macro_rules! commit_lanes {
+    ($($(#[$doc:meta])* $name:ident: $n:literal;)*) => {$(
+        $(#[$doc])*
+        #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+        #[repr(C)]
+        pub struct $name(pub [u16; $n]);
+    )*};
+}
+
+commit_lanes! {
+    /// Canonical 16-bit lanes of an [`Fp32`] element: [`Fp32x2i32`] at data width.
+    Fp32x2u16: 2;
+    /// Canonical 16-bit lanes of an [`Fp64`] element: [`Fp64x4i32`] at data width.
+    Fp64x4u16: 4;
+    /// Canonical 16-bit lanes of an [`Fp128`] element: [`Fp128x8i32`] at data
+    /// width (one 128-bit vector register).
+    Fp128x8u16: 8;
+}
+
 const MAX_WIDE_LANE_ACCUMULATIONS: usize = (i32::MAX as usize) / (u16::MAX as usize);
 
-impl<const P: u32> WithCommitAccumulator for Fp32<P> {
-    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+macro_rules! impl_commit_accumulator {
+    ($(impl[$($g:tt)*] $field:ty => $wide:ty, $lanes:ty, $n:literal;)*) => {$(
+        impl<$($g)*> WithCommitAccumulator for $field {
+            const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+            type CommitLanes = $lanes;
+
+            #[inline(always)]
+            fn flatten_commit_lanes(lanes: &[$lanes]) -> &[u16] {
+                // SAFETY: `$lanes` is `repr(C)` with the single field
+                // `[u16; $n]`, so it has that array's size and alignment and a
+                // slice of `len` values is `len · $n` initialized `u16`s. The
+                // result borrows `lanes`, whose length bounds the product.
+                unsafe { std::slice::from_raw_parts(lanes.as_ptr().cast(), lanes.len() * $n) }
+            }
+
+            #[inline(always)]
+            fn flatten_wide_mut(wide: &mut [$wide]) -> &mut [i32] {
+                // SAFETY: `$wide` is `repr(C)` with the single field
+                // `[i32; $n]`, as for `flatten_commit_lanes`; every `i32` is a
+                // valid lane, and the result holds the unique borrow of `wide`.
+                unsafe {
+                    std::slice::from_raw_parts_mut(wide.as_mut_ptr().cast(), wide.len() * $n)
+                }
+            }
+        }
+    )*};
 }
 
-impl<const P: u64> WithCommitAccumulator for Fp64<P> {
-    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
-}
-
-impl<const P: u128> WithCommitAccumulator for Fp128<P> {
-    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+impl_commit_accumulator! {
+    impl[const P: u32] Fp32<P> => Fp32x2i32, Fp32x2u16, 2;
+    impl[const P: u64] Fp64<P> => Fp64x4i32, Fp64x4u16, 4;
+    impl[const P: u128] Fp128<P> => Fp128x8i32, Fp128x8u16, 8;
 }
 
 macro_rules! product_accum {
@@ -177,9 +220,12 @@ macro_rules! impl_from {
 }
 
 impl_from! {
-    impl[const P: u32] Fp32<P> => Fp32x2i32 { x => Self(split16(x.to_limbs() as u128)) }
-    impl[const P: u64] Fp64<P> => Fp64x4i32 { x => Self(split16(x.to_limbs() as u128)) }
-    impl[const P: u128] Fp128<P> => Fp128x8i32 { x => Self(split16(x.to_canonical_u128())) }
+    impl[const P: u32] Fp32<P> => Fp32x2u16 { x => Self(split16(x.to_limbs() as u128)) }
+    impl[const P: u64] Fp64<P> => Fp64x4u16 { x => Self(split16(x.to_limbs() as u128)) }
+    impl[const P: u128] Fp128<P> => Fp128x8u16 { x => Self(split16(x.to_canonical_u128())) }
+    impl[const P: u32] Fp32<P> => Fp32x2i32 { x => Self(Fp32x2u16::from(x).0.map(i32::from)) }
+    impl[const P: u64] Fp64<P> => Fp64x4i32 { x => Self(Fp64x4u16::from(x).0.map(i32::from)) }
+    impl[const P: u128] Fp128<P> => Fp128x8i32 { x => Self(Fp128x8u16::from(x).0.map(i32::from)) }
     impl[const P: u32] Fp32<P> => Fp32ProductAccum { x => Self([x.to_limbs() as u128, 0]) }
     impl[const P: u64] Fp64<P> => Fp64ProductAccum { x => Self([x.to_limbs() as u128, 0]) }
     impl[const P: u128] Fp128<P> => Fp128MulU64Accum {

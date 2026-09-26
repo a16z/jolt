@@ -21,8 +21,8 @@ pub use packed::{
 };
 pub use unreduced::{
     AccumPair, FoldMatrixFp32, FoldMatrixFp64, Fp128MulU64Accum, Fp128ProductAccum, Fp128x8i32,
-    Fp32ProductAccum, Fp32x2i32, Fp64ProductAccum, Fp64x4i32, FpExt2Fp64ProductAccum,
-    FpExt4Fp32ProductAccum,
+    Fp128x8u16, Fp32ProductAccum, Fp32x2i32, Fp32x2u16, Fp64ProductAccum, Fp64x4i32, Fp64x4u16,
+    FpExt2Fp64ProductAccum, FpExt4Fp32ProductAccum,
 };
 pub use word::{Fp32, Fp64};
 

@@ -121,13 +121,13 @@ pub use solinas::{
     balanced_digit_lut, canonical_extension_basis, is_registered_prime_offset,
     pseudo_mersenne_modulus, registered_prime_offset_spec, solve_frobenius_moore,
     validate_canonical_frobenius_thetas, AccumPair, Ext2, FoldMatrixFp32, FoldMatrixFp64, Fp128,
-    Fp128MulU64Accum, Fp128Packing, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32Packing,
-    Fp32ProductAccum, Fp32x2i32, Fp64, Fp64Packing, Fp64ProductAccum, Fp64x4i32, FpExt2,
-    FpExt2Fp64ProductAccum, FpExt4, FpExt4Fp32ProductAccum, FpExt8, PackedFpExt2, PackedFpExt4,
-    PackedFpExt8, Prime128Offset275, Prime128OffsetA7F7, Prime24Offset3, Prime30Offset35,
-    Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59, Prime56Offset27,
-    Prime64Offset59, PrimeOffsetSpec, PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX,
-    PRIME_OFFSET_SPECS,
+    Fp128MulU64Accum, Fp128Packing, Fp128ProductAccum, Fp128x8i32, Fp128x8u16, Fp32, Fp32Packing,
+    Fp32ProductAccum, Fp32x2i32, Fp32x2u16, Fp64, Fp64Packing, Fp64ProductAccum, Fp64x4i32,
+    Fp64x4u16, FpExt2, FpExt2Fp64ProductAccum, FpExt4, FpExt4Fp32ProductAccum, FpExt8,
+    PackedFpExt2, PackedFpExt4, PackedFpExt8, Prime128Offset275, Prime128OffsetA7F7,
+    Prime24Offset3, Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195,
+    Prime48Offset59, Prime56Offset27, Prime64Offset59, PrimeOffsetSpec,
+    PRIME_OFFSET_IMPLEMENTED_MAX_BITS, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
