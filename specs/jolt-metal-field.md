@@ -257,6 +257,13 @@ first ran at 29 G/s, slower than `a * a` at 45 G/s. Written out, with each
 square added in one multiply-add step, it runs at 60 G/s (paired ratios
 against it: loop 2.055, `a * a` 1.322).
 
+A second run, on AC power with other processes loading the machine (load
+average 32–51 on 16 cores), reproduced every ratio within 2%: 1.073, 1.506,
+1.643, 1.939, 1.001, 1.076 and 1.040 in the table's order, and 2.090 and 1.330
+for `square`. Load moved the absolute rates of both runs, so the rates above
+are indicative only; the ratios hold because each round times every variant
+back to back.
+
 Regression bound: after the first measurement, a PR that changes an MSL
 arithmetic header must report the table. A regression above 3% on any `mul`
 or `fmadd` row needs justification in the PR.

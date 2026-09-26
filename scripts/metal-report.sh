@@ -13,8 +13,10 @@ set -euo pipefail
 #
 # With --bench, it then runs crates/jolt-metal/benches/fp128.rs and appends
 # the GPU and CPU throughput table (scripts/metal-bench-table.py). Run it on
-# AC power, not in low power mode; the report records the power source
-# and energy mode.
+# AC power, not in low power mode, on an otherwise idle machine: other
+# processes slow the CPU baseline and share the chip's power budget with the
+# GPU. The report records the power source, the energy mode, and the load
+# average before and after the benchmarks.
 
 if [[ "$(uname -s)" != Darwin ]]; then
   echo "error: the Metal report runs on macOS only" >&2
@@ -81,10 +83,18 @@ if $bench; then
   # pmset powermode: 0 automatic, 1 low power, 2 high power.
   echo "- power: $(pmset -g batt | head -1 | sed -E "s/.*'(.*)'.*/\1/"), energy mode $(pmset -g | awk '/ powermode / {print ($2 == 0 ? "automatic" : $2 == 1 ? "low power" : $2 == 2 ? "high power" : $2)}')"
   echo "- GPU: GPU execution time; CPU: wall time on all cores, \`jolt_field\` with \`asm\`"
-  echo
   rm -rf target/criterion/fp128_*
   log="$(mktemp)"
-  if cargo bench -p jolt-metal --bench fp128 -- --noplot >"$log" 2>&1; then
+  # Build first, so the load average before the run excludes the compiler.
+  bench_status=0
+  cargo bench -p jolt-metal --bench fp128 --no-run >"$log" 2>&1 || bench_status=$?
+  if [[ $bench_status -eq 0 ]]; then
+    echo "- load average (1, 5, 15 min) on $(sysctl -n hw.ncpu) cores, before: $(sysctl -n vm.loadavg | tr -d '{}' | xargs)"
+    cargo bench -p jolt-metal --bench fp128 -- --noplot >"$log" 2>&1 || bench_status=$?
+  fi
+  echo "- load average after: $(sysctl -n vm.loadavg | tr -d '{}' | xargs)"
+  echo
+  if [[ $bench_status -eq 0 ]]; then
     scripts/metal-bench-table.py target/criterion
   else
     echo '```'
