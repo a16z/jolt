@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prints the jolt-metal benchmark results as a Markdown table.
 
-Reads criterion's output for the `fp128_*` groups of
-`crates/jolt-metal/benches/fp128.rs` and pairs each GPU benchmark with the CPU
+Reads criterion's output for the `metal/*` groups of
+`crates/jolt-metal/benches/field.rs` and pairs each GPU benchmark with the CPU
 benchmark of the same case. Rates are the benchmark's throughput divided by
 criterion's median time: operations per second for the chains, elements per
 second otherwise.
@@ -18,7 +18,7 @@ from pathlib import Path
 def results(root):
     """Maps (group, case) to {"gpu": rate, "cpu": rate} in units of 10^9/s."""
     table = {}
-    for meta_path in sorted(root.glob("fp128_*/**/new/benchmark.json")):
+    for meta_path in sorted(root.glob("metal_*/**/new/benchmark.json")):
         meta = json.loads(meta_path.read_text())
         estimates = json.loads((meta_path.parent / "estimates.json").read_text())
         parts = meta["full_id"].split("/")
@@ -26,7 +26,9 @@ def results(root):
         if len(sides) != 1:
             continue
         side = sides[0]
-        group = "/".join(parts[:side])
+        if parts[0] != "metal":
+            continue
+        group = "/".join(parts[1:side])
         case = "/".join(parts[side + 1 :])
         nanoseconds = estimates["median"]["point_estimate"]
         rate = meta["throughput"]["Elements"] / nanoseconds
@@ -38,7 +40,7 @@ def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "target/criterion")
     table = results(root)
     if not table:
-        sys.exit(f"error: no fp128 benchmark results under {root}")
+        sys.exit(f"error: no jolt-metal field benchmark results under {root}")
     print("| benchmark | case | GPU (G/s) | CPU (G/s) | GPU / CPU |")
     print("|---|---|---:|---:|---:|")
     for (group, case), rates in sorted(table.items()):

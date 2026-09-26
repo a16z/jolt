@@ -1,4 +1,5 @@
-//! Throughput of `jolt::Fp128` on the GPU against `jolt_field` on the CPU.
+//! Throughput of the MSL field types on the GPU against `jolt_field` on the
+//! CPU.
 //!
 //! GPU samples are GPU execution time from command-buffer timestamps, which
 //! exclude host submission and wake-up; CPU samples are wall time over all
@@ -6,12 +7,16 @@
 //! Every kernel's output is checked against the CPU once before it is
 //! timed.
 //!
-//! Groups, all for `Prime128OffsetA7F7`:
+//! Fields, each a group prefix `metal/{field}`: `fp128_a7f7`
+//! (`Prime128OffsetA7F7`), `fp64_59` (`Prime64Offset59`) and `ext2_fp64_59`
+//! (its `Ext2`, Akita's fp64 extension field). Groups, for every field:
 //! - `chain/{add,mul,mul4,square}`: dependent operations per thread in
 //!   registers, reported as operations per second;
 //! - `stream/{add,mul,square}`: elementwise over 2^16 to 2^26 elements;
 //! - `inner_product`: sum of `a[i] * b[i]` with a threadgroup reduction on the
-//!   GPU, over 2^16 to 2^26 elements;
+//!   GPU, over 2^16 to 2^26 elements.
+//!
+//! For `fp128_a7f7`, whose accumulators are the only ones in MSL so far:
 //! - `accum/{fmadd,fmadd4,fmadd_i64}`: deferred-reduction terms per thread in
 //!   registers, reported as terms per second, against `jolt_field`'s
 //!   accumulators;
@@ -31,11 +36,15 @@ mod metal {
     use std::time::Duration;
 
     use criterion::{BenchmarkId, Criterion, Throughput};
-    use jolt_field::{Accumulator, Ring, WithAccumulator, Zero};
+    use jolt_field::solinas::{Ext2, Prime128OffsetA7F7, Prime64Offset59};
+    use jolt_field::{Accumulator, WithAccumulator};
     use jolt_metal::runtime::{Binding, Device, DeviceBuffer, Grid, ShaderLibrary};
     use rayon::prelude::*;
 
-    use super::support::{dispatch, elements, library, pipeline, threadgroup, words, F};
+    use super::support::{dispatch, elements, library, pipeline, threadgroup, words, Sample};
+
+    /// The field of the accumulator benchmarks.
+    type F = Prime128OffsetA7F7;
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");
@@ -53,7 +62,7 @@ mod metal {
     const ACCUM_FMADD4: &str = "jolt_bench_accum_fmadd4";
     const ACCUM_FMADD_I64: &str = "jolt_bench_accum_fmadd_i64";
     const ACCUM_INNER_PRODUCT: &str = "jolt_bench_accum_inner_product";
-    const KERNELS: [&str; 12] = [
+    const FIELD_KERNELS: [&str; 8] = [
         ADD,
         MUL,
         SQUARE,
@@ -62,10 +71,17 @@ mod metal {
         MUL_CHAIN4,
         SQUARE_CHAIN,
         INNER_PRODUCT,
+    ];
+    const ACCUM_KERNELS: [&str; 4] = [
         ACCUM_FMADD,
         ACCUM_FMADD4,
         ACCUM_FMADD_I64,
         ACCUM_INNER_PRODUCT,
+    ];
+    const SOURCES: [(&str, &str); 3] = [
+        ("field_ops.metal", FIELD_OPS),
+        ("field_bench.metal", FIELD_BENCH),
+        ("accum_bench.metal", ACCUM_BENCH),
     ];
 
     type Acc = <F as WithAccumulator>::Accumulator;
@@ -90,37 +106,19 @@ mod metal {
 
     pub fn benches(c: &mut Criterion) {
         let device = Device::system_default().expect("a supported Metal device");
-        let library = library(
+        let fp128 = library::<F>(
             &device,
-            &[
-                ("field_ops.metal", FIELD_OPS),
-                ("field_bench.metal", FIELD_BENCH),
-                ("accum_bench.metal", ACCUM_BENCH),
-            ],
-            &KERNELS,
+            &SOURCES,
+            &[&FIELD_KERNELS[..], &ACCUM_KERNELS[..]].concat(),
             &[],
         );
-        chains(c, &device, &library);
-        streams(c, &device, &library);
+        field::<F>(c, &device, &fp128, "fp128_a7f7");
+        accumulators(c, &device, &fp128);
         inner_products(
             c,
             &device,
-            &library,
-            "inner_product",
-            INNER_PRODUCT,
-            |a, b| {
-                a.par_iter()
-                    .zip(b)
-                    .map(|(x, y)| *x * *y)
-                    .reduce(F::zero, |x, y| x + y)
-            },
-        );
-        accumulators(c, &device, &library);
-        inner_products(
-            c,
-            &device,
-            &library,
-            "accum_inner_product",
+            &fp128,
+            "fp128_a7f7/accum_inner_product",
             ACCUM_INNER_PRODUCT,
             |a, b| {
                 a.par_iter()
@@ -136,37 +134,67 @@ mod metal {
                     .reduce()
             },
         );
+        field_with_library::<Prime64Offset59>(c, &device, "fp64_59");
+        field_with_library::<Ext2<Prime64Offset59>>(c, &device, "ext2_fp64_59");
     }
+
+    fn field_with_library<T: Sample>(c: &mut Criterion, device: &Device, id: &str) {
+        let library = library::<T>(device, &SOURCES, &FIELD_KERNELS, &[]);
+        field::<T>(c, device, &library, id);
+    }
+
+    /// The chain, stream, and inner-product groups of one field.
+    fn field<T: Sample>(c: &mut Criterion, device: &Device, library: &ShaderLibrary, id: &str) {
+        chains::<T>(c, device, library, id);
+        streams::<T>(c, device, library, id);
+        inner_products::<T>(
+            c,
+            device,
+            library,
+            &format!("{id}/inner_product"),
+            INNER_PRODUCT,
+            |a, b| {
+                a.par_iter()
+                    .zip(b)
+                    .map(|(x, y)| *x * *y)
+                    .reduce(T::zero, |x, y| x + y)
+            },
+        );
+    }
+
+    /// A chain's CPU mirror: one thread's inputs and rounds to its output.
+    type Chain<T> = fn(T, T, u32) -> T;
+    /// An elementwise operation; unary ones ignore the second operand.
+    type Op<T> = fn(T, T) -> T;
 
     /// Sums GPU time over `iters` runs of one dispatch, for `iter_custom`.
     fn gpu_time(iters: u64, run: impl Fn() -> Duration) -> Duration {
         (0..iters).map(|_| run()).sum()
     }
 
-    fn read(buffer: &mut DeviceBuffer<F>) -> Vec<F> {
+    fn read<T: Sample>(buffer: &mut DeviceBuffer<T>) -> Vec<T> {
         buffer.read().expect("canonical output").to_vec()
     }
 
-    fn chains(c: &mut Criterion, device: &Device, library: &ShaderLibrary) {
-        let a = elements(1, CHAIN_THREADS);
-        let b = elements(2, CHAIN_THREADS);
+    fn chains<T: Sample>(c: &mut Criterion, device: &Device, library: &ShaderLibrary, id: &str) {
+        let a = elements::<T>(1, CHAIN_THREADS);
+        let b = elements::<T>(2, CHAIN_THREADS);
         let (a_dev, b_dev) = (
             DeviceBuffer::from_slice(device, &a).expect("upload"),
             DeviceBuffer::from_slice(device, &b).expect("upload"),
         );
-        let mut out = DeviceBuffer::<F>::zeroed(device, CHAIN_THREADS).expect("allocate");
+        let mut out = DeviceBuffer::<T>::zeroed(device, CHAIN_THREADS).expect("allocate");
         let rounds = CHAIN_ROUNDS;
 
-        let mut group = c.benchmark_group("fp128_a7f7/chain");
+        let mut group = c.benchmark_group(format!("metal/{id}/chain"));
         group.sample_size(10);
         let operations = CHAIN_THREADS as u64 * u64::from(rounds);
 
-        type Chain = fn(F, F, u32) -> F;
-        let cases: [(&str, &str, u64, Chain); 4] = [
+        let cases: [(&str, &str, u64, Chain<T>); 4] = [
             ("add", ADD_CHAIN, 1, |x, y, r| (0..r).fold(x, |x, _| x + y)),
             ("mul", MUL_CHAIN, 1, |x, y, r| (0..r).fold(x, |x, _| x * y)),
             ("mul4", MUL_CHAIN4, 4, |x, y, r| {
-                let chain = |x: F| (0..r).fold(x, |x, _| x * y);
+                let chain = |x: T| (0..r).fold(x, |x, _| x * y);
                 let (x1, x2, x3) = (x + y, x + y + y, x + y + y + y);
                 (chain(x) + chain(x1)) + (chain(x2) + chain(x3))
             }),
@@ -175,10 +203,10 @@ mod metal {
             }),
         ];
         for (name, kernel, chains, cpu) in cases {
-            let pipeline = pipeline(library, kernel);
+            let pipeline = pipeline::<T>(library, kernel);
             let grid = Grid::linear(CHAIN_THREADS, threadgroup(pipeline));
             let unary = kernel == SQUARE_CHAIN;
-            let run = |out: &DeviceBuffer<F>| {
+            let run = |out: &DeviceBuffer<T>| {
                 let bindings = if unary {
                     vec![
                         Binding::buffer(&a_dev),
@@ -195,7 +223,7 @@ mod metal {
                 };
                 dispatch(device, pipeline, &bindings, grid, 1)
             };
-            let cpu_all = || -> Vec<F> {
+            let cpu_all = || -> Vec<T> {
                 a.par_iter()
                     .zip(&b)
                     .map(|(x, y)| cpu(*x, *y, rounds))
@@ -215,31 +243,30 @@ mod metal {
         group.finish();
     }
 
-    fn streams(c: &mut Criterion, device: &Device, library: &ShaderLibrary) {
-        let mut group = c.benchmark_group("fp128_a7f7/stream");
+    fn streams<T: Sample>(c: &mut Criterion, device: &Device, library: &ShaderLibrary, id: &str) {
+        let mut group = c.benchmark_group(format!("metal/{id}/stream"));
         group.sample_size(10);
-        type Op = fn(F, F) -> F;
-        let cases: [(&str, &str, Op); 3] = [
+        let cases: [(&str, &str, Op<T>); 3] = [
             ("add", ADD, |x, y| x + y),
             ("mul", MUL, |x, y| x * y),
             ("square", SQUARE, |x, _| x.square()),
         ];
         for log in LOG_SIZES {
             let len = 1usize << log;
-            let a = elements(3, len);
-            let b = elements(4, len);
+            let a = elements::<T>(3, len);
+            let b = elements::<T>(4, len);
             let (a_dev, b_dev) = (
                 DeviceBuffer::from_slice(device, &a).expect("upload"),
                 DeviceBuffer::from_slice(device, &b).expect("upload"),
             );
-            let mut out = DeviceBuffer::<F>::zeroed(device, len).expect("allocate");
-            let mut cpu_out = vec![F::zero(); len];
+            let mut out = DeviceBuffer::<T>::zeroed(device, len).expect("allocate");
+            let mut cpu_out = vec![T::zero(); len];
             group.throughput(Throughput::Elements(len as u64));
             for (name, kernel, op) in cases {
-                let pipeline = pipeline(library, kernel);
+                let pipeline = pipeline::<T>(library, kernel);
                 let grid = Grid::linear(len, threadgroup(pipeline));
                 let unary = kernel == SQUARE;
-                let run = |out: &DeviceBuffer<F>| {
+                let run = |out: &DeviceBuffer<T>| {
                     let bindings = if unary {
                         vec![Binding::buffer(&a_dev), Binding::buffer(out)]
                     } else {
@@ -251,7 +278,7 @@ mod metal {
                     };
                     dispatch(device, pipeline, &bindings, grid, 1)
                 };
-                let cpu = |cpu_out: &mut [F]| {
+                let cpu = |cpu_out: &mut [T]| {
                     cpu_out
                         .par_iter_mut()
                         .zip(a.par_iter().zip(&b))
@@ -276,15 +303,15 @@ mod metal {
     /// Inner products with `kernel`, whose threadgroups of
     /// `INNER_PRODUCT_GROUP` threads each write one partial sum, against the
     /// CPU inner product `cpu`.
-    fn inner_products(
+    fn inner_products<T: Sample>(
         c: &mut Criterion,
         device: &Device,
         library: &ShaderLibrary,
         name: &str,
         kernel: &str,
-        cpu: fn(&[F], &[F]) -> F,
+        cpu: fn(&[T], &[T]) -> T,
     ) {
-        let pipeline = pipeline(library, kernel);
+        let pipeline = pipeline::<T>(library, kernel);
         assert!(
             pipeline.max_total_threads_per_threadgroup() >= INNER_PRODUCT_GROUP,
             "{kernel} needs {INNER_PRODUCT_GROUP} threads per threadgroup",
@@ -293,20 +320,20 @@ mod metal {
             INNER_PRODUCT_GROUPS * INNER_PRODUCT_GROUP,
             INNER_PRODUCT_GROUP,
         );
-        let mut group = c.benchmark_group(format!("fp128_a7f7/{name}"));
+        let mut group = c.benchmark_group(format!("metal/{name}"));
         group.sample_size(10);
         for log in LOG_SIZES {
             let len = 1usize << log;
-            let a = elements(5, len);
-            let b = elements(6, len);
+            let a = elements::<T>(5, len);
+            let b = elements::<T>(6, len);
             let (a_dev, b_dev) = (
                 DeviceBuffer::from_slice(device, &a).expect("upload"),
                 DeviceBuffer::from_slice(device, &b).expect("upload"),
             );
             let n = u32::try_from(len).expect("benchmark sizes fit u32");
             let mut partials =
-                DeviceBuffer::<F>::zeroed(device, INNER_PRODUCT_GROUPS).expect("allocate");
-            let run = |partials: &DeviceBuffer<F>| {
+                DeviceBuffer::<T>::zeroed(device, INNER_PRODUCT_GROUPS).expect("allocate");
+            let run = |partials: &DeviceBuffer<T>| {
                 let bindings = [
                     Binding::buffer(&a_dev),
                     Binding::buffer(&b_dev),
@@ -318,7 +345,7 @@ mod metal {
             run(&partials);
             let gpu_sum = read(&mut partials)
                 .into_iter()
-                .fold(F::zero(), |x, y| x + y);
+                .fold(T::zero(), |x, y| x + y);
             assert_eq!(gpu_sum, cpu(&a, &b), "{kernel} disagrees with the CPU");
 
             let size = format!("2^{log}");
@@ -384,8 +411,8 @@ mod metal {
     }
 
     fn accumulators(c: &mut Criterion, device: &Device, library: &ShaderLibrary) {
-        let a = elements(7, CHAIN_THREADS);
-        let b = elements(8, CHAIN_THREADS);
+        let a = elements::<F>(7, CHAIN_THREADS);
+        let b = elements::<F>(8, CHAIN_THREADS);
         let s = words(9, CHAIN_THREADS);
         let (a_dev, b_dev, s_dev) = (
             DeviceBuffer::from_slice(device, &a).expect("upload"),
@@ -394,7 +421,7 @@ mod metal {
         );
         let mut out = DeviceBuffer::<F>::zeroed(device, CHAIN_THREADS).expect("allocate");
 
-        let mut group = c.benchmark_group("fp128_a7f7/accum");
+        let mut group = c.benchmark_group("metal/fp128_a7f7/accum");
         group.sample_size(10);
         group.throughput(Throughput::Elements(
             CHAIN_THREADS as u64 * u64::from(FMADD_ROUNDS) * 4,
@@ -409,7 +436,7 @@ mod metal {
             }),
         ];
         for (name, kernel, second, cpu) in cases {
-            let pipeline = pipeline(library, kernel);
+            let pipeline = pipeline::<F>(library, kernel);
             let grid = Grid::linear(CHAIN_THREADS, threadgroup(pipeline));
             let run = |out: &DeviceBuffer<F>| {
                 let bindings = [Binding::buffer(&a_dev), second, Binding::buffer(out)];

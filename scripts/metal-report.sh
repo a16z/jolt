@@ -11,7 +11,7 @@ set -euo pipefail
 # buffer still completes; ABORT_ON_FAULT turns each one into a failed test.
 # Exits non-zero if either run fails.
 #
-# With --bench, it then runs crates/jolt-metal/benches/fp128.rs and appends
+# With --bench, it then runs crates/jolt-metal/benches/field.rs and appends
 # the GPU and CPU throughput table (scripts/metal-bench-table.py), then runs
 # crates/jolt-metal/benches/limits.rs and appends the machine limits and the
 # paired fractions of them. Run it on AC power, not in low power mode. Other
@@ -86,15 +86,15 @@ if $bench; then
   # pmset powermode: 0 automatic, 1 low power, 2 high power.
   echo "- power: $(pmset -g batt | head -1 | sed -E "s/.*'(.*)'.*/\1/"), energy mode $(pmset -g | awk '/ powermode / {print ($2 == 0 ? "automatic" : $2 == 1 ? "low power" : $2 == 2 ? "high power" : $2)}')"
   echo "- GPU: GPU execution time; CPU: wall time on all cores, \`jolt_field\` with \`asm\`"
-  rm -rf target/criterion/fp128_*
+  rm -rf target/criterion/metal_*
   log="$(mktemp)"
   err="$(mktemp)"
   # Build first, so the load average before the run excludes the compiler.
   bench_status=0
-  cargo bench -p jolt-metal --bench fp128 --bench limits --no-run >"$log" 2>&1 || bench_status=$?
+  cargo bench -p jolt-metal --bench field --bench limits --no-run >"$log" 2>&1 || bench_status=$?
   if [[ $bench_status -eq 0 ]]; then
     echo "- load average (1, 5, 15 min) on $(sysctl -n hw.ncpu) cores, before: $(sysctl -n vm.loadavg | tr -d '{}' | xargs)"
-    cargo bench -p jolt-metal --bench fp128 -- --noplot >"$log" 2>&1 || bench_status=$?
+    cargo bench -p jolt-metal --bench field -- --noplot >"$log" 2>&1 || bench_status=$?
   fi
   echo "- load average after: $(sysctl -n vm.loadavg | tr -d '{}' | xargs)"
   echo
