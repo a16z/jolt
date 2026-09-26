@@ -25,23 +25,23 @@ struct Wide {
     ulong hi;
 };
 
-// a * b over 128 bits, no reduction: four 32 x 32-bit multiplies.
-//
-// The cross products sum to mid < 2^65, whose carry mid_carry is bit 64.
-// lo = p00 + mid * 2^32 mod 2^64 carries at most once, and the product is
-// below 2^128, so hi takes every remaining bit without overflow.
+// a * b over 128 bits, no reduction: four 32 x 32-bit multiplies, summed
+// row by row as mul_words in fp128.h does. Each step computes
+// x * y + c + d <= (2^32 - 1)^2 + 2 (2^32 - 1) = 2^64 - 1 for 32-bit x, y, c
+// and d, so no step carries out of 64 bits, and the last one is the high
+// word.
 inline Wide mul_wide(ulong a, ulong b) {
     uint a0 = uint(a), a1 = uint(a >> 32);
     uint b0 = uint(b), b1 = uint(b >> 32);
-    ulong p00 = ulong(a0) * b0;
-    ulong p01 = ulong(a0) * b1;
-    ulong p10 = ulong(a1) * b0;
-    ulong p11 = ulong(a1) * b1;
-    ulong mid = p01 + p10;
-    ulong mid_carry = mid < p01 ? 1ul << 32 : 0ul;
-    ulong lo = p00 + (mid << 32);
-    ulong hi = p11 + (mid >> 32) + mid_carry + (lo < p00 ? 1ul : 0ul);
-    return Wide{lo, hi};
+    ulong t = ulong(a0) * b0;
+    uint w0 = uint(t);
+    t = ulong(a0) * b1 + (t >> 32);
+    uint w1 = uint(t);
+    uint w2 = uint(t >> 32);
+    t = ulong(a1) * b0 + w1;
+    w1 = uint(t);
+    t = ulong(a1) * b1 + w2 + (t >> 32);
+    return Wide{(ulong(w1) << 32) | w0, t};
 }
 
 // a^2 over 128 bits, no reduction: three 32 x 32-bit multiplies.
