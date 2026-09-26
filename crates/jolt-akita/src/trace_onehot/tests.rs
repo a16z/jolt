@@ -18,9 +18,10 @@ use akita_prover::{CpuBackend, OneHotPoly, RootOpeningSource, RootPolyMeta, Root
 use akita_types::{
     BasisMode, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
-use jolt_field::{One, Ring};
+use jolt_field::{Fp128x8i32, One, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::digit_windows::{flush_digit_accumulators, DigitWindows};
 use super::source::{TracePackedOneHotBatchView, TracePackedOneHotView};
 use crate::AkitaField;
 
@@ -144,61 +145,97 @@ fn committed_digit_zero_mapping_is_dimension_generic() {
     assert_ring_mapping::<64>(256, 32, Some(1));
 }
 
-fn assert_k16_shift_groups<const D: usize>() {
+fn digit_window_source<const D: usize>() -> CyclotomicRing<AkitaField, D> {
+    // Mix small, negative, and near-modulus coefficients so both window
+    // halves carry dense 16-bit digits.
+    CyclotomicRing::from_coefficients(std::array::from_fn(|index| match index % 3 {
+        0 => AkitaField::from_u64((index + 1) as u64),
+        1 => -AkitaField::from_u64((index + 1) as u64),
+        _ => AkitaField::from_u128(u128::MAX / (index as u128 + 2)),
+    }))
+}
+
+fn assert_digit_windows_match_shift_accumulation<const D: usize>() {
     const COLUMNS: usize = 5;
     let rows_per_ring = D / 16;
     let mut selected_rows = vec![NO_SELECTED_ROW; rows_per_ring * COLUMNS];
-    let committed_zero_masks = vec![0u64; rows_per_ring];
+    let mut committed_zero_masks = vec![0u64; rows_per_ring];
     for row in 0..rows_per_ring {
         let shared_hot = ((row + 1) % 15 + 1) as u8;
         selected_rows[row * COLUMNS] = shared_hot;
         selected_rows[row * COLUMNS + 1] = shared_hot;
-        selected_rows[row * COLUMNS + 2] = shared_hot;
-        selected_rows[row * COLUMNS + 3] = ((2 * row + 3) % 15 + 1) as u8;
-        selected_rows[row * COLUMNS + 4] = if row == 1 {
+        selected_rows[row * COLUMNS + 2] = ((2 * row + 3) % 15 + 1) as u8;
+        selected_rows[row * COLUMNS + 3] = if row % 3 == 1 {
             NO_SELECTED_ROW
         } else {
             ((3 * row + 5) % 15 + 1) as u8
         };
-    }
-
-    let source: CyclotomicRing<AkitaField, D> =
-        CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
-            AkitaField::from_u64((index + 1) as u64)
-        }));
-    let source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
-    let mut actual = vec![AkitaWideRing::zero(); COLUMNS];
-    for (chunk, chunk_rows) in selected_rows.chunks_exact(4 * COLUMNS).enumerate() {
-        let masks = &committed_zero_masks[4 * chunk..4 * chunk + 4];
-        let mut groups = K16FourRowShiftGroups::new(COLUMNS, 4 * chunk).unwrap();
-        assert!(groups.build(chunk_rows, masks, COLUMNS));
-        groups.accumulate(&source, &mut actual, 0, 1, chunk_rows, masks, COLUMNS);
-    }
-
-    let mut expected = vec![AkitaWideRing::zero(); COLUMNS];
-    for (row, row_indices) in selected_rows.chunks_exact(COLUMNS).enumerate() {
-        for (column, &hot) in row_indices.iter().enumerate() {
-            if hot != NO_SELECTED_ROW {
-                source.shift_accumulate_into(&mut expected[column], 16 * row + usize::from(hot));
-            }
+        if row % 2 == 0 {
+            committed_zero_masks[row] |= 1 << 4;
         }
     }
-    let actual = actual
-        .into_iter()
-        .map(|value| value.reduce::<AkitaField>())
-        .collect::<Vec<_>>();
+
+    let source = digit_window_source::<D>();
+    let mut windows = DigitWindows::<D>::new();
+    windows.load(&source);
+    let mut actual = vec![[Fp128x8i32([0; 8]); D]; COLUMNS];
+    let wide_source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
+    let mut expected = vec![AkitaWideRing::zero(); COLUMNS];
+    for (column, actual) in actual.iter_mut().enumerate() {
+        let mut shifts = Vec::new();
+        for (row, (row_indices, &mask)) in selected_rows
+            .chunks_exact(COLUMNS)
+            .zip(&committed_zero_masks)
+            .enumerate()
+        {
+            let hot = row_indices[column];
+            if traversal::row_is_committed(hot, mask, column) {
+                shifts.push(16 * row + usize::from(hot));
+                wide_source
+                    .shift_accumulate_into(&mut expected[column], 16 * row + usize::from(hot));
+            }
+        }
+        windows.accumulate(actual, &shifts);
+    }
+
+    let mut reduced = vec![CyclotomicRing::zero(); COLUMNS];
+    flush_digit_accumulators(&mut actual, &mut reduced);
     let expected = expected
         .into_iter()
         .map(|value| value.reduce::<AkitaField>())
         .collect::<Vec<_>>();
-    assert_eq!(actual, expected);
+    assert_eq!(reduced, expected);
 }
 
 #[test]
-fn k16_shared_shift_groups_cover_adaptive_dimensions() {
-    assert_k16_shift_groups::<64>();
-    assert_k16_shift_groups::<128>();
-    assert_k16_shift_groups::<256>();
+fn digit_windows_match_shift_accumulation() {
+    assert_digit_windows_match_shift_accumulation::<64>();
+    assert_digit_windows_match_shift_accumulation::<128>();
+    assert_digit_windows_match_shift_accumulation::<256>();
+    assert_digit_windows_match_shift_accumulation::<512>();
+}
+
+#[test]
+fn digit_windows_stay_exact_at_accumulation_budget() {
+    const D: usize = 64;
+    let source = CyclotomicRing::<AkitaField, D>::from_coefficients(std::array::from_fn(|index| {
+        -AkitaField::from_u64(index as u64 + 1)
+    }));
+    let mut windows = DigitWindows::<D>::new();
+    windows.load(&source);
+    let shifts = (0..D).collect::<Vec<_>>();
+    let mut actual = [[Fp128x8i32([0; 8]); D]];
+    let wide_source: AkitaWideRing<D> = AkitaWideRing::from_ring(&source);
+    let mut expected = AkitaWideRing::zero();
+    for _ in 0..MAX_WIDE_ACCUMULATIONS / D {
+        windows.accumulate(&mut actual[0], &shifts);
+        for &shift in &shifts {
+            wide_source.shift_accumulate_into(&mut expected, shift);
+        }
+    }
+    let mut reduced = [CyclotomicRing::zero()];
+    flush_digit_accumulators(&mut actual, &mut reduced);
+    assert_eq!(reduced[0], expected.reduce::<AkitaField>());
 }
 
 #[test]
