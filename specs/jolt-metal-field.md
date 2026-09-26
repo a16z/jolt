@@ -36,10 +36,12 @@ reading back kernels that use them.
 Key abstractions:
 
 - **MSL field templates** (`shaders/jolt/field/*.h`). These define
-  `jolt::Fp32<BITS, C>`, `jolt::Fp64<BITS, C>`, `jolt::Fp128<C>`,
-  `jolt::Ext2<F, NR>` and `jolt::Ext4<F>`. Each template mirrors one
-  `jolt_field` type and uses the same algorithm names (`reduce_product`,
-  `mul_unreduced`, `mul_u64_unreduced`, …).
+  `jolt::Fp128<C>` and `jolt::Fp64<C>`, the fields `2^128 − C` and
+  `2^64 − C` for odd `C < 2^32`, and `jolt::Ext2<F>`, the quadratic
+  extension with non-residue 2 over either. `Fp32` and `FpExt4` follow the
+  same pattern when a consumer needs them (see Non-Goals). Each template
+  mirrors one `jolt_field` type and uses the same algorithm names
+  (`reduce_product`, `fold2_canonicalize`, …).
 - **MSL accumulators.** `shaders/jolt/field/accum.h` states the contract and
   mirrors `jolt_field::WithAccumulator` with `Accumulator` and
   `SmallScalarAccumulator`; each field header specializes it (`fp128_accum.h`
@@ -110,10 +112,16 @@ Key abstractions:
   this spec.
 - **Field inversion on the GPU.** No planned consumer needs it. It will be
   added with its first caller.
-- **`FpExt8`, and `Fp32` / `Fp64` before a consumer needs them.** The
-  templates are written generically from the start. Instantiations,
-  `MetalField` impls, and tests land with their first production caller, per
-  the repository rule against speculative API.
+- **`Fp32`, `FpExt4` and `FpExt8` before a consumer needs them.**
+  Instantiations, `MetalField` impls, and tests land with their first
+  production caller, per the repository rule against speculative API.
+  `Fp64` and `Ext2` landed in step 4 because Akita's `fp64` preset
+  (`akita-config`'s `proof_optimized/fp64.rs`: `Field = Prime64Offset59`,
+  `ExtensionField = Ext2<Field>`) uses them as its base and extension
+  fields. The `fp32` preset's `Prime32Offset99` and `FpExt4` follow in step 5.
+- **`Fp64` moduli below `2^63`.** `jolt_field`'s `Fp64<P>` also covers
+  sub-word moduli, which fold at a different bit. `MetalField` for such a
+  `P` is a build error.
 - **Fallback policy.** Whether a consumer fails the proof or re-proves on the
   CPU after a GPU error is decided by the consumer. This crate only
   classifies errors (see Error model).
@@ -171,6 +179,33 @@ implementation, not a refactor of the CPU code.
   each reduction's intermediate values in `u128` arithmetic and asserts that
   every branch of `fold2_canonicalize` is taken for `mul` and `mul_u64`, and
   that `add`'s wrap and canonicalization and `sub`'s borrow occur.
+- **`Fp64` and `Ext2`** (`tests/fp64.rs`, `tests/ext2.rs`, step 4). The
+  same harness and branch assertions, over the moduli that reach each
+  bound at its limit. `Fp64` runs over `Prime64Offset59` and
+  `2^64 − 2^32 + 1`, whose offset is the largest `jolt::Fp64` accepts.
+  `Ext2` runs over four bases: `Prime64Offset59`; `2^64 − 0x7fffffd3`,
+  whose offset is the largest prime offset below `2^31`, the bound of the
+  `Fp64` forms that reduce a sum of three products once; and, through the
+  generic Karatsuba forms, `2^64 − 2^32 + 1` and `Prime128Offset275`.
+  A shared model (`tests/support/fp64.rs`) recomputes the reduction in
+  `u128` arithmetic, and the suites assert that every `fold2_canonicalize`
+  branch is taken by `mul`, by `mul_u64`, and by each coefficient of the
+  `Ext2` multiply, and that one `c1` sum carries into its top word through
+  the low word, which random operands reach with probability about
+  `2^−64`. Inputs for the rare branches are built from the modulus:
+  with `a = 2^63` and `b = 2m`, the product is `m · 2^64`, and `m` is chosen
+  so that `C·m` lands just below `(k + 1) · 2^64`. The `2^64 − 0x7fffffd3`
+  suite caught a real bug during development: the carry into the second
+  fold, up to `3C`, was held in 32 bits, which overflows for `C` near
+  `2^31`. Since `Ext2` over non-field bases is exercised (the Goldilocks
+  prime has `p ≡ 1 (mod 8)`, so `u^2 − 2` splits), the suites test the
+  arithmetic, not the field axioms, which `jolt_field` covers. Of 40
+  mutants of `fp64.h` and `ext2.h`, covering each carry, fold, sign step,
+  coefficient term and the non-residue, 39 fail the suites. The low-word
+  carry was added after its mutant first survived. The other survivor is
+  equivalent: narrowing the bound of the reduce-once overloads, which
+  changes speed, not results. Widening it past `2^31` fails to compile,
+  through `reduce_sum`'s `static_assert`.
 - **Mutation testing.** The suite's strength is checked by hand-made
   mutants of each carry, shift, fold, and sign-handling step. In step 2,
   all 23 mutants of the code in the final `fp128.h` fail the suite. Two
@@ -219,7 +254,8 @@ implementation, not a refactor of the CPU code.
 
 ### Performance
 
-Criterion benchmarks (`crates/jolt-metal/benches/fp128.rs`) per field:
+Criterion benchmarks (`crates/jolt-metal/benches/field.rs`) for `Fp128`
+(offset `0xA7F7`), `Fp64` (offset 59) and `Ext2` over that `Fp64`:
 
 - dependent chains of `add`, `mul`, and `square` in registers, plus `mul`
   with four independent chains, reported as operations per second: the ALU
@@ -227,9 +263,9 @@ Criterion benchmarks (`crates/jolt-metal/benches/fp128.rs`) per field:
 - elementwise `add`, `mul`, and `square` at 2^16–2^26 elements;
 - an inner product with a threadgroup reduction at 2^16–2^26 elements, the
   shape of a sumcheck round;
-- `fmadd`, `fmadd` with four independent accumulators, and `fmadd_i64` in
-  registers, and an inner product whose products are accumulated unreduced
-  and summed by `threadgroup_merge` (step 3).
+- for `Fp128`, `fmadd`, `fmadd` with four independent accumulators, and
+  `fmadd_i64` in registers, and an inner product whose products are
+  accumulated unreduced and summed by `threadgroup_merge` (step 3).
 
 GPU samples are GPU execution time from the command buffer's timestamps
 (`Batch::commit_and_wait` returns it), which excludes host submission. The
@@ -281,6 +317,49 @@ average 32–51 on 16 cores), reproduced every ratio within 2%: 1.073, 1.506,
 for `square`. Load moved the absolute rates of both runs, so the rates above
 are indicative only; the ratios hold because each round times every variant
 back to back.
+
+**Fp64 and Ext2 forms** (step 4). A paired A/B on the unmerged branch
+`metal/fp64-ext2-ab` (`benches/fp64_ab.rs`) chose the product, the square,
+and the `Ext2` multiply and square. Each variant is the merged header with
+exactly one function replaced. The rule, fixed before the first round, is
+the limb-layout rule made explicit: the fastest variant on the dependent
+chain wins if it beats every other there by at least 3% and is at most 3%
+slower than the best on four chains and on the inner product at 2^20;
+otherwise the simplest variant within 3% of the best on the chain wins.
+Four rounds ran on an M4 Max on AC power, at load 9–37, each with 31
+rounds per case. Times relative to the variant named first, median per-round
+ratio:
+
+| round | choice | chain | four chains | inner product 2^20 |
+|---|---|---|---|---|
+| 1 | 64×64 product: row-by-row (as `fp128.h`) / cross products first | 0.848 | 0.838 | 0.994 |
+| 1 | the same, MSL `*` and `mulhi` / cross products first | 1.073 | 1.064 | 0.996 |
+| 2 | square: `mul_wide(a, a)` / three-product square | 0.847 | — | — |
+| 3 | square: row-by-row, cross product once / `mul_wide(a, a)` | 1.001 | — | — |
+| 3 | `Ext2` multiply: reduce each coefficient once / Karatsuba | 0.962 | 0.987 | 1.015 |
+| 3 | `Ext2` multiply: base-field `dot2` / Karatsuba | 0.992 | 0.992 | 1.004 |
+| 3 | `Ext2` multiply: schoolbook / Karatsuba | 1.108 | 1.130 | 1.010 |
+| 3 | `Ext2` square: reduce `c0` once / generic | 0.914 | — | — |
+| 3 | `Ext2` square: base-field `dot2` / generic | 0.949 | — | — |
+| 4 | merged `Ext2` multiply / Karatsuba | 0.960 | 0.985 | 1.009 |
+| 4 | merged `Ext2` square / generic | 0.910 | — | — |
+
+The row-by-row product is 15% faster than the four-product form it
+replaced, and the three-product square did not beat squaring through it, so
+`square(a)` is `a * a`. The `Ext2` multiply over `Fp64<C>` with `C < 2^31`
+sums each coefficient's products, `a0 b0 + 2 a1 b1` and `a0 b1 + a1 b0`,
+unreduced and reduces once: four base products and two reductions against
+Karatsuba's three and three. In round 3 it ran the chain 3.8% faster than
+Karatsuba and 3.0% faster than `dot2` (from the two medians against
+Karatsuba, just over the rule's margin). `dot2` sums two products and
+reduces once, which is valid for every `C < 2^32`, but it must reduce the
+doubled `a1` first. On inner products every form ties within the
+round-to-round spread, since the kernel is memory-bound; at 2^24 the merged
+multiply measured 1.4–1.7% slower than Karatsuba in rounds 2–4, inside that
+spread. Round 4 timed forced Karatsuba and generic squaring against the
+merged forms (1.042, 1.015, 0.991 and 1.099); the table inverts those
+ratios. Offsets from `2^31` up keep Karatsuba: there a sum of three
+products can exceed the bound `C (t2 + 1) ≤ p` of `fold2_canonicalize`.
 
 Regression bound: after the first measurement, a PR that changes an MSL
 arithmetic header reports the table and a paired comparison against its base
@@ -389,8 +468,8 @@ jolt-kernels (feature metal)  akita-metal (Akita `dev`, opt-in)
 ```
 
 **Shader genericity.** The Metal Shading Language is C++14-based. Field types
-are class templates whose non-type parameters are the modulus shape
-(`BITS`, `C`). The `C` parameter is a compile-time constant, so a multiply by
+are class templates whose non-type parameter is the offset `C`, and
+extensions are templates over their base field. The `C` parameter is a compile-time constant, so a multiply by
 a small `C` folds. Consumer kernels are function templates over the field
 type:
 
@@ -423,7 +502,9 @@ MSL `uint4` little-endian words. Upload is therefore a byte copy, with a
 `const` assertion on size and layout. Read-back goes through the checked
 conversion (invariant 6). This is one small `jolt-field` addition behind an
 optional `bytemuck` feature: `Zeroable`, `NoUninit`, and `CheckedBitPattern`
-for `Fp128<P>`, whose validity check is `limbs < P`. It is pure,
+for `Fp128<P>`, whose validity check is `limbs < P`, and likewise for
+`Fp64<P>` (over `u64`) and `FpExt2<F, C>` (over `[F; 2]`, valid when both
+coefficients are). It is pure,
 allocation-free, and has no platform code. Device buffer offsets are required to be multiples of 16 so that
 `device uint4*` accesses are aligned.
 
@@ -580,10 +661,21 @@ together with #1848.
    faster than reducing every product. The A/B harness is kept on a branch,
    not merged. `SignedProductAccumulator` is deferred until a kernel needs
    it.
-4. **Extensions.** `Ext2`, and `FpExt4` in the `[1, e1, e2, e3]` cyclotomic
-   basis matching `PseudoMersenne::ext4_mul`.
-5. **Word fields.** `Fp64<BITS, C>` / `Fp32<BITS, C>` for `Prime64Offset59` /
-   `Prime32Offset99`, landed when `akita-metal` first needs them.
+4. **`Fp64` and `Ext2`.** Contents:
+   - `fp64.h`: `jolt::Fp64<C>` with the operations of `Fp128`, for 64-bit
+     moduli with odd `C < 2^32`, and `fp64_detail::reduce_sum`, which
+     reduces a sum of up to three 128-bit products once for `C < 2^31`;
+   - `ext2.h`: `jolt::Ext2<F>` over either base, with multiplication by a
+     base-field element (`mul_base`). Multiply and square are Karatsuba
+     forms, overloaded over `Fp64<C>` with `C < 2^31` by forms that reduce
+     each coefficient once;
+   - `MetalField` for `Fp64<P>` with 64-bit `P` and for `Ext2<F>`, and the
+     `bytemuck` impls behind them;
+   - the conformance suites, the generic field benchmarks
+     (`benches/field.rs`), and the A/B under Performance.
+5. **`Fp32` and `FpExt4`.** `Fp32` for `Prime32Offset99`, and `FpExt4` in
+   the `[1, e1, e2, e3]` cyclotomic basis matching
+   `PseudoMersenne::ext4_mul`, each landed when a consumer first needs it.
 6. **Adoption.** #1848 (Jolt) and `akita-metal` (Akita `dev`) switch to these
    headers and delete their copies. The Akita side follows its own spec:
    ring, NTT over CRT primes, commitment, fold, and range sumcheck layers.
