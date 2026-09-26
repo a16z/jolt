@@ -184,11 +184,6 @@ where
                 reason: "table dimension exceeds the relation's round count",
             });
         }
-        if table_rounds >= usize::BITS as usize {
-            return Err(KernelError::Unsupported {
-                reason: "table dimension exceeds the host index width",
-            });
-        }
         let expected_len = 1usize << table_rounds;
         let check_len = |table: &Polynomial<F>, id: &dyn core::fmt::Debug| {
             if table.len() == expected_len {

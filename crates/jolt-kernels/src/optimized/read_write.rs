@@ -73,11 +73,12 @@ impl<F: JoltField, R: ConcreteSumcheck<F>> RamAddressKernel<F, R> {
     where
         R: 'static,
     {
-        dimensions
-            .validate_phase_split()
+        let mut active_rounds: Vec<_> = dimensions
+            .address_opening_indices()
             .map_err(|_| KernelError::InvariantViolation {
-                reason: "invalid RAM address round geometry",
-            })?;
+                reason: "read/write phase split exceeds the cycle/address dimensions",
+            })?
+            .collect();
         if inner.num_rounds() != dimensions.log_k() {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM address kernel has the wrong number of active rounds",
@@ -86,12 +87,6 @@ impl<F: JoltField, R: ConcreteSumcheck<F>> RamAddressKernel<F, R> {
         if dimensions.phase3_cycle_rounds() == 0 {
             return Ok(inner);
         }
-        let mut active_rounds: Vec<_> = dimensions
-            .address_opening_indices()
-            .map_err(|_| KernelError::InvariantViolation {
-                reason: "invalid RAM address round geometry",
-            })?
-            .collect();
         active_rounds.sort_unstable();
         let scale = F::pow2(dimensions.phase3_cycle_rounds());
         Ok(Box::new(Self {

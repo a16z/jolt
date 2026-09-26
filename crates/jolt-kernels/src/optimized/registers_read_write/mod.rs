@@ -77,11 +77,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
                 reason: "register read/write dimensions do not match the witness domain",
             });
         }
-        if log_t >= usize::BITS as usize {
-            return Err(KernelError::Unsupported {
-                reason: "register read/write trace exceeds the host index width",
-            });
-        }
         if order == ReadWriteOrder::AddressFirst {
             return Ok(Box::new(AddressFirstKernel::prepare(
                 session, witness, &inputs,

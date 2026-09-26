@@ -36,11 +36,6 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
         let ram_log_k = relation.ram_log_k();
         let lowest_address = relation.lowest_address();
         let tau_low = relation.tau_low();
-        dimensions
-            .validate_phase_split()
-            .map_err(|_| KernelError::InvariantViolation {
-                reason: "invalid RAM RAF phase split",
-            })?;
         if tau_low.len() != dimensions.log_t() || ram_log_k != dimensions.log_k() {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM RAF evaluation inputs disagree with the trace/address geometry",

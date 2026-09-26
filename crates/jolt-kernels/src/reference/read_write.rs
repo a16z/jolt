@@ -18,47 +18,27 @@ impl ReadWriteTableLayout {
     pub(super) fn joint<F: JoltField>(
         dimensions: ReadWriteDimensions,
     ) -> Result<Self, KernelError<F>> {
-        Self::validate::<F>(dimensions)?;
-        let rounds = dimensions.read_write_rounds();
         let variables = dimensions
             .read_write_opening_indices()
             .map_err(|_| KernelError::InvariantViolation {
-                reason: "invalid read/write opening geometry",
+                reason: "read/write phase split exceeds the cycle/address dimensions",
             })?
             .collect();
+        let rounds = dimensions.read_write_rounds();
         Ok(Self { rounds, variables })
     }
 
     pub(super) fn address<F: JoltField>(
         dimensions: ReadWriteDimensions,
     ) -> Result<Self, KernelError<F>> {
-        Self::validate::<F>(dimensions)?;
-        let rounds = dimensions.output_check_rounds();
         let variables = dimensions
             .address_opening_indices()
             .map_err(|_| KernelError::InvariantViolation {
-                reason: "invalid RAM address opening geometry",
+                reason: "read/write phase split exceeds the cycle/address dimensions",
             })?
             .collect();
+        let rounds = dimensions.output_check_rounds();
         Ok(Self { rounds, variables })
-    }
-
-    fn validate<F: JoltField>(dimensions: ReadWriteDimensions) -> Result<(), KernelError<F>> {
-        dimensions
-            .validate_phase_split()
-            .map_err(|_| KernelError::InvariantViolation {
-                reason: "read/write phase split exceeds the cycle/address dimensions",
-            })?;
-        if dimensions
-            .log_t()
-            .checked_add(dimensions.log_k())
-            .is_none_or(|rounds| rounds >= usize::BITS as usize)
-        {
-            return Err(KernelError::Unsupported {
-                reason: "dense read/write reference tables exceed the host index width",
-            });
-        }
-        Ok(())
     }
 
     pub(super) fn table<F: JoltField>(
@@ -162,15 +142,6 @@ mod tests {
                 Err(KernelError::InvariantViolation { .. })
             ));
         }
-        assert!(matches!(
-            ReadWriteTableLayout::joint::<F>(ReadWriteDimensions::new(
-                usize::BITS as usize,
-                1,
-                0,
-                1
-            )),
-            Err(KernelError::Unsupported { .. })
-        ));
         let layout =
             ReadWriteTableLayout::joint::<F>(ReadWriteDimensions::new(3, 2, 0, 2)).unwrap();
         assert!(matches!(

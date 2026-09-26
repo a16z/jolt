@@ -57,11 +57,6 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
         let output_address_challenges = inputs.challenges.output_address.as_slice();
         let ram_log_k = output_address_challenges.len();
         let dimensions = relation.read_write_dimensions();
-        dimensions
-            .validate_phase_split()
-            .map_err(|_| KernelError::InvariantViolation {
-                reason: "invalid RAM output-check phase split",
-            })?;
         if dimensions.log_k() != ram_log_k {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM output challenges do not match the address dimensions",
