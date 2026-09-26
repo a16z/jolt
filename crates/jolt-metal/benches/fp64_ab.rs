@@ -48,6 +48,10 @@
 //!   with `c0 = dot2(a0, b0, 2 a1, b1)`, `c1 = dot2(a0, b1, a1, b0)` and
 //!   `c0 = dot2(a0, a0, 2 a1, a1)` for the square (order: `karatsuba`,
 //!   `schoolbook`, `dot2`, `lazy`; `generic`, `dot2`, `lazy`).
+//!
+//! Round 3 chose `mul` and `lazy` again, and the branch merged them. Round 4
+//! confirms the merged Ext2 forms against Karatsuba on the merged base; the
+//! earlier rounds' variants are in this branch's history.
 
 #[cfg(target_os = "macos")]
 #[expect(
@@ -92,190 +96,6 @@ mod metal {
     /// (through its closing brace at column 0 or 4).
     type Patch = (&'static str, &'static str, &'static str);
 
-    const ROWS: Patch = (
-        "jolt/field/fp64.h",
-        "inline Wide mul_wide(ulong a, ulong b) {",
-        "",
-    );
-    const NATIVE: Patch = (
-        "jolt/field/fp64.h",
-        "inline Wide mul_wide(ulong a, ulong b) {",
-        "inline Wide mul_wide(ulong a, ulong b) {\n    return Wide{a * b, metal::mulhi(a, b)};\n}",
-    );
-    const CROSS: Patch = (
-        "jolt/field/fp64.h",
-        "inline Wide mul_wide(ulong a, ulong b) {",
-        "inline Wide mul_wide(ulong a, ulong b) {
-    uint a0 = uint(a), a1 = uint(a >> 32);
-    uint b0 = uint(b), b1 = uint(b >> 32);
-    ulong p00 = ulong(a0) * b0;
-    ulong p01 = ulong(a0) * b1;
-    ulong p10 = ulong(a1) * b0;
-    ulong p11 = ulong(a1) * b1;
-    ulong mid = p01 + p10;
-    ulong mid_carry = mid < p01 ? 1ul << 32 : 0ul;
-    ulong lo = p00 + (mid << 32);
-    ulong hi = p11 + (mid >> 32) + mid_carry + (lo < p00 ? 1ul : 0ul);
-    return Wide{lo, hi};
-}",
-    );
-
-    const SQR3: Patch = ("jolt/field/fp64.h", "inline Wide sqr_wide(ulong a) {", "");
-    const SQR_MUL: Patch = (
-        "jolt/field/fp64.h",
-        "inline Wide sqr_wide(ulong a) {",
-        "inline Wide sqr_wide(ulong a) {\n    return mul_wide(a, a);\n}",
-    );
-    const SQR_ROWS3: Patch = (
-        "jolt/field/fp64.h",
-        "inline Wide sqr_wide(ulong a) {",
-        "inline Wide sqr_wide(ulong a) {
-    uint a0 = uint(a), a1 = uint(a >> 32);
-    ulong m = ulong(a0) * a1;
-    ulong t = ulong(a0) * a0;
-    uint w0 = uint(t);
-    t = m + (t >> 32);
-    uint w1 = uint(t);
-    uint w2 = uint(t >> 32);
-    t = m + w1;
-    w1 = uint(t);
-    t = ulong(a1) * a1 + w2 + (t >> 32);
-    return Wide{(ulong(w1) << 32) | w0, t};
-}",
-    );
-    const KARATSUBA: Patch = (
-        "jolt/field/ext2.h",
-        "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
-        "",
-    );
-    const SCHOOLBOOK: Patch = (
-        "jolt/field/ext2.h",
-        "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
-        "    friend Ext2 operator*(Ext2 a, Ext2 b) {
-        return Ext2{a.c0 * b.c0 + mul_non_residue(a.c1 * b.c1), a.c0 * b.c1 + a.c1 * b.c0};
-    }",
-    );
-    const LAZY: Patch = (
-        "jolt/field/ext2.h",
-        "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
-        "    friend Ext2 operator*(Ext2 a, Ext2 b) {\n        return ext2_ab_mul(a, b);\n    }",
-    );
-    const DOT2: Patch = (
-        "jolt/field/ext2.h",
-        "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
-        "    friend Ext2 operator*(Ext2 a, Ext2 b) {
-        return Ext2{dot2(a.c0, b.c0, mul_non_residue(a.c1), b.c1), dot2(a.c0, b.c1, a.c1, b.c0)};
-    }",
-    );
-    const SQUARE_DOT2: Patch = (
-        "jolt/field/ext2.h",
-        "    friend Ext2 square(Ext2 a) {",
-        "    friend Ext2 square(Ext2 a) {
-        return Ext2{dot2(a.c0, a.c0, mul_non_residue(a.c1), a.c1), (a.c0 + a.c0) * a.c1};
-    }",
-    );
-    const SQUARE_GENERIC: Patch = ("jolt/field/ext2.h", "    friend Ext2 square(Ext2 a) {", "");
-    const SQUARE_LAZY: Patch = (
-        "jolt/field/ext2.h",
-        "    friend Ext2 square(Ext2 a) {",
-        "    friend Ext2 square(Ext2 a) {\n        return ext2_ab_square(a);\n    }",
-    );
-
-    /// The lazy Ext2 forms, found by argument-dependent lookup when `Ext2` is
-    /// instantiated. A 130-bit value `lo + hi 2^64 + top 2^128`
-    /// (`top <= 2`) first-folds to `t + t2 2^64` with `t2 <= 3C`, and
-    /// `C t2 <= 3 C^2` wraps `t` at most once when `C < 2^31`.
-    const LAZY_FORMS: &str = "
-namespace jolt {
-namespace ext2_ab {
-struct Wide3 {
-    ulong lo;
-    ulong hi;
-    uint top;
-};
-inline Wide3 add(Wide3 x, fp64_detail::Wide y) {
-    ulong lo = x.lo + y.lo;
-    ulong c0 = lo < y.lo ? 1ul : 0ul;
-    ulong hi = x.hi + y.hi;
-    uint c1 = hi < y.hi ? 1u : 0u;
-    ulong hi2 = hi + c0;
-    c1 += hi2 < hi ? 1u : 0u;
-    return Wide3{lo, hi2, x.top + c1};
-}
-template <uint C>
-inline ulong reduce3(Wide3 x) {
-    static_assert(C < (1u << 31), \"the lazy forms need C < 2^31\");
-    ulong u = ulong(uint(x.hi)) * C + uint(x.lo);
-    uint t0 = uint(u);
-    u = ulong(uint(x.hi >> 32)) * C + uint(x.lo >> 32) + (u >> 32);
-    ulong t = (u << 32) | t0;
-    ulong t2 = (u >> 32) + ulong(x.top) * C;
-    ulong s = t + t2 * C;
-    bool overflow = s < t;
-    ulong r = s + C;
-    bool carry = r < s;
-    return (overflow || carry) ? r : s;
-}
-} // namespace ext2_ab
-
-template <uint C>
-Ext2<Fp64<C>> ext2_ab_mul(Ext2<Fp64<C>> a, Ext2<Fp64<C>> b) {
-    using namespace fp64_detail;
-    Wide p00 = mul_wide(a.c0.word, b.c0.word);
-    Wide p11 = mul_wide(a.c1.word, b.c1.word);
-    Wide p01 = mul_wide(a.c0.word, b.c1.word);
-    Wide p10 = mul_wide(a.c1.word, b.c0.word);
-    ext2_ab::Wide3 c0 = ext2_ab::add(ext2_ab::add(ext2_ab::Wide3{p00.lo, p00.hi, 0u}, p11), p11);
-    ext2_ab::Wide3 c1 = ext2_ab::add(ext2_ab::Wide3{p01.lo, p01.hi, 0u}, p10);
-    return Ext2<Fp64<C>>{Fp64<C>{ext2_ab::reduce3<C>(c0)}, Fp64<C>{ext2_ab::reduce3<C>(c1)}};
-}
-
-template <uint C>
-Ext2<Fp64<C>> ext2_ab_square(Ext2<Fp64<C>> a) {
-    using namespace fp64_detail;
-    Wide p00 = sqr_wide(a.c0.word);
-    Wide p11 = sqr_wide(a.c1.word);
-    ext2_ab::Wide3 c0 = ext2_ab::add(ext2_ab::add(ext2_ab::Wide3{p00.lo, p00.hi, 0u}, p11), p11);
-    return Ext2<Fp64<C>>{Fp64<C>{ext2_ab::reduce3<C>(c0)}, (a.c0 + a.c0) * a.c1};
-}
-
-// x0 y0 + x1 y1, reduced once. The two products sum to below 2^129, so a
-// carry bit top joins the first fold: t2 <= C + C top <= 2C, and
-// fold2_canonicalize needs C (t2 + 1) <= p, which 2C + 1 < 2^32 gives
-// whenever C < 2^31. Larger offsets reduce each product.
-template <typename F>
-F dot2(F x0, F y0, F x1, F y1) {
-    return x0 * y0 + x1 * y1;
-}
-
-template <uint C>
-Fp64<C> dot2(Fp64<C> x0, Fp64<C> y0, Fp64<C> x1, Fp64<C> y1) {
-    using namespace fp64_detail;
-    if constexpr (C < (1u << 31)) {
-        Wide p = mul_wide(x0.word, y0.word);
-        Wide q = mul_wide(x1.word, y1.word);
-        ulong lo = p.lo + q.lo;
-        ulong h = p.hi + q.hi;
-        ulong top = h < p.hi ? 1ul : 0ul;
-        ulong hi = h + (lo < q.lo ? 1ul : 0ul);
-        top += hi < h ? 1ul : 0ul;
-        ulong u = ulong(uint(hi)) * C + uint(lo);
-        uint t0 = uint(u);
-        u = ulong(uint(hi >> 32)) * C + uint(lo >> 32) + (u >> 32);
-        ulong t = (u << 32) | t0;
-        ulong t2 = (u >> 32) + top * C;
-        ulong s = t + t2 * C;
-        bool overflow = s < t;
-        ulong r = s + C;
-        bool carry = r < s;
-        return Fp64<C>{(overflow || carry) ? r : s};
-    } else {
-        return x0 * y0 + x1 * y1;
-    }
-}
-} // namespace jolt
-";
-
     /// `text` with the function starting at `first_line` replaced by
     /// `replacement`; an empty replacement keeps it.
     fn patch(text: &str, first_line: &str, replacement: &str) -> String {
@@ -285,9 +105,15 @@ Fp64<C> dot2(Fp64<C> x0, Fp64<C> y0, Fp64<C> x1, Fp64<C> y1) {
         if replacement.is_empty() {
             return text.to_owned();
         }
-        let indent = &first_line[..first_line.len() - first_line.trim_start().len()];
-        let close = format!("\n{indent}}}\n");
-        let end = start + text[start..].find(&close).expect("function closes") + close.len() - 1;
+        let line_end = start + text[start..].find('\n').expect("line ends");
+        let end = if text[..line_end].ends_with('}') {
+            // A one-line function.
+            line_end
+        } else {
+            let indent = &first_line[..first_line.len() - first_line.trim_start().len()];
+            let close = format!("\n{indent}}}\n");
+            start + text[start..].find(&close).expect("function closes") + close.len() - 1
+        };
         format!("{}{replacement}{}", &text[..start], &text[end..])
     }
 
@@ -306,12 +132,7 @@ Fp64<C> dot2(Fp64<C> x0, Fp64<C> y0, Fp64<C> x1, Fp64<C> y1) {
                     .fold((*text).to_owned(), |text, (_, first, replacement)| {
                         patch(&text, first, replacement)
                     });
-                let spec = spec.source(header, &text);
-                if *header == "jolt/field/ext2.h" {
-                    spec.source("lazy_forms.h", LAZY_FORMS)
-                } else {
-                    spec
-                }
+                spec.source(header, &text)
             });
         let spec = spec.source("field_bench.metal", FIELD_BENCH);
         let spec = KERNELS
@@ -601,34 +422,40 @@ Fp64<C> dot2(Fp64<C> x0, Fp64<C> y0, Fp64<C> x1, Fp64<C> y1) {
         println!("| comparison | case | variant | max threads/group | median | p10–p90 | G op/s | ratio vs first (p10–p90) |");
         println!("|---|---|---|---|---|---|---|---|");
 
-        let product = [
-            variant::<F>(&device, "rows", &[ROWS]),
-            variant::<F>(&device, "cross", &[CROSS]),
-            variant::<F>(&device, "native", &[NATIVE]),
-        ];
-        for case in CASES {
-            compare::<F>(&device, "Fp64 product", case, &product);
-        }
-        let square = [
-            variant::<F>(&device, "mul", &[SQR_MUL]),
-            variant::<F>(&device, "sqr3", &[SQR3]),
-            variant::<F>(&device, "rows3", &[SQR_ROWS3]),
-        ];
-        compare::<F>(&device, "Fp64 square", Case::Square, &square);
-
+        // Round 4: the merged forms against Karatsuba over the same base.
+        let merged_mul: Patch = (
+            "jolt/field/ext2.h",
+            "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
+            "",
+        );
+        let karatsuba_mul: Patch = (
+            "jolt/field/ext2.h",
+            "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
+            "    friend Ext2 operator*(Ext2 a, Ext2 b) {
+        F v0 = a.c0 * b.c0;
+        F v1 = a.c1 * b.c1;
+        F cross = (a.c0 + a.c1) * (b.c0 + b.c1);
+        return Ext2{v0 + mul_non_residue(v1), cross - v0 - v1};
+    }",
+        );
+        let merged_square: Patch = ("jolt/field/ext2.h", "    friend Ext2 square(Ext2 a) {", "");
+        let generic_square: Patch = (
+            "jolt/field/ext2.h",
+            "    friend Ext2 square(Ext2 a) {",
+            "    friend Ext2 square(Ext2 a) {
+        return Ext2{square(a.c0) + mul_non_residue(square(a.c1)), (a.c0 + a.c0) * a.c1};
+    }",
+        );
         let ext_mul = [
-            variant::<E>(&device, "karatsuba", &[SQR_MUL, KARATSUBA]),
-            variant::<E>(&device, "schoolbook", &[SQR_MUL, SCHOOLBOOK]),
-            variant::<E>(&device, "dot2", &[SQR_MUL, DOT2]),
-            variant::<E>(&device, "lazy", &[SQR_MUL, LAZY]),
+            variant::<E>(&device, "merged", &[merged_mul]),
+            variant::<E>(&device, "karatsuba", &[karatsuba_mul]),
         ];
         for case in CASES {
             compare::<E>(&device, "Ext2 multiply", case, &ext_mul);
         }
         let ext_square = [
-            variant::<E>(&device, "generic", &[SQR_MUL, SQUARE_GENERIC]),
-            variant::<E>(&device, "dot2", &[SQR_MUL, SQUARE_DOT2]),
-            variant::<E>(&device, "lazy", &[SQR_MUL, SQUARE_LAZY]),
+            variant::<E>(&device, "merged", &[merged_square]),
+            variant::<E>(&device, "generic", &[generic_square]),
         ];
         compare::<E>(&device, "Ext2 square", Case::Square, &ext_square);
 
