@@ -2,6 +2,7 @@ use std::cell::Cell;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytemuck::NoUninit;
 
@@ -180,11 +181,13 @@ impl<'a> Batch<'a> {
         Ok(())
     }
 
-    /// Runs the batch and blocks until the GPU finishes it.
+    /// Runs the batch and blocks until the GPU finishes it, returning the
+    /// GPU's execution time for the batch: from when the GPU starts it to
+    /// when it finishes, excluding host submission and wake-up.
     ///
     /// On a GPU failure the error names every pipeline in the batch; split
     /// the batch to attribute a fault to a single dispatch.
-    pub fn commit_and_wait(self) -> Result<(), MetalError> {
+    pub fn commit_and_wait(self) -> Result<Duration, MetalError> {
         let Self {
             sys, dispatched, ..
         } = self;

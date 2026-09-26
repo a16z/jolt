@@ -100,7 +100,7 @@ mod gpu {
             batch
                 .dispatch(pipeline, &bindings, Grid::linear(len, group))
                 .unwrap();
-            batch.commit_and_wait().unwrap();
+            let _ = batch.commit_and_wait().unwrap();
         }
         out.read().map(<[F]>::to_vec)
     }
