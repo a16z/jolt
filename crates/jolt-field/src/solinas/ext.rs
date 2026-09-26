@@ -220,6 +220,50 @@ where
     }
 }
 
+// Byte views for device buffers (`jolt-metal`): an element is its two
+// coefficients in basis order, and it is canonical exactly when both are.
+
+// SAFETY: `FpExt2<F, C>` is `repr(transparent)` over `[F; 2]` (the config
+// marker is zero-sized), and two zero coefficients are the zero element.
+#[cfg(feature = "bytemuck")]
+unsafe impl<F, C> bytemuck::Zeroable for FpExt2<F, C>
+where
+    F: Field + bytemuck::Zeroable,
+    C: Ext2Config<F>,
+{
+}
+
+// SAFETY: `FpExt2<F, C>` is `repr(transparent)` over `[F; 2]`, and an array
+// of a type without padding or uninitialized bytes has none either.
+#[cfg(feature = "bytemuck")]
+unsafe impl<F, C> bytemuck::NoUninit for FpExt2<F, C>
+where
+    F: Field + bytemuck::NoUninit,
+    C: Ext2Config<F>,
+    Self: 'static,
+{
+}
+
+// SAFETY: `Bits` is `[F::Bits; 2]`, which has the size and layout of
+// `[F; 2]` because each `F::Bits` has those of `F`; `FpExt2<F, C>` is
+// `repr(transparent)` over `[F; 2]`. The check admits exactly the pairs of
+// valid coefficients.
+#[cfg(feature = "bytemuck")]
+unsafe impl<F, C> bytemuck::CheckedBitPattern for FpExt2<F, C>
+where
+    F: Field + bytemuck::CheckedBitPattern,
+    F::Bits: bytemuck::Pod,
+    C: Ext2Config<F>,
+    Self: 'static,
+{
+    type Bits = [F::Bits; 2];
+
+    #[inline]
+    fn is_valid_bit_pattern(bits: &[F::Bits; 2]) -> bool {
+        bits.iter().all(F::is_valid_bit_pattern)
+    }
+}
+
 /// Quartic extension element in the cyclotomic ring-subfield basis
 /// `[1, e1, e2, e3]`. Multiplication dispatches through
 /// [`PseudoMersenne::ext4_mul`].
@@ -804,4 +848,35 @@ where
         .map(|idx| E::lift_base(F::from_u64((idx + 1) as u64)))
         .collect::<Vec<_>>();
     solve_frobenius_moore::<F, E>(&thetas, &rhs).map(|_| ())
+}
+
+#[cfg(all(test, feature = "bytemuck"))]
+mod bytemuck_tests {
+    use super::Ext2;
+    use crate::solinas::{Prime128Offset275, Prime64Offset59};
+    use bytemuck::checked::{self, CheckedCastError};
+
+    #[test]
+    fn ext2_is_valid_exactly_when_both_coefficients_are() {
+        type E = Ext2<Prime64Offset59>;
+        let p = 0u64.wrapping_sub(59);
+        for valid in [[0, 0], [1, 0], [0, 1], [p - 1, p - 1]] {
+            assert!(checked::try_cast::<[u64; 2], E>(valid).is_ok(), "{valid:?}");
+        }
+        for invalid in [[p, 0], [0, p], [u64::MAX, 1], [1, u64::MAX]] {
+            assert_eq!(
+                checked::try_cast::<[u64; 2], E>(invalid).err(),
+                Some(CheckedCastError::InvalidBitPattern),
+                "{invalid:?}"
+            );
+        }
+
+        type E128 = Ext2<Prime128Offset275>;
+        let top = [u64::MAX - 274, u64::MAX];
+        assert!(checked::try_cast::<[[u64; 2]; 2], E128>([[0, 0], [0, 0]]).is_ok());
+        assert_eq!(
+            checked::try_cast::<[[u64; 2]; 2], E128>([[0, 0], top]).err(),
+            Some(CheckedCastError::InvalidBitPattern),
+        );
+    }
 }

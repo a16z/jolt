@@ -455,6 +455,32 @@ impl<const P: u64> PseudoMersenne for Fp64<P> {
     const OFFSET: u128 = Self::C as u128;
 }
 
+// Byte views for device buffers (`jolt-metal`), as for `Fp128`. Upload is a
+// byte copy; read-back goes through `CheckedBitPattern`, which admits only
+// canonical words.
+
+// SAFETY: `Fp64<P>` is `repr(transparent)` over `u64`, and zero is the
+// canonical zero.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u64> bytemuck::Zeroable for Fp64<P> {}
+
+// SAFETY: `Fp64<P>` is `repr(transparent)` over `u64`, which has no padding
+// or uninitialized bytes.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u64> bytemuck::NoUninit for Fp64<P> {}
+
+// SAFETY: `Bits` is `u64`, the layout of `Fp64<P>` (`repr(transparent)`), and
+// the check admits exactly the canonical values `< P`.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u64> bytemuck::CheckedBitPattern for Fp64<P> {
+    type Bits = u64;
+
+    #[inline]
+    fn is_valid_bit_pattern(bits: &u64) -> bool {
+        *bits < P
+    }
+}
+
 impl<const P: u64> Fp64<P> {
     /// Mask for the low `BITS` bits in a word.
     pub(crate) const MASK64: u64 = if Self::BITS < 64 {
@@ -530,5 +556,31 @@ fn mul_c_narrow(c: u64, x: u64) -> u64 {
     {
         let (c, x_lo, x_hi) = (c as u32 as u64, x as u32 as u64, x >> 32);
         (c * x_lo).wrapping_add((c * x_hi) << 32)
+    }
+}
+
+#[cfg(all(test, feature = "bytemuck"))]
+mod bytemuck_tests {
+    use super::super::{Prime48Offset59, Prime64Offset59};
+    use bytemuck::checked::{self, CheckedCastError};
+    use bytemuck::CheckedBitPattern;
+
+    fn check<F: CheckedBitPattern<Bits = u64>>(p: u64) {
+        for valid in [0, 1, 1 << 32, p - 1] {
+            assert!(checked::try_cast::<u64, F>(valid).is_ok(), "{valid}");
+        }
+        for invalid in [p, p + 1, u64::MAX] {
+            assert_eq!(
+                checked::try_cast::<u64, F>(invalid).err(),
+                Some(CheckedCastError::InvalidBitPattern),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_canonical_words_are_valid_bit_patterns() {
+        check::<Prime64Offset59>(0u64.wrapping_sub(59));
+        check::<Prime48Offset59>((1 << 48) - 59);
     }
 }
