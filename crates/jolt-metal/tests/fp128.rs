@@ -10,19 +10,21 @@
 #![cfg(target_os = "macos")]
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
+#[path = "support/field.rs"]
+mod field;
 mod support;
 
 mod gpu {
     use std::fmt::Debug;
 
     use jolt_field::solinas::{Prime128Offset275, Prime128OffsetA7F7};
-    use jolt_field::{CanonicalEncoding, PseudoMersenne};
     use jolt_metal::runtime::{
         host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, Pipeline, ShaderLibrary,
     };
     use jolt_metal::shaders::FIELD_HEADERS;
-    use jolt_metal::{ErrorClass, MetalError, MetalField};
+    use jolt_metal::{ErrorClass, MetalError};
 
+    use super::field::{edges, element, modulus, random_elements, TestField};
     use super::support::{gpu, SplitMix64};
 
     const FIELD_OPS: &str = include_str!("shaders/field_ops.metal");
@@ -55,10 +57,6 @@ mod gpu {
     /// Random inputs per operation.
     const RANDOM: usize = 1 << 20;
 
-    /// The field types under test, with the CPU operations the harness needs.
-    trait TestField: MetalField + PseudoMersenne + CanonicalEncoding + Debug {}
-    impl<F: MetalField + PseudoMersenne + CanonicalEncoding + Debug> TestField for F {}
-
     fn library<F: TestField>(device: &Device) -> ShaderLibrary {
         let spec = FIELD_HEADERS
             .iter()
@@ -70,14 +68,6 @@ mod gpu {
             .iter()
             .fold(spec, |spec, kernel| spec.instantiate::<F>(kernel));
         ShaderLibrary::compile(device, &spec).unwrap()
-    }
-
-    fn element<F: TestField>(value: u128) -> F {
-        F::from_u128_checked(value).unwrap()
-    }
-
-    fn modulus<F: TestField>() -> u128 {
-        0u128.wrapping_sub(F::OFFSET)
     }
 
     /// Runs `kernel` over `len` threads with `inputs` bound first and a fresh
@@ -127,62 +117,6 @@ mod gpu {
                 input(index),
             ));
         }
-    }
-
-    /// Canonical values at every boundary the arithmetic treats specially:
-    /// small values, `C` and its neighbours, word and limb boundaries, the
-    /// top of the field, and every value whose 32-bit words are each one of
-    /// `0`, `1`, `2^31`, `2^32 − 1`.
-    fn edges<F: TestField>() -> Vec<u128> {
-        let p = modulus::<F>();
-        let c = F::OFFSET;
-        let mut values = vec![
-            0,
-            1,
-            2,
-            3,
-            c - 1,
-            c,
-            c + 1,
-            (1 << 32) - 1,
-            1 << 32,
-            (1 << 63) - 1,
-            1 << 63,
-            (1 << 64) - 1,
-            1 << 64,
-            (1 << 96) - 1,
-            1 << 96,
-            (1 << 127) - 1,
-            1 << 127,
-            p / 2,
-            p / 2 + 1,
-            p - c,
-            p - 2,
-            p - 1,
-        ];
-        let words = [0u128, 1, 1 << 31, (1 << 32) - 1];
-        for pattern in 0..256u32 {
-            let value = (0..4).fold(0u128, |value, i| {
-                value | words[((pattern >> (2 * i)) & 3) as usize] << (32 * i)
-            });
-            values.push(value);
-        }
-        values.retain(|&v| v < p);
-        values.sort_unstable();
-        values.dedup();
-        values
-    }
-
-    fn random_elements<F: TestField>(words: &mut SplitMix64, len: usize) -> Vec<u128> {
-        let p = modulus::<F>();
-        let mut values = Vec::with_capacity(len);
-        while values.len() < len {
-            let v = u128::from(words.next().unwrap()) | u128::from(words.next().unwrap()) << 64;
-            if v < p {
-                values.push(v);
-            }
-        }
-        values
     }
 
     /// `(hi, lo)` of the 256-bit product `a · b`.

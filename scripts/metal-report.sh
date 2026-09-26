@@ -12,11 +12,14 @@ set -euo pipefail
 # Exits non-zero if either run fails.
 #
 # With --bench, it then runs crates/jolt-metal/benches/fp128.rs and appends
-# the GPU and CPU throughput table (scripts/metal-bench-table.py). Run it on
-# AC power, not in low power mode, on an otherwise idle machine: other
+# the GPU and CPU throughput table (scripts/metal-bench-table.py), then runs
+# crates/jolt-metal/benches/limits.rs and appends the machine limits and the
+# paired fractions of them. Run it on AC power, not in low power mode. Other
 # processes slow the CPU baseline and share the chip's power budget with the
-# GPU. The report records the power source, the energy mode, and the load
-# average before and after the benchmarks.
+# GPU, so the report records the power source, the energy mode, and the load
+# average before and after each benchmark, and absolute rates are read with
+# the load they were measured under (specs/jolt-metal-field.md, Measurement
+# hygiene).
 
 if [[ "$(uname -s)" != Darwin ]]; then
   echo "error: the Metal report runs on macOS only" >&2
@@ -85,9 +88,10 @@ if $bench; then
   echo "- GPU: GPU execution time; CPU: wall time on all cores, \`jolt_field\` with \`asm\`"
   rm -rf target/criterion/fp128_*
   log="$(mktemp)"
+  err="$(mktemp)"
   # Build first, so the load average before the run excludes the compiler.
   bench_status=0
-  cargo bench -p jolt-metal --bench fp128 --no-run >"$log" 2>&1 || bench_status=$?
+  cargo bench -p jolt-metal --bench fp128 --bench limits --no-run >"$log" 2>&1 || bench_status=$?
   if [[ $bench_status -eq 0 ]]; then
     echo "- load average (1, 5, 15 min) on $(sysctl -n hw.ncpu) cores, before: $(sysctl -n vm.loadavg | tr -d '{}' | xargs)"
     cargo bench -p jolt-metal --bench fp128 -- --noplot >"$log" 2>&1 || bench_status=$?
@@ -96,12 +100,21 @@ if $bench; then
   echo
   if [[ $bench_status -eq 0 ]]; then
     scripts/metal-bench-table.py target/criterion
+    echo
+    # Its stdout is the Markdown; its stderr joins the log only on failure.
+    cargo bench -p jolt-metal --bench limits >"$log" 2>"$err" || {
+      bench_status=$?
+      cat "$err" >>"$log"
+    }
+  fi
+  if [[ $bench_status -eq 0 ]]; then
+    sed 's/^### /#### /' "$log"
   else
     echo '```'
     tail -n 40 "$log"
     echo '```'
     status=1
   fi
-  rm -f "$log"
+  rm -f "$log" "$err"
 fi
 exit "$status"
