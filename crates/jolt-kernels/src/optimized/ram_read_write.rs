@@ -618,7 +618,8 @@ mod tests {
     /// `val_init` reconstruction must recover a read-first word's initial
     /// value from its first access's pre-value, a never-accessed nonzero
     /// word's from the final state, and stay in parity with the reference
-    /// val grid through both phases.
+    /// val grid through both phases. A RAM-silent prefix exercises the initial
+    /// checkpoint in the address-first handoff.
     #[test]
     fn matches_reference_on_read_before_write_with_nonzero_val_init() {
         let shape = FixtureShape {
@@ -630,6 +631,7 @@ mod tests {
             // Words 2..5 start at 7, 5, 11; word 3 is never accessed.
             vec![7, 5, 11],
             vec![
+                RamOp::None,
                 RamOp::Read { word: 2 },
                 RamOp::Write { word: 2, post: 9 },
                 RamOp::Read { word: 2 },
