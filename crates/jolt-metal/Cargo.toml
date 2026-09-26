@@ -30,7 +30,7 @@ jolt-field = { path = "../jolt-field", default-features = false, features = [
 rayon = { workspace = true }
 
 [[bench]]
-name = "fp128"
+name = "field"
 harness = false
 
 [[bench]]

@@ -22,11 +22,17 @@ returns `MetalError::Unavailable`.
 
 ## Field arithmetic
 
-`shaders/jolt/field/fp128.h` defines `jolt::Fp128<C>`, the field
-`2^128 − C`, bit-exact with `jolt_field::solinas::Fp128<P>`: `+`, `-`, `*`,
-unary `-`, `square`, `mul_u64`, `mul_i64`, `from_u64`, and `from_i64`. Write a
-kernel once as a template over the field type and instantiate it per
-`MetalField`:
+Each field type is bit-exact with its `jolt_field` counterpart:
+
+| MSL type | Header | `jolt_field` type |
+|---|---|---|
+| `jolt::Fp128<C>`, the field `2^128 − C` | `shaders/jolt/field/fp128.h` | `solinas::Fp128<P>` |
+| `jolt::Fp64<C>`, the field `2^64 − C`, odd `C < 2^32` | `shaders/jolt/field/fp64.h` | `solinas::Fp64<P>` with a 64-bit `P` |
+| `jolt::Ext2<F>`, `F[u] / (u^2 − 2)` | `shaders/jolt/field/ext2.h` | `solinas::Ext2<F>` |
+
+Each has `+`, `-`, `*`, unary `-`, `square`, `mul_u64`, `mul_i64`,
+`from_u64`, and `from_i64`; `Ext2` also has `mul_base`. Write a kernel once
+as a template over the field type and instantiate it per `MetalField`:
 
 ```metal
 template <typename F>
@@ -85,7 +91,7 @@ output is Markdown; paste it into the PR description.
 GPU tests serialize on a file lock and abort after two minutes on one test,
 since a GPU hang can stall the whole machine.
 
-`scripts/metal-report.sh --bench` also runs `benches/fp128.rs` and appends a
+`scripts/metal-report.sh --bench` also runs `benches/field.rs` and appends a
 table of GPU and CPU throughput. Run it on AC power, not in low power mode;
 the report records both. PRs that change an MSL arithmetic header include
 this table.

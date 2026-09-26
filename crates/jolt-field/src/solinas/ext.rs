@@ -21,6 +21,8 @@
 
 use crate::solinas::pseudo_mersenne_modulus;
 use crate::{CanonicalBytes, Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring};
+#[cfg(feature = "bytemuck")]
+use bytemuck::{CheckedBitPattern, NoUninit, Pod, Zeroable};
 use num_traits::Zero;
 use rand_core::RngCore;
 use std::marker::PhantomData;
@@ -217,6 +219,50 @@ where
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let [c0, c1] = <[F; 2]>::deserialize(deserializer)?;
         Ok(Self::new(c0, c1))
+    }
+}
+
+// Byte views for device buffers (`jolt-metal`): an element is its two
+// coefficients in basis order, and it is canonical exactly when both are.
+
+// SAFETY: `FpExt2<F, C>` is `repr(transparent)` over `[F; 2]` (the config
+// marker is zero-sized), and two zero coefficients are the zero element.
+#[cfg(feature = "bytemuck")]
+unsafe impl<F, C> Zeroable for FpExt2<F, C>
+where
+    F: Field + Zeroable,
+    C: Ext2Config<F>,
+{
+}
+
+// SAFETY: `FpExt2<F, C>` is `repr(transparent)` over `[F; 2]`, and an array
+// of a type without padding or uninitialized bytes has none either.
+#[cfg(feature = "bytemuck")]
+unsafe impl<F, C> NoUninit for FpExt2<F, C>
+where
+    F: Field + NoUninit,
+    C: Ext2Config<F>,
+    Self: 'static,
+{
+}
+
+// SAFETY: `Bits` is `[F::Bits; 2]`, which has the size and layout of
+// `[F; 2]` because each `F::Bits` has those of `F`; `FpExt2<F, C>` is
+// `repr(transparent)` over `[F; 2]`. The check admits exactly the pairs of
+// valid coefficients.
+#[cfg(feature = "bytemuck")]
+unsafe impl<F, C> CheckedBitPattern for FpExt2<F, C>
+where
+    F: Field + CheckedBitPattern,
+    F::Bits: Pod,
+    C: Ext2Config<F>,
+    Self: 'static,
+{
+    type Bits = [F::Bits; 2];
+
+    #[inline]
+    fn is_valid_bit_pattern(bits: &[F::Bits; 2]) -> bool {
+        bits.iter().all(F::is_valid_bit_pattern)
     }
 }
 
@@ -804,4 +850,35 @@ where
         .map(|idx| E::lift_base(F::from_u64((idx + 1) as u64)))
         .collect::<Vec<_>>();
     solve_frobenius_moore::<F, E>(&thetas, &rhs).map(|_| ())
+}
+
+#[cfg(all(test, feature = "bytemuck"))]
+mod bytemuck_tests {
+    use super::Ext2;
+    use crate::solinas::{Prime128Offset275, Prime64Offset59};
+    use bytemuck::checked::{self, CheckedCastError};
+
+    #[test]
+    fn ext2_is_valid_exactly_when_both_coefficients_are() {
+        type E = Ext2<Prime64Offset59>;
+        let p = 0u64.wrapping_sub(59);
+        for valid in [[0, 0], [1, 0], [0, 1], [p - 1, p - 1]] {
+            assert!(checked::try_cast::<[u64; 2], E>(valid).is_ok(), "{valid:?}");
+        }
+        for invalid in [[p, 0], [0, p], [u64::MAX, 1], [1, u64::MAX]] {
+            assert_eq!(
+                checked::try_cast::<[u64; 2], E>(invalid).err(),
+                Some(CheckedCastError::InvalidBitPattern),
+                "{invalid:?}"
+            );
+        }
+
+        type E128 = Ext2<Prime128Offset275>;
+        let top = [u64::MAX - 274, u64::MAX];
+        assert!(checked::try_cast::<[[u64; 2]; 2], E128>([[0, 0], [0, 0]]).is_ok());
+        assert_eq!(
+            checked::try_cast::<[[u64; 2]; 2], E128>([[0, 0], top]).err(),
+            Some(CheckedCastError::InvalidBitPattern),
+        );
+    }
 }
