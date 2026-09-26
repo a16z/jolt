@@ -5,10 +5,16 @@
 //! `FpExt4`/`FpExt8` use the cyclotomic ring-subfield basis `[1, e1, ...]`
 //! (`e_j = zeta^(jm) + zeta^(-jm)`) aligned with trace reduction; there is no
 //! alternate power- or tower-basis quartic implementation. Their multiply
-//! dispatches through the [`PseudoMersenne`] kernel hooks; every base field
-//! keeps the generic-schedule defaults (`crate::schedules`) — the baseline's
-//! fused u128-accumulation `Fp32` override lost the checkpoint-6 bench gate
-//! (see specs/jolt-field-rebuild.md and `benches/ext4_kernels.rs`).
+//! dispatches through the [`PseudoMersenne`] kernel hooks. The base fields
+//! keep the generic-schedule defaults (`crate::schedules`), except that
+//! 32-bit `Fp32` on `x86_64` fuses the quartic multiply and square into
+//! `u128` accumulators.
+//!
+//! Which of these are fields depends on the base prime. `Ext2` (non-residue
+//! 2), `FpExt4` and `FpExt8` are fields exactly when `p ≡ ±3 (mod 8)`, which
+//! holds for every registered prime and not for `Prime128OffsetA7F7`. Over
+//! any other prime the types are still rings, and the differential tests use
+//! them as such.
 //!
 //! Frobenius powers are intentionally algebraic (raise to powers of the base
 //! modulus) rather than basis-specific: one auditable contract first;
@@ -39,7 +45,8 @@ pub struct FpExt2<F: Field, C: Ext2Config<F>> {
     _cfg: PhantomData<fn() -> C>,
 }
 
-/// Default quadratic extension used by the Solinas backend.
+/// Default quadratic extension used by the Solinas backend: a field exactly
+/// when `p ≡ ±3 (mod 8)` (see [`crate::TwoNr`]).
 pub type Ext2<F> = FpExt2<F, crate::TwoNr>;
 
 impl<F: Field, C: Ext2Config<F>> FpExt2<F, C> {
@@ -222,7 +229,8 @@ where
 
 /// Quartic extension element in the cyclotomic ring-subfield basis
 /// `[1, e1, e2, e3]`. Multiplication dispatches through
-/// [`PseudoMersenne::ext4_mul`].
+/// [`PseudoMersenne::ext4_mul`]. The defining polynomial `x^4 − 4x^2 + 2` is
+/// irreducible, so this is a field, exactly when `p ≡ ±3 (mod 8)`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[cfg_attr(
     feature = "allocative",
@@ -384,7 +392,8 @@ impl<'de, F: Field + serde::Deserialize<'de>> serde::Deserialize<'de> for FpExt4
 }
 
 /// Octic extension element in the Chebyshev basis `[1, e1, ..., e7]`.
-/// Multiplication dispatches through [`PseudoMersenne::ext8_mul`].
+/// Multiplication dispatches through [`PseudoMersenne::ext8_mul`]. This is a
+/// field exactly when `p ≡ ±3 (mod 8)`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[cfg_attr(
     feature = "allocative",
