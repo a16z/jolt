@@ -13,6 +13,10 @@ workspace = true
 
 [dependencies]
 bytemuck = { workspace = true }
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "bytemuck",
+  "solinas",
+] }
 thiserror = { workspace = true }
 
 # Metal is linked only on macOS. On every other target this crate has no

@@ -23,6 +23,8 @@ use crate::{
     CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator, Ring,
     WithAccumulator,
 };
+#[cfg(feature = "bytemuck")]
+use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
 use rand_core::RngCore;
 #[cfg(all(feature = "asm", any(target_arch = "aarch64", target_arch = "x86_64")))]
 use std::arch::asm;
@@ -1189,6 +1191,62 @@ impl<const P: u128> WithAccumulator for Fp128<P> {
 
 impl<const P: u128> PseudoMersenne for Fp128<P> {
     const OFFSET: u128 = Self::C;
+}
+
+// Byte views for device buffers (`jolt-metal`). Upload is a byte copy;
+// read-back goes through `CheckedBitPattern`, which admits only canonical
+// limbs.
+
+// SAFETY: `Fp128<P>` is `repr(transparent)` over `[u64; 2]`, and all-zero
+// limbs are the canonical zero.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u128> Zeroable for Fp128<P> {}
+
+// SAFETY: `Fp128<P>` is `repr(transparent)` over `[u64; 2]`, which has no
+// padding or uninitialized bytes.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u128> NoUninit for Fp128<P> {}
+
+// SAFETY: `Bits` has the size and bit layout of `Fp128<P>` (`repr(transparent)`
+// over `[u64; 2]`), and the check admits exactly the canonical values `< P`.
+#[cfg(feature = "bytemuck")]
+unsafe impl<const P: u128> CheckedBitPattern for Fp128<P> {
+    type Bits = [u64; 2];
+
+    #[inline]
+    fn is_valid_bit_pattern(bits: &[u64; 2]) -> bool {
+        join(*bits) < P
+    }
+}
+
+#[cfg(all(test, feature = "bytemuck"))]
+mod bytemuck_tests {
+    use super::super::{Prime128Offset275, Prime128OffsetA7F7};
+    use super::split;
+    use bytemuck::checked::{self, CheckedCastError};
+    use bytemuck::CheckedBitPattern;
+
+    fn check<F: CheckedBitPattern<Bits = [u64; 2]>>(p: u128) {
+        for valid in [0, 1, 1 << 64, p - 1] {
+            assert!(
+                checked::try_cast::<[u64; 2], F>(split(valid)).is_ok(),
+                "{valid}"
+            );
+        }
+        for invalid in [p, p + 1, u128::MAX] {
+            assert_eq!(
+                checked::try_cast::<[u64; 2], F>(split(invalid)).err(),
+                Some(CheckedCastError::InvalidBitPattern),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_canonical_limbs_are_valid_bit_patterns() {
+        check::<Prime128OffsetA7F7>(0u128.wrapping_sub(0xFFFF_A7F7));
+        check::<Prime128Offset275>(0u128.wrapping_sub(275));
+    }
 }
 
 // Cross-check the inline-asm kernels against the portable arithmetic on every

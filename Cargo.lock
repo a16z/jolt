@@ -3334,6 +3334,7 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "bincode 2.0.1",
+ "bytemuck",
  "cc",
  "criterion",
  "num-bigint",
@@ -3553,6 +3554,7 @@ name = "jolt-metal"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "jolt-field",
  "objc2",
  "objc2-foundation",
  "objc2-metal",
