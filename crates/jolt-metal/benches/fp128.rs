@@ -11,7 +11,15 @@
 //!   registers, reported as operations per second;
 //! - `stream/{add,mul,square}`: elementwise over 2^16 to 2^26 elements;
 //! - `inner_product`: sum of `a[i] * b[i]` with a threadgroup reduction on the
-//!   GPU, over 2^16 to 2^26 elements.
+//!   GPU, over 2^16 to 2^26 elements;
+//! - `accum/{fmadd,fmadd4,fmadd_i64}`: deferred-reduction terms per thread in
+//!   registers, reported as terms per second, against `jolt_field`'s
+//!   accumulators;
+//! - `accum_inner_product`: `inner_product` with unreduced products and
+//!   merged accumulators on both sides.
+
+#[cfg(target_os = "macos")]
+mod support;
 
 #[cfg(target_os = "macos")]
 #[expect(
@@ -23,18 +31,15 @@ mod metal {
     use std::time::Duration;
 
     use criterion::{BenchmarkId, Criterion, Throughput};
-    use jolt_field::solinas::Prime128OffsetA7F7;
-    use jolt_field::{Ring, Zero};
-    use jolt_metal::runtime::{
-        host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, Pipeline, ShaderLibrary,
-    };
-    use jolt_metal::shaders::FIELD_HEADERS;
+    use jolt_field::{Accumulator, Ring, WithAccumulator, Zero};
+    use jolt_metal::runtime::{Binding, Device, DeviceBuffer, Grid, ShaderLibrary};
     use rayon::prelude::*;
 
-    type F = Prime128OffsetA7F7;
+    use super::support::{dispatch, elements, library, pipeline, threadgroup, words, F};
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");
+    const ACCUM_BENCH: &str = include_str!("shaders/accum_bench.metal");
 
     const ADD: &str = "jolt_test_field_add";
     const MUL: &str = "jolt_test_field_mul";
@@ -44,7 +49,11 @@ mod metal {
     const MUL_CHAIN4: &str = "jolt_bench_field_mul_chain4";
     const SQUARE_CHAIN: &str = "jolt_bench_field_square_chain";
     const INNER_PRODUCT: &str = "jolt_bench_field_inner_product";
-    const KERNELS: [&str; 8] = [
+    const ACCUM_FMADD: &str = "jolt_bench_accum_fmadd";
+    const ACCUM_FMADD4: &str = "jolt_bench_accum_fmadd4";
+    const ACCUM_FMADD_I64: &str = "jolt_bench_accum_fmadd_i64";
+    const ACCUM_INNER_PRODUCT: &str = "jolt_bench_accum_inner_product";
+    const KERNELS: [&str; 12] = [
         ADD,
         MUL,
         SQUARE,
@@ -53,7 +62,14 @@ mod metal {
         MUL_CHAIN4,
         SQUARE_CHAIN,
         INNER_PRODUCT,
+        ACCUM_FMADD,
+        ACCUM_FMADD4,
+        ACCUM_FMADD_I64,
+        ACCUM_INNER_PRODUCT,
     ];
+
+    type Acc = <F as WithAccumulator>::Accumulator;
+    type SmallScalarAcc = <F as WithAccumulator>::SmallScalarAccumulator;
 
     /// `INNER_PRODUCT_GROUP` in `field_bench.metal`.
     const INNER_PRODUCT_GROUP: usize = 256;
@@ -64,69 +80,62 @@ mod metal {
     /// Threads and dependent operations per thread of the chain kernels.
     const CHAIN_THREADS: usize = 1 << 20;
     const CHAIN_ROUNDS: u32 = 256;
+    /// `FMADD_ROUNDS` in `accum_bench.metal`: each accumulator kernel does
+    /// four terms per round.
+    const FMADD_ROUNDS: u32 = 64;
+    /// The additive step of the `fmadd_i64` scalars.
+    const SCALAR_STEP: u64 = 0x9E37_79B9_7F4A_7C15;
 
     const LOG_SIZES: [u32; 6] = [16, 18, 20, 22, 24, 26];
 
     pub fn benches(c: &mut Criterion) {
         let device = Device::system_default().expect("a supported Metal device");
-        let library = library(&device);
+        let library = library(
+            &device,
+            &[
+                ("field_ops.metal", FIELD_OPS),
+                ("field_bench.metal", FIELD_BENCH),
+                ("accum_bench.metal", ACCUM_BENCH),
+            ],
+            &KERNELS,
+            &[],
+        );
         chains(c, &device, &library);
         streams(c, &device, &library);
-        inner_products(c, &device, &library);
-    }
-
-    fn library(device: &Device) -> ShaderLibrary {
-        let spec = FIELD_HEADERS
-            .iter()
-            .fold(LibrarySpec::new(), |spec, (name, text)| {
-                spec.source(name, text)
-            })
-            .source("field_ops.metal", FIELD_OPS)
-            .source("field_bench.metal", FIELD_BENCH);
-        let spec = KERNELS
-            .iter()
-            .fold(spec, |spec, kernel| spec.instantiate::<F>(kernel));
-        ShaderLibrary::compile(device, &spec).expect("benchmark library compiles")
-    }
-
-    fn pipeline<'l>(library: &'l ShaderLibrary, kernel: &str) -> &'l Pipeline {
-        library
-            .pipeline(&host_name::<F>(kernel))
-            .expect("kernel is instantiated")
-    }
-
-    /// The elementwise threadgroup size used by the tests.
-    fn threadgroup(pipeline: &Pipeline) -> usize {
-        (pipeline.thread_execution_width() * 8).min(pipeline.max_total_threads_per_threadgroup())
-    }
-
-    /// Fixed-seed field elements.
-    fn elements(seed: u64, len: usize) -> Vec<F> {
-        let mut state = seed;
-        let mut next = move || {
-            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-            let mut z = state;
-            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            z ^ (z >> 31)
-        };
-        (0..len)
-            .map(|_| F::from_u128((u128::from(next()) << 64) | u128::from(next())))
-            .collect()
-    }
-
-    /// Runs one dispatch and returns its GPU time.
-    fn dispatch(
-        device: &Device,
-        pipeline: &Pipeline,
-        bindings: &[Binding<'_>],
-        grid: Grid,
-    ) -> Duration {
-        let mut batch = Batch::new(device).expect("command batch");
-        batch
-            .dispatch(pipeline, bindings, grid)
-            .expect("valid dispatch");
-        batch.commit_and_wait().expect("batch completes")
+        inner_products(
+            c,
+            &device,
+            &library,
+            "inner_product",
+            INNER_PRODUCT,
+            |a, b| {
+                a.par_iter()
+                    .zip(b)
+                    .map(|(x, y)| *x * *y)
+                    .reduce(F::zero, |x, y| x + y)
+            },
+        );
+        accumulators(c, &device, &library);
+        inner_products(
+            c,
+            &device,
+            &library,
+            "accum_inner_product",
+            ACCUM_INNER_PRODUCT,
+            |a, b| {
+                a.par_iter()
+                    .zip(b)
+                    .fold(Acc::default, |mut acc, (x, y)| {
+                        acc.fmadd(*x, *y);
+                        acc
+                    })
+                    .reduce(Acc::default, |mut acc, other| {
+                        acc.merge(other);
+                        acc
+                    })
+                    .reduce()
+            },
+        );
     }
 
     /// Sums GPU time over `iters` runs of one dispatch, for `iter_custom`.
@@ -184,7 +193,7 @@ mod metal {
                         Binding::buffer(out),
                     ]
                 };
-                dispatch(device, pipeline, &bindings, grid)
+                dispatch(device, pipeline, &bindings, grid, 1)
             };
             let cpu_all = || -> Vec<F> {
                 a.par_iter()
@@ -240,7 +249,7 @@ mod metal {
                             Binding::buffer(out),
                         ]
                     };
-                    dispatch(device, pipeline, &bindings, grid)
+                    dispatch(device, pipeline, &bindings, grid, 1)
                 };
                 let cpu = |cpu_out: &mut [F]| {
                     cpu_out
@@ -264,17 +273,27 @@ mod metal {
         group.finish();
     }
 
-    fn inner_products(c: &mut Criterion, device: &Device, library: &ShaderLibrary) {
-        let pipeline = pipeline(library, INNER_PRODUCT);
+    /// Inner products with `kernel`, whose threadgroups of
+    /// `INNER_PRODUCT_GROUP` threads each write one partial sum, against the
+    /// CPU inner product `cpu`.
+    fn inner_products(
+        c: &mut Criterion,
+        device: &Device,
+        library: &ShaderLibrary,
+        name: &str,
+        kernel: &str,
+        cpu: fn(&[F], &[F]) -> F,
+    ) {
+        let pipeline = pipeline(library, kernel);
         assert!(
             pipeline.max_total_threads_per_threadgroup() >= INNER_PRODUCT_GROUP,
-            "the inner-product kernel needs {INNER_PRODUCT_GROUP} threads per threadgroup",
+            "{kernel} needs {INNER_PRODUCT_GROUP} threads per threadgroup",
         );
         let grid = Grid::linear(
             INNER_PRODUCT_GROUPS * INNER_PRODUCT_GROUP,
             INNER_PRODUCT_GROUP,
         );
-        let mut group = c.benchmark_group("fp128_a7f7/inner_product");
+        let mut group = c.benchmark_group(format!("fp128_a7f7/{name}"));
         group.sample_size(10);
         for log in LOG_SIZES {
             let len = 1usize << log;
@@ -294,19 +313,13 @@ mod metal {
                     Binding::value(&n),
                     Binding::buffer(partials),
                 ];
-                dispatch(device, pipeline, &bindings, grid)
-            };
-            let cpu = || -> F {
-                a.par_iter()
-                    .zip(&b)
-                    .map(|(x, y)| *x * *y)
-                    .reduce(F::zero, |x, y| x + y)
+                dispatch(device, pipeline, &bindings, grid, 1)
             };
             run(&partials);
             let gpu_sum = read(&mut partials)
                 .into_iter()
                 .fold(F::zero(), |x, y| x + y);
-            assert_eq!(gpu_sum, cpu(), "inner product disagrees with the CPU");
+            assert_eq!(gpu_sum, cpu(&a, &b), "{kernel} disagrees with the CPU");
 
             let size = format!("2^{log}");
             group.throughput(Throughput::Elements(len as u64));
@@ -314,7 +327,103 @@ mod metal {
                 bench.iter_custom(|iters| gpu_time(iters, || run(&partials)));
             });
             group.bench_function(BenchmarkId::new("cpu", &size), |bench| {
-                bench.iter(cpu);
+                bench.iter(|| cpu(&a, &b));
+            });
+        }
+        group.finish();
+    }
+
+    /// The CPU computation of one GPU thread, by thread index.
+    type ThreadMirror<'a> = &'a (dyn Fn(usize) -> F + Sync);
+
+    /// Four fmadd terms per round, as in `accum_bench.metal`.
+    fn fmadd(x0: F, y: F) -> F {
+        let x1 = x0 + y;
+        let x2 = x1 + y;
+        let x3 = x2 + y;
+        let mut y = y;
+        let mut acc = Acc::default();
+        for _ in 0..FMADD_ROUNDS {
+            for x in [x0, x1, x2, x3] {
+                acc.fmadd(x, y);
+            }
+            y += x0;
+        }
+        acc.reduce()
+    }
+
+    fn fmadd4(x0: F, y: F) -> F {
+        let x1 = x0 + y;
+        let x2 = x1 + y;
+        let x3 = x2 + y;
+        let mut y = y;
+        let mut accs = [Acc::default(); 4];
+        for _ in 0..FMADD_ROUNDS {
+            for (acc, x) in accs.iter_mut().zip([x0, x1, x2, x3]) {
+                acc.fmadd(x, y);
+            }
+            y += x0;
+        }
+        let [a0, a1, a2, a3] = accs.map(Accumulator::reduce);
+        (a0 + a1) + (a2 + a3)
+    }
+
+    fn fmadd_i64(x0: F, s: u64) -> F {
+        let x1 = x0 + x0;
+        let x2 = x1 + x0;
+        let x3 = x2 + x0;
+        let mut z = s;
+        let mut acc = SmallScalarAcc::default();
+        for _ in 0..FMADD_ROUNDS {
+            for x in [x0, x1, x2, x3] {
+                acc.fmadd_i64(x, z as i64);
+                z = z.wrapping_add(SCALAR_STEP);
+            }
+        }
+        acc.reduce()
+    }
+
+    fn accumulators(c: &mut Criterion, device: &Device, library: &ShaderLibrary) {
+        let a = elements(7, CHAIN_THREADS);
+        let b = elements(8, CHAIN_THREADS);
+        let s = words(9, CHAIN_THREADS);
+        let (a_dev, b_dev, s_dev) = (
+            DeviceBuffer::from_slice(device, &a).expect("upload"),
+            DeviceBuffer::from_slice(device, &b).expect("upload"),
+            DeviceBuffer::from_slice(device, &s).expect("upload"),
+        );
+        let mut out = DeviceBuffer::<F>::zeroed(device, CHAIN_THREADS).expect("allocate");
+
+        let mut group = c.benchmark_group("fp128_a7f7/accum");
+        group.sample_size(10);
+        group.throughput(Throughput::Elements(
+            CHAIN_THREADS as u64 * u64::from(FMADD_ROUNDS) * 4,
+        ));
+        let b_elements = Binding::buffer(&b_dev);
+        let scalars = Binding::buffer(&s_dev);
+        let cases: [(&str, &str, Binding<'_>, ThreadMirror<'_>); 3] = [
+            ("fmadd", ACCUM_FMADD, b_elements, &|i| fmadd(a[i], b[i])),
+            ("fmadd4", ACCUM_FMADD4, b_elements, &|i| fmadd4(a[i], b[i])),
+            ("fmadd_i64", ACCUM_FMADD_I64, scalars, &|i| {
+                fmadd_i64(a[i], s[i])
+            }),
+        ];
+        for (name, kernel, second, cpu) in cases {
+            let pipeline = pipeline(library, kernel);
+            let grid = Grid::linear(CHAIN_THREADS, threadgroup(pipeline));
+            let run = |out: &DeviceBuffer<F>| {
+                let bindings = [Binding::buffer(&a_dev), second, Binding::buffer(out)];
+                dispatch(device, pipeline, &bindings, grid, 1)
+            };
+            let cpu_all = || -> Vec<F> { (0..CHAIN_THREADS).into_par_iter().map(cpu).collect() };
+            run(&out);
+            assert_eq!(read(&mut out), cpu_all(), "{kernel} disagrees with the CPU");
+
+            group.bench_function(BenchmarkId::new("gpu", name), |bench| {
+                bench.iter_custom(|iters| gpu_time(iters, || run(&out)));
+            });
+            group.bench_function(BenchmarkId::new("cpu", name), |bench| {
+                bench.iter(cpu_all);
             });
         }
         group.finish();

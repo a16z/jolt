@@ -17,6 +17,7 @@ const MAX_INLINE_BYTES: usize = 4096;
 
 /// One kernel argument. Bindings are positional: the `i`-th binding of a
 /// dispatch goes to `[[buffer(i)]]`.
+#[derive(Clone, Copy)]
 pub struct Binding<'a> {
     pub(crate) kind: BindingKind<'a>,
 }

@@ -40,11 +40,14 @@ Key abstractions:
   `jolt::Ext2<F, NR>` and `jolt::Ext4<F>`. Each template mirrors one
   `jolt_field` type and uses the same algorithm names (`reduce_product`,
   `mul_unreduced`, `mul_u64_unreduced`, …).
-- **MSL accumulators** (`shaders/jolt/field/accum.h`). These mirror
-  `jolt_field::WithAccumulator`: `Accumulator`, `SmallScalarAccumulator`, and
-  `SignedProductAccumulator`. Each has a `constexpr` `CAPACITY`, the maximum
-  number of worst-case terms before `reduce()`, derived in a comment next to
-  its definition.
+- **MSL accumulators.** `shaders/jolt/field/accum.h` states the contract and
+  mirrors `jolt_field::WithAccumulator` with `Accumulator` and
+  `SmallScalarAccumulator`; each field header specializes it (`fp128_accum.h`
+  for `Fp128`). Each accumulator has a `constexpr` `CAPACITY`, the number of
+  terms it holds exactly, derived in a comment next to its definition.
+  `shaders/jolt/field/reduce.h` sums accumulators over a simdgroup and a
+  threadgroup, generically over the contract. `SignedProductAccumulator`
+  lands with its first consumer.
 - **`MetalField` trait** (Rust). It is implemented for each supported
   `jolt_field` type. It supplies:
   - the MSL type spelling, for example `jolt::Fp128<0xFFFFA7F7u>`;
@@ -176,9 +179,23 @@ implementation, not a refactor of the CPU code.
   `sub128`'s borrow from bit 32 instead of bit 63, which agree for every
   input. Canonical outputs are enforced by the checked read-back, and
   bit-exact agreement with `jolt_field` implies the ring axioms, so there are
-  no separate property tests for base-field operations. The accumulator
-  property (the reduction equals the sum of fully reduced products) lands
-  with step 3.
+  no separate property tests for base-field operations.
+- **Accumulator conformance** (`tests/fp128_accum.rs`, step 3). For both
+  instantiated moduli, the accumulator property: every accumulator's
+  `reduce()` equals the `jolt_field` sum of its terms. Edge operands and
+  2^20 fixed-seed random terms, with every operation interleaved, are summed
+  by `threadgroup_merge` at one and at 16 terms per thread, in threadgroups of
+  1, 2, 3 and 8 simdgroups and the pipeline's largest whole-simdgroup size.
+  Every lane's result is checked. The small-scalar edges are 0, 1, 2,
+  2^32 − 1, 2^32, 2^63 − 1, 2^63, 2^63 + 1, 2^64 − 2 and 2^64 − 1, each with
+  both signs. Capacity (invariant 7) is checked at exactly `CAPACITY`
+  worst-case terms, and at `CAPACITY + 1` both through the documented
+  pre-reduction path, which must be exact, and without it, which must
+  differ. The signed accumulator is filled with each sign. Of 19 mutants of
+  the carry, fold, sign and merge steps in `fp128_accum.h` and `reduce.h`,
+  17 fail the suite. The other two are equivalent: negating a zero scalar
+  product in `fmadd_i64`, and writing the simdgroup sum from lane 1 instead
+  of lane 0, which hold the same value after the butterfly.
 - **Serialization.** nextest runs each test in its own process, so GPU tests
   take an exclusive file lock (`File::lock` on a file in the temp directory),
   following the `/tmp` flock in #1733. This avoids contention noise and makes
@@ -210,8 +227,9 @@ Criterion benchmarks (`crates/jolt-metal/benches/fp128.rs`) per field:
 - elementwise `add`, `mul`, and `square` at 2^16–2^26 elements;
 - an inner product with a threadgroup reduction at 2^16–2^26 elements, the
   shape of a sumcheck round;
-- from step 3, `fmadd` into an accumulator and the simdgroup and threadgroup
-  accumulator reductions.
+- `fmadd`, `fmadd` with four independent accumulators, and `fmadd_i64` in
+  registers, and an inner product whose products are accumulated unreduced
+  and summed by `threadgroup_merge` (step 3).
 
 GPU samples are GPU execution time from the command buffer's timestamps
 (`Batch::commit_and_wait` returns it), which excludes host submission. The
@@ -282,19 +300,34 @@ kernel can be bound by, on the machine that runs it:
 | Limit | Measured as |
 |---|---|
 | field multiply | independent `Fp128` multiplies per second, with enough threads to hide latency |
-| deferred multiply-accumulate | `fmadd` into an accumulator, reduced once per `CAPACITY` terms |
-| memory bandwidth | a streaming copy, at sizes inside and beyond the system-level cache |
+| deferred multiply-accumulate | `fmadd` into an accumulator, reduced once per 256 terms |
+| memory copy | `out[i] = in[i]` on 16 B words, at sizes inside and beyond the system-level cache |
+| memory read | four strided 16 B loads summed per thread, one write, at the same sizes |
 | threadgroup memory bandwidth | 16 B loads per second from threadgroup memory |
 | round trip | from committing a batch to the host observing its result, for an empty batch and for one reduction to a single element |
 
 The report prints these next to the device descriptor. The machine's ridge,
-bandwidth divided by multiply rate, says which kernels are compute-bound. On
-an M4 Max, step 2's provisional figures (about 45 G multiplies/s, about
-430 GB/s) put the ridge near 1.7 multiplies per 16 B element read. That is
-half an RTX 5090's, about 3.3 (327 G multiplies/s at 1.6 TB/s). So on Apple
-GPUs any kernel doing more than about two multiplies per element it reads is
+bandwidth divided by multiply rate, says which kernels are compute-bound.
+
+Copy is not an upper bound for a kernel that only reads. On an M4 Max in
+step 3, reads beyond the system-level cache ran at about 440 GB/s and copies
+at about 415 (both directions counted), and the inner products measured 1.04
+of the copy rate. A read-only kernel is compared with the read limit, and a
+kernel that writes as much as it reads with the copy limit.
+
+On that machine, at load about 30, step 3 measured 42.9 G multiplies/s,
+46.8 G multiply-accumulates/s and 444 GB/s read at 2^26 elements. That puts
+the ridge at about 1.5 multiplies per 16 B element read, under half an
+RTX 5090's, about 3.3 (327 G multiplies/s at 1.6 TB/s). So on Apple GPUs any
+kernel doing more than about two multiplies per element it reads is
 compute-bound, and the multiply and multiply-accumulate rates are the limits
 that matter most.
+
+The round trip is dominated by the host. Reducing 1024 elements to one and
+reading it back took 135–152 µs from commit to observation (medians of two
+runs), of which the GPU spent 8 µs; an empty batch took 33–36 µs. A protocol step that waits on the GPU
+between rounds pays that per round, so kernels that end in a host decision
+batch as much work as the protocol allows before it.
 
 **Kernel criteria.** From step 3 on, every kernel PR:
 
@@ -311,17 +344,28 @@ that matter most.
 
 **Measurement hygiene.**
 
-- Absolute rates come from an otherwise idle machine on AC power in high power
-  mode. The report records the power source, the energy mode, and the load
-  average before and after the benchmarks. A run whose 1-minute load average
-  exceeds 1 does not supply absolute rates. Other processes share the chip's
-  power budget: at load 32–51 on 16 cores, step 2's GPU multiply chain
-  measured 29 G/s instead of 45, and the CPU baseline varied 2.5–20×.
+- Benchmarks run on AC power in high power mode. The report records the power
+  source, the energy mode, and the load average before and after the
+  benchmarks. Other processes share the chip's power budget: at load 32–51 on
+  16 cores, from CPU-only work, step 2's GPU multiply chain measured 29 G/s
+  instead of 45, and the CPU baseline varied 2.5–20×. An idle development
+  machine is rarely available, so absolute rates are reported with the load
+  they were measured under, and no comparison is drawn between absolute rates
+  from different runs.
 - A choice between variants uses a paired comparison. Each round times every
   variant back to back in alternating order, and the result is the median
   per-round ratio with its 10th–90th percentile spread. The decision rule is
   fixed before the run. Under the load above, step 2's paired ratios
   reproduced within 2%.
+- A kernel's fraction of its limit is measured the same way: each round times
+  the kernel and the benchmark of its bounding limit back to back. That makes
+  the fraction a paired ratio. In step 3, runs at load about 30 and about
+  100 gave fractions within 3% of each other (stream `mul` 1.028 and 1.032
+  of copy; inner product 0.976 and 0.996, and accumulator inner product
+  0.959 and 0.989, of read), so fractions are compared across runs the way
+  variant ratios are. Unpaired in-cache rates are not: copying 4 MiB ran at
+  1880 GB/s in the first run and 460 in the second, while reading 4 MiB ran
+  at about 1500 in both. The cause is not known.
 
 **No runtime autotuning.** A kernel's configuration is a pure function of the
 kernel, the problem shape, and the device descriptor. It comes from
@@ -336,7 +380,7 @@ jolt-field (CPU types, verifier-reachable)
     ▲
     │ normal dependency (types, OFFSET, ext tables)
 jolt-metal (prover-only; macOS runtime, portable shader text)
-    ├── shaders/jolt/field/{fp32,fp64,fp128,ext2,ext4,accum,reduce}.h
+    ├── shaders/jolt/field/{fp32,fp64,fp128,ext2,ext4,accum,fp128_accum,reduce}.h
     ├── src/field.rs        MetalField trait + impls for instantiated types
     ├── src/runtime/        Device, ShaderLibrary, Pipeline, DeviceBuffer, Batch
     └── src/error.rs        MetalError + ErrorClass
@@ -517,11 +561,25 @@ together with #1848.
      mutation testing;
    - GPU timestamps on `Batch`, the benchmarks, the limb-layout A/B, and the
      `--bench` option of the local report.
-3. **Accumulators and machine limits.** `accum.h` mirrors `Fp128Accumulator`
-   and `Fp128SignedAccumulator` with proved `CAPACITY`. Also simdgroup and
-   threadgroup reductions that are generic over the accumulator, and
-   `benches/limits.rs` (Performance model), whose multiply-accumulate limit
-   needs the accumulators. The kernel criteria apply from this step.
+3. **Accumulators and machine limits.** `accum.h` and `fp128_accum.h` mirror
+   `Fp128Accumulator` and `Fp128SignedAccumulator` with proved `CAPACITY`.
+   Also simdgroup and threadgroup reductions that are generic over the
+   accumulator (`reduce.h`), and `benches/limits.rs` (Performance model),
+   whose multiply-accumulate limit needs the accumulators. The kernel
+   criteria apply from this step. The layouts were chosen by a paired A/B on
+   an M4 Max, with the rule fixed in advance: the fastest variant on `fmadd`
+   wins if it beats every other by at least 3% and is at most 3% slower than
+   the best on `fmadd` in four chains; otherwise the variant with the fewest
+   words within 3% of the best on `fmadd` wins, since consumer kernels spend
+   registers on other state. A 288-bit carried accumulator in 9 words was
+   within 3% of eight `ulong` slots and of eight uncarried column sums, both
+   16 words, on `fmadd`, on `fmadd` in four chains and on an inner product at
+   2^24, and 3% faster at 2^20. Reducing every product was 1.40× slower on
+   `fmadd`. A 224-bit two's-complement signed accumulator in 7 words was
+   1.16× faster than a positive and negative pair (14 words), and 1.82×
+   faster than reducing every product. The A/B harness is kept on a branch,
+   not merged. `SignedProductAccumulator` is deferred until a kernel needs
+   it.
 4. **Extensions.** `Ext2`, and `FpExt4` in the `[1, e1, e2, e3]` cyclotomic
    basis matching `PseudoMersenne::ext4_mul`.
 5. **Word fields.** `Fp64<BITS, C>` / `Fp32<BITS, C>` for `Prime64Offset59` /
