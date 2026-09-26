@@ -87,34 +87,49 @@ inline Words<6> mul_wide_u64(uint4 a, ulong b) {
 
 // a^2 as a 256-bit value, no reduction: 10 word multiplies.
 //
-// The six cross products a[i] a[j] (i < j) are summed with the mul_words row
-// bound, doubled by a one-bit shift, and the four squares a[i]^2 are added.
-// The cross sum is below a^2 / 2 < 2^255, so the shift loses no bit, and the
-// final carry is zero because a^2 < 2^256. Word 0 holds no cross product
-// (i + j >= 1), so it stays zero through the shift.
+// The six cross products a[i] a[j] (i < j) are summed row by row, written
+// out: each step computes a[i] a[j] + c + carry with the mul_words row bound,
+// and the sum is below a^2 / 2 < 2^255, so doubling it by a one-bit shift
+// loses no bit. Word 0 holds no cross product (i + j >= 1). Each square
+// a[i]^2 is then added at word 2i in one step,
+// a[i]^2 + out[2i] + carry <= (2^32 - 1)^2 + (2^32 - 1) + 1 < 2^64, and its
+// carry is propagated through word 2i + 1, leaving a carry of at most 1. The
+// final carry is zero because a^2 < 2^256.
+//
+// Written out rather than as a triangular loop: on an Apple M4 Max the loop
+// form ran at half this throughput and slower than a * a (see the Fp128
+// benchmarks in specs/jolt-metal-field.md).
 inline Words<8> sqr_wide(uint4 a) {
-    Words<8> out;
-    for (int k = 0; k < 8; k++) {
-        out[k] = 0;
-    }
-    for (int i = 0; i < 3; i++) {
-        ulong t = 0;
-        for (int j = i + 1; j < 4; j++) {
-            t = ulong(a[i]) * a[j] + out[i + j] + (t >> 32);
-            out[i + j] = uint(t);
-        }
-        out[i + 4] = uint(t >> 32);
-    }
-    for (int k = 7; k > 0; k--) {
-        out[k] = (out[k] << 1) | (out[k - 1] >> 31);
-    }
-    ulong t = 0;
+    ulong t = ulong(a.x) * a.y;
+    uint c1 = uint(t);
+    t = ulong(a.x) * a.z + (t >> 32);
+    uint c2 = uint(t);
+    t = ulong(a.x) * a.w + (t >> 32);
+    uint c3 = uint(t);
+    uint c4 = uint(t >> 32);
+    t = ulong(a.y) * a.z + c3;
+    c3 = uint(t);
+    t = ulong(a.y) * a.w + c4 + (t >> 32);
+    c4 = uint(t);
+    uint c5 = uint(t >> 32);
+    t = ulong(a.z) * a.w + c5;
+    c5 = uint(t);
+    uint c6 = uint(t >> 32);
+    Words<8> out{0u,
+                 c1 << 1,
+                 (c2 << 1) | (c1 >> 31),
+                 (c3 << 1) | (c2 >> 31),
+                 (c4 << 1) | (c3 >> 31),
+                 (c5 << 1) | (c4 >> 31),
+                 (c6 << 1) | (c5 >> 31),
+                 c6 >> 31};
+    ulong carry = 0;
     for (int i = 0; i < 4; i++) {
-        ulong square = ulong(a[i]) * a[i];
-        t = ulong(out[2 * i]) + uint(square) + (t >> 32);
+        t = ulong(a[i]) * a[i] + out[2 * i] + carry;
         out[2 * i] = uint(t);
-        t = ulong(out[2 * i + 1]) + uint(square >> 32) + (t >> 32);
+        t = ulong(out[2 * i + 1]) + (t >> 32);
         out[2 * i + 1] = uint(t);
+        carry = t >> 32;
     }
     return out;
 }
