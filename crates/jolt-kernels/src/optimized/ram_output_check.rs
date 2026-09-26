@@ -95,7 +95,7 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             val_final: Polynomial::new(dense_view(witness, ram_val_final())?),
             bind_scratch: Vec::new(),
         });
-        RamAddressKernel::wrap(kernel, dimensions)
+        RamAddressKernel::wrap(kernel, dimensions, relation)
     }
 }
 

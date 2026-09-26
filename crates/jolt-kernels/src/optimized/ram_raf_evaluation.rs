@@ -64,7 +64,7 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for OptimizedBackend {
             BindingOrder::LowToHigh,
             ram_log_k,
         )?);
-        RamAddressKernel::wrap(kernel, dimensions)
+        RamAddressKernel::wrap(kernel, dimensions, relation)
     }
 }
 
@@ -172,42 +172,51 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_phase_split() {
+    fn rejects_inconsistent_geometry() {
         let shape = FixtureShape { log_t: 4, ram_k: 8 };
         with_ram_fixture(shape, vec![RamOp::None; 3], |witness| {
-            let read_write_dimensions = ReadWriteDimensions::new(
-                shape.log_t,
-                shape.log_k(),
-                shape.log_t - 1,
-                shape.log_k() + 1,
-            );
-            let relation = RamRafEvaluation::<Fr>::new(
-                read_write_dimensions,
-                RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap(),
-                shape.log_k(),
-                super::super::testing::fixture_lowest_address(),
-                random_scalars(shape.log_t, 83),
-            );
-            let claims = RamRafEvaluationInputClaims {
-                ram_address: Fr::from_u64(0),
-            };
-            let points = RamRafEvaluationInputClaims::<Vec<Fr>>::default();
-            let challenges = NoChallenges::default();
-            let result = PrepareKernel::<Fr, _>::prepare(
-                &OptimizedBackend,
-                &mut ProofSession::default(),
-                witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-            );
-            assert!(matches!(
-                result.map(|_| ()),
-                Err(KernelError::InvariantViolation { .. })
-            ));
+            for (read_write_dimensions, raf_dimensions) in [
+                (
+                    ReadWriteDimensions::new(4, 3, 3, 4),
+                    ReadWriteDimensions::new(4, 3, 3, 4),
+                ),
+                (
+                    ReadWriteDimensions::new(4, 3, 0, 3),
+                    ReadWriteDimensions::new(4, 3, 4, 3),
+                ),
+                (
+                    ReadWriteDimensions::new(4, 3, 4, 3),
+                    ReadWriteDimensions::new(4, 3, 0, 3),
+                ),
+            ] {
+                let relation = RamRafEvaluation::<Fr>::new(
+                    read_write_dimensions,
+                    RamRafEvaluationDimensions::try_from(raf_dimensions).unwrap(),
+                    shape.log_k(),
+                    super::super::testing::fixture_lowest_address(),
+                    random_scalars(shape.log_t, 83),
+                );
+                let claims = RamRafEvaluationInputClaims {
+                    ram_address: Fr::from_u64(0),
+                };
+                let points = RamRafEvaluationInputClaims::<Vec<Fr>>::default();
+                let challenges = NoChallenges::default();
+                let result = PrepareKernel::<Fr, _>::prepare(
+                    &OptimizedBackend,
+                    &mut ProofSession::default(),
+                    witness,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                );
+                assert!(matches!(
+                    result.map(|_| ()),
+                    Err(KernelError::InvariantViolation { .. })
+                ));
+            }
         });
     }
 }

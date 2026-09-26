@@ -69,6 +69,7 @@ impl<F: JoltField, R: ConcreteSumcheck<F>> RamAddressKernel<F, R> {
     pub(super) fn wrap(
         inner: Box<dyn SumcheckKernel<F, Relation = R>>,
         dimensions: ReadWriteDimensions,
+        relation: &R,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = R>>, KernelError<F>>
     where
         R: 'static,
@@ -84,15 +85,22 @@ impl<F: JoltField, R: ConcreteSumcheck<F>> RamAddressKernel<F, R> {
                 reason: "RAM address kernel has the wrong number of active rounds",
             });
         }
-        if dimensions.phase3_cycle_rounds() == 0 {
+        let gap = dimensions.phase3_cycle_rounds();
+        let rounds = relation.rounds();
+        if active_rounds.len() + gap != rounds {
+            return Err(KernelError::InvariantViolation {
+                reason: "RAM address schedule disagrees with the relation's round count",
+            });
+        }
+        if gap == 0 {
             return Ok(inner);
         }
         active_rounds.sort_unstable();
-        let scale = F::pow2(dimensions.phase3_cycle_rounds());
+        let scale = F::pow2(gap);
         Ok(Box::new(Self {
             inner,
             active_rounds,
-            progress: RoundProgress::new(dimensions.output_check_rounds()),
+            progress: RoundProgress::new(rounds),
             pending: None,
             half: F::from_u64(2)
                 .inverse()
