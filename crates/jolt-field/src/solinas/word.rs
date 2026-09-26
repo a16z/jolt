@@ -10,6 +10,8 @@
 
 use crate::PseudoMersenne;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+#[cfg(feature = "bytemuck")]
+use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
 use rand_core::RngCore;
 
 /// Trial-division primality check, cheap enough for CTFE at u32 scale.
@@ -462,17 +464,17 @@ impl<const P: u64> PseudoMersenne for Fp64<P> {
 // SAFETY: `Fp64<P>` is `repr(transparent)` over `u64`, and zero is the
 // canonical zero.
 #[cfg(feature = "bytemuck")]
-unsafe impl<const P: u64> bytemuck::Zeroable for Fp64<P> {}
+unsafe impl<const P: u64> Zeroable for Fp64<P> {}
 
 // SAFETY: `Fp64<P>` is `repr(transparent)` over `u64`, which has no padding
 // or uninitialized bytes.
 #[cfg(feature = "bytemuck")]
-unsafe impl<const P: u64> bytemuck::NoUninit for Fp64<P> {}
+unsafe impl<const P: u64> NoUninit for Fp64<P> {}
 
 // SAFETY: `Bits` is `u64`, the layout of `Fp64<P>` (`repr(transparent)`), and
 // the check admits exactly the canonical values `< P`.
 #[cfg(feature = "bytemuck")]
-unsafe impl<const P: u64> bytemuck::CheckedBitPattern for Fp64<P> {
+unsafe impl<const P: u64> CheckedBitPattern for Fp64<P> {
     type Bits = u64;
 
     #[inline]

@@ -1,5 +1,7 @@
 //! `jolt_field` types with MSL counterparts in `shaders/jolt/field`.
 
+use std::marker::PhantomData;
+
 use bytemuck::checked::CheckedBitPattern;
 use bytemuck::{NoUninit, Pod, Zeroable};
 use jolt_field::solinas::{Ext2, Fp128, Fp64};
@@ -52,14 +54,8 @@ struct Fp64Spelling<const P: u64>;
 impl<const P: u64> Fp64Spelling<P> {
     /// `jolt_field` const-asserts `C (C + 1) < P < 2^64`, so `C < 2^32` and
     /// the cast is exact.
-    #[expect(
-        clippy::panic,
-        reason = "evaluated only in constants, where any failure is a build error"
-    )]
     const OFFSET: [u8; 8] = {
-        if P >> 63 == 0 {
-            panic!("jolt::Fp64 needs a 64-bit modulus");
-        }
+        assert!(P >> 63 == 1, "jolt::Fp64 needs a 64-bit modulus");
         hex8(Fp64::<P>::C as u32)
     };
     const MSL_NAME: Spelling = spell(&[b"jolt::Fp64<0x", &Self::OFFSET, b"u>"]);
@@ -74,7 +70,7 @@ impl<F: MetalField> MslType for Ext2<F> {
     const HOST_SUFFIX: &'static str = Ext2Spelling::<F>::HOST_SUFFIX.text();
 }
 
-struct Ext2Spelling<F>(std::marker::PhantomData<F>);
+struct Ext2Spelling<F>(PhantomData<F>);
 
 impl<F: MslType> Ext2Spelling<F> {
     const MSL_NAME: Spelling = spell(&[b"jolt::Ext2<", F::MSL_NAME.as_bytes(), b">"]);

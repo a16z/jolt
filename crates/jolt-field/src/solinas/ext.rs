@@ -21,6 +21,8 @@
 
 use crate::solinas::pseudo_mersenne_modulus;
 use crate::{CanonicalBytes, Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring};
+#[cfg(feature = "bytemuck")]
+use bytemuck::{CheckedBitPattern, NoUninit, Pod, Zeroable};
 use num_traits::Zero;
 use rand_core::RngCore;
 use std::marker::PhantomData;
@@ -226,9 +228,9 @@ where
 // SAFETY: `FpExt2<F, C>` is `repr(transparent)` over `[F; 2]` (the config
 // marker is zero-sized), and two zero coefficients are the zero element.
 #[cfg(feature = "bytemuck")]
-unsafe impl<F, C> bytemuck::Zeroable for FpExt2<F, C>
+unsafe impl<F, C> Zeroable for FpExt2<F, C>
 where
-    F: Field + bytemuck::Zeroable,
+    F: Field + Zeroable,
     C: Ext2Config<F>,
 {
 }
@@ -236,9 +238,9 @@ where
 // SAFETY: `FpExt2<F, C>` is `repr(transparent)` over `[F; 2]`, and an array
 // of a type without padding or uninitialized bytes has none either.
 #[cfg(feature = "bytemuck")]
-unsafe impl<F, C> bytemuck::NoUninit for FpExt2<F, C>
+unsafe impl<F, C> NoUninit for FpExt2<F, C>
 where
-    F: Field + bytemuck::NoUninit,
+    F: Field + NoUninit,
     C: Ext2Config<F>,
     Self: 'static,
 {
@@ -249,10 +251,10 @@ where
 // `repr(transparent)` over `[F; 2]`. The check admits exactly the pairs of
 // valid coefficients.
 #[cfg(feature = "bytemuck")]
-unsafe impl<F, C> bytemuck::CheckedBitPattern for FpExt2<F, C>
+unsafe impl<F, C> CheckedBitPattern for FpExt2<F, C>
 where
-    F: Field + bytemuck::CheckedBitPattern,
-    F::Bits: bytemuck::Pod,
+    F: Field + CheckedBitPattern,
+    F::Bits: Pod,
     C: Ext2Config<F>,
     Self: 'static,
 {
