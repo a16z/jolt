@@ -38,6 +38,7 @@ use jolt_verifier::stages::relations::{
 use jolt_verifier::stages::stage2::ram_output_check::{RamOutputCheck, RamOutputCheckOutputClaims};
 use jolt_witness::JoltWitnessPlane;
 
+use super::read_write::RamAddressKernel;
 use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::dense_view;
@@ -55,10 +56,10 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
         let relation = inputs.relation;
         let output_address_challenges = inputs.challenges.output_address.as_slice();
         let ram_log_k = output_address_challenges.len();
-        if relation.read_write_dimensions().output_check_rounds() != ram_log_k {
-            return Err(KernelError::Unsupported {
-                reason: "optimized RAM output check supports only the default read-write config \
-                         (phase 1 = all cycle rounds)",
+        let dimensions = relation.read_write_dimensions();
+        if dimensions.log_k() != ram_log_k {
+            return Err(KernelError::InvariantViolation {
+                reason: "RAM output challenges do not match the address dimensions",
             });
         }
 
@@ -86,14 +87,15 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for OptimizedBackend {
             })
             .collect();
 
-        Ok(Box::new(OutputCheckKernel {
+        let kernel = Box::new(OutputCheckKernel {
             progress: RoundProgress::new(ram_log_k),
             gruen: GruenSplitEqPolynomial::new(output_address_challenges, BindingOrder::LowToHigh),
             io_mask: Polynomial::new(io_mask),
             val_io: Polynomial::new(val_io),
             val_final: Polynomial::new(dense_view(witness, ram_val_final())?),
             bind_scratch: Vec::new(),
-        }))
+        });
+        RamAddressKernel::wrap(kernel, dimensions, relation)
     }
 }
 
@@ -322,55 +324,57 @@ mod tests {
     fn run_parity(log_t: usize, ram_k: usize, seed: u64) {
         with_output_check_plane(log_t, ram_k, |witness, public_memory| {
             let log_k = ram_k.trailing_zeros() as usize;
-            let relation = RamOutputCheck::<Fr>::new(
-                ReadWriteDimensions::new(log_t, log_k, log_t, log_k),
-                public_memory,
-            );
-            let challenges = RamOutputCheckChallenges {
-                output_address: random_scalars(log_k, seed ^ 0xADD1),
-            };
-            let claims = RamOutputCheckInputClaims::<Fr>::default();
-            let points = RamOutputCheckInputClaims::<Vec<Fr>>::default();
+            for (phase1, phase2) in [(log_t, log_k), (0, log_k), (log_t - 1, 1), (0, 0)] {
+                let relation = RamOutputCheck::<Fr>::new(
+                    ReadWriteDimensions::new(log_t, log_k, phase1, phase2),
+                    public_memory.clone(),
+                );
+                let challenges = RamOutputCheckChallenges {
+                    output_address: random_scalars(log_k, seed ^ 0xADD1),
+                };
+                let claims = RamOutputCheckInputClaims::<Fr>::default();
+                let points = RamOutputCheckInputClaims::<Vec<Fr>>::default();
 
-            // Fixture guard: the DRAM image must reach `val_final` (a zero
-            // table would make parity vacuous).
-            let val_final = dense_view::<Fr>(witness, ram_val_final()).unwrap();
-            assert_ne!(val_final[8], Fr::from_u64(0), "degenerate DRAM fixture");
+                // Fixture guard: the DRAM image must reach `val_final` (a zero
+                // table would make parity vacuous).
+                let val_final = dense_view::<Fr>(witness, ram_val_final()).unwrap();
+                assert_ne!(val_final[8], Fr::from_u64(0), "degenerate DRAM fixture");
 
-            let inputs = ProverInputs {
-                relation: &relation,
-                claims: &claims,
-                points: &points,
-                challenges: &challenges,
-            };
-            let mut reference_session = ProofSession::default();
-            let reference = PrepareKernel::<Fr, _>::prepare(
-                &ReferenceBackend,
-                &mut reference_session,
-                witness,
-                ProverInputs {
+                let inputs = ProverInputs {
                     relation: &relation,
                     claims: &claims,
                     points: &points,
                     challenges: &challenges,
-                },
-            )
-            .unwrap();
-            let mut session = ProofSession::default();
-            let optimized = PrepareKernel::<Fr, _>::prepare(
-                &OptimizedBackend,
-                &mut session,
-                witness,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &challenges,
-                },
-            )
-            .unwrap();
+                };
+                let mut reference_session = ProofSession::default();
+                let reference = PrepareKernel::<Fr, _>::prepare(
+                    &ReferenceBackend,
+                    &mut reference_session,
+                    witness,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
+                let mut session = ProofSession::default();
+                let optimized = PrepareKernel::<Fr, _>::prepare(
+                    &OptimizedBackend,
+                    &mut session,
+                    witness,
+                    ProverInputs {
+                        relation: &relation,
+                        claims: &claims,
+                        points: &points,
+                        challenges: &challenges,
+                    },
+                )
+                .unwrap();
 
-            assert_parity(reference, optimized, Fr::from_u64(0), &inputs, seed);
+                assert_parity(reference, optimized, Fr::from_u64(0), &inputs, seed);
+            }
         });
     }
 

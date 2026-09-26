@@ -7,9 +7,8 @@
 //! stage 1's point, pre-folded into the table) and
 //! `unmap(k) = 8k + lowest_address` is affine, hence a multilinear leaf.
 //!
-//! Only the default read-write config is supported (phase 1 = all cycle
-//! rounds): then the relation's rounds equal `log_K` and no dummy cycle-gap
-//! rounds or `2^gap` scalings exist.
+//! Address tables repeat across the configured unused cycle variables.
+//! The naive evaluator supplies their `2^gap` scaling and constant rounds.
 
 use std::collections::BTreeMap;
 
@@ -17,10 +16,11 @@ use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::ram::ram_ra_raf_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRafEvaluationPublic};
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, Polynomial};
+use jolt_poly::BindingOrder;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_witness::JoltWitnessPlane;
 
+use super::read_write::ReadWriteTableLayout;
 use super::views::cycle_fold;
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
@@ -38,12 +38,7 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for ReferenceBackend {
         let ram_log_k = relation.ram_log_k();
         let lowest_address = relation.lowest_address();
         let tau_low = relation.tau_low();
-        if dimensions.raf_evaluation_rounds() != ram_log_k {
-            return Err(KernelError::Unsupported {
-                reason: "reference RAM RAF evaluation supports only the default read-write config \
-                         (phase 1 = all cycle rounds)",
-            });
-        }
+        let layout = ReadWriteTableLayout::address::<F>(dimensions)?;
 
         let addresses = 1usize << ram_log_k;
         let ra_folded = cycle_fold(witness, ram_ra_raf_evaluation(), ram_log_k, tau_low)?;
@@ -51,11 +46,10 @@ impl<F: JoltField> PrepareKernel<F, RamRafEvaluation<F>> for ReferenceBackend {
             .map(|k| F::from_u64(8 * k + lowest_address))
             .collect();
 
-        let opening_tables =
-            BTreeMap::from([(ram_ra_raf_evaluation(), Polynomial::new(ra_folded))]);
+        let opening_tables = BTreeMap::from([(ram_ra_raf_evaluation(), layout.table(ra_folded)?)]);
         let derived_tables = BTreeMap::from([(
             JoltDerivedId::from(RamRafEvaluationPublic::UnmapAddress),
-            Polynomial::new(unmap),
+            layout.table(unmap)?,
         )]);
 
         Ok(Box::new(NaiveSumcheckProver::new(

@@ -59,8 +59,8 @@ where
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     /// The kernel's own clone of the stage's relation, taken from
-    /// [`ProverInputs`] at prepare time; geometry (`rounds`/`degree`) and the
-    /// output expression are read off it directly.
+    /// [`ProverInputs`] at prepare time; the degree and output expression
+    /// are read off it directly.
     relation: R,
     /// The expression's `Challenge` leaves pre-resolved to scalars at
     /// construction, so the round loop reads plain `Sync` data (the typed
@@ -70,6 +70,9 @@ where
     opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
     derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
     binding_order: BindingOrder,
+    /// Active variables in the stored tables. An enclosing kernel handles
+    /// any inactive variables in the relation's full round schedule.
+    table_rounds: usize,
     rounds_bound: usize,
 }
 
@@ -155,9 +158,33 @@ where
         derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
         binding_order: BindingOrder,
     ) -> Result<Self, KernelError<F>> {
+        Self::new_with_table_rounds(
+            inputs,
+            opening_tables,
+            derived_tables,
+            binding_order,
+            inputs.relation.rounds(),
+        )
+    }
+
+    /// Evaluate the supplied relation's summand over compact tables. The
+    /// caller owns placement and multiplicity of omitted inactive rounds;
+    /// this kernel binds only the `table_rounds` variables stored in each table.
+    pub(crate) fn new_with_table_rounds(
+        inputs: &ProverInputs<'_, F, R>,
+        opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
+        derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
+        binding_order: BindingOrder,
+        table_rounds: usize,
+    ) -> Result<Self, KernelError<F>> {
         let relation = inputs.relation;
         let challenges = inputs.challenges;
-        let expected_len = 1usize << relation.rounds();
+        if table_rounds > relation.rounds() {
+            return Err(KernelError::InvariantViolation {
+                reason: "table dimension exceeds the relation's round count",
+            });
+        }
+        let expected_len = 1usize << table_rounds;
         let check_len = |table: &Polynomial<F>, id: &dyn core::fmt::Debug| {
             if table.len() == expected_len {
                 Ok(())
@@ -216,12 +243,13 @@ where
             opening_tables,
             derived_tables,
             binding_order,
+            table_rounds,
             rounds_bound: 0,
         })
     }
 
     fn remaining_rounds(&self) -> usize {
-        self.relation.rounds() - self.rounds_bound
+        self.table_rounds - self.rounds_bound
     }
 
     fn bind_tables(&mut self, challenge: F) {
@@ -251,7 +279,7 @@ where
     ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     fn num_rounds(&self) -> usize {
-        self.relation.rounds()
+        self.table_rounds
     }
 
     fn prove_round(
@@ -856,6 +884,34 @@ mod tests {
                 BindingOrder::HighToLow,
             ),
             Err(KernelError::TableSizeMismatch { .. }),
+        ));
+
+        let inputs = ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &challenges,
+        };
+        assert!(matches!(
+            NaiveSumcheckProver::new_with_table_rounds(
+                &inputs,
+                opening_tables(),
+                derived_tables(&reference_point()),
+                BindingOrder::HighToLow,
+                ROUNDS - 1,
+            ),
+            Err(KernelError::TableSizeMismatch { expected, got, .. })
+                if expected == SIZE / 2 && got == SIZE,
+        ));
+        assert!(matches!(
+            NaiveSumcheckProver::new_with_table_rounds(
+                &inputs,
+                opening_tables(),
+                derived_tables(&reference_point()),
+                BindingOrder::HighToLow,
+                ROUNDS + 1,
+            ),
+            Err(KernelError::InvariantViolation { .. }),
         ));
     }
 

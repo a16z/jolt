@@ -72,7 +72,10 @@ mod zk {
     ) -> ProvedGuest {
         let run = support::prepare(&case);
         inspect_trace(run.trace.trace.as_slice());
-        let config = derive_config(&run);
+        let mut config = derive_config(&run);
+        // Exercise inactive cycle rounds and RAF claim scaling through BlindFold.
+        config.rw_config.ram_rw_phase1_num_rounds = 0;
+        config.rw_config.registers_rw_phase1_num_rounds = 0;
         let shared = JoltSharedPreprocessing::new(run.preprocessing).expect("shared preprocessing");
         let preprocessing = jolt_prover::dory::from_shared(shared).expect("Dory preprocessing");
         assert!(preprocessing.verifier.vc_setup.is_some());
