@@ -4,9 +4,10 @@ use akita_prover::compute::SubringCoefficientPackingPlan;
 use akita_prover::RootPolyShape;
 use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalEncoding, ExtField, PseudoMersenne, Unreduced, Zero};
+use rayon::prelude::*;
 
 use super::source::{validate_dimension, TracePackedOneHot};
-use super::{K256_ROW_BATCH, NO_SELECTED_ROW, SHARED_SHIFT_MIN_COLUMNS, TASKS_PER_RAYON_WORKER};
+use super::{K256_ROW_BATCH, NO_SELECTED_ROW, TASKS_PER_RAYON_WORKER};
 use crate::AkitaField;
 
 #[inline(always)]
@@ -88,149 +89,6 @@ impl<const D: usize> DeferredFp128Ring<D> {
                 base - correction
             }
         }))
-    }
-}
-
-/// Groups columns that share four consecutive K=16 row shifts. Adaptive
-/// dimensions use one, two, or four of these groups per ring, preserving the
-/// useful four-row reuse pattern without dimension-specific implementations.
-pub(super) struct K16FourRowShiftGroups {
-    group_by_key: Vec<(u64, u8)>,
-    group_columns: Vec<u8>,
-    group_counts: Vec<u8>,
-    group_shifts: Vec<[usize; 4]>,
-    partial_columns: Vec<u8>,
-    row_start: usize,
-    num_groups: u8,
-}
-
-impl K16FourRowShiftGroups {
-    pub(super) fn new(num_columns: usize, row_start: usize) -> Option<Self> {
-        if num_columns >= usize::from(u8::MAX) {
-            return None;
-        }
-        let key_slots = (2 * num_columns).next_power_of_two();
-        Some(Self {
-            group_by_key: vec![(0, u8::MAX); key_slots],
-            group_columns: vec![u8::MAX; num_columns * num_columns],
-            group_counts: vec![0; num_columns],
-            group_shifts: vec![[0; 4]; num_columns],
-            partial_columns: Vec::with_capacity(num_columns),
-            row_start,
-            num_groups: 0,
-        })
-    }
-
-    pub(super) fn build(
-        &mut self,
-        selected_rows: &[u8],
-        committed_zero_masks: &[u64],
-        num_columns: usize,
-    ) -> bool {
-        self.group_by_key.fill((0, u8::MAX));
-        self.partial_columns.clear();
-        self.num_groups = 0;
-        if selected_rows.len() != 4 * num_columns || committed_zero_masks.len() != 4 {
-            return false;
-        }
-
-        for column in 0..num_columns {
-            let mut key = 0u64;
-            let mut shifts = [0usize; 4];
-            let mut complete = true;
-            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
-                .chunks_exact(num_columns)
-                .zip(committed_zero_masks)
-                .enumerate()
-            {
-                let hot = row_indices[column];
-                if !row_is_committed(hot, committed_zero_mask, column) {
-                    complete = false;
-                    break;
-                }
-                key |= u64::from(hot) << (4 * row_offset);
-                shifts[row_offset] = 16 * (self.row_start + row_offset) + usize::from(hot);
-            }
-            if !complete {
-                self.partial_columns.push(column as u8);
-                continue;
-            }
-            let slot_mask = self.group_by_key.len() - 1;
-            let mut slot = key.wrapping_mul(0x9e37_79b9_7f4a_7c15) as usize & slot_mask;
-            let group = loop {
-                let (stored_key, stored_group) = self.group_by_key[slot];
-                if stored_group != u8::MAX && stored_key == key {
-                    break stored_group;
-                }
-                if stored_group == u8::MAX {
-                    let group = self.num_groups;
-                    self.num_groups += 1;
-                    self.group_by_key[slot] = (key, group);
-                    self.group_counts[usize::from(group)] = 0;
-                    self.group_shifts[usize::from(group)] = shifts;
-                    break group;
-                }
-                slot = (slot + 1) & slot_mask;
-            };
-            let group = usize::from(group);
-            let count = usize::from(self.group_counts[group]);
-            self.group_columns[group * num_columns + count] = column as u8;
-            self.group_counts[group] += 1;
-        }
-        true
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the fused shift kernel keeps its source, destination, rank, and row views explicit"
-    )]
-    pub(super) fn accumulate<const D: usize>(
-        &self,
-        src: &AkitaWideRing<D>,
-        dst: &mut [AkitaWideRing<D>],
-        a: usize,
-        n_a: usize,
-        selected_rows: &[u8],
-        committed_zero_masks: &[u64],
-        num_columns: usize,
-    ) {
-        for group in 0..self.num_groups {
-            let group = usize::from(group);
-            let count = usize::from(self.group_counts[group]);
-            let columns = &self.group_columns[group * num_columns..group * num_columns + count];
-            if self.group_counts[group] >= SHARED_SHIFT_MIN_COLUMNS {
-                let mut shifted_sum = AkitaWideRing::zero();
-                for &shift in &self.group_shifts[group] {
-                    src.shift_accumulate_into(&mut shifted_sum, shift);
-                }
-                for &column in columns {
-                    dst[usize::from(column) * n_a + a] += shifted_sum;
-                }
-            } else {
-                for &column in columns {
-                    let dst = &mut dst[usize::from(column) * n_a + a];
-                    for &shift in &self.group_shifts[group] {
-                        src.shift_accumulate_into(dst, shift);
-                    }
-                }
-            }
-        }
-        for &column in &self.partial_columns {
-            let column = usize::from(column);
-            for (row_offset, (row_indices, &committed_zero_mask)) in selected_rows
-                .chunks_exact(num_columns)
-                .zip(committed_zero_masks)
-                .enumerate()
-            {
-                let hot = row_indices[column];
-                if row_is_committed(hot, committed_zero_mask, column) {
-                    src.shift_accumulate_into(
-                        &mut dst[column * n_a + a],
-                        (self.row_start + row_offset) * 16 + usize::from(hot),
-                    );
-                }
-            }
-        }
     }
 }
 
@@ -407,22 +265,72 @@ where
     let packed_len = num_blocks.checked_mul(subring_dimension).ok_or_else(|| {
         AkitaError::InvalidInput("coefficient-packing accumulator length overflow".to_string())
     })?;
-    let mut packed = vec![E::zero(); packed_len];
+    let _span = tracing::info_span!("trace_onehot_coefficient_packing").entered();
     let positions_per_block = point.num_positions_per_block();
+    if !positions_per_block.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "coefficient-packing positions per block {positions_per_block} must be a nonzero power of two"
+        )));
+    }
     let segment_rings = source.segment_ring_elems::<D>()?;
+    let num_columns = source.rows.num_columns();
+    let position_weights = point.position_weights();
+    let packing_weights = point.packing_weights();
 
-    visit_segment_ring_range::<D>(source, 0, segment_rings, |ring, contributions| {
-        for &(column, coefficient) in contributions {
-            let position = column * segment_rings + ring;
-            let block = position / positions_per_block;
-            let position_in_block = position % positions_per_block;
-            let subring = coefficient / stride;
-            let low_coefficient = coefficient % stride;
-            packed[block * subring_dimension + subring] += point.position_weights()
-                [position_in_block]
-                * point.packing_weights()[low_coefficient];
+    // Segments and blocks are both powers of two, so a ring range inside one
+    // `span` meets exactly one block per column, at consecutive positions.
+    // Summing position weights per `(column, coefficient)` first leaves one
+    // packing-weight multiplication per coefficient instead of per nonzero.
+    let span = positions_per_block.min(segment_rings);
+    let spans = segment_rings / span;
+    let ring_alignment = (source.one_hot_k / D).clamp(1, span);
+    let parts = rayon::current_num_threads()
+        .saturating_mul(TASKS_PER_RAYON_WORKER)
+        .div_ceil(spans)
+        .clamp(1, span / ring_alignment);
+    let partials = (0..spans * parts)
+        .into_par_iter()
+        .map(|task| {
+            let (part_start, part_end) =
+                trace_block_part_range(span, ring_alignment, task % parts, parts);
+            let ring_start = task / parts * span + part_start;
+            let ring_end = task / parts * span + part_end;
+            let first_positions = (0..num_columns)
+                .map(|column| (column * segment_rings + ring_start) % positions_per_block)
+                .collect::<Vec<_>>();
+            let mut sums = vec![E::zero(); num_columns * D];
+            visit_segment_ring_range::<D>(source, ring_start, ring_end, |ring, contributions| {
+                let offset = ring - ring_start;
+                for &(column, coefficient) in contributions {
+                    sums[column * D + coefficient] +=
+                        position_weights[first_positions[column] + offset];
+                }
+            })?;
+            let mut blocks = vec![E::zero(); num_columns * subring_dimension];
+            for (column_sums, column_blocks) in sums
+                .chunks_exact(D)
+                .zip(blocks.chunks_exact_mut(subring_dimension))
+            {
+                for (coefficient, sum) in column_sums.iter().enumerate() {
+                    column_blocks[coefficient / stride] +=
+                        *sum * packing_weights[coefficient % stride];
+                }
+            }
+            Ok::<_, AkitaError>((ring_start, blocks))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut packed = vec![E::zero(); packed_len];
+    for (ring_start, blocks) in partials {
+        for (column, column_blocks) in blocks.chunks_exact(subring_dimension).enumerate() {
+            let block = (column * segment_rings + ring_start) / positions_per_block;
+            for (dst, value) in packed[block * subring_dimension..][..subring_dimension]
+                .iter_mut()
+                .zip(column_blocks)
+            {
+                *dst += *value;
+            }
         }
-    })?;
+    }
 
     let partial_width = geometry.partial_base_field_width();
     let output_len = num_blocks.checked_mul(partial_width).ok_or_else(|| {
@@ -465,121 +373,6 @@ pub(super) fn flush_deferred_rank<const D: usize>(
     for (column, value) in rank_deferred.iter_mut().enumerate() {
         let index = column * n_a + a;
         reduced[index] += value.reduce_and_clear();
-    }
-}
-
-#[inline(always)]
-pub(super) fn full_row_coefficients<const N: usize>(
-    selected_rows: &[u8],
-    committed_zero_masks: &[u64],
-    num_columns: usize,
-    column: usize,
-    one_hot_k: usize,
-) -> Option<[usize; N]> {
-    if selected_rows.len() != N * num_columns || committed_zero_masks.len() != N {
-        return None;
-    }
-    let coefficients = std::array::from_fn(|row| {
-        row * one_hot_k + usize::from(selected_rows[row * num_columns + column])
-    });
-    (0..N)
-        .all(|row| {
-            row_is_committed(
-                selected_rows[row * num_columns + column],
-                committed_zero_masks[row],
-                column,
-            )
-        })
-        .then_some(coefficients)
-}
-
-#[inline(always)]
-pub(super) fn shift_accumulate_full_rows<const D: usize, const N: usize>(
-    src: &AkitaWideRing<D>,
-    dst: &mut AkitaWideRing<D>,
-    selected_rows: &[u8],
-    committed_zero_masks: &[u64],
-    num_columns: usize,
-    column: usize,
-    one_hot_k: usize,
-) -> bool {
-    let Some(coefficients) = full_row_coefficients::<N>(
-        selected_rows,
-        committed_zero_masks,
-        num_columns,
-        column,
-        one_hot_k,
-    ) else {
-        return false;
-    };
-    for coefficient in coefficients {
-        src.shift_accumulate_into(dst, coefficient);
-    }
-    true
-}
-
-#[inline(always)]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the fixed-row fast path keeps its source, destination, row views, and geometry explicit"
-)]
-pub(super) fn try_shift_accumulate_full_rows<const D: usize>(
-    src: &AkitaWideRing<D>,
-    dst: &mut AkitaWideRing<D>,
-    selected_rows: &[u8],
-    committed_zero_masks: &[u64],
-    num_columns: usize,
-    column: usize,
-    one_hot_k: usize,
-    rows_per_ring: usize,
-) -> bool {
-    match rows_per_ring {
-        2 => shift_accumulate_full_rows::<D, 2>(
-            src,
-            dst,
-            selected_rows,
-            committed_zero_masks,
-            num_columns,
-            column,
-            one_hot_k,
-        ),
-        4 => shift_accumulate_full_rows::<D, 4>(
-            src,
-            dst,
-            selected_rows,
-            committed_zero_masks,
-            num_columns,
-            column,
-            one_hot_k,
-        ),
-        8 => shift_accumulate_full_rows::<D, 8>(
-            src,
-            dst,
-            selected_rows,
-            committed_zero_masks,
-            num_columns,
-            column,
-            one_hot_k,
-        ),
-        16 => shift_accumulate_full_rows::<D, 16>(
-            src,
-            dst,
-            selected_rows,
-            committed_zero_masks,
-            num_columns,
-            column,
-            one_hot_k,
-        ),
-        32 => shift_accumulate_full_rows::<D, 32>(
-            src,
-            dst,
-            selected_rows,
-            committed_zero_masks,
-            num_columns,
-            column,
-            one_hot_k,
-        ),
-        _ => false,
     }
 }
 

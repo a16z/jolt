@@ -16,12 +16,12 @@ const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
 const TASKS_PER_RAYON_WORKER: usize = 4;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
-const SHARED_SHIFT_MIN_COLUMNS: u8 = 3;
 const K256_ROW_BATCH: usize = 1 << 13;
 const _: () = assert!(K256_ROW_BATCH <= i16::MAX as usize);
 
 mod commit;
 mod decomposition;
+mod digit_windows;
 mod kernels;
 mod opening;
 mod source;
@@ -38,6 +38,5 @@ use decomposition::{
 };
 #[cfg(test)]
 use traversal::{
-    coefficient_packing_partials_packed, visit_segment_ring_range, AkitaWideRing,
-    DeferredFp128Ring, K16FourRowShiftGroups,
+    coefficient_packing_partials_packed, visit_segment_ring_range, AkitaWideRing, DeferredFp128Ring,
 };
