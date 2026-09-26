@@ -265,8 +265,67 @@ are indicative only; the ratios hold because each round times every variant
 back to back.
 
 Regression bound: after the first measurement, a PR that changes an MSL
-arithmetic header must report the table. A regression above 3% on any `mul`
-or `fmadd` row needs justification in the PR.
+arithmetic header reports the table and a paired comparison against its base
+(see Performance model). A regression above 3% on any `mul` or `fmadd` case
+needs justification in the PR.
+
+### Performance model
+
+Invariant 1 fixes every output, so a kernel's configuration can change only
+its speed. This section fixes how speed is measured and reported. Decisions
+then rest on numbers, and per-machine tuning (see Direction) needs no kernel
+rewrite.
+
+**Machine limits.** A benchmark, `benches/limits.rs`, measures the resources a
+kernel can be bound by, on the machine that runs it:
+
+| Limit | Measured as |
+|---|---|
+| field multiply | independent `Fp128` multiplies per second, with enough threads to hide latency |
+| deferred multiply-accumulate | `fmadd` into an accumulator, reduced once per `CAPACITY` terms |
+| memory bandwidth | a streaming copy, at sizes inside and beyond the system-level cache |
+| threadgroup memory bandwidth | 16 B loads per second from threadgroup memory |
+| round trip | from committing a batch to the host observing its result, for an empty batch and for one reduction to a single element |
+
+The report prints these next to the device descriptor. The machine's ridge,
+bandwidth divided by multiply rate, says which kernels are compute-bound. On
+an M4 Max, step 2's provisional figures (about 45 G multiplies/s, about
+430 GB/s) put the ridge near 1.7 multiplies per 16 B element read. That is
+half an RTX 5090's, about 3.3 (327 G multiplies/s at 1.6 TB/s). So on Apple
+GPUs any kernel doing more than about two multiplies per element it reads is
+compute-bound, and the multiply and multiply-accumulate rates are the limits
+that matter most.
+
+**Kernel criteria.** From step 3 on, every kernel PR:
+
+- states the kernel's work per element (multiplies, multiply-accumulates,
+  bytes read and written) and, from that, the limit that bounds it;
+- reports the measured rate at a representative size as a fraction of that
+  limit on the reporting machine. A kernel below half of its limit states why,
+  or what would close the gap;
+- exposes its tuning knobs (threadgroup size, elements per thread, terms
+  accumulated before a reduction, tile sizes) as template parameters or
+  function constants. Each knob has a documented valid range that is small and
+  finite, and a default that is valid on every supported device;
+- runs conformance at every value of every knob in its valid range.
+
+**Measurement hygiene.**
+
+- Absolute rates come from an otherwise idle machine on AC power in high power
+  mode. The report records the power source, the energy mode, and the load
+  average before and after the benchmarks. A run whose 1-minute load average
+  exceeds 1 does not supply absolute rates. Other processes share the chip's
+  power budget: at load 32–51 on 16 cores, step 2's GPU multiply chain
+  measured 29 G/s instead of 45, and the CPU baseline varied 2.5–20×.
+- A choice between variants uses a paired comparison. Each round times every
+  variant back to back in alternating order, and the result is the median
+  per-round ratio with its 10th–90th percentile spread. The decision rule is
+  fixed before the run. Under the load above, step 2's paired ratios
+  reproduced within 2%.
+
+**No runtime autotuning.** A kernel's configuration is a pure function of the
+kernel, the problem shape, and the device descriptor. It comes from
+checked-in data or the default. Nothing is timed during a proof.
 
 ## Design
 
@@ -458,9 +517,11 @@ together with #1848.
      mutation testing;
    - GPU timestamps on `Batch`, the benchmarks, the limb-layout A/B, and the
      `--bench` option of the local report.
-3. **Accumulators.** `accum.h` mirrors `Fp128Accumulator` and
-   `Fp128SignedAccumulator` with proved `CAPACITY`. Also simdgroup and
-   threadgroup reductions that are generic over the accumulator.
+3. **Accumulators and machine limits.** `accum.h` mirrors `Fp128Accumulator`
+   and `Fp128SignedAccumulator` with proved `CAPACITY`. Also simdgroup and
+   threadgroup reductions that are generic over the accumulator, and
+   `benches/limits.rs` (Performance model), whose multiply-accumulate limit
+   needs the accumulators. The kernel criteria apply from this step.
 4. **Extensions.** `Ext2`, and `FpExt4` in the `[1, e1, e2, e3]` cyclotomic
    basis matching `PseudoMersenne::ext4_mul`.
 5. **Word fields.** `Fp64<BITS, C>` / `Fp32<BITS, C>` for `Prime64Offset59` /
@@ -468,6 +529,45 @@ together with #1848.
 6. **Adoption.** #1848 (Jolt) and `akita-metal` (Akita `dev`) switch to these
    headers and delete their copies. The Akita side follows its own spec:
    ring, NTT over CRT primes, commitment, fold, and range sumcheck layers.
+
+## Direction: per-machine plans
+
+This section is a direction, not part of this spec's scope. The Performance
+model keeps it possible without rewriting kernels.
+
+The protocol is fixed. A configuration may change how fast the prover runs,
+never its output (invariant 1) or the proof bytes. Within that, the aim is a
+prover that runs each kernel in the fastest configuration for the machine it
+is on, as FFTW's planner and cuBLAS's per-architecture heuristics do.
+
+1. **Device descriptor.** GPU family is not enough. An M4 MacBook Air and an
+   M4 Max are both family 9, but by Apple's published figures they differ
+   about 4× in GPU cores (8–10 against 40) and about 4.5× in memory
+   bandwidth (120 against 546 GB/s). The descriptor adds:
+   - the GPU core count, which Metal does not expose but the IORegistry does
+     (`gpu-core-count`);
+   - the threadgroup memory size and the recommended working set;
+   - the measured machine limits.
+2. **Plan tables.** Checked-in data maps (kernel, shape class, device class)
+   to knob values. It is reviewed like code, and the default applies when
+   nothing matches.
+3. **Offline tuner.** This generalizes the paired-comparison harness: it
+   searches knob values and code variants on one machine, checks each
+   candidate's output against `jolt_field`, and emits a table entry for
+   review. It runs during development, never inside a proof. Step 2's
+   limb-layout and squaring decisions are the manual version. The squaring
+   gain (2.06×) came from rewriting the code, not from any parameter, so code
+   variants belong in the search space.
+4. **Pipeline cache.** `MTLBinaryArchive` stores compiled pipelines per
+   device, so specializing for a machine costs compile time once.
+5. **Fusion.** The largest remaining gains are structural: fusing the passes
+   of a sumcheck round, keeping data resident between rounds, and doing fewer
+   reductions. A generator that emits fused kernels from a description of a
+   round is the end state. It waits until at least three kernel families
+   (sumcheck, NTT, commitment matvec) exist by hand, so that it abstracts
+   patterns that have been seen.
+6. **CPU and GPU together.** Unified memory lets a plan split one phase
+   between the CPU and the GPU without copies.
 
 ## Resolved questions
 
@@ -493,19 +593,10 @@ only the Command Line Tools installed.
   listed in the error table.
 - **Platform floor.** Apple GPU family 7 and MSL 3.0, as described under
   Platform floor.
-
-## Open question
-
-- **CI.** Public reports say GitHub-hosted `macos-latest` runners expose an
-  "Apple Paravirtual device" that compiles MSL and runs command buffers, and
-  that `macos-14` returns no device. A probe workflow in PR 1 will record:
-  - the GPU family;
-  - `maxBufferLength`;
-  - whether the conformance suite passes.
-
-  If it passes, conformance runs in CI on every PR. Performance numbers
-  still come from local Apple Silicon hardware, because a paravirtual device
-  is not representative.
+- **CI.** The GitHub-hosted `macos-latest` runner exposes an `Apple
+  Paravirtual device` below Apple GPU family 7. The probe job therefore skips
+  the GPU tests there and runs the host-only tests. GPU evidence comes from
+  the local report.
 
 ## References
 
