@@ -50,6 +50,7 @@ members = [
   "crates/jolt-host",
   "crates/jolt-kernels",
   "crates/jolt-kernels-derive",
+  "crates/jolt-metal",
   "crates/jolt-prover",
   "tracer",
   "common",
@@ -342,6 +343,11 @@ postcard = { version = "1.0.8", default-features = false, features = [
 toml_edit = "0.25"
 bytemuck = "1.23.2"
 bytemuck_derive = "1.10.1"
+
+# Metal (macOS-only; see crates/jolt-metal)
+objc2 = { version = "0.6.4", default-features = false }
+objc2-foundation = { version = "0.3.2", default-features = false }
+objc2-metal = { version = "0.3.2", default-features = false }
 
 # Numeric
 num = "0.4.3"
