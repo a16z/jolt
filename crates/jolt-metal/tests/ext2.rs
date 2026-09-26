@@ -9,8 +9,8 @@
 //! Over `Fp64<C>` with `C < 2^31`, multiply and square reduce each
 //! coefficient's sum of products once (`fp64_detail::reduce_sum`). The test
 //! recomputes that reduction's intermediate values and requires every branch
-//! to be taken by both coefficients of the multiply. The square shares the
-//! reduction.
+//! to be taken by both coefficients of the multiply, and one sum to carry
+//! into its top word through the low word. The square shares the reduction.
 //!
 //! Four base fields: `Prime64Offset59`, whose `Ext2` is Akita's fp64
 //! extension field; `2^64 − 0x7fffffd3`, whose offset is the largest prime
@@ -31,11 +31,11 @@ mod support;
 
 mod gpu {
     use jolt_field::solinas::{Ext2, Fp64, Prime128Offset275, Prime64Offset59};
-    use jolt_field::{ExtField, Zero};
+    use jolt_field::ExtField;
     use jolt_metal::runtime::{Binding, DeviceBuffer};
     use jolt_metal::MetalField;
 
-    use super::field::{element, modulus, random_elements, TestField};
+    use super::field::{edges, element, modulus, random_elements, TestField};
     use super::fp64::{fold2_branch, windows, Fold2, BRANCHES};
     use super::ops::{check_ops, compare, library, run, Inputs, I64_EDGES, U64_EDGES};
     use super::support::{gpu, SplitMix64};
@@ -84,6 +84,44 @@ mod gpu {
         x.to_u128_checked().unwrap()
     }
 
+    /// Whether summing `products` as `fp64_detail::add` does, word by word,
+    /// carries into the top word through the low word: the high words sum to
+    /// exactly `2^64 − 1` without wrapping, and the low words' carry wraps them.
+    /// Random operands reach this with probability about `2^−64`.
+    fn carries_through_low(products: &[u128]) -> bool {
+        let Some((&first, rest)) = products.split_first() else {
+            return false;
+        };
+        let mut sum = first;
+        let mut carried = false;
+        for &y in rest {
+            let (high, wrapped) = ((sum >> 64) as u64).overflowing_add((y >> 64) as u64);
+            let (_, low_carry) = (sum as u64).overflowing_add(y as u64);
+            carried |= !wrapped && high == u64::MAX && low_carry;
+            sum = sum.wrapping_add(y);
+        }
+        carried
+    }
+
+    /// Operands `(a1, b0)` for which `(p − 1)^2 + a1 b0`, the `c1` of the `Ext2`
+    /// product `(p − 1, a1) · (b0, p − 1)`, carries through the low word
+    /// (`carries_through_low`).
+    ///
+    /// With `x = (p − 1)^2 = h 2^64 + l`, the second product must lie in
+    /// `[start, start + l)` for `start = (2^64 − 1 − h) 2^64 + 2^64 − l`. Any
+    /// `a1 ≤ l` has a multiple there; the smallest `a1` with
+    /// `b0 = ⌈start / a1⌉ < p` is taken.
+    fn low_carry<F: TestField>() -> (u128, u128) {
+        let p = modulus::<F>();
+        let x = (p - 1) * (p - 1);
+        let (h, l) = (x >> 64, x & u128::from(u64::MAX));
+        let start = (u128::from(u64::MAX) - h) * (1 << 64) + (1 << 64) - l;
+        (start.div_ceil(p - 1)..=l)
+            .map(|a1| (a1, start.div_ceil(a1)))
+            .find(|&(a1, b0)| b0 < p && a1 * b0 < start + l)
+            .unwrap()
+    }
+
     /// Whether `jolt::Ext2<F>` multiplies through `reduce_sum`: the
     /// condition of the Fp64 overloads in `ext2.h`.
     fn sums_products<F: TestField>() -> bool {
@@ -99,7 +137,7 @@ mod gpu {
         let mut words = SplitMix64(seed);
 
         let coefficients = coefficient_edges::<F>();
-        let edges: Vec<Ext2<F>> = coefficients
+        let ext_edges: Vec<Ext2<F>> = coefficients
             .iter()
             .flat_map(|&c0| coefficients.iter().map(move |&c1| Ext2::new(c0, c1)))
             .collect();
@@ -107,9 +145,9 @@ mod gpu {
         // Every pair of edges; then (a, 0) (b, b) for the base field's
         // window operands, so each coefficient of the product is the single
         // product a b; then random.
-        let mut pairs: Vec<(Ext2<F>, Ext2<F>)> = edges
+        let mut pairs: Vec<(Ext2<F>, Ext2<F>)> = ext_edges
             .iter()
-            .flat_map(|&a| edges.iter().map(move |&b| (a, b)))
+            .flat_map(|&a| ext_edges.iter().map(move |&b| (a, b)))
             .collect();
         if F::MODULUS_BITS == 64 {
             pairs.extend(windows::<F>().into_iter().map(|(a, b)| {
@@ -120,34 +158,48 @@ mod gpu {
         let random = random_ext::<F>(&mut words, 2 * RANDOM);
         pairs.extend(random.chunks_exact(2).map(|pair| (pair[0], pair[1])));
         if sums_products::<F>() {
-            let coefficient_branches = |product: fn(u128, u128, u128, u128) -> [u128; 3]| {
+            // A c1 sum whose carry into the top word comes through the low
+            // word.
+            let (a1, b0) = low_carry::<F>();
+            let top = element::<F>(modulus::<F>() - 1);
+            pairs.push((Ext2::new(top, element(a1)), Ext2::new(element(b0), top)));
+            let coefficient_sums = |product: fn(u128, u128, u128, u128) -> [u128; 3]| {
                 pairs
                     .iter()
                     .map(|&(a, b)| {
                         let [a0, a1, b0, b1] = [a.c0(), a.c1(), b.c0(), b.c1()].map(value);
-                        fold2_branch::<F>(&product(a0, a1, b0, b1))
+                        product(a0, a1, b0, b1)
                     })
-                    .collect::<Vec<Fold2>>()
+                    .collect::<Vec<[u128; 3]>>()
             };
-            let c0 = coefficient_branches(|a0, a1, b0, b1| [a0 * b0, a1 * b1, a1 * b1]);
-            let c1 = coefficient_branches(|a0, a1, b0, b1| [a0 * b1, a1 * b0, 0]);
-            for branch in BRANCHES {
-                assert!(c0.contains(&branch), "no c0 of a product takes {branch:?}");
-                assert!(c1.contains(&branch), "no c1 of a product takes {branch:?}");
+            let c0 = coefficient_sums(|a0, a1, b0, b1| [a0 * b0, a1 * b1, a1 * b1]);
+            let c1 = coefficient_sums(|a0, a1, b0, b1| [a0 * b1, a1 * b0, 0]);
+            for (name, sums) in [("c0", &c0), ("c1", &c1)] {
+                let branches: Vec<Fold2> = sums.iter().map(|sum| fold2_branch::<F>(sum)).collect();
+                for branch in BRANCHES {
+                    assert!(
+                        branches.contains(&branch),
+                        "no {name} of a product takes {branch:?}"
+                    );
+                }
             }
+            assert!(
+                c1.iter().any(|sum| carries_through_low(sum)),
+                "no c1 of a product carries into its top word through the low word"
+            );
         }
 
-        let mut singles = edges.clone();
+        let mut singles = ext_edges.clone();
         singles.extend(random_ext::<F>(&mut words, RANDOM));
 
-        let mut u64_pairs: Vec<(Ext2<F>, u64)> = edges
+        let mut u64_pairs: Vec<(Ext2<F>, u64)> = ext_edges
             .iter()
             .flat_map(|&a| U64_EDGES.iter().map(move |&s| (a, s)))
             .collect();
         let random = random_ext::<F>(&mut words, RANDOM);
         u64_pairs.extend(random.into_iter().map(|a| (a, words.next().unwrap())));
 
-        let mut i64_pairs: Vec<(Ext2<F>, i64)> = edges
+        let mut i64_pairs: Vec<(Ext2<F>, i64)> = ext_edges
             .iter()
             .flat_map(|&a| I64_EDGES.iter().map(move |&s| (a, s)))
             .collect();
@@ -167,11 +219,12 @@ mod gpu {
         let mut failures = Vec::new();
         check_ops(&device, &library, &inputs, &mut failures);
 
-        // Base-field scaling: every edge against every coefficient edge, and
+        // Base-field scaling: every edge against every base-field edge, and
         // random.
-        let mut base_pairs: Vec<(Ext2<F>, F)> = edges
+        let scalars: Vec<F> = edges::<F>().into_iter().map(element).collect();
+        let mut base_pairs: Vec<(Ext2<F>, F)> = ext_edges
             .iter()
-            .flat_map(|&a| coefficients.iter().map(move |&x| (a, x)))
+            .flat_map(|&a| scalars.iter().map(move |&x| (a, x)))
             .collect();
         let random = random_ext::<F>(&mut words, RANDOM);
         let scalars = random_elements::<F>(&mut words, RANDOM);
