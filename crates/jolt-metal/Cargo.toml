@@ -60,3 +60,7 @@ objc2-metal = { workspace = true, features = [
   # `GPUStartTime` / `GPUEndTime` return a `CFTimeInterval`.
   "objc2-core-foundation",
 ] }
+
+[[bench]]
+name = "limb_ab"
+harness = false
