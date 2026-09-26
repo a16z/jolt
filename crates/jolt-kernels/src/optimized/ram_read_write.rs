@@ -10,7 +10,7 @@
 //!   `prev_val`/`next_val` checkpoints recover every implicit coefficient
 //!   (see `rw_matrix`).
 //! - **Gruen split-eq + Dao–Thaler factoring** for the `log_T` cycle rounds:
-//!   the eq factor stays in `O(√T)` tables and each cubic round message is
+//!   cycle-first keeps the eq factor in `O(√T)` tables, and each cubic message is
 //!   reconstructed from the quadratic factor's `[q(0), q_∞]` plus the
 //!   running claim ([`GruenSplitEqPolynomial::gruen_poly_deg_3`]).
 //! - **Hint-based quadratic address rounds** on the address-major matrix
@@ -24,8 +24,14 @@
 //! final-claim check rather than a per-round check.
 //!
 //! Supports cycle-first and full address-first binding. Address-first starts
-//! with the same sparse address matrix, then materializes only the remaining
-//! O(T) cycle tables. Mixed cycle/address schedules are explicitly unsupported.
+//! with a dense `T`-element eq table alongside the retained Gruen split-eq
+//! tables, plus one `AddressMajorEntry<F>` per RAM access (four field elements
+//! and two `u32` indices; 136 bytes with BN254 `Fr`). This state remains during
+//! the `log_K` address rounds. At the cycle handoff, the dense eq table is
+//! dropped and the matrix becomes two `T`-element cycle tables (`ra`, `val`);
+//! Gruen factoring then handles the cycle rounds. Address-first still uses
+//! O(T + K) storage, but with a larger peak constant than cycle-first.
+//! Mixed cycle/address schedules are explicitly unsupported.
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
