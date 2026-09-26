@@ -80,7 +80,7 @@ mod metal {
     /// (through its closing brace at column 0 or 4).
     type Patch = (&'static str, &'static str, &'static str);
 
-    const CROSS: Patch = (
+    const ROWS: Patch = (
         "jolt/field/fp64.h",
         "inline Wide mul_wide(ulong a, ulong b) {",
         "",
@@ -90,21 +90,21 @@ mod metal {
         "inline Wide mul_wide(ulong a, ulong b) {",
         "inline Wide mul_wide(ulong a, ulong b) {\n    return Wide{a * b, metal::mulhi(a, b)};\n}",
     );
-    const ROWS: Patch = (
+    const CROSS: Patch = (
         "jolt/field/fp64.h",
         "inline Wide mul_wide(ulong a, ulong b) {",
         "inline Wide mul_wide(ulong a, ulong b) {
     uint a0 = uint(a), a1 = uint(a >> 32);
     uint b0 = uint(b), b1 = uint(b >> 32);
-    ulong t = ulong(a0) * b0;
-    uint w0 = uint(t);
-    t = ulong(a0) * b1 + (t >> 32);
-    uint w1 = uint(t);
-    uint w2 = uint(t >> 32);
-    t = ulong(a1) * b0 + w1;
-    w1 = uint(t);
-    t = ulong(a1) * b1 + w2 + (t >> 32);
-    return Wide{(ulong(w1) << 32) | w0, t};
+    ulong p00 = ulong(a0) * b0;
+    ulong p01 = ulong(a0) * b1;
+    ulong p10 = ulong(a1) * b0;
+    ulong p11 = ulong(a1) * b1;
+    ulong mid = p01 + p10;
+    ulong mid_carry = mid < p01 ? 1ul << 32 : 0ul;
+    ulong lo = p00 + (mid << 32);
+    ulong hi = p11 + (mid >> 32) + mid_carry + (lo < p00 ? 1ul : 0ul);
+    return Wide{lo, hi};
 }",
     );
 
@@ -114,12 +114,6 @@ mod metal {
         "inline Wide sqr_wide(ulong a) {",
         "inline Wide sqr_wide(ulong a) {\n    return mul_wide(a, a);\n}",
     );
-    const SQR_NATIVE: Patch = (
-        "jolt/field/fp64.h",
-        "inline Wide sqr_wide(ulong a) {",
-        "inline Wide sqr_wide(ulong a) {\n    return Wide{a * a, metal::mulhi(a, a)};\n}",
-    );
-
     const KARATSUBA: Patch = (
         "jolt/field/ext2.h",
         "    friend Ext2 operator*(Ext2 a, Ext2 b) {",
@@ -530,9 +524,9 @@ Ext2<Fp64<C>> ext2_ab_square(Ext2<Fp64<C>> a) {
         println!("|---|---|---|---|---|---|---|---|");
 
         let product = [
+            variant::<F>(&device, "rows", &[ROWS]),
             variant::<F>(&device, "cross", &[CROSS]),
             variant::<F>(&device, "native", &[NATIVE]),
-            variant::<F>(&device, "rows", &[ROWS]),
         ];
         for case in CASES {
             compare::<F>(&device, "Fp64 product", case, &product);
@@ -540,7 +534,6 @@ Ext2<Fp64<C>> ext2_ab_square(Ext2<Fp64<C>> a) {
         let square = [
             variant::<F>(&device, "sqr3", &[SQR3]),
             variant::<F>(&device, "mul", &[SQR_MUL]),
-            variant::<F>(&device, "native", &[SQR_NATIVE]),
         ];
         compare::<F>(&device, "Fp64 square", Case::Square, &square);
 
