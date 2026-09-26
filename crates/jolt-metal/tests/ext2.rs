@@ -3,31 +3,47 @@
 //! Every MSL operation, and multiplication by a base-field element, runs
 //! through a generic test kernel and must match the CPU result byte for
 //! byte: on every pair of elements whose coefficients are base-field edges,
-//! and on 2^20 fixed-seed random inputs. `Ext2` has no branches of its own;
-//! the base fields' suites cover theirs.
+//! on products that reach the rare reduction branches, and on 2^20
+//! fixed-seed random inputs.
 //!
-//! Two base fields: `Prime64Offset59`, whose `Ext2` is Akita's fp64
-//! extension field, and `Prime128Offset275`, so the template is checked over
-//! both base-field layouts.
+//! Over `Fp64<C>` with `C < 2^31`, multiply and square reduce each
+//! coefficient's sum of products once (`fp64_detail::reduce_sum`). The test
+//! recomputes that reduction's intermediate values and requires every branch
+//! to be taken by both coefficients of the multiply. The square shares the
+//! reduction.
+//!
+//! Four base fields: `Prime64Offset59`, whose `Ext2` is Akita's fp64
+//! extension field; `2^64 − 0x7fffffd3`, whose offset is the largest prime
+//! offset below `2^31`, so the `reduce_sum` bound is reached at its limit;
+//! and, through the generic Karatsuba forms, `2^64 − 2^32 + 1` and
+//! `Prime128Offset275`.
 
 #![cfg(target_os = "macos")]
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
 #[path = "support/field.rs"]
 mod field;
+#[path = "support/fp64.rs"]
+mod fp64;
 #[path = "support/ops.rs"]
 mod ops;
 mod support;
 
 mod gpu {
-    use jolt_field::solinas::{Ext2, Prime128Offset275, Prime64Offset59};
-    use jolt_field::ExtField;
+    use jolt_field::solinas::{Ext2, Fp64, Prime128Offset275, Prime64Offset59};
+    use jolt_field::{ExtField, Zero};
     use jolt_metal::runtime::{Binding, DeviceBuffer};
     use jolt_metal::MetalField;
 
     use super::field::{element, modulus, random_elements, TestField};
+    use super::fp64::{fold2_branch, windows, Fold2, BRANCHES};
     use super::ops::{check_ops, compare, library, run, Inputs, I64_EDGES, U64_EDGES};
     use super::support::{gpu, SplitMix64};
+
+    /// `2^64 − 0x7fffffd3`: the largest prime offset below `2^31`.
+    type MaxSumOffset = Fp64<0xFFFF_FFFF_8000_002D>;
+    /// `2^64 − 2^32 + 1`: the largest `jolt::Fp64` offset.
+    type MaxOffset = Fp64<0xFFFF_FFFF_0000_0001>;
 
     const EXT_OPS: &str = include_str!("shaders/ext_ops.metal");
     const MUL_BASE: &str = "jolt_test_ext_mul_base";
@@ -64,6 +80,16 @@ mod gpu {
             .collect()
     }
 
+    fn value<F: TestField>(x: F) -> u128 {
+        x.to_u128_checked().unwrap()
+    }
+
+    /// Whether `jolt::Ext2<F>` multiplies through `reduce_sum`: the
+    /// condition of the Fp64 overloads in `ext2.h`.
+    fn sums_products<F: TestField>() -> bool {
+        F::MODULUS_BITS == 64 && F::OFFSET < 1 << 31
+    }
+
     fn conformance<F: TestField>(test: &'static str, seed: u64)
     where
         Ext2<F>: MetalField,
@@ -78,12 +104,38 @@ mod gpu {
             .flat_map(|&c0| coefficients.iter().map(move |&c1| Ext2::new(c0, c1)))
             .collect();
 
+        // Every pair of edges; then (a, 0) (b, b) for the base field's
+        // window operands, so each coefficient of the product is the single
+        // product a b; then random.
         let mut pairs: Vec<(Ext2<F>, Ext2<F>)> = edges
             .iter()
             .flat_map(|&a| edges.iter().map(move |&b| (a, b)))
             .collect();
+        if F::MODULUS_BITS == 64 {
+            pairs.extend(windows::<F>().into_iter().map(|(a, b)| {
+                let (a, b) = (element::<F>(a), element::<F>(b));
+                (Ext2::new(a, F::zero()), Ext2::new(b, b))
+            }));
+        }
         let random = random_ext::<F>(&mut words, 2 * RANDOM);
         pairs.extend(random.chunks_exact(2).map(|pair| (pair[0], pair[1])));
+        if sums_products::<F>() {
+            let coefficient_branches = |product: fn(u128, u128, u128, u128) -> [u128; 3]| {
+                pairs
+                    .iter()
+                    .map(|&(a, b)| {
+                        let [a0, a1, b0, b1] = [a.c0(), a.c1(), b.c0(), b.c1()].map(value);
+                        fold2_branch::<F>(&product(a0, a1, b0, b1))
+                    })
+                    .collect::<Vec<Fold2>>()
+            };
+            let c0 = coefficient_branches(|a0, a1, b0, b1| [a0 * b0, a1 * b1, a1 * b1]);
+            let c1 = coefficient_branches(|a0, a1, b0, b1| [a0 * b1, a1 * b0, 0]);
+            for branch in BRANCHES {
+                assert!(c0.contains(&branch), "no c0 of a product takes {branch:?}");
+                assert!(c1.contains(&branch), "no c1 of a product takes {branch:?}");
+            }
+        }
 
         let mut singles = edges.clone();
         singles.extend(random_ext::<F>(&mut words, RANDOM));
@@ -148,6 +200,16 @@ mod gpu {
     #[test]
     fn ext2_fp64_59_matches_jolt_field() {
         conformance::<Prime64Offset59>("ext2_fp64_59_matches_jolt_field", 0xe264_003b);
+    }
+
+    #[test]
+    fn ext2_fp64_max_sum_offset_matches_jolt_field() {
+        conformance::<MaxSumOffset>("ext2_fp64_max_sum_offset_matches_jolt_field", 0xe264_7fff);
+    }
+
+    #[test]
+    fn ext2_fp64_max_offset_matches_jolt_field() {
+        conformance::<MaxOffset>("ext2_fp64_max_offset_matches_jolt_field", 0xe264_ffff);
     }
 
     #[test]

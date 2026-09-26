@@ -44,54 +44,81 @@ inline Wide mul_wide(ulong a, ulong b) {
     return Wide{(ulong(w1) << 32) | w0, t};
 }
 
-// a^2 over 128 bits, no reduction: three 32 x 32-bit multiplies.
+// Reduces t + t2 * 2^64 into [0, p) for any 64-bit t and any t2 with
+// C (t2 + 1) <= p. reduce_product passes t2 <= C, which C (C + 1) < p gives
+// for every C < 2^32; reduce_sum passes t2 <= 3C with C < 2^31.
 //
-// 2 a0 a1 * 2^32 = mid * 2^33 splits into mid << 33 (the low 64 bits) and
-// mid >> 31 (the rest). lo carries at most once, and a^2 < 2^128.
-inline Wide sqr_wide(ulong a) {
-    uint a0 = uint(a), a1 = uint(a >> 32);
-    ulong p00 = ulong(a0) * a0;
-    ulong mid = ulong(a0) * a1;
-    ulong p11 = ulong(a1) * a1;
-    ulong lo = p00 + (mid << 33);
-    ulong hi = p11 + (mid >> 31) + (lo < p00 ? 1ul : 0ul);
-    return Wide{lo, hi};
-}
-
-// Reduces t + t2 * 2^64 into [0, p) for any 64-bit t and any t2 <= C.
-//
-// C * t2 <= C^2 < 2^64. Let v = t + C * t2 < 2^64 + C^2, so the 64-bit sum s
-// wraps at most once (`overflow`).
+// C * t2 < p < 2^64. Let v = t + C * t2, so the 64-bit sum s wraps at most
+// once (`overflow`).
 //
 // - No overflow (v < 2^64): s = v, and s + C carries out of bit 63 exactly
 //   when s >= p, in which case the wrapped s + C equals s - p.
-// - Overflow (v >= 2^64): s = v - 2^64 < C * t2 <= C^2, and the residue is
-//   s + C, since 2^64 = C (mod p). s + C < C (C + 1) < p because
-//   C < 2^32, so it is canonical and the add does not carry.
+// - Overflow (v >= 2^64): s = v - 2^64 < C * t2, and the residue is s + C,
+//   since 2^64 = C (mod p). s + C < C (t2 + 1) <= p, so it is canonical and
+//   the add does not carry.
 //
 // Either way the result is s + C when overflow or that add carries, and s
 // otherwise.
 template <uint C>
-inline ulong fold2_canonicalize(ulong t, uint t2) {
-    ulong s = t + ulong(t2) * C;
+inline ulong fold2_canonicalize(ulong t, ulong t2) {
+    ulong s = t + t2 * C;
     bool overflow = s < t;
     ulong r = s + C;
     bool carry = r < s;
     return (overflow || carry) ? r : s;
 }
 
-// Reduces any 128-bit value into [0, p).
-//
-// First fold: t = lo + C * hi, in two 32-bit steps. Each step computes
+// The first fold of a 128-bit value: lo + C * hi = t + c * 2^64, returned
+// as Wide{t, c}, in two 32-bit steps. Each step computes
 // hi[i] * C + lo[i] + carry <= (2^32 - 1)^2 + 2 (2^32 - 1) = 2^64 - 1.
-// t <= (C + 1)(2^64 - 1), so the carry out t2 is at most C; then
-// fold2_canonicalize.
+// lo + C * hi <= (C + 1)(2^64 - 1), so c <= C.
 template <uint C>
-inline ulong reduce_product(Wide x) {
+inline Wide first_fold(Wide x) {
     ulong u = ulong(uint(x.hi)) * C + uint(x.lo);
     uint t0 = uint(u);
     u = ulong(uint(x.hi >> 32)) * C + uint(x.lo >> 32) + (u >> 32);
-    return fold2_canonicalize<C>((u << 32) | t0, uint(u >> 32));
+    return Wide{(u << 32) | t0, u >> 32};
+}
+
+// Reduces any 128-bit value into [0, p): the first fold, then
+// fold2_canonicalize with t2 = c <= C.
+template <uint C>
+inline ulong reduce_product(Wide x) {
+    Wide f = first_fold<C>(x);
+    return fold2_canonicalize<C>(f.lo, f.hi);
+}
+
+// A sum of up to three products, unreduced: lo + hi 2^64 + top 2^128.
+// Each product is below 2^128, so top <= 2.
+struct Sum3 {
+    ulong lo;
+    ulong hi;
+    uint top;
+};
+
+inline Sum3 sum(Wide x) { return Sum3{x.lo, x.hi, 0u}; }
+
+// x + y, carrying into top.
+inline Sum3 add(Sum3 x, Wide y) {
+    ulong lo = x.lo + y.lo;
+    ulong hi = x.hi + y.hi;
+    uint top = x.top + (hi < y.hi ? 1u : 0u);
+    ulong carried = hi + (lo < y.lo ? 1ul : 0ul);
+    top += carried < hi ? 1u : 0u;
+    return Sum3{lo, carried, top};
+}
+
+// Reduces a sum of up to three products into [0, p), for C < 2^31.
+//
+// The first fold of lo + hi 2^64 leaves t + c 2^64 with c <= C, and
+// top 2^128 = top C 2^64 (mod p) joins it: t2 = c + top C <= 3C, which can
+// exceed 32 bits. C (3C + 1) < 3 2^62 + 2^31 < p for C < 2^31, as
+// fold2_canonicalize requires.
+template <uint C>
+inline ulong reduce_sum(Sum3 x) {
+    static_assert(C < (1u << 31), "reduce_sum needs C < 2^31");
+    Wide f = first_fold<C>(Wide{x.lo, x.hi});
+    return fold2_canonicalize<C>(f.lo, f.hi + ulong(x.top) * C);
 }
 
 // With a, b < p, a + b < 2^65 wraps at most once. Without the wrap, s + C
@@ -176,9 +203,9 @@ struct Fp64 {
     friend Fp64 operator*(Fp64 a, Fp64 b) {
         return Fp64{fp64_detail::reduce_product<C>(fp64_detail::mul_wide(a.word, b.word))};
     }
-    friend Fp64 square(Fp64 a) {
-        return Fp64{fp64_detail::reduce_product<C>(fp64_detail::sqr_wide(a.word))};
-    }
+    // The general product: a dedicated three-multiply square measured
+    // slower (specs/jolt-metal-field.md).
+    friend Fp64 square(Fp64 a) { return a * a; }
     friend Fp64 mul_u64(Fp64 a, ulong s) {
         return Fp64{fp64_detail::mul_u64<C>(a.word, s)};
     }

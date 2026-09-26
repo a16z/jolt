@@ -16,6 +16,8 @@
 
 #[path = "support/field.rs"]
 mod field;
+#[path = "support/fp64.rs"]
+mod fp64;
 #[path = "support/ops.rs"]
 mod ops;
 mod support;
@@ -25,6 +27,7 @@ mod gpu {
     use jolt_metal::ErrorClass;
 
     use super::field::{edges, element, modulus, random_elements, TestField};
+    use super::fp64::{fold2_branch, windows, Fold2, BRANCHES};
     use super::ops::{check_ops, library, run, Inputs, I64_EDGES, U64_EDGES, WRITE_NON_CANONICAL};
     use super::support::{gpu, SplitMix64};
 
@@ -35,56 +38,6 @@ mod gpu {
     const RANDOM: usize = 1 << 20;
 
     const WORD: u128 = u64::MAX as u128;
-
-    /// Which branch `fold2_canonicalize(t, t2)` takes.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum Fold2 {
-        /// `t + C·t2 < p`: the sum is already canonical.
-        Plain,
-        /// `p ≤ t + C·t2 < 2^64`: one conditional add of `C`.
-        Canonicalize,
-        /// `t + C·t2 ≥ 2^64`: the wrap is corrected by adding `C`.
-        Overflow,
-    }
-
-    /// The fold-2 branch of `reduce_product(x)`: the first fold
-    /// `lo + C·hi` is split into `t` and `t2 ≤ C`.
-    fn reduce_branch<F: TestField>(x: u128) -> Fold2 {
-        let c = F::OFFSET;
-        let first = (x & WORD) + c * (x >> 64);
-        let v = (first & WORD) + c * (first >> 64);
-        if v > WORD {
-            Fold2::Overflow
-        } else if v >= modulus::<F>() {
-            Fold2::Canonicalize
-        } else {
-            Fold2::Plain
-        }
-    }
-
-    /// `⌊((k + 1) · 2^64 − 1) / d⌋`, the largest `m` with `m · d` below
-    /// `(k + 1) · 2^64`.
-    fn window(k: u128, d: u128) -> u128 {
-        ((k + 1) << 64).div_ceil(d) - 1
-    }
-
-    /// Pairs whose product reaches the rare fold-2 branches.
-    ///
-    /// With `a = 2^63` and `b = 2m`, the product is `m · 2^64`, so the first
-    /// fold gives `C·m`. Taking `m = window(k, C)` puts `C·m` in
-    /// `[(k + 1) 2^64 − C, (k + 1) 2^64)`: for `k = 0` that is `[p, 2^64)`
-    /// (canonicalize), and for `k ≥ 1` it is `t2 = k` with
-    /// `t ≥ 2^64 − C·k` (overflow). `b` is below `2^64` for every `k < C/2`,
-    /// so `mul_u64` reaches the branches with the same operands.
-    fn windows<F: TestField>() -> Vec<(u128, u128)> {
-        let p = modulus::<F>();
-        [0, 1, 2, 3]
-            .into_iter()
-            .map(|k| 2 * window(k, F::OFFSET))
-            .filter(|&b| b < p)
-            .flat_map(|b| [(1 << 63, b), (b, 1 << 63)])
-            .collect()
-    }
 
     fn conformance<F: TestField>(test: &'static str, seed: u64) {
         let (_gpu, device) = gpu(test);
@@ -103,9 +56,9 @@ mod gpu {
         pairs.extend(random.chunks_exact(2).map(|pair| (pair[0], pair[1])));
         let branches: Vec<Fold2> = pairs
             .iter()
-            .map(|&(a, b)| reduce_branch::<F>(a * b))
+            .map(|&(a, b)| fold2_branch::<F>(&[a * b]))
             .collect();
-        for branch in [Fold2::Plain, Fold2::Canonicalize, Fold2::Overflow] {
+        for branch in BRANCHES {
             assert!(branches.contains(&branch), "no mul input takes {branch:?}");
         }
         assert!(pairs.iter().any(|&(a, b)| a + b > WORD), "no add wraps");
@@ -135,9 +88,9 @@ mod gpu {
         u64_pairs.extend(random.into_iter().map(|a| (a, words.next().unwrap())));
         let branches: Vec<Fold2> = u64_pairs
             .iter()
-            .map(|&(a, s)| reduce_branch::<F>(a * u128::from(s)))
+            .map(|&(a, s)| fold2_branch::<F>(&[a * u128::from(s)]))
             .collect();
-        for branch in [Fold2::Plain, Fold2::Canonicalize, Fold2::Overflow] {
+        for branch in BRANCHES {
             assert!(
                 branches.contains(&branch),
                 "no mul_u64 input takes {branch:?}"
