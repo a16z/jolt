@@ -145,7 +145,9 @@ Key abstractions:
       validation enabled (`MTL_SHADER_VALIDATION=1`,
       `MTL_DEBUG_LAYER=1`).
 - [ ] `grep` over `crates/jolt-metal/src` (excluding `#[cfg(test)]`) finds no
-      `unwrap(`, `expect(`, `panic!`, `assert!`, or `unreachable!`.
+      `unwrap(`, `expect(`, `panic!`, `assert!`, or `unreachable!`, except in
+      `const fn`s evaluated only in constants, where a failure is a build
+      error (`field.rs` spells MSL type names from `P` this way).
 - [ ] #1848's `solinas/fp128.metal`, `simd_reduce.metal`, `deferred_sum.metal`,
       and the per-kernel wide accumulators are deleted in favour of
       `jolt-metal` headers. This is tracked in #1848's rebase, not in this
@@ -160,10 +162,23 @@ implementation, not a refactor of the CPU code.
 - **Conformance.** A generic `#[cfg(test)]` harness is instantiated per
   `MetalField` type. It assembles test kernels (`vec_add`, `vec_mul`,
   `vec_fmadd_accum`, …) from the same headers consumers use.
-- **Property tests** with `proptest` on a fixed seed:
-  - ring axioms on device outputs;
-  - canonical form of all outputs;
-  - accumulator reduction equals the sum of fully reduced products.
+- **Branch coverage.** Random inputs almost never reach the rare reduction
+  branches (the second fold's overflow and its canonicalization), so the
+  suite also builds inputs for each branch from the modulus. It recomputes
+  each reduction's intermediate values in `u128` arithmetic and asserts that
+  every branch of `fold2_canonicalize` is taken for `mul` and `mul_u64`, and
+  that `add`'s wrap and canonicalization and `sub`'s borrow occur.
+- **Mutation testing.** The suite's strength is checked by hand-made
+  mutants of each carry, shift, fold, and sign-handling step. In step 2,
+  all 23 mutants of the code in the final `fp128.h` fail the suite. Two
+  other mutants survived because they were equivalent: shifting a word that
+  is always zero, in the loop-form `sqr_wide` since replaced, and reading
+  `sub128`'s borrow from bit 32 instead of bit 63, which agree for every
+  input. Canonical outputs are enforced by the checked read-back, and
+  bit-exact agreement with `jolt_field` implies the ring axioms, so there are
+  no separate property tests for base-field operations. The accumulator
+  property (the reduction equals the sum of fully reduced products) lands
+  with step 3.
 - **Serialization.** nextest runs each test in its own process, so GPU tests
   take an exclusive file lock (`File::lock` on a file in the temp directory),
   following the `/tmp` flock in #1733. This avoids contention noise and makes
@@ -187,22 +202,67 @@ implementation, not a refactor of the CPU code.
 
 ### Performance
 
-Criterion benchmarks, one per operation and field:
+Criterion benchmarks (`crates/jolt-metal/benches/fp128.rs`) per field:
 
-- elementwise `add`, `mul`, and `square`;
-- `fmadd` into an accumulator;
-- simdgroup and threadgroup sum reduction.
+- dependent chains of `add`, `mul`, and `square` in registers, plus `mul`
+  with four independent chains, reported as operations per second: the ALU
+  cost of each operation;
+- elementwise `add`, `mul`, and `square` at 2^16–2^26 elements;
+- an inner product with a threadgroup reduction at 2^16–2^26 elements, the
+  shape of a sumcheck round;
+- from step 3, `fmadd` into an accumulator and the simdgroup and threadgroup
+  accumulator reductions.
 
-Each is reported as elements per second at sizes 2^16–2^26, with a CPU
-`jolt_field` baseline on the same machine: the NEON packed engine where it
-exists, scalar otherwise.
+GPU samples are GPU execution time from the command buffer's timestamps
+(`Batch::commit_and_wait` returns it), which excludes host submission. The
+CPU baseline is `jolt_field` on all cores with rayon and the `asm` multiply
+Akita's prover uses. The packed NEON `Fp128` multiplies lane by lane through
+that same scalar path, so it is not a separate baseline. Every kernel's output
+is checked against the CPU before it is timed.
+`scripts/metal-report.sh --bench` appends the table to the local report.
 
-Fp128 limb layout decision gate. The PR introducing `Fp128` benchmarks the
-`uint4` (4×u32) representation used by #1848 and Akita against the 2×u64
-representation from the earlier `quang/metal-field-kernels` branch. It keeps
-the faster one and records both numbers. The expectation, not yet measured,
-is that `uint4` wins, because Apple GPU ALUs are 32-bit and 64-bit multiplies
-are emulated.
+**Fp128 limb layout.** The earlier `quang/metal-field-kernels` 2×u64 code
+built each 64×64 product from four 32×32 multiplies and read `C` from a
+buffer, so comparing it with `uint4` would have measured those choices, not
+the layout. The comparison run instead was `uint4` schoolbook against a
+`ulong2` port of the same header using MSL's native 64-bit `*` and `mulhi`,
+with `C` a template constant in both and the same storage. It lives on the
+unmerged branch `metal/fp128-limb-ab` (`benches/limb_ab.rs`), so it can be
+rerun on other chips. Each round times every variant in alternating order,
+and the result is the median per-round ratio against `uint4`, a paired
+comparison. The decision rule, fixed in advance, was to take a variant only
+if it is faster on the ALU-bound and inner-product cases by more than the
+round-to-round spread, and otherwise to keep the simpler code.
+
+Result on an Apple M4 Max (macOS 27.0, 31 rounds; battery power, high power
+mode), time of `ulong2` relative to `uint4`:
+
+| case | `ulong2` / `uint4` (p10–p90) |
+|---|---|
+| dependent `add` | 1.072 (1.072–1.073) |
+| dependent `mul` | 1.495 (1.495–1.495) |
+| four independent `mul` chains | 1.625 (1.625–1.629) |
+| dependent `square` | 1.910 (1.899–1.918) |
+| streaming `mul`, 2^24 | 0.999 (0.995–1.006) |
+| inner product, 2^20 | 1.057 (1.033–1.078) |
+| inner product, 2^24 | 1.048 (1.024–1.070) |
+
+`uint4` is kept. Streaming `mul` ties because at 2^24 both reach about
+430 GB/s, near the memory bandwidth. Every pipeline reported 1024 maximum
+threads per threadgroup, so neither layout limits occupancy through register
+pressure.
+
+The same run changed `square`. The triangular cross-product loop ported
+first ran at 29 G/s, slower than `a * a` at 45 G/s. Written out, with each
+square added in one multiply-add step, it runs at 60 G/s (paired ratios
+against it: loop 2.055, `a * a` 1.322).
+
+A second run, on AC power with other processes loading the machine (load
+average 32–51 on 16 cores), reproduced every ratio within 2%: 1.073, 1.506,
+1.643, 1.939, 1.001, 1.076 and 1.040 in the table's order, and 2.090 and 1.330
+for `square`. Load moved the absolute rates of both runs, so the rates above
+are indicative only; the ratios hold because each round times every variant
+back to back.
 
 Regression bound: after the first measurement, a PR that changes an MSL
 arithmetic header reports the table and a paired comparison against its base
@@ -317,10 +377,10 @@ hand-written in a consumer, and the `C < 2^32` precondition is a
 (little-endian, canonical). On little-endian Apple Silicon its bytes equal
 MSL `uint4` little-endian words. Upload is therefore a byte copy, with a
 `const` assertion on size and layout. Read-back goes through the checked
-conversion (invariant 6). This needs one small `jolt-field` addition: a
-checked constructor from canonical limbs or bytes, or a `bytemuck`
-`CheckedBitPattern` impl. It is pure, allocation-free, and has no platform
-code. Device buffer offsets are required to be multiples of 16 so that
+conversion (invariant 6). This is one small `jolt-field` addition behind an
+optional `bytemuck` feature: `Zeroable`, `NoUninit`, and `CheckedBitPattern`
+for `Fp128<P>`, whose validity check is `limbs < P`. It is pure,
+allocation-free, and has no platform code. Device buffer offsets are required to be multiples of 16 so that
 `device uint4*` accesses are aligned.
 
 **Shader packaging.** `ShaderLibrary` compiles embedded source at runtime
@@ -446,12 +506,17 @@ together with #1848.
    a byte-fill kernel for the read-back check. `MslType` is the seam that
    `MetalField` extends in step 2.
 2. **`Fp128`.** Contents:
-   - `fp128.h`: add, sub, neg, mul, square, `mul_u64`, `mul_i64`,
-     `from_u64`, `from_i64`;
-   - the `MetalField` impls for `Prime128OffsetA7F7` and `Prime128Offset275`;
-   - the checked read-back addition to `jolt-field`;
-   - conformance and property suites;
-   - benchmarks, including the limb-layout A/B.
+   - `fp128.h`: `jolt::Fp128<C>` with add, sub, neg, mul, square, `mul_u64`,
+     `mul_i64`, `from_u64`, `from_i64`, ported from #1848's
+     `fp128.metal` with the `LONG_MIN` negation fixed and each bound argued;
+   - `MetalField`, implemented for every `Fp128<P>`, with the MSL spelling
+     and host suffix computed from `P` at compile time;
+   - the `bytemuck` feature of `jolt-field` for byte views and checked
+     read-back;
+   - the conformance suite with asserted branch coverage, checked by
+     mutation testing;
+   - GPU timestamps on `Batch`, the benchmarks, the limb-layout A/B, and the
+     `--bench` option of the local report.
 3. **Accumulators and machine limits.** `accum.h` mirrors `Fp128Accumulator`
    and `Fp128SignedAccumulator` with proved `CAPACITY`. Also simdgroup and
    threadgroup reductions that are generic over the accumulator, and
@@ -514,8 +579,10 @@ only the Command Line Tools installed.
   template are both listed by the library and both dispatch correctly. A
   `static_assert` on a template parameter fails `newLibraryWithSource` with
   `MTLLibraryErrorDomain` code 3, so an invalid field instantiation is a
-  `Setup` error. A small library compiled in about 220 ms; full-library
-  compile time will be measured with the `Fp128` library in step 2.
+  `Setup` error. A small library compiled in about 220 ms. The `Fp128`
+  conformance library (10 kernels) compiles in 75 ms for one field and
+  104 ms for two, the first compile in a process; later compiles in the same
+  process take 26 and 43 ms.
 - **Objective-C exceptions.** `objc2` 0.6 lets an uncaught exception unwind
   into Rust, which in practice aborts. `catch-all` wraps every send but
   panics on a caught exception. `exception::catch` returns a `Result`, and

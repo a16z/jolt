@@ -13,7 +13,25 @@ workspace = true
 
 [dependencies]
 bytemuck = { workspace = true }
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "bytemuck",
+  "solinas",
+] }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+# The CPU baseline uses the multiply Akita's prover uses.
+jolt-field = { path = "../jolt-field", default-features = false, features = [
+  "asm",
+  "bytemuck",
+  "solinas",
+] }
+rayon = { workspace = true }
+
+[[bench]]
+name = "fp128"
+harness = false
 
 # Metal is linked only on macOS. On every other target this crate has no
 # Objective-C dependency and `Device::system_default` reports `Unavailable`.
@@ -39,4 +57,6 @@ objc2-metal = { workspace = true, features = [
   "MTLLibrary",
   "MTLResource",
   "MTLTypes",
+  # `GPUStartTime` / `GPUEndTime` return a `CFTimeInterval`.
+  "objc2-core-foundation",
 ] }

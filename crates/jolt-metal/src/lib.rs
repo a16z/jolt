@@ -1,7 +1,7 @@
 //! Prover-only Metal support for `jolt-field`.
 //!
-//! This crate owns the Metal runtime shared by Jolt's and Akita's GPU
-//! provers. It never enters a verifier dependency graph. On non-macOS targets
+//! This crate owns the Metal runtime and the MSL field arithmetic shared by
+//! Jolt's and Akita's GPU provers. It never enters a verifier dependency graph. On non-macOS targets
 //! it compiles without any Objective-C dependency and
 //! [`Device::system_default`](runtime::Device::system_default) returns
 //! [`MetalError::Unavailable`].
@@ -32,6 +32,9 @@
 )]
 
 mod error;
+pub mod field;
 pub mod runtime;
+pub mod shaders;
 
 pub use error::{CapacityLimit, CommandBufferError, ErrorClass, MetalError};
+pub use field::MetalField;
