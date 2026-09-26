@@ -22,7 +22,7 @@
 
 use jolt_field as two;
 
-use num_traits::Zero;
+use num_traits::{One, Zero};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use two::{
@@ -54,6 +54,50 @@ fn commitment_accumulation_limit_is_the_exact_i32_lane_bound() {
         <two::Prime64Offset59 as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS,
         limit
     );
+}
+
+/// Commit lanes are the wide lanes at data width, and widening them into a
+/// wide accumulator matches adding the wide lift.
+macro_rules! commit_lanes_suite {
+    ($name:ident, $F:ty, $seed:expr) => {
+        #[test]
+        fn $name() {
+            type F = $F;
+            type Wide = <F as Unreduced>::Wide;
+            type Lanes = <F as WithCommitAccumulator>::CommitLanes;
+            let mut rng = ChaCha20Rng::seed_from_u64($seed);
+            let mut values = vec![F::zero(), F::one(), -F::one()];
+            values.extend((0..64).map(|_| <F as Ring>::from_u128(rng.gen())));
+            let mut acc = Wide::zero();
+            let mut sum = F::zero();
+            for x in values {
+                let lanes = Lanes::from(x);
+                assert_eq!(Wide::from(x).0, lanes.0.map(i32::from));
+                <F as WithCommitAccumulator>::add_commit_lanes(&mut acc, lanes);
+                sum += x;
+            }
+            assert_eq!(<F as Unreduced>::reduce_wide(acc), sum);
+        }
+    };
+}
+
+commit_lanes_suite!(commit_lanes_match_wide_fp32, two::Prime32Offset99, 0xC0);
+commit_lanes_suite!(commit_lanes_match_wide_fp64, two::Prime64Offset59, 0xC1);
+commit_lanes_suite!(commit_lanes_match_wide_fp128, two::Prime128Offset275, 0xC2);
+
+/// `MAX_COMMIT_ACCUMULATIONS` widening adds of the largest canonical element
+/// (`p − 1`, whose lanes are almost all `0xFFFF`) stay exact.
+#[test]
+fn commit_lanes_headroom_boundary_is_exact() {
+    type F = two::Prime128Offset275;
+    let limit = <F as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS;
+    let lanes = two::Fp128x8u16::from(-F::one());
+    let mut acc = two::Fp128x8i32([0; 8]);
+    for _ in 0..limit {
+        <F as WithCommitAccumulator>::add_commit_lanes(&mut acc, lanes);
+    }
+    let expect = -<F as Ring>::from_u64(limit as u64);
+    assert_eq!(<F as Unreduced>::reduce_wide(acc), expect);
 }
 
 /// 128×128 → 256-bit schoolbook multiply over 64-bit halves (independent of

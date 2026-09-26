@@ -81,6 +81,18 @@ pub trait Unreduced: Field {
 pub trait WithCommitAccumulator: Unreduced {
     /// Maximum unit-scale additions before any signed lane can overflow.
     const MAX_COMMIT_ACCUMULATIONS: usize;
+
+    /// The lanes of `Self::Wide::from(x)` stored at their data width.
+    ///
+    /// Every lane of a canonical element is non-negative, so a commitment
+    /// source can hold its entries (and their negations) at half the bytes
+    /// of [`Unreduced::Wide`] and widen them only when adding. Each
+    /// [`add_commit_lanes`](Self::add_commit_lanes) counts as one unit-scale
+    /// addition against [`MAX_COMMIT_ACCUMULATIONS`](Self::MAX_COMMIT_ACCUMULATIONS).
+    type CommitLanes: Copy + Default + Send + Sync + From<Self>;
+
+    /// `wide += Self::Wide::from(x)` for the element `x` whose lanes are `lanes`.
+    fn add_commit_lanes(wide: &mut Self::Wide, lanes: Self::CommitLanes);
 }
 
 /// Per-element multilinear bind: `even + r·(odd − even)` for a challenge
