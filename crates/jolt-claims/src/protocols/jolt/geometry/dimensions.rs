@@ -796,51 +796,66 @@ mod tests {
 
     #[test]
     fn read_write_dimensions_normalize_full_opening_point() {
-        let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
-        let challenges = (1..=7).map(Fr::from_u64).collect::<Vec<_>>();
+        for (dimensions, address, cycle) in [
+            (
+                ReadWriteDimensions::new(4, 3, 1, 2),
+                vec![7, 3, 2],
+                vec![6, 5, 4, 1],
+            ),
+            (
+                ReadWriteDimensions::new(5, 4, 2, 2),
+                vec![9, 8, 4, 3],
+                vec![7, 6, 5, 2, 1],
+            ),
+            (ReadWriteDimensions::new(2, 2, 0, 2), vec![2, 1], vec![4, 3]),
+            (
+                ReadWriteDimensions::new(3, 3, 1, 1),
+                vec![6, 5, 2],
+                vec![4, 3, 1],
+            ),
+        ] {
+            let challenges = (1..=dimensions.read_write_rounds() as u64)
+                .map(Fr::from_u64)
+                .collect::<Vec<_>>();
+            let point = dimensions
+                .read_write_opening_point(&challenges)
+                .unwrap_or_else(|error| {
+                    panic!("read-write opening point should evaluate: {error}")
+                });
+            let address: Vec<_> = address.into_iter().map(Fr::from_u64).collect();
+            let cycle: Vec<_> = cycle.into_iter().map(Fr::from_u64).collect();
 
-        let point = dimensions
-            .read_write_opening_point(&challenges)
-            .unwrap_or_else(|error| panic!("read-write opening point should evaluate: {error}"));
-
-        assert_eq!(
-            point.r_cycle,
-            vec![
-                Fr::from_u64(6),
-                Fr::from_u64(5),
-                Fr::from_u64(4),
-                Fr::from_u64(1)
-            ]
-        );
-        assert_eq!(
-            point.r_address,
-            vec![Fr::from_u64(7), Fr::from_u64(3), Fr::from_u64(2)]
-        );
-        assert_eq!(
-            point.opening_point,
-            vec![
-                Fr::from_u64(7),
-                Fr::from_u64(3),
-                Fr::from_u64(2),
-                Fr::from_u64(6),
-                Fr::from_u64(5),
-                Fr::from_u64(4),
-                Fr::from_u64(1),
-            ]
-        );
+            assert_eq!(point.r_address, address, "{dimensions:?}");
+            assert_eq!(point.r_cycle, cycle, "{dimensions:?}");
+            assert_eq!(
+                point.opening_point,
+                [address, cycle].concat(),
+                "{dimensions:?}"
+            );
+        }
     }
 
     #[test]
     fn read_write_dimensions_extract_address_opening_point() {
-        let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
-        let challenges = (10..=15).map(Fr::from_u64).collect::<Vec<_>>();
-
-        assert_eq!(
-            dimensions
-                .address_opening_point(&challenges)
-                .unwrap_or_else(|error| panic!("address opening point should evaluate: {error}")),
-            vec![Fr::from_u64(15), Fr::from_u64(11), Fr::from_u64(10)]
-        );
+        for (dimensions, address) in [
+            (ReadWriteDimensions::new(4, 3, 1, 2), vec![6, 2, 1]),
+            (ReadWriteDimensions::new(5, 4, 2, 2), vec![7, 6, 2, 1]),
+            (ReadWriteDimensions::new(2, 2, 0, 2), vec![2, 1]),
+            (ReadWriteDimensions::new(3, 3, 1, 1), vec![5, 4, 1]),
+        ] {
+            let challenges = (1..=dimensions.output_check_rounds() as u64)
+                .map(Fr::from_u64)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                dimensions
+                    .address_opening_point(&challenges)
+                    .unwrap_or_else(|error| panic!(
+                        "address opening point should evaluate: {error}"
+                    )),
+                address.into_iter().map(Fr::from_u64).collect::<Vec<_>>(),
+                "{dimensions:?}"
+            );
+        }
     }
 
     #[test]
