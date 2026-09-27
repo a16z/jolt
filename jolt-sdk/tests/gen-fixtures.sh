@@ -2,7 +2,13 @@
 set -euo pipefail
 
 echo "Generating fixtures files..."
-cargo run --profile build-fast -p fibonacci -- --save
+# CI passes the fixture generator prebuilt by its build job; locally,
+# build-fast is the quickest edit-run loop.
+if [[ -n "${FIBONACCI_BIN:-}" ]]; then
+  "$FIBONACCI_BIN" --save
+else
+  cargo run --profile build-fast -p fibonacci -- --save
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXTURE_DIR=$SCRIPT_DIR/fixtures
