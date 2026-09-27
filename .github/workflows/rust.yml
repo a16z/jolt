@@ -201,107 +201,131 @@ jobs:
       - name: Build Wasm
         run: RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo build -p jolt-prover -p jolt-platform --features jolt-platform/random --release --target wasm32-unknown-unknown
 
-  # The ci-profile test family compiles exactly once. This job installs the
-  # jolt CLI (the guest builds inside the tests shell out to it), builds one
-  # nextest archive per test invocation, and uploads them; the test-release
-  # matrix below runs the archives on fresh runners. Before this job every
-  # test lane ran its own `cargo install --path .` plus its own test build:
-  # eleven lanes, ~85 runner-minutes of compilation for ~21 minutes of tests.
+  # The ci-profile test family compiles exactly once. Each lane below builds
+  # one nextest archive per test invocation and uploads it; the `cli` lane
+  # also installs the jolt CLI (the guest builds inside the tests shell out
+  # to it), the SDK fixture generator, and the tracer equivalence harness.
+  # The test-release matrix downloads the archives and runs them on fresh
+  # runners. Before this job every test lane ran its own `cargo install
+  # --path .` plus its own test build: eleven lanes, ~85 runner-minutes of
+  # compilation for ~21 minutes of tests.
   #
   # One archive per package x feature set, never one archive per protocol:
   # selecting several packages in one cargo invocation unifies their features
   # (jolt-kernels' serial paths would pick up `parallel` through jolt-verifier,
   # jolt-verifier would gain `prover-fixtures` inside the prover build), so the
-  # invocations below stay 1:1 with the commands they replace.
+  # invocations below stay 1:1 with the commands they replace. Building all of
+  # them in one job took 27 min on a 4-vCPU runner (workspace feature variants
+  # dominate; rust-cache never stores them), so the archives are spread over
+  # lanes that share nothing but dependencies. Lanes keep archives that share
+  # workspace variants together (verifier-akita reuses prover-akita's units).
   build-release:
-    name: Build jolt CLI and release test archives
+    name: Build release test archives (${{ matrix.lane }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: dory
+            cli: true
+            archives: |
+              prover-dory|-p jolt-prover --features prover-fixtures
+              tracer|-p tracer --features test-utils
+              tracer-field-inline|-p tracer --features test-utils,field-inline
+              tracer-x86|-p jolt-tracer-x86
+              sdk|-p jolt-sdk --features host
+          - lane: verifier-dory
+            archives: |
+              verifier-dory|-p jolt-verifier --features prover-fixtures
+          - lane: zk
+            archives: |
+              prover-zk|-p jolt-prover --features prover-fixtures,zk
+              verifier-zk|-p jolt-verifier --features prover-fixtures,zk
+              kernels-zk|-p jolt-kernels --features zk
+          - lane: akita
+            archives: |
+              prover-akita|-p jolt-prover --features akita,prover-fixtures
+              verifier-akita|-p jolt-verifier --features akita,prover-fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
-          components: rust-src
           cache: false
-      # Sole saver of the release-tests shared cache.
+      # The cli lane has the broadest dependency footprint and is the sole
+      # saver of the release-tests shared cache.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: release-tests
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Cache ZeroOS musl toolchain
-        id: cache-zeroos-musl
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ~/.zeroos/musl
-          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
-      - name: Install ZeroOS musl toolchain
-        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
-        run: |
-          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
-          mkdir -p ~/.zeroos
-          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.cli == true }}
       - name: Install nextest
         uses: taiki-e/install-action@45fceba0fc176f41d2aee1ca9d6598ba628eea62 # nextest
       - name: Build and install jolt CLI
+        if: matrix.cli
         run: cargo install --path . --locked --force --profile ci --target-dir target
       # `fibonacci --save` generates the SDK verifier fixtures; the
       # trace_equivalence example is the tracer's serial/parallel harness.
       # Both are built here and run in their test jobs.
       - name: Build SDK fixture generator
+        if: matrix.cli
         run: cargo build --profile ci -p fibonacci
       - name: Build tracer equivalence harness
+        if: matrix.cli
         run: cargo build --profile ci -p tracer --example trace_equivalence
-      - name: Archive release test binaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/nextest-archives"
-          # name|cargo selection. Names are the `archives` of the test-release matrix.
-          while IFS='|' read -r name selection; do
-            echo "::group::${name}: cargo nextest archive ${selection}"
-            # shellcheck disable=SC2086
-            cargo nextest archive --cargo-profile ci $selection \
-              --archive-file "$RUNNER_TEMP/nextest-archives/${name}.tar.zst"
-            echo "::endgroup::"
-          done <<'ARCHIVES'
-          prover-dory|-p jolt-prover --features prover-fixtures
-          verifier-dory|-p jolt-verifier --features prover-fixtures
-          tracer|-p tracer --features test-utils
-          tracer-field-inline|-p tracer --features test-utils,field-inline
-          tracer-x86|-p jolt-tracer-x86
-          sdk|-p jolt-sdk --features host
-          prover-zk|-p jolt-prover --features prover-fixtures,zk
-          verifier-zk|-p jolt-verifier --features prover-fixtures,zk
-          kernels-zk|-p jolt-kernels --features zk
-          prover-akita|-p jolt-prover --features akita,prover-fixtures
-          verifier-akita|-p jolt-verifier --features akita,prover-fixtures
-          ARCHIVES
-          ls -la "$RUNNER_TEMP/nextest-archives"
       - name: Stage binaries
+        if: matrix.cli
         run: |
           mkdir -p "$RUNNER_TEMP/jolt-bin"
           cp ~/.cargo/bin/jolt target/ci/fibonacci target/ci/examples/trace_equivalence "$RUNNER_TEMP/jolt-bin/"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: matrix.cli
         with:
           name: jolt-bin
           path: ${{ runner.temp }}/jolt-bin
           if-no-files-found: error
           retention-days: 1
+      # Every archive of the lane is attempted even after one fails, so the
+      # test jobs of the archives that did build still run; the step (and the
+      # jobs of the missing archives) fail.
+      - name: Archive release test binaries
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/nextest-archives"
+          failed=()
+          while IFS='|' read -r name selection; do
+            [[ -z "$name" ]] && continue
+            echo "::group::${name}: cargo nextest archive ${selection}"
+            # shellcheck disable=SC2086
+            if ! cargo nextest archive --cargo-profile ci $selection \
+                --archive-file "$RUNNER_TEMP/nextest-archives/${name}.tar.zst"; then
+              failed+=("$name")
+            fi
+            echo "::endgroup::"
+          done <<< "${{ matrix.archives }}"
+          ls -la "$RUNNER_TEMP/nextest-archives"
+          if (( ${#failed[@]} )); then
+            echo "::error::archives failed to build: ${failed[*]}"
+            exit 1
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
         with:
-          name: nextest-archives
+          name: nextest-archives-${{ matrix.lane }}
           path: ${{ runner.temp }}/nextest-archives
-          if-no-files-found: error
+          if-no-files-found: ignore
           compression-level: 0
           retention-days: 1
 
   # Runs the archives built above. Each matrix entry keeps the display name
   # of the lane it replaces; `args` applies to every archive of the entry.
   # The guest toolchain stays installed because the prover tests build their
-  # guests at test time through the jolt CLI.
+  # guests at test time through the jolt CLI. `!cancelled()` lets the entries
+  # whose archives did build run when another build lane failed.
   test-release:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: build-release
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -377,7 +401,8 @@ jobs:
           path: ${{ runner.temp }}/jolt-bin
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: nextest-archives
+          pattern: nextest-archives-*
+          merge-multiple: true
           path: ${{ runner.temp }}/nextest-archives
       # Artifacts drop the executable bit.
       - name: Install jolt CLI
@@ -392,14 +417,19 @@ jobs:
         run: |
           set -euo pipefail
           for archive in ${{ matrix.archives }}; do
-            cargo nextest run --archive-file "$RUNNER_TEMP/nextest-archives/${archive}.tar.zst" \
-              --workspace-remap "$GITHUB_WORKSPACE" ${{ matrix.args }}
+            file="$RUNNER_TEMP/nextest-archives/${archive}.tar.zst"
+            if [[ ! -f "$file" ]]; then
+              echo "::error::archive ${archive} is missing: its build lane failed"
+              exit 1
+            fi
+            cargo nextest run --archive-file "$file" --workspace-remap "$GITHUB_WORKSPACE" ${{ matrix.args }}
           done
 
   trace-equivalence:
     runs-on: ubuntu-latest
     name: Tracer serial/parallel equivalence
     needs: build-release
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
