@@ -168,7 +168,7 @@ You can also control symbol preservation directly via `jolt build --backtrace en
 
 To further assist in debugging, Jolt supports `print!` and `println!` macros in guest programs. For `no_std` guests, import the macros via `use jolt::println;`. When std is enabled, the standard `println!` works automatically.
 
-When debugging issues with guest programs, it's recommended to use the corresponding `trace_analyze` for your `#[jolt::provable]` functions. This skips instantiating the prover and allows for faster iteration.
+When debugging issues with guest programs, it's recommended to use the generated `analyze_<fn>` for your `#[jolt::provable]` functions. This skips instantiating the prover and allows for faster iteration.
 
 ## AI Coding Skill
 
