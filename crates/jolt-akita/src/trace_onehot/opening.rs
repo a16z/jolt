@@ -5,8 +5,8 @@ use rayon::prelude::*;
 
 use super::source::TracePackedOneHot;
 use super::traversal::{
-    row_is_committed, trace_block_part_range, trace_block_task_parts, validate_block_geometry,
-    visit_segment_ring_range, visit_segment_ring_row_range,
+    row_is_committed, trace_block_task_schedule, validate_block_geometry, visit_segment_ring_range,
+    visit_segment_ring_row_range,
 };
 use crate::AkitaField;
 
@@ -83,28 +83,27 @@ pub(super) fn opening_fold_packed<const D: usize>(
     }
     let folded = if segment_rings >= num_positions {
         let blocks_per_column = segment_rings / num_positions;
-        let parts = trace_block_task_parts::<D>(source.one_hot_k, num_positions, blocks_per_column);
-        let ring_alignment = (source.one_hot_k / D).max(1);
+        let schedule =
+            trace_block_task_schedule::<D>(source.one_hot_k, num_positions, blocks_per_column);
         let num_columns = source.rows.num_columns();
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_evaluate_fold_accumulate",
             num_blocks,
             blocks_per_column,
-            task_parts = parts,
-            tasks = blocks_per_column * parts,
+            task_parts = schedule.parts,
+            tasks = blocks_per_column * schedule.parts,
             active_columns = num_columns,
             rows_per_ring = (D / source.one_hot_k).max(1),
             weight_kind,
         )
         .entered();
-        let partials = (0..blocks_per_column * parts)
+        let partials = (0..blocks_per_column * schedule.parts)
             .into_par_iter()
             .map(|task| {
-                let trace_block = task / parts;
-                let part = task % parts;
+                let trace_block = task / schedule.parts;
+                let part = task % schedule.parts;
                 let block_ring_start = trace_block * num_positions;
-                let (part_start, part_end) =
-                    trace_block_part_range(num_positions, ring_alignment, part, parts);
+                let (part_start, part_end) = schedule.part_range(part);
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
                 let mut folded = vec![CyclotomicRing::zero(); num_columns];
@@ -198,14 +197,14 @@ pub(super) fn opening_fold_packed<const D: usize>(
             "trace_onehot_evaluate_fold_merge_partials",
             num_blocks,
             blocks_per_column,
-            task_parts = parts,
+            task_parts = schedule.parts,
             active_columns = num_columns,
         )
         .entered();
         let mut folded = vec![CyclotomicRing::zero(); num_blocks];
         for (task, trace_folded) in partials.into_iter().enumerate() {
-            let trace_block = task / parts;
-            let part = task % parts;
+            let trace_block = task / schedule.parts;
+            let part = task % schedule.parts;
             for column in 0..num_columns {
                 let dst = &mut folded[column * blocks_per_column + trace_block];
                 if part == 0 {

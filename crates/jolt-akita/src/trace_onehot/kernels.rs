@@ -61,7 +61,7 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TracePackedOneHotCommitOpe
                 .par_iter()
                 .map(|source| {
                     let source = source.payload::<TracePackedOneHot>()?;
-                    commit_packed::<D>(prepared, source, *plan)
+                    commit_packed::<D>(prepared.expanded(), source, *plan)
                 })
                 .collect()
         )
