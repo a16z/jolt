@@ -197,32 +197,6 @@ where
     ))
 }
 
-/// Resolves the grouped opening under the setup's K-specific one-hot catalog.
-fn grouped_one_hot_opening<'a>(
-    setup: &AkitaProverSetup,
-    claims: OpeningClaims<'a, AkitaBackendExtField, AkitaBackendCommitment>,
-    handles: Vec<AkitaBackendHint>,
-) -> Result<AkitaOpening<'a>, OpeningsError> {
-    match setup.one_hot_k() {
-        AKITA_ONE_HOT_K256 => {
-            SelectedProverOpeningData::from_committed_claims::<AkitaOneHotK256Config>(
-                claims,
-                handles,
-                setup.verifier.one_hot_k256_scheme()?.schedules(),
-            )
-        }
-        AKITA_ONE_HOT_K16 => {
-            SelectedProverOpeningData::from_committed_claims::<AkitaOneHotK16Config>(
-                claims,
-                handles,
-                setup.verifier.one_hot_k16_scheme()?.schedules(),
-            )
-        }
-        _ => unreachable!("one-hot K was validated by setup"),
-    }
-    .map_err(akita_error)
-}
-
 /// Runs the one-hot backend prover for an opening whose final group was
 /// committed under the setup's K-specific scheme.
 fn prove_one_hot_opening(
@@ -380,7 +354,24 @@ impl AkitaNativeBatching {
         .map_err(prove_failed)?;
         handles.push(main_backend_hint);
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
-        let opening = grouped_one_hot_opening(setup, claims, handles)?;
+        let opening = match setup.one_hot_k() {
+            AKITA_ONE_HOT_K256 => {
+                SelectedProverOpeningData::from_committed_claims::<AkitaOneHotK256Config>(
+                    claims,
+                    handles,
+                    setup.verifier.one_hot_k256_scheme()?.schedules(),
+                )
+            }
+            AKITA_ONE_HOT_K16 => {
+                SelectedProverOpeningData::from_committed_claims::<AkitaOneHotK16Config>(
+                    claims,
+                    handles,
+                    setup.verifier.one_hot_k16_scheme()?.schedules(),
+                )
+            }
+            _ => unreachable!("one-hot K was validated by setup"),
+        }
+        .map_err(akita_error)?;
         let selection = opening.selection();
         let session = bind_grouped_statement_transcripts(
             transcript,
