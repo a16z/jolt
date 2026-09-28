@@ -28,7 +28,7 @@ nostd panicked: true
 nostd proof valid: true
 ```
 
-The `panicked: true` indicates Jolt successfully detected the guest panic through `JoltCommitments::has_panic()`.
+The `panicked: true` indicates Jolt successfully detected the guest panic through the `panic` flag of the returned `JoltDevice` (`program_io.panic`).
 
 ## Backtrace Output Reference
 
