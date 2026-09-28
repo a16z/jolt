@@ -189,7 +189,7 @@ mod native {
         std::fs::write(path, out)
     }
 
-    /// `name -> address` for the ELF's symbols, mirroring the tracer's map
+    /// `name -> address` for the ELF's symbols, using the tracer's map
     /// construction (NOTYPE and FUNC entries).
     fn symbol_map(elf: &[u8]) -> HashMap<String, u64> {
         use tracer::emulator::elf_analyzer::ElfAnalyzer;
@@ -200,21 +200,8 @@ mod native {
         }
         let header = analyzer.read_header();
         let section_headers = analyzer.read_section_headers(&header);
-        let mut symbol_tables = Vec::new();
-        let mut string_tables = Vec::new();
-        for section in &section_headers {
-            match section.sh_type {
-                2 => symbol_tables.push(section),
-                3 => string_tables.push(section),
-                _ => {}
-            }
-        }
-        let Some(string_table) = string_tables.first() else {
-            return HashMap::new();
-        };
-        let entries = analyzer.read_symbol_entries(&header, &symbol_tables);
         analyzer
-            .create_symbol_map(&entries, string_table)
+            .read_symbol_map(&header, &section_headers)
             .into_iter()
             .collect()
     }

@@ -53,7 +53,7 @@ pub struct SectionHeader {
     pub sh_addr: u64,
     pub sh_offset: u64,
     pub sh_size: u64,
-    _sh_link: u32,
+    pub sh_link: u32,
     _sh_info: u32,
     _sh_addralign: u64,
     _sh_entsize: u64,
@@ -491,7 +491,7 @@ impl ElfAnalyzer {
                 sh_addr,
                 sh_offset,
                 sh_size,
-                _sh_link: sh_link,
+                sh_link,
                 _sh_info: sh_info,
                 _sh_addralign: sh_addralign,
                 _sh_entsize: sh_entsize,
@@ -509,7 +509,7 @@ impl ElfAnalyzer {
     pub fn read_symbol_entries(
         &self,
         header: &Header,
-        symbol_table_section_headers: &Vec<&SectionHeader>,
+        symbol_table_section_headers: &[&SectionHeader],
     ) -> Vec<SymbolEntry> {
         let mut entries = Vec::new();
         for section_header in symbol_table_section_headers {
@@ -596,6 +596,28 @@ impl ElfAnalyzer {
             }
         }
         entries
+    }
+
+    /// Builds the symbol name -> address map of every symbol table section.
+    ///
+    /// Each symbol table resolves its names through the string table named by
+    /// its own `sh_link`, as the ELF spec requires; picking the first
+    /// `SHT_STRTAB` section instead can select `.shstrtab` (LLD emits it
+    /// before `.strtab`).
+    pub fn read_symbol_map(
+        &self,
+        header: &Header,
+        section_headers: &[SectionHeader],
+    ) -> FnvHashMap<String, u64> {
+        let mut map = FnvHashMap::default();
+        for symbol_table in section_headers.iter().filter(|s| s.sh_type == 2) {
+            let Some(string_table) = section_headers.get(symbol_table.sh_link as usize) else {
+                continue;
+            };
+            let entries = self.read_symbol_entries(header, &[symbol_table]);
+            map.extend(self.create_symbol_map(&entries, string_table));
+        }
+        map
     }
 
     /// Reads strings from a string table section
@@ -713,9 +735,19 @@ pub(crate) mod test_elf {
         pub size: u64,
     }
 
+    /// Order of the two `SHT_STRTAB` sections in the section header table.
+    #[derive(Clone, Copy)]
+    pub(crate) enum StrtabOrder {
+        /// `.strtab` before `.shstrtab`, as GNU ld emits them.
+        GnuLd,
+        /// `.shstrtab` before `.strtab`, as LLD emits them.
+        Lld,
+    }
+
     /// Builds a minimal but well-formed RV64 ELF: `.text` loaded at
-    /// 0x8000_0000 with the given instruction words, plus a symbol table.
-    pub(crate) fn build_elf64(text: &[u32], symbols: &[TestSymbol]) -> Vec<u8> {
+    /// 0x8000_0000 with the given instruction words, plus a symbol table whose
+    /// `sh_link` names `.strtab` in either section order.
+    pub(crate) fn build_elf64(text: &[u32], symbols: &[TestSymbol], order: StrtabOrder) -> Vec<u8> {
         const TEXT_ADDR: u64 = 0x8000_0000;
         let text_bytes: Vec<u8> = text.iter().flat_map(|w| w.to_le_bytes()).collect();
 
@@ -739,6 +771,12 @@ pub(crate) mod test_elf {
         let shstrtab_offset = strtab_offset + strtab.len();
         let shoff = align8(shstrtab_offset + shstrtab.len());
 
+        // Section header indices of .strtab and .shstrtab.
+        let (strtab_index, shstrtab_index): (u32, u16) = match order {
+            StrtabOrder::GnuLd => (3, 4),
+            StrtabOrder::Lld => (4, 3),
+        };
+
         let mut elf = Vec::new();
         // ELF header
         elf.extend_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -754,7 +792,7 @@ pub(crate) mod test_elf {
         elf.extend_from_slice(&0u16.to_le_bytes()); // e_phnum
         elf.extend_from_slice(&64u16.to_le_bytes()); // e_shentsize
         elf.extend_from_slice(&5u16.to_le_bytes()); // e_shnum
-        elf.extend_from_slice(&4u16.to_le_bytes()); // e_shstrndx
+        elf.extend_from_slice(&shstrtab_index.to_le_bytes()); // e_shstrndx
         assert_eq!(elf.len(), 0x40);
 
         // .text content
@@ -819,35 +857,20 @@ pub(crate) mod test_elf {
             0,
             symtab_offset as u64,
             symtab_size as u64,
-            3, // link to .strtab
-            1, // one local symbol (the null entry)
+            strtab_index, // link to .strtab
+            1,            // one local symbol (the null entry)
             8,
             24,
         );
-        push_shdr(
-            15, // ".strtab"
-            3,  // SHT_STRTAB
-            0,
-            0,
-            strtab_offset as u64,
-            strtab.len() as u64,
-            0,
-            0,
-            1,
-            0,
-        );
-        push_shdr(
-            23, // ".shstrtab"
-            3,
-            0,
-            0,
-            shstrtab_offset as u64,
-            shstrtab.len() as u64,
-            0,
-            0,
-            1,
-            0,
-        );
+        let strtab_shdr = (15, strtab_offset, strtab.len()); // ".strtab"
+        let shstrtab_shdr = (23, shstrtab_offset, shstrtab.len()); // ".shstrtab"
+        let string_tables = match order {
+            StrtabOrder::GnuLd => [strtab_shdr, shstrtab_shdr],
+            StrtabOrder::Lld => [shstrtab_shdr, strtab_shdr],
+        };
+        for (name, offset, size) in string_tables {
+            push_shdr(name, 3, 0, 0, offset as u64, size as u64, 0, 0, 1, 0); // SHT_STRTAB
+        }
 
         elf
     }
