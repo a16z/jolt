@@ -1282,6 +1282,7 @@ mod tests {
     )]
 
     use super::*;
+    use akita_types::RingVec;
     use jolt_field::Ring;
 
     fn af(value: u64) -> AkitaField {
@@ -1452,16 +1453,18 @@ mod tests {
 
     #[test]
     fn deserialize_akita_rejects_trailing_bytes() {
-        let selection = OpeningScheduleSelection {
-            row_digest: ScheduleRowDigest::from_bytes([7; 32]),
-        };
-        let mut bytes = serialize_akita(&selection).expect("selection serializes");
-        let roundtrip: OpeningScheduleSelection =
-            deserialize_akita(&bytes, &()).expect("exact bytes deserialize");
-        assert_eq!(roundtrip, selection);
+        // The wire form carries coefficients only, so the fixture stays D-free.
+        let payload = AkitaBackendCommitmentPayload::new(RingVec::from_coeffs(
+            (1..=64).map(AkitaField::from_u64).collect(),
+        ));
+        let coeff_len = payload.rows().coeff_len();
+        let mut bytes = serialize_akita(&payload).expect("payload serializes");
+        let roundtrip: AkitaBackendCommitmentPayload =
+            deserialize_akita(&bytes, &coeff_len).expect("exact bytes deserialize");
+        assert_eq!(roundtrip, payload);
 
         bytes.push(0);
-        let err = deserialize_akita::<OpeningScheduleSelection>(&bytes, &())
+        let err = deserialize_akita::<AkitaBackendCommitmentPayload>(&bytes, &coeff_len)
             .expect_err("trailing bytes must be rejected");
         assert!(
             matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),
