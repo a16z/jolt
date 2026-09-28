@@ -17,16 +17,6 @@ impl TestVectors {
     pub fn create_simple_pattern() -> Keccak256State {
         core::array::from_fn(|i| (i * 3 + 5) as u64)
     }
-
-    pub fn get_rotation_test_vectors() -> Vec<(u64, u32, u64)> {
-        vec![
-            (0x0000000000000001u64, 1, 0x0000000000000002u64),
-            (0x8000000000000000u64, 1, 0x0000000000000001u64),
-            (0x0123456789ABCDEFu64, 4, 0x123456789ABCDEF0u64),
-            (0x0123456789ABCDEFu64, 32, 0x89ABCDEF01234567u64),
-            (0x0123456789ABCDEFu64, 36, 0x9ABCDEF012345678u64),
-        ]
-    }
 }
 
 pub mod xkcp_vectors {
@@ -73,35 +63,6 @@ pub mod xkcp_vectors {
         0x16F53526E70465C2,
         0x75F644E97F30A13B,
         0xEAF1FF7B5CECA249,
-    ];
-
-    /// XKCP test vector: Result after two Keccak-f[1600] permutations on all-zero input
-    pub const AFTER_TWO_PERMUTATIONS: Keccak256State = [
-        0x2D5C954DF96ECB3C,
-        0x6A332CD07057B56D,
-        0x093D8D1270D76B6C,
-        0x8A20D9B25569D094,
-        0x4F9C4F99E5E7F156,
-        0xF957B9A2DA65FB38,
-        0x85773DAE1275AF0D,
-        0xFAF4F247C3D810F7,
-        0x1F1B9EE6F79A8759,
-        0xE4FECC0FEE98B425,
-        0x68CE61B6B9CE68A1,
-        0xDEEA66C4BA8F974F,
-        0x33C43D836EAFB1F5,
-        0xE00654042719DBD9,
-        0x7CF8A9F009831265,
-        0xFD5449A6BF174743,
-        0x97DDAD33D8994B40,
-        0x48EAD5FC5D0BE774,
-        0xE3B8C8EE55B7B03C,
-        0x91A0226E649E42E9,
-        0x900E3129E7BADD7B,
-        0x202A9EC5FAA3CCE8,
-        0x5B3402464E1C3DB6,
-        0x609F4E62A44C1059,
-        0x20D06CD26A8FBF5C,
     ];
 
     pub const EXPECTED_AFTER_ROUND1_THETA: Keccak256State = [
