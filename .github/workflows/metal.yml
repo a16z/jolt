@@ -68,4 +68,4 @@ jobs:
         run: scripts/metal-report.sh | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run host-only tests
         if: steps.probe.outputs.gpu == 'false'
-        run: cargo nextest run -p jolt-metal --lib --cargo-quiet
+        run: cargo nextest run -p jolt-metal --lib -E 'not test(gpu::)' --cargo-quiet

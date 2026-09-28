@@ -264,13 +264,16 @@ mod metal {
         for kind in [Memory::Copy, Memory::Read] {
             let bindings = [Binding::buffer(&source_dev), Binding::buffer(&copy_dev)];
             let grid = memory_grid(kind, max_words);
-            let _ = dispatch(
-                &device,
-                pipeline(&library, kind.kernel()),
-                &bindings,
-                grid,
-                1,
-            );
+            // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+            let _ = unsafe {
+                dispatch(
+                    &device,
+                    pipeline(&library, kind.kernel()),
+                    &bindings,
+                    grid,
+                    1,
+                )
+            };
             let threads = kind.threads(max_words);
             let expected: Vec<Word> = match kind {
                 Memory::Copy => source.clone(),
@@ -293,7 +296,8 @@ mod metal {
         assert!(tile_pipeline.max_total_threads_per_threadgroup() >= TILE_WORDS);
         let tile_grid = Grid::linear(THREADS, TILE_WORDS);
         let tile_bindings = [Binding::buffer(&source_dev), Binding::buffer(&tile_out)];
-        let _ = dispatch(&device, tile_pipeline, &tile_bindings, tile_grid, 1);
+        // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+        let _ = unsafe { dispatch(&device, tile_pipeline, &tile_bindings, tile_grid, 1) };
         let expected: Vec<Word> = (0..TILE_WORDS)
             .map(|t| {
                 (0..TILE_ROUNDS).fold([0u32; 4], |acc, r| {
@@ -326,7 +330,8 @@ mod metal {
                         Binding::value(&CHAIN_ROUNDS),
                         Binding::buffer(field_out),
                     ];
-                    dispatch(device, pipeline, &bindings, grid, 1)
+                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }
         };
@@ -341,7 +346,8 @@ mod metal {
                         Binding::buffer(b_dev),
                         Binding::buffer(field_out),
                     ];
-                    dispatch(device, pipeline, &bindings, grid, 1)
+                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }
         };
@@ -353,7 +359,8 @@ mod metal {
                 work: (kind.bytes(len) * repeats) as f64,
                 run: Box::new(move || {
                     let bindings = [Binding::buffer(source_dev), Binding::buffer(copy_dev)];
-                    dispatch(device, pipeline, &bindings, grid, repeats)
+                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    unsafe { dispatch(device, pipeline, &bindings, grid, repeats) }
                 }),
             }
         };
@@ -361,7 +368,8 @@ mod metal {
             work: (THREADS * TILE_ROUNDS * WORD_BYTES) as f64,
             run: Box::new(move || {
                 let bindings = [Binding::buffer(source_dev), Binding::buffer(tile_out)];
-                dispatch(device, tile_pipeline, &bindings, tile_grid, 1)
+                // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                unsafe { dispatch(device, tile_pipeline, &bindings, tile_grid, 1) }
             }),
         };
 
@@ -422,8 +430,8 @@ mod metal {
                 Binding::buffer(&sum_dev),
             ];
             let grid = Grid::linear(ROUND_TRIP_ELEMENTS, ROUND_TRIP_ELEMENTS);
-            batch
-                .dispatch(reduce_pipeline, &bindings, grid)
+            // SAFETY: one full group reduces n allocated inputs into one output.
+            unsafe { batch.dispatch_unchecked(reduce_pipeline, &bindings, grid) }
                 .expect("valid dispatch");
             let start = Instant::now();
             gpu_times.push(
@@ -478,7 +486,8 @@ mod metal {
                         Binding::buffer(b_dev),
                         Binding::buffer(field_out),
                     ];
-                    dispatch(device, pipeline, &bindings, grid, 1)
+                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }
         };
@@ -498,7 +507,8 @@ mod metal {
                         Binding::value(&n),
                         Binding::buffer(partials),
                     ];
-                    dispatch(device, pipeline, &bindings, grid, 1)
+                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }
         };

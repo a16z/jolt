@@ -1,6 +1,6 @@
-//! Safe runtime over Metal: open a [`Device`], build a [`ShaderLibrary`] with
-//! every pipeline created up front, move data through [`DeviceBuffer`]s, and
-//! run [`Batch`]es of dispatches.
+//! Runtime over Metal: open a [`Device`], build a [`ShaderLibrary`] with every
+//! pipeline created up front, move data through [`DeviceBuffer`]s, and run
+//! [`Batch`]es of dispatches through an explicit unsafe shader boundary.
 
 mod batch;
 mod buffer;

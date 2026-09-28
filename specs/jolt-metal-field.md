@@ -18,8 +18,9 @@ about six per-kernel lazy-reduction variants. No implementation covers `Fp32`,
 
 This spec defines one crate, `jolt-metal`, that owns two things. The first is
 the Metal field arithmetic for `jolt_field::solinas`: generic MSL templates
-that mirror the CPU types. The second is the small safe runtime every Metal
-consumer needs. Jolt's and Akita's Metal kernels build on it instead of
+that mirror the CPU types. The second is the shared runtime every Metal
+consumer needs, with an explicit unsafe boundary for raw shader execution.
+Jolt's and Akita's Metal kernels build on it instead of
 redefining arithmetic. The crate is prover-only and cannot enter a verifier
 dependency graph.
 
@@ -30,8 +31,8 @@ dependency graph.
 Provide MSL field types and operations for `jolt_field::solinas` whose results
 are bit-identical to the CPU implementation. The types are templated over the
 modulus, with lazy-reduction accumulators whose capacities are proved. Provide
-a safe, typed, non-panicking Rust runtime for compiling, dispatching, and
-reading back kernels that use them.
+a typed, non-panicking Rust runtime for compilation and checked readback,
+with an unsafe raw-dispatch API whose caller establishes kernel memory safety.
 
 Key abstractions:
 
@@ -54,8 +55,10 @@ Key abstractions:
   - a stable host-name suffix, for example `fp128_a7f7`;
   - the device word layout;
   - a checked read-back conversion.
-- **Runtime** (`jolt_metal::runtime`). This is a thin safe layer over
-  `objc2-metal`. Its pieces are `Device`, `ShaderLibrary` (source assembly and
+- **Runtime** (`jolt_metal::runtime`). This is a thin layer over
+  `objc2-metal`. Compilation and checked readback are safe; raw dispatch is
+  unsafe because reflection cannot establish shader access bounds or aliasing.
+  Its pieces are `Device`, `ShaderLibrary` (source assembly and
   explicit template instantiation), `Pipeline`, `DeviceBuffer<T>`, `Batch`
   (encode, commit, wait, classify errors), and `MetalError`.
 
@@ -91,6 +94,10 @@ Key abstractions:
 6. **Checked read-back.** A device buffer becomes `&[F]` or `Vec<F>` only
    through a conversion that verifies canonical form. The check costs one
    comparison per element. Unchecked reinterpretation is not public API.
+   Host views and further submissions are rejected for bound buffers when GPU
+   completion is uncertain, including after a caught submission exception.
+   This restriction is enforced by buffer state, even if the caller ignores
+   the error.
 7. **Accumulator capacity.** Every accumulator's `CAPACITY` is checked by a
    test at exactly `CAPACITY` worst-case terms (all inputs `p − 1`, or
    `u64::MAX` for scalar terms). Any kernel that accumulates more terms than
@@ -231,8 +238,10 @@ Criterion benchmarks (`crates/jolt-metal/benches/fp128.rs`) per field:
   registers, and an inner product whose products are accumulated unreduced
   and summed by `threadgroup_merge` (step 3).
 
-GPU samples are GPU execution time from the command buffer's timestamps
-(`Batch::commit_and_wait` returns it), which excludes host submission. The
+GPU kernel samples use execution time from the command buffer's timestamps
+(`Batch::commit_and_wait` returns it), which excludes host submission. Inner
+products additionally report complete wall time including submission, checked
+readback, and the CPU sum of partials; inputs are already resident. The
 CPU baseline is `jolt_field` on all cores with rayon and the `asm` multiply
 Akita's prover uses. The packed NEON `Fp128` multiplies lane by lane through
 that same scalar path, so it is not a separate baseline. Every kernel's output
@@ -267,8 +276,10 @@ mode), time of `ulong2` relative to `uint4`:
 
 `uint4` is kept. Streaming `mul` ties because at 2^24 both reach about
 430 GB/s, near the memory bandwidth. Every pipeline reported 1024 maximum
-threads per threadgroup, so neither layout limits occupancy through register
-pressure.
+threads per threadgroup. This is a dispatch limit; it does not establish equal
+register use, spilling, or achieved occupancy. The timings support the layout
+choice on this device. Attributing the difference to occupancy requires
+profiling evidence and a sweep of actual threadgroup sizes.
 
 The same run changed `square`. The triangular cross-product loop ported
 first ran at 29 G/s, slower than `a * a` at 45 G/s. Written out, with each
@@ -539,8 +550,9 @@ together with #1848.
      `MslType`, named by `host_name::<T>(template)`) and `ShaderLibrary`
      (eager pipelines with reflected buffer arguments);
    - `DeviceBuffer<T>` (`from_slice`, `zeroed`, and checked `read`);
-   - `Batch`, `Binding`, and `Grid`: every dispatch is checked against the
-     kernel's reflected signature before encoding;
+   - `Batch`, `Binding`, and `Grid`: `dispatch_unchecked` checks the kernel's
+     reflected signature before encoding, but its unsafe caller must establish
+     access bounds, permitted aliasing, and shader synchronization;
    - `MetalError` / `ErrorClass` with `MTLCommandBufferError` mapping;
    - an uninhabited non-macOS backend;
    - the dependency-graph check in Jolt CI, the macOS probe job, and the

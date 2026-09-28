@@ -22,15 +22,23 @@ def results(root):
         meta = json.loads(meta_path.read_text())
         estimates = json.loads((meta_path.parent / "estimates.json").read_text())
         parts = meta["full_id"].split("/")
-        sides = [i for i, part in enumerate(parts) if part in ("gpu", "cpu")]
+        modes = {
+            "gpu": ("gpu", ""),
+            "cpu": ("cpu", ""),
+            "gpu_partials": ("gpu", "/partial_kernel"),
+            "gpu_complete_wall": ("gpu", "/complete_wall"),
+            "cpu_complete_wall": ("cpu", "/complete_wall"),
+        }
+        sides = [i for i, part in enumerate(parts) if part in modes]
         if len(sides) != 1:
             continue
         side = sides[0]
-        group = "/".join(parts[:side])
+        device, timing = modes[parts[side]]
+        group = "/".join(parts[:side]) + timing
         case = "/".join(parts[side + 1 :])
         nanoseconds = estimates["median"]["point_estimate"]
         rate = meta["throughput"]["Elements"] / nanoseconds
-        table.setdefault((group, case), {})[parts[side]] = rate
+        table.setdefault((group, case), {})[device] = rate
     return table
 
 
@@ -39,6 +47,10 @@ def main():
     table = results(root)
     if not table:
         sys.exit(f"error: no fp128 benchmark results under {root}")
+    print("Inner products: `partial_kernel` measures GPU partial reduction only; "
+          "`complete_wall` includes submission, readback, and the CPU sum of partials, "
+          "with inputs already resident. Only complete results are compared with CPU times.")
+    print()
     print("| benchmark | case | GPU (G/s) | CPU (G/s) | GPU / CPU |")
     print("|---|---|---:|---:|---:|")
     for (group, case), rates in sorted(table.items()):

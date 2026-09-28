@@ -193,7 +193,8 @@ mod metal {
                         Binding::buffer(out),
                     ]
                 };
-                dispatch(device, pipeline, &bindings, grid, 1)
+                // SAFETY: inputs cover all kernel reads; distinct output covers each thread or one partial per whole 256-thread group.
+                unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
             };
             let cpu_all = || -> Vec<F> {
                 a.par_iter()
@@ -249,7 +250,8 @@ mod metal {
                             Binding::buffer(out),
                         ]
                     };
-                    dispatch(device, pipeline, &bindings, grid, 1)
+                    // SAFETY: inputs cover all kernel reads; distinct output covers each thread or one partial per whole 256-thread group.
+                    unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 };
                 let cpu = |cpu_out: &mut [F]| {
                     cpu_out
@@ -313,7 +315,8 @@ mod metal {
                     Binding::value(&n),
                     Binding::buffer(partials),
                 ];
-                dispatch(device, pipeline, &bindings, grid, 1)
+                // SAFETY: inputs cover all kernel reads; distinct output covers each thread or one partial per whole 256-thread group.
+                unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
             };
             run(&partials);
             let gpu_sum = read(&mut partials)
@@ -323,10 +326,21 @@ mod metal {
 
             let size = format!("2^{log}");
             group.throughput(Throughput::Elements(len as u64));
-            group.bench_function(BenchmarkId::new("gpu", &size), |bench| {
+            group.bench_function(BenchmarkId::new("gpu_partials", &size), |bench| {
                 bench.iter_custom(|iters| gpu_time(iters, || run(&partials)));
             });
-            group.bench_function(BenchmarkId::new("cpu", &size), |bench| {
+            group.bench_function(BenchmarkId::new("gpu_complete_wall", &size), |bench| {
+                bench.iter(|| {
+                    run(&partials);
+                    partials
+                        .read()
+                        .expect("canonical partials")
+                        .iter()
+                        .copied()
+                        .fold(F::zero(), |x, y| x + y)
+                });
+            });
+            group.bench_function(BenchmarkId::new("cpu_complete_wall", &size), |bench| {
                 bench.iter(|| cpu(&a, &b));
             });
         }
@@ -413,7 +427,8 @@ mod metal {
             let grid = Grid::linear(CHAIN_THREADS, threadgroup(pipeline));
             let run = |out: &DeviceBuffer<F>| {
                 let bindings = [Binding::buffer(&a_dev), second, Binding::buffer(out)];
-                dispatch(device, pipeline, &bindings, grid, 1)
+                // SAFETY: inputs cover all kernel reads; distinct output covers each thread or one partial per whole 256-thread group.
+                unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
             };
             let cpu_all = || -> Vec<F> { (0..CHAIN_THREADS).into_par_iter().map(cpu).collect() };
             run(&out);

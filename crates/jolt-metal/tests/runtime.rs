@@ -92,21 +92,25 @@ mod gpu {
             Binding::buffer(&b_dev),
             Binding::buffer(&out),
         ];
-        batch
-            .dispatch(pipeline64, &bindings, Grid::linear(LEN, group(pipeline64)))
-            .unwrap();
+        // SAFETY: every lane accesses its same in-bounds index in LEN-element buffers.
+        unsafe {
+            batch.dispatch_unchecked(pipeline64, &bindings, Grid::linear(LEN, group(pipeline64)))
+        }
+        .unwrap();
         let bindings32 = [
             Binding::buffer(&a32_dev),
             Binding::buffer(&b32_dev),
             Binding::buffer(&out32),
         ];
-        batch
-            .dispatch(
+        // SAFETY: every lane accesses its same in-bounds index in LEN-element buffers.
+        unsafe {
+            batch.dispatch_unchecked(
                 pipeline32,
                 &bindings32,
                 Grid::linear(LEN, group(pipeline32)),
             )
-            .unwrap();
+        }
+        .unwrap();
         let _ = batch.commit_and_wait().unwrap();
 
         let expected: Vec<u64> = a.iter().zip(&b).map(|(x, y)| x.wrapping_add(*y)).collect();
@@ -137,13 +141,16 @@ mod gpu {
             Binding::buffer(&a_dev),
             Binding::buffer(&sum),
         ];
-        batch.dispatch(pipeline, &first, grid).unwrap();
+        // SAFETY: both dispatches access only their same in-bounds lane in
+        // LEN-element buffers, and serial dispatch order synchronizes them.
+        unsafe { batch.dispatch_unchecked(pipeline, &first, grid) }.unwrap();
         let second = [
             Binding::buffer(&sum),
             Binding::buffer(&a_dev),
             Binding::buffer(&triple),
         ];
-        batch.dispatch(pipeline, &second, grid).unwrap();
+        // SAFETY: justified with the preceding dispatch.
+        unsafe { batch.dispatch_unchecked(pipeline, &second, grid) }.unwrap();
         let submitted = Instant::now();
         let gpu_time = batch.commit_and_wait().unwrap();
         let wall_time = submitted.elapsed();
@@ -213,7 +220,9 @@ mod gpu {
             ),
         ];
         for (bindings, grid, reason) in &rejected {
-            let error = fault(batch.dispatch(pipeline, bindings, *grid));
+            // SAFETY: none of these rejected calls reaches shader execution;
+            // the valid-shape cases bind 64-element buffers for 64 lanes.
+            let error = fault(unsafe { batch.dispatch_unchecked(pipeline, bindings, *grid) });
             assert!(
                 matches!(&error, MetalError::InvalidDispatch { .. })
                     && error.to_string().contains(reason),
@@ -229,7 +238,8 @@ mod gpu {
             Binding::buffer(&ones),
             Binding::buffer(&out),
         ];
-        batch.dispatch(pipeline, &valid, grid).unwrap();
+        // SAFETY: every lane accesses its same in-bounds index in 64-element buffers.
+        unsafe { batch.dispatch_unchecked(pipeline, &valid, grid) }.unwrap();
         let _ = batch.commit_and_wait().unwrap();
         assert_eq!(out.read().unwrap(), [2u32; 64]);
     }
@@ -247,8 +257,8 @@ mod gpu {
         for (value, valid) in [(1u8, true), (2u8, false)] {
             let mut batch = Batch::new(&device).unwrap();
             let bindings = [Binding::buffer(&flags), Binding::value(&value)];
-            batch
-                .dispatch(pipeline, &bindings, Grid::linear(100, 32))
+            // SAFETY: every lane writes its same in-bounds byte in `flags`.
+            unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(100, 32)) }
                 .unwrap();
             let _ = batch.commit_and_wait().unwrap();
             match flags.read() {
@@ -341,9 +351,8 @@ mod gpu {
             Binding::buffer(&empty),
             Binding::buffer(&out),
         ];
-        batch
-            .dispatch(pipeline, &bindings, Grid::linear(0, 1))
-            .unwrap();
+        // SAFETY: the zero-thread grid executes no memory access.
+        unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(0, 1)) }.unwrap();
         let _ = batch.commit_and_wait().unwrap();
         assert!(out.read().unwrap().is_empty());
         // A batch dropped without committing runs nothing and must not raise.
