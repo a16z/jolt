@@ -430,21 +430,6 @@ impl ElfAnalyzer {
                 _ => panic!("Not happen"),
             };
 
-            /*
-            println!("");
-            println!("Section:{:X}", _i);
-            println!("sh_name:{:X}", sh_name);
-            println!("sh_type:{:X}", sh_type);
-            println!("sh_flags:{:X}", sh_flags);
-            println!("sh_addr:{:X}", sh_addr);
-            println!("sh_offset:{:X}", sh_offset);
-            println!("sh_size:{:X}", sh_size);
-            println!("sh_link:{:X}", sh_link);
-            println!("sh_info:{:X}", sh_info);
-            println!("sh_addralign:{:X}", sh_addralign);
-            println!("sh_entsize:{:X}", sh_entsize);
-            */
-
             headers.push(SectionHeader {
                 sh_name,
                 sh_type,
@@ -529,17 +514,6 @@ impl ElfAnalyzer {
                     }
                     _ => panic!("No happen"),
                 };
-
-                /*
-                println!("Symbol: {}", _j);
-                println!("st_name: {:X}", st_name);
-                println!("st_info: {:X}", st_info);
-                println!("st_other: {:X}", _st_other);
-                println!("st_shndx: {:X}", _st_shndx);
-                println!("st_value: {:X}", st_value);
-                println!("st_size: {:X}", _st_size);
-                println!("");
-                */
 
                 entries.push(SymbolEntry {
                     st_name,
