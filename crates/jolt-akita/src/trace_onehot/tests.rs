@@ -10,17 +10,26 @@ use std::sync::Arc;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_prover::backend::OneHotBatchView;
-use akita_prover::compute::{
-    DecomposeFoldPlan, OpeningFoldKernel, OpeningFoldPlan, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPlan,
+use akita_prover::commitment::{
+    compile_commitment_request, BackendKindId, CommitmentRequestCapabilities, CommitmentSource,
+    OneHotIndexWidth, OneHotType, PolynomialType,
 };
-use akita_prover::{CpuBackend, OneHotPoly, RootOpeningSource, RootPolyMeta, RootPolyShape};
+use akita_prover::compute::{
+    CommitInnerPlan, DecomposeFoldPlan, OpeningFoldKernel, OpeningFoldPlan,
+    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPlan,
+};
+use akita_prover::{
+    AkitaProverSetup, ComputeBackendSetup, CpuBackend, OneHotPoly, RootOpeningSource, RootPolyMeta,
+    RootPolyShape,
+};
 use akita_types::{
-    BasisMode, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+    BasisMode, PreparedSubringCoefficientPackingPoint, SetupMatrixCapacity,
+    SubringCoefficientPackingGeometry,
 };
 use jolt_field::{Fp128x8i32, One, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::commit::commit_packed;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
 use super::source::{TracePackedOneHotBatchView, TracePackedOneHotView};
 use crate::AkitaField;
@@ -480,6 +489,77 @@ fn blockwise_opening_kernels_match_materialized_onehot() {
     assert_opening_kernels_match_materialized::<64>(256, 32, 16, Some(1));
     assert_opening_kernels_match_materialized::<64>(16, 32, 4, Some(1));
 }
+
+#[test]
+fn small_k256_blocks_commit_like_materialized_onehot() {
+    const D: usize = 64;
+    const K: usize = 256;
+    const ROWS: usize = 32;
+    const COLUMNS: usize = 3;
+    const CAPACITY: usize = 4;
+    const POSITIONS_PER_BLOCK: usize = 2;
+    let source = TracePackedOneHot::new(
+        K,
+        D,
+        CAPACITY,
+        Arc::new(TestRows {
+            rows: ROWS,
+            columns: COLUMNS,
+            k: K,
+            committed_zero_column: None,
+        }),
+    )
+    .unwrap();
+    let packed_indices = (0..CAPACITY)
+        .flat_map(|column| {
+            (0..ROWS).map(move |row| {
+                let selected_row = ((row * (2 * column + 1) + column) % K) as u8;
+                (column < COLUMNS && selected_row != 0).then_some(selected_row)
+            })
+        })
+        .collect();
+    let materialized_source = OneHotPoly::<AkitaField, u8>::new(K, packed_indices).unwrap();
+    let setup = AkitaProverSetup::<AkitaField>::generate_with_capacity(
+        1,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: D * POSITIONS_PER_BLOCK,
+        },
+    )
+    .unwrap();
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend.prepare_setup(&setup).unwrap();
+    let plan = CommitInnerPlan {
+        ring_dimension: D,
+        num_live_blocks: RootPolyShape::<AkitaField, D>::num_ring_elems(&source)
+            / POSITIONS_PER_BLOCK,
+        n_a: 1,
+        num_positions_per_block: POSITIONS_PER_BLOCK,
+        num_digits_inner: 1,
+        log_basis_inner: 1,
+    };
+
+    let streamed = commit_packed::<D>(&backend, &prepared, &source, plan).unwrap();
+    let source_refs: [&dyn CommitmentSource<AkitaField>; 1] = [&materialized_source];
+    let capabilities = CommitmentRequestCapabilities::split::<()>(
+        BackendKindId::of::<MaterializedOneHotTestBackend>("materialized-one-hot-test").unwrap(),
+        vec![PolynomialType::OneHot(
+            OneHotType::new(K, OneHotIndexWidth::U8).unwrap(),
+        )],
+    );
+    let resolved = compile_commitment_request(&plan, &source_refs, &capabilities)
+        .unwrap()
+        .materialize()
+        .unwrap();
+    let materialized = backend
+        .commit_resolved_inner_host::<AkitaField, D>(&prepared, &resolved, plan)
+        .unwrap()
+        .remove(0);
+
+    assert_eq!(streamed.inner_rows, materialized.inner_rows);
+}
+
+struct MaterializedOneHotTestBackend;
 
 #[derive(Debug)]
 struct CountingRows {

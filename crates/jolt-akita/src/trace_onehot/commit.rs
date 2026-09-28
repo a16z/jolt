@@ -86,6 +86,7 @@ pub(super) fn commit_packed<const D: usize>(
                 let ring_end = block_ring_start + part_end;
                 let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
                     && source.one_hot_k == 256
+                    && plan.num_positions_per_block >= source.one_hot_k / D
                     && num_columns <= u32::BITS as usize;
                 let mut wide = if rank_tiled_k256 || source.one_hot_k < D {
                     Vec::new()
