@@ -333,7 +333,6 @@ pub struct Cpu {
     reservation: u64,
     is_reservation_set: bool,
     reservation_width: ReservationWidth,
-    _dump_flag: bool,
     unsigned_data_mask: u64,
     pub trace_len: usize,
     executed_instrs: u64, // "real" RV64IMAC cycles
@@ -460,7 +459,6 @@ impl Cpu {
             reservation: 0,
             is_reservation_set: false,
             reservation_width: ReservationWidth::Word,
-            _dump_flag: false,
             unsigned_data_mask: 0xffffffffffffffff,
             trace_len: 0,
             executed_instrs: 0,
@@ -1181,7 +1179,6 @@ impl Cpu {
             reservation: self.reservation,
             is_reservation_set: self.is_reservation_set,
             reservation_width: self.reservation_width,
-            _dump_flag: self._dump_flag,
             unsigned_data_mask: self.unsigned_data_mask,
             trace_len: self.trace_len,
             executed_instrs: self.executed_instrs,
@@ -1217,7 +1214,6 @@ impl Cpu {
             is_reservation_set,
             reservation_width,
             // Constants, re-established by worker construction.
-            _dump_flag: _,
             unsigned_data_mask: _,
             trace_len,
             executed_instrs,
