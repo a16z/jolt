@@ -278,15 +278,13 @@ where
     // packing-weight multiplication per coefficient instead of per nonzero.
     let span = positions_per_block.min(segment_rings);
     let spans = segment_rings / span;
-    let ring_alignment = (source.one_hot_k / D).max(1);
-    let parts = trace_block_task_parts::<D>(source.one_hot_k, span, spans);
-    let partials = (0..spans * parts)
+    let schedule = trace_block_task_schedule::<D>(source.one_hot_k, span, spans);
+    let partials = (0..spans * schedule.parts)
         .into_par_iter()
         .map(|task| {
-            let (part_start, part_end) =
-                trace_block_part_range(span, ring_alignment, task % parts, parts);
-            let ring_start = task / parts * span + part_start;
-            let ring_end = task / parts * span + part_end;
+            let (part_start, part_end) = schedule.part_range(task % schedule.parts);
+            let ring_start = task / schedule.parts * span + part_start;
+            let ring_end = task / schedule.parts * span + part_end;
             let first_positions = (0..num_columns)
                 .map(|column| (column * segment_rings + ring_start) % positions_per_block)
                 .collect::<Vec<_>>();
@@ -384,30 +382,39 @@ pub(super) fn validate_block_geometry(
     Ok((total_rings, total_rings.div_ceil(num_positions)))
 }
 
-pub(super) fn trace_block_task_parts<const D: usize>(
+pub(super) struct TraceBlockTaskSchedule {
+    num_positions: usize,
+    ring_alignment: usize,
+    pub(super) parts: usize,
+}
+
+impl TraceBlockTaskSchedule {
+    pub(super) fn part_range(&self, part: usize) -> (usize, usize) {
+        debug_assert!(part < self.parts);
+        let aligned_positions = self.num_positions / self.ring_alignment;
+        (
+            part * aligned_positions / self.parts * self.ring_alignment,
+            (part + 1) * aligned_positions / self.parts * self.ring_alignment,
+        )
+    }
+}
+
+pub(super) fn trace_block_task_schedule<const D: usize>(
     one_hot_k: usize,
     num_positions: usize,
     blocks_per_column: usize,
-) -> usize {
-    let ring_alignment = (one_hot_k / D).max(1);
+) -> TraceBlockTaskSchedule {
+    debug_assert!(num_positions > 0);
+    debug_assert!(blocks_per_column > 0);
+    let ring_alignment = (one_hot_k / D).max(1).min(num_positions);
     debug_assert_eq!(num_positions % ring_alignment, 0);
     let max_parts = num_positions / ring_alignment;
     let target_tasks = rayon::current_num_threads()
         .saturating_mul(TASKS_PER_RAYON_WORKER)
         .max(1);
-    target_tasks.div_ceil(blocks_per_column).clamp(1, max_parts)
-}
-
-pub(super) fn trace_block_part_range(
-    num_positions: usize,
-    ring_alignment: usize,
-    part: usize,
-    parts: usize,
-) -> (usize, usize) {
-    debug_assert_eq!(num_positions % ring_alignment, 0);
-    let aligned_positions = num_positions / ring_alignment;
-    (
-        part * aligned_positions / parts * ring_alignment,
-        (part + 1) * aligned_positions / parts * ring_alignment,
-    )
+    TraceBlockTaskSchedule {
+        num_positions,
+        ring_alignment,
+        parts: target_tasks.div_ceil(blocks_per_column).clamp(1, max_parts),
+    }
 }

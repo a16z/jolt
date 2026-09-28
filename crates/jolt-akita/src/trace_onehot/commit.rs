@@ -8,9 +8,9 @@ use rayon::prelude::*;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
 use super::source::TracePackedOneHot;
 use super::traversal::{
-    flush_deferred_rank, flush_wide, row_is_committed, trace_block_part_range,
-    trace_block_task_parts, validate_block_geometry, visit_segment_ring_range,
-    visit_segment_ring_row_range, DeferredFp128Ring,
+    flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
+    validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
+    DeferredFp128Ring,
 };
 use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
 use crate::AkitaField;
@@ -58,36 +58,30 @@ pub(super) fn commit_packed<const D: usize>(
             blocks_per_column * plan.num_positions_per_block,
             segment_rings
         );
-        let parts = trace_block_task_parts::<D>(
+        let schedule = trace_block_task_schedule::<D>(
             source.one_hot_k,
             plan.num_positions_per_block,
             blocks_per_column,
         );
-        let ring_alignment = (source.one_hot_k / D).max(1);
         let num_columns = source.rows.num_columns();
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate",
             num_blocks,
             blocks_per_column,
-            task_parts = parts,
-            tasks = blocks_per_column * parts,
+            task_parts = schedule.parts,
+            tasks = blocks_per_column * schedule.parts,
             active_columns = num_columns,
             rows_per_ring = D / source.one_hot_k,
         )
         .entered();
-        let partials = (0..blocks_per_column * parts)
+        let partials = (0..blocks_per_column * schedule.parts)
             .into_par_iter()
             .map(|task| {
-                let trace_block = task / parts;
-                let part = task % parts;
+                let trace_block = task / schedule.parts;
+                let part = task % schedule.parts;
                 let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let block_ring_start = trace_block * plan.num_positions_per_block;
-                let (part_start, part_end) = trace_block_part_range(
-                    plan.num_positions_per_block,
-                    ring_alignment,
-                    part,
-                    parts,
-                );
+                let (part_start, part_end) = schedule.part_range(part);
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
                 let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
@@ -245,15 +239,15 @@ pub(super) fn commit_packed<const D: usize>(
             "trace_onehot_commit_merge_partials",
             num_blocks,
             blocks_per_column,
-            task_parts = parts,
+            task_parts = schedule.parts,
             active_columns = num_columns,
             n_a = plan.n_a,
         )
         .entered();
         let mut rows = vec![vec![CyclotomicRing::zero(); plan.n_a]; num_blocks];
         for (task, block_rows) in partials.into_iter().enumerate() {
-            let trace_block = task / parts;
-            let part = task % parts;
+            let trace_block = task / schedule.parts;
+            let part = task % schedule.parts;
             for column in 0..num_columns {
                 let dst = &mut rows[column * blocks_per_column + trace_block];
                 let src = &block_rows[column * plan.n_a..(column + 1) * plan.n_a];

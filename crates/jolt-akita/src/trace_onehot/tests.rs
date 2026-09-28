@@ -465,6 +465,7 @@ fn d128_auto_uses_compact_rotations() {
 #[test]
 fn blockwise_opening_kernels_match_materialized_onehot() {
     assert_opening_kernels_match_materialized::<64>(256, 32, 16, None);
+    assert_opening_kernels_match_materialized::<64>(256, 32, 1, None);
     assert_opening_kernels_match_materialized::<128>(256, 32, 16, None);
     assert_opening_kernels_match_materialized::<256>(256, 32, 16, None);
     assert_opening_kernels_match_materialized::<512>(256, 32, 8, None);
