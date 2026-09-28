@@ -275,10 +275,6 @@ impl OptimizationObjective {
         }
     }
 
-    pub fn is_perf(&self) -> bool {
-        matches!(self, Self::Performance(_))
-    }
-
     /// Parses a string-keyed objective (`telemetry:...` / `callgrind:...`).
     /// Returns `None` for keys outside the two grammars, `Some(Err)` for a
     /// malformed key inside them.

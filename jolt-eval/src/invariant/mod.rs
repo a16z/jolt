@@ -12,7 +12,6 @@ use std::fmt;
 
 use arbitrary::Arbitrary;
 use enumset::{EnumSet, EnumSetType};
-use rand::RngCore;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -196,10 +195,6 @@ impl JoltInvariants {
         dispatch!(self, |inv| InvariantTargets::targets(inv))
     }
 
-    pub fn run_checks(&self, num_random: usize) -> Vec<Result<(), InvariantViolation>> {
-        dispatch!(self, |inv| run_checks_impl(inv, num_random))
-    }
-
     pub fn red_team(
         &self,
         config: &synthesis::redteam::RedTeamConfig,
@@ -210,36 +205,6 @@ impl JoltInvariants {
             inv, config, agent, repo_dir
         ))
     }
-}
-
-fn run_checks_impl<I: Invariant>(
-    inv: &I,
-    num_random: usize,
-) -> Vec<Result<(), InvariantViolation>> {
-    let setup = inv.setup();
-    let mut results = Vec::new();
-
-    let mut record = |r: Result<(), CheckError>| match r {
-        Ok(()) => results.push(Ok(())),
-        Err(CheckError::Violation(v)) => results.push(Err(v)),
-        Err(CheckError::InvalidInput(_)) => {}
-    };
-
-    for input in inv.seed_corpus() {
-        record(inv.check(&setup, input));
-    }
-
-    let mut rng = rand::thread_rng();
-    for _ in 0..num_random {
-        let mut raw = vec![0u8; 4096];
-        rng.fill_bytes(&mut raw);
-        let mut u = arbitrary::Unstructured::new(&raw);
-        if let Ok(input) = I::Input::arbitrary(&mut u) {
-            record(inv.check(&setup, input));
-        }
-    }
-
-    results
 }
 
 /// Record of a red-team attempt that failed to find a violation.
