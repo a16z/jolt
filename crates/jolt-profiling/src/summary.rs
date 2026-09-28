@@ -3,8 +3,7 @@
 //! One span stream, two renderings: [`finalize_trace`] parses the
 //! `tracing-chrome` output after the flush guard drops, rewrites the
 //! `counters.*` monitor events into native chrome counter events
-//! (`"ph": "C"` — `tracing-chrome` cannot emit them itself, which is what
-//! previously forced the offline `postprocess_trace.py` step), writes the
+//! (`"ph": "C"` — `tracing-chrome` cannot emit them itself), writes the
 //! trace back, and aggregates the same events into
 //! `summary.json` next to the trace. Both artifacts therefore derive from one
 //! event stream by construction.

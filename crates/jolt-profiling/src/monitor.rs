@@ -2,8 +2,8 @@
 //!
 //! Spawns a thread that periodically samples CPU usage, memory, active cores,
 //! and thread count. Metrics are emitted as `tracing::debug!` events with
-//! structured `counters.*` fields, compatible with the Perfetto postprocessing
-//! script (`scripts/postprocess_trace.py`).
+//! structured `counters.*` fields; `summary::finalize_trace` rewrites them
+//! into native Perfetto counter tracks at flush.
 
 use memory_stats::memory_stats;
 use std::sync::atomic::{AtomicBool, Ordering};
