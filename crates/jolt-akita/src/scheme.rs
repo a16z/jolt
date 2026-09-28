@@ -533,12 +533,7 @@ impl CommitmentScheme for AkitaScheme {
             prepared_one_hot_backend_setup,
             one_hot_backend_verifier_setup,
         ) = if params.max_num_vars >= one_hot_log_k && params.flavor != AkitaSetupFlavor::Dense {
-            let backend_prover_setup = crate::adapters::one_hot_setup_prover(
-                &verifier,
-                params.max_num_vars,
-                params.max_total_batch_polys,
-            )
-            .map_err(invalid_setup)?;
+            let backend_prover_setup = crate::adapters::one_hot_setup_prover(&verifier)?;
             let prepared_backend_setup =
                 with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&backend_prover_setup))
                     .map_err(invalid_setup)?;
