@@ -47,6 +47,7 @@ pub mod ram_ra_virtualization;
 pub mod ram_raf_evaluation;
 pub mod ram_read_write;
 pub mod ram_val_check;
+mod read_write;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;
@@ -107,7 +108,7 @@ where
             registers_claim_reduction: Box::new(ReferenceBackend),
             registers_read_write: Box::new(ReferenceBackend),
             ram_val_check: Box::new(ReferenceBackend),
-            advice_opening: Box::new(ReferenceBackend),
+            ram_initial_openings: Box::new(ReferenceBackend),
             instruction_read_raf: Box::new(ReferenceBackend),
             ram_ra_claim_reduction: Box::new(ReferenceBackend),
             registers_val_evaluation: Box::new(ReferenceBackend),

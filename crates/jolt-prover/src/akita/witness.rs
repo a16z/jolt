@@ -259,9 +259,10 @@ pub struct AdviceObject<PCS: CommitmentScheme> {
 }
 
 /// Builds the canonical zero-padded advice-word commitment. The setup
-/// is derived from the public advice shape with the same fixed seed on both
-/// sides (the setup is transparent).
+/// is derived from the application-owned immutable setup context plus the
+/// public advice shape (the setup is transparent).
 pub fn commit_advice<PCS>(
+    setup_context: &PCS::SetupContext,
     kind: JoltAdviceKind,
     advice_bytes: &[u8],
     max_advice_bytes: usize,
@@ -274,8 +275,9 @@ where
     let word_vars = words.len().ilog2() as usize;
     let plan = advice_packing_plan(kind, word_vars).map_err(commit_failed)?;
     let physical_vars = plan.packing().packed_num_vars();
-    let (setup, _) = PCS::transparent_object_setup(physical_vars, plan.layout_digest())
-        .map_err(commit_failed)?;
+    let (setup, _) =
+        PCS::transparent_object_setup(setup_context, physical_vars, plan.layout_digest())
+            .map_err(commit_failed)?;
     let mut evaluations = vec![PCS::Field::default(); 1usize << physical_vars];
     for (evaluation, word) in evaluations.iter_mut().zip(words) {
         *evaluation = PCS::Field::from_u64(word);
@@ -317,6 +319,7 @@ pub struct DirectProgramObjects<PCS: CommitmentScheme> {
 
 /// Assembles and commits the direct bytecode chunks and program-image object.
 pub fn commit_direct_program<PCS>(
+    setup_context: &PCS::SetupContext,
     program: &JoltProgramPreprocessing,
     bytecode_chunk_count: usize,
     trace_order: TracePolynomialOrder,
@@ -372,9 +375,13 @@ where
                     .map_err(commit_failed)?
                     .0
             } else {
-                PCS::transparent_object_setup(physical_vars, object_plan.layout_digest())
-                    .map_err(commit_failed)?
-                    .0
+                PCS::transparent_object_setup(
+                    setup_context,
+                    physical_vars,
+                    object_plan.layout_digest(),
+                )
+                .map_err(commit_failed)?
+                .0
             };
             let (commitment, hint) = PCS::commit(&witness, &setup).map_err(commit_failed)?;
             let _ = setups.entry(physical_vars).or_insert_with(|| setup.clone());

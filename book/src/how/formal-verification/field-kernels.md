@@ -9,6 +9,10 @@ expected bytes. The proof does not cover every inlined caller or a downstream
 executable. This chapter explains the exact claim, its connection to Rust, and
 its limits.
 
+This page focuses on `Prime128OffsetA7F7`. The
+[scalar Fp64 page](field-kernels-fp64.md) describes the separate
+`Prime64Offset59` proofs.
+
 The `jolt-field/asm` feature opts into these architecture kernels. A `solinas`
 build without `asm` uses portable Rust even on AArch64 and x86-64. The
 inspection-only `fp128-proof-linkage` feature implies `asm`.
@@ -423,11 +427,12 @@ The result relies on the following assumptions.
 
 Jolt owns the kernel, theorem, proof object, and inspection witness. This
 does not yet prove every executable that depends on Jolt. In particular, the
-current legacy `akita` feature in `jolt-prover` still reaches the external
-Akita field implementation instead of `Prime128OffsetA7F7`. These theorems do
-not cover that path. The final cutover must route the production prover or
-verifier through this field type and inspect that final binary before making
-a claim about the complete production path.
+`akita` path (`jolt-akita` and the `akita` feature of `jolt-prover`) now uses the shared `jolt_field::Fp128` at
+`Prime128OffsetA7F7`, but it enables only `jolt-field/solinas`, not `asm`, so
+it runs the portable Rust bodies rather than the proved kernels. These
+theorems do not cover that path. A production rollout must forward `asm` from
+the product's feature configuration and inspect that final binary before
+making a claim about the complete production path.
 
 ## Running the checks
 

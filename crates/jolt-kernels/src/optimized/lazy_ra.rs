@@ -165,7 +165,13 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                         source,
                     }
                 } else {
-                    Self::Dense(materialize(&tables, &source, width * 2))
+                    let log_t = source.cycles().ilog2() as usize;
+                    let dense = Self::Dense(materialize(&tables, &source, width * 2));
+                    // Return branch tables and the final shared index handle.
+                    drop(tables);
+                    drop(source);
+                    crate::mem::purge_retained_memory(log_t);
+                    dense
                 }
             }
             Self::Dense(mut polys) => {

@@ -15,6 +15,7 @@ use jolt_witness::{JoltWitnessPlane, RowSource};
 
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
+pub mod preprocessing;
 mod prover;
 mod setup;
 pub use setup::one_hot_trace_setup_shape;
@@ -111,7 +112,7 @@ where
                 registers_claim_reduction: Box::new(ReferenceBackend),
                 registers_read_write: Box::new(ReferenceBackend),
                 ram_val_check: Box::new(ReferenceBackend),
-                advice_opening: Box::new(ReferenceBackend),
+                ram_initial_openings: Box::new(ReferenceBackend),
                 instruction_read_raf: Box::new(ReferenceBackend),
                 ram_ra_claim_reduction: Box::new(ReferenceBackend),
                 registers_val_evaluation: Box::new(ReferenceBackend),

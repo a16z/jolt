@@ -9,12 +9,11 @@ description = "Spartan + HyperKZG wrapper of the Jolt/Dory verifier (proof-size 
 workspace = true
 
 [features]
-# Real-proof fixtures for the relation tests: the legacy host toolchain
-# compiles the guest ELF, the modular prover produces the Blake3 proof.
+# Real-proof fixtures for the relation tests: the host toolchain compiles the
+# guest ELF, the modular prover produces the Blake3 proof.
 prover-fixtures = [
   "dep:jolt-prover",
-  "dep:jolt-prover-legacy",
-  "jolt-prover-legacy/host",
+  "dep:jolt-host",
   "dep:jolt-witness",
   "dep:postcard",
   "postcard/use-std",
@@ -28,9 +27,7 @@ jolt-claims = { workspace = true }
 jolt-lookup-tables = { workspace = true }
 jolt-program = { workspace = true }
 jolt-prover = { workspace = true, optional = true }
-jolt-prover-legacy = { workspace = true, optional = true, features = [
-  "minimal",
-] }
+jolt-host = { workspace = true, optional = true }
 jolt-witness = { workspace = true, optional = true }
 postcard = { workspace = true, optional = true }
 tracer = { workspace = true, optional = true }
@@ -45,6 +42,7 @@ jolt-r1cs = { path = "../jolt-r1cs" }
 jolt-sumcheck = { path = "../jolt-sumcheck" }
 jolt-transcript = { path = "../jolt-transcript", features = [
   "transcript-blake3",
+  "transcript-keccak",
 ] }
 jolt-verifier = { path = "../jolt-verifier" }
 rayon = { workspace = true }

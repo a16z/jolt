@@ -1,5 +1,5 @@
 //! The optimized joint-opening kernel: lazy grid embeddings for the stage-8
-//! batch opening, ported from the legacy prover's streaming-RLC machinery.
+//! batch opening.
 //!
 //! The reference slot materializes every opened polynomial dense over the
 //! full `2^total_vars` commitment domain — `O(polys · 2^total_vars)` field
@@ -9,24 +9,21 @@
 //! opening; `RlcSource` distributes it per constituent) and — in hiding
 //! mode — [`MultilinearPoly::evaluate`], so nothing needs the dense table.
 //! This kernel returns lazy views that answer both from compact per-cycle
-//! trace columns, the legacy techniques by name:
+//! trace columns:
 //!
-//! - **Sparse one-hot VMP** (legacy `OneHotPolynomial::vector_matrix_product`):
+//! - **Sparse one-hot VMP**:
 //!   a one-hot polynomial's fold is `result[col(idx)] += left[row(idx)]` at
 //!   the single hot grid index per cycle — `O(T)` group-free additions
 //!   instead of an `O(K · T)` dense walk over a materialized grid.
-//! - **Streaming trace columns** (legacy `StreamingRLCContext` /
-//!   `gen_from_trace`): the committed values are re-derived from one typed
-//!   witness pass ([`CommittedColumnsWitness`], the same bundle the commit
+//! - **Streaming trace columns**: the committed values are re-derived from one typed
+//!   witness pass (`CommittedColumnsWitness`, the same bundle the commit
 //!   kernel consumed) into packed per-cycle columns — `O(T)` small scalars
 //!   shared by every trace polynomial via [`Arc`], never `K × T` oracle
 //!   tables.
-//! - **Strided dense scatter** (legacy `RLCPolynomial::vector_matrix_product`,
-//!   address-major arm): a dense trace column contributes
+//! - **Strided dense scatter**: a dense trace column contributes
 //!   `result[col] += left[row] · value` at `index = t · t_stride`, covering
 //!   both coefficient orders with one placement formula.
-//! - **Precommitted block contribution** (legacy
-//!   `vmp_precommitted_contribution`): advice / committed-program tables
+//! - **Precommitted block contribution**: advice / committed-program tables
 //!   fold from their own balanced `(2^{ν_p} × 2^{σ_p})` matrix into the
 //!   grid's top-left block, `O(len)` work and space.
 //!
@@ -34,8 +31,7 @@
 //! batch opener (`combine_hints`), so no re-commit touches these views. The
 //! placement formulas are exactly the reference embeddings'
 //! (`reference::opening`); the in-module tests pin dense equality against
-//! the reference slot on a real synthetic trace, and `byte_diff` pins the
-//! full proof bytes against `jolt-prover-legacy`.
+//! the reference slot on a real synthetic trace.
 
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -53,7 +49,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, RandomAccessRows, StreamC
 use rayon::prelude::*;
 
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
-use crate::opening::JointOpeningPolynomials;
+use crate::opening::{JointOpeningPolynomials, PrecommittedOpeningTables};
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::reference::views::dense_view;
 use crate::{KernelError, OptimizedBackend, ProofSession};
@@ -81,9 +77,10 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
         _session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         polynomials: &[JoltCommittedPolynomial],
-        precommitted_tables: &BTreeMap<JoltCommittedPolynomial, Vec<F>>,
+        precommitted_tables: PrecommittedOpeningTables<'_, F>,
         grid: CommitmentGrid,
     ) -> Result<Vec<Box<dyn MultilinearPoly<F>>>, KernelError<F>> {
+        let mut precommitted_tables = precommitted_tables()?;
         if grid.total_vars < grid.log_t + grid.log_k_chunk {
             return Err(KernelError::InvalidGeometry {
                 reason: format!(
@@ -117,8 +114,8 @@ impl<F: JoltField> JointOpeningPolynomials<F> for OptimizedBackend {
             .iter()
             .map(|&polynomial| {
                 if is_block_embedded(polynomial) {
-                    let table = match precommitted_tables.get(&polynomial) {
-                        Some(table) => table.clone(),
+                    let table = match precommitted_tables.remove(&polynomial) {
+                        Some(table) => table,
                         None => dense_view(witness, final_opening_id(polynomial))?,
                     };
                     let poly = BlockOpeningPoly::new(table, grid, polynomial)?;
@@ -687,7 +684,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            &precommitted_tables,
+            Box::new(|| Ok(precommitted_tables.clone())),
             grid,
         )
         .unwrap();
@@ -696,7 +693,7 @@ mod tests {
             &mut ProofSession::default(),
             witness,
             &order,
-            &precommitted_tables,
+            Box::new(|| Ok(precommitted_tables)),
             grid,
         )
         .unwrap();

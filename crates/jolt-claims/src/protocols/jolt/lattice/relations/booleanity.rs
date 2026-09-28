@@ -49,7 +49,7 @@ impl LatticeBooleanityDimensions {
 /// bit 63. WARNING: the honest encoder only ever uses rows `0`, `1`, and
 /// `K - 1` (value `-1`), but nothing enforces that — booleanity plus the
 /// column sum pin the carry only to the full alphabet `[-K/2, K/2)`. Do not
-/// rely on the narrow set; see the range note in [`super::hamming_weight`].
+/// rely on the narrow set; see the range note in [`super::digit_zero`].
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, OutputClaims)]
 #[serde(bound(
@@ -72,7 +72,7 @@ pub struct LatticeBooleanityOutputClaims<C> {
 
 /// The base booleanity fold extended past the `Ra` families with the
 /// increment digit polynomials and the carry; the formula itself is the
-/// shared [`booleanity_output`] helper, so the two mode variants cannot
+/// shared `booleanity_output` helper, so the two mode variants cannot
 /// diverge.
 pub struct LatticeBooleanity {
     shape: LatticeBooleanityDimensions,

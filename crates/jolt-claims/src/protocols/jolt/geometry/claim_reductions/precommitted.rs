@@ -4,9 +4,8 @@
 //! chunks and the program image in committed program mode) are smaller or larger
 //! than the main trace-domain polynomials. All of them are reduced over a shared
 //! reference domain so their final openings embed consistently into the stage 8
-//! batched PCS opening. Mirrors `jolt-prover-legacy`'s
-//! `zkvm/claim_reductions/precommitted.rs`, with the Dory globals
-//! (`main_k`, `main_t`, layout, configured column count) parameter-passed.
+//! batched PCS opening. Dory layout parameters (`main_k`, `main_t`, layout,
+//! configured column count) are passed explicitly.
 
 use jolt_field::JoltField;
 

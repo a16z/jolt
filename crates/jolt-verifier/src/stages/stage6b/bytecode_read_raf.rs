@@ -109,7 +109,7 @@ fn cycle_symbolic_committed(dimensions: BytecodeReadRafDimensions) -> CycleSymbo
 /// on the address variables, so the `O(2^log_k)` fold against `eq(r_address)` runs
 /// once at construction (clear mode only) and the cycle-dependent factors are
 /// attached in [`ConcreteSumcheck::expected_output`], which it OVERRIDES to
-/// evaluate the publics once and reuse the [`expected_output_from_publics`] helper.
+/// evaluate the publics once and reuse the `expected_output_from_publics` helper.
 #[derive(Clone)]
 pub struct BytecodeReadRaf<F: JoltField> {
     symbolic: CycleSymbolic,

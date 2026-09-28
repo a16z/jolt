@@ -6,7 +6,8 @@ use super::*;
 /// must preserve the Zicsr read-before-write rule, including the special cases:
 /// `rs1 = x0` is read-only, `rd = x0` discards the old CSR value, and
 /// `rd == rs1` needs a temporary so the source bits are not overwritten before
-/// the CSR update.
+/// the CSR update. With both `rs1 = x0` and `rd = x0` the instruction has no
+/// effect and lowers to the canonical no-op.
 pub(in crate::expand) fn expand_csrrs(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
@@ -14,7 +15,10 @@ pub(in crate::expand) fn expand_csrrs(
     let virtual_reg = virtual_register_for_csr(csr).ok_or(ExpansionError::UnsupportedCsr(csr))?;
     let mut asm = ExpansionBuilder::new(*instruction);
 
-    if rs1(instruction)? == 0 {
+    if rs1(instruction)? == 0 && rd(instruction)? == 0 {
+        asm.emit_i(Kind::ADDI, reg(0), reg(0), 0);
+        return asm.finalize();
+    } else if rs1(instruction)? == 0 {
         // Read-only `csrr rd, csr`: copy the CSR virtual register to rd.
         asm.emit_i(Kind::ADDI, reg(rd(instruction)?), reg(virtual_reg), 0);
         return asm.finalize();

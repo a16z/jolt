@@ -1,13 +1,18 @@
 //! Opening-claim projection for verifier-native prover proofs.
 #[cfg(not(feature = "akita"))]
+use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::claim_reductions::increments;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::{
     self as native,
     geometry::{
         booleanity, bytecode,
+        claim_reductions::instruction as instruction_claim_reduction,
         claim_reductions::registers as registers_claim_reduction,
-        claim_reductions::{advice, instruction as instruction_claim_reduction},
+        claim_reductions::{
+            bytecode as bytecode_reduction, program_image as program_image_reduction,
+        },
         instruction, ram, registers, spartan,
         spartan::{outer_opening, outer_uniskip_opening, product_uniskip_opening},
     },
@@ -329,6 +334,9 @@ fn claim_mut_from_stage4_outputs<F: JoltField>(
         id if id == ram::val_check_advice_opening(JoltAdviceKind::Trusted) => {
             claims.ram_val_check.trusted_advice.as_mut()
         }
+        id if id == program_image_reduction::ram_val_check_contribution_opening() => {
+            claims.ram_val_check.program_image.as_mut()
+        }
         id if id == registers_val => Some(&mut claims.registers_read_write.registers_val),
         id if id == rs1_ra => Some(&mut claims.registers_read_write.rs1_ra),
         id if id == rs2_ra => Some(&mut claims.registers_read_write.rs2_ra),
@@ -384,6 +392,31 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
     stage6b: &'a mut Stage6bOutputClaims<F>,
     id: native::JoltOpeningId,
 ) -> Option<&'a mut F> {
+    for (stage, opening_claim) in stage6a.bytecode_read_raf.val_stages.iter_mut().enumerate() {
+        if id == bytecode_reduction::bytecode_val_stage_opening(stage) {
+            return Some(opening_claim);
+        }
+    }
+    if let Some(reduction) = stage6b.bytecode_reduction.as_mut() {
+        if id == bytecode_reduction::cycle_phase_intermediate_opening() {
+            if let Some(intermediate) = reduction.intermediate.as_mut() {
+                return Some(intermediate);
+            }
+        }
+        // cycle-phase-only shapes emit the final chunk claims here
+        for (chunk, opening_claim) in reduction.chunks.iter_mut().enumerate() {
+            if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {
+                return Some(opening_claim);
+            }
+        }
+    }
+    if let Some(reduction) = stage6b.program_image_reduction.as_mut() {
+        if id == program_image_reduction::cycle_phase_program_image_opening()
+            || id == program_image_reduction::final_program_image_opening()
+        {
+            return Some(&mut reduction.program_image);
+        }
+    }
     for (index, opening_claim) in stage6b.bytecode_read_raf.bytecode_ra.iter_mut().enumerate() {
         if id
             == JoltOpeningId::committed(
@@ -455,6 +488,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
         id if id == ram_inc => Some(&mut stage6b.inc_claim_reduction.ram_inc),
         #[cfg(not(feature = "akita"))]
         id if id == rd_inc => Some(&mut stage6b.inc_claim_reduction.rd_inc),
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Trusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Trusted) =>
         {
@@ -463,6 +497,7 @@ fn claim_mut_from_stage6_outputs<'a, F: JoltField>(
                 .as_mut()
                 .map(|claim| &mut claim.trusted)
         }
+        #[cfg(not(feature = "akita"))]
         id if id == advice::cycle_phase_advice_opening(JoltAdviceKind::Untrusted)
             || id == advice::final_advice_opening(JoltAdviceKind::Untrusted) =>
         {
@@ -525,15 +560,36 @@ fn claim_mut_from_stage7_outputs<F: JoltField>(
         }
     }
 
-    match id {
-        id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
-            .trusted_advice
-            .as_mut()
-            .map(|claims| &mut claims.trusted),
-        id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
-            .untrusted_advice
-            .as_mut()
-            .map(|claims| &mut claims.untrusted),
-        _ => None,
+    if let Some(address_phase) = claims.bytecode_address_phase.as_mut() {
+        for (chunk, opening) in address_phase.chunks.iter_mut().enumerate() {
+            if id == bytecode_reduction::final_bytecode_chunk_opening(chunk) {
+                return Some(opening);
+            }
+        }
+    }
+    if let Some(address_phase) = claims.program_image_address_phase.as_mut() {
+        if id == program_image_reduction::final_program_image_opening() {
+            return Some(&mut address_phase.program_image);
+        }
+    }
+
+    #[cfg(not(feature = "akita"))]
+    {
+        match id {
+            id if id == advice::final_advice_opening(JoltAdviceKind::Trusted) => claims
+                .trusted_advice
+                .as_mut()
+                .map(|claims| &mut claims.trusted),
+            id if id == advice::final_advice_opening(JoltAdviceKind::Untrusted) => claims
+                .untrusted_advice
+                .as_mut()
+                .map(|claims| &mut claims.untrusted),
+            _ => None,
+        }
+    }
+    #[cfg(feature = "akita")]
+    {
+        let _ = id;
+        None
     }
 }

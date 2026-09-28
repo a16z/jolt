@@ -138,7 +138,7 @@ fn akita_proof_payloads_reject_unknown_serialized_fields() {
 }
 
 #[test]
-fn akita_forged_shape_metadata_rejects_before_shape_backed_allocation() {
+fn akita_forged_commitment_metadata_rejects_before_shape_backed_allocation() {
     let (verifier_setup, statement, proof) = native_proof_fixture(b"akita-forged-metadata");
 
     // Forge the commitment's declared coefficient count to the upstream
@@ -171,39 +171,13 @@ fn akita_forged_shape_metadata_rejects_before_shape_backed_allocation() {
         matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("coefficients")),
         "expected a shape-guard rejection, got: {err}"
     );
-
-    // An oversized proof-shape blob must be rejected by the protocol cap
-    // before shape deserialization ever runs.
-    let mut oversized = proof.clone();
-    let mut value = serde_json::to_value(&oversized).expect("proof should serialize");
-    *value
-        .get_mut("serialized_akita_proof_shape")
-        .expect("proof should expose the shape blob") =
-        serde_json::to_value(vec![0u8; 64 * 1024]).expect("blob should serialize");
-    oversized = serde_json::from_value(value).expect("oversized proof should deserialize");
-    let mut transcript = Blake2bTranscript::new(b"akita-forged-metadata");
-    let err = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
-        &verifier_setup,
-        &statement,
-        &oversized,
-        &mut transcript,
-    )
-    .expect_err("oversized shape blob should reject");
-    assert!(
-        matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("protocol cap")),
-        "expected the shape-blob cap rejection, got: {err}"
-    );
 }
 
 #[test]
 fn akita_native_batching_rejects_corrupted_proof_payloads() {
     let (verifier_setup, statement, proof) = native_proof_fixture(b"akita-corrupt-proof");
 
-    for field in [
-        "statement_bridge",
-        "serialized_akita_proof_shape",
-        "serialized_akita_proof",
-    ] {
+    for field in ["schedule_selection", "backend_proof"] {
         let tampered = mutate_byte_array_field(&proof, field);
         let mut transcript = Blake2bTranscript::new(b"akita-corrupt-proof");
         assert!(

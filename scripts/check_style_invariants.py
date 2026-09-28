@@ -491,10 +491,11 @@ def check_qualified_dup(
 def check_nominal_paths(
     rel: str, lines: list[str], in_raw: list[bool], in_macro: list[bool]
 ) -> list[tuple[int, str]]:
-    in_mod = inline_mod_mask(lines, in_raw)
-    in_use = use_item_mask(lines, in_raw, in_macro, in_mod)
+    # This rule needs no import ownership, so inline modules are safe to scan.
+    no_modules = [False] * len(lines)
+    in_use = use_item_mask(lines, in_raw, in_macro, no_modules)
     module_aliases: set[str] = set()
-    collect_imports(lines, in_raw, in_macro, in_mod, module_aliases)
+    collect_imports(lines, in_raw, in_macro, no_modules, module_aliases)
     in_attr = [False] * len(lines)
     for start, end, _text in whole_line_attrs(lines):
         for k in range(start, end + 1):
@@ -502,7 +503,7 @@ def check_nominal_paths(
 
     findings = []
     for i, ln in enumerate(lines):
-        if in_raw[i] or in_macro[i] or in_attr[i] or in_mod[i] or in_use[i]:
+        if in_raw[i] or in_macro[i] or in_attr[i] or in_use[i]:
             continue
         stripped = ln.strip()
         if stripped.startswith(("//", "///", "//!", "*")):

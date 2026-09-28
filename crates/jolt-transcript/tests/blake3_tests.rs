@@ -2,6 +2,8 @@
 //! chain and the Fiat-Shamir properties the shared suite checks (minus the
 //! empty-append rule — an empty append is a no-op here by design).
 
+#![cfg(feature = "transcript-blake3")]
+
 use std::collections::HashSet;
 
 use blake3::Hasher;

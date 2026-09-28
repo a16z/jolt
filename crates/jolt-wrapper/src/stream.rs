@@ -673,9 +673,9 @@ where
             offset: member.offset,
         })
         .collect();
-    let prelude = BatchPrelude::new_observed(descriptions, max_rounds, max_degree, || {
+    let prelude = BatchPrelude::try_new_observed(descriptions, max_rounds, max_degree, || {
         observer.record_fr_mul();
-    });
+    })?;
     let committed = proof
         .committed_rounds
         .as_ref()
@@ -916,9 +916,9 @@ where
             offset: member.offset,
         })
         .collect();
-    let prelude = BatchPrelude::new_observed(descriptions, max_rounds, max_degree, || {
+    let prelude = BatchPrelude::try_new_observed(descriptions, max_rounds, max_degree, || {
         observer.record_fr_mul();
-    });
+    })?;
     let evaluation = proof.round_polynomials.verify_observed(
         &SumcheckClaim::new(max_rounds, max_degree, prelude.claimed_sum),
         BooleanHypercube,

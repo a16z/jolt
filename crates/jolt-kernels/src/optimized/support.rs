@@ -807,3 +807,42 @@ impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
         }
     }
 }
+
+/// `left * right`, skipping the multiply when either side is zero.
+#[inline(always)]
+pub(crate) fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
+    if left.is_zero() || right.is_zero() {
+        F::zero()
+    } else {
+        left * right
+    }
+}
+
+/// First-bind value at half-domain index `y` of a raw column:
+/// `raw(2y) + r1·(raw(2y+1) − raw(2y))`.
+#[inline]
+pub(crate) fn bound_pair<F: JoltField>(raw: impl Fn(usize) -> F, r1: F, y: usize) -> F {
+    let lo = raw(2 * y);
+    let hi = raw(2 * y + 1);
+    lo + mul_0_optimized(r1, hi - lo)
+}
+
+/// Two LSB binds of a raw `len`-entry column materialized directly at
+/// `len / 4`, skipping the half-size intermediate.
+pub(crate) fn bind_raw_twice<F: JoltField>(
+    raw: impl Fn(usize) -> F + Sync,
+    len: usize,
+    r1: F,
+    r2: F,
+) -> Polynomial<F> {
+    let pair = |z: usize| {
+        let lo = bound_pair(&raw, r1, 2 * z);
+        let hi = bound_pair(&raw, r1, 2 * z + 1);
+        lo + mul_0_optimized(r2, hi - lo)
+    };
+    #[cfg(feature = "parallel")]
+    let bound: Vec<F> = (0..len / 4).into_par_iter().map(pair).collect();
+    #[cfg(not(feature = "parallel"))]
+    let bound: Vec<F> = (0..len / 4).map(pair).collect();
+    Polynomial::new(bound)
+}

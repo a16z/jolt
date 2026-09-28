@@ -1,3 +1,8 @@
+//! Known-answer tests for the chained Keccak-256 transcript
+//! (`Keccak256Transcript`): every state transition is recomputed with `sha3`.
+
+#![cfg(all(feature = "bn254", feature = "transcript-keccak"))]
+
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr, Ring};
 use jolt_transcript::{Keccak256Transcript, Label, Transcript};
 use sha3::{Digest, Keccak256};

@@ -1,3 +1,5 @@
+use super::TraceRowError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TraceError {
     #[error(transparent)]
@@ -6,4 +8,6 @@ pub enum TraceError {
     MissingElfBytes,
     #[error("execution backend failed: {0}")]
     Backend(&'static str),
+    #[error(transparent)]
+    InvalidRow(#[from] TraceRowError),
 }

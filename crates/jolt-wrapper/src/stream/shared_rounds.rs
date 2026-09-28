@@ -294,9 +294,9 @@ where
             offset: member.offset,
         })
         .collect();
-    let prelude = BatchPrelude::new_observed(descriptions, rounds, degree, || {
+    let prelude = BatchPrelude::try_new_observed(descriptions, rounds, degree, || {
         observer.record_fr_mul();
-    });
+    })?;
     verify_round_transcript(
         proof,
         rounds,

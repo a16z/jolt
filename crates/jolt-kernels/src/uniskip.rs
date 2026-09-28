@@ -22,10 +22,10 @@ use jolt_witness::JoltWitnessPlane;
 use crate::{KernelError, ProofSession};
 
 /// The uni-skip front slot of a stage. `R` is never named by the methods —
-/// it types the slot to the remainder relation the parked state becomes, so
-/// the two uni-skip fronts are distinct [`JoltBackend`](crate::JoltBackend)
-/// fields.
-pub trait UniskipKernel<F, R>
+/// it types the slot to the remainder relation the parked state becomes.
+/// `I` carries the upstream claims needed for interpolation: `()` for outer,
+/// and the three typed stage-1 claims for product virtualization.
+pub trait UniskipKernel<F, R, I = ()>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
@@ -45,10 +45,12 @@ where
 
     /// The uni-skip first-round polynomial. `late_tau` carries the challenges
     /// drawn after [`prepare`](Self::prepare) (outer: empty; product:
-    /// `&[tau_high]`).
+    /// `&[tau_high]`). `inputs` supplies upstream claims that a backend can
+    /// reuse as base-domain evaluations without recomputing them from the witness.
     fn first_round_poly(
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
+        inputs: &I,
     ) -> Result<UnivariatePoly<F>, KernelError<F>>;
 }

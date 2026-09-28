@@ -168,6 +168,21 @@ impl Blake2b {
         Self::digest_from_state(initial_state_with_params(salt, persona), input)
     }
 
+    /// One BLAKE2b compression on the inline: mixes the 16-word message block
+    /// `m` into the state `h` in place, with byte counter `t` and final-block
+    /// flag `last`. 12 rounds, 64-bit counter: the EIP-152 `BLAKE2F` primitive
+    /// for `rounds == 12` with a zero high counter word.
+    #[inline(always)]
+    pub fn compress(h: &mut [u64; STATE_VECTOR_LEN], m: &[u64; MSG_BLOCK_LEN], t: u64, last: bool) {
+        let mut block = [0u64; MSG_BLOCK_LEN + 2];
+        block[..MSG_BLOCK_LEN].copy_from_slice(m);
+        block[MSG_BLOCK_LEN] = t;
+        block[MSG_BLOCK_LEN + 1] = last as u64;
+        // SAFETY: `h` is 8 and `block` 18 aligned u64s, exactly what the
+        // inline reads and writes.
+        unsafe { blake2b_compress(h.as_mut_ptr(), block.as_ptr()) }
+    }
+
     #[inline(always)]
     fn digest_from_state(mut h: [u64; STATE_VECTOR_LEN], input: &[u8]) -> [u8; OUTPUT_SIZE] {
         let len = input.len();
@@ -526,6 +541,49 @@ mod digest_tests {
                 "Blake2b test failed for case: {test_name} (input length: {} bytes)",
                 input.len()
             );
+        }
+    }
+
+    /// EIP-152 vectors 5 (final) and 6 (not final): 12 rounds, h = BLAKE2b-512
+    /// IV with the parameter block, m = "abc" zero-padded, t = 3.
+    #[test]
+    fn test_blake2b_compress_eip152_vectors() {
+        let mut h = IV;
+        h[0] ^= 0x0101_0000 ^ 64;
+        let mut m = [0u64; MSG_BLOCK_LEN];
+        m[0] = 0x0063_6261;
+        let expected: [(bool, [u64; STATE_VECTOR_LEN]); 2] = [
+            (
+                true,
+                [
+                    0x0d4d_1c98_3fa5_80ba,
+                    0xe9f6_129f_b697_276a,
+                    0xb7c4_5a68_142f_214c,
+                    0xd1a2_ffdb_6fbb_124b,
+                    0x2d79_ab2a_39c5_877d,
+                    0x95cc_3345_ded5_52c2,
+                    0x5a92_f1db_a88a_d318,
+                    0x2399_00d4_ed86_23b9,
+                ],
+            ),
+            (
+                false,
+                [
+                    0x2c56_0a19_d369_ab75,
+                    0x7527_1c8f_d8f8_ae51,
+                    0x2cc4_7072_4044_6987,
+                    0x5287_d226_2c25_4498,
+                    0xf2a2_5e6d_7f3e_7498,
+                    0x1bd3_9c03_26d2_e8d3,
+                    0x66d6_d3f2_c46a_424e,
+                    0x3547_de6f_11c2_10a6,
+                ],
+            ),
+        ];
+        for (last, want) in expected {
+            let mut got = h;
+            Blake2b::compress(&mut got, &m, 3, last);
+            assert_eq!(got, want, "last = {last}");
         }
     }
 

@@ -37,6 +37,30 @@ class CheckStyleInvariantsTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("import `std::sync::Arc`", findings[0][1])
 
+    def test_requires_import_inside_inline_module(self) -> None:
+        findings = check(
+            [
+                "mod tests {",
+                "    let value = crate::support::BundleStore::Retained(rows);",
+                "}",
+            ]
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertIn("import `crate::support::BundleStore`", findings[0][1])
+
+    def test_allows_module_alias_inside_inline_module(self) -> None:
+        self.assertEqual(
+            check(
+                [
+                    "mod tests {",
+                    "    use crate::witness as prover_witness;",
+                    "    let poly: prover_witness::VirtualPolynomial;",
+                    "}",
+                ]
+            ),
+            [],
+        )
+
     def test_requires_enum_import_but_keeps_variant_qualified(self) -> None:
         findings = check(["let kind = crate::instruction::Kind::ADD;"])
         self.assertEqual(len(findings), 1)

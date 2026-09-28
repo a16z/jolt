@@ -16,22 +16,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use blake3::Hasher;
-use common::constants::ONEHOT_CHUNK_THRESHOLD_LOG_T;
-use common::jolt_device::{JoltDevice, MemoryLayout};
+use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::{CanonicalEncoding, Field, Fr, Ring, Zero};
+use jolt_host::Program;
 use jolt_poly::EqPolynomial;
 use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
-use jolt_prover::{JoltBackend, JoltProverPreprocessing, ProverConfig};
-use jolt_prover_legacy::ark_bn254::Fr as LegacyFr;
-use jolt_prover_legacy::curve::Bn254Curve;
-use jolt_prover_legacy::host::Program;
-use jolt_prover_legacy::poly::commitment::dory::DoryCommitmentScheme;
-use jolt_prover_legacy::zkvm::preprocessing::JoltSharedPreprocessing;
-use jolt_prover_legacy::zkvm::program::ProgramPreprocessing as LegacyProgramPreprocessing;
-use jolt_prover_legacy::zkvm::proof::verifier_preprocessing_from_prover;
-use jolt_prover_legacy::zkvm::prover::JoltProverPreprocessing as LegacyProverPreprocessing;
+use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
 use jolt_sumcheck::prover::{prove_batch, SequentialRounds};
 use jolt_sumcheck::recorder::ClearSumcheckRecorder;
 use jolt_sumcheck::{BatchMember, BatchPrelude};
@@ -63,7 +56,6 @@ type Vc = Pedersen<Bn254G1>;
 type Proof = JoltProof<Pcs, Vc>;
 type VerifierPreprocessing = JoltVerifierPreprocessing<Pcs, Vc>;
 type Recording = RecordingTranscript<Blake3Transcript>;
-type LegacyPreprocessing = LegacyProverPreprocessing<LegacyFr, Bn254Curve, DoryCommitmentScheme>;
 
 const TRACE_LENGTH: usize = 1 << 18;
 const FIBONACCI_UNITS: u32 = 19_660;
@@ -76,23 +68,8 @@ const CACHE: &str = "/Volumes/Dev/scratch/wrapper-fixtures/fibonacci_2_18_blake3
 const EXPECTED_CELLS: usize = 267 + 1_017 + 535;
 const EXPECTED_SQUEEZES: u32 = 376;
 
-fn setup_total_vars(memory_layout: &MemoryLayout, max_padded_trace_length: usize) -> usize {
-    let advice_vars = |bytes: u64| -> usize {
-        ((bytes / 8) as usize).next_power_of_two().max(1).ilog2() as usize
-    };
-    let max_log_t = max_padded_trace_length.ilog2() as usize;
-    let max_log_k_chunk = if max_log_t >= ONEHOT_CHUNK_THRESHOLD_LOG_T {
-        8
-    } else {
-        4
-    };
-    (max_log_k_chunk + max_log_t)
-        .max(advice_vars(memory_layout.max_trusted_advice_size))
-        .max(advice_vars(memory_layout.max_untrusted_advice_size))
-}
-
-/// The `dory_byte_diff` fixture recipe: legacy guest build and preprocessing,
-/// modular trace, derived config, padded witness, Dory setup, one proof.
+/// The fixture recipe: host guest build and program preprocessing, modular
+/// trace, derived config, padded witness, Dory setup, one proof.
 fn generate() -> (VerifierPreprocessing, JoltDevice, Proof) {
     let mut program = Program::new("fibonacci-guest");
     let inputs = postcard::to_stdvec(&FIBONACCI_UNITS).expect("serialize inputs");
@@ -101,24 +78,30 @@ fn generate() -> (VerifierPreprocessing, JoltDevice, Proof) {
         .trace_with_backend(&mut TracerBackend::new(), &inputs, &[], &[])
         .expect("trace fibonacci");
     let elf_contents = program.get_elf_contents().expect("elf contents");
-    let legacy_program =
-        LegacyProgramPreprocessing::preprocess(bytecode, init_memory_state, entry_address)
-            .expect("legacy preprocess");
     let memory_layout = trace_output.device.memory_layout.clone();
-    let shared = JoltSharedPreprocessing::new(legacy_program, memory_layout.clone(), TRACE_LENGTH);
-    let legacy_preprocessing = LegacyPreprocessing::new(shared);
-    let verifier_preprocessing = verifier_preprocessing_from_prover(&legacy_preprocessing);
-    let program_preprocessing = verifier_preprocessing
-        .program
-        .as_full_arc()
+    let program_preprocessing = JoltProgramPreprocessing::new(
+        bytecode,
+        init_memory_state,
+        memory_layout.clone(),
+        entry_address,
+        TRACE_LENGTH,
+        program.instruction_profile(),
+    )
+    .expect("program preprocessing");
+    let preprocessing = dory::from_shared(
+        JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing"),
+    )
+    .expect("Dory preprocessing");
+    let program_preprocessing = preprocessing
+        .program_arc()
         .expect("full program preprocessing");
     let jolt_program = Arc::new(JoltProgram::from_elf_bytes(elf_contents));
     println!("trace rows: {}", trace_output.trace.rows().len());
     let config = ProverConfig::derive::<Fr>(
         trace_output.trace.rows(),
         &memory_layout,
-        verifier_preprocessing.program.min_bytecode_address(),
-        verifier_preprocessing.program.program_image_len_words(),
+        preprocessing.verifier.program.min_bytecode_address(),
+        preprocessing.verifier.program.program_image_len_words(),
         TRACE_LENGTH,
     )
     .expect("derive config");
@@ -140,13 +123,8 @@ fn generate() -> (VerifierPreprocessing, JoltDevice, Proof) {
         ),
         JoltVmWitnessInputs::new(&jolt_program, &program_preprocessing, padded),
     );
-    let preprocessing = JoltProverPreprocessing::<Pcs, Vc> {
-        verifier: verifier_preprocessing,
-        pcs_setup: Pcs::setup_prover(setup_total_vars(&memory_layout, TRACE_LENGTH)),
-        committed_program: None,
-    };
     let start = Instant::now();
-    let proof = jolt_prover::dory::prove::<Fr, Pcs, Vc, Blake3Transcript, _>(
+    let proof = dory::prove::<Fr, Pcs, Vc, Blake3Transcript, _>(
         &JoltBackend::<Fr, Pcs>::optimized(),
         &preprocessing,
         &config,

@@ -4,6 +4,7 @@
 //! rule. Methods are positional, matching spongefish-native usage
 //! (WhiR, sigma-rs).
 
+#[cfg(feature = "bn254")]
 use jolt_field::Fr;
 use rand::{CryptoRng, RngCore};
 use spongefish::{Decoding, DuplexSpongeInterface, Encoding, NargSerialize, ProverState};
@@ -51,12 +52,13 @@ where
 /// optimization is sound (Blake2b, Keccak); deliberately not implemented
 /// for [`PoseidonSponge`](crate::PoseidonSponge), so calling it on a
 /// Poseidon-backed state is a compile error.
+#[cfg(feature = "bn254")]
 pub trait OptimizedChallenge {
     /// Squeezes a 128-bit-truncated challenge as an [`Fr`].
     fn challenge_128(&mut self) -> Fr;
 }
 
-#[cfg(feature = "transcript-blake2b")]
+#[cfg(all(feature = "bn254", feature = "transcript-blake2b"))]
 impl<R> OptimizedChallenge for ProverState<spongefish::instantiations::Blake2b512, R>
 where
     R: RngCore + CryptoRng,
@@ -66,7 +68,7 @@ where
     }
 }
 
-#[cfg(feature = "transcript-keccak")]
+#[cfg(all(feature = "bn254", feature = "transcript-keccak"))]
 impl<R> OptimizedChallenge for ProverState<spongefish::instantiations::Keccak, R>
 where
     R: RngCore + CryptoRng,

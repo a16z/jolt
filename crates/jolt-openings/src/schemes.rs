@@ -14,8 +14,9 @@ use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::claims::{EvaluationClaim, VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
+use crate::claims::{VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
+use crate::EvaluationClaim;
 
 /// Self-describing metadata a group commitment carries: the backend flavor,
 /// the protocol-owned layout digest binding the ordered member identities,
@@ -134,16 +135,22 @@ pub trait CommitmentScheme: Commitment {
     }
 }
 
-/// Transparent derivation of a singleton commitment-object setup from the
-/// object's public shape alone (one polynomial at `num_vars`, seeded by the
-/// object plan's layout digest): prover and verifier re-derive
-/// byte-identical setups independently, so packed objects need no setup
-/// ceremony or transport.
+/// Transparent derivation of a singleton commitment-object setup from an
+/// immutable application-owned context plus the object's public shape.
+/// Prover and verifier use the exact catalog admitted by that context; packed
+/// objects need no per-object setup ceremony or transport.
 pub trait TransparentObjectSetup: CommitmentScheme {
+    type SetupContext: Send + Sync;
+
     fn transparent_object_setup(
+        context: &Self::SetupContext,
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Return the immutable context that admitted `setup`, for objects created
+    /// later in the same preprocessing/proving run.
+    fn transparent_setup_context(setup: &Self::ProverSetup) -> &Self::SetupContext;
 
     /// Reuses an object's backend setup for another layout at the same arity.
     fn retag_transparent_object_setup(
@@ -370,10 +377,17 @@ pub trait ZkStreamingCommitment: StreamingCommitment + ZkOpeningScheme {
 /// The prover-side inputs are deliberately split into three parameters with
 /// distinct roles:
 ///
-/// - [`Statement`](Self::Statement) is the public input both sides agree on
-///   and bind to the transcript: the opening claims plus the commitments they
-///   refer to. Its shape is scheme-specific — [`HomomorphicBatch`] carries
-///   one commitment per claim.
+/// - [`Statement`](Self::Statement) is the public input both sides agree on:
+///   the opening claims plus the commitments they refer to. Its shape is
+///   scheme-specific — [`HomomorphicBatch`] carries one commitment per claim.
+///   The batch does not bind the commitments or the opening point itself; it
+///   absorbs at most the claimed values before drawing the batching challenge.
+///   The caller must have absorbed every commitment into `transcript` and
+///   derived the opening point from it before calling `prove_batch` or
+///   `verify_batch`, or the challenge is independent of the commitments and a
+///   prover can pick one after seeing it. In Jolt, `absorb_commitments` in
+///   `jolt-verifier` and the stage 1–7 sumcheck challenges pin this before
+///   stage 8.
 /// - [`Polynomials`](Self::Polynomials) are the borrowed prover-side
 ///   polynomial sources backing the statement; the verifier never sees them.
 /// - [`Hints`](Self::Hints) are the commit-time auxiliary data
@@ -382,7 +396,9 @@ pub trait BatchOpeningScheme {
     type Field: JoltField;
     type ProverSetup;
     type VerifierSetup;
-    /// Public opening claims plus the commitments they refer to.
+    /// Public opening claims plus the commitments they refer to. Not
+    /// transcript-bound by the batch; see the trait docs for the caller's
+    /// obligation.
     type Statement;
     /// Borrowed prover-side polynomial sources backing the statement.
     type Polynomials<'a>
