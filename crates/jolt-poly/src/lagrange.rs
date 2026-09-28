@@ -73,17 +73,6 @@ pub fn centered_lagrange_evals<F: Field>(
     ))
 }
 
-pub fn centered_lagrange_evals_array<F: Field, const N: usize>(
-    r: F,
-) -> Result<[F; N], CenteredIntegerDomainError> {
-    let evals = centered_lagrange_evals(N, r)?;
-    let mut result = [F::zero(); N];
-    for (dst, src) in result.iter_mut().zip(evals) {
-        *dst = src;
-    }
-    Ok(result)
-}
-
 /// Computes `sum_i L_i(x) * L_i(y)` over the centered consecutive integer
 /// domain used by univariate-skip protocols.
 pub fn centered_lagrange_kernel<F: Field>(
@@ -98,25 +87,6 @@ pub fn centered_lagrange_kernel<F: Field>(
         .zip(y_evals)
         .map(|(left, right)| left * right)
         .sum())
-}
-
-/// Computes power sums $S_k = \sum_{t=-D}^{D} t^k$ for $k = 0, 1, \ldots, \text{num\_powers}-1$
-/// over the symmetric integer domain $\{-D, \ldots, D\}$ of size $2D+1$.
-///
-/// Returns integer power sums as `i128`. Odd-power sums are zero by symmetry.
-///
-/// Used by the verifier to check $\sum_{Y \in W} p(Y) = \text{claimed\_sum}$
-/// without evaluating $p$ at every domain point.
-pub fn symmetric_power_sums(half_width: i64, num_powers: usize) -> Vec<i128> {
-    let mut sums = vec![0i128; num_powers];
-    for t in -half_width..=half_width {
-        let mut power = 1i128;
-        for s in &mut sums {
-            *s += power;
-            power *= t as i128;
-        }
-    }
-    sums
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,23 +285,6 @@ mod tests {
     }
 
     #[test]
-    fn symmetric_power_sums_basic() {
-        let sums = symmetric_power_sums(1, 4);
-        assert_eq!(sums[0], 3);
-        assert_eq!(sums[1], 0);
-        assert_eq!(sums[2], 2);
-        assert_eq!(sums[3], 0);
-    }
-
-    #[test]
-    fn symmetric_power_sums_width_2() {
-        let sums = symmetric_power_sums(2, 3);
-        assert_eq!(sums[0], 5);
-        assert_eq!(sums[1], 0);
-        assert_eq!(sums[2], 10);
-    }
-
-    #[test]
     fn centered_domain_start_matches_core_uniskip_convention() {
         assert_eq!(centered_domain_start(1), Ok(0));
         assert_eq!(centered_domain_start(3), Ok(-1));
@@ -343,10 +296,8 @@ mod tests {
     fn centered_lagrange_helpers_match_centered_domain() {
         let r = Fr::from_u64(7);
         let evals = centered_lagrange_evals(5, r).unwrap();
-        let evals_array = centered_lagrange_evals_array::<_, 5>(r).unwrap();
 
         assert_eq!(evals, lagrange_evals(-2, 5, r));
-        assert_eq!(evals_array.as_slice(), evals.as_slice());
         assert_eq!(
             centered_lagrange_kernel(5, Fr::from_i64(-1), Fr::from_i64(-1)),
             Ok(Fr::one())
