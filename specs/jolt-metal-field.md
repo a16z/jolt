@@ -361,8 +361,12 @@ replaced, and the three-product square did not beat squaring through it, so
 sums each coefficient's products, `a0 b0 + 2 a1 b1` and `a0 b1 + a1 b0`,
 unreduced and reduces once: four base products and two reductions against
 Karatsuba's three and three. In round 3 it ran the chain 3.8% faster than
-Karatsuba and 3.0% faster than `dot2` (from the two medians against
-Karatsuba, just over the rule's margin). `dot2` sums two products and
+Karatsuba. The two medians against Karatsuba suggest a roughly 3% advantage
+over `dot2`, but their quotient is not the median of direct per-round ratios.
+These aggregates do not establish that the selected form beats `dot2` by the
+rule's 3% margin. That selection remains provisional pending a direct paired
+comparison, including its spread, under quieter conditions. `dot2` sums two
+products and
 reduces once, which is valid for every `C < 2^32`, but it must reduce the
 doubled `a1` first. On inner products every form ties within the
 round-to-round spread, since the kernel is memory-bound; at 2^24 the merged

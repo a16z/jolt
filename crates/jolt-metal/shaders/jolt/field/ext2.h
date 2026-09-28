@@ -63,7 +63,7 @@ Ext2<F> ext2_mul(Ext2<F> a, Ext2<F> b) {
     return Ext2<F>{v0 + Ext2<F>::mul_non_residue(v1), cross - v0 - v1};
 }
 
-// Two base multiplies: (c0 + c1 u)^2 = (c0^2 + 2 c1^2) + (2 c0 c1) u.
+// Two base squares and one base multiply: (c0 + c1 u)^2 = (c0^2 + 2 c1^2) + (2 c0 c1) u.
 template <typename F>
 Ext2<F> ext2_square(Ext2<F> a) {
     return Ext2<F>{square(a.c0) + Ext2<F>::mul_non_residue(square(a.c1)),
