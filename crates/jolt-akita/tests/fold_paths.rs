@@ -1,8 +1,8 @@
 //! Deep fold-schedule coverage. The rest of the suite stays at the
 //! 13/14-variable planner floor where schedules carry one to three recursive
-//! folds; this exercises a deeper recursion (16 variables, four recursive
-//! folds) end to end, plus the `valid_proof || garbage` rejection the
-//! adapter's exact-length deserializer must enforce.
+//! folds; this exercises a deeper recursion (17 variables, four recursive
+//! folds) end to end, plus the `valid_proof || garbage` rejection Akita's
+//! argument parser must enforce.
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
@@ -12,7 +12,10 @@
 )]
 mod support;
 
-use jolt_akita::{AkitaBatchProof, AkitaCommitment, AkitaField, AkitaScheme};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use jolt_akita::{
+    AkitaBatchProof, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
+};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial, setup_for};
@@ -81,11 +84,25 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
     }
 }
 
-/// 16 variables resolve to four recursive fold levels — deeper than any
-/// other suite fixture — and a tampered evaluation must still reject.
+/// 17 variables resolve to four recursive fold levels — deeper than any
+/// other single-polynomial suite fixture — and a tampered evaluation must
+/// still reject. The depth is asserted so a catalog regeneration cannot
+/// quietly shrink the fixture.
 #[test]
 fn deep_recursive_fold_schedule_roundtrips() {
-    let fixture = fold_roundtrip(16, b"akita-fold-deep");
+    const NUM_VARS: usize = 17;
+    let depth = AkitaScheduleArtifacts::shared_from_default_directory()
+        .dense_catalog()
+        .expect("dense catalog")
+        .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            NUM_VARS, 1,
+        )))
+        .expect("deep fixture row must resolve")
+        .schedule()
+        .recursive_folds
+        .len();
+    assert_eq!(depth, 4, "the deep fixture must keep four recursive folds");
+    let fixture = fold_roundtrip(NUM_VARS, b"akita-fold-deep");
 
     let mut tampered_eval = fixture.eval;
     tampered_eval += f(1);
