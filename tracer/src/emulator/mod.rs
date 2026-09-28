@@ -227,8 +227,6 @@ impl Emulator {
         let section_headers = analyzer.read_section_headers(&header);
 
         let mut program_data_section_headers = vec![];
-        let mut symbol_table_section_headers = vec![];
-        let mut string_table_section_headers = vec![];
 
         for header in &section_headers {
             match header.sh_type {
@@ -237,26 +235,13 @@ impl Emulator {
                 // SHT_FINI_ARRAY (15): .fini_array - destructor function pointers
                 // SHT_PREINIT_ARRAY (16): .preinit_array - early constructor pointers
                 1 | 14 | 15 | 16 => program_data_section_headers.push(header),
-                2 => symbol_table_section_headers.push(header),
-                3 => string_table_section_headers.push(header),
                 _ => {}
             };
         }
 
-        // AZ: It seems that string and symbol tables are not being used. I expected them to be loaded
-        // in the CPU memory just like the program data sections.
-
         // Creates symbol - virtual address mapping
-        if !string_table_section_headers.is_empty() {
-            let entries = analyzer.read_symbol_entries(&header, &symbol_table_section_headers);
-            // Assuming symbols are in the first string table section.
-            // @TODO: What if symbol can be in the second or later string table sections?
-            let map = analyzer.create_symbol_map(&entries, string_table_section_headers[0]);
-            for key in map.keys() {
-                self.symbol_map
-                    .insert(key.to_string(), *map.get(key).unwrap());
-            }
-        }
+        self.symbol_map
+            .extend(analyzer.read_symbol_map(&header, &section_headers));
 
         // Find tohost, begin_signature, and end_signature addresses from symbol map since they are all global labels
         self.tohost_addr = self.symbol_map.get("tohost").copied().unwrap_or(0);
@@ -405,7 +390,7 @@ impl Emulator {
 
 #[cfg(test)]
 mod tests {
-    use super::elf_analyzer::test_elf::{build_elf64, TestSymbol};
+    use super::elf_analyzer::test_elf::{build_elf64, StrtabOrder, TestSymbol};
     use super::*;
     use crate::emulator::default_terminal::DefaultTerminal;
 
@@ -443,8 +428,8 @@ mod tests {
         ]
     }
 
-    fn emulator_with(text: &[u32], symbols: &[TestSymbol]) -> Emulator {
-        let elf = build_elf64(text, symbols);
+    fn emulator_with(text: &[u32], symbols: &[TestSymbol], order: StrtabOrder) -> Emulator {
+        let elf = build_elf64(text, symbols, order);
         let mut emulator = Emulator::new(Box::new(DefaultTerminal::default()));
         emulator.setup_program(&elf);
         emulator
@@ -452,7 +437,7 @@ mod tests {
 
     #[test]
     fn setup_program_loads_text_finds_symbols_and_sets_the_entry_point() {
-        let emulator = emulator_with(&tohost_program(5), &tohost_symbols());
+        let emulator = emulator_with(&tohost_program(5), &tohost_symbols(), StrtabOrder::GnuLd);
         assert_eq!(emulator.get_cpu().read_pc(), 0x8000_0000);
         assert_eq!(emulator.tohost_addr, TOHOST_ADDR);
         assert_eq!(
@@ -462,6 +447,19 @@ mod tests {
         assert_eq!(
             emulator.get_address_of_symbol(&"nonexistent".to_string()),
             None
+        );
+    }
+
+    /// LLD emits `.shstrtab` before `.strtab`. Symbol names must still be
+    /// resolved through the symbol table's own `sh_link`, not through the
+    /// first `SHT_STRTAB` section.
+    #[test]
+    fn setup_program_resolves_symbols_through_symtab_sh_link_under_lld_order() {
+        let emulator = emulator_with(&tohost_program(5), &tohost_symbols(), StrtabOrder::Lld);
+        assert_eq!(emulator.tohost_addr, TOHOST_ADDR);
+        assert_eq!(
+            emulator.get_address_of_symbol(&"_start".to_string()),
+            Some(0x8000_0000)
         );
     }
 
