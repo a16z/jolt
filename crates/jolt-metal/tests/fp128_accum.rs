@@ -92,9 +92,11 @@ mod gpu {
         sizes
     }
 
-    fn dispatch(device: &Device, pipeline: &Pipeline, bindings: &[Binding<'_>], grid: Grid) {
+    // Safety: bindings and grid must satisfy the selected accumulator kernel's access contract.
+    unsafe fn dispatch(device: &Device, pipeline: &Pipeline, bindings: &[Binding<'_>], grid: Grid) {
         let mut batch = Batch::new(device).unwrap();
-        batch.dispatch(pipeline, bindings, grid).unwrap();
+        // SAFETY: the caller supplies the selected kernel's access and synchronization contract.
+        unsafe { batch.dispatch_unchecked(pipeline, bindings, grid) }.unwrap();
         let _ = batch.commit_and_wait().unwrap();
     }
 
@@ -119,7 +121,8 @@ mod gpu {
             Binding::value(&terms_u32),
             Binding::buffer(&out),
         ]);
-        dispatch(device, pipeline, &bindings, Grid::linear(threads, group));
+        // SAFETY: inputs cover cpu_terms; guarded loads and whole groups write one allocated output per thread.
+        unsafe { dispatch(device, pipeline, &bindings, Grid::linear(threads, group)) };
         let got = out.read().unwrap();
         let per_group = terms * group;
         for (g, outputs) in got.chunks(group).enumerate() {
@@ -252,7 +255,8 @@ mod gpu {
         let mut bindings = leading.to_vec();
         bindings.extend_from_slice(trailing);
         bindings.push(Binding::buffer(&out));
-        dispatch(device, pipeline, &bindings, Grid::linear(group, group));
+        // SAFETY: merge kernels read count allocated partials, use one whole group, and only thread 0 writes out[0].
+        unsafe { dispatch(device, pipeline, &bindings, Grid::linear(group, group)) };
         out.read().unwrap()[0]
     }
 
@@ -266,16 +270,19 @@ mod gpu {
         let fill = pipeline::<F>(library, FILL);
         let terms = u32::try_from(CAPACITY / FILL_THREADS as u64).unwrap();
         let partials = DeviceBuffer::<RawAccumulator>::zeroed(device, FILL_THREADS).unwrap();
-        dispatch(
-            device,
-            fill,
-            &[
-                Binding::buffer(&x_dev),
-                Binding::value(&terms),
-                Binding::buffer(&partials),
-            ],
-            Grid::linear(FILL_THREADS, fill_group(fill)),
-        );
+        // SAFETY: fill reads x[0] and writes one accumulator per thread into FILL_THREADS slots.
+        unsafe {
+            dispatch(
+                device,
+                fill,
+                &[
+                    Binding::buffer(&x_dev),
+                    Binding::value(&terms),
+                    Binding::buffer(&partials),
+                ],
+                Grid::linear(FILL_THREADS, fill_group(fill)),
+            );
+        }
         let merge_pipeline = pipeline::<F>(library, MERGE);
         let leading = [
             Binding::buffer(&partials),
@@ -303,17 +310,20 @@ mod gpu {
         for negative in [false, true] {
             let partials =
                 DeviceBuffer::<RawSmallScalarAccumulator>::zeroed(device, FILL_THREADS).unwrap();
-            dispatch(
-                device,
-                fill,
-                &[
-                    Binding::buffer(&x_dev),
-                    Binding::value(&terms),
-                    Binding::value(&negative),
-                    Binding::buffer(&partials),
-                ],
-                Grid::linear(FILL_THREADS, fill_group(fill)),
-            );
+            // SAFETY: fill reads x[0] and writes one accumulator per thread into FILL_THREADS slots.
+            unsafe {
+                dispatch(
+                    device,
+                    fill,
+                    &[
+                        Binding::buffer(&x_dev),
+                        Binding::value(&terms),
+                        Binding::value(&negative),
+                        Binding::buffer(&partials),
+                    ],
+                    Grid::linear(FILL_THREADS, fill_group(fill)),
+                );
+            }
             let leading = [
                 Binding::buffer(&partials),
                 Binding::value(&count),

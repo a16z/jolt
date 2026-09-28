@@ -14,7 +14,10 @@
 //!   registers, reported as operations per second;
 //! - `stream/{add,mul,square}`: elementwise over 2^16 to 2^26 elements;
 //! - `inner_product`: sum of `a[i] * b[i]` with a threadgroup reduction on the
-//!   GPU, over 2^16 to 2^26 elements.
+//!   GPU, over 2^16 to 2^26 elements. `gpu_partials` times only the GPU kernel;
+//!   `gpu_complete_wall` includes submission, readback, and the CPU sum of
+//!   partials with inputs already resident. `cpu_complete_wall` returns the
+//!   same scalar on the CPU.
 //!
 //! For `fp128_a7f7`, whose accumulators are the only ones in MSL so far:
 //! - `accum/{fmadd,fmadd4,fmadd_i64}`: deferred-reduction terms per thread in
@@ -221,7 +224,8 @@ mod metal {
                         Binding::buffer(out),
                     ]
                 };
-                dispatch(device, pipeline, &bindings, grid, 1)
+                // SAFETY: chain kernels read and write one element per thread; all buffers have CHAIN_THREADS elements.
+                unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
             };
             let cpu_all = || -> Vec<T> {
                 a.par_iter()
@@ -276,7 +280,8 @@ mod metal {
                             Binding::buffer(out),
                         ]
                     };
-                    dispatch(device, pipeline, &bindings, grid, 1)
+                    // SAFETY: elementwise kernels access only their thread index in distinct len-element buffers.
+                    unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 };
                 let cpu = |cpu_out: &mut [T]| {
                     cpu_out
@@ -340,7 +345,8 @@ mod metal {
                     Binding::value(&n),
                     Binding::buffer(partials),
                 ];
-                dispatch(device, pipeline, &bindings, grid, 1)
+                // SAFETY: inputs contain n elements; the grid has 1024 whole 256-thread groups and one output per group.
+                unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
             };
             run(&partials);
             let gpu_sum = read(&mut partials)
@@ -350,10 +356,21 @@ mod metal {
 
             let size = format!("2^{log}");
             group.throughput(Throughput::Elements(len as u64));
-            group.bench_function(BenchmarkId::new("gpu", &size), |bench| {
+            group.bench_function(BenchmarkId::new("gpu_partials", &size), |bench| {
                 bench.iter_custom(|iters| gpu_time(iters, || run(&partials)));
             });
-            group.bench_function(BenchmarkId::new("cpu", &size), |bench| {
+            group.bench_function(BenchmarkId::new("gpu_complete_wall", &size), |bench| {
+                bench.iter(|| {
+                    run(&partials);
+                    partials
+                        .read()
+                        .expect("canonical partials")
+                        .iter()
+                        .copied()
+                        .fold(T::zero(), |x, y| x + y)
+                });
+            });
+            group.bench_function(BenchmarkId::new("cpu_complete_wall", &size), |bench| {
                 bench.iter(|| cpu(&a, &b));
             });
         }
@@ -440,7 +457,8 @@ mod metal {
             let grid = Grid::linear(CHAIN_THREADS, threadgroup(pipeline));
             let run = |out: &DeviceBuffer<F>| {
                 let bindings = [Binding::buffer(&a_dev), second, Binding::buffer(out)];
-                dispatch(device, pipeline, &bindings, grid, 1)
+                // SAFETY: chain kernels access one element per thread in distinct CHAIN_THREADS-element buffers.
+                unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
             };
             let cpu_all = || -> Vec<F> { (0..CHAIN_THREADS).into_par_iter().map(cpu).collect() };
             run(&out);

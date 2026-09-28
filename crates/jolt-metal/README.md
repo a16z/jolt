@@ -1,6 +1,6 @@
 # jolt-metal
 
-Prover-only Metal support for `jolt-field`: a safe runtime for compiling,
+Prover-only Metal support for `jolt-field`: a runtime for compiling,
 dispatching, and reading back Metal compute kernels, and the MSL field
 arithmetic that Jolt's and Akita's GPU provers share.
 Design and invariants: [`specs/jolt-metal-field.md`](../../specs/jolt-metal-field.md).
@@ -59,6 +59,16 @@ The runtime compiles one source string, so `#include` does not resolve: add
 as bytes and read back through a canonical-form check, so a kernel that
 writes a value outside `[0, p)` makes `DeviceBuffer::read` fail with
 `MetalError::InvalidReadback`.
+
+Raw kernel execution uses `Batch::dispatch_unchecked`, because reflection can
+check argument types but cannot prove a shader's memory accesses are in bounds.
+The caller must uphold its documented buffer-bounds, aliasing, and
+synchronization contract. Kernel-specific safe wrappers may establish those
+facts before calling the raw dispatch API.
+
+Buffers bound to a submitted batch remain unavailable until GPU completion is
+confirmed. If submission or waiting fails in a way that leaves completion
+uncertain, later dispatches and `DeviceBuffer::read` reject those buffers.
 
 ## Errors
 

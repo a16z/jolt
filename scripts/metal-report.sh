@@ -85,7 +85,7 @@ if $bench; then
   echo
   # pmset powermode: 0 automatic, 1 low power, 2 high power.
   echo "- power: $(pmset -g batt | head -1 | sed -E "s/.*'(.*)'.*/\1/"), energy mode $(pmset -g | awk '/ powermode / {print ($2 == 0 ? "automatic" : $2 == 1 ? "low power" : $2 == 2 ? "high power" : $2)}')"
-  echo "- GPU: GPU execution time; CPU: wall time on all cores, \`jolt_field\` with \`asm\`"
+  echo "- GPU kernels: GPU execution time; inner-product complete results: wall time including submission and host finish; CPU: wall time on all cores, \`jolt_field\` with \`asm\`"
   rm -rf target/criterion/metal_*
   log="$(mktemp)"
   err="$(mktemp)"

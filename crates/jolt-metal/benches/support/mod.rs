@@ -113,7 +113,10 @@ pub fn elements<T: Sample>(seed: u64, len: usize) -> Vec<T> {
 
 /// Runs `repeats` copies of one dispatch as one batch and returns its GPU
 /// time.
-pub fn dispatch(
+///
+/// # Safety
+/// Every repetition must satisfy `Batch::dispatch_unchecked`'s contract.
+pub unsafe fn dispatch(
     device: &Device,
     pipeline: &Pipeline,
     bindings: &[Binding<'_>],
@@ -122,9 +125,8 @@ pub fn dispatch(
 ) -> Duration {
     let mut batch = Batch::new(device).expect("command batch");
     for _ in 0..repeats {
-        batch
-            .dispatch(pipeline, bindings, grid)
-            .expect("valid dispatch");
+        // SAFETY: the caller supplies the kernel's access and synchronization contract.
+        unsafe { batch.dispatch_unchecked(pipeline, bindings, grid) }.expect("valid dispatch");
     }
     batch.commit_and_wait().expect("batch completes")
 }

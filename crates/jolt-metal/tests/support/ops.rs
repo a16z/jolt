@@ -101,7 +101,11 @@ pub fn library<F: MetalField>(
 /// Runs `kernel`, instantiated for `F`, over `len` threads with `inputs`
 /// bound first and a fresh output buffer last, and returns the checked
 /// output.
-pub fn run<F: MetalField>(
+///
+/// # Safety
+/// `kernel` must access only the supplied inputs, each large enough for `len`
+/// threads, and the fresh `len`-element output, without data races.
+pub unsafe fn run<F: MetalField>(
     device: &Device,
     library: &ShaderLibrary,
     kernel: &str,
@@ -116,9 +120,8 @@ pub fn run<F: MetalField>(
         let group = (pipeline.thread_execution_width() * 8)
             .min(pipeline.max_total_threads_per_threadgroup());
         let mut batch = Batch::new(device).unwrap();
-        batch
-            .dispatch(pipeline, &bindings, Grid::linear(len, group))
-            .unwrap();
+        // SAFETY: inputs and kernel are covered by the caller; the fresh output has len elements.
+        unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(len, group)) }.unwrap();
         let _ = batch.commit_and_wait().unwrap();
     }
     out.read().map(<[F]>::to_vec)
@@ -170,13 +173,16 @@ pub fn check_ops<F: MetalField + Debug>(
         (MUL, |x, y| x * y),
     ];
     for (kernel, op) in binary {
-        let got = run::<F>(
-            device,
-            library,
-            kernel,
-            vec![Binding::buffer(&a_dev), Binding::buffer(&b_dev)],
-            a.len(),
-        )
+        // SAFETY: binary inputs and the output have a.len() elements and the kernel is elementwise.
+        let got = unsafe {
+            run::<F>(
+                device,
+                library,
+                kernel,
+                vec![Binding::buffer(&a_dev), Binding::buffer(&b_dev)],
+                a.len(),
+            )
+        }
         .unwrap();
         let want: Vec<F> = a.iter().zip(&b).map(|(&x, &y)| op(x, y)).collect();
         compare(failures, kernel, &got, &want, |i| {
@@ -187,13 +193,16 @@ pub fn check_ops<F: MetalField + Debug>(
     let x_dev = DeviceBuffer::from_slice(device, &inputs.singles).unwrap();
     let unary: [(&str, UnaryOp<F>); 2] = [(NEG, |x| -x), (SQUARE, |x| x.square())];
     for (kernel, op) in unary {
-        let got = run::<F>(
-            device,
-            library,
-            kernel,
-            vec![Binding::buffer(&x_dev)],
-            inputs.singles.len(),
-        )
+        // SAFETY: unary input and output have singles.len() elements and the kernel is elementwise.
+        let got = unsafe {
+            run::<F>(
+                device,
+                library,
+                kernel,
+                vec![Binding::buffer(&x_dev)],
+                inputs.singles.len(),
+            )
+        }
         .unwrap();
         let want: Vec<F> = inputs.singles.iter().map(|&v| op(v)).collect();
         compare(failures, kernel, &got, &want, |i| {
@@ -206,25 +215,31 @@ pub fn check_ops<F: MetalField + Debug>(
         DeviceBuffer::from_slice(device, &a).unwrap(),
         DeviceBuffer::from_slice(device, &s).unwrap(),
     );
-    let got = run::<F>(
-        device,
-        library,
-        MUL_U64,
-        vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
-        s.len(),
-    )
+    // SAFETY: field and scalar inputs have s.len() elements and the kernel is elementwise.
+    let got = unsafe {
+        run::<F>(
+            device,
+            library,
+            MUL_U64,
+            vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
+            s.len(),
+        )
+    }
     .unwrap();
     let want: Vec<F> = a.iter().zip(&s).map(|(x, &s)| x.mul_u64(s)).collect();
     compare(failures, MUL_U64, &got, &want, |i| {
         format!("{:?}", inputs.u64_pairs[i])
     });
-    let got = run::<F>(
-        device,
-        library,
-        FROM_U64,
-        vec![Binding::buffer(&s_dev)],
-        s.len(),
-    )
+    // SAFETY: scalar input and output have s.len() elements and the kernel is elementwise.
+    let got = unsafe {
+        run::<F>(
+            device,
+            library,
+            FROM_U64,
+            vec![Binding::buffer(&s_dev)],
+            s.len(),
+        )
+    }
     .unwrap();
     let want: Vec<F> = s.iter().map(|&s| F::from_u64(s)).collect();
     compare(failures, FROM_U64, &got, &want, |i| format!("{}", s[i]));
@@ -234,25 +249,31 @@ pub fn check_ops<F: MetalField + Debug>(
         DeviceBuffer::from_slice(device, &a).unwrap(),
         DeviceBuffer::from_slice(device, &s).unwrap(),
     );
-    let got = run::<F>(
-        device,
-        library,
-        MUL_I64,
-        vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
-        s.len(),
-    )
+    // SAFETY: field and scalar inputs have s.len() elements and the kernel is elementwise.
+    let got = unsafe {
+        run::<F>(
+            device,
+            library,
+            MUL_I64,
+            vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
+            s.len(),
+        )
+    }
     .unwrap();
     let want: Vec<F> = a.iter().zip(&s).map(|(x, &s)| x.mul_i64(s)).collect();
     compare(failures, MUL_I64, &got, &want, |i| {
         format!("{:?}", inputs.i64_pairs[i])
     });
-    let got = run::<F>(
-        device,
-        library,
-        FROM_I64,
-        vec![Binding::buffer(&s_dev)],
-        s.len(),
-    )
+    // SAFETY: scalar input and output have s.len() elements and the kernel is elementwise.
+    let got = unsafe {
+        run::<F>(
+            device,
+            library,
+            FROM_I64,
+            vec![Binding::buffer(&s_dev)],
+            s.len(),
+        )
+    }
     .unwrap();
     let want: Vec<F> = s.iter().map(|&s| F::from_i64(s)).collect();
     compare(failures, FROM_I64, &got, &want, |i| format!("{}", s[i]));

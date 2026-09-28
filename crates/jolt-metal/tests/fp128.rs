@@ -211,8 +211,10 @@ mod gpu {
     fn non_canonical_output_is_rejected_on_read_back() {
         let (_gpu, device) = gpu("non_canonical_output_is_rejected_on_read_back");
         let library = library::<Prime128OffsetA7F7>(&device, &[], &[]);
-        let error = run::<Prime128OffsetA7F7>(&device, &library, WRITE_NON_CANONICAL, vec![], 3)
-            .unwrap_err();
+        // SAFETY: the noncanonical writer only writes its thread index in the fresh three-element output.
+        let error =
+            unsafe { run::<Prime128OffsetA7F7>(&device, &library, WRITE_NON_CANONICAL, vec![], 3) }
+                .unwrap_err();
         assert_eq!(error.class(), ErrorClass::Fault, "{error}");
         assert!(error.to_string().contains("element 0"), "{error}");
     }

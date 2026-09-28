@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::mem::size_of;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytemuck::checked::{self, CheckedBitPattern};
 use bytemuck::{NoUninit, Zeroable};
@@ -7,6 +8,33 @@ use bytemuck::{NoUninit, Zeroable};
 use crate::error::{CapacityLimit, MetalError};
 use crate::runtime::device::Device;
 use crate::runtime::sys::RawBuffer;
+
+#[derive(Default)]
+pub(crate) struct BufferAccess {
+    completion_pending: AtomicBool,
+}
+
+impl BufferAccess {
+    pub(crate) fn require_available(&self, operation: &'static str) -> Result<(), MetalError> {
+        if self.completion_pending.load(Ordering::Acquire) {
+            return Err(MetalError::BufferUnavailable { operation });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn begin_submission(&self) -> Result<(), MetalError> {
+        self.completion_pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|_| MetalError::BufferUnavailable {
+                operation: "GPU dispatch",
+            })
+    }
+
+    pub(crate) fn confirm_completion(&self) {
+        self.completion_pending.store(false, Ordering::Release);
+    }
+}
 
 /// A shared-storage Metal buffer holding `len` values of `T`.
 ///
@@ -16,9 +44,12 @@ use crate::runtime::sys::RawBuffer;
 /// whole lifetime, and the GPU runs the batch only inside
 /// [`Batch::commit_and_wait`](crate::runtime::Batch::commit_and_wait), which
 /// blocks until the GPU finishes. Host views need `&mut self`, so the borrow
-/// checker rules out a host view while the GPU may touch the buffer.
+/// checker rules out a host view while the call is active. If the runtime
+/// cannot confirm completion, the buffer remains unavailable to host reads
+/// and later dispatches.
 pub struct DeviceBuffer<T> {
     pub(crate) sys: RawBuffer,
+    pub(crate) access: BufferAccess,
     len: usize,
     byte_len: usize,
     pub(crate) device_id: u64,
@@ -49,6 +80,7 @@ impl<T> DeviceBuffer<T> {
     fn from_sys(device: &Device, sys: RawBuffer, len: usize, byte_len: usize) -> Self {
         Self {
             sys,
+            access: BufferAccess::default(),
             len,
             byte_len,
             device_id: device.registry_id,
@@ -83,6 +115,7 @@ impl<T: CheckedBitPattern> DeviceBuffer<T> {
     /// valid `T`. A kernel that wrote an invalid value (for a field element,
     /// a non-canonical one) yields [`MetalError::InvalidReadback`].
     pub fn read(&mut self) -> Result<&[T], MetalError> {
+        self.access.require_available("host read")?;
         let byte_len = self.byte_len;
         let bytes = self
             .sys

@@ -234,13 +234,16 @@ mod gpu {
             DeviceBuffer::from_slice(&device, &a).unwrap(),
             DeviceBuffer::from_slice(&device, &x).unwrap(),
         );
-        let got = run::<Ext2<F>>(
-            &device,
-            &library,
-            MUL_BASE,
-            vec![Binding::buffer(&a_dev), Binding::buffer(&x_dev)],
-            a.len(),
-        )
+        // SAFETY: MUL_BASE reads one element from each equally sized input and writes one fresh output.
+        let got = unsafe {
+            run::<Ext2<F>>(
+                &device,
+                &library,
+                MUL_BASE,
+                vec![Binding::buffer(&a_dev), Binding::buffer(&x_dev)],
+                a.len(),
+            )
+        }
         .unwrap();
         let want: Vec<Ext2<F>> = a.iter().zip(&x).map(|(&a, &x)| a.mul_base(x)).collect();
         compare(&mut failures, MUL_BASE, &got, &want, |i| {

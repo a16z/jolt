@@ -12,7 +12,7 @@ This skill handles all the boilerplate: creating the invariant struct + input ty
 
 <Execution_Policy>
 - The user must provide an invariant name (lowercase with underscores, e.g. `sumcheck_binding`).
-- Ask the user what property is being checked and what the input type should look like before writing code.
+- Use the request, spec, and repository context to establish the property and input type; ask only for missing requirements before writing code.
 - Follow existing patterns exactly — study the split_eq_bind and soundness invariants as models.
 - Always run clippy and the auto-generated tests before reporting success.
 </Execution_Policy>
@@ -22,7 +22,7 @@ This skill handles all the boilerplate: creating the invariant struct + input ty
 ## Phase 1: Gather Requirements
 
 1. Validate the argument `{{ARGUMENTS}}`: must be a valid Rust identifier (lowercase alphanumeric + underscores). Reject otherwise.
-2. Ask the user:
+2. Gather these requirements from existing context; ask the user only for missing information:
    - What property does this invariant check? (becomes the `description()`)
    - What does the input look like? (fields, types, ranges)
    - What synthesis targets should it support? (`Test`, `Fuzz`, `RedTeam`)

@@ -2,12 +2,12 @@
 //! uninhabited and its methods are statically unreachable.
 
 use std::env::consts::OS;
-use std::time::Duration;
 
 use crate::error::MetalError;
 use crate::runtime::batch::Binding;
 use crate::runtime::device::DeviceInfo;
 use crate::runtime::library::PipelineInfo;
+use crate::runtime::sys::RawBatchOutcome;
 
 pub(crate) enum RawDevice {}
 
@@ -74,7 +74,7 @@ impl RawCommandBatch {
         match *self {}
     }
 
-    pub(crate) fn commit_and_wait(self) -> Result<Duration, MetalError> {
+    pub(crate) fn commit_and_wait(self) -> RawBatchOutcome {
         match self {}
     }
 }

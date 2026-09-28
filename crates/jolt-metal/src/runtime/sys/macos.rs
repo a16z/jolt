@@ -28,6 +28,7 @@ use crate::error::{CommandBufferError, MetalError};
 use crate::runtime::batch::{Binding, BindingKind};
 use crate::runtime::device::{DeviceInfo, DeviceLimits};
 use crate::runtime::library::{ArgumentSlot, PipelineInfo};
+use crate::runtime::sys::RawBatchOutcome;
 
 // `MTLCreateSystemDefaultDevice` returns nil unless CoreGraphics is linked
 // (see the `objc2-metal` crate docs). Headless command-line processes do not
@@ -266,18 +267,17 @@ impl RawBuffer {
 
     /// The first `len` bytes of the buffer, for the host.
     ///
-    /// `&mut self` is the proof that no GPU work touches the buffer: a
-    /// [`Batch`](crate::runtime::Batch) holds `&Buffer` from the dispatch
-    /// that binds it until it is committed (and the GPU is done) or dropped
-    /// (and nothing ran). `None` if `len` exceeds the allocation.
+    /// The caller establishes that no GPU work touches the buffer through the
+    /// batch borrow and the buffer's completion state. `None` if `len`
+    /// exceeds the allocation.
     pub(crate) fn host_bytes(&mut self, len: usize) -> Option<&[u8]> {
         if len > self.allocated {
             return None;
         }
         // SAFETY: `contents` points to `allocated >= len` bytes initialized
         // at creation (zeroed or copied) and since written only by completed
-        // GPU work; no GPU access is in flight, per the borrow argument
-        // above; the slice borrows `self`, so the buffer outlives it.
+        // GPU work; the caller checked that no GPU access is in flight; the
+        // slice borrows `self`, so the buffer outlives it.
         Some(unsafe { slice::from_raw_parts(self.contents.as_ptr(), len) })
     }
 }
@@ -339,23 +339,18 @@ impl RawCommandBatch {
 
     /// Submits the batch and blocks until the GPU finishes it.
     ///
-    /// WARNING: if an exception escapes `commit` or `waitUntilCompleted`, the
-    /// GPU may still be running the batch when this returns. The command
-    /// buffer retains its buffers, so memory stays valid, but their contents
-    /// are unspecified; the resulting `Fault` tells the consumer to discard
-    /// the device and everything allocated on it.
-    pub(crate) fn commit_and_wait(mut self) -> Result<Duration, MetalError> {
+    pub(crate) fn commit_and_wait(mut self) -> RawBatchOutcome {
         self.encoding = false;
-        objc("command buffer submission", || {
+        match objc("command buffer submission", || {
             self.encoder.endEncoding();
             self.buffer.commit();
             self.buffer.waitUntilCompleted();
             let status = self.buffer.status();
             if status == MTLCommandBufferStatus::Completed {
-                return Ok(gpu_time(
+                return RawBatchOutcome::CompletionConfirmed(Ok(gpu_time(
                     self.buffer.GPUStartTime(),
                     self.buffer.GPUEndTime(),
-                ));
+                )));
             }
             let (code, description) = match self.buffer.error() {
                 Some(error) => {
@@ -374,12 +369,20 @@ impl RawCommandBatch {
                     format!("command buffer ended with status {}", status.0),
                 ),
             };
-            Err(MetalError::CommandBuffer {
+            let error = MetalError::CommandBuffer {
                 code,
                 description,
                 pipelines: Vec::new(),
-            })
-        })?
+            };
+            if status == MTLCommandBufferStatus::Error {
+                RawBatchOutcome::CompletionConfirmed(Err(error))
+            } else {
+                RawBatchOutcome::CompletionUncertain(error)
+            }
+        }) {
+            Ok(outcome) => outcome,
+            Err(error) => RawBatchOutcome::CompletionUncertain(error),
+        }
     }
 }
 
