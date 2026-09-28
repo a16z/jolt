@@ -205,29 +205,6 @@ impl VirtualRegisterAllocator {
         panic!("Failed to allocate virtual register for inline: No registers left");
     }
 
-    pub fn get_registers_for_reset(&self) -> Vec<u8> {
-        // Assert that all inline registers (48+) have been dropped.
-        // This function only returns inline registers from pending_clearing_inline,
-        // so we only need to verify those are deallocated.
-        // Skip reserved (32-39) and instruction (40-47) registers.
-        assert!(
-            self.allocated
-                .lock()
-                .expect("Failed to lock virtual register allocator")
-                .iter()
-                .skip(NUM_RESERVED_VIRTUAL_REGISTERS + NUM_VIRTUAL_INSTRUCTION_REGISTERS)
-                .all(|allocated| !*allocated),
-            "All inline virtual registers must be dropped before inline finalization"
-        );
-
-        std::mem::take(
-            &mut self
-                .pending_clearing_inline
-                .lock()
-                .expect("Failed to lock virtual register allocator"),
-        )
-    }
-
     fn deallocate(&self, index: u8) {
         let virtual_index = (index - RISCV_REGISTER_BASE) as usize;
         if virtual_index < NUM_VIRTUAL_REGISTERS {

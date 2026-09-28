@@ -63,12 +63,6 @@ pub struct Emulator {
     pub end_signature_addr: u64,
 }
 
-pub type EmulatorState = Emulator;
-
-pub fn get_mut_emulator(state: &mut EmulatorState) -> &mut Emulator {
-    state
-}
-
 impl Emulator {
     /// Creates a new `Emulator`. [`Terminal`](terminal/trait.Terminal.html)
     /// is internally used for transferring input/output data to/from `Emulator`.
@@ -91,14 +85,6 @@ impl Emulator {
 
     pub fn set_advice_tape(&mut self, tape: cpu::AdviceTape) {
         self.cpu.advice_tape = tape;
-    }
-
-    pub fn get_advice_tape(&self) -> &cpu::AdviceTape {
-        &self.cpu.advice_tape
-    }
-
-    pub fn get_mut_advice_tape(&mut self) -> &mut cpu::AdviceTape {
-        &mut self.cpu.advice_tape
     }
 
     /// Take ownership of the advice tape, replacing it with an empty one
