@@ -23,8 +23,8 @@ The motivation is twofold:
 
 | Invariant | Targets | Description |
 |---|---|---|
-| `split_eq_bind_low_high` | Test, Fuzz, RedTeam | `GruenSplitEqPolynomial::bind` (LowToHigh) matches `DensePolynomial::bound_poly_var_bot` |
-| `split_eq_bind_high_low` | Test, Fuzz | `GruenSplitEqPolynomial::bind` (HighToLow) matches `DensePolynomial::bound_poly_var_top` |
+| `split_eq_bind_low_high` | Test, Fuzz, RedTeam | `GruenSplitEqPolynomial::bind` (LowToHigh) matches `Polynomial::bind_with_order` |
+| `split_eq_bind_high_low` | Test, Fuzz | `GruenSplitEqPolynomial::bind` (HighToLow) matches `Polynomial::bind_with_order` |
 | `soundness` | RedTeam | For any deterministic guest program + input, only one (output, panic) pair is accepted by the verifier |
 
 ## Built-in objectives
@@ -41,8 +41,8 @@ The motivation is twofold:
 
 | Benchmark | Description |
 |---|---|
-| `bind_parallel_low_to_high` | `DensePolynomial::bind_parallel` with LowToHigh binding (2^20 evaluations) |
-| `bind_parallel_high_to_low` | `DensePolynomial::bind_parallel` with HighToLow binding (2^20 evaluations) |
+| `bind_parallel_low_to_high` | `Polynomial::bind_with_order` with LowToHigh binding (2^20 evaluations) |
+| `bind_parallel_high_to_low` | `Polynomial::bind_with_order` with HighToLow binding (2^20 evaluations) |
 | `naive_sort_time` | Wall-clock time of the `naive_sort` function in `jolt-eval/src/sort_targets.rs` |
 | `prover_time_fibonacci_100` | End-to-end prover time for `fibonacci(100)` |
 | `prover_time_sha2_chain_100` | End-to-end prover time for 100 iterations of SHA-256 chain |
