@@ -939,7 +939,7 @@ impl AkitaBatchProof {
         }
     }
 
-    /// Headerless backend proof body produced by Akita's canonical encoder.
+    /// Headerless backend proof body: Akita's Spongefish argument bytes.
     pub fn backend_proof_body_size(&self) -> usize {
         self.backend_proof.len()
     }
