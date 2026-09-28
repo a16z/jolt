@@ -1,10 +1,10 @@
-//! End-to-end test harnesses for the optimization and red-team loops,
-//! using simple sorting functions as the target domain.
+//! End-to-end test harness for the red-team loop, using a simple sorting
+//! function as the target domain.
 
 use crate::agent::ClaudeCodeAgent;
 use crate::invariant::synthesis::redteam::{auto_redteam, RedTeamConfig, RedTeamResult};
 use crate::invariant::{CheckError, Invariant, InvariantViolation};
-use crate::sort_targets::{candidate_sort, naive_sort};
+use crate::sort_targets::candidate_sort;
 
 /// Invariant: a sort function must preserve all elements (multiset
 /// equality) and produce sorted output.
@@ -59,47 +59,6 @@ impl Invariant for CandidateSortInvariant {
             vec![5, 4, 3, 2, 1],
             vec![1, 1, 1],
         ]
-    }
-}
-
-/// Invariant for the naive (correct) sort — used in the optimization
-/// loop to verify that the "optimized" sort is still correct.
-pub struct NaiveSortInvariant;
-
-impl Invariant for NaiveSortInvariant {
-    type Setup = ();
-    type Input = Vec<i32>;
-
-    fn name(&self) -> &str {
-        "naive_sort_correctness"
-    }
-
-    fn description(&self) -> String {
-        "The naive sort must return a permutation of its input in \
-         non-decreasing order."
-            .to_string()
-    }
-
-    fn setup(&self) {}
-
-    fn check(&self, _: &(), input: Vec<i32>) -> Result<(), CheckError> {
-        let mut output = input.clone();
-        naive_sort(&mut output);
-
-        let mut expected = input;
-        expected.sort();
-
-        if output != expected {
-            return Err(CheckError::Violation(InvariantViolation::new(format!(
-                "naive sort incorrect: expected {expected:?}, got {output:?}"
-            ))));
-        }
-
-        Ok(())
-    }
-
-    fn seed_corpus(&self) -> Vec<Vec<i32>> {
-        vec![vec![], vec![1], vec![3, 1, 2], vec![5, 4, 3, 2, 1]]
     }
 }
 
