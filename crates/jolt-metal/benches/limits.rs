@@ -1,5 +1,5 @@
-//! The machine limits a kernel can be bound by, and kernels' fractions of
-//! them (specs/jolt-metal-field.md, Performance model). Prints Markdown for
+//! Machine limits, kernels' fractions of them, and diagnostic workloads
+//! (specs/jolt-metal-field.md, Performance model). Prints Markdown for
 //! the local report.
 //!
 //! Limits, from GPU timestamps unless noted:
@@ -12,7 +12,8 @@
 //!   least 2^24 elements, by repeating smaller passes within one batch, so
 //!   in-cache sizes are not measuring launch cost alone. A kernel that only
 //!   reads is bound by the read rate, which is above the copy rate;
-//! - threadgroup memory bandwidth: `jolt_bench_threadgroup_load`;
+//! - threadgroup-load workload time: `jolt_bench_threadgroup_load`; its
+//!   repeated addresses do not establish an executed load count;
 //! - round trip, in wall time: from committing a batch to the host holding
 //!   its result, for an empty batch and for one threadgroup reducing an
 //!   inner product of 1024 elements to one element that the host reads.
@@ -23,7 +24,7 @@
 //! alternating order, and the fraction is the median per-round ratio of
 //! their rates.
 //!
-//! The field kernels are checked against the CPU in `benches/fp128.rs`; the
+//! The field kernels are checked against the CPU in `benches/field.rs`; the
 //! kernels only this benchmark runs are checked here before they are timed.
 
 #[cfg(target_os = "macos")]
@@ -39,10 +40,14 @@ mod metal {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
+    use jolt_field::solinas::Prime128OffsetA7F7;
     use jolt_field::Zero;
     use jolt_metal::runtime::{Batch, Binding, Device, DeviceBuffer, Grid};
 
-    use super::support::{dispatch, elements, library, pipeline, threadgroup, words, F};
+    use super::support::{dispatch, elements, library, pipeline, threadgroup, words};
+
+    /// The field whose kernels the limits bound.
+    type F = Prime128OffsetA7F7;
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");
@@ -264,7 +269,7 @@ mod metal {
         for kind in [Memory::Copy, Memory::Read] {
             let bindings = [Binding::buffer(&source_dev), Binding::buffer(&copy_dev)];
             let grid = memory_grid(kind, max_words);
-            // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+            // SAFETY: copy/read grids cover the allocated inputs and outputs, with disjoint source and destination.
             let _ = unsafe {
                 dispatch(
                     &device,
@@ -296,7 +301,7 @@ mod metal {
         assert!(tile_pipeline.max_total_threads_per_threadgroup() >= TILE_WORDS);
         let tile_grid = Grid::linear(THREADS, TILE_WORDS);
         let tile_bindings = [Binding::buffer(&source_dev), Binding::buffer(&tile_out)];
-        // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+        // SAFETY: each whole TILE_WORDS group loads a full tile and writes one output per thread.
         let _ = unsafe { dispatch(&device, tile_pipeline, &tile_bindings, tile_grid, 1) };
         let expected: Vec<Word> = (0..TILE_WORDS)
             .map(|t| {
@@ -330,7 +335,7 @@ mod metal {
                         Binding::value(&CHAIN_ROUNDS),
                         Binding::buffer(field_out),
                     ];
-                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    // SAFETY: chain inputs and output each hold at least THREADS elements and are distinct.
                     unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }
@@ -346,7 +351,7 @@ mod metal {
                         Binding::buffer(b_dev),
                         Binding::buffer(field_out),
                     ];
-                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    // SAFETY: fmadd inputs and output each hold at least THREADS elements and are distinct.
                     unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }
@@ -359,16 +364,16 @@ mod metal {
                 work: (kind.bytes(len) * repeats) as f64,
                 run: Box::new(move || {
                     let bindings = [Binding::buffer(source_dev), Binding::buffer(copy_dev)];
-                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    // SAFETY: copy/read grids stay within the allocated buffers, with disjoint source and destination.
                     unsafe { dispatch(device, pipeline, &bindings, grid, repeats) }
                 }),
             }
         };
         let tile = Case {
-            work: (THREADS * TILE_ROUNDS * WORD_BYTES) as f64,
+            work: 1.0,
             run: Box::new(move || {
                 let bindings = [Binding::buffer(source_dev), Binding::buffer(tile_out)];
-                // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                // SAFETY: each whole TILE_WORDS group loads a full tile and writes one output per thread.
                 unsafe { dispatch(device, tile_pipeline, &bindings, tile_grid, 1) }
             }),
         };
@@ -398,9 +403,10 @@ mod metal {
                 beyond_cache = spread.median;
             }
         }
+        let tile_time = Spread::of((0..ROUNDS).map(|_| tile.sample().recip()).collect());
         println!(
-            "| threadgroup memory (GB/s) | 16 B loads, {TILE_WORDS}-thread groups | {} |",
-            rate(&tile).row(1e-9, 0)
+            "| threadgroup load workload (µs) | {TILE_ROUNDS} source rounds, executed load count unverified | {} |",
+            tile_time.row(1e6, 1)
         );
 
         let empty = wall(|| {
@@ -430,7 +436,7 @@ mod metal {
                 Binding::buffer(&sum_dev),
             ];
             let grid = Grid::linear(ROUND_TRIP_ELEMENTS, ROUND_TRIP_ELEMENTS);
-            // SAFETY: one full group reduces n allocated inputs into one output.
+            // SAFETY: one complete group reduces n allocated input elements into the single output.
             unsafe { batch.dispatch_unchecked(reduce_pipeline, &bindings, grid) }
                 .expect("valid dispatch");
             let start = Instant::now();
@@ -486,7 +492,7 @@ mod metal {
                         Binding::buffer(b_dev),
                         Binding::buffer(field_out),
                     ];
-                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    // SAFETY: elementwise multiplication stays within the distinct len-element buffers.
                     unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }
@@ -507,7 +513,7 @@ mod metal {
                         Binding::value(&n),
                         Binding::buffer(partials),
                     ];
-                    // SAFETY: the selected kernel's inputs and distinct outputs cover its whole grid and guarded accesses.
+                    // SAFETY: whole groups read only indices below n and write one partial per allocated output slot.
                     unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
                 }),
             }

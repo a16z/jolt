@@ -1,5 +1,5 @@
 // Machine-limit benchmarks that no field kernel measures: memory bandwidth,
-// for copies and for reads, and threadgroup memory bandwidth. All move 16 B
+// for copies and for reads, and a threadgroup-load workload. All move 16 B
 // words, the size of an Fp128 element.
 
 // out[i] = in[i]: 16 B read and 16 B written per thread.
@@ -36,9 +36,8 @@ constant constexpr uint TILE_ROUNDS = 1024;
 // threads. Each threadgroup copies in[0..TILE_WORDS) to its tile, then
 // thread t sums tile[(t + 32 r) mod TILE_WORDS] over TILE_ROUNDS rounds r,
 // with wrapping lane-wise addition: each round a simdgroup reads 32
-// consecutive words, and consecutive rounds of a thread read different
-// words, so no load is loop-invariant. (XOR would cancel: the index repeats
-// every 8 rounds, an even number of times.)
+// consecutive words. Each thread repeats eight addresses, so a compiler may
+// reuse loads. Time this workload without inferring an executed load count.
 kernel void jolt_bench_threadgroup_load(device const uint4* in [[buffer(0)]],
                                         device uint4* out [[buffer(1)]],
                                         uint i [[thread_position_in_grid]],

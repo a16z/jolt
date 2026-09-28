@@ -108,7 +108,7 @@ kernel void jolt_bench_accum_inner_product(device const F* a [[buffer(0)]],
     static_assert(Acc::CAPACITY >= 0xFFFFFFFFul, "a threadgroup may read every index below n");
     threadgroup Acc scratch[32];
     Acc acc = Acc::zero();
-    for (uint j = i; j < n; j += threads) {
+    for (ulong j = ulong(i); j < ulong(n); j += ulong(threads)) {
         acc.fmadd(a[j], b[j]);
     }
     Acc total = jolt::threadgroup_merge(acc, scratch, lane, simdgroup, simdgroups, width);

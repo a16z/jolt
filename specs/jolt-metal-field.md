@@ -305,8 +305,9 @@ its speed. This section fixes how speed is measured and reported. Decisions
 then rest on numbers, and per-machine tuning (see Direction) needs no kernel
 rewrite.
 
-**Machine limits.** A benchmark, `benches/limits.rs`, measures the resources a
-kernel can be bound by, on the machine that runs it:
+**Machine limits and diagnostic workloads.** `benches/limits.rs` measures
+arithmetic and memory rates, completion latency, and a threadgroup-load workload
+on the machine that runs it:
 
 | Limit | Measured as |
 |---|---|
@@ -314,8 +315,20 @@ kernel can be bound by, on the machine that runs it:
 | deferred multiply-accumulate | `fmadd` into an accumulator, reduced once per 256 terms |
 | memory copy | `out[i] = in[i]` on 16 B words, at sizes inside and beyond the system-level cache |
 | memory read | four strided 16 B loads summed per thread, one write, at the same sizes |
-| threadgroup memory bandwidth | 16 B loads per second from threadgroup memory |
+| threadgroup load workload | GPU execution time; executed load count is unverified |
 | round trip | from committing a batch to the host observing its result, for an empty batch and for one reduction to a single element |
+
+The threadgroup-load workload repeats eight addresses per thread across 1024
+rounds. A compiler may reuse those loads, so source-level load counts cannot
+justify a bandwidth figure. The benchmark reports workload time only. Promote
+it to a bandwidth limit only after checking generated code or suitable counters
+and a round-count sweep with setup costs accounted for.
+
+Inner-product benchmarks label GPU partial-reduction time separately from
+complete wall time. The latter includes submission, checked readback, and the
+CPU sum of all partials, with inputs already resident on the GPU. CPU complete
+wall time returns the same final scalar. Compare those complete measurements
+when assessing latency; the partial kernel time measures GPU throughput only.
 
 The report prints these next to the device descriptor. The machine's ridge,
 bandwidth divided by multiply rate, says which kernels are compute-bound.
