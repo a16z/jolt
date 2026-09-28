@@ -123,7 +123,7 @@ pub(super) fn commit_packed<const D: usize>(
                                             .enumerate()
                                     {
                                         let hot = row_indices[column];
-                                        shifts[len.min(rows_per_ring - 1)] =
+                                        shifts[len] =
                                             row_offset * source.one_hot_k + usize::from(hot);
                                         len += usize::from(row_is_committed(
                                             hot,

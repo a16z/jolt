@@ -24,8 +24,9 @@ pub(super) type DigitAccumulator<const D: usize> = [Fp128x8i32; D];
 /// `j` of `a · X^k` is entry `D + j - k` for every `k < D`. The digits are the
 /// non-negative [`Fp128x8i32`] lanes of each canonical value, so a shift reads
 /// half the bytes of a wide ring element and adds a value below `2^16` to
-/// each destination lane. At most `2^15` shifts per destination between
-/// flushes keep every lane inside `reduce_wide`'s `i32` range.
+/// each destination lane. At most `MAX_WIDE_ACCUMULATIONS` shifts per
+/// destination between flushes keep every lane inside `reduce_wide`'s `i32`
+/// range.
 pub(super) struct DigitWindows<const D: usize> {
     digits: Vec<[u16; 8]>,
 }

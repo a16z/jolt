@@ -267,11 +267,6 @@ where
     })?;
     let _span = tracing::info_span!("trace_onehot_coefficient_packing").entered();
     let positions_per_block = point.num_positions_per_block();
-    if !positions_per_block.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "coefficient-packing positions per block {positions_per_block} must be a nonzero power of two"
-        )));
-    }
     let segment_rings = source.segment_ring_elems::<D>()?;
     let num_columns = source.rows.num_columns();
     let position_weights = point.position_weights();
@@ -283,11 +278,8 @@ where
     // packing-weight multiplication per coefficient instead of per nonzero.
     let span = positions_per_block.min(segment_rings);
     let spans = segment_rings / span;
-    let ring_alignment = (source.one_hot_k / D).clamp(1, span);
-    let parts = rayon::current_num_threads()
-        .saturating_mul(TASKS_PER_RAYON_WORKER)
-        .div_ceil(spans)
-        .clamp(1, span / ring_alignment);
+    let ring_alignment = (source.one_hot_k / D).max(1);
+    let parts = trace_block_task_parts::<D>(source.one_hot_k, span, spans);
     let partials = (0..spans * parts)
         .into_par_iter()
         .map(|task| {

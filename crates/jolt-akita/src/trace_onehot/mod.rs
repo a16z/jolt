@@ -11,8 +11,11 @@
     reason = "hot kernels index geometry validated by TracePackedOneHot and their plans"
 )]
 
+use crate::AkitaField;
+use jolt_field::WithCommitAccumulator;
+
 const NO_SELECTED_ROW: u8 = 0;
-const MAX_WIDE_ACCUMULATIONS: usize = 1 << 15;
+const MAX_WIDE_ACCUMULATIONS: usize = AkitaField::MAX_COMMIT_ACCUMULATIONS;
 const TASKS_PER_RAYON_WORKER: usize = 4;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
