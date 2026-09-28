@@ -27,7 +27,8 @@ mod tests {
     use crate::instruction::Instruction;
 
     /// MISC-MEM carries `fence` (funct3 = 000) only. Zifencei's `fence.i`
-    /// (funct3 = 001) and the reserved funct3 values are outside RV64IMAC, so
+    /// (funct3 = 001), the Zicbom/Zicboz CBO instructions (funct3 = 010) and
+    /// the reserved funct3 values (011..111) are outside RV64IMAC, so
     /// `decode` must reject them with an error instead of handing the word to
     /// `FENCE::new`, whose `MASK` requires funct3 = 000.
     #[test]

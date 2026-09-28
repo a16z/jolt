@@ -57,8 +57,9 @@ pub fn decode_instruction(
         0b0011011 => decode_op_imm_32(word)?,
         0b0110011 => decode_op(word)?,
         0b0111011 => decode_op_32(word)?,
-        // Zifencei's FENCE.I (funct3 = 001) shares MISC-MEM with FENCE but is
-        // outside RV64IMAC, and funct3 >= 2 is reserved.
+        // MISC-MEM also carries Zifencei's FENCE.I (funct3 = 001) and the
+        // Zicbom/Zicboz CBO instructions (funct3 = 010), all outside RV64IMAC;
+        // funct3 = 011..111 is reserved.
         0b0001111 => match funct3(word) {
             0b000 => SourceInstructionKind::FENCE,
             _ => return invalid("invalid MISC-MEM funct3"),
@@ -936,6 +937,13 @@ mod tests {
                 "invalid atomic memory operation",
             ),
             ((0x3f << 25) | 0x5b, "invalid custom instruction"),
+            (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b010 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b011 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b100 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b101 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b110 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b111 << 12), "invalid MISC-MEM funct3"),
         ];
         for (word, message) in cases {
             match decode_instruction(*word, 0x8000_0000, false, RV64IMAC_JOLT) {
@@ -989,11 +997,10 @@ mod tests {
         assert_eq!(instruction.row().operands.rs2, Some(3));
     }
 
-    /// MISC-MEM carries `fence` (funct3 = 000) only. Zifencei's `fence.i`
-    /// (funct3 = 001) is outside RV64IMAC and funct3 >= 2 is reserved, so
-    /// neither may enter the program image as a no-op `FENCE` row.
+    /// `fence rw, rw` is the only MISC-MEM encoding in RV64IMAC; the other
+    /// funct3 values are rejected in `rejects_invalid_encodings_with_exact_messages`.
     #[test]
-    fn misc_mem_decodes_only_fence() {
+    fn decodes_fence() {
         let fence = decode_instruction(0x0ff0_000f, 0x8000_0000, false, RV64IMAC_JOLT);
         assert!(
             matches!(
@@ -1002,17 +1009,6 @@ mod tests {
             ),
             "{fence:?}"
         );
-
-        for funct3 in 1..8 {
-            let word = (funct3 << 12) | 0x0000_000f;
-            assert!(
-                matches!(
-                    decode_instruction(word, 0x8000_0000, false, RV64IMAC_JOLT),
-                    Err(ProgramError::MalformedImage("invalid MISC-MEM funct3"))
-                ),
-                "MISC-MEM funct3={funct3:03b} must be rejected"
-            );
-        }
     }
 
     #[cfg(not(feature = "field-inline"))]
