@@ -408,11 +408,10 @@ impl AkitaScheme {
         source: AkitaHintSource,
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let backend_flavor = source.backend_flavor();
-        let one_hot_k = match backend_flavor {
-            AkitaBackendFlavor::Dense => 0,
-            AkitaBackendFlavor::OneHot => source
-                .one_hot_k()
-                .ok_or_else(|| invalid_batch("Akita one-hot commitment group must not be empty"))?,
+        let one_hot_k = match source {
+            AkitaHintSource::Dense { .. } => 0,
+            AkitaHintSource::OneHot { one_hot_k, .. }
+            | AkitaHintSource::TraceOneHot { one_hot_k } => one_hot_k,
         };
         let commitment = AkitaCommitment {
             backend_flavor,

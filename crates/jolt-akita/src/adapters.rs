@@ -1021,13 +1021,6 @@ impl AkitaHintSource {
             Self::TraceOneHot { .. } => 1,
         }
     }
-
-    pub(crate) const fn one_hot_k(self) -> Option<usize> {
-        match self {
-            Self::OneHot { one_hot_k, .. } | Self::TraceOneHot { one_hot_k } => Some(one_hot_k),
-            Self::Dense { .. } => None,
-        }
-    }
 }
 
 /// `2^num_vars`, or `None` when it does not fit in `usize`.
