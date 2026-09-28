@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790564933773,
+  "lastUpdate": 1790612944594,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -169114,6 +169114,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 867332,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ec22da9af3966aa0e63a887066aafe650da614ec",
+          "message": "ci: give jolt-akita its own modular-crate test shard (#1947)\n\n* ci: build once, test from nextest archive, right-size runners\n\nThe ci-profile test family (prover, verifier fixtures, tracer, x86, sdk,\nzk and akita lanes) compiled the workspace eleven times per run: every\nlane ran cargo install --path . plus its own test build, ~85 runner\nminutes of compilation for ~21 minutes of tests. A single build-release\njob now installs the jolt CLI and builds one nextest archive per test\ninvocation (1:1 with the old commands, so per-package feature resolution\nis unchanged); the test-release matrix downloads the archives and runs\nthem, splitting the two longest suites with --partition.\n\nrust-cache entries are saved from main only. PR-scoped copies of the\nshared keys were blowing the 10 GB repository quota: 5 of the 10 main\nruns sampled on Sep 27, 2026 started fully cold (34% hit rate overall).\nThe dead ~/.cache/dory cache directory is dropped; its saver never ran a\nDory test, and its presence in the key kept the x86 lane from ever\nhitting the shared entry.\n\n* ci: spread the release archives over build lanes\n\nOne build job took 27 min on a 4-vCPU runner: the workspace feature\nvariants dominate (22 of the 27 minutes were the archive step) and\nrust-cache never stores them, so the single job became the critical\npath. Four lanes (dory + CLI, verifier-dory, zk, akita) share nothing\nbut dependencies; verifier-akita stays with prover-akita because it\nreuses its units. Lanes attempt every archive even after one fails and\nthe test matrix runs whenever the run is not cancelled, so one broken\nfeature set only fails its own test jobs. Build lanes drop the guest\ntoolchain: no build script compiles a guest.\n\n* ci: give jolt-akita its own crate shard\n\nIts optimized test build alone takes 10-14 min on a 4-vCPU runner and\nmade shard 0 (16-26 min) the critical path of every run.\n\n* ci: give jolt-akita its own modular-crate test shard\n\njolt-akita's optimized test build ([profile.test] opt-level = 3) takes\n10-14 min on a 4-vCPU runner and sat inside shard 0, which made that\nshard the critical path of every run (27.4 min in the latest main run).\nOther crates keep their shard index; only jolt-akita moves.\n\nReplaces the earlier nextest-archive fan-out on this branch, which was\nneutral on wall time and CPU once the shard split landed.",
+          "timestamp": "2026-09-28T11:36:40-04:00",
+          "tree_id": "5dba41a6712225bd3bf30e1fc1eefb7236e897e2",
+          "url": "https://github.com/a16z/jolt/commit/ec22da9af3966aa0e63a887066aafe650da614ec"
+        },
+        "date": 1790612940946,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6097,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 862124,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4153,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 508960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 498700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.841,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999264,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.6823,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 498664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0063,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 507148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.9729,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 173592,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.7011,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 858960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6913,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 500620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5023,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 510988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.7197,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 498652,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.3775,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 507120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 35.333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1953620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.5934,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 631680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 80.889,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1105072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.5349,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 504064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.785,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 502860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.8674,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861068,
             "unit": "KB",
             "extra": ""
           }
