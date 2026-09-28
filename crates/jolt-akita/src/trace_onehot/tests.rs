@@ -9,14 +9,15 @@ use std::sync::Arc;
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_prover::backend::OneHotBatchView;
-use akita_prover::compute::{
-    DecomposeFoldPlan, OpeningFoldKernel, OpeningFoldPlan, SubringCoefficientPackingBatchKernel,
+use akita_pcs::custom_source::{
+    DecomposeFoldPlan, OneHotBatchView, OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, SubringCoefficientPackingBatchKernel,
     SubringCoefficientPackingPlan,
 };
-use akita_prover::{CpuBackend, OneHotPoly, RootOpeningSource, RootPolyMeta, RootPolyShape};
+use akita_pcs::{AkitaProverSetup, CpuBackend, OneHotPoly};
 use akita_types::{
-    BasisMode, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+    BasisMode, PreparedSubringCoefficientPackingPoint, SetupMatrixCapacity,
+    SubringCoefficientPackingGeometry,
 };
 use jolt_field::{One, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -58,6 +59,22 @@ impl TraceOneHotRows for TestRows {
             .filter(|&column| self.selected_row(row, column) == 0)
             .map_or(0, |column| 1u64 << column)
     }
+}
+
+type TestBackend = CpuBackend<AkitaField, AkitaField>;
+
+/// The kernels under test never read the owned setup; the smallest valid
+/// setup only gives them a backend to hang off.
+fn test_backend() -> TestBackend {
+    let setup = AkitaProverSetup::<AkitaField>::generate_with_capacity(
+        1,
+        1,
+        SetupMatrixCapacity {
+            num_field_elements: 1,
+        },
+    )
+    .unwrap();
+    CpuBackend::new(setup.expanded).unwrap()
 }
 
 fn packing_point<const D: usize>(
@@ -289,19 +306,19 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         position_weights: &position_weights,
         num_positions_per_block: num_positions,
     };
-    let backend = CpuBackend::DEFAULT;
-    let streamed = <CpuBackend as OpeningFoldKernel<
-            TracePackedOneHotView<'_, D>,
-            AkitaField,
-            D,
-        >>::evaluate_and_fold(
-            &backend,
-            None,
-            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap(),
-            fold_plan,
-        )
-        .unwrap();
-    let materialized = <CpuBackend as OpeningFoldKernel<_, AkitaField, D>>::evaluate_and_fold(
+    let backend = test_backend();
+    let streamed = <TestBackend as OpeningFoldKernel<
+        TracePackedOneHotView<'_, D>,
+        AkitaField,
+        D,
+    >>::evaluate_and_fold(
+        &backend,
+        None,
+        <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap(),
+        fold_plan,
+    )
+    .unwrap();
+    let materialized = <TestBackend as OpeningFoldKernel<_, AkitaField, D>>::evaluate_and_fold(
         &backend,
         None,
         <OneHotPoly<AkitaField, u8> as RootOpeningSource<AkitaField, D>>::opening_view(
@@ -325,18 +342,18 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         num_digits: 2,
         log_basis: 3,
     };
-    let streamed = <CpuBackend as OpeningFoldKernel<
-            TracePackedOneHotView<'_, D>,
-            AkitaField,
-            D,
-        >>::decompose_fold(
-            &backend,
-            None,
-            <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap(),
-            decompose_plan,
-        )
-        .unwrap();
-    let materialized = <CpuBackend as OpeningFoldKernel<_, AkitaField, D>>::decompose_fold(
+    let streamed = <TestBackend as OpeningFoldKernel<
+        TracePackedOneHotView<'_, D>,
+        AkitaField,
+        D,
+    >>::decompose_fold(
+        &backend,
+        None,
+        <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap(),
+        decompose_plan,
+    )
+    .unwrap();
+    let materialized = <TestBackend as OpeningFoldKernel<_, AkitaField, D>>::decompose_fold(
         &backend,
         None,
         <OneHotPoly<AkitaField, u8> as RootOpeningSource<AkitaField, D>>::opening_view(
@@ -389,7 +406,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
         <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_batch(&trace_sources)
             .unwrap();
     let streamed =
-        <CpuBackend as SubringCoefficientPackingBatchKernel<
+        <TestBackend as SubringCoefficientPackingBatchKernel<
             TracePackedOneHotBatchView<'_, D>,
             AkitaField,
             AkitaField,
@@ -402,7 +419,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
             &materialized_sources,
         )
         .unwrap();
-    let materialized = <CpuBackend as SubringCoefficientPackingBatchKernel<
+    let materialized = <TestBackend as SubringCoefficientPackingBatchKernel<
         OneHotBatchView<'_, AkitaField, D, u8>,
         AkitaField,
         AkitaField,

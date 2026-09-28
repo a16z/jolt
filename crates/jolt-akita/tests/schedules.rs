@@ -222,7 +222,7 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
         TrustedScheduleCatalog::<JoltOneHotK256>::new(setup_catalog).expect("config-bound catalog");
     let setup_capacity = SetupRequirements::from_catalog(&trusted_catalog, 39, 2)
         .expect("catalog-backed setup capacity")
-        .matrix_capacity;
+        .matrix_capacity();
     assert!(setup_capacity.num_field_elements >= full_capacity.num_field_elements);
     assert!(setup_capacity.num_field_elements >= precommit_capacity);
 }
