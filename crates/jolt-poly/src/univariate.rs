@@ -292,52 +292,6 @@ impl<F: Field> UnivariatePoly<F> {
         Self { coefficients }
     }
 
-    /// Computes the cubic polynomial `s(X) = l(X) * q(X)`, where `l(X)` is linear
-    /// and `q(X)` is quadratic, given partial information and a hint.
-    ///
-    /// - `linear_coeffs = [l(0), l(∞)]` (constant and leading coefficient)
-    /// - `quadratic_coeff_0 = q(0)` (constant)
-    /// - `quadratic_coeff_2 = q(∞)` (quadratic coefficient, i.e., leading coeff)
-    /// - `hint = s(0) + s(1)`
-    ///
-    /// Used by the split-eq evaluator to construct round polynomials.
-    ///
-    /// # Panics
-    /// Panics if `l(1) = linear_coeffs[0] + linear_coeffs[1]` is zero, since the
-    /// hint equation cannot then be solved for the missing quadratic coefficient.
-    #[expect(clippy::expect_used)]
-    pub fn from_linear_times_quadratic_with_hint(
-        linear_coeffs: [F; 2],
-        quadratic_coeff_0: F,
-        quadratic_coeff_2: F,
-        hint: F,
-    ) -> Self {
-        let linear_eval_one = linear_coeffs[0] + linear_coeffs[1];
-        let cubic_coeff_0 = linear_coeffs[0] * quadratic_coeff_0;
-
-        // s(0) + s(1) = l(0)*q(0) + l(1)*q(1) = hint
-        // l(1) = l(0) + l(∞) = linear_eval_one
-        // q(1) = q(0) + q(1_coeff) + q(2_coeff)
-        // Solve for the linear coefficient of q:
-        assert!(
-            !linear_eval_one.is_zero(),
-            "linear polynomial vanishes at x=1"
-        );
-        let linear_eval_one_inv = linear_eval_one
-            .inverse()
-            .expect("nonzero linear_eval_one has an inverse");
-        let quadratic_coeff_1 =
-            (hint - cubic_coeff_0) * linear_eval_one_inv - quadratic_coeff_0 - quadratic_coeff_2;
-
-        let coefficients = vec![
-            cubic_coeff_0,
-            linear_coeffs[0] * quadratic_coeff_1 + linear_coeffs[1] * quadratic_coeff_0,
-            linear_coeffs[0] * quadratic_coeff_2 + linear_coeffs[1] * quadratic_coeff_1,
-            linear_coeffs[1] * quadratic_coeff_2,
-        ];
-        Self { coefficients }
-    }
-
     /// Returns `true` if all coefficients are zero (or the vector is empty).
     pub fn is_zero(&self) -> bool {
         self.coefficients.is_empty() || self.coefficients.iter().all(|c| *c == F::zero())
@@ -797,23 +751,5 @@ mod tests {
                 assert_eq!(UnivariatePoly::from_evals_toom(&samples), expected);
             }
         }
-    }
-
-    #[test]
-    fn from_linear_times_quadratic_with_hint() {
-        let linear_coeffs = [Fr::from_u64(1), Fr::from_u64(1)];
-        let q0 = Fr::from_u64(3);
-        let q2 = Fr::from_u64(1);
-        let hint = Fr::from_u64(15);
-        let poly =
-            UnivariatePoly::from_linear_times_quadratic_with_hint(linear_coeffs, q0, q2, hint);
-
-        let expected = UnivariatePoly::new(vec![
-            Fr::from_u64(3),
-            Fr::from_u64(5),
-            Fr::from_u64(3),
-            Fr::from_u64(1),
-        ]);
-        assert_eq!(poly, expected);
     }
 }
