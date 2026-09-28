@@ -16,7 +16,7 @@ use akita_pcs::{
 };
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
-    AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
+    AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
 use jolt_field::{CanonicalBytes, Zero};
@@ -166,7 +166,7 @@ pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHot
 pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
 pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
 pub(crate) type AkitaBackendHint = CommitmentHandle<AkitaField, AkitaBackendExtField>;
-pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
+pub(crate) type AkitaBackendVerifierSetup = BackendVerifierSetup<AkitaField>;
 pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
 /// The owning CPU backend: prepared setup transforms plus every commitment
@@ -556,8 +556,8 @@ impl AkitaVerifierSetup {
     /// in-process setups never pay the shape→key re-derivation.
     pub(crate) fn prime_backend_cache(
         &self,
-        dense: Option<AkitaBackendVerifier>,
-        one_hot: Option<AkitaBackendVerifier>,
+        dense: Option<AkitaBackendVerifierSetup>,
+        one_hot: Option<AkitaBackendVerifierSetup>,
     ) -> Result<(), OpeningsError> {
         if let Some(dense) = dense {
             let verifier =
@@ -689,7 +689,7 @@ impl AkitaVerifierSetup {
         Ok(self.backend_cache.one_hot_k256.get_or_init(|| verifier))
     }
 
-    fn one_hot_backend_verifier_setup(&self) -> Result<AkitaBackendVerifier, OpeningsError> {
+    fn one_hot_backend_verifier_setup(&self) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
         let log_k = validate_one_hot_k(self.one_hot_k)?;
         if self.max_num_vars < log_k {
             return Err(invalid_batch("Akita verifier setup has no one-hot backend"));
@@ -1102,7 +1102,7 @@ pub(crate) fn one_hot_setup_prover(
 pub(crate) fn one_hot_setup_verifier(
     setup: &AkitaVerifierSetup,
     prover_setup: &AkitaBackendProverSetup,
-) -> Result<AkitaBackendVerifier, OpeningsError> {
+) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
     match setup.one_hot_k {
         AKITA_ONE_HOT_K16 => with_backend_pool(|| {
             setup
