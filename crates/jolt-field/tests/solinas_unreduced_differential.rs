@@ -109,7 +109,7 @@ commit_lanes_suite!(commit_lanes_match_wide_fp128, two::Prime128Offset275, 0xC2)
 fn commit_lanes_headroom_boundary_is_exact() {
     type F = two::Prime128Offset275;
     let limit = <F as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS;
-    let lanes = [two::Fp128x8u16::from(-F::one())];
+    let lanes = [<[u16; 8]>::from(-F::one())];
     let mut acc = [two::Fp128x8i32([0; 8])];
     for _ in 0..limit {
         add_flat_commit_lanes::<F>(&mut acc, &lanes);
