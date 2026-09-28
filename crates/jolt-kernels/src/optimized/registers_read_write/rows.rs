@@ -79,7 +79,7 @@ const COLLECT_CHUNK: usize = 1 << 16;
 
 /// Signed rd write delta, or zero without an rd operand.
 #[inline]
-fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
+pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
     match cycle.rd {
         Some((_, pre, post)) => post as i128 - pre as i128,
         None => 0,

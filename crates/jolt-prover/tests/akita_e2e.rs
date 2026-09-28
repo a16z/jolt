@@ -140,7 +140,20 @@ mod akita_tests {
 
     #[test]
     fn muldiv_e2e_akita() {
-        let (run, config) = muldiv_run();
+        check_muldiv_e2e(false);
+    }
+
+    #[test]
+    fn muldiv_address_first_e2e_akita() {
+        check_muldiv_e2e(true);
+    }
+
+    fn check_muldiv_e2e(address_first: bool) {
+        let (run, mut config) = muldiv_run();
+        if address_first {
+            config.rw_config.ram_rw_phase1_num_rounds = 0;
+            config.rw_config.registers_rw_phase1_num_rounds = 0;
+        }
         assert_eq!(config.one_hot_config.committed_chunk_bits(), 4);
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("Akita proof must verify");
