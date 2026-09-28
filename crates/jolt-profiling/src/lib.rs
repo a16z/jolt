@@ -13,8 +13,8 @@
 //!   `taxonomy` module for the normative span schema).
 //! - **CPU profiling** (`pprof` feature) — scoped `pprof` guards that write `.pb`
 //!   flamegraph files on drop.
-//! - **Heap flamegraphs** (`allocative` feature) — generates SVG flamegraphs from
-//!   `allocative`-instrumented data structures.
+//! - **Heap flamegraphs** (`allocative` feature) — writes folded-stack heap
+//!   snapshots of `allocative`-instrumented data structures.
 //!
 //! # Usage
 //!
