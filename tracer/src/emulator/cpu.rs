@@ -1405,7 +1405,6 @@ impl Drop for Cpu {
     }
 }
 
-#[allow(dead_code)]
 pub fn get_register_name(num: usize) -> &'static str {
     match num {
         0 => "zero",
