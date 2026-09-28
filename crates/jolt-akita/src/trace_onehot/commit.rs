@@ -2,14 +2,15 @@ use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
 use akita_prover::compute::CommitInnerPlan;
 use akita_prover::{CommitInnerWitness, ComputeBackendSetup, CpuBackend};
+use jolt_field::Fp128x8i32;
 use rayon::prelude::*;
 
+use super::digit_windows::{flush_digit_accumulators, DigitWindows};
 use super::source::TracePackedOneHot;
 use super::traversal::{
-    flush_deferred_rank, flush_wide, row_is_committed, trace_block_part_range,
-    trace_block_task_parts, try_shift_accumulate_full_rows, validate_block_geometry,
-    visit_segment_ring_range, visit_segment_ring_row_range, DeferredFp128Ring,
-    K16FourRowShiftGroups,
+    flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
+    validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
+    DeferredFp128Ring,
 };
 use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
 use crate::AkitaField;
@@ -57,44 +58,37 @@ pub(super) fn commit_packed<const D: usize>(
             blocks_per_column * plan.num_positions_per_block,
             segment_rings
         );
-        let parts = trace_block_task_parts::<D>(
+        let schedule = trace_block_task_schedule::<D>(
             source.one_hot_k,
             plan.num_positions_per_block,
             blocks_per_column,
         );
-        let ring_alignment = (source.one_hot_k / D).max(1);
         let num_columns = source.rows.num_columns();
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate",
             num_blocks,
             blocks_per_column,
-            task_parts = parts,
-            tasks = blocks_per_column * parts,
+            task_parts = schedule.parts,
+            tasks = blocks_per_column * schedule.parts,
             active_columns = num_columns,
             rows_per_ring = D / source.one_hot_k,
-            shared_shift_groups = source.one_hot_k == 16 && matches!(D, 64 | 128 | 256),
-            generic_fused_row_shifts = matches!(D / source.one_hot_k, 2 | 4 | 8 | 16 | 32),
         )
         .entered();
-        let partials = (0..blocks_per_column * parts)
+        let partials = (0..blocks_per_column * schedule.parts)
             .into_par_iter()
             .map(|task| {
-                let trace_block = task / parts;
-                let part = task % parts;
+                let trace_block = task / schedule.parts;
+                let part = task % schedule.parts;
                 let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let block_ring_start = trace_block * plan.num_positions_per_block;
-                let (part_start, part_end) = trace_block_part_range(
-                    plan.num_positions_per_block,
-                    ring_alignment,
-                    part,
-                    parts,
-                );
+                let (part_start, part_end) = schedule.part_range(part);
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
                 let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
                     && source.one_hot_k == 256
+                    && plan.num_positions_per_block >= source.one_hot_k / D
                     && num_columns <= u32::BITS as usize;
-                let mut wide = if rank_tiled_k256 {
+                let mut wide = if rank_tiled_k256 || source.one_hot_k < D {
                     Vec::new()
                 } else {
                     vec![WideCyclotomicRing::zero(); num_columns * plan.n_a]
@@ -102,14 +96,9 @@ pub(super) fn commit_packed<const D: usize>(
                 let mut budget = 0usize;
                 if source.one_hot_k < D {
                     let rows_per_ring = D / source.one_hot_k;
-                    let mut shift_groups = (source.one_hot_k == 16
-                        && rows_per_ring.is_multiple_of(4))
-                    .then(|| {
-                        (0..rows_per_ring / 4)
-                            .map(|chunk| K16FourRowShiftGroups::new(num_columns, 4 * chunk))
-                            .collect::<Option<Vec<_>>>()
-                    })
-                    .flatten();
+                    let mut windows = DigitWindows::<D>::new();
+                    let mut accumulators = vec![[Fp128x8i32([0; 8]); D]; num_columns * plan.n_a];
+                    let mut shifts = vec![0usize; rows_per_ring];
                     visit_segment_ring_row_range::<D>(
                         source,
                         ring_start,
@@ -117,51 +106,11 @@ pub(super) fn commit_packed<const D: usize>(
                         |ring, selected_rows, committed_zero_masks| {
                             let position = ring - block_ring_start;
                             let a_col = position * plan.num_digits_inner;
-                            let grouped = shift_groups.as_mut().is_some_and(|groups| {
-                                groups
-                                    .iter_mut()
-                                    .zip(selected_rows.chunks_exact(4 * num_columns))
-                                    .zip(committed_zero_masks.chunks_exact(4))
-                                    .all(|((groups, selected_rows), masks)| {
-                                        groups.build(selected_rows, masks, num_columns)
-                                    })
-                            });
                             for (a, a_row) in a_rows.iter().enumerate() {
-                                let a_wide = WideCyclotomicRing::from_ring(&a_row[a_col]);
-                                if grouped {
-                                    if let Some(groups) = &shift_groups {
-                                        for ((groups, selected_rows), masks) in groups
-                                            .iter()
-                                            .zip(selected_rows.chunks_exact(4 * num_columns))
-                                            .zip(committed_zero_masks.chunks_exact(4))
-                                        {
-                                            groups.accumulate(
-                                                &a_wide,
-                                                &mut wide,
-                                                a,
-                                                plan.n_a,
-                                                selected_rows,
-                                                masks,
-                                                num_columns,
-                                            );
-                                        }
-                                        continue;
-                                    }
-                                }
+                                windows.load(&a_row[a_col]);
                                 for column in 0..num_columns {
-                                    let dst = &mut wide[column * plan.n_a + a];
-                                    if try_shift_accumulate_full_rows(
-                                        &a_wide,
-                                        dst,
-                                        selected_rows,
-                                        committed_zero_masks,
-                                        num_columns,
-                                        column,
-                                        source.one_hot_k,
-                                        rows_per_ring,
-                                    ) {
-                                        continue;
-                                    }
+                                    // Every row writes its shift; only committed rows keep it.
+                                    let mut len = 0;
                                     for (row_offset, (row_indices, &committed_zero_mask)) in
                                         selected_rows
                                             .chunks_exact(num_columns)
@@ -169,22 +118,29 @@ pub(super) fn commit_packed<const D: usize>(
                                             .enumerate()
                                     {
                                         let hot = row_indices[column];
-                                        if row_is_committed(hot, committed_zero_mask, column) {
-                                            a_wide.shift_accumulate_into(
-                                                dst,
-                                                row_offset * source.one_hot_k + usize::from(hot),
-                                            );
-                                        }
+                                        shifts[len] =
+                                            row_offset * source.one_hot_k + usize::from(hot);
+                                        len += usize::from(row_is_committed(
+                                            hot,
+                                            committed_zero_mask,
+                                            column,
+                                        ));
                                     }
+                                    windows.accumulate(
+                                        &mut accumulators[column * plan.n_a + a],
+                                        &shifts[..len],
+                                    );
                                 }
                             }
                             budget += rows_per_ring;
                             if budget >= MAX_WIDE_ACCUMULATIONS {
-                                flush_wide(&mut wide, &mut reduced);
+                                flush_digit_accumulators(&mut accumulators, &mut reduced);
                                 budget = 0;
                             }
                         },
                     )?;
+                    flush_digit_accumulators(&mut accumulators, &mut reduced);
+                    budget = 0;
                 } else if rank_tiled_k256 {
                     // Stream one A rank at a time so its destination accumulators fit in cache.
                     let rings_per_row = source.one_hot_k / D;
@@ -284,15 +240,15 @@ pub(super) fn commit_packed<const D: usize>(
             "trace_onehot_commit_merge_partials",
             num_blocks,
             blocks_per_column,
-            task_parts = parts,
+            task_parts = schedule.parts,
             active_columns = num_columns,
             n_a = plan.n_a,
         )
         .entered();
         let mut rows = vec![vec![CyclotomicRing::zero(); plan.n_a]; num_blocks];
         for (task, block_rows) in partials.into_iter().enumerate() {
-            let trace_block = task / parts;
-            let part = task % parts;
+            let trace_block = task / schedule.parts;
+            let part = task % schedule.parts;
             for column in 0..num_columns {
                 let dst = &mut rows[column * blocks_per_column + trace_block];
                 let src = &block_rows[column * plan.n_a..(column + 1) * plan.n_a];

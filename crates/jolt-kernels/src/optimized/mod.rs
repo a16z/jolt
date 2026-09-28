@@ -50,6 +50,7 @@ pub mod ram_raf_evaluation;
 pub mod ram_read_write;
 mod ram_trace;
 pub mod ram_val_check;
+mod read_write;
 pub mod registers_claim_reduction;
 pub mod registers_read_write;
 pub mod registers_val_evaluation;

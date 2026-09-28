@@ -96,6 +96,12 @@ impl MacroBuilder {
         let require_zk = self.make_require_zk_check();
 
         quote! {
+            // Cargo cannot see this macro's own `std::env::var` read, but rustc
+            // records `option_env!` reads as dep-info env-deps, so a changed
+            // selector invalidates the cached guest build.
+            #[cfg(feature = "guest")]
+            const _: ::core::option::Option<&str> = ::core::option_env!("JOLT_FUNC_NAME");
+
             #require_zk
             #memory_config_fn
             #build_prover_fn

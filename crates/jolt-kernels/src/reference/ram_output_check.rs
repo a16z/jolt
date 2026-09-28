@@ -7,12 +7,9 @@
 //! multilinear table, built pointwise from the public IO memory and pinned
 //! by the `derive_output_term` cross-check at the bound point.
 //!
-//! Only the default read-write config is supported (phase 1 = all cycle
-//! rounds), where the relation's rounds equal `log_K`. The legacy prover's
-//! leading zero-address rounds emit 1-coefficient constant polynomials whose
-//! true round polynomial is zero — the naive member computes those zeros
-//! literally, and the engine's batched-polynomial trim reproduces the wire
-//! lengths.
+//! Address tables repeat across the configured unused cycle variables;
+//! the naive evaluator supplies the scaling and constant rounds, including
+//! the zero polynomials before the IO mask starts to vary.
 
 use std::collections::BTreeMap;
 
@@ -20,10 +17,11 @@ use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::ram::ram_val_final;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamOutputCheckPublic};
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, Polynomial};
+use jolt_poly::BindingOrder;
 use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_witness::JoltWitnessPlane;
 
+use super::read_write::ReadWriteTableLayout;
 use super::views::{dense_view, eq_table};
 use crate::{
     KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
@@ -41,10 +39,10 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for ReferenceBackend {
         let output_address_challenges = inputs.challenges.output_address.as_slice();
         let ram_log_k = output_address_challenges.len();
         let public_memory = relation.public_memory();
-        if dimensions.output_check_rounds() != ram_log_k {
-            return Err(KernelError::Unsupported {
-                reason: "reference RAM output check supports only the default read-write config \
-                         (phase 1 = all cycle rounds)",
+        let layout = ReadWriteTableLayout::address::<F>(dimensions)?;
+        if ram_log_k != dimensions.log_k() {
+            return Err(KernelError::InvariantViolation {
+                reason: "RAM output challenges do not match the address dimensions",
             });
         }
 
@@ -72,20 +70,20 @@ impl<F: JoltField> PrepareKernel<F, RamOutputCheck<F>> for ReferenceBackend {
 
         let opening_tables = BTreeMap::from([(
             ram_val_final(),
-            Polynomial::new(dense_view(witness, ram_val_final())?),
+            layout.table(dense_view(witness, ram_val_final())?)?,
         )]);
         let derived_tables = BTreeMap::from([
             (
                 JoltDerivedId::from(RamOutputCheckPublic::EqAddress),
-                Polynomial::new(eq_table(output_address_challenges)),
+                layout.table(eq_table(output_address_challenges))?,
             ),
             (
                 JoltDerivedId::from(RamOutputCheckPublic::IoMask),
-                Polynomial::new(io_mask),
+                layout.table(io_mask)?,
             ),
             (
                 JoltDerivedId::from(RamOutputCheckPublic::ValIo),
-                Polynomial::new(val_io),
+                layout.table(val_io)?,
             ),
         ]);
 
