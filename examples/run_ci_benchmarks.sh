@@ -22,7 +22,7 @@ export RUST_LOG=info
 # Define the exclude list
 # field-ops is feature-gated (field-inline) and exits non-zero without it;
 # its smoke run lives in the field-inline CI lane instead.
-exclusion_list=("advice-consumer" "collatz" "overflow" "sha3-chain" "verifier" "recursion" "malloc" "hash-bench" "sig-recovery" "field-ops")
+exclusion_list=("advice-consumer" "collatz" "overflow" "sha3-chain" "recursion" "malloc" "hash-bench" "sig-recovery" "field-ops")
 # JSON file to store results
 output_file="benchmark_results.json"
 
@@ -110,7 +110,6 @@ for i in "${!test_directories[@]}"; do
   exec_time=$(awk '/Prover runtime:/ { for(i=1; i<=NF; i++) if($i=="runtime:") val=$(i+1) } END { print val }' "$temp_output") # in seconds
   # Extract 'MRS' value using awk
   mem_used=$(awk '/MRS:/ {print $2}' "$temp_output") # in KB
-  echo "$output" # Print the output for debugging
   # Append execution time to JSON file
   write_to_json "${file}-time" "$exec_time" "s" false
   # Add a comma if it's not the last entry
