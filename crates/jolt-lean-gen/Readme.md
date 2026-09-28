@@ -31,29 +31,6 @@ To see bytecode expansion for the `LB` instruction in Lean
 
 ```zsh
 cargo run -p jolt-lean-gen -- LB
-
-
---- LB ---
-rd == x0:
-  .instr (.ADDI (.vreg v41) (.xreg rs1) imm) <|
-  .instr (.ANDI (.vreg v42) (.vreg v41) (-8 : BitVec 12)) <|
-  .instr (.LD .normal (.vreg v42) (.vreg v42) (0 : BitVec 12)) <|
-  .instr (.XORI (.vreg v41) (.vreg v41) (7 : BitVec 12)) <|
-  .instr (.VirtualMULI (.vreg v41) (.vreg v41) (slliMultiplier 3)) <|
-  .instr (.VirtualPow2 (.vreg v43) (.vreg v41)) <|
-  .instr (.MUL (.vreg v42) (.vreg v42) (.vreg v43)) <|
-  .instr (.VirtualSRAI (.vreg v40) (.vreg v42) (sraiBitmask 56)) <|
-  .done RETIRE_SUCCESS
-rd != x0:
-  .instr (.ADDI (.vreg v40) (.xreg rs1) imm) <|
-  .instr (.ANDI (.vreg v41) (.vreg v40) (-8 : BitVec 12)) <|
-  .instr (.LD .normal (.vreg v41) (.vreg v41) (0 : BitVec 12)) <|
-  .instr (.XORI (.vreg v40) (.vreg v40) (7 : BitVec 12)) <|
-  .instr (.VirtualMULI (.vreg v40) (.vreg v40) (slliMultiplier 3)) <|
-  .instr (.VirtualPow2 (.vreg v42) (.vreg v40)) <|
-  .instr (.MUL (.vreg v41) (.vreg v41) (.vreg v42)) <|
-  .instr (.VirtualSRAI (.xreg rd) (.vreg v41) (sraiBitmask 56)) <|
-  .done RETIRE_SUCCESS
 ```
 
 ## Generating Full Lean File 
