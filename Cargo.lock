@@ -3121,7 +3121,6 @@ dependencies = [
  "akita-error",
  "akita-pcs",
  "akita-planner",
- "akita-prover",
  "akita-schedules",
  "akita-types",
  "bincode 2.0.1",
@@ -3216,8 +3215,6 @@ version = "0.1.0"
 dependencies = [
  "akita-config",
  "akita-pcs",
- "akita-prover",
- "akita-transcript",
  "akita-types",
  "ark-bn254",
  "ark-ec",
