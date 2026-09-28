@@ -409,7 +409,7 @@ impl AkitaNativeBatching {
             .iter()
             .map(|entry| &entry.claim.commitment)
             .collect::<Vec<_>>();
-        let (selection, precommitted_backend, main_backend) = match setup.one_hot_k {
+        let (precommitted_backend, main_backend) = match setup.one_hot_k {
             AKITA_ONE_HOT_K16 => crate::shape_guard::deserialize_checked_grouped_backend_payload(
                 setup.one_hot_k16_scheme()?.schedules(),
                 &precommitted_commitments,
@@ -424,6 +424,7 @@ impl AkitaNativeBatching {
             ),
             _ => unreachable!("one-hot K was validated by setup"),
         }?;
+        let selection = proof.selection();
         let session =
             bind_grouped_statement_transcripts(transcript, setup, selection, precommitted, main)?;
         let mut group_claims = Vec::with_capacity(precommitted.len() + 1);
@@ -753,7 +754,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         // Deserializes the proof-controlled backend commitment only after its
         // shape is validated against the trusted schedule, so a malformed
         // proof cannot drive shape-backed allocations (see `shape_guard`).
-        let (selection, backend_commitment) = match commitment.backend_flavor {
+        let backend_commitment = match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => crate::shape_guard::deserialize_checked_backend_payload(
                 setup.dense_scheme()?.schedules(),
                 commitment,
@@ -789,7 +790,8 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         let group = PolynomialGroupClaims::new(backend_point, openings, &backend_commitment)
             .map_err(akita_error)?;
         let claims = OpeningClaims::from_groups(vec![group]).map_err(akita_error)?;
-        let batch_statement = GroupBatchStatement::new(selection, claims).map_err(akita_error)?;
+        let batch_statement =
+            GroupBatchStatement::new(proof.selection(), claims).map_err(akita_error)?;
         match commitment.backend_flavor {
             AkitaBackendFlavor::Dense => {
                 let verifier = setup.dense_verifier()?;

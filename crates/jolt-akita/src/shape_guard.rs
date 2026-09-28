@@ -30,7 +30,7 @@ pub(crate) fn deserialize_checked_backend_payload<Cfg>(
     selection: OpeningScheduleSelection,
     statement_len: usize,
     backend_point: &[AkitaField],
-) -> Result<(OpeningScheduleSelection, AkitaBackendCommitment), OpeningsError>
+) -> Result<AkitaBackendCommitment, OpeningsError>
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
@@ -45,7 +45,7 @@ where
     )?;
     let backend_commitment =
         AkitaBackendCommitment::new(resolved.profiles().final_group, backend_payload);
-    Ok((resolved.selection(), backend_commitment))
+    Ok(backend_commitment)
 }
 
 /// Guard and decode the ordered grouped root in public order
@@ -55,14 +55,7 @@ pub(crate) fn deserialize_checked_grouped_backend_payload<Cfg>(
     precommitted: &[&AkitaCommitment],
     main: &AkitaCommitment,
     selection: OpeningScheduleSelection,
-) -> Result<
-    (
-        OpeningScheduleSelection,
-        Vec<AkitaBackendCommitment>,
-        AkitaBackendCommitment,
-    ),
-    OpeningsError,
->
+) -> Result<(Vec<AkitaBackendCommitment>, AkitaBackendCommitment), OpeningsError>
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
@@ -93,7 +86,7 @@ where
     )?;
     let main_backend = AkitaBackendCommitment::new(profiles.final_group, main_payload);
 
-    Ok((resolved.selection(), precommitted_backend, main_backend))
+    Ok((precommitted_backend, main_backend))
 }
 
 fn resolve_schedule_row<'a, Cfg>(
