@@ -5,11 +5,11 @@
 //! the three prover lanes in CI prove the same guests and a guest missing from
 //! a lane is a build-matrix gap, not a test-file gap. Every case checks the
 //! guest's output against a natively computed value, proves with the
-//! optimized backend, and verifies through the public verifier API. The clear
-//! arm deliberately overlaps the jolt-verifier fixture completeness cases so
-//! the table stays identical across modes. Mode-specific behavior (tampering,
-//! committed programs, forced one-hot sizes) lives in `zk_e2e.rs` and
-//! `akita_e2e.rs`.
+//! optimized backend with full address-first read/write binding, and verifies
+//! through the public verifier API. The clear arm deliberately overlaps the
+//! jolt-verifier fixture completeness cases so the table stays identical
+//! across modes. Mode-specific behavior (tampering, committed programs,
+//! forced one-hot sizes) lives in `zk_e2e.rs` and `akita_e2e.rs`.
 
 #[cfg(feature = "prover-fixtures")]
 mod support;
@@ -223,7 +223,7 @@ mod matrix {
 
         fn prove_case(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let config = ProverConfig::derive_compact::<Fr>(
+            let mut config = ProverConfig::derive_compact::<Fr>(
                 prepared.trace.trace.as_slice(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
@@ -231,6 +231,8 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
+            config.rw_config.ram_rw_phase1_num_rounds = 0;
+            config.rw_config.registers_rw_phase1_num_rounds = 0;
             let preprocessing = dory::from_shared(
                 JoltSharedPreprocessing::new(prepared.preprocessing).expect("shared preprocessing"),
             )
@@ -285,7 +287,7 @@ mod matrix {
 
         pub fn prove_and_verify(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let config = ProverConfig::derive_compact::<AkitaField>(
+            let mut config = ProverConfig::derive_compact::<AkitaField>(
                 prepared.trace.trace.as_slice(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
@@ -293,6 +295,8 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
+            config.rw_config.ram_rw_phase1_num_rounds = 0;
+            config.rw_config.registers_rw_phase1_num_rounds = 0;
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
             let preprocessing = preprocessing::preprocess_full_with_advice(
