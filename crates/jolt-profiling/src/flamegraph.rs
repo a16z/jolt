@@ -8,9 +8,7 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use allocative::{Allocative, FlameGraphBuilder};
-
-use crate::units::{format_memory_size, BYTES_PER_GIB};
+use allocative::FlameGraphBuilder;
 
 /// Output-path prefix for the prover's mid-stage heap snapshots
 /// (`{prefix}{label}.folded`). Unset means the harness did not opt in and
@@ -38,18 +36,6 @@ pub fn capture_heap_snapshot(label: &str, visit: impl FnOnce(&mut FlameGraphBuil
     let mut snapshot = FlameGraphBuilder::default();
     visit(&mut snapshot);
     write_flamegraph_folded(snapshot, format!("{prefix}{label}.folded"));
-}
-
-/// Logs the heap allocation size of an `Allocative`-instrumented value.
-pub fn print_data_structure_heap_usage<T: Allocative>(label: &str, data: &T) {
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        let memory_gib = allocative::size_of_unique_allocated_data(data) as f64 / BYTES_PER_GIB;
-        tracing::debug!(
-            label = label,
-            usage = %format_memory_size(memory_gib),
-            "heap allocation size"
-        );
-    }
 }
 
 /// Writes a [`FlameGraphBuilder`]'s stacks as folded text (`root;child
