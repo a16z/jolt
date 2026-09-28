@@ -643,7 +643,7 @@ impl Cpu {
 
     fn decode_and_cache(&mut self) -> Result<Instruction, Trap> {
         let original_word = self.fetch()?;
-        let instruction_address = normalize_u64(self.pc);
+        let instruction_address = self.pc;
         let is_compressed = (original_word & 0x3) != 0x3;
         let word = match is_compressed {
             false => {
@@ -1442,10 +1442,6 @@ pub fn get_register_name(num: usize) -> &'static str {
         31 => "t6",
         _ => panic!("Unknown register num {num}"),
     }
-}
-
-fn normalize_u64(value: u64) -> u64 {
-    value
 }
 
 #[cold]
