@@ -79,7 +79,7 @@ pub use flamegraph::{
 mod units;
 
 pub use setup::{setup_tracing, setup_tracing_with_trace_path, TracingFormat, TracingGuards};
-pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
+pub use units::{format_memory_size, BYTES_PER_GIB};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory::{current_footprint_bytes, peak_footprint_bytes, peak_rss_bytes, PeakMemory};
