@@ -89,7 +89,7 @@ kernel void jolt_bench_field_inner_product(device const F* a [[buffer(0)]],
                                            uint group [[threadgroup_position_in_grid]]) {
     threadgroup F partial[INNER_PRODUCT_GROUP];
     F sum = F::zero();
-    for (uint j = i; j < n; j += threads) {
+    for (ulong j = ulong(i); j < ulong(n); j += ulong(threads)) {
         sum = sum + a[j] * b[j];
     }
     partial[lane] = sum;

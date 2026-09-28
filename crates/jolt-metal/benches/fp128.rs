@@ -11,7 +11,10 @@
 //!   registers, reported as operations per second;
 //! - `stream/{add,mul,square}`: elementwise over 2^16 to 2^26 elements;
 //! - `inner_product`: sum of `a[i] * b[i]` with a threadgroup reduction on the
-//!   GPU, over 2^16 to 2^26 elements.
+//!   GPU, over 2^16 to 2^26 elements. `gpu_partials` times only the GPU kernel;
+//!   `gpu_complete_wall` includes submission, readback, and the CPU sum of
+//!   partials with inputs already resident. `cpu_complete_wall` returns the
+//!   same scalar on the CPU.
 
 #[cfg(target_os = "macos")]
 #[expect(
@@ -313,10 +316,21 @@ mod metal {
 
             let size = format!("2^{log}");
             group.throughput(Throughput::Elements(len as u64));
-            group.bench_function(BenchmarkId::new("gpu", &size), |bench| {
+            group.bench_function(BenchmarkId::new("gpu_partials", &size), |bench| {
                 bench.iter_custom(|iters| gpu_time(iters, || run(&partials)));
             });
-            group.bench_function(BenchmarkId::new("cpu", &size), |bench| {
+            group.bench_function(BenchmarkId::new("gpu_complete_wall", &size), |bench| {
+                bench.iter(|| {
+                    run(&partials);
+                    partials
+                        .read()
+                        .expect("canonical partials")
+                        .iter()
+                        .copied()
+                        .fold(F::zero(), |x, y| x + y)
+                });
+            });
+            group.bench_function(BenchmarkId::new("cpu_complete_wall", &size), |bench| {
                 bench.iter(cpu);
             });
         }

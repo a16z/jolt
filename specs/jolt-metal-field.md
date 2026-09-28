@@ -220,8 +220,10 @@ Criterion benchmarks (`crates/jolt-metal/benches/fp128.rs`) per field:
 - from step 3, `fmadd` into an accumulator and the simdgroup and threadgroup
   accumulator reductions.
 
-GPU samples are GPU execution time from the command buffer's timestamps
-(`Batch::commit_and_wait` returns it), which excludes host submission. The
+GPU kernel samples use execution time from the command buffer's timestamps
+(`Batch::commit_and_wait` returns it), which excludes host submission. Inner
+products additionally report complete wall time including submission, checked
+readback, and the CPU sum of partials; inputs are already resident. The
 CPU baseline is `jolt_field` on all cores with rayon and the `asm` multiply
 Akita's prover uses. The packed NEON `Fp128` multiplies lane by lane through
 that same scalar path, so it is not a separate baseline. Every kernel's output
@@ -256,8 +258,10 @@ mode), time of `ulong2` relative to `uint4`:
 
 `uint4` is kept. Streaming `mul` ties because at 2^24 both reach about
 430 GB/s, near the memory bandwidth. Every pipeline reported 1024 maximum
-threads per threadgroup, so neither layout limits occupancy through register
-pressure.
+threads per threadgroup. This is a dispatch limit; it does not establish equal
+register use, spilling, or achieved occupancy. The timings support the layout
+choice on this device. Attributing the difference to occupancy requires
+profiling evidence and a sweep of actual threadgroup sizes.
 
 The same run changed `square`. The triangular cross-product loop ported
 first ran at 29 G/s, slower than `a * a` at 45 G/s. Written out, with each
