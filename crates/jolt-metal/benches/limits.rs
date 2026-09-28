@@ -24,7 +24,7 @@
 //! alternating order, and the fraction is the median per-round ratio of
 //! their rates.
 //!
-//! The field kernels are checked against the CPU in `benches/field.rs`; the
+//! The field kernels are checked against the CPU in `benches/fp128.rs`; the
 //! kernels only this benchmark runs are checked here before they are timed.
 
 #[cfg(target_os = "macos")]
@@ -40,14 +40,10 @@ mod metal {
     use std::process::Command;
     use std::time::{Duration, Instant};
 
-    use jolt_field::solinas::Prime128OffsetA7F7;
     use jolt_field::Zero;
     use jolt_metal::runtime::{Batch, Binding, Device, DeviceBuffer, Grid};
 
-    use super::support::{dispatch, elements, library, pipeline, threadgroup, words};
-
-    /// The field whose kernels the limits bound.
-    type F = Prime128OffsetA7F7;
+    use super::support::{dispatch, elements, library, pipeline, threadgroup, words, F};
 
     const FIELD_OPS: &str = include_str!("../tests/shaders/field_ops.metal");
     const FIELD_BENCH: &str = include_str!("shaders/field_bench.metal");
