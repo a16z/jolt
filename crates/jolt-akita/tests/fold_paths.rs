@@ -104,8 +104,9 @@ fn deep_recursive_fold_schedule_roundtrips() {
     );
 }
 
-/// `valid_proof || garbage` must be rejected: the adapter's deserializer
-/// requires backend payloads to consume their byte buffers exactly.
+/// `valid_proof || garbage` must be rejected: Akita's verifier parses the
+/// argument stream against the selected row's grammar and rejects leftover
+/// bytes.
 #[test]
 fn proof_payloads_with_trailing_garbage_reject() {
     let fixture = fold_roundtrip(14, b"akita-fold-trailing");
@@ -124,10 +125,7 @@ fn proof_payloads_with_trailing_garbage_reject() {
         .verify(&extended)
         .expect_err("trailing payload bytes must be rejected");
     assert!(
-        matches!(
-            &err,
-            OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")
-        ),
-        "expected a trailing-bytes rejection, got: {err}"
+        matches!(&err, OpeningsError::VerificationFailed),
+        "expected a verification failure, got: {err}"
     );
 }

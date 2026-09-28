@@ -11,8 +11,8 @@ use std::{cell::Cell, num::NonZeroUsize};
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{
-    AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaVerifier,
-    CommitmentHandle, CpuBackend, DensePoly, OneHotPoly,
+    AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaProverSetup as BackendProverSetup,
+    AkitaSerialize, AkitaVerifier, CommitmentHandle, CpuBackend, DensePoly, OneHotPoly,
 };
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
@@ -172,7 +172,7 @@ pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
 /// The owning CPU backend: prepared setup transforms plus every commitment
 /// handle's source. Handles only prove on the backend that committed them.
 pub(crate) type AkitaBackend = CpuBackend<AkitaField, AkitaBackendExtField>;
-pub(crate) type AkitaBackendProverSetup = akita_pcs::AkitaProverSetup<AkitaField>;
+pub(crate) type AkitaBackendProverSetup = BackendProverSetup<AkitaField>;
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
 const SCHEDULE_SELECTION_BYTES: usize = 32;

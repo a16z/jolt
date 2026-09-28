@@ -363,6 +363,21 @@ impl AkitaNativeBatching {
             )
             .map_err(akita_error)?,
         );
+        // Precommitted objects were committed on their own setups' dense
+        // backends, but a handle only proves on the backend that owns it and the
+        // grouped argument runs on the trace backend. Akita re-derives each
+        // imported handle from its retained source and checks the recomputed
+        // commitment against this setup's public matrix (shared by every Jolt
+        // setup through the deterministic setup seed).
+        let (_, backend) = setup.one_hot_backend()?;
+        let mut handles = with_backend_pool(|| {
+            let _span = info_span!("AkitaNativeBatching::import_precommitted_handles").entered();
+            handles
+                .iter()
+                .map(|handle| backend.import_commitment(handle))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(prove_failed)?;
         handles.push(main_backend_hint);
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
         let opening = grouped_one_hot_opening(setup, claims, handles)?;
