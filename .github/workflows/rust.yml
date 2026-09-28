@@ -530,17 +530,19 @@ jobs:
         working-directory: ./sample_project
         run: node verify.mjs
 
-  # Sharded 3-way: the sequential per-crate loop was the CI critical path
+  # Sharded: the sequential per-crate loop was the CI critical path
   # (~18 min). Crates are assigned to shards by discovery index; each crate
   # keeps its own nextest invocation so per-crate feature resolution is
-  # unchanged.
+  # unchanged. jolt-akita's optimized test build alone takes 10-14 min on a
+  # 4-vCPU runner (measured Sep 27, 2026) and made shard 0 the critical path
+  # of the whole run, so it gets a shard of its own.
   test-crates-shard:
     name: Test modular crates (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, akita]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
@@ -567,7 +569,13 @@ jobs:
           set -euo pipefail
           i=0
           for pkg in ${{ steps.discover.outputs.pkgs }}; do
-            if (( i % 3 == ${{ matrix.shard }} )); then
+            if [[ "$pkg" == jolt-akita ]]; then
+              shard=akita
+            else
+              shard=$(( i % 3 ))
+            fi
+            i=$((i + 1))
+            if [[ "$shard" == "${{ matrix.shard }}" ]]; then
               features=()
               if cargo metadata --format-version=1 --no-deps \
                    | jq -e --arg pkg "$pkg" '.packages[] | select(.name == $pkg) | .features | has("test-utils")' >/dev/null; then
@@ -575,7 +583,6 @@ jobs:
               fi
               cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
-            i=$((i + 1))
           done
       # jolt-witness's parallel feature is not a default, so the shard loop
       # above tests only the serial paths; the shipped provers enable it
