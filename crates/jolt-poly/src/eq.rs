@@ -192,16 +192,6 @@ impl<F: JoltField> EqPolynomial<F> {
             .fold(F::one(), |acc, v| acc * v)
     }
 
-    /// Computes `eq(r, 0) = Π_i (1 - r_i)`, selecting the all-zeros vertex.
-    pub fn zero_selector<C>(r: &[C]) -> F
-    where
-        C: Copy + Send + Sync + Into<F>,
-    {
-        r.iter()
-            .map(|r_i| F::one() - (*r_i).into())
-            .fold(F::one(), |acc, v| acc * v)
-    }
-
     /// Computes `{ eq(r, x) : x ∈ {0,1}^n }` with optional scaling.
     ///
     /// Uses a serial or parallel path based on table size. Big-endian index
@@ -620,19 +610,6 @@ mod tests {
         let via_instance = EqPolynomial::new(x.clone()).evaluate(&y);
         let via_static = EqPolynomial::<Fr>::mle(&x, &y);
         assert_eq!(via_instance, via_static);
-    }
-
-    #[test]
-    fn zero_selector() {
-        let mut rng = ChaCha20Rng::seed_from_u64(405);
-        let n = 4;
-        let r: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-
-        let expected = r
-            .iter()
-            .fold(Fr::one(), |acc, &r_i| acc * (Fr::one() - r_i));
-        let result = EqPolynomial::<Fr>::zero_selector(&r);
-        assert_eq!(expected, result);
     }
 
     #[test]
