@@ -443,8 +443,12 @@ fn invalid_compact_row(row: &TraceRow, reason: &'static str) -> WitnessError {
 /// with a `WitnessError` keeps the failure actionable. 32 GiB admits every
 /// in-tree test and the fibonacci profiling default (scale 16); the larger
 /// documented profiling defaults are refused by design and belong on the
-/// optimized backend.
-pub(crate) const MAX_DENSE_GRID_BYTES: usize = 1 << 35;
+/// optimized backend. On narrower targets, the allocation limit is capped
+/// at `isize::MAX` bytes instead.
+pub(crate) const MAX_DENSE_GRID_BYTES: usize = match 1_usize.checked_shl(35) {
+    Some(bytes) => bytes,
+    None => isize::MAX as usize,
+};
 
 /// The element count of a dense `addresses × cycles` grid of `F`, refused
 /// with an actionable error when the byte size overflows or exceeds

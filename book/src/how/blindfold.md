@@ -1,5 +1,7 @@
 # Zero Knowledge: BlindFold
 
+BlindFold is available with Jolt's [Dory](./dory.md) backend by enabling the `zk` Cargo feature. The [Akita](./akita.md) backend currently supports only proofs without zero knowledge; combining `akita` and `zk` is rejected at compile time. This chapter describes the Dory ZK protocol.
+
 Jolt achieves zero-knowledge natively via the **[BlindFold](https://eprint.iacr.org/2025/2094)** protocol — a folding-based scheme that makes all sumcheck proofs ZK without SNARK composition. Unlike approaches that require per-round sigma protocols or expensive homomorphic operations on commitments, BlindFold defers all verification to a single small R1CS instance proved via Nova folding + Spartan, keeping most of the work in the field arithmetic layer.
 
 The core idea: instead of the prover sending sumcheck round polynomial coefficients in the clear, it sends **Pedersen commitments** to them. The sumcheck verifier's algebraic consistency checks are encoded into a small **verifier R1CS** circuit, and a single Nova fold + Spartan proof over this R1CS proves all rounds were executed correctly without revealing the witness.

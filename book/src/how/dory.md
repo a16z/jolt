@@ -1,6 +1,8 @@
 # Dory
 
-Dory is the [polynomial commitment scheme](./appendix/pcs.md) used in Jolt. It is based on the scheme described in [Lee21](https://eprint.iacr.org/2020/1274) and implemented in the [`a16z/dory`](https://github.com/a16z/dory/) repository.
+Dory is Jolt's default elliptic curve [polynomial commitment backend](./appendix/pcs.md), using pairings over BN254 and its scalar field. It is based on the scheme described in [Lee21](https://eprint.iacr.org/2020/1274) and implemented in the [`a16z/dory`](https://github.com/a16z/dory/) repository. Jolt also supports the lattice-based [Akita](./akita.md) backend.
+
+Dory supports both ordinary proofs and zero-knowledge proofs via [BlindFold](./blindfold.md), selected with the `zk` Cargo feature. The matrix layout, group operations, and homomorphic batching described in this chapter apply to Dory.
 
 ## Background: AFGHO commitments
 
@@ -88,9 +90,4 @@ In Jolt, witness polynomials can be committed in a **streaming** fashion: rather
 
 ## Implementation
 
-The Jolt implementation of Dory lives in `crates/jolt-prover-legacy/src/poly/commitment/dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. Key files:
-
-- `commitment_scheme.rs` &mdash; Implements the `CommitmentScheme` and `StreamingCommitmentScheme` traits.
-- `dory_globals.rs` &mdash; Manages per-context Dory matrix dimensions ($\nu$, $\sigma$) and coefficient layout.
-- `wrappers.rs` &mdash; Bridges Jolt's `MultilinearPolynomial` types to Dory's polynomial interface, including specialized `commit_tier_1` for compact scalars and one-hot polynomials.
-- `jolt_dory_routines.rs` &mdash; Custom implementations of low-level group operations (MSM, vector-scalar multiplication, folding) used by the Dory prover and verifier.
+The Jolt adapter lives in `crates/jolt-dory/` and wraps the [`a16z/dory`](https://github.com/a16z/dory/) library. `scheme.rs` implements commitments and openings, `streaming.rs` implements trace streaming and the one-hot fast path, and `routines.rs` contains Jolt's low-level group operations. The generic PCS interface lives in `crates/jolt-openings/`; the Jolt prover assembles the final batch in `crates/jolt-prover/src/dory/stages/stage8.rs`.

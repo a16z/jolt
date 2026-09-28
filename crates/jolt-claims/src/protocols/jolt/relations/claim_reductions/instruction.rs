@@ -41,8 +41,7 @@ pub struct InstructionClaimReductionOutputClaims<C> {
 /// Consumed instruction-lookup openings from stage 1's outer sumcheck, reduced by
 /// this sumcheck. The relation reads only these values (its output point comes from
 /// its own sumcheck point), so the input points are left empty. Generic over the
-/// cell. Field order matches
-/// [`instruction_claim_reduction::claim_reduction_input_openings`].
+/// cell. Field order matches the generated stage-2 batch declaration.
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct InstructionClaimReductionInputClaims<C> {
     #[opening(LookupOutput, from = SpartanOuter)]

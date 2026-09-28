@@ -59,6 +59,8 @@ pub mod fs_mutations;
 #[cfg(feature = "fs-audit")]
 pub mod fs_transcript;
 #[cfg(feature = "prover-fixtures")]
+pub mod guest_fixtures;
+#[cfg(feature = "prover-fixtures")]
 pub mod proof_claims;
 pub mod tamper_manifest;
 #[cfg(all(feature = "prover-fixtures", not(feature = "akita")))]

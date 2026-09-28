@@ -1,8 +1,36 @@
 use jolt_field::JoltField;
 use jolt_kernels::{KernelError, SumcheckKernelError};
+use jolt_openings::OpeningsError;
+use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum PreprocessingError {
+    #[error(transparent)]
+    Program(#[from] ProgramPreprocessingError),
+
+    #[error(transparent)]
+    Openings(#[from] OpeningsError),
+
+    #[error("invalid program preprocessing: {reason}")]
+    InvalidProgram { reason: String },
+
+    #[error("invalid committed program: {reason}")]
+    InvalidCommittedProgram { reason: String },
+
+    #[error("invalid prover configuration: {reason}")]
+    InvalidConfiguration { reason: String },
+
+    #[error("invalid advice: {reason}")]
+    InvalidAdvice { reason: String },
+
+    /// The verifier-side preprocessing rejected the program view, e.g. its
+    /// digest could not be computed.
+    #[error(transparent)]
+    Verifier(#[from] VerifierError),
+}
 
 /// Errors surfaced while proving. The engine-level failures come through
 /// [`SumcheckError`], compute failures through [`KernelError`], and

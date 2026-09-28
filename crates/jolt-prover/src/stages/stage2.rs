@@ -111,7 +111,7 @@ where
         tracing::info_span!("SpartanProductUniskip::first_round_poly").in_scope(|| {
             backend
                 .spartan_product_uniskip
-                .first_round_poly(session, &[tau_high])
+                .first_round_poly(session, &[tau_high], &uniskip_inputs)
         })?;
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,

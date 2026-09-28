@@ -1,0 +1,354 @@
+{
+  "schema_version": 1,
+  "name": "Jolt scalar Fp64 proof builds",
+  "toolchain": {
+    "rustc_release": "1.95.0",
+    "rustc_commit_hash": "59807616e1fa2540724bfbac14d7976d7e4a3860",
+    "llvm_version": "22.1.2",
+    "cargo_release": "1.95.0",
+    "cargo_commit_hash": "f2d3ce0bd"
+  },
+  "proof_libraries": {
+    "hol_light_commit": "433477862bb90b328a593e012e09390e99b2439b",
+    "s2n_bignum_commit": "ac31a43db30953037abd1b64b540e65cf31f4c67"
+  },
+  "build_contract": {
+    "cargo_profile": "release",
+    "cargo_features": [
+      "solinas",
+      "fp64-proof-linkage"
+    ],
+    "release_profile": {
+      "opt_level": 3,
+      "lto": "fat",
+      "codegen_units": 16,
+      "debug": 1,
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "split_debuginfo": "off",
+      "strip": "none",
+      "rpath": false,
+      "incremental": false,
+      "panic": "unwind"
+    },
+    "forbidden_environment_exact": [
+      "RUSTFLAGS",
+      "CARGO_ENCODED_RUSTFLAGS",
+      "CARGO_BUILD_RUSTFLAGS",
+      "CARGO_BUILD_TARGET",
+      "CARGO_INCREMENTAL",
+      "RUSTC_WRAPPER",
+      "RUSTC_WORKSPACE_WRAPPER"
+    ],
+    "forbidden_environment_prefixes": [
+      "CARGO_PROFILE_RELEASE_"
+    ],
+    "forbidden_target_environment_suffixes": [
+      "_RUSTFLAGS"
+    ]
+  },
+  "targets": [
+    {
+      "id": "aarch64-apple-darwin",
+      "target_triple": "aarch64-apple-darwin",
+      "architecture": "aarch64",
+      "vendor": "apple",
+      "target_os": "macos",
+      "target_env": "",
+      "endian": "little",
+      "pointer_width": 64,
+      "object_format_marker": "file format mach-o arm64",
+      "certification_scope": "complete-inspection-symbol",
+      "wrapper_policy": "exact",
+      "post_return_policy": "none",
+      "ci_required": true,
+      "profiles": [
+        {
+          "id": "baseline",
+          "rustflags": [],
+          "target_features": [
+            "aes",
+            "crc",
+            "dit",
+            "dotprod",
+            "dpb",
+            "dpb2",
+            "fcma",
+            "fhm",
+            "flagm",
+            "fp16",
+            "frintts",
+            "jsconv",
+            "lor",
+            "lse",
+            "neon",
+            "paca",
+            "pacg",
+            "pan",
+            "pmuv3",
+            "ras",
+            "rcpc",
+            "rcpc2",
+            "rdm",
+            "sb",
+            "sha2",
+            "sha3",
+            "ssbs",
+            "vh"
+          ],
+          "required_cpu_features": [],
+          "operations": [
+            {
+              "name": "add",
+              "expected_sequence": "aarch64-darwin-add",
+              "object_source": "fp64_add_object.ml",
+              "correctness_source": "fp64_add_correct.ml",
+              "body_theorem": "JOLT_FP64_ADD_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_ADD_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "sub",
+              "expected_sequence": "aarch64-darwin-sub",
+              "object_source": "fp64_sub_object.ml",
+              "correctness_source": "fp64_sub_correct.ml",
+              "body_theorem": "JOLT_FP64_SUB_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_SUB_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "mul",
+              "expected_sequence": "aarch64-darwin-mul",
+              "object_source": "fp64_mul_object.ml",
+              "correctness_source": "fp64_mul_correct.ml",
+              "body_theorem": "JOLT_FP64_MUL_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_MUL_SUBROUTINE_CORRECT"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "aarch64-unknown-linux-gnu",
+      "target_triple": "aarch64-unknown-linux-gnu",
+      "architecture": "aarch64",
+      "vendor": "unknown",
+      "target_os": "linux",
+      "target_env": "gnu",
+      "endian": "little",
+      "pointer_width": 64,
+      "object_format_marker": "file format elf64-littleaarch64",
+      "certification_scope": "complete-inspection-symbol",
+      "wrapper_policy": "exact",
+      "post_return_policy": "none",
+      "ci_required": true,
+      "profiles": [
+        {
+          "id": "baseline",
+          "rustflags": [],
+          "target_features": [
+            "neon"
+          ],
+          "required_cpu_features": [],
+          "operations": [
+            {
+              "name": "add",
+              "expected_sequence": "aarch64-linux-add",
+              "object_source": "fp64_add_aarch64_linux_object.ml",
+              "correctness_source": "fp64_add_aarch64_linux_correct.ml",
+              "body_theorem": "JOLT_FP64_ADD_AARCH64_LINUX_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_ADD_AARCH64_LINUX_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "sub",
+              "expected_sequence": "aarch64-linux-sub",
+              "object_source": "fp64_sub_aarch64_linux_object.ml",
+              "correctness_source": "fp64_sub_aarch64_linux_correct.ml",
+              "body_theorem": "JOLT_FP64_SUB_AARCH64_LINUX_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_SUB_AARCH64_LINUX_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "mul",
+              "expected_sequence": "aarch64-linux-mul",
+              "object_source": "fp64_mul_aarch64_linux_object.ml",
+              "correctness_source": "fp64_mul_aarch64_linux_correct.ml",
+              "body_theorem": "JOLT_FP64_MUL_AARCH64_LINUX_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_MUL_AARCH64_LINUX_SUBROUTINE_CORRECT"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "x86_64-unknown-linux-gnu",
+      "target_triple": "x86_64-unknown-linux-gnu",
+      "architecture": "x86_64",
+      "vendor": "unknown",
+      "target_os": "linux",
+      "target_env": "gnu",
+      "endian": "little",
+      "pointer_width": 64,
+      "object_format_marker": "file format elf64-x86-64",
+      "certification_scope": "complete-inspection-symbol",
+      "wrapper_policy": "exact",
+      "post_return_policy": "int3-padding-only",
+      "ci_required": true,
+      "profiles": [
+        {
+          "id": "baseline",
+          "rustflags": [],
+          "target_features": [
+            "fxsr",
+            "sse",
+            "sse2"
+          ],
+          "required_cpu_features": [],
+          "operations": [
+            {
+              "name": "add",
+              "expected_sequence": "x86_64-add",
+              "object_source": "fp64_add_x86_64_object.ml",
+              "correctness_source": "fp64_add_x86_64_correct.ml",
+              "body_theorem": "JOLT_FP64_ADD_X86_64_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_ADD_X86_64_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "sub",
+              "expected_sequence": "x86_64-sub",
+              "object_source": "fp64_sub_x86_64_object.ml",
+              "correctness_source": "fp64_sub_x86_64_correct.ml",
+              "body_theorem": "JOLT_FP64_SUB_X86_64_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_SUB_X86_64_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "mul",
+              "expected_sequence": "x86_64-mul",
+              "object_source": "fp64_mul_x86_64_object.ml",
+              "correctness_source": "fp64_mul_x86_64_correct.ml",
+              "body_theorem": "JOLT_FP64_MUL_X86_64_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_MUL_X86_64_SUBROUTINE_CORRECT"
+            }
+          ]
+        },
+        {
+          "id": "bmi2-mul",
+          "rustflags": [
+            "-C",
+            "target-feature=+bmi2"
+          ],
+          "target_features": [
+            "bmi2",
+            "fxsr",
+            "sse",
+            "sse2"
+          ],
+          "required_cpu_features": [
+            "bmi2"
+          ],
+          "operations": [
+            {
+              "name": "mul",
+              "expected_sequence": "x86_64-mul-bmi2",
+              "object_source": "fp64_mul_x86_64_bmi2_object.ml",
+              "correctness_source": "fp64_mul_x86_64_bmi2_correct.ml",
+              "body_theorem": "JOLT_FP64_MUL_X86_64_BMI2_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_MUL_X86_64_BMI2_SUBROUTINE_CORRECT"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "x86_64-apple-darwin-inspection-only",
+      "target_triple": "x86_64-apple-darwin",
+      "architecture": "x86_64",
+      "vendor": "apple",
+      "target_os": "macos",
+      "target_env": "",
+      "endian": "little",
+      "pointer_width": 64,
+      "object_format_marker": "file format mach-o 64-bit x86-64",
+      "certification_scope": "checked-wrapper-proved-inner-sequence",
+      "wrapper_policy": "darwin-frame",
+      "post_return_policy": "nop-padding-only",
+      "ci_required": false,
+      "profiles": [
+        {
+          "id": "baseline",
+          "rustflags": [],
+          "target_features": [
+            "cmpxchg16b",
+            "fxsr",
+            "sse",
+            "sse2",
+            "sse3",
+            "sse4.1",
+            "ssse3"
+          ],
+          "required_cpu_features": [],
+          "operations": [
+            {
+              "name": "add",
+              "expected_sequence": "x86_64-add",
+              "object_source": "fp64_add_x86_64_object.ml",
+              "correctness_source": "fp64_add_x86_64_correct.ml",
+              "body_theorem": "JOLT_FP64_ADD_X86_64_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_ADD_X86_64_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "sub",
+              "expected_sequence": "x86_64-sub",
+              "object_source": "fp64_sub_x86_64_object.ml",
+              "correctness_source": "fp64_sub_x86_64_correct.ml",
+              "body_theorem": "JOLT_FP64_SUB_X86_64_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_SUB_X86_64_SUBROUTINE_CORRECT"
+            },
+            {
+              "name": "mul",
+              "expected_sequence": "x86_64-mul",
+              "object_source": "fp64_mul_x86_64_object.ml",
+              "correctness_source": "fp64_mul_x86_64_correct.ml",
+              "body_theorem": "JOLT_FP64_MUL_X86_64_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_MUL_X86_64_SUBROUTINE_CORRECT"
+            }
+          ]
+        },
+        {
+          "id": "bmi2-mul",
+          "rustflags": [
+            "-C",
+            "target-feature=+bmi2"
+          ],
+          "target_features": [
+            "bmi2",
+            "cmpxchg16b",
+            "fxsr",
+            "sse",
+            "sse2",
+            "sse3",
+            "sse4.1",
+            "ssse3"
+          ],
+          "required_cpu_features": [
+            "bmi2"
+          ],
+          "operations": [
+            {
+              "name": "mul",
+              "expected_sequence": "x86_64-mul-bmi2",
+              "object_source": "fp64_mul_x86_64_bmi2_object.ml",
+              "correctness_source": "fp64_mul_x86_64_bmi2_correct.ml",
+              "body_theorem": "JOLT_FP64_MUL_X86_64_BMI2_CORRECT",
+              "subroutine_theorem": "JOLT_FP64_MUL_X86_64_BMI2_SUBROUTINE_CORRECT"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "excluded_target_families": [
+    "Windows x86-64 and Windows AArch64 use unproved calling conventions and COFF objects.",
+    "Linux musl, Android, BSD, iOS, and other ELF or Mach-O targets have no registered witness build.",
+    "Big-endian and non-64-bit targets are outside the scalar machine-code proof.",
+    "RISC-V and WebAssembly use different instruction sets and are outside these HOL Light theorems.",
+    "Arbitrary target-cpu, target-feature, profile, LTO, and codegen overrides are not certified."
+  ]
+}

@@ -9,15 +9,17 @@ use std::{
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
 
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::{
     AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaSerialize, AkitaTranscript,
 };
-use akita_prover::{CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly};
-use akita_schedules::TrustedScheduleCatalog;
+use akita_prover::{
+    CpuBackend, CpuPreparedSetup, DensePoly, OneHotPoly, ResidentCommitmentState,
+    ResidentStatePolicy, UniformProverStack,
+};
+use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
     AkitaBatchedProof as AkitaBackendBatchProof, AkitaBatchedProofShape,
-    AkitaCommitmentHint as AkitaBackendCommitmentHint,
     AkitaVerifierSetup as AkitaBackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
@@ -137,21 +139,23 @@ impl AkitaScheduleArtifacts {
         )
     }
 
-    pub fn dense_catalog(&self) -> Result<TrustedScheduleCatalog, AkitaError> {
-        akita_config::trusted_schedule_catalog_from_bytes::<JoltDenseBounded>(&self.dense)
+    pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
+        TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(&self.dense)
+            .map(|catalog| catalog.catalog().clone())
     }
 
-    pub fn one_hot_catalog(&self, one_hot_k: usize) -> Result<TrustedScheduleCatalog, AkitaError> {
+    pub fn one_hot_catalog(
+        &self,
+        one_hot_k: usize,
+    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
         match one_hot_k {
             AKITA_ONE_HOT_K16 => {
-                akita_config::trusted_schedule_catalog_from_bytes::<JoltOneHotK16>(
-                    &self.one_hot_k16,
-                )
+                TrustedScheduleCatalog::<JoltOneHotK16>::from_artifact_bytes(&self.one_hot_k16)
+                    .map(|catalog| catalog.catalog().clone())
             }
             AKITA_ONE_HOT_K256 => {
-                akita_config::trusted_schedule_catalog_from_bytes::<JoltOneHotK256>(
-                    &self.one_hot_k256,
-                )
+                TrustedScheduleCatalog::<JoltOneHotK256>::from_artifact_bytes(&self.one_hot_k256)
+                    .map(|catalog| catalog.catalog().clone())
             }
             other => Err(AkitaError::InvalidSetup(format!(
                 "unsupported Akita one-hot K={other}"
@@ -167,7 +171,7 @@ pub(crate) type AkitaOneHotK16BackendScheme = AkitaCommitmentScheme<AkitaOneHotK
 pub(crate) type AkitaOneHotK256BackendScheme = AkitaCommitmentScheme<AkitaOneHotK256Config>;
 pub(crate) type AkitaBackendCommitment = AkitaBackendCommittedGroup<AkitaField>;
 pub(crate) type AkitaBackendCommitmentPayload = AkitaBackendRingCommitment<AkitaField>;
-pub(crate) type AkitaBackendHint = AkitaBackendCommitmentHint<AkitaField>;
+pub(crate) type AkitaBackendHint = ResidentCommitmentState<AkitaField>;
 pub(crate) type AkitaBackendProof = AkitaBackendBatchProof<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProofShape = AkitaBatchedProofShape;
 pub(crate) type AkitaBackendVerifier = AkitaBackendVerifierSetup<AkitaField>;
@@ -175,7 +179,8 @@ pub(crate) type AkitaBackendDensePoly = DensePoly<AkitaField>;
 pub(crate) type AkitaBackendOneHotPoly = OneHotPoly<AkitaField, u8>;
 pub(crate) type AkitaBackendPreparedSetup = CpuPreparedSetup<AkitaField>;
 pub(crate) type AkitaBackendProverSetup = akita_prover::AkitaProverSetup<AkitaField>;
-pub(crate) type BackendStack<'a> = akita_prover::UniformProverStack<'a, AkitaField, CpuBackend>;
+pub(crate) type BackendStack<'a> =
+    UniformProverStack<'a, AkitaField, CpuBackend, ResidentStatePolicy>;
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
 const SCHEDULE_SELECTION_BYTES: usize = 32;
@@ -1014,10 +1019,11 @@ pub(crate) fn backend_stack<'a>(
     prepared_backend_setup: &'a AkitaBackendPreparedSetup,
 ) -> Result<BackendStack<'a>, OpeningsError> {
     let _span = info_span!("jolt_akita::make_backend_stack").entered();
-    akita_prover::UniformProverStack::uniform(
+    UniformProverStack::uniform_with_state_policy(
         &CpuBackend::DEFAULT,
         prepared_backend_setup,
         backend_prover_setup.expanded.as_ref(),
+        ResidentStatePolicy,
     )
     .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))
 }
@@ -1258,4 +1264,209 @@ where
     bridged_session_label.extend_from_slice(session_label);
     bridged_session_label.extend_from_slice(&bridge_bytes);
     AkitaTranscript::new(&bridged_session_label)
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "tests assert successful conversions and exact error text"
+    )]
+
+    use super::*;
+    use akita_types::{LevelProofShape, NextWitnessBindingShape};
+    use jolt_field::Ring;
+
+    fn af(value: u64) -> AkitaField {
+        AkitaField::from_u64(value)
+    }
+
+    /// Jolt indexes MLE evaluations big-endian (variable `j` carries index
+    /// weight `2^(n-1-j)`, see the `eq_table` convention in `scheme.rs`);
+    /// Akita indexes them little-endian (variable `j` carries weight `2^j`).
+    /// The tables below are derived by hand from those weight conventions —
+    /// e.g. for n = 3, jolt index 1 is the assignment (0, 0, 1), whose Akita
+    /// index is 1 * 2^2 = 4 — not by re-running any bit arithmetic.
+    #[test]
+    fn jolt_to_akita_index_matches_hand_derived_tables() {
+        let three_vars = [0, 4, 2, 6, 1, 5, 3, 7];
+        for (jolt_index, &akita_index) in three_vars.iter().enumerate() {
+            assert_eq!(
+                jolt_to_akita_index(3, jolt_index),
+                akita_index,
+                "num_vars=3, jolt index {jolt_index}",
+            );
+        }
+
+        let two_vars = [0, 2, 1, 3];
+        for (jolt_index, &akita_index) in two_vars.iter().enumerate() {
+            assert_eq!(
+                jolt_to_akita_index(2, jolt_index),
+                akita_index,
+                "num_vars=2, jolt index {jolt_index}",
+            );
+        }
+
+        assert_eq!(jolt_to_akita_index(1, 0), 0);
+        assert_eq!(jolt_to_akita_index(1, 1), 1);
+        assert_eq!(jolt_to_akita_index(0, 0), 0);
+    }
+
+    /// Reversing a reversal is the identity, and the map permutes the whole
+    /// domain (every Akita index is hit exactly once).
+    #[test]
+    fn jolt_to_akita_index_is_a_self_inverse_permutation() {
+        let num_vars = 4;
+        let mut seen = [false; 16];
+        for index in 0..16 {
+            let mapped = jolt_to_akita_index(num_vars, index);
+            assert!(mapped < 16);
+            assert!(!seen[mapped], "akita index {mapped} hit twice");
+            seen[mapped] = true;
+            assert_eq!(jolt_to_akita_index(num_vars, mapped), index);
+        }
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_permutes_an_explicit_two_var_vector() {
+        let jolt = [af(10), af(20), af(30), af(40)];
+        let akita = jolt_to_akita_evals(2, &jolt).expect("well-formed evaluations convert");
+        // Jolt index 1 = assignment (0, 1) = Akita index 2, and vice versa;
+        // the all-zero and all-one corners are fixed points.
+        assert_eq!(akita, vec![af(10), af(30), af(20), af(40)]);
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_passes_zero_var_polynomials_through() {
+        let jolt = [af(99)];
+        assert_eq!(
+            jolt_to_akita_evals(0, &jolt).expect("constant polynomial converts"),
+            vec![af(99)],
+        );
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_rejects_length_domain_mismatch() {
+        let error = jolt_to_akita_evals(2, &[af(1), af(2), af(3)]).unwrap_err();
+        assert!(matches!(error, OpeningsError::InvalidBatch(_)));
+        assert_eq!(
+            error.to_string(),
+            "invalid batch opening: Akita polynomial has 3 evaluations but dimension 2 requires 4",
+        );
+    }
+
+    #[test]
+    fn jolt_to_akita_evals_rejects_dimension_beyond_usize_width() {
+        let error = jolt_to_akita_evals(usize::BITS as usize, &[]).unwrap_err();
+        assert!(matches!(error, OpeningsError::InvalidBatch(_)));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "invalid batch opening: Akita polynomial dimension {} exceeds usize bit width",
+                usize::BITS
+            ),
+        );
+    }
+
+    #[test]
+    fn reverse_point_reverses_coordinates_and_round_trips() {
+        let point = vec![af(1), af(2), af(3)];
+        assert_eq!(reverse_point(&point), vec![af(3), af(2), af(1)]);
+        assert_eq!(reverse_point(&reverse_point(&point)), point);
+        assert!(reverse_point(&[]).is_empty());
+    }
+
+    /// The identity the backend hand-off relies on: transforming the
+    /// evaluations with `jolt_to_akita_evals` AND the opening point with
+    /// `reverse_point` leaves the multilinear evaluation unchanged. Checked
+    /// against a hand-rolled big-endian MLE evaluator, so a bug in either
+    /// transform (or applying only one of them) fails this test.
+    #[test]
+    fn eval_and_point_transforms_together_preserve_mle_evaluation() {
+        fn mle_big_endian(evals: &[AkitaField], point: &[AkitaField]) -> AkitaField {
+            let one = af(1);
+            let mut acc = af(0);
+            for (index, &eval) in evals.iter().enumerate() {
+                let mut weight = one;
+                for (variable, &coordinate) in point.iter().enumerate() {
+                    let bit = (index >> (point.len() - 1 - variable)) & 1;
+                    weight *= if bit == 1 {
+                        coordinate
+                    } else {
+                        one - coordinate
+                    };
+                }
+                acc += weight * eval;
+            }
+            acc
+        }
+
+        let evals: Vec<AkitaField> = (0..8).map(|value| af(100 + 7 * value)).collect();
+        let point = vec![af(3), af(17), af(29)];
+        let transformed = jolt_to_akita_evals(3, &evals).expect("well-formed evaluations convert");
+
+        assert_eq!(
+            mle_big_endian(&transformed, &reverse_point(&point)),
+            mle_big_endian(&evals, &point),
+        );
+        // Applying only the evaluation transform must NOT preserve the value
+        // at this off-hypercube point — otherwise the check above is vacuous.
+        assert_ne!(
+            mle_big_endian(&transformed, &point),
+            mle_big_endian(&evals, &point),
+        );
+    }
+
+    struct HugeDimensionPoly;
+
+    impl MultilinearPoly<AkitaField> for HugeDimensionPoly {
+        fn num_vars(&self) -> usize {
+            usize::BITS as usize
+        }
+
+        fn evaluate(&self, _point: &[AkitaField]) -> AkitaField {
+            unreachable!("the dimension check rejects before any evaluation")
+        }
+
+        fn for_each_row(&self, _sigma: usize, _f: &mut dyn FnMut(usize, &[AkitaField])) {
+            unreachable!("the dimension check rejects before any row is streamed")
+        }
+    }
+
+    #[test]
+    fn akita_ordered_evaluations_rejects_unrepresentable_domains() {
+        let err = akita_ordered_evaluations(&HugeDimensionPoly)
+            .expect_err("2^64 evaluation domain must overflow");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("bit width")),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn deserialize_akita_rejects_trailing_bytes() {
+        let shape = LevelProofShape {
+            extension_opening_reduction: None,
+            opening_payload_coeffs: 3,
+            stage1_stages: Vec::new(),
+            stage1_norm: None,
+            stage2_sumcheck_proof: vec![3, 3],
+            stage3_sumcheck: None,
+            next_witness_binding: NextWitnessBindingShape::TerminalInnerState,
+        };
+        let mut bytes = serialize_akita(&shape).expect("shape serializes");
+        let roundtrip: LevelProofShape =
+            deserialize_akita(&bytes, &()).expect("exact bytes deserialize");
+        assert_eq!(roundtrip, shape);
+
+        bytes.push(0);
+        let err = deserialize_akita::<LevelProofShape>(&bytes, &())
+            .expect_err("trailing bytes must be rejected");
+        assert!(
+            matches!(&err, OpeningsError::InvalidBatch(message) if message.contains("trailing bytes")),
+            "unexpected error: {err}"
+        );
+    }
 }

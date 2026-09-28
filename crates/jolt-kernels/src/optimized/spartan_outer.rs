@@ -1,8 +1,5 @@
-//! Optimized stage-1 Spartan outer kernels: the legacy prover's algorithms
-//! behind the reference kernels' exact wire behavior.
-//!
-//! Techniques ported from `jolt-prover-legacy`'s `zkvm/spartan/outer.rs` +
-//! `r1cs/evaluation.rs`:
+//! Optimized stage-1 Spartan outer kernels with the reference kernels' exact
+//! wire behavior:
 //!
 //! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
 //!   rows are evaluated per cycle as integers (`i64` guards, `S192`
@@ -532,6 +529,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
         &self,
         session: &mut ProofSession,
         _late_tau: &[F],
+        _inputs: &(),
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let carry =
             session
@@ -1221,6 +1219,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut reference_session,
                 &[],
+                &(),
             )
             .unwrap();
 
@@ -1232,6 +1231,7 @@ mod tests {
                 &OptimizedOuterUniskip,
                 &mut optimized_session,
                 &[],
+                &(),
             )
             .unwrap();
         assert_eq!(
@@ -1347,6 +1347,7 @@ mod tests {
                     &ReferenceBackend,
                     &mut reference_session,
                     &[],
+                    &(),
                 )
                 .unwrap();
 
@@ -1363,7 +1364,7 @@ mod tests {
                 Fr,
                 OuterRemainder<Fr>,
             >>::first_round_poly(
-                &OptimizedOuterUniskip, &mut optimized_session, &[]
+                &OptimizedOuterUniskip, &mut optimized_session, &[], &()
             )
             .unwrap();
             assert_eq!(optimized_uniskip, reference_uniskip);

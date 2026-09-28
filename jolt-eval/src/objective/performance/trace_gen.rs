@@ -1,6 +1,6 @@
 use common::constants::RAM_START_ADDRESS;
+use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceInputs};
-use jolt_prover_legacy::host::Program;
 use tracer::TracerBackend;
 
 use crate::guests::GuestConfig;

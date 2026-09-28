@@ -22,7 +22,6 @@ const _: () = assert!(K256_ROW_BATCH <= i16::MAX as usize);
 
 mod commit;
 mod decomposition;
-mod grouped;
 mod kernels;
 mod opening;
 mod source;
@@ -31,7 +30,6 @@ mod traversal;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use grouped::GroupedRootSource;
 pub use source::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
 
 #[cfg(test)]

@@ -317,9 +317,7 @@ fn shift_imm_w(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
     let mut i = base_instance(rng, kind);
     i.row.operands.rs1 = Some(reg(rng));
     i.row.operands.rd = Some(rd(rng));
-    // The immediate is the W bitmask 2^32 - 2^shift (shift ∈ 0..32);
-    // shift = imm.trailing_zeros(). The expander emits no other values, and
-    // the interpreter's plain `>>` rejects shifts ≥ 32 under debug asserts.
+    // The expander emits W bitmasks 2^32 - 2^shift (shift ∈ 0..32).
     let shift = rng.gen_range(0u32..32);
     i.row.operands.imm = (((1u128 << (32 - shift)) - 1) << shift) as i128;
     i
@@ -773,7 +771,13 @@ difftests! {
     diff_shift_right_bitmask_w => |r| unary(r, kind_by_name("VirtualShiftRightBitmaskW"));
     diff_srlw => |r| shift_reg_w(r, K::VirtualSRLW);
     diff_sraw => |r| shift_reg_w(r, K::VirtualSRAW);
-    diff_srliw => |r| shift_imm_w(r, K::VirtualSRLIW);
+    diff_srliw => |r| {
+        let mut instance = shift_imm_w(r, K::VirtualSRLIW);
+        if r.gen_ratio(1, 20) {
+            instance.row.operands.imm = 0;
+        }
+        instance
+    };
     diff_sraiw => |r| shift_imm_w(r, K::VirtualSRAIW);
     diff_window_mask_w => |r| alu_ri(r, kind_by_name("VirtualWindowMaskW"), false);
     diff_window_mask_b => |r| alu_ri(r, kind_by_name("VirtualWindowMaskB"), false);

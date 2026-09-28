@@ -3,7 +3,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
-use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId};
+use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
@@ -49,6 +49,11 @@ where
     T: Transcript<Challenge = F>,
     W: JoltWitnessPlane<F>,
 {
+    if config.trace_polynomial_order != TracePolynomialOrder::CycleMajor {
+        return Err(ProverError::Unsupported {
+            reason: "Akita supports only cycle-major trace polynomials",
+        });
+    }
     if trusted_advice.is_some() == public_io.trusted_advice.is_empty() {
         return Err(ProverError::Unsupported {
             reason: "trusted-advice object presence disagrees with the trusted advice bytes",

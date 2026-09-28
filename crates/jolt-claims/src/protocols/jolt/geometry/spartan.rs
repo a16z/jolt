@@ -226,18 +226,22 @@ pub fn virtual_instruction_product() -> JoltOpeningId {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn next_unexpanded_pc_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextUnexpandedPC)
 }
 
+#[cfg(test)]
 pub(crate) fn next_pc_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextPC)
 }
 
+#[cfg(test)]
 pub(crate) fn next_is_virtual_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextIsVirtual)
 }
 
+#[cfg(test)]
 pub(crate) fn next_is_first_in_sequence_outer() -> JoltOpeningId {
     outer_opening(JoltVirtualPolynomial::NextIsFirstInSequence)
 }

@@ -2,7 +2,7 @@
 //! stage-6b cycle phase, byte-parity twins of the reference kernels in
 //! [`crate::reference::bytecode_read_raf`].
 //!
-//! Ported legacy techniques (`jolt-prover-legacy/src/zkvm/bytecode/read_raf_checking.rs`):
+//! Carries forward three optimizations from the former bytecode read/RAF prover:
 //!
 //! - **Split-eq two-table pushforwards** (address phase): the per-stage
 //!   `F_s(k) = Σ_{j: pc(j)=k} eq(r_cycle_s, j)` tables are accumulated as
@@ -34,7 +34,7 @@
 //! - **Eval-at-1 recovery** and **rayon walks**, both phases (see the module
 //!   docs on [`crate::optimized`]).
 //!
-//! Both phases read the stage-5 [`InstructionCycleRow`] carry their Booleanity
+//! Both phases read the stage-5 `InstructionCycleRow` carry their Booleanity
 //! and RA-virtualization peers already retain, so neither protocol pays for a
 //! second per-cycle PC cache. Both phases read the same total `BytecodePc`
 //! column: the pushforward slot and the committed one-hot hot index are the

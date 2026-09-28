@@ -1,5 +1,5 @@
-use akita_pcs::{AkitaError, ComputeBackendSetup, CpuBackend};
-use akita_prover::{GroupContext, RootPolyMeta};
+use akita_pcs::{AkitaError, ComputeBackendSetup};
+use akita_prover::{CommitOutput, CommitmentSource, CpuBackend, GroupContext};
 use akita_types::PrecommittedGroupProfiles;
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
@@ -30,9 +30,9 @@ use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 pub struct AkitaScheme;
 
 fn split_commit_output(
-    output: akita_prover::CommitOutput<AkitaField>,
+    output: CommitOutput<AkitaField, AkitaBackendHint>,
 ) -> (AkitaBackendCommitment, AkitaBackendHint) {
-    (output.committed_group, output.hint)
+    (output.committed_group, output.prover_state)
 }
 
 /// Prover seam for committing the packed trace directly from selected one-hot rows.
@@ -173,7 +173,7 @@ impl AkitaScheme {
         )
     }
 
-    /// Contextual owned one-hot final commit used by the legacy packed path.
+    /// Contextual owned one-hot final commit with precommitted objects.
     /// The witness buffers move into the opening hint without cloning.
     pub fn commit_one_hot_group_owned_with_precommitted(
         setup: &AkitaProverSetup,
@@ -231,7 +231,7 @@ impl AkitaScheme {
             rows,
         )
         .map_err(commit_failed)?;
-        let num_vars = RootPolyMeta::num_vars(&source);
+        let num_vars = source.descriptor().map_err(commit_failed)?.num_vars();
         Self::validate_commit_shape(setup, num_vars, 1)?;
         let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
         let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
@@ -241,40 +241,40 @@ impl AkitaScheme {
                     .verifier
                     .one_hot_k16_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_without_precommitted_groups(),
                     ),
                 (AKITA_ONE_HOT_K16, Some(profiles)) => setup
                     .verifier
                     .one_hot_k16_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_with_precommitted_groups(profiles),
                     ),
                 (AKITA_ONE_HOT_K256, None) => setup
                     .verifier
                     .one_hot_k256_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_without_precommitted_groups(),
                     ),
                 (AKITA_ONE_HOT_K256, Some(profiles)) => setup
                     .verifier
                     .one_hot_k256_scheme()
                     .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .commit::<TracePackedOneHot, CpuBackend>(
+                    .commit(
                         backend_prover_setup,
                         std::slice::from_ref(&source),
-                        &stack,
+                        stack.commitment(),
                         GroupContext::scheduler_with_precommitted_groups(profiles),
                     ),
                 _ => unreachable!("the one-hot setup geometry was validated during setup"),
@@ -304,7 +304,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_without_precommitted_groups(),
                 ),
             AKITA_ONE_HOT_K256 => setup
@@ -314,7 +314,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_without_precommitted_groups(),
                 ),
             _ => unreachable!("the one-hot setup geometry was validated during setup"),
@@ -338,7 +338,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_with_precommitted_groups(profiles),
                 ),
             AKITA_ONE_HOT_K256 => setup
@@ -348,7 +348,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     polynomials,
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_with_precommitted_groups(profiles),
                 ),
             _ => unreachable!("the one-hot setup geometry was validated during setup"),
@@ -472,7 +472,7 @@ impl AkitaScheme {
                 .commit(
                     backend_prover_setup,
                     dense.as_slice(),
-                    &stack,
+                    stack.commitment(),
                     GroupContext::scheduler_without_precommitted_groups(),
                 )
         })
@@ -907,7 +907,7 @@ mod tests {
     use crate::adapters::{append_verifier_setup, AkitaBackendFlavor};
     use crate::configs::JoltDenseBounded;
     use akita_config::{policy_of, CommitmentConfig};
-    use akita_schedules::TrustedScheduleCatalog;
+    use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
 
@@ -1210,7 +1210,7 @@ mod tests {
             .find(|row| row.selection() != selected)
             .expect("the base catalog must contain an unused row")
             .selection();
-        let reduced_catalog = TrustedScheduleCatalog::try_new(
+        let reduced_catalog = ValidatedScheduleCatalog::try_new(
             JoltDenseBounded::schedule_family_name(),
             full_catalog
                 .rows()

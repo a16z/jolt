@@ -3,9 +3,7 @@
 //! These five values are exactly the proof's wire config block
 //! (`JoltProof::{trace_length, ram_K, rw_config, one_hot_config,
 //! trace_polynomial_order}`) plus the Fiat-Shamir preamble inputs. The
-//! derivation policies here must match `jolt-prover-legacy`'s choices
-//! byte-for-byte while it remains the parity oracle; the byte-diff harness
-//! pins them.
+//! derivation policies here must match the verifier's choices byte-for-byte.
 
 use common::constants::{ONEHOT_CHUNK_THRESHOLD_LOG_T, REGISTER_COUNT, XLEN};
 use common::jolt_device::MemoryLayout;
@@ -47,9 +45,10 @@ pub struct ProverConfig {
     /// Coefficient placement of the trace polynomials in the commitment
     /// matrix. [`ProverConfig::derive`] always picks cycle-major (legacy has
     /// no production selection logic); address-major is chosen by
-    /// overwriting this field after derivation. Committed-program
-    /// preprocessing bakes this order into its chunk commitments — it must
-    /// be chosen before preprocessing and match here (stage 0 checks).
+    /// overwriting this field after derivation. Dory committed-program
+    /// preprocessing bakes this order into its chunk commitments, so pass it
+    /// to `preprocess_committed_with_order` and keep the values equal. Akita
+    /// supports only cycle-major order.
     pub trace_polynomial_order: TracePolynomialOrder,
 }
 
@@ -210,12 +209,10 @@ fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
     }
 }
 
-/// One-hot chunking policy, mirroring `jolt-prover-legacy`'s
-/// `OneHotConfig::new`: below the trace-length threshold (`log_T < 25`),
+/// Below the trace-length threshold (`log_T < 25`), use
 /// 4-bit committed chunks and `LOG_K/8 = 16`-bit virtual-RA chunks; at or
 /// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks
-/// (a branch that requires a 2^25-cycle trace and may never have run in
-/// practice — kept for parity).
+/// (a branch that requires a 2^25-cycle trace).
 #[expect(non_snake_case)]
 fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
@@ -229,6 +226,16 @@ fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
         }
     }
+}
+
+/// The committed one-hot chunk width [`one_hot_config`] selects for a
+/// `2^log_T`-cycle trace. The committed preprocessing digest and the Dory
+/// setup sizing read it from here so they keep describing the chunking the
+/// prover actually uses.
+#[cfg(not(feature = "akita"))]
+#[expect(non_snake_case)]
+pub(crate) fn committed_log_k_chunk(log_T: usize) -> u8 {
+    one_hot_config(log_T).log_k_chunk
 }
 
 /// The committed-program precommitted candidates' variable counts, folded

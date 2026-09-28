@@ -1222,20 +1222,26 @@ fn backend_drops_only_canonical_trailing_padding() {
 #[test]
 fn dense_grid_len_is_capped_and_overflow_checked() {
     assert_eq!(checked_dense_grid_len::<Fr>(4096, 1 << 10), Ok(4096 << 10));
+    let max_elements = MAX_DENSE_GRID_BYTES / core::mem::size_of::<Fr>();
     assert_eq!(
-        checked_dense_grid_len::<Fr>(
-            MAX_DENSE_GRID_BYTES / core::mem::size_of::<Fr>() / (1 << 10),
-            1 << 10
-        ),
-        Ok(MAX_DENSE_GRID_BYTES / core::mem::size_of::<Fr>())
+        checked_dense_grid_len::<Fr>(max_elements, 1),
+        Ok(max_elements)
     );
+    assert!(matches!(
+        checked_dense_grid_len::<Fr>(max_elements + 1, 1),
+        Err(WitnessError::InvalidDimensions { .. })
+    ));
 
     let refused = checked_dense_grid_len::<Fr>(4096, 1 << 22).unwrap_err();
     let reason = match refused {
         WitnessError::InvalidDimensions { reason, .. } => reason,
         other => format!("expected InvalidDimensions, got {other:?}"),
     };
-    assert!(reason.contains(&(1_u64 << 39).to_string()), "{reason}");
+    if usize::BITS >= 64 {
+        assert!(reason.contains(&(1_u64 << 39).to_string()), "{reason}");
+    } else {
+        assert!(reason.contains("overflows"), "{reason}");
+    }
 
     assert!(matches!(
         checked_dense_grid_len::<Fr>(usize::MAX, 2),

@@ -110,4 +110,7 @@ pub enum VerifierError {
 
     #[error("BlindFold proof verification failed: {reason}")]
     BlindFoldVerificationFailed { reason: String },
+
+    #[error("program preprocessing digest failed: {reason}")]
+    PreprocessingDigestFailed { reason: String },
 }

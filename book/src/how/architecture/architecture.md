@@ -115,8 +115,9 @@ Note the white boxes corresponding to the five components of Jolt under the CPU 
 In the diagaram above, sumchecks are color-coded based on "batch"; sumchecks in the same batch are "run in parallel" (see [Batched sumcheck](../optimizations/batched-sumcheck.md)).
 Note that a given component may include sumchecks in different batches. For example, the sumchecks under "Registers" span stages 3, 4, 5, and 6.
 
-The sumcheck stages are codified in `zkvm/prover.rs` (resp. `zkvm/verifier.rs`), which contain functions `prove_stage1`, `prove_stage2` (resp. `verify_stage1`, `verify_stage2`) etc.
-The function for a given stage declares which sumcheck instances the stage contains.
+The prover stages live in `crates/jolt-prover/src/stages/`, while the verifier
+stages live in `crates/jolt-verifier/src/stages/`. Each stage module declares
+the sumcheck instances it contains.
 
 Observe that the DAG defines a partial ordering over the nodes (sumchecks), which consequently defines the minimum number of batches -- two sumchecks cannot be batched together if one "depends" on the other.
 
@@ -129,7 +130,7 @@ The `ProverOpeningAccumulator` (resp. `VerifierOpeningAccumulator`) is responsib
 The opening accumulator contains a mapping from `OpeningId` to claimed polynomial evaluation.
 As sumchecks are proven, their output claims (for both virtual and committed polynomials) are inserted into the map. Later sumchecks can then consume the virtual polynomial openings as input claims.
 
-While virtual polynomial claims are used internally and passed between sumchecks, committed polynomial claims are tracked because they must ultimately be verified via a batched [Dory](../dory.md) opening proof at the end of the protocol.
+While virtual polynomial claims are used internally and passed between sumchecks, committed polynomial claims are tracked because they must ultimately be verified via the selected backend's [batched opening proof](./opening-proof.md). [Dory](../dory.md) uses a random linear combination of commitments; [Akita](../akita.md) uses a native grouped opening over packed trace and precommitted objects.
 
 The `input_claim` and `cache_openings` methods on the `SumcheckInstanceProver` and `SumcheckInstanceVerifier` traits provide hooks to the respective accumulator objects.
 `input_claim` effectively declares the in-edges for the sumcheck instance, while `cache_openings` effectively declares the out-edges.

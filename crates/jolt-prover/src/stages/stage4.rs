@@ -3,9 +3,9 @@
 //!
 //! Pure orchestration mirroring `stage4::verify`: the `Val_init`
 //! decomposition (public initial-RAM evaluation + init structure) is built
-//! with the verifier's own promoted helpers; the advice blocks' opening
-//! VALUES are the prover-only work (the advice polynomial evaluated at each
-//! block's address sub-point, staged transcript-silently before the RAM
+//! with the verifier's own promoted helpers; the private opening VALUES
+//! are evaluated through the backend as one batch (program image and advice,
+//! staged transcript-silently before the RAM
 //! value-check gamma draw). The stage's one curated behavior: the batch
 //! carries `no_opening_values`, so the final absorbs use the claims struct's
 //! hand-ordered `opening_values()` (staged advice/program-image openings
@@ -15,9 +15,9 @@ use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
+use jolt_kernels::opening::RamInitialOpening;
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
-use jolt_poly::sparse_segments_mle_msb;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
@@ -105,61 +105,65 @@ where
     let untrusted_advice_present = !checked.public_io.untrusted_advice.is_empty();
     let init_structure =
         ram_val_check_init_structure(checked, untrusted_advice_present, r_address, public_eval)?;
-    // The committed program-image contribution: the image words' block MLE at
-    // the RAM address point (the public initial-RAM evaluation switched to
-    // inputs-only above, so this staged opening carries the image's share).
+    // Submit all private contributions together so device backends can share
+    // one batch. Only scalar values cross this seam; geometry and transcript
+    // ordering stay with this coordinator.
+    let mut openings = Vec::new();
+    if let Some(point) = init_structure.program_image_point.as_ref() {
+        let layout =
+            checked
+                .precommitted
+                .program_image
+                .as_ref()
+                .ok_or(ProverError::InvariantViolation {
+                    reason: "program-image init contribution without a committed layout",
+                })?;
+        openings.push(RamInitialOpening::ProgramImage { layout, point });
+    }
+    openings.extend(init_structure.advice_blocks.iter().map(|(kind, block)| {
+        RamInitialOpening::Advice {
+            kind: *kind,
+            point: &block.opening_point,
+        }
+    }));
+    let values = if openings.is_empty() {
+        Vec::new()
+    } else {
+        tracing::info_span!("RamInitialOpeningEvaluation::evaluate").in_scope(|| {
+            backend
+                .ram_initial_openings
+                .evaluate(session, &openings, witness)
+        })?
+    };
+    if values.len() != openings.len() {
+        return Err(ProverError::InvariantViolation {
+            reason: "initial RAM opening count does not match the requests",
+        });
+    }
+    let mut values = values.into_iter();
     let program_image_contribution = init_structure
         .program_image_point
         .as_ref()
         .map(|point| {
-            let layout = checked.precommitted.program_image.as_ref().ok_or(
-                ProverError::InvariantViolation {
-                    reason: "program-image init contribution without a committed layout",
-                },
-            )?;
-            // The full program rides the witness plane (witness generation
-            // requires it in every mode, including committed-program runs
-            // whose PREPROCESSING retains only commitments).
-            let program = witness.program_preprocessing();
-            let value = sparse_segments_mle_msb(
-                std::iter::once((
-                    layout.start_index() as u128,
-                    program.ram.bytecode_words.as_slice(),
-                )),
-                point,
-            );
+            let value = values.next().ok_or(ProverError::InvariantViolation {
+                reason: "missing program-image initial RAM opening",
+            })?;
             Ok::<_, ProverError<F>>((point.clone(), value))
         })
         .transpose()?;
-    // The advice blocks' opening values: each advice polynomial evaluated at
-    // its block's address sub-point. Staged before the RAM value-check gamma
-    // draw, exactly as legacy's `prover_accumulate_advice` — transcript-silent
-    // on this branch (the claims flush with the stage-4 batch openings).
     let advice_contributions = init_structure
         .advice_blocks
         .iter()
-        .map(|(kind, block)| {
-            // Backend-neutral kernel-seam span at the call boundary — see
-            // the taxonomy's kernel-seam contract.
-            let opening_value =
-                tracing::info_span!("AdviceOpeningEvaluation::evaluate", kind = ?kind).in_scope(
-                    || {
-                        backend.advice_opening.evaluate(
-                            session,
-                            *kind,
-                            &block.opening_point,
-                            witness,
-                        )
-                    },
-                )?;
-            Ok(VerifiedRamValCheckAdviceContribution {
+        .zip(values)
+        .map(
+            |((kind, block), opening_value)| VerifiedRamValCheckAdviceContribution {
                 kind: *kind,
                 selector: block.selector,
                 opening_point: block.opening_point.clone(),
                 opening_value,
-            })
-        })
-        .collect::<Result<Vec<_>, ProverError<F>>>()?;
+            },
+        )
+        .collect();
     let ram_val_check_init = RamValCheckInitialEvaluation {
         public_eval,
         program_image_contribution,

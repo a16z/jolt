@@ -13,7 +13,7 @@ use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use akita_planner::find_adapted_schedule;
-use akita_schedules::{ResolvedScheduleRow, TrustedScheduleCatalog};
+use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupCommitPhaseParams,
     PolynomialGroupLayout, ScheduleRowDigest,
@@ -66,10 +66,10 @@ impl PrecommittedScheduleParams {
 
     pub(crate) fn extend_catalog(
         &self,
-        dense_catalog: &TrustedScheduleCatalog,
-        one_hot_catalog: &TrustedScheduleCatalog,
+        dense_catalog: &ValidatedScheduleCatalog,
+        one_hot_catalog: &ValidatedScheduleCatalog,
         one_hot_k: usize,
-    ) -> Result<TrustedScheduleCatalog, AkitaError> {
+    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
         let rows = provision_precommitted_for_k(
             dense_catalog,
             one_hot_catalog,
@@ -115,16 +115,21 @@ impl RegisteredRows {
 
 /// Freeze base and setup-specific rows into one validated immutable catalog.
 pub fn extend_catalog<Cfg: CommitmentConfig>(
-    base: &TrustedScheduleCatalog,
+    base: &ValidatedScheduleCatalog,
     extra: &RegisteredRows,
-) -> Result<TrustedScheduleCatalog, AkitaError> {
-    akita_config::validate_trusted_schedule_catalog::<Cfg>(base)?;
+) -> Result<ValidatedScheduleCatalog, AkitaError> {
+    akita_config::validate_config_policy::<Cfg>()?;
+    base.validate_binding(
+        Cfg::schedule_family_name(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )?;
     let rows = base
         .rows()
         .chain(extra.rows())
         .map(|row| (row.profiles().clone(), row.schedule().clone()))
         .collect::<Vec<_>>();
-    TrustedScheduleCatalog::try_new(
+    ValidatedScheduleCatalog::try_new(
         Cfg::schedule_family_name(),
         rows,
         &policy_of::<Cfg>(),
@@ -133,7 +138,7 @@ pub fn extend_catalog<Cfg: CommitmentConfig>(
 }
 
 fn plan_row<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
-    base: &TrustedScheduleCatalog,
+    base: &ValidatedScheduleCatalog,
     key: &AkitaScheduleLookupKey,
 ) -> Result<ResolvedScheduleRow, AkitaError> {
     let main_row = base.resolve_key(&AkitaScheduleLookupKey::single(key.final_group))?;
@@ -149,7 +154,7 @@ fn plan_row<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
         .collect::<Result<Vec<_>, _>>()?;
     let request = GroupedGenerationRequest::new(key.final_group, producers);
     let planned = find_adapted_schedule(
-        &main_row,
+        main_row,
         &request,
         honest_fold_policy_of::<Cfg>(),
         &policy_of::<Cfg>(),
@@ -168,11 +173,16 @@ fn plan_row<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
 
 /// Adapt missing grouped rows from the base catalog's approved scalar rows.
 pub fn provision<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
-    base: &TrustedScheduleCatalog,
+    base: &ValidatedScheduleCatalog,
     precommitted_combinations: &[Vec<GroupCommitPhaseParams>],
     final_num_vars: impl IntoIterator<Item = usize>,
 ) -> Result<RegisteredRows, AkitaError> {
-    akita_config::validate_trusted_schedule_catalog::<Cfg>(base)?;
+    akita_config::validate_config_policy::<Cfg>()?;
+    base.validate_binding(
+        Cfg::schedule_family_name(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )?;
     if precommitted_combinations.iter().any(Vec::is_empty) {
         return Err(AkitaError::InvalidSetup(
             "a grouped row must have at least one precommitted group".to_owned(),
@@ -215,7 +225,7 @@ pub fn provision<Cfg: CommitmentConfig, ProducerCfg: CommitmentConfig>(
 
 /// Resolve the frozen profile of an independently committed dense object.
 pub fn dense_precommit_profile(
-    dense_catalog: &TrustedScheduleCatalog,
+    dense_catalog: &ValidatedScheduleCatalog,
     layout: PolynomialGroupLayout,
 ) -> Result<GroupCommitPhaseParams, AkitaError> {
     Ok(dense_catalog
@@ -233,7 +243,7 @@ pub struct AdvicePrecommitLayouts {
 impl AdvicePrecommitLayouts {
     fn precommit_combinations(
         self,
-        dense_catalog: &TrustedScheduleCatalog,
+        dense_catalog: &ValidatedScheduleCatalog,
     ) -> Result<Vec<Vec<GroupCommitPhaseParams>>, AkitaError> {
         let untrusted = self
             .untrusted
@@ -267,15 +277,20 @@ pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
 /// Adapt grouped rows for optional advice followed by committed-program objects.
 pub fn provision_precommitted_for_k(
-    dense_catalog: &TrustedScheduleCatalog,
-    one_hot_catalog: &TrustedScheduleCatalog,
+    dense_catalog: &ValidatedScheduleCatalog,
+    one_hot_catalog: &ValidatedScheduleCatalog,
     untrusted_physical_vars: Option<usize>,
     trusted_physical_vars: Option<usize>,
     direct_program_physical_vars: &[usize],
     one_hot_k: usize,
     final_num_vars: usize,
 ) -> Result<RegisteredRows, AkitaError> {
-    akita_config::validate_trusted_schedule_catalog::<JoltDenseBounded>(dense_catalog)?;
+    akita_config::validate_config_policy::<JoltDenseBounded>()?;
+    dense_catalog.validate_binding(
+        JoltDenseBounded::schedule_family_name(),
+        &policy_of::<JoltDenseBounded>(),
+        JoltDenseBounded::ring_challenge_config,
+    )?;
     let layouts = AdvicePrecommitLayouts {
         untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
         trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),

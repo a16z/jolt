@@ -1,6 +1,5 @@
 //! Sparse `(K × T)` read-write matrix for the RAM read-write-checking
-//! kernel, ported from `jolt-prover-legacy`'s `read_write_matrix` module
-//! (RAM entries; RAM has no one-hot coefficient lookup tables).
+//! kernel. RAM entries have no one-hot coefficient lookup tables.
 //!
 //! `ra(k, j)` and `val(k, j)` are conceptually `K × T` matrices, far too
 //! large to materialize. One entry exists per RAM access; everything else is
@@ -714,6 +713,37 @@ pub(crate) struct AddressMajorMatrix<F> {
 }
 
 impl<F: JoltField> AddressMajorMatrix<F> {
+    pub fn from_columns(columns: &RamAccessColumns) -> Self {
+        let mut entries: Vec<_> = (0..columns.addresses.len())
+            .filter_map(|cycle| {
+                round0_entry(columns, cycle).map(CycleMajorEntry::into_address_major)
+            })
+            .collect();
+        #[cfg(feature = "parallel")]
+        entries.par_sort_unstable_by_key(|entry| (entry.col, entry.row));
+        #[cfg(not(feature = "parallel"))]
+        entries.sort_unstable_by_key(|entry| (entry.col, entry.row));
+        Self { entries }
+    }
+
+    /// After binding every address, fill the remaining cycle tables using
+    /// checkpoints for untouched cycles. This allocates O(T), never O(K*T).
+    pub fn into_cycle_tables(self, cycles: usize, initial: F) -> (Polynomial<F>, Polynomial<F>) {
+        let mut ra = vec![F::zero(); cycles];
+        let mut val = Vec::with_capacity(cycles);
+        let mut checkpoint = initial;
+        for entry in self.entries {
+            debug_assert_eq!(entry.col, 0);
+            let row = entry.row as usize;
+            val.resize(row, checkpoint);
+            val.push(entry.val);
+            ra[row] = entry.ra;
+            checkpoint = entry.next_val;
+        }
+        val.resize(cycles, checkpoint);
+        (Polynomial::new(ra), Polynomial::new(val))
+    }
+
     /// Bind one address variable low-to-high: merge every adjacent column
     /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {
