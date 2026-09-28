@@ -990,11 +990,15 @@ mod tests {
         }
     }
 
-    use crate::emulator::elf_analyzer::test_elf::build_elf64;
+    use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
 
     /// addi x1, x0, 1 ; addi x2, x1, 2 ; j .  — terminates via PC stall.
     fn tiny_guest_elf() -> Vec<u8> {
-        build_elf64(&[0x0010_0093, 0x0020_8113, 0x0000_006f], &[])
+        build_elf64(
+            &[0x0010_0093, 0x0020_8113, 0x0000_006f],
+            &[],
+            StrtabOrder::GnuLd,
+        )
     }
 
     fn tiny_guest_config(elf: &[u8]) -> MemoryConfig {

@@ -141,6 +141,12 @@ pub enum MetalError {
     #[error("invalid dispatch of `{pipeline}`: {reason}")]
     InvalidDispatch { pipeline: String, reason: String },
 
+    #[error("command batch is unusable: {reason}")]
+    InvalidBatch { reason: &'static str },
+
+    #[error("device buffer is unavailable for {operation}: GPU completion was not confirmed")]
+    BufferUnavailable { operation: &'static str },
+
     #[error("command buffer failed ({code}) running [{}]: {description}", pipelines.join(", "))]
     CommandBuffer {
         code: CommandBufferError,
@@ -173,6 +179,8 @@ impl MetalError {
             Self::CommandBuffer { code, .. } => code.class(),
             Self::UnknownPipeline { .. }
             | Self::InvalidDispatch { .. }
+            | Self::InvalidBatch { .. }
+            | Self::BufferUnavailable { .. }
             | Self::NilObject { .. }
             | Self::ObjcException { .. }
             | Self::InvalidReadback { .. } => ErrorClass::Fault,

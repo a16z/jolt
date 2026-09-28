@@ -116,16 +116,16 @@ mod metal {
     }
 
     /// Runs one dispatch and returns its GPU time.
-    fn dispatch(
+    // Safety: bindings and grid must satisfy Batch::dispatch_unchecked's contract.
+    unsafe fn dispatch(
         device: &Device,
         pipeline: &Pipeline,
         bindings: &[Binding<'_>],
         grid: Grid,
     ) -> Duration {
         let mut batch = Batch::new(device).expect("command batch");
-        batch
-            .dispatch(pipeline, bindings, grid)
-            .expect("valid dispatch");
+        // SAFETY: the caller supplies the kernel's bounds and synchronization contract.
+        unsafe { batch.dispatch_unchecked(pipeline, bindings, grid) }.expect("valid dispatch");
         batch.commit_and_wait().expect("batch completes")
     }
 
@@ -184,7 +184,8 @@ mod metal {
                         Binding::buffer(out),
                     ]
                 };
-                dispatch(device, pipeline, &bindings, grid)
+                // SAFETY: inputs cover all kernel reads; distinct output covers every thread or one partial per whole 256-thread group.
+                unsafe { dispatch(device, pipeline, &bindings, grid) }
             };
             let cpu_all = || -> Vec<F> {
                 a.par_iter()
@@ -240,7 +241,8 @@ mod metal {
                             Binding::buffer(out),
                         ]
                     };
-                    dispatch(device, pipeline, &bindings, grid)
+                    // SAFETY: inputs cover all kernel reads; distinct output covers every thread or one partial per whole 256-thread group.
+                    unsafe { dispatch(device, pipeline, &bindings, grid) }
                 };
                 let cpu = |cpu_out: &mut [F]| {
                     cpu_out
@@ -294,7 +296,8 @@ mod metal {
                     Binding::value(&n),
                     Binding::buffer(partials),
                 ];
-                dispatch(device, pipeline, &bindings, grid)
+                // SAFETY: inputs cover all kernel reads; distinct output covers every thread or one partial per whole 256-thread group.
+                unsafe { dispatch(device, pipeline, &bindings, grid) }
             };
             let cpu = || -> F {
                 a.par_iter()

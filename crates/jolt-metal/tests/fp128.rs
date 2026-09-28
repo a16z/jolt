@@ -82,7 +82,8 @@ mod gpu {
 
     /// Runs `kernel` over `len` threads with `inputs` bound first and a fresh
     /// output buffer last, and returns the checked output.
-    fn run<F: TestField>(
+    // Safety: the selected elementwise kernel's inputs must cover len threads.
+    unsafe fn run<F: TestField>(
         device: &Device,
         library: &ShaderLibrary,
         kernel: &str,
@@ -97,8 +98,8 @@ mod gpu {
             let group = (pipeline.thread_execution_width() * 8)
                 .min(pipeline.max_total_threads_per_threadgroup());
             let mut batch = Batch::new(device).unwrap();
-            batch
-                .dispatch(pipeline, &bindings, Grid::linear(len, group))
+            // SAFETY: inputs follow the caller's contract; the fresh output has len elements.
+            unsafe { batch.dispatch_unchecked(pipeline, &bindings, Grid::linear(len, group)) }
                 .unwrap();
             let _ = batch.commit_and_wait().unwrap();
         }
@@ -350,13 +351,16 @@ mod gpu {
             (MUL, |x, y| x * y),
         ];
         for (kernel, op) in binary {
-            let got = run::<F>(
-                &device,
-                &library,
-                kernel,
-                vec![Binding::buffer(&a_dev), Binding::buffer(&b_dev)],
-                pairs.len(),
-            )
+            // SAFETY: the selected test kernel is elementwise; inputs cover the requested length and output is fresh.
+            let got = unsafe {
+                run::<F>(
+                    &device,
+                    &library,
+                    kernel,
+                    vec![Binding::buffer(&a_dev), Binding::buffer(&b_dev)],
+                    pairs.len(),
+                )
+            }
             .unwrap();
             let want: Vec<F> = a.iter().zip(&b).map(|(&x, &y)| op(x, y)).collect();
             compare(&mut failures, kernel, &got, &want, describe);
@@ -371,13 +375,16 @@ mod gpu {
         let describe = |i: usize| format!("{}", singles[i]);
         let unary: [(&str, UnaryOp<F>); 2] = [(NEG, |x| -x), (SQUARE, |x| x.square())];
         for (kernel, op) in unary {
-            let got = run::<F>(
-                &device,
-                &library,
-                kernel,
-                vec![Binding::buffer(&x_dev)],
-                singles.len(),
-            )
+            // SAFETY: the selected test kernel is elementwise; inputs cover the requested length and output is fresh.
+            let got = unsafe {
+                run::<F>(
+                    &device,
+                    &library,
+                    kernel,
+                    vec![Binding::buffer(&x_dev)],
+                    singles.len(),
+                )
+            }
             .unwrap();
             let want: Vec<F> = x.iter().map(|&v| op(v)).collect();
             compare(&mut failures, kernel, &got, &want, describe);
@@ -408,25 +415,31 @@ mod gpu {
             DeviceBuffer::from_slice(&device, &a).unwrap(),
             DeviceBuffer::from_slice(&device, &s).unwrap(),
         );
-        let got = run::<F>(
-            &device,
-            &library,
-            MUL_U64,
-            vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
-            s.len(),
-        )
+        // SAFETY: the selected test kernel is elementwise; inputs cover the requested length and output is fresh.
+        let got = unsafe {
+            run::<F>(
+                &device,
+                &library,
+                MUL_U64,
+                vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
+                s.len(),
+            )
+        }
         .unwrap();
         let want: Vec<F> = a.iter().zip(&s).map(|(x, &s)| x.mul_u64(s)).collect();
         compare(&mut failures, MUL_U64, &got, &want, |i| {
             format!("({}, {})", u64_pairs[i].0, u64_pairs[i].1)
         });
-        let got = run::<F>(
-            &device,
-            &library,
-            FROM_U64,
-            vec![Binding::buffer(&s_dev)],
-            s.len(),
-        )
+        // SAFETY: the selected test kernel is elementwise; inputs cover the requested length and output is fresh.
+        let got = unsafe {
+            run::<F>(
+                &device,
+                &library,
+                FROM_U64,
+                vec![Binding::buffer(&s_dev)],
+                s.len(),
+            )
+        }
         .unwrap();
         let want: Vec<F> = s.iter().map(|&s| F::from_u64(s)).collect();
         compare(&mut failures, FROM_U64, &got, &want, |i| {
@@ -449,25 +462,31 @@ mod gpu {
             DeviceBuffer::from_slice(&device, &a).unwrap(),
             DeviceBuffer::from_slice(&device, &s).unwrap(),
         );
-        let got = run::<F>(
-            &device,
-            &library,
-            MUL_I64,
-            vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
-            s.len(),
-        )
+        // SAFETY: the selected test kernel is elementwise; inputs cover the requested length and output is fresh.
+        let got = unsafe {
+            run::<F>(
+                &device,
+                &library,
+                MUL_I64,
+                vec![Binding::buffer(&a_dev), Binding::buffer(&s_dev)],
+                s.len(),
+            )
+        }
         .unwrap();
         let want: Vec<F> = a.iter().zip(&s).map(|(x, &s)| x.mul_i64(s)).collect();
         compare(&mut failures, MUL_I64, &got, &want, |i| {
             format!("({}, {})", i64_pairs[i].0, i64_pairs[i].1)
         });
-        let got = run::<F>(
-            &device,
-            &library,
-            FROM_I64,
-            vec![Binding::buffer(&s_dev)],
-            s.len(),
-        )
+        // SAFETY: the selected test kernel is elementwise; inputs cover the requested length and output is fresh.
+        let got = unsafe {
+            run::<F>(
+                &device,
+                &library,
+                FROM_I64,
+                vec![Binding::buffer(&s_dev)],
+                s.len(),
+            )
+        }
         .unwrap();
         let want: Vec<F> = s.iter().map(|&s| F::from_i64(s)).collect();
         compare(&mut failures, FROM_I64, &got, &want, |i| {
@@ -491,8 +510,10 @@ mod gpu {
     fn non_canonical_output_is_rejected_on_read_back() {
         let (_gpu, device) = gpu("non_canonical_output_is_rejected_on_read_back");
         let library = library::<Prime128OffsetA7F7>(&device);
-        let error = run::<Prime128OffsetA7F7>(&device, &library, WRITE_NON_CANONICAL, vec![], 3)
-            .unwrap_err();
+        // SAFETY: the selected test kernel is elementwise; inputs cover the requested length and output is fresh.
+        let error =
+            unsafe { run::<Prime128OffsetA7F7>(&device, &library, WRITE_NON_CANONICAL, vec![], 3) }
+                .unwrap_err();
         assert_eq!(error.class(), ErrorClass::Fault, "{error}");
         assert!(error.to_string().contains("element 0"), "{error}");
     }

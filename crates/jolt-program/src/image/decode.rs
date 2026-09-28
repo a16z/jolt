@@ -57,7 +57,13 @@ pub fn decode_instruction(
         0b0011011 => decode_op_imm_32(word)?,
         0b0110011 => decode_op(word)?,
         0b0111011 => decode_op_32(word)?,
-        0b0001111 => SourceInstructionKind::FENCE,
+        // MISC-MEM also carries Zifencei's FENCE.I (funct3 = 001) and the
+        // Zicbom/Zicboz CBO instructions (funct3 = 010), all outside RV64IMAC;
+        // funct3 = 011..111 is reserved.
+        0b0001111 => match funct3(word) {
+            0b000 => SourceInstructionKind::FENCE,
+            _ => return invalid("invalid MISC-MEM funct3"),
+        },
         0b0101111 => decode_amo(word)?,
         0b1110011 => decode_system(word)?,
         0b0001011 | 0b0101011 => SourceInstructionKind::Inline,
@@ -931,6 +937,13 @@ mod tests {
                 "invalid atomic memory operation",
             ),
             ((0x3f << 25) | 0x5b, "invalid custom instruction"),
+            (0x0f | (0b001 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b010 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b011 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b100 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b101 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b110 << 12), "invalid MISC-MEM funct3"),
+            (0x0f | (0b111 << 12), "invalid MISC-MEM funct3"),
         ];
         for (word, message) in cases {
             match decode_instruction(*word, 0x8000_0000, false, RV64IMAC_JOLT) {
@@ -982,6 +995,21 @@ mod tests {
         assert_eq!(instruction.row().operands.rd, Some(1));
         assert_eq!(instruction.row().operands.rs1, Some(2));
         assert_eq!(instruction.row().operands.rs2, Some(3));
+    }
+
+    /// `fence` (`fence iorw, iorw`) decodes as FENCE, the only MISC-MEM
+    /// instruction in RV64IMAC; the other funct3 values are rejected in
+    /// `rejects_invalid_encodings_with_exact_messages`.
+    #[test]
+    fn decodes_fence() {
+        let fence = decode_instruction(0x0ff0_000f, 0x8000_0000, false, RV64IMAC_JOLT);
+        assert!(
+            matches!(
+                fence.as_ref().map(SourceInstruction::kind),
+                Ok(SourceInstructionKind::FENCE)
+            ),
+            "{fence:?}"
+        );
     }
 
     #[cfg(not(feature = "field-inline"))]
