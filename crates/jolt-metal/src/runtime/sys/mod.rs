@@ -2,6 +2,13 @@
 //! crate-internal surface with uninhabited types, so every public type
 //! compiles everywhere and only `Device::system_default` can be reached.
 
+use crate::error::MetalError;
+
+pub(crate) enum RawBatchOutcome {
+    CompletionConfirmed(Result<(), MetalError>),
+    CompletionUncertain(MetalError),
+}
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

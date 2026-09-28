@@ -7,6 +7,7 @@ use crate::error::MetalError;
 use crate::runtime::batch::Binding;
 use crate::runtime::device::DeviceInfo;
 use crate::runtime::library::PipelineInfo;
+use crate::runtime::sys::RawBatchOutcome;
 
 pub(crate) enum RawDevice {}
 
@@ -73,7 +74,7 @@ impl RawCommandBatch {
         match *self {}
     }
 
-    pub(crate) fn commit_and_wait(self) -> Result<(), MetalError> {
+    pub(crate) fn commit_and_wait(self) -> RawBatchOutcome {
         match self {}
     }
 }

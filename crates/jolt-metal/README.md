@@ -1,6 +1,6 @@
 # jolt-metal
 
-Prover-only Metal support for `jolt-field`: a safe runtime for compiling,
+Prover-only Metal support for `jolt-field`: a runtime for compiling,
 dispatching, and reading back Metal compute kernels, and (from step 2 of the
 spec) the MSL field arithmetic that Jolt's and Akita's GPU provers share.
 Design and invariants: [`specs/jolt-metal-field.md`](../../specs/jolt-metal-field.md).
@@ -19,6 +19,16 @@ returns `MetalError::Unavailable`.
 - Do not build a consumer with `panic = "abort"`. The runtime catches
   Objective-C exceptions with `objc2::exception::catch`, which needs
   unwinding.
+
+Raw kernel execution uses `Batch::dispatch_unchecked`, because reflection can
+check argument types but cannot prove a shader's memory accesses are in bounds.
+The caller must uphold its documented buffer-bounds, aliasing, and
+synchronization contract. Kernel-specific safe wrappers may establish those
+facts before calling the raw dispatch API.
+
+Buffers bound to a submitted batch remain unavailable until GPU completion is
+confirmed. If submission or waiting fails in a way that leaves completion
+uncertain, later dispatches and `DeviceBuffer::read` reject those buffers.
 
 ## Errors
 
