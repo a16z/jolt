@@ -42,7 +42,7 @@ mod tests {
         }
     }
 
-    /// `fence rw, rw` still decodes to [`FENCE`].
+    /// `fence` (`fence iorw, iorw`) still decodes to [`FENCE`].
     #[test]
     fn decode_accepts_fence() {
         let decoded = Instruction::decode(0x0ff0_000f, 0x1000, false).expect("fence should decode");

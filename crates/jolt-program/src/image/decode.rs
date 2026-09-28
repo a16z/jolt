@@ -997,8 +997,9 @@ mod tests {
         assert_eq!(instruction.row().operands.rs2, Some(3));
     }
 
-    /// `fence rw, rw` is the only MISC-MEM encoding in RV64IMAC; the other
-    /// funct3 values are rejected in `rejects_invalid_encodings_with_exact_messages`.
+    /// `fence` (`fence iorw, iorw`) decodes as FENCE, the only MISC-MEM
+    /// instruction in RV64IMAC; the other funct3 values are rejected in
+    /// `rejects_invalid_encodings_with_exact_messages`.
     #[test]
     fn decodes_fence() {
         let fence = decode_instruction(0x0ff0_000f, 0x8000_0000, false, RV64IMAC_JOLT);
