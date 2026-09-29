@@ -3,8 +3,12 @@
 //! only through the functions here.
 
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
-use jolt_claims::protocols::jolt::geometry::committed_openings::commitment_embedding_scale;
-use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
+use jolt_claims::protocols::jolt::geometry::committed_openings::{
+    commitment_embedding_scale, CommitmentEmbedding,
+};
+use jolt_claims::protocols::jolt::{
+    JoltCommittedPolynomial, JoltOpeningId, JoltRelationId, TracePolynomialOrder,
+};
 use jolt_field::JoltField;
 
 use super::Stage8BatchEntry;
@@ -33,6 +37,7 @@ pub(super) fn require_commitment<C>(commitments: &JoltCommitments<C>) -> Result<
 pub fn splice_final_opening<'a, F, C>(
     entries: &mut Vec<Stage8BatchEntry<'a, F, C>>,
     commitments: &'a JoltCommitments<C>,
+    trace_order: TracePolynomialOrder,
     opening_point: &[F],
     field_inline_opening_point: &[F],
     opening_claim: Option<F>,
@@ -66,12 +71,19 @@ where
             id: field_rd_inc_reduced().into(),
             commitment: &field_inline.field_registers.rd_inc,
             opening_claim,
-            scale: commitment_embedding_scale(opening_point, field_inline_opening_point)
-                .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
-                    reason: "the FieldRdInc reduction point is not embedded in the unified \
+            scale: commitment_embedding_scale(
+                opening_point,
+                field_inline_opening_point,
+                CommitmentEmbedding::Trace {
+                    order: trace_order,
+                    log_t: field_inline_opening_point.len(),
+                },
+            )
+            .ok_or_else(|| VerifierError::FinalOpeningBatchFailed {
+                reason: "the FieldRdInc reduction point is not embedded in the unified \
                              final opening point"
-                        .to_string(),
-                })?,
+                    .to_string(),
+            })?,
         },
     );
     Ok(())

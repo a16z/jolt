@@ -151,6 +151,7 @@ where
         commitments,
         untrusted_advice_commitment,
         layout,
+        config.trace_polynomial_order,
         trusted_advice_commitment,
         &opening_point,
         hamming_opening_point.as_slice(),
@@ -166,6 +167,7 @@ where
         jolt_verifier::stages::stage8::field_inline::splice_final_opening(
             &mut entries,
             commitments,
+            config.trace_polynomial_order,
             &opening_point,
             stage6b.output_points.field_registers_inc_opening_point(),
             Some(

@@ -240,9 +240,24 @@ impl Valid for FieldInlineOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "serialization",
-    derive(CanonicalSerialize, serde::Serialize, serde::Deserialize)
+    derive(CanonicalSerialize, serde::Serialize, serde::Deserialize),
+    serde(try_from = "u8", into = "u8")
 )]
-pub struct FieldRegister(pub u8);
+pub struct FieldRegister(u8);
+
+impl TryFrom<u8> for FieldRegister {
+    type Error = &'static str;
+
+    fn try_from(index: u8) -> Result<Self, Self::Error> {
+        Self::new(index).ok_or("field register index must be below 16")
+    }
+}
+
+impl From<FieldRegister> for u8 {
+    fn from(register: FieldRegister) -> Self {
+        register.index()
+    }
+}
 
 impl FieldRegister {
     pub const fn new(index: u8) -> Option<Self> {
@@ -528,6 +543,18 @@ pub const fn field_inline_operand_shape_for_op(op: FieldInlineOp) -> FieldInline
 mod tests {
     use super::*;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
+
+    #[test]
+    fn serde_register_indices_obey_the_constructor_bound() {
+        for index in 0..=u8::MAX {
+            let decoded = serde_json::from_str::<FieldRegister>(&index.to_string());
+            assert_eq!(decoded.is_ok(), FieldRegister::new(index).is_some());
+            if let Ok(register) = decoded {
+                assert_eq!(register.index(), index);
+                assert_eq!(serde_json::to_string(&register).unwrap(), index.to_string());
+            }
+        }
+    }
 
     fn roundtrip(
         register: FieldRegister,

@@ -31,9 +31,8 @@ pub struct Stage2OutputClaims<F: JoltField> {
 }
 
 impl<F: JoltField> Stage2OutputClaims<F> {
-    /// Construct the ordinary stage-2 claims. Producers without field-inline semantics use
-    /// this regardless of the build's feature set — the field-inline payload starts absent and
-    /// `stage2::verify` rejects its absence on field-inline proofs.
+    /// Combine the product uni-skip claim with the selected batch's output claims.
+    /// Field-inline builds carry mandatory composed product and register-reduction fields.
     pub fn new(product_uniskip_output_claim: F, batch_outputs: Stage2BatchOutputClaims<F>) -> Self {
         Self {
             product_uniskip_output_claim,

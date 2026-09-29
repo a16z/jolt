@@ -3,7 +3,7 @@
 use jolt_field::JoltField;
 
 use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
-use super::dimensions::TracePolynomialOrder;
+use super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
 use super::error::PointGeometryError;
 use super::ra::JoltRaPolynomialLayout;
 
@@ -81,31 +81,64 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
     }
 }
 
-/// Lagrange factor for embedding a smaller polynomial's opening into the
-/// top-left block of the unified final opening point: `1` on variables the
-/// embedded point binds, `1 - r` on the rest. `None` when the embedded point
-/// is not a subset of the unified point — the scale would then embed a
-/// different polynomial than the one the batch opens, so callers must fail
-/// the final opening batch instead of proceeding.
+/// Coefficient placement in the unified commitment grid.
+#[derive(Clone, Copy, Debug)]
+pub enum CommitmentEmbedding {
+    /// Native points are `[address, cycle]`; dense increments have no address variables.
+    Trace {
+        order: TracePolynomialOrder,
+        log_t: usize,
+    },
+    /// A balanced matrix placed in the top-left corner of the unified balanced matrix.
+    Precommitted,
+}
+
+/// Check the embedded point at its layout-selected coordinates and multiply
+/// `(1-r)` over the zero-padding coordinates. Returns `None` for an oversized
+/// domain, invalid trace width, or mismatched coordinate. Equal challenge values
+/// at different coordinates remain distinct variables.
 pub fn commitment_embedding_scale<F: JoltField>(
     opening_point: &[F],
     embedded_opening_point: &[F],
+    embedding: CommitmentEmbedding,
 ) -> Option<F> {
-    embedded_opening_point
+    let total = opening_point.len();
+    let native = embedded_opening_point.len();
+    let padding = total.checked_sub(native)?;
+    let positions = match embedding {
+        CommitmentEmbedding::Trace { order, log_t } => {
+            let _ = native.checked_sub(log_t)?;
+            match order {
+                TracePolynomialOrder::CycleMajor => [padding..total, 0..0],
+                TracePolynomialOrder::AddressMajor => [log_t..native, 0..log_t],
+            }
+        }
+        CommitmentEmbedding::Precommitted => {
+            let grid = CommitmentMatrixShape::balanced(total);
+            let poly = CommitmentMatrixShape::balanced(native);
+            [
+                grid.row_vars().checked_sub(poly.row_vars())?..grid.row_vars(),
+                total.checked_sub(poly.column_vars())?..total,
+            ]
+        }
+    };
+    if !positions
         .iter()
-        .all(|challenge| opening_point.contains(challenge))
-        .then(|| {
-            opening_point
-                .iter()
-                .map(|challenge| {
-                    if embedded_opening_point.contains(challenge) {
-                        F::one()
-                    } else {
-                        F::one() - challenge
-                    }
-                })
-                .product()
-        })
+        .cloned()
+        .flatten()
+        .zip(embedded_opening_point)
+        .all(|(index, value)| opening_point.get(index) == Some(value))
+    {
+        return None;
+    }
+    Some(
+        opening_point
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !positions.iter().any(|range| range.contains(index)))
+            .map(|(_, value)| F::one() - value)
+            .product(),
+    )
 }
 
 /// Inputs to [`final_opening_point`], gathered from earlier verification
@@ -184,10 +217,14 @@ pub fn final_opening_point<F: JoltField>(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
+    #![expect(
+        clippy::panic,
+        clippy::unwrap_used,
+        reason = "tests fail loudly on unexpected errors"
+    )]
 
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, Ring, Zero};
 
     fn layout() -> JoltRaPolynomialLayout {
         JoltRaPolynomialLayout::new(2, 1, 2).unwrap_or_else(|error| {
@@ -272,19 +309,66 @@ mod tests {
     }
 
     #[test]
-    fn embedding_scale_selects_variables_outside_embedded_point() {
-        let opening_point = [Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
-        let embedded_point = [Fr::from_u64(3)];
+    fn embedding_scale_checks_positions_and_repeated_coordinates() {
+        use jolt_poly::Polynomial;
+        let r = Fr::from_u64(3);
+        let embedding = CommitmentEmbedding::Trace {
+            order: TracePolynomialOrder::CycleMajor,
+            log_t: 1,
+        };
+        let value = Polynomial::new(vec![Fr::from_u64(5), Fr::from_u64(7)]).evaluate(&[r]);
+        let padded = Polynomial::new(vec![
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+            Fr::zero(),
+            Fr::zero(),
+        ]);
+        let scale = commitment_embedding_scale(&[r, r], &[r], embedding).unwrap();
+        assert_eq!(scale * value, padded.evaluate(&[r, r]));
+        let point = [Fr::from_u64(2), r];
+        assert!(commitment_embedding_scale(&point, &[r, point[0]], embedding).is_none());
+        assert!(commitment_embedding_scale(&point, &[point[0], r, r], embedding).is_none());
+        assert!(commitment_embedding_scale(&point, &[point[0]], embedding).is_none());
+    }
 
-        assert_eq!(
-            commitment_embedding_scale(&opening_point, &embedded_point),
-            Some((Fr::from_u64(1) - Fr::from_u64(2)) * (Fr::from_u64(1) - Fr::from_u64(5)))
-        );
-        assert_eq!(
-            commitment_embedding_scale(&opening_point, &[Fr::from_u64(7)]),
-            None,
-            "a point outside the unified opening point has no embedding"
-        );
+    #[test]
+    fn embedding_scales_match_independently_placed_tables() {
+        use jolt_poly::Polynomial;
+        // Native table [1,2,3,4]: two trace cycles at each of two addresses,
+        // or the rows of a 2x2 precommitted matrix in a 4x4 grid.
+        let native = [1, 2, 3, 4].map(Fr::from_u64).to_vec();
+        let cases = [
+            (
+                CommitmentEmbedding::Trace {
+                    order: TracePolynomialOrder::CycleMajor,
+                    log_t: 1,
+                },
+                [0, 1, 2, 3],
+                [2, 3],
+            ),
+            (
+                CommitmentEmbedding::Trace {
+                    order: TracePolynomialOrder::AddressMajor,
+                    log_t: 1,
+                },
+                [0, 8, 4, 12],
+                [1, 0],
+            ),
+            (CommitmentEmbedding::Precommitted, [0, 1, 4, 5], [1, 3]),
+        ];
+        for point in [[2, 3, 5, 7], [3, 3, 3, 3]] {
+            let point = point.map(Fr::from_u64);
+            for (embedding, indices, coordinates) in cases {
+                let mut padded = vec![Fr::zero(); 16];
+                for (index, value) in indices.into_iter().zip(&native) {
+                    padded[index] = *value;
+                }
+                let own = coordinates.map(|index| point[index]);
+                let value = Polynomial::new(native.clone()).evaluate(&own);
+                let scale = commitment_embedding_scale(&point, &own, embedding).unwrap();
+                assert_eq!(scale * value, Polynomial::new(padded).evaluate(&point));
+            }
+        }
     }
 
     #[test]

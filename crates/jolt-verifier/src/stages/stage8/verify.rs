@@ -26,11 +26,11 @@ use jolt_claims::protocols::jolt::{
     geometry::{
         committed_openings::{
             commitment_embedding_scale, final_opening_id, final_opening_point,
-            final_opening_polynomial_order, FinalOpeningPointInputs,
+            final_opening_polynomial_order, CommitmentEmbedding, FinalOpeningPointInputs,
         },
         ra::JoltRaPolynomialLayout,
     },
-    JoltCommittedPolynomial, JoltRelationId,
+    JoltCommittedPolynomial, JoltRelationId, TracePolynomialOrder,
 };
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
@@ -147,6 +147,7 @@ where
         &proof.commitments,
         proof.untrusted_advice_commitment.as_ref(),
         layout,
+        proof.trace_polynomial_order,
         trusted_advice_commitment,
         &opening_point,
         hamming_opening_point.as_slice(),
@@ -160,6 +161,7 @@ where
         super::field_inline::splice_final_opening(
             &mut entries,
             &proof.commitments,
+            proof.trace_polynomial_order,
             &opening_point,
             stage6_points.field_registers_inc_opening_point(),
             clear_claims.map(|(stage6, _)| stage6.field_registers_inc_claim_reduction.rd_inc),
@@ -286,6 +288,7 @@ pub fn batch_entries<'a, F, PCS, VC>(
     commitments: &'a JoltCommitments<PCS::Output>,
     untrusted_advice_commitment: Option<&'a PCS::Output>,
     layout: JoltRaPolynomialLayout,
+    trace_order: TracePolynomialOrder,
     trusted_advice_commitment: Option<&'a PCS::Output>,
     opening_point: &[F],
     hamming_opening_point: &[F],
@@ -440,18 +443,38 @@ where
                     });
                 }
             };
+        let embedding = match polynomial {
+            JoltCommittedPolynomial::RamInc
+            | JoltCommittedPolynomial::RdInc
+            | JoltCommittedPolynomial::InstructionRa(_)
+            | JoltCommittedPolynomial::BytecodeRa(_)
+            | JoltCommittedPolynomial::RamRa(_) => CommitmentEmbedding::Trace {
+                order: trace_order,
+                log_t: inc_opening_point.len(),
+            },
+            JoltCommittedPolynomial::TrustedAdvice
+            | JoltCommittedPolynomial::UntrustedAdvice
+            | JoltCommittedPolynomial::BytecodeChunk(_)
+            | JoltCommittedPolynomial::ProgramImageInit => CommitmentEmbedding::Precommitted,
+            JoltCommittedPolynomial::BalancedIncDigit(_)
+            | JoltCommittedPolynomial::BalancedIncCarry => {
+                return Err(VerifierError::FinalOpeningBatchFailed {
+                    reason: "packed increments have no homomorphic embedding".to_string(),
+                });
+            }
+        };
         entries.push(Stage8BatchEntry {
             id: id.into(),
             commitment,
             opening_claim,
-            scale: commitment_embedding_scale(opening_point, own_point).ok_or_else(|| {
-                VerifierError::FinalOpeningBatchFailed {
+            scale: commitment_embedding_scale(opening_point, own_point, embedding).ok_or_else(
+                || VerifierError::FinalOpeningBatchFailed {
                     reason: format!(
                         "opening point of {polynomial:?} is not embedded in the unified final \
                          opening point"
                     ),
-                }
-            })?,
+                },
+            )?,
         });
     }
     Ok(entries)
@@ -572,6 +595,7 @@ mod tests {
         crate::stages::stage8::field_inline::splice_final_opening(
             &mut entries,
             &commitments,
+            TracePolynomialOrder::CycleMajor,
             &opening_point,
             &field_point,
             Some(Fr::from_u64(7)),
@@ -599,10 +623,7 @@ mod tests {
             .iter()
             .find(|entry| entry.id == field_rd_inc_reduced().into())
             .unwrap();
-        assert_eq!(
-            spliced.scale,
-            commitment_embedding_scale(&opening_point, &field_point).unwrap()
-        );
+        assert_eq!(spliced.scale, (Fr::from_u64(1) - opening_point[0]));
         assert_eq!(spliced.opening_claim, Some(Fr::from_u64(7)));
 
         // Advice-free batches splice at the same anchor position.
@@ -610,6 +631,7 @@ mod tests {
         crate::stages::stage8::field_inline::splice_final_opening(
             &mut without_advice,
             &commitments,
+            TracePolynomialOrder::CycleMajor,
             &opening_point,
             &field_point,
             None,
@@ -634,6 +656,7 @@ mod tests {
             crate::stages::stage8::field_inline::splice_final_opening(
                 &mut base_entries(false),
                 &without_payload,
+                TracePolynomialOrder::CycleMajor,
                 &opening_point,
                 &opening_point,
                 None,
@@ -652,6 +675,7 @@ mod tests {
             crate::stages::stage8::field_inline::splice_final_opening(
                 &mut anchorless,
                 &commitments,
+                TracePolynomialOrder::CycleMajor,
                 &opening_point,
                 &opening_point,
                 None,

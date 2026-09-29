@@ -4,6 +4,7 @@
 //! splices, and the field-inline-lane expression terms. Each blindfold stage file keeps
 //! exactly one contiguous, flagged region per interaction point, calling into here.
 
+use crate::stages::derivations;
 use jolt_claims::protocols::field_inline::geometry::claim_reductions as field_claim_reductions;
 use jolt_claims::protocols::field_inline::geometry::registers as field_registers_geometry;
 use jolt_claims::protocols::field_inline::geometry::spartan as field_spartan_geometry;
@@ -21,7 +22,6 @@ use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPha
 use jolt_claims::SymbolicSumcheck as _;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_poly::{try_eq_mle, LtPolynomial};
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
 
@@ -29,8 +29,6 @@ use super::{ComposedOpeningId, SourceValues};
 use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::preprocessing::ProgramPreprocessing;
 use crate::stages::field_inline_bytecode::field_inline_stage_gamma_powers;
-use crate::stages::stage4::Stage4OutputPoints;
-use crate::stages::stage5::Stage5OutputPoints;
 use crate::VerifierError;
 
 pub(super) fn public_error(stage: FieldInlineRelationId, error: impl ToString) -> VerifierError {
@@ -83,14 +81,14 @@ pub(super) fn stage2_claim_reduction<F: JoltField, C>(
         .map_err(|error| {
             public_error(FieldInlineRelationId::FieldRegistersClaimReduction, error)
         })?;
-    let reduction_opening_point = reduction_point.iter().rev().copied().collect::<Vec<_>>();
+    let reduction_opening_point = derivations::reversed(&reduction_point);
     values.public(
         FieldInlineChallengeId::from(FieldRegistersClaimReductionChallenge::Gamma),
         gamma,
     )?;
     values.public(
         FieldInlineDerivedId::from(FieldRegistersClaimReductionPublic::EqSpartan),
-        try_eq_mle(&reduction_opening_point, product_tau_low).map_err(|error| {
+        derivations::eq_at_point(&reduction_opening_point, product_tau_low).map_err(|error| {
             public_error(FieldInlineRelationId::FieldRegistersClaimReduction, error)
         })?,
     )?;
@@ -123,14 +121,15 @@ pub(super) fn stage4_read_write<F: JoltField>(
         FieldInlineChallengeId::from(FieldRegistersReadWriteChallenge::Gamma),
         gamma,
     )?;
-    let own_cycle = point_suffix(
-        read_write_point,
-        field_inline_dimensions.log_k(),
-        FieldInlineRelationId::FieldRegistersReadWriteChecking,
-    )?;
     values.public(
         FieldInlineDerivedId::from(FieldRegistersReadWritePublic::EqCycle),
-        try_eq_mle(fixed_cycle, own_cycle).map_err(|error| {
+        derivations::eq_at_cycle(
+            fixed_cycle,
+            read_write_point,
+            field_inline_dimensions.log_k(),
+            "field-register",
+        )
+        .map_err(|error| {
             public_error(
                 FieldInlineRelationId::FieldRegistersReadWriteChecking,
                 error,
@@ -158,19 +157,15 @@ pub(super) fn stage5_val_evaluation<F: JoltField>(
     read_write_point: &[F],
 ) -> Result<field_registers::ValEvaluation, VerifierError> {
     let claims = field_registers::ValEvaluation::new(FieldRegistersTraceDimensions::new(log_t));
-    let own_cycle = point_suffix(
-        val_evaluation_point,
-        FIELD_REGISTERS_LOG_K,
-        FieldInlineRelationId::FieldRegistersValEvaluation,
-    )?;
-    let upstream_cycle = point_suffix(
-        read_write_point,
-        FIELD_REGISTERS_LOG_K,
-        FieldInlineRelationId::FieldRegistersValEvaluation,
-    )?;
     values.public(
         FieldInlineDerivedId::from(FieldRegistersValEvaluationPublic::LtCycle),
-        LtPolynomial::evaluate(own_cycle, upstream_cycle),
+        derivations::lt_at_cycle(
+            val_evaluation_point,
+            read_write_point,
+            FIELD_REGISTERS_LOG_K,
+            "field-register",
+        )
+        .map_err(|error| public_error(FieldInlineRelationId::FieldRegistersValEvaluation, error))?,
     )?;
     Ok(claims)
 }
@@ -273,26 +268,26 @@ pub(super) fn stage6b_inc_publics<F: JoltField>(
     values: &mut SourceValues<F>,
     inc_opening_point: &[F],
     gamma: F,
-    stage4_points: &Stage4OutputPoints<F>,
-    stage5_points: &Stage5OutputPoints<F>,
+    read_write_point: &[F],
+    val_evaluation_point: &[F],
 ) -> Result<(), VerifierError> {
     values.public(
         FieldInlineChallengeId::from(FieldRegistersIncClaimReductionChallenge::Gamma),
         gamma,
     )?;
     let read_write_cycle = point_suffix(
-        stage4_points.field_registers_read_write_point(),
+        read_write_point,
         FIELD_REGISTERS_LOG_K,
         FieldInlineRelationId::FieldRegistersIncClaimReduction,
     )?;
     let val_evaluation_cycle = point_suffix(
-        stage5_points.field_registers_val_evaluation_point(),
+        val_evaluation_point,
         FIELD_REGISTERS_LOG_K,
         FieldInlineRelationId::FieldRegistersIncClaimReduction,
     )?;
     values.public(
         FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqReadWrite),
-        try_eq_mle(inc_opening_point, read_write_cycle).map_err(|error| {
+        derivations::eq_at_point(inc_opening_point, read_write_cycle).map_err(|error| {
             public_error(
                 FieldInlineRelationId::FieldRegistersIncClaimReduction,
                 error,
@@ -301,7 +296,7 @@ pub(super) fn stage6b_inc_publics<F: JoltField>(
     )?;
     values.public(
         FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqValEvaluation),
-        try_eq_mle(inc_opening_point, val_evaluation_cycle).map_err(|error| {
+        derivations::eq_at_point(inc_opening_point, val_evaluation_cycle).map_err(|error| {
             public_error(
                 FieldInlineRelationId::FieldRegistersIncClaimReduction,
                 error,

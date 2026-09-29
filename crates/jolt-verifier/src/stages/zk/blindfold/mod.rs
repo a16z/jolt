@@ -1073,8 +1073,14 @@ where
         values,
         &inc_opening_point,
         input.stage6b.challenges.field_registers_inc_gamma,
-        &input.stage4.output_points,
-        &input.stage5.output_points,
+        input
+            .stage4
+            .output_points
+            .field_registers_read_write_point(),
+        input
+            .stage5
+            .output_points
+            .field_registers_val_evaluation_point(),
     )?;
 
     Ok(())
@@ -1438,6 +1444,10 @@ fn blindfold_error(error: impl ToString) -> VerifierError {
     clippy::arithmetic_side_effects,
     reason = "tests use plain arithmetic on fixture data"
 )]
+#[expect(
+    clippy::panic,
+    reason = "unexpected expression sources must fail parity tests"
+)]
 mod field_inline_relation_parity {
     use super::*;
     use crate::stages::relations::{
@@ -1450,6 +1460,7 @@ mod field_inline_relation_parity {
     };
     use jolt_claims::{InputClaims, SumcheckChallenges};
     use jolt_field::{Fr, Ring};
+    use jolt_sumcheck::VerifiedCommittedRound;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -1460,7 +1471,7 @@ mod field_inline_relation_parity {
     }
 
     /// Assert the lowered `(input, output)` expressions of `relation` evaluate
-    /// to the clear `input_claim` / `expected_output` under shared resolvers.
+    /// to the clear claims using the production ZK public-value assembly.
     fn assert_relation_parity<S>(
         relation: &S,
         inputs: &SumcheckInputClaims<Fr, S>,
@@ -1468,6 +1479,7 @@ mod field_inline_relation_parity {
         outputs: &SumcheckOutputClaims<Fr, S>,
         sumcheck_point: &[Fr],
         challenges: &ConcreteSumcheckChallenges<Fr, S>,
+        assemble_publics: impl FnOnce(&SumcheckOutputPoints<Fr, S>) -> SourceValues<Fr>,
     ) where
         S: ConcreteSumcheck<Fr>,
         S::Symbolic: SymbolicSumcheck<
@@ -1486,25 +1498,21 @@ mod field_inline_relation_parity {
         let clear_input = relation.input_claim(inputs, challenges).unwrap();
         let (_, lowered_input_expr, lowered_output_expr) =
             relation_claim::<Fr, S::Symbolic>(relation.symbolic());
-        let resolve_challenge = |id: &VerifierPublicId| match id {
-            VerifierPublicId::FieldInlineChallenge(id) => {
-                challenges.resolve_challenge(id).unwrap_or_else(Fr::zero)
-            }
-            VerifierPublicId::FieldInline(id) => relation
-                .derive_output_term(id, input_points, &output_points, challenges)
-                .unwrap_or_else(|_| Fr::zero()),
-            VerifierPublicId::Jolt(_)
-            | VerifierPublicId::SpartanOuter(_)
-            | VerifierPublicId::Challenge(_) => Fr::zero(),
+        let publics = assemble_publics(&output_points);
+        let resolve_challenge = |id: &VerifierPublicId| {
+            publics
+                .publics
+                .iter()
+                .find(|(candidate, _)| candidate == id)
+                .unwrap()
+                .1
         };
         let lowered_input = lowered_input_expr.evaluate(
             |id| match id {
-                ComposedOpeningId::FieldInline(id) => {
-                    inputs.resolve_input(id).unwrap_or_else(Fr::zero)
-                }
-                ComposedOpeningId::Jolt(_) => Fr::zero(),
+                ComposedOpeningId::FieldInline(id) => inputs.resolve_input(id).unwrap(),
+                ComposedOpeningId::Jolt(_) => panic!("unexpected Jolt opening"),
             },
-            |_| Fr::zero(),
+            |_| panic!("lowered expression retained a challenge"),
             resolve_challenge,
         );
         assert_eq!(lowered_input, clear_input, "input claim parity");
@@ -1514,12 +1522,10 @@ mod field_inline_relation_parity {
             .unwrap();
         let lowered_output = lowered_output_expr.evaluate(
             |id| match id {
-                ComposedOpeningId::FieldInline(id) => {
-                    outputs.resolve_output(id).unwrap_or_else(Fr::zero)
-                }
-                ComposedOpeningId::Jolt(_) => Fr::zero(),
+                ComposedOpeningId::FieldInline(id) => outputs.resolve_output(id).unwrap(),
+                ComposedOpeningId::Jolt(_) => panic!("unexpected Jolt opening"),
             },
-            |_| Fr::zero(),
+            |_| panic!("lowered expression retained a challenge"),
             resolve_challenge,
         );
         assert_eq!(lowered_output, clear_output, "output claim parity");
@@ -1552,6 +1558,33 @@ mod field_inline_relation_parity {
             },
             &point(60, log_t),
             &FieldRegistersClaimReductionChallenges { gamma: fr(19) },
+            |_| {
+                let mut publics = SourceValues::default();
+                let rounds = point(900, 2)
+                    .into_iter()
+                    .chain(point(60, log_t))
+                    .map(|challenge| VerifiedCommittedRound {
+                        commitment: (),
+                        degree: 3,
+                        challenge,
+                    })
+                    .collect();
+                let batch = BatchedCommittedSumcheckConsistency {
+                    consistency: CommittedSumcheckConsistency { rounds },
+                    batching_coefficients: vec![fr(1)],
+                    max_num_vars: log_t + 2,
+                    max_degree: 3,
+                };
+                let _ = field_inline::stage2_claim_reduction(
+                    &mut publics,
+                    log_t,
+                    &batch,
+                    fr(19),
+                    relation.tau_low(),
+                )
+                .unwrap();
+                publics
+            },
         );
     }
 
@@ -1577,7 +1610,7 @@ mod field_inline_relation_parity {
             &FieldRegistersReadWriteInputClaims {
                 rd_value: fixed_cycle.clone(),
                 rs1_value: fixed_cycle.clone(),
-                rs2_value: fixed_cycle,
+                rs2_value: fixed_cycle.clone(),
             },
             &FieldRegistersReadWriteOutputClaims {
                 registers_val: fr(11),
@@ -1588,6 +1621,18 @@ mod field_inline_relation_parity {
             },
             &point(80, relation.rounds()),
             &FieldRegistersReadWriteChallenges { gamma: fr(29) },
+            |points| {
+                let mut publics = SourceValues::default();
+                let _ = field_inline::stage4_read_write(
+                    &mut publics,
+                    log_t,
+                    fr(29),
+                    &fixed_cycle,
+                    points.registers_val(),
+                )
+                .unwrap();
+                publics
+            },
         );
     }
 
@@ -1617,6 +1662,17 @@ mod field_inline_relation_parity {
             },
             &point(100, log_t),
             &NoChallenges::default(),
+            |points| {
+                let mut publics = SourceValues::default();
+                let _ = field_inline::stage5_val_evaluation(
+                    &mut publics,
+                    log_t,
+                    points.rd_inc(),
+                    &point(90, FIELD_REGISTERS_LOG_K + log_t),
+                )
+                .unwrap();
+                publics
+            },
         );
     }
 
@@ -1644,6 +1700,20 @@ mod field_inline_relation_parity {
             &FieldRegistersIncClaimReductionOutputClaims { rd_inc: fr(7) },
             &point(130, log_t),
             &FieldRegistersIncClaimReductionChallenges { gamma: fr(11) },
+            |points| {
+                use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
+                let mut publics = SourceValues::default();
+                let address = point(500, FIELD_REGISTERS_LOG_K);
+                field_inline::stage6b_inc_publics(
+                    &mut publics,
+                    points.rd_inc(),
+                    fr(11),
+                    &[address.as_slice(), &point(110, log_t)].concat(),
+                    &[address.as_slice(), &point(120, log_t)].concat(),
+                )
+                .unwrap();
+                publics
+            },
         );
     }
 }
