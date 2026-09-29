@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790626889313,
+  "lastUpdate": 1790717225942,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -170170,6 +170170,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 868580,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2a85f76476daee22dea4234a5fa10c4c89e732be",
+          "message": "feat: field-inline — native field arithmetic on the modular stack (#1808)\n\n* feat: integrate native field arithmetic on the modular stack\n\nConsolidate field-inline development from original PR head a48725375eed311f161aef547c0155d34dbdecea.\n\n* style: format refreshed field-inline integration\n\n* chore: reconcile field-inline workspace dependency lock\n\n* fix: keep field-limb setup helper before test module\n\n* fix: reconcile field-inline imports and retired benchmark dependencies\n\n* fix(prover): handle field-profile trace and digest layout\n\n* fix(verifier): select fp128 tracing for packed fixtures\n\n* refactor(examples): rename eqpoly-field to field-ops\n\n* refactor(field-inline): use explicit field terminology\n\n* refactor(prover): remove redundant field-inline grid sizing\n\n* docs(field-ops): explain inversion check\n\n* refactor(field-inline): unify ingress as load and accumulate\n\n* refactor(field-inline): name accumulation sources explicitly\n\n* refactor(field-inline): rename store bridge to StoreToRegister\n\n* test(prover): include field-inline guests in the mode matrix\n\nRun field_ops and inactive_muldiv from one field-profile guest table in clear,\nZK, and Akita. Share field-aware guest preparation and expected-output, panic,\nand field-activity checks with the specialized suites while preserving rich\ntrace payloads.\n\nKeep backend parity, commitment invariants, and tamper rejection in their\nspecialized suites. Collect Akita limb fixtures only in tests that inspect or\nmutate them, and document the matrix and existing CI coverage.\n\nValidation: 54 end-to-end tests across both instruction profiles and all three\nmodes; six fixture Clippy configurations; workspace host and host,zk Clippy;\nformatting and repository style invariants.\n\n* test(prover): name the field-profile muldiv case consistently\n\n* refactor(field-inline): derive CPU register access from the operation\n\nRemove FieldInlineXRegisterRole and its operand-shape metadata. Dispatch\ntracer capture, operand normalization, bytecode metadata construction, and\nwitness bridge validation directly on FieldInlineOp.\n\nPreserve the memory load's base/scratch register handling, nonzero CPU\nwrite destinations, and AdviceLimb's store bridge. Instruction encodings,\nprofile fingerprints, and persisted bytecode/trace layouts are unchanged.\n\nValidation: 422 core tests, 301 fp128 core tests, and all 15 field e2e tests\nacross clear/ZK/Akita; workspace host/host,zk and field-mode Clippy; formatting\nand repository style invariants.\n\n* refactor(claims): rename JoltFormulaPointError to PointGeometryError\n\n* test(kernels): allow zero claims in the parity runner\n\n* refactor(lookups): split field bridges and reuse instruction tests\n\n* test(field-inline): generate random cycles through shared test support\n\n* Replace field stores with zero assertions\n\nUse AdviceLimb followed by AssertZero for checked field readout and exercise\nin-place extraction and restoration in field-ops. Remove the specialized\nstore lookup, range constraints, and test support; retain shared randomized\nAdviceLimb coverage. Version the changed field protocol and document the\nscratch-free SDK conversion sequence tracked by #1934.\n\nValidated core/proof suites, fp128 checks, all three field e2e modes,\nexample and witness integration tests, and standard/ZK workspace Clippy.\n\n* Clarify field memory-load outputs and simplify bridge metadata\n\n* Split field-inline instruction definitions into separate modules\n\n* refactor: split tracer field instructions into standard modules\n\n* refactor: separate register snapshots from RAM tracing\n\n* refactor: inline field arithmetic execution\n\n* refactor: simplify register snapshot capture\n\n* refactor: use contiguous field operation tags\n\n* docs: explain each field equality constraint\n\n* Unify field witness bundles over borrowed cycle views\n\n* Revert \"Unify field witness bundles over borrowed cycle views\"\n\nThis reverts commit 6991852388732446dadeca072e68f9d625217a3c.\n\n* Remove field limb presence marker from precommitted schedule\n\n* Use TryFrom for verifier opening ID conversions\n\n* Align field inline stage setup with existing patterns\n\n* Inline stage 4 field opening collection\n\n* Commit full field increments directly in Akita\n\nKeep advice and program objects on bounded dense profiles, while opening FieldRdInc directly from its full-width commitment. Remove limb claims, recomposition, and selector challenges.\n\nValidate mixed-preset proofs, range rejection, all supported schedule arities, verifier security checks, clear and ZK e2e, and workspace Clippy.\n\n* Clarify field increment batch ordering comment\n\n* Clarify commitment group terminology\n\n* Unify field-inline bytecode operands and circuit flags\n\n* Fix CI configuration after field-inline bytecode cleanup\n\n* Move composed symbolic relations into jolt-claims\n\n* Address field-inline review: share witness state and restore independent reference kernels\n\n* fix: enforce positional commitment embeddings and field register bounds\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>",
+          "timestamp": "2026-09-29T16:43:15-04:00",
+          "tree_id": "122881077dc72c5b3f2f545010d4ac628e2ab9d1",
+          "url": "https://github.com/a16z/jolt/commit/2a85f76476daee22dea4234a5fa10c4c89e732be"
+        },
+        "date": 1790717220866,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.1411,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 861144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.0335,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 500084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 496932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 498128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5673,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 497908,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999276,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5687,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 501184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.7086,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 508976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.0924,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 154760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1637,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.4641,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 504604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3509,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 500344,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.7241,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 507360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.0074,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 501028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 23.6921,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1954184,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.3785,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 640832,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 56.5587,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1136416,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0452,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 500628,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2503,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499256,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.4301,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861340,
             "unit": "KB",
             "extra": ""
           }
