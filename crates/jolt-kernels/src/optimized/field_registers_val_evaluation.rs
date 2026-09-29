@@ -21,26 +21,25 @@
 //! and the column is all-zero exactly when the trace has no field-inline activity (a
 //! cheap bind).
 
+use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
 use jolt_claims::protocols::field_inline::{
-    FieldInlineCommittedPolynomial, FieldInlineDerivedId, FieldInlinePolynomialId,
-    FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
+    FieldInlineDerivedId, FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
 };
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims, SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
-use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
 use super::field_registers_read_write::{
     field_register_rows, SharedFieldRdWrites, SharedFieldRegisterRows,
 };
 use super::registers_val_evaluation::WaState;
-use super::support::{triple_product_round_evals, RoundProgress, SplitLt};
+use super::support::{pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -80,40 +79,27 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
                 .ok_or(KernelError::Witness(WitnessError::UnavailableView {
                     label: "field-registers value-evaluation field-inline oracle",
                 }))?;
-        let inc_table = field_inline.oracle_table(FieldInlinePolynomialId::Committed(
-            FieldInlineCommittedPolynomial::FieldRdInc,
-        ))?;
-        if inc_table.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: "FieldRdInc".to_owned(),
-                expected: cycles,
-                got: inc_table.len(),
-            });
-        }
+        let inc_column = FieldIncrementColumn::resolve(session, field_inline, cycles)?;
 
         // Reclaim the field-register write slots the stage-4 kernel parked; collect
         // them from the shared rows otherwise (reference-only stage 4, tests). This is
         // the rows' last consumer, so the session copy is released either way.
         let shared_rows = session.take::<SharedFieldRegisterRows<F>>();
-        let writes = match session.take::<SharedFieldRdWrites>() {
-            Some(SharedFieldRdWrites(writes))
-                if writes
-                    .last()
-                    .is_none_or(|&(cycle, _)| (cycle as usize) < cycles) =>
-            {
+        let writes =
+            if let Some(SharedFieldRdWrites(writes)) = session.take::<SharedFieldRdWrites>() {
                 writes
-            }
-            _ => {
-                let rows = match shared_rows {
-                    Some(SharedFieldRegisterRows(rows)) if rows.len() == cycles => rows,
-                    _ => field_register_rows(session, field_inline, cycles, true)?,
+            } else {
+                let rows = if let Some(SharedFieldRegisterRows(rows)) = shared_rows {
+                    rows
+                } else {
+                    let rows = field_register_rows(session, field_inline, cycles)?;
+                    let _ = session.take::<SharedFieldRegisterRows<F>>();
+                    rows
                 };
                 rows.iter()
-                    .enumerate()
-                    .filter_map(|(cycle, row)| row.rd.map(|write| (cycle as u32, write.register)))
+                    .filter_map(|(cycle, row)| row.rd.map(|write| (*cycle as u32, write.register)))
                     .collect()
-            }
-        };
+            };
         let mut rd: Vec<Option<u8>> = vec![None; cycles];
         for (cycle, register) in writes {
             let slot = rd
@@ -131,7 +117,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
 
         Ok(Box::new(FieldValEvaluationKernel {
             progress: RoundProgress::new(log_t),
-            inc: Polynomial::new(inc_table),
+            inc: IncrementRounds::new(inc_column),
             wa: WaState::Indices {
                 rd,
                 eq_address: EqPolynomial::<F>::evals(r_address, None),
@@ -148,14 +134,14 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
 )]
 struct FieldValEvaluationKernel<F: JoltField> {
     progress: RoundProgress,
-    inc: Polynomial<F>,
+    inc: IncrementRounds<F>,
     wa: WaState<F>,
     lt: SplitLt<F>,
 }
 
 impl<F: JoltField> FieldValEvaluationKernel<F> {
     fn bind(&mut self, challenge: F) {
-        self.inc.bind_with_order(challenge, BindingOrder::LowToHigh);
+        self.inc.bind(challenge);
         self.wa.bind(challenge);
         self.lt.bind(challenge);
         self.progress.advance();
@@ -177,10 +163,9 @@ impl<F: JoltField> ProveRounds<F> for FieldValEvaluationKernel<F> {
             self.bind(challenge);
         }
         let half = self.inc.len() / 2;
-        let inc = self.inc.evals();
         let evals = triple_product_round_evals(
             half,
-            |y| (inc[2 * y], inc[2 * y + 1]),
+            |y| self.inc.pair(y),
             |y| self.wa.pair(y),
             |y| self.lt.pair(y),
         );
@@ -204,7 +189,7 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
 
         self.progress.require_complete()?;
         Ok(FieldRegistersValEvaluationOutputClaims {
-            rd_inc: self.inc.evals()[0],
+            rd_inc: self.inc.value(0),
             rd_wa: self.wa.final_value(),
         })
     }
@@ -220,24 +205,14 @@ impl<F: JoltField> SumcheckKernel<F> for FieldValEvaluationKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let expected = relation.derive_output_term(
-            &FieldInlineDerivedId::from(FieldRegistersValEvaluationPublic::LtCycle),
+        pin_derived_term(
+            relation,
+            FieldInlineDerivedId::from(FieldRegistersValEvaluationPublic::LtCycle),
             input_points,
             output_points,
             challenges,
-        )?;
-        let got = self.lt.final_value();
-        if got != expected {
-            return Err(SumcheckKernelError::Verifier(
-                VerifierError::StageClaimSumcheckFailed {
-                    stage: "FieldRegistersValEvaluation".to_string(),
-                    reason: format!(
-                        "bound LT value {got:?}, but derive_output_term gives {expected:?}"
-                    ),
-                },
-            ));
-        }
-        Ok(())
+            self.lt.final_value(),
+        )
     }
 }
 
@@ -251,6 +226,7 @@ mod tests {
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::NoChallenges;
     use jolt_field::{Fr, Ring};
+    use jolt_verifier::stages::relations::ConcreteSumcheck as _;
     use jolt_witness::field_inline::FieldInlineWitnessOracle;
     use jolt_witness::JoltWitnessOracle;
 
@@ -259,13 +235,13 @@ mod tests {
         inactive_field_register_fixture, structured_field_register_fixture,
         FieldRegisterTraceFixture,
     };
-    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, synthetic_point};
+    use crate::optimized::registers_read_write::test_support::assert_kernel_parity_with_session;
     use crate::ReferenceBackend;
 
     enum IndexSource {
         Collect,
         Parked,
-        StaleParked,
     }
 
     fn run_parity(
@@ -302,17 +278,11 @@ mod tests {
                         .field_inline_register_read_write_rows()
                         .unwrap()
                         .iter()
-                        .enumerate()
                         .filter_map(|(cycle, row)| {
-                            row.rd.map(|write| (cycle as u32, write.register))
+                            row.rd.map(|write| (*cycle as u32, write.register))
                         })
                         .collect();
                     session.park(SharedFieldRdWrites(writes));
-                }
-                IndexSource::StaleParked => {
-                    // An out-of-domain cycle: prepare must fall back to
-                    // collecting from the oracle rows.
-                    session.park(SharedFieldRdWrites(vec![(1 << log_t, 0)]));
                 }
             }
 
@@ -323,10 +293,6 @@ mod tests {
                 &ReferenceBackend, &mut session, backend, inputs()
             )
             .unwrap();
-            let mut optimized = OptimizedFieldRegistersValEvaluation
-                .prepare(&mut session, backend, inputs())
-                .unwrap();
-
             let claim = probe_input_claim(reference.as_mut());
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
@@ -342,25 +308,18 @@ mod tests {
                     "claim without field-inline activity must be zero"
                 );
             }
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
+            drop(reference);
+            assert_kernel_parity_with_session(
+                &mut session,
+                &OptimizedFieldRegistersValEvaluation,
+                backend,
+                &relation,
+                &claims,
+                &points,
+                &challenges,
                 claim,
                 &round_challenges,
             );
-            assert_eq!(
-                reference.output_claims(&claims).unwrap(),
-                optimized.output_claims(&claims).unwrap()
-            );
-            let output_points = relation
-                .derive_opening_points(&round_challenges, &points)
-                .unwrap();
-            reference
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
-            optimized
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
         });
     }
 
@@ -383,17 +342,6 @@ mod tests {
             223,
             true,
             &IndexSource::Parked,
-        );
-    }
-
-    #[test]
-    fn parity_stale_parked_indices_fall_back() {
-        run_parity(
-            structured_field_register_fixture(8),
-            3,
-            227,
-            true,
-            &IndexSource::StaleParked,
         );
     }
 

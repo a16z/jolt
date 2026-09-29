@@ -24,8 +24,6 @@ use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
 use std::collections::BTreeMap;
 
-#[cfg(all(feature = "allocative", feature = "field-inline"))]
-use allocative::{Allocative, Key, Visitor};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
 #[cfg(feature = "field-inline")]
@@ -43,29 +41,16 @@ use jolt_r1cs::constraints::jolt::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
-#[cfg(feature = "field-inline")]
-use jolt_sumcheck::{ProveRounds, SumcheckError};
-#[cfg(feature = "field-inline")]
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
-    SumcheckOutputPoints,
-};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-#[cfg(feature = "field-inline")]
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessOracle;
 #[cfg(feature = "field-inline")]
 use jolt_witness::WitnessError;
 
-#[cfg(not(feature = "field-inline"))]
 use super::views::stream_pair_lsb;
 use super::views::{dense_view, replicate_stream_lsb};
 use crate::uniskip::UniskipKernel;
-#[cfg(not(feature = "field-inline"))]
 use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
-#[cfg(feature = "field-inline")]
-use crate::SumcheckKernelError;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
 impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
@@ -276,102 +261,73 @@ impl<F: JoltField> SpartanOuterKernel<F> {
             .map(|&eq| eq * kernel)
             .collect::<Vec<F>>();
 
-        // The composed member: the rv64 symbolic expression cannot name the appended
-        // field-inline columns (separate id family), so the kernel with field-inline
-        // enabled materializes the two composed linear forms directly.
+        let variable_count = self.input_tables.len();
+        let mut derived_tables = BTreeMap::new();
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(SpartanOuterPublic::TauKernel),
+            Polynomial::new(tau_kernel_table),
+        );
+        for index in 0..variable_count {
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(SpartanOuterPublic::AzWeight(index)),
+                Polynomial::new(stream_pair_lsb(
+                    [az_columns[0][index], az_columns[1][index]],
+                    cycles,
+                )),
+            );
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(SpartanOuterPublic::BzWeight(index)),
+                Polynomial::new(stream_pair_lsb(
+                    [bz_columns[0][index], bz_columns[1][index]],
+                    cycles,
+                )),
+            );
+        }
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(SpartanOuterPublic::AzConstant),
+            Polynomial::new(stream_pair_lsb(az_constant, cycles)),
+        );
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(SpartanOuterPublic::BzConstant),
+            Polynomial::new(stream_pair_lsb(bz_constant, cycles)),
+        );
+
+        let dimensions = SpartanOuterDimensions::rv64(self.log_t);
+        let opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>> = dimensions
+            .variables()
+            .iter()
+            .zip(&self.input_tables)
+            .map(|(&variable, table)| {
+                (
+                    outer_opening(variable),
+                    Polynomial::new(replicate_stream_lsb(table)),
+                )
+            })
+            .collect();
+
         #[cfg(feature = "field-inline")]
-        {
-            let mut az_table = vec![F::zero(); 2 * cycles];
-            let mut bz_table = vec![F::zero(); 2 * cycles];
-            for t in 0..cycles {
-                for s in 0..2 {
-                    let mut az = az_constant[s];
-                    let mut bz = bz_constant[s];
-                    for (index, table) in self.input_tables.iter().enumerate() {
-                        az += az_columns[s][index] * table[t];
-                        bz += bz_columns[s][index] * table[t];
-                    }
-                    az_table[(t << 1) | s] = az;
-                    bz_table[(t << 1) | s] = bz;
-                }
-            }
-            let dimensions = SpartanOuterDimensions::rv64(self.log_t);
-            let ordinary_ids: Vec<JoltOpeningId> = dimensions
-                .variables()
-                .iter()
-                .map(|&variable| outer_opening(variable))
-                .collect();
-            let column_tables: Vec<Polynomial<F>> = self
-                .input_tables
-                .iter()
-                .map(|table| Polynomial::new(replicate_stream_lsb(table)))
-                .collect();
-            Ok(Box::new(ComposedOuterRemainderKernel {
-                relation: inputs.relation.clone(),
-                tau_kernel: Polynomial::new(tau_kernel_table),
-                az: Polynomial::new(az_table),
-                bz: Polynomial::new(bz_table),
-                column_tables,
-                ordinary_ids,
-                rounds_bound: 0,
-            }))
-        }
+        let opening_tables = opening_tables
+            .into_iter()
+            .map(|(id, table)| (ComposedOpeningId::from(id), table))
+            .chain(
+                field_outer_output_openings()
+                    .into_iter()
+                    .zip(self.input_tables.iter().skip(dimensions.variables().len()))
+                    .map(|(id, table)| {
+                        (
+                            ComposedOpeningId::from(id),
+                            Polynomial::new(replicate_stream_lsb(table)),
+                        )
+                    }),
+            )
+            .collect();
 
-        // rv64: the naive prover over the expanded quadratic — every derived
-        // leaf one multilinear (the weights are linear in the stream bit).
-        #[cfg(not(feature = "field-inline"))]
-        {
-            let variable_count = self.input_tables.len();
-            let mut derived_tables = BTreeMap::new();
-            let _ = derived_tables.insert(
-                JoltDerivedId::from(SpartanOuterPublic::TauKernel),
-                Polynomial::new(tau_kernel_table),
-            );
-            for index in 0..variable_count {
-                let _ = derived_tables.insert(
-                    JoltDerivedId::from(SpartanOuterPublic::AzWeight(index)),
-                    Polynomial::new(stream_pair_lsb(
-                        [az_columns[0][index], az_columns[1][index]],
-                        cycles,
-                    )),
-                );
-                let _ = derived_tables.insert(
-                    JoltDerivedId::from(SpartanOuterPublic::BzWeight(index)),
-                    Polynomial::new(stream_pair_lsb(
-                        [bz_columns[0][index], bz_columns[1][index]],
-                        cycles,
-                    )),
-                );
-            }
-            let _ = derived_tables.insert(
-                JoltDerivedId::from(SpartanOuterPublic::AzConstant),
-                Polynomial::new(stream_pair_lsb(az_constant, cycles)),
-            );
-            let _ = derived_tables.insert(
-                JoltDerivedId::from(SpartanOuterPublic::BzConstant),
-                Polynomial::new(stream_pair_lsb(bz_constant, cycles)),
-            );
-
-            let dimensions = SpartanOuterDimensions::rv64(self.log_t);
-            let opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>> = dimensions
-                .variables()
-                .iter()
-                .zip(&self.input_tables)
-                .map(|(&variable, table)| {
-                    (
-                        outer_opening(variable),
-                        Polynomial::new(replicate_stream_lsb(table)),
-                    )
-                })
-                .collect();
-
-            Ok(Box::new(NaiveSumcheckProver::new(
-                inputs,
-                opening_tables,
-                derived_tables,
-                BindingOrder::LowToHigh,
-            )?))
-        }
+        Ok(Box::new(NaiveSumcheckProver::new(
+            inputs,
+            opening_tables,
+            derived_tables,
+            BindingOrder::LowToHigh,
+        )?))
     }
 }
 
@@ -456,226 +412,6 @@ fn row_value_tables<F: JoltField>(
             .collect()
     };
     Ok((row_values(&matrices.a)?, row_values(&matrices.b)?))
-}
-
-/// The composed (field-inline) stage-1 remainder member.
-///
-/// Proves the factored quadratic `TauKernel · Az · Bz` over the joint `(cycle ‖
-/// stream)` domain with the `Az`/`Bz` linear forms spanning the full composed column
-/// selection (45 ordinary + five field-inline). The rv64 symbolic expression cannot name the
-/// appended field-inline columns (a separate id family, per the protocol ruling), so
-/// this kernel materializes the two linear forms as dense tables instead of
-/// leaf-per-column expression walking. That is exact, not an approximation: every
-/// `w_i(stream) · col_i(cycle)` factor pair is a product over disjoint variables, hence
-/// itself multilinear, so the materialized `Az`/`Bz` tables ARE the relation's linear
-/// forms and the bound `Az`/`Bz` values equal the verifier's weight-folded openings —
-/// tied down per proof by [`SumcheckKernel::validate_derived_tables`] and the driver's
-/// composed expected-output fold.
-///
-/// Column tables bind alongside the summand for extraction into the
-/// composed typed output claims.
-#[cfg(feature = "field-inline")]
-struct ComposedOuterRemainderKernel<F: JoltField> {
-    relation: OuterRemainder<F>,
-    tau_kernel: Polynomial<F>,
-    az: Polynomial<F>,
-    bz: Polynomial<F>,
-    /// All composed column tables (replicated over the stream LSB), in opening order:
-    /// ordinary inputs then five field-inline values.
-    column_tables: Vec<Polynomial<F>>,
-    /// The ordinary opening ids, aligned with the prefix of `column_tables`.
-    ordinary_ids: Vec<JoltOpeningId>,
-    rounds_bound: usize,
-}
-
-// Size arithmetic rather than a derive, like the sibling kernels: `F` stays
-// unbounded and the tables dominate.
-#[cfg(all(feature = "allocative", feature = "field-inline"))]
-impl<F: JoltField> Allocative for ComposedOuterRemainderKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            Key::new("tau_kernel"),
-            self.tau_kernel.len() * size_of::<F>(),
-        );
-        visitor.visit_simple(Key::new("az"), self.az.len() * size_of::<F>());
-        visitor.visit_simple(Key::new("bz"), self.bz.len() * size_of::<F>());
-        visitor.visit_simple(
-            Key::new("column_tables"),
-            self.column_tables
-                .iter()
-                .map(|table| table.len() * size_of::<F>())
-                .sum::<usize>(),
-        );
-        visitor.exit();
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> ComposedOuterRemainderKernel<F> {
-    fn remaining_rounds(&self) -> usize {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-        self.relation.rounds() - self.rounds_bound
-    }
-
-    fn bind_tables(&mut self, challenge: F) {
-        self.tau_kernel
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.az.bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.bz.bind_with_order(challenge, BindingOrder::LowToHigh);
-        for table in &mut self.column_tables {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
-        self.rounds_bound += 1;
-    }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        match self.remaining_rounds() {
-            0 => Ok(()),
-            remaining => Err(SumcheckKernelError::NotFullyBound { remaining }),
-        }
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> ProveRounds<F> for ComposedOuterRemainderKernel<F> {
-    fn num_rounds(&self) -> usize {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-        self.relation.rounds()
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<F>,
-        round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-
-        if let Some(challenge) = bind {
-            self.bind_tables(challenge);
-        }
-        let half = (1usize << self.remaining_rounds()) / 2;
-        let degree = self.relation.degree();
-        let order = BindingOrder::LowToHigh;
-        let mut evals = Vec::with_capacity(degree + 1);
-        for sample in 0..=degree {
-            let point = F::from_u64(sample as u64);
-            let sum = (0..half)
-                .map(|y| {
-                    self.tau_kernel
-                        .sumcheck_round_eval_with_order(y, point, order)
-                        * self.az.sumcheck_round_eval_with_order(y, point, order)
-                        * self.bz.sumcheck_round_eval_with_order(y, point, order)
-                })
-                .sum::<F>();
-            evals.push(sum);
-        }
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
-    }
-
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind_tables(bind);
-        Ok(())
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> SumcheckKernel<F> for ComposedOuterRemainderKernel<F> {
-    type Relation = OuterRemainder<F>;
-
-    fn output_claims(
-        &mut self,
-        inputs: &SumcheckInputClaims<F, OuterRemainder<F>>,
-    ) -> Result<SumcheckOutputClaims<F, OuterRemainder<F>>, SumcheckKernelError<F>> {
-        use jolt_claims::{InputClaims as _, OutputClaims as _};
-
-        self.require_fully_bound()?;
-        let ids = self
-            .ordinary_ids
-            .iter()
-            .copied()
-            .map(ComposedOpeningId::from)
-            .chain(
-                field_outer_output_openings()
-                    .into_iter()
-                    .map(ComposedOpeningId::from),
-            );
-        let claims: BTreeMap<_, _> = ids
-            .zip(self.column_tables.iter().map(|table| table.evals()[0]))
-            .collect();
-        SumcheckOutputClaims::<F, OuterRemainder<F>>::from_opening_values(|id| {
-            claims.get(id).copied().or_else(|| inputs.resolve_input(id))
-        })
-        .map_err(SumcheckKernelError::from)
-    }
-
-    /// Ties the materialized tables to the verifier's scalar path: the bound
-    /// `TauKernel` must equal `derive_output_term(TauKernel)`, and the bound
-    /// `Az`/`Bz` linear forms must equal the verifier's weight scalars folded
-    /// over the bound column values (the composed factored form's two
-    /// factors, constant included).
-    fn validate_derived_tables(
-        &self,
-        relation: &OuterRemainder<F>,
-        input_points: &SumcheckInputPoints<F, OuterRemainder<F>>,
-        output_points: &SumcheckOutputPoints<F, OuterRemainder<F>>,
-        challenges: &ConcreteSumcheckChallenges<F, OuterRemainder<F>>,
-    ) -> Result<(), SumcheckKernelError<F>> {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-
-        self.require_fully_bound()?;
-        let resolve = |public: SpartanOuterPublic| {
-            relation.derive_output_term(
-                &JoltDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
-            )
-        };
-        let expected_tau_kernel = resolve(SpartanOuterPublic::TauKernel)?;
-        let got_tau_kernel = self.tau_kernel.evals()[0];
-        if got_tau_kernel != expected_tau_kernel {
-            return Err(SumcheckKernelError::DerivedTableDrift {
-                id: JoltDerivedId::from(SpartanOuterPublic::TauKernel),
-                expected: expected_tau_kernel,
-                got: got_tau_kernel,
-            });
-        }
-
-        let mut expected_az = resolve(SpartanOuterPublic::AzConstant)?;
-        let mut expected_bz = resolve(SpartanOuterPublic::BzConstant)?;
-        for (index, table) in self.column_tables.iter().enumerate() {
-            let opening = table.evals()[0];
-            expected_az += resolve(SpartanOuterPublic::AzWeight(index))? * opening;
-            expected_bz += resolve(SpartanOuterPublic::BzWeight(index))? * opening;
-        }
-        for (label, expected, got) in [
-            ("Az", expected_az, self.az.evals()[0]),
-            ("Bz", expected_bz, self.bz.evals()[0]),
-        ] {
-            if got != expected {
-                return Err(SumcheckKernelError::Verifier(
-                    VerifierError::StageClaimSumcheckFailed {
-                        stage: "SpartanOuter".to_string(),
-                        reason: format!(
-                            "composed {label} linear form bound to {got:?}, but the \
-                             verifier's weight fold gives {expected:?}"
-                        ),
-                    },
-                ));
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]

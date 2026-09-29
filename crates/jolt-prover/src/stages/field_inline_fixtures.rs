@@ -18,9 +18,9 @@
 
 use std::sync::Arc;
 
-use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS, REGISTER_COUNT};
+use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
-use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_program::execution::{
@@ -101,7 +101,7 @@ pub(crate) fn field_inline_backend(
     TraceBackend::new(
         JoltVmWitnessConfig::new(
             LOG_T,
-            64,
+            1 << RAM_LOG_K,
             JoltOneHotConfig {
                 log_k_chunk: 4,
                 lookups_ra_virtual_log_k_chunk: 16,
@@ -405,21 +405,11 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
 /// derivation `ProverConfig::derive` performs, at the fixture's scale (no
 /// RAM traffic, so `ram_K` stays at a small power of two).
 pub(crate) fn test_prover_config() -> ProverConfig {
-    // Matches the witness backend's `JoltVmWitnessConfig` ram size (64).
-    const RAM_LOG_K: usize = 6;
     ProverConfig {
         trace_length: 1 << LOG_T,
         ram_K: 1 << RAM_LOG_K,
-        rw_config: JoltReadWriteConfig {
-            ram_rw_phase1_num_rounds: LOG_T as u8,
-            ram_rw_phase2_num_rounds: RAM_LOG_K as u8,
-            registers_rw_phase1_num_rounds: LOG_T as u8,
-            registers_rw_phase2_num_rounds: REGISTER_COUNT.ilog2() as u8,
-        },
-        one_hot_config: JoltOneHotConfig {
-            log_k_chunk: 4,
-            lookups_ra_virtual_log_k_chunk: 16,
-        },
+        rw_config: crate::config::read_write_config(LOG_T, RAM_LOG_K),
+        one_hot_config: crate::config::one_hot_config(LOG_T),
         trace_polynomial_order: Default::default(),
     }
 }
@@ -648,8 +638,7 @@ pub(crate) mod twins {
         let input_values = stage2_batch_input_values_from_upstream(
             &stage1.clear_output,
             stage2.claims.product_uniskip_output_claim,
-        )
-        .unwrap();
+        );
         let _stage2_points = sumchecks
             .verify_clear(
                 &input_values,
@@ -911,5 +900,133 @@ pub(crate) mod twins {
             )
             .unwrap();
         sumchecks.append_output_claims(transcript, &stage6a.claims);
+    }
+}
+
+/// Shared upstream proving for clear and committed stage tests.
+pub(crate) mod proving {
+    use super::*;
+    use crate::stages::stage1::{prove_stage1, Stage1ProverOutput};
+    use crate::stages::stage2::{prove_stage2, Stage2ProverOutput};
+    use crate::stages::stage3::{prove_stage3, Stage3ProverOutput};
+    use crate::stages::stage4::{prove_stage4, Stage4ProverOutput};
+    use crate::stages::stage5::{prove_stage5, Stage5ProverOutput};
+    use crate::stages::stage6a::{prove_stage6a, Stage6aProverOutput};
+    use crate::{JoltBackend, ProofMode};
+    use jolt_field::Fr;
+    use jolt_kernels::ProofSession;
+    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_witness::JoltWitnessPlane;
+    type Commitment = Bn254G1;
+    type Stages3 = (
+        Stage1ProverOutput<Fr, Commitment>,
+        Stage2ProverOutput<Fr, Commitment>,
+        Stage3ProverOutput<Fr, Commitment>,
+    );
+    type Stages4 = (Stages3, Stage4ProverOutput<Fr, Commitment>);
+    type Stages5 = (Stages4, Stage5ProverOutput<Fr, Commitment>);
+    type Stages6a = (Stages5, Stage6aProverOutput<Fr, Commitment>);
+
+    pub(crate) struct FixtureProver<'a> {
+        pub(crate) backend: &'a JoltBackend<Fr, DoryScheme>,
+        pub(crate) session: &'a mut ProofSession,
+        pub(crate) mode: &'a ProofMode<'a, Pedersen<Bn254G1>>,
+        pub(crate) config: &'a ProverConfig,
+        pub(crate) public_io: &'a JoltDevice,
+        pub(crate) checked: &'a CheckedInputs,
+        pub(crate) preprocessing: &'a JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
+        pub(crate) witness: &'a dyn JoltWitnessPlane<Fr>,
+        pub(crate) transcript: &'a mut Blake2bTranscript,
+    }
+
+    impl FixtureProver<'_> {
+        pub(crate) fn through_stage3(&mut self) -> Stages3 {
+            let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                self.backend,
+                self.session,
+                self.mode,
+                LOG_T,
+                self.witness,
+                self.transcript,
+            )
+            .unwrap();
+            let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                self.backend,
+                self.session,
+                self.mode,
+                self.config,
+                self.public_io,
+                &stage1.clear_output,
+                self.witness,
+                self.transcript,
+            )
+            .unwrap();
+            let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                self.backend,
+                self.session,
+                self.mode,
+                self.config,
+                &stage1.clear_output,
+                &stage2.clear_output,
+                self.witness,
+                self.transcript,
+            )
+            .unwrap();
+            (stage1, stage2, stage3)
+        }
+        pub(crate) fn through_stage4(&mut self) -> Stages4 {
+            let (stage1, stage2, stage3) = self.through_stage3();
+            let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                self.backend,
+                self.session,
+                self.mode,
+                self.checked,
+                self.config,
+                self.preprocessing,
+                &stage2.clear_output,
+                &stage3.clear_output,
+                self.witness,
+                self.transcript,
+            )
+            .unwrap();
+            ((stage1, stage2, stage3), stage4)
+        }
+        pub(crate) fn through_stage5(&mut self) -> Stages5 {
+            let ((stage1, stage2, stage3), stage4) = self.through_stage4();
+            let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                self.backend,
+                self.session,
+                self.mode,
+                self.checked,
+                self.config,
+                self.preprocessing,
+                &stage2.clear_output,
+                &stage4.clear_output,
+                self.witness,
+                self.transcript,
+            )
+            .unwrap();
+            (((stage1, stage2, stage3), stage4), stage5)
+        }
+        pub(crate) fn through_stage6a(&mut self) -> Stages6a {
+            let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
+            let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+                self.backend,
+                self.session,
+                self.mode,
+                self.checked,
+                self.config,
+                self.preprocessing,
+                &stage1.clear_output,
+                &stage2.clear_output,
+                &stage3.clear_output,
+                &stage4.clear_output,
+                &stage5.clear_output,
+                self.witness,
+                self.transcript,
+            )
+            .unwrap();
+            ((((stage1, stage2, stage3), stage4), stage5), stage6a)
+        }
     }
 }

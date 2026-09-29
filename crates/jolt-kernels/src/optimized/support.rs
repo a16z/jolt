@@ -5,8 +5,6 @@
 
 use std::ops::Range;
 
-use jolt_claims::protocols::jolt::JoltDerivedId;
-use jolt_claims::SymbolicSumcheck;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
@@ -15,8 +13,8 @@ use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
-    SymbolicOf,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, DerivedIdOf, SumcheckInputPoints,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::{
@@ -314,19 +312,19 @@ impl<F: JoltField> RoundChallenges<F> {
 /// naive tier's check on its hand-materialized derived tables.
 pub(crate) fn pin_derived_term<F: JoltField, R: ConcreteSumcheck<F>>(
     relation: &R,
-    id: JoltDerivedId,
+    id: DerivedIdOf<F, R>,
     input_points: &SumcheckInputPoints<F, R>,
     output_points: &SumcheckOutputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
     got: F,
-) -> Result<(), SumcheckKernelError<F>>
-where
-    // The pinned id (and `DerivedTableDrift`'s payload) is a `JoltDerivedId`.
-    SymbolicOf<F, R>: SymbolicSumcheck<DerivedId = JoltDerivedId>,
-{
+) -> Result<(), SumcheckKernelError<F>> {
     let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
     if got != expected {
-        return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+        return Err(SumcheckKernelError::DerivedTableDrift {
+            id: id.into(),
+            expected,
+            got,
+        });
     }
     Ok(())
 }
@@ -335,19 +333,18 @@ where
 /// the term under this proof shape (`MissingStageClaimDerived`).
 pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
     relation: &R,
-    id: JoltDerivedId,
+    id: DerivedIdOf<F, R>,
     input_points: &SumcheckInputPoints<F, R>,
     output_points: &SumcheckOutputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
     got: F,
-) -> Result<(), SumcheckKernelError<F>>
-where
-    SymbolicOf<F, R>: SymbolicSumcheck<DerivedId = JoltDerivedId>,
-{
+) -> Result<(), SumcheckKernelError<F>> {
     match relation.derive_output_term(&id, input_points, output_points, challenges) {
-        Ok(expected) if got != expected => {
-            Err(SumcheckKernelError::DerivedTableDrift { id, expected, got })
-        }
+        Ok(expected) if got != expected => Err(SumcheckKernelError::DerivedTableDrift {
+            id: id.into(),
+            expected,
+            got,
+        }),
         Ok(_) | Err(VerifierError::MissingStageClaimDerived { .. }) => Ok(()),
         Err(error) => Err(error.into()),
     }

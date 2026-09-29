@@ -137,7 +137,6 @@ pub(crate) fn replicate_stream_lsb<F: JoltField>(base: &[F]) -> Vec<F> {
 /// stream bit at the index LSB (`out[(t << 1) | s] = values[s]`).
 // With field-inline enabled, the composed outer remainder materializes its linear forms
 // directly, leaving this rv64-only helper without callers.
-#[cfg(not(feature = "field-inline"))]
 pub(crate) fn stream_pair_lsb<F: JoltField>(values: [F; 2], cycles: usize) -> Vec<F> {
     #[cfg(feature = "parallel")]
     if cycles >= PAR_THRESHOLD {

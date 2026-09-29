@@ -49,8 +49,6 @@ use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 use jolt_akita::AkitaField;
-#[cfg(feature = "field-inline")]
-use jolt_field::{CanonicalBytes, Ring};
 use jolt_host::{JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
@@ -212,20 +210,8 @@ impl Workload {
 #[cfg(feature = "field-inline")]
 fn eqpoly_inputs() -> Vec<u8> {
     const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
-    let one = FieldInlineField::from_u64(1);
-    let value = EQ_PAIRS.iter().fold(one, |acc, [r, x]| {
-        let r = FieldInlineField::from_u64(*r);
-        let x = FieldInlineField::from_u64(*x);
-        acc * (r * x + (one - r) * (one - x))
-    });
-    let bytes = value.to_bytes_le_vec();
-    let mut limbs = [0u64; 4];
-    for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
-        *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
-    }
-    let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
-    inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
-    inputs
+    jolt_host::field_inline::eqpoly_inputs::<FieldInlineField>(EQ_PAIRS)
+        .expect("field-ops input encoding")
 }
 
 /// Subscriber stack selector.
@@ -292,7 +278,7 @@ pub struct ProfileArgs {
     pub name: Workload,
 
     /// log2 of the max (padded) trace length; per-workload default when
-    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20).
+    /// omitted (fibonacci 16, sha2-chain 22, sha3-chain 22, btreemap 20, field-ops 16).
     #[clap(long)]
     pub scale: Option<u32>,
 

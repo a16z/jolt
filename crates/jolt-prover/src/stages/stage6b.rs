@@ -219,6 +219,7 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use crate::stages::field_inline_fixtures::proving::FixtureProver;
     use jolt_claims::protocols::field_inline::relations::claim_reductions::increments::{
         FieldRegistersIncClaimReductionChallenges, FieldRegistersIncClaimReductionInputClaims,
     };
@@ -243,12 +244,6 @@ mod field_inline_round_trip {
         field_arithmetic_preprocessing, test_checked_inputs, test_prover_config, test_public_io,
         twins, LOG_T, RAM_LOG_K,
     };
-    use crate::stages::stage1::prove_stage1;
-    use crate::stages::stage2::prove_stage2;
-    use crate::stages::stage3::prove_stage3;
-    use crate::stages::stage4::prove_stage4;
-    use crate::stages::stage5::prove_stage5;
-    use crate::stages::stage6a::prove_stage6a;
 
     #[test]
     fn addi_only_stage6b_round_trips_the_composed_verifier() {
@@ -282,79 +277,18 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
 
         let mut prover_transcript = Blake2bTranscript::new(label);
-        let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            LOG_T,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &config,
-            &public_io,
-            &stage1.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &config,
-            &stage1.clear_output,
-            &stage2.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &checked,
-            &config,
-            &preprocessing,
-            &stage2.clear_output,
-            &stage3.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &checked,
-            &config,
-            &preprocessing,
-            &stage2.clear_output,
-            &stage4.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &checked,
-            &config,
-            &preprocessing,
-            &stage1.clear_output,
-            &stage2.clear_output,
-            &stage3.clear_output,
-            &stage4.clear_output,
-            &stage5.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
+        let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
+            backend: &backend,
+            session: &mut session,
+            mode: &mode,
+            config: &config,
+            public_io: &public_io,
+            checked: &checked,
+            preprocessing: &preprocessing,
+            witness: &witness,
+            transcript: &mut prover_transcript,
+        }
+        .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,
@@ -601,6 +535,7 @@ mod field_inline_round_trip {
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
+    use crate::stages::field_inline_fixtures::proving::FixtureProver;
     use common::constants::MAX_BLINDFOLD_GENERATORS;
     use jolt_claims::OutputClaims;
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
@@ -611,14 +546,8 @@ mod field_inline_zk {
     use super::*;
     use crate::stages::field_inline_fixtures::{
         addi_only_backend, addi_only_preprocessing, test_checked_inputs, test_prover_config,
-        test_public_io, LOG_T,
+        test_public_io,
     };
-    use crate::stages::stage1::prove_stage1;
-    use crate::stages::stage2::prove_stage2;
-    use crate::stages::stage3::prove_stage3;
-    use crate::stages::stage4::prove_stage4;
-    use crate::stages::stage5::prove_stage5;
-    use crate::stages::stage6a::prove_stage6a;
 
     const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
 
@@ -635,79 +564,18 @@ mod field_inline_zk {
         let preprocessing = addi_only_preprocessing();
 
         let mut transcript = Blake2bTranscript::new(b"stage6b-field-inline-zk");
-        let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            LOG_T,
-            &witness,
-            &mut transcript,
-        )
-        .unwrap();
-        let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &config,
-            &public_io,
-            &stage1.clear_output,
-            &witness,
-            &mut transcript,
-        )
-        .unwrap();
-        let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &config,
-            &stage1.clear_output,
-            &stage2.clear_output,
-            &witness,
-            &mut transcript,
-        )
-        .unwrap();
-        let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &checked,
-            &config,
-            &preprocessing,
-            &stage2.clear_output,
-            &stage3.clear_output,
-            &witness,
-            &mut transcript,
-        )
-        .unwrap();
-        let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &checked,
-            &config,
-            &preprocessing,
-            &stage2.clear_output,
-            &stage4.clear_output,
-            &witness,
-            &mut transcript,
-        )
-        .unwrap();
-        let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &checked,
-            &config,
-            &preprocessing,
-            &stage1.clear_output,
-            &stage2.clear_output,
-            &stage3.clear_output,
-            &stage4.clear_output,
-            &stage5.clear_output,
-            &witness,
-            &mut transcript,
-        )
-        .unwrap();
+        let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
+            backend: &backend,
+            session: &mut session,
+            mode: &mode,
+            config: &config,
+            public_io: &public_io,
+            checked: &checked,
+            preprocessing: &preprocessing,
+            witness: &witness,
+            transcript: &mut transcript,
+        }
+        .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,

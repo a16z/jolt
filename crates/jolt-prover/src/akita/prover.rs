@@ -60,6 +60,8 @@ where
         witness,
         public_io,
     )?;
+    #[cfg(feature = "field-inline")]
+    session.park(stage0.field_inc.column.clone());
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
     let log_t = config.trace_length.ilog2() as usize;

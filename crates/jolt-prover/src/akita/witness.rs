@@ -2,6 +2,11 @@
 //! from the witness plane's typed rows, the advice word objects, the
 //! direct bounded-dense committed-program objects.
 
+#[cfg(feature = "field-inline")]
+use jolt_kernels::field_inline::FieldIncrementColumn;
+
+#[cfg(not(feature = "field-inline"))]
+use std::marker::PhantomData;
 use std::{collections::HashMap, sync::Arc};
 
 use jolt_akita::TraceOneHotRows;
@@ -34,6 +39,14 @@ struct OneHotTraceSourceRow {
     bytecode_pc: BytecodePc,
     ram_address: RemappedRamAddress,
     fused_inc: FusedInc,
+}
+
+pub struct AssembledTrace<F: JoltField> {
+    pub rows: Arc<dyn TraceOneHotRows>,
+    #[cfg(feature = "field-inline")]
+    pub increments: FieldIncrementColumn<F>,
+    #[cfg(not(feature = "field-inline"))]
+    field: PhantomData<F>,
 }
 
 #[derive(Clone, Copy)]
@@ -143,8 +156,12 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
     log_t: usize,
-) -> Result<Arc<dyn TraceOneHotRows>, ProverError<F>> {
+) -> Result<AssembledTrace<F>, ProverError<F>> {
     PackedTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
+    #[cfg(feature = "field-inline")]
+    let field_oracle = witness.field_inline().ok_or(ProverError::Unsupported {
+        reason: "field-inline trace assembly requires its witness oracle",
+    })?;
     let num_rows = 1usize << log_t;
     let num_columns = plan.packing().ids().len();
     let ram_digit_zero_mask = plan
@@ -188,44 +205,63 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
 
     let mut selected_rows = vec![0u8; num_rows * num_columns];
     let mut ram_active_rows = vec![0u64; num_rows.div_ceil(u64::BITS as usize)];
+    #[cfg(feature = "field-inline")]
+    let mut increments = vec![F::zero(); num_rows];
     #[cfg(feature = "parallel")]
     if let Some(access) = witness.random_access() {
         if num_rows <= access.cycles() {
             let extraction_error = std::sync::Mutex::new(None);
-            selected_rows
+            let blocks = selected_rows
                 .par_chunks_mut(num_columns * u64::BITS as usize)
-                .zip(ram_active_rows.par_iter_mut())
-                .enumerate()
-                .for_each(|(word_index, (word_rows, ram_active_word))| {
-                    for (row_offset, selected_rows) in
-                        word_rows.chunks_exact_mut(num_columns).enumerate()
-                    {
-                        let row_index = word_index * u64::BITS as usize + row_offset;
-                        match access.window::<OneHotTraceSourceRow>(row_index) {
-                            Ok(row) => {
-                                if fill_trace_row(row, &columns, selected_rows) {
-                                    *ram_active_word |= 1u64 << row_offset;
-                                }
+                .zip(ram_active_rows.par_iter_mut());
+            #[cfg(feature = "field-inline")]
+            let blocks = blocks.zip(increments.par_chunks_mut(u64::BITS as usize));
+            blocks.enumerate().for_each(|(word_index, block)| {
+                #[cfg(feature = "field-inline")]
+                let ((word_rows, ram_active_word), increments) = block;
+                #[cfg(not(feature = "field-inline"))]
+                let (word_rows, ram_active_word) = block;
+                for (row_offset, selected_rows) in
+                    word_rows.chunks_exact_mut(num_columns).enumerate()
+                {
+                    let row_index = word_index * u64::BITS as usize + row_offset;
+                    let extracted = access.window::<OneHotTraceSourceRow>(row_index);
+                    #[cfg(feature = "field-inline")]
+                    let extracted = extracted.and_then(|row| {
+                        increments[row_offset] = field_oracle.rd_increment_at(row_index)?;
+                        Ok(row)
+                    });
+                    match extracted {
+                        Ok(row) => {
+                            if fill_trace_row(row, &columns, selected_rows) {
+                                *ram_active_word |= 1u64 << row_offset;
                             }
-                            Err(error) => {
-                                if let Ok(mut guard) = extraction_error.try_lock() {
-                                    let _ = guard.get_or_insert(error);
-                                }
+                        }
+                        Err(error) => {
+                            if let Ok(mut guard) = extraction_error.try_lock() {
+                                let _ = guard.get_or_insert(error);
                             }
                         }
                     }
-                });
+                }
+            });
             #[expect(clippy::unwrap_used, reason = "no lock user can panic")]
             if let Some(error) = extraction_error.into_inner().unwrap() {
                 return Err(error.into());
             }
-            return Ok(Arc::new(PackedTraceRows {
-                num_rows,
-                num_columns,
-                selected_rows,
-                ram_active_rows,
-                ram_digit_zero_mask,
-            }));
+            return Ok(AssembledTrace {
+                rows: Arc::new(PackedTraceRows {
+                    num_rows,
+                    num_columns,
+                    selected_rows,
+                    ram_active_rows,
+                    ram_digit_zero_mask,
+                }),
+                #[cfg(feature = "field-inline")]
+                increments: FieldIncrementColumn::from_values(increments),
+                #[cfg(not(feature = "field-inline"))]
+                field: PhantomData,
+            });
         }
     }
 
@@ -235,18 +271,28 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         .zip(selected_rows.chunks_exact_mut(num_columns))
         .enumerate()
     {
+        #[cfg(feature = "field-inline")]
+        {
+            increments[row_index] = field_oracle.rd_increment_at(row_index)?;
+        }
         if fill_trace_row(row, &columns, selected_rows) {
             ram_active_rows[row_index / u64::BITS as usize] |=
                 1u64 << (row_index % u64::BITS as usize);
         }
     }
-    Ok(Arc::new(PackedTraceRows {
-        num_rows,
-        num_columns,
-        selected_rows,
-        ram_active_rows,
-        ram_digit_zero_mask,
-    }))
+    Ok(AssembledTrace {
+        rows: Arc::new(PackedTraceRows {
+            num_rows,
+            num_columns,
+            selected_rows,
+            ram_active_rows,
+            ram_digit_zero_mask,
+        }),
+        #[cfg(feature = "field-inline")]
+        increments: FieldIncrementColumn::from_values(increments),
+        #[cfg(not(feature = "field-inline"))]
+        field: PhantomData,
+    })
 }
 
 /// One advice-word commitment object: one field coefficient per

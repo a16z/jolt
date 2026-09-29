@@ -268,7 +268,7 @@ where
         trusted_advice.map(|trusted| &trusted.commitment),
         stage0.hints,
         #[cfg(feature = "field-inline")]
-        &stage0.field_inline_hints,
+        stage0.field_inline_hints,
         &stage6b.clear_output,
         &stage7.clear_output,
         witness,

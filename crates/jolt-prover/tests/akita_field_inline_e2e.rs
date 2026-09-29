@@ -25,7 +25,7 @@ mod support;
     reason = "integration tests should fail loudly"
 )]
 mod clear {
-    use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_akita::{AkitaCommitment, AkitaField, AkitaProverSetup, AkitaScheme};
     use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
@@ -55,6 +55,7 @@ mod clear {
     }
 
     struct IncFixture {
+        setup: AkitaProverSetup,
         log_t: usize,
         rd_inc: Vec<AkitaField>,
     }
@@ -62,8 +63,10 @@ mod clear {
     fn collect_inc(
         config: &ProverConfig,
         oracle: &dyn FieldInlineWitnessOracle<AkitaField>,
+        setup: &AkitaProverSetup,
     ) -> IncFixture {
         IncFixture {
+            setup: setup.clone(),
             log_t: config.trace_length.ilog2() as usize,
             rd_inc: oracle
                 .oracle_table(FieldInlinePolynomialId::Committed(
@@ -84,7 +87,7 @@ mod clear {
         let polynomial = Polynomial::new(evaluations);
         let (commitment, _hint) =
             <AkitaScheme as TransparentObjectSetup>::commit_full_width_object(
-                &AkitaScheduleArtifacts::shared_from_default_directory(),
+                &fixture.setup,
                 &polynomial,
                 digest,
             )
@@ -267,7 +270,7 @@ mod clear {
         use jolt_prover::akita::preprocessing::AkitaTranscript;
         use jolt_transcript::Transcript;
 
-        let (output, ()) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), |_, _| ());
+        let (output, ()) = akita::prove(&field_ops(), JoltAkitaBackend::optimized(), |_, _, _| ());
         let commitment = output
             .proof
             .field_inc_commitment

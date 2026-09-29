@@ -195,7 +195,6 @@ mod field_inline {
 
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-    use jolt_field::{CanonicalBytes, Ring};
     use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
@@ -222,20 +221,8 @@ mod field_inline {
     /// 16-byte fp128 form fills the low two; the guest Horner-recomposes them
     /// in whatever field it proves over).
     fn eqpoly_inputs() -> Vec<u8> {
-        let one = AkitaField::from_u64(1);
-        let value = EQ_PAIRS.iter().fold(one, |acc, [r, x]| {
-            let r = AkitaField::from_u64(*r);
-            let x = AkitaField::from_u64(*x);
-            acc * (r * x + (one - r) * (one - x))
-        });
-        let bytes = value.to_bytes_le_vec();
-        let mut limbs = [0u64; 4];
-        for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
-            *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
-        }
-        let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
-        inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
-        inputs
+        jolt_host::field_inline::eqpoly_inputs::<AkitaField>(EQ_PAIRS)
+            .expect("field-ops input encoding")
     }
 
     fn trace_modular(

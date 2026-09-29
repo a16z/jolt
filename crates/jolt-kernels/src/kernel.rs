@@ -8,10 +8,10 @@
 use std::fmt::Debug;
 
 use jolt_claims::protocols::composed::ComposedOpeningId;
-use jolt_claims::protocols::jolt::JoltDerivedId;
 use jolt_claims::MissingOpeningValue;
 use jolt_field::{Field, JoltField};
 use jolt_sumcheck::ProveRounds;
+use jolt_verifier::stages::ids::VerifierDerivedId;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -44,7 +44,7 @@ pub enum SumcheckKernelError<F: Field> {
     /// resolver drifted from the relation's scalar path.
     #[error("derived table {id:?} bound to {got}, but derive_output_term gives {expected}")]
     DerivedTableDrift {
-        id: JoltDerivedId,
+        id: VerifierDerivedId,
         expected: F,
         got: F,
     },

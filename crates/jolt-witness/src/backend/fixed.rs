@@ -66,7 +66,7 @@ impl<F> FixedFieldInline<F> {
 impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for FixedFieldInline<F> {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
+    ) -> Result<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>, WitnessError> {
         Err(WitnessError::UnavailableView {
             label: "fixed field-inline register replay rows",
         })
@@ -86,6 +86,16 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for FixedFieldInline<F> {
         self.columns
             .get(&id)
             .map(|(_, values)| values.clone())
+            .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
+    }
+
+    fn rd_increment_at(&self, cycle: usize) -> Result<F, WitnessError> {
+        self.columns
+            .get(&FieldInlinePolynomialId::Committed(
+                FieldInlineCommittedPolynomial::FieldRdInc,
+            ))
+            .and_then(|(_, values)| values.get(cycle))
+            .copied()
             .ok_or(WitnessError::UnknownOracle { label: FIXED_LABEL })
     }
 

@@ -48,10 +48,10 @@ Regenerate draft field-inline proofs after upgrading. Byte parity against the
 updated legacy prover checks agreement within this revision; it does not
 establish compatibility with earlier proof bytes.
 
-Committed-program construction rejects field instructions before dropping full
-bytecode rows, in both Dory and packed commitment paths. A field-enabled profile
-containing only base instructions needs no extra preprocessing data, but the
-field-inline verifier still requires full public bytecode. The verifier checks protocol and
+Field-inline builds reject committed-program construction at preprocessing entry,
+before deriving setup or commitments, in both Dory and packed commitment paths.
+This also applies to programs containing only base instructions: the field-inline
+verifier requires full public bytecode. The verifier checks protocol and
 cheap input shapes before scanning full program metadata; stage 6a builds
 field-inline bytecode kernel geometry only on the prover path.
 

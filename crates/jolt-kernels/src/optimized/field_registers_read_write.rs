@@ -10,19 +10,18 @@
 //!
 //! - **Sparse cycle-major entries**: ≤ 3 entries per active field-inline cycle (rs2
 //!   merges into rs1's cell, rd into either read's), built in one pass over
-//!   the field-inline oracle's decoded per-cycle rows against a running K = 16 register
-//!   file (the all-zero init the field-register value-evaluation sumcheck enforces).
+//!   the field-inline oracle's decoded rows. The witness boundary validates the
+//!   K = 16 register history, so extraction can fill disjoint blocks in parallel.
 //!   Between touches a field register is constant, so a missing merge partner
 //!   is inferred from its neighbor's `prev_val`/`next_val` — field-valued
 //!   here (the v2 delta vs the integer sibling's raw `u64`s). The integer
-//!   sibling's u16 coefficient LUT is deliberately not ported: its win is
-//!   peak memory at ≤ 3·T entries, and field-inline entries are ≤ 3·(active field-inline cycles).
+//!   access coefficients remain compact selector bits until the first bind.
 //! - **γ-combined read coefficient**: one `ra = γ·rs1_ra + γ²·rs2_ra` column
 //!   per entry (exact by distributivity).
 //! - **Gruen split-eq factoring** for the cycle rounds, with the quadratic
 //!   endpoints accumulated over the sparse rows only — a trace without field-inline activity
 //!   has zero entries and the cycle rounds cost O(√T) eq-table work plus the
-//!   dense `FieldRdInc` bind (an all-zero column).
+//!   increment column stays allocation-free when zero.
 //! - **Rayon past a threshold**: the round accumulation and the bind shell
 //!   out to pair-aligned parallel blocks once the entry count crosses
 //!   [`PARALLEL_THRESHOLD`] (the v2 `par_chunk_by` convention); below it the
@@ -36,29 +35,31 @@
 //! Like the reference kernel, only the config-pinned field-inline phase split (phase 1
 //! = all cycle rounds, phase 2 = the 4 address rounds) is supported.
 
-use core::cmp::Ordering;
-use core::ops::Range;
+use core::{mem::MaybeUninit, ops::Range};
 
+use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
 use jolt_claims::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineDerivedId,
-    FieldInlinePolynomialId, FieldRegistersReadWriteChallenge, FieldRegistersReadWritePublic,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldRegistersReadWriteChallenge,
+    FieldRegistersReadWritePublic,
 };
 use jolt_claims::SumcheckChallenges as _;
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims, SumcheckOutputPoints,
+    ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
-use jolt_verifier::VerifierError;
 use jolt_witness::field_inline::FieldInlineRegisterReadWriteRow;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{bind_pairs, RoundChallenges};
+use super::registers_read_write::address::{OperandEq, RegisterAddressState};
+use super::registers_read_write::sparse::layout::{merge_bind, split_pair_group, Cell};
+use super::registers_read_write::sparse::ops::{bind_sparse_entries_in_place, pair_aligned_bounds};
+use super::support::{map_indices, map_reduce_chunks, pin_derived_term, RoundChallenges};
 use std::sync::Arc;
 
 use crate::{
@@ -70,9 +71,6 @@ use jolt_witness::field_inline::FieldInlineWitnessOracle;
 /// pair-aligned parallel blocks (the v2-port `DENSE_BIND_PAR_THRESHOLD`
 /// convention — below it the sequential walk beats the fork/join overhead).
 const PARALLEL_THRESHOLD: usize = 1 << 12;
-
-/// Pair-aligned block target for the parallel walks.
-const BLOCK_TARGET: usize = 1 << 12;
 
 /// One non-zero cell of the conceptual `K × T` field register matrices: the bound `Val`
 /// coefficient plus the γ-combined read and write coefficients of one touched register
@@ -95,6 +93,124 @@ struct FieldSparseEntry<F> {
     row: usize,
     /// Field register index.
     col: u8,
+}
+
+/// Before binding, Val equals its pre-value and the access coefficients are
+/// selector bits. Keep only two field values and expand coefficients on demand.
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+struct FieldSeed<F> {
+    pre: F,
+    post: F,
+    row: usize,
+    col: u8,
+    reads: u8,
+    write: bool,
+}
+
+impl<F: JoltField> Cell for FieldSeed<F> {
+    fn row(&self) -> usize {
+        self.row
+    }
+    fn col(&self) -> u8 {
+        self.col
+    }
+}
+
+impl<F: JoltField> FieldSeed<F> {
+    fn row_entries(row: usize, access: &FieldInlineRegisterReadWriteRow<F>) -> [Option<Self>; 3] {
+        let mut entries: [Option<Self>; 3] = [None; 3];
+        let mut len = 0;
+        let mut add = |col, pre, post, reads, write| {
+            if let Some(entry) = entries[..len]
+                .iter_mut()
+                .flatten()
+                .find(|entry| entry.col == col)
+            {
+                entry.reads |= reads;
+                if write {
+                    entry.write = true;
+                    entry.post = post;
+                }
+            } else {
+                entries[len] = Some(Self {
+                    pre,
+                    post,
+                    row,
+                    col,
+                    reads,
+                    write,
+                });
+                len += 1;
+            }
+        };
+        if let Some(read) = access.rs1 {
+            add(read.register, read.value, read.value, 1, false);
+        }
+        if let Some(read) = access.rs2 {
+            add(read.register, read.value, read.value, 2, false);
+        }
+        if let Some(write) = access.rd {
+            add(write.register, write.pre_value, write.post_value, 0, true);
+        }
+        entries.sort_unstable_by_key(|entry| entry.map(|entry| entry.col));
+        entries
+    }
+
+    fn expand(self, reads: &[F; 4]) -> FieldSparseEntry<F> {
+        FieldSparseEntry {
+            val: self.pre,
+            prev_val: self.pre,
+            next_val: self.post,
+            ra: reads[usize::from(self.reads)],
+            wa: F::from_bool(self.write),
+            row: self.row,
+            col: self.col,
+        }
+    }
+}
+
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+enum FieldEntries<F: JoltField> {
+    Seeds {
+        entries: Vec<FieldSeed<F>>,
+        reads: [F; 4],
+    },
+    Bound(Vec<FieldSparseEntry<F>>),
+}
+
+impl<F: JoltField> FieldEntries<F> {
+    fn quadratic(&self, e_in: &[F], e_out: &[F], inc: &IncrementRounds<F>) -> [F; 2] {
+        match self {
+            Self::Seeds { entries, reads } => {
+                sparse_quadratic(entries, e_in, e_out, inc, |entry| entry.expand(reads))
+            }
+            Self::Bound(entries) => sparse_quadratic(entries, e_in, e_out, inc, |entry| entry),
+        }
+    }
+
+    fn bind(&mut self, challenge: F) {
+        if let Self::Seeds { entries, reads } = self {
+            let expanded = map_indices(entries.len(), |index| entries[index].expand(reads));
+            *self = Self::Bound(expanded);
+        }
+        if let Self::Bound(entries) = self {
+            bind_sparse_entries_in_place(entries, |even, odd| {
+                FieldSparseEntry::bind(even, odd, challenge)
+            });
+        }
+    }
+
+    fn take_bound(&mut self) -> Vec<FieldSparseEntry<F>> {
+        match self {
+            Self::Bound(entries) => std::mem::take(entries),
+            Self::Seeds { .. } => unreachable!("at least one cycle binds before the address phase"),
+        }
+    }
 }
 
 impl<F: JoltField> FieldSparseEntry<F> {
@@ -179,80 +295,27 @@ impl<F: JoltField> FieldSparseEntry<F> {
             (None, None) => unreachable!("merge visits only represented cells"),
         }
     }
-
-    /// Split a row-pair group (entries sharing `row / 2`) into its even and
-    /// odd rows. Entries are sorted by `(row, col)`, so the evens form the
-    /// prefix.
-    fn split_pair_group(group: &[Self]) -> (&[Self], &[Self]) {
-        let odd_start = group.partition_point(|entry| entry.row.is_multiple_of(2));
-        group.split_at(odd_start)
-    }
-
-    /// Two-pointer merge walk over one row pair's (col-sorted) even and odd
-    /// slices, calling `visit` per merged cell.
-    fn merge_walk(
-        evens: &[Self],
-        odds: &[Self],
-        mut visit: impl FnMut(Option<&Self>, Option<&Self>),
-    ) {
-        let mut i = 0;
-        let mut j = 0;
-        while i < evens.len() && j < odds.len() {
-            match evens[i].col.cmp(&odds[j].col) {
-                Ordering::Equal => {
-                    visit(Some(&evens[i]), Some(&odds[j]));
-                    i += 1;
-                    j += 1;
-                }
-                Ordering::Less => {
-                    visit(Some(&evens[i]), None);
-                    i += 1;
-                }
-                Ordering::Greater => {
-                    visit(None, Some(&odds[j]));
-                    j += 1;
-                }
-            }
-        }
-        for even in &evens[i..] {
-            visit(Some(even), None);
-        }
-        for odd in &odds[j..] {
-            visit(None, Some(odd));
-        }
-    }
 }
 
-/// Pair-aligned block bounds over a sorted entry slice: fixed-size blocks
-/// advanced to the next row-pair edge, so no merge group straddles a block.
-fn pair_aligned_bounds<F: JoltField>(entries: &[FieldSparseEntry<F>]) -> Vec<usize> {
-    let len = entries.len();
-    let block_count = len.div_ceil(BLOCK_TARGET).max(1);
-    let mut bounds: Vec<usize> = Vec::with_capacity(block_count + 1);
-    bounds.push(0);
-    for block in 1..block_count {
-        let mut index = block * len / block_count;
-        while index < len && index > 0 && entries[index].row / 2 == entries[index - 1].row / 2 {
-            index += 1;
-        }
-        #[expect(clippy::unwrap_used, reason = "bounds starts non-empty")]
-        if index > *bounds.last().unwrap() && index < len {
-            bounds.push(index);
-        }
+impl<F: JoltField> Cell for FieldSparseEntry<F> {
+    fn row(&self) -> usize {
+        self.row
     }
-    bounds.push(len);
-    bounds
+    fn col(&self) -> u8 {
+        self.col
+    }
 }
 
 /// The cycle-round quadratic inner factor `[q(0), leading coefficient]` over the sparse
 /// entries: per row pair, the eq weight is `E_out[z >> in_bits] · E_in[z & mask]`
 /// (recombined per pair — untouched pairs contribute nothing, so there is no
 /// per-`x_out` factoring win at field-inline densities).
-fn sparse_quadratic<F: JoltField>(
-    entries: &[FieldSparseEntry<F>],
+fn sparse_quadratic<F: JoltField, E: Cell>(
+    entries: &[E],
     e_in: &[F],
     e_out: &[F],
-    inc: &[F],
+    inc: &IncrementRounds<F>,
+    expand: impl Fn(E) -> FieldSparseEntry<F> + Sync,
 ) -> [F; 2] {
     let in_bits = if e_in.len() <= 1 {
         0
@@ -263,71 +326,44 @@ fn sparse_quadratic<F: JoltField>(
 
     let range_contribution = |range: Range<usize>| -> [F; 2] {
         let mut acc = [F::Accumulator::default(), F::Accumulator::default()];
-        for group in entries[range].chunk_by(|a, b| a.row / 2 == b.row / 2) {
-            let z = group[0].row / 2;
+        for group in entries[range].chunk_by(|a, b| a.row() / 2 == b.row() / 2) {
+            let z = group[0].row() / 2;
             let weight = if e_in.len() <= 1 {
                 e_out[z]
             } else {
                 e_out[z >> in_bits] * e_in[z & mask]
             };
             let j_prime = 2 * z;
-            let inc_0 = inc[j_prime];
-            let inc_evals = [inc_0, inc[j_prime + 1] - inc_0];
-            let (evens, odds) = FieldSparseEntry::split_pair_group(group);
-            FieldSparseEntry::merge_walk(evens, odds, |even, odd| {
-                FieldSparseEntry::accumulate_pair_evals(even, odd, inc_evals, weight, &mut acc);
-            });
+            let inc_0 = inc.value(j_prime);
+            let inc_evals = [inc_0, inc.value(j_prime + 1) - inc_0];
+            let (evens, odds) = split_pair_group(group);
+            merge_bind(
+                evens,
+                odds,
+                &|even, odd| (even.copied().map(&expand), odd.copied().map(&expand)),
+                |(even, odd)| {
+                    FieldSparseEntry::accumulate_pair_evals(
+                        even.as_ref(),
+                        odd.as_ref(),
+                        inc_evals,
+                        weight,
+                        &mut acc,
+                    );
+                },
+            );
         }
         [acc[0].reduce(), acc[1].reduce()]
     };
 
     #[cfg(feature = "parallel")]
     if entries.len() >= PARALLEL_THRESHOLD {
-        let bounds = pair_aligned_bounds(entries);
+        let bounds = pair_aligned_bounds(entries, 1);
         return (0..bounds.len() - 1)
             .into_par_iter()
             .map(|block| range_contribution(bounds[block]..bounds[block + 1]))
             .reduce(|| [F::zero(); 2], |a, b| [a[0] + b[0], a[1] + b[1]]);
     }
     range_contribution(0..entries.len())
-}
-
-/// Bind one cycle variable of the sparse matrix: merge every adjacent row
-/// pair into `output` (cleared and refilled — the caller swaps buffers).
-fn bind_sparse_entries<F: JoltField>(
-    entries: &[FieldSparseEntry<F>],
-    r: F,
-    output: &mut Vec<FieldSparseEntry<F>>,
-) {
-    output.clear();
-    let merge_range = |range: Range<usize>, out: &mut Vec<FieldSparseEntry<F>>| {
-        for group in entries[range].chunk_by(|a, b| a.row / 2 == b.row / 2) {
-            let (evens, odds) = FieldSparseEntry::split_pair_group(group);
-            FieldSparseEntry::merge_walk(evens, odds, |even, odd| {
-                out.push(FieldSparseEntry::bind(even, odd, r));
-            });
-        }
-    };
-
-    #[cfg(feature = "parallel")]
-    if entries.len() >= PARALLEL_THRESHOLD {
-        let bounds = pair_aligned_bounds(entries);
-        let blocks: Vec<Vec<FieldSparseEntry<F>>> = (0..bounds.len() - 1)
-            .into_par_iter()
-            .map(|block| {
-                let range = bounds[block]..bounds[block + 1];
-                let mut out = Vec::with_capacity(range.len());
-                merge_range(range, &mut out);
-                out
-            })
-            .collect();
-        for block in blocks {
-            output.extend_from_slice(&block);
-        }
-        return;
-    }
-    output.reserve(entries.len());
-    merge_range(0..entries.len(), output);
 }
 
 /// The rd write slots of one proof's field-inline trace — `(cycle, register)` pairs of
@@ -337,52 +373,33 @@ fn bind_sparse_entries<F: JoltField>(
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedFieldRdWrites(pub(crate) Vec<(u32, u8)>);
 
-/// The decoded field register rows of one proof, built by the first field-inline kernel
-/// to need them (stage 2) and shared with stages 4 and 5 through the session — one
-/// trace-sized build per proof. `Arc`-shared so a kernel can keep the rows while it
-/// parks its own carries; stage 5, the last consumer, releases them.
+type FieldRegisterRows<F> = Arc<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>>;
+
+/// Sparse register rows shared by claim reduction and read/write checking.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedFieldRegisterRows<F: JoltField>(
-    #[cfg_attr(
-        feature = "allocative",
-        allocative(visit = crate::backend::visit_shared_heap_free_elements)
-    )]
-    pub(crate) Arc<Vec<FieldInlineRegisterReadWriteRow<F>>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_shared_heap_free_elements))]
+    pub(crate) FieldRegisterRows<F>,
 );
 
-/// The proof's field register rows, from the session when a previous field-inline
-/// kernel built them for this trace arity, otherwise decoded off the oracle and parked.
-/// `release` drops the shared copy from the session (the last consumer's call).
 pub(crate) fn field_register_rows<F: JoltField>(
     session: &mut ProofSession,
     field_inline: &dyn FieldInlineWitnessOracle<F>,
     cycles: usize,
-    release: bool,
-) -> Result<Arc<Vec<FieldInlineRegisterReadWriteRow<F>>>, KernelError<F>> {
-    let parked = if release {
-        session.take::<SharedFieldRegisterRows<F>>()
-    } else {
-        session
-            .state::<SharedFieldRegisterRows<F>>()
-            .map(|shared| SharedFieldRegisterRows(Arc::clone(&shared.0)))
-    };
-    if let Some(SharedFieldRegisterRows(rows)) = parked {
-        if rows.len() == cycles {
-            return Ok(rows);
-        }
+) -> Result<FieldRegisterRows<F>, KernelError<F>> {
+    if let Some(SharedFieldRegisterRows(rows)) = session.state::<SharedFieldRegisterRows<F>>() {
+        return Ok(Arc::clone(rows));
     }
     let rows = field_inline.field_inline_register_read_write_rows()?;
-    if rows.len() != cycles {
-        return Err(KernelError::TableSizeMismatch {
-            table: "field-inline register read-write rows".to_owned(),
-            expected: cycles,
-            got: rows.len(),
+    if rows.iter().any(|(cycle, _)| *cycle >= cycles)
+        || rows.windows(2).any(|pair| pair[0].0 >= pair[1].0)
+    {
+        return Err(KernelError::InvariantViolation {
+            reason: "field register rows must be ordered within the cycle domain",
         });
     }
     let rows = Arc::new(rows);
-    if !release {
-        session.park(SharedFieldRegisterRows(Arc::clone(&rows)));
-    }
+    session.park(SharedFieldRegisterRows(Arc::clone(&rows)));
     Ok(rows)
 }
 
@@ -390,107 +407,99 @@ pub(crate) fn field_register_rows<F: JoltField>(
 /// the ≤3-entries-per-active-cycle matrix cells plus the raw read/write index lists
 /// (reads feed the final one-hot claims, writes feed stage 5).
 pub(crate) struct FieldRegisterAccesses<F: JoltField> {
-    entries: Vec<FieldSparseEntry<F>>,
+    entries: Vec<FieldSeed<F>>,
     rs1_reads: Vec<(u32, u8)>,
     rs2_reads: Vec<(u32, u8)>,
     pub(crate) rd_writes: Vec<(u32, u8)>,
 }
 
 impl<F: JoltField> FieldRegisterAccesses<F> {
-    /// One pass over the decoded rows against a running register file (the all-zero
-    /// initial state every field-inline execution shares — enforced by the stage-5
-    /// val-evaluation identity, not merely assumed). `Val` cells use the running value,
-    /// exactly as the oracle's dense `FieldRegistersVal` materializer replays writes;
-    /// the witness view's build-time validation pins the rows' claimed pre-values to
-    /// the same replay.
+    /// Count then fill disjoint spans over the already-validated sparse rows.
+    /// Read/pre-write values are pinned to the register replay by the witness
+    /// boundary, so entry construction needs no serial register-file replay.
     pub(crate) fn collect(
-        rows: &[FieldInlineRegisterReadWriteRow<F>],
+        rows: &[(usize, FieldInlineRegisterReadWriteRow<F>)],
         register_count: usize,
-        gamma: F,
     ) -> Result<Self, KernelError<F>> {
-        let gamma_sq = gamma * gamma;
-        let mut running: Vec<F> = vec![F::zero(); register_count];
-        let mut entries: Vec<FieldSparseEntry<F>> = Vec::new();
-        let mut rs1_reads: Vec<(u32, u8)> = Vec::new();
-        let mut rs2_reads: Vec<(u32, u8)> = Vec::new();
-        let mut rd_writes: Vec<(u32, u8)> = Vec::new();
-        let in_domain = |register: u8| -> Result<usize, KernelError<F>> {
-            let col = usize::from(register);
-            if col >= register_count {
+        for (cycle, access) in rows {
+            if u32::try_from(*cycle).is_err()
+                || access
+                    .rs1
+                    .iter()
+                    .map(|r| r.register)
+                    .chain(access.rs2.iter().map(|r| r.register))
+                    .chain(access.rd.iter().map(|r| r.register))
+                    .any(|register| usize::from(register) >= register_count)
+            {
                 return Err(KernelError::InvariantViolation {
-                    reason: "field register index is out of bounds",
+                    reason: "field register access exceeds its cycle or register domain",
                 });
             }
-            Ok(col)
+        }
+        const CHUNK: usize = 1 << 12;
+        let counts = map_indices(rows.len().div_ceil(CHUNK), |chunk| {
+            rows[chunk * CHUNK..((chunk + 1) * CHUNK).min(rows.len())]
+                .iter()
+                .map(|(cycle, access)| {
+                    FieldSeed::row_entries(*cycle, access)
+                        .into_iter()
+                        .flatten()
+                        .count()
+                })
+                .sum::<usize>()
+        });
+        let total = counts.iter().sum();
+        let mut entries: Vec<FieldSeed<F>> = Vec::with_capacity(total);
+        let mut spare = &mut entries.spare_capacity_mut()[..total];
+        let spans: Vec<_> = counts
+            .iter()
+            .map(|&count| {
+                let (head, tail) = std::mem::take(&mut spare).split_at_mut(count);
+                spare = tail;
+                head
+            })
+            .collect();
+        let fill = |(chunk, span): (usize, &mut [MaybeUninit<FieldSeed<F>>])| {
+            let mut output = span.iter_mut();
+            for (cycle, access) in &rows[chunk * CHUNK..((chunk + 1) * CHUNK).min(rows.len())] {
+                for entry in FieldSeed::row_entries(*cycle, access).into_iter().flatten() {
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "count and fill use the same row_entries constructor"
+                    )]
+                    let _ = output.next().expect("counted field entry").write(entry);
+                }
+            }
+            assert!(
+                output.next().is_none(),
+                "field entry count and fill disagree"
+            );
         };
-        for (row, access) in rows.iter().enumerate() {
-            let start = entries.len();
-            if let Some(read) = &access.rs1 {
-                let col = in_domain(read.register)?;
-                rs1_reads.push((row as u32, read.register));
-                let val = running[col];
-                entries.push(FieldSparseEntry {
-                    val,
-                    prev_val: val,
-                    next_val: val,
-                    ra: gamma,
-                    wa: F::zero(),
-                    row,
-                    col: read.register,
-                });
-            }
-            if let Some(read) = &access.rs2 {
-                let col = in_domain(read.register)?;
-                rs2_reads.push((row as u32, read.register));
-                if let Some(entry) = entries[start..]
-                    .iter_mut()
-                    .find(|entry| usize::from(entry.col) == col)
-                {
-                    entry.ra += gamma_sq;
-                } else {
-                    let val = running[col];
-                    entries.push(FieldSparseEntry {
-                        val,
-                        prev_val: val,
-                        next_val: val,
-                        ra: gamma_sq,
-                        wa: F::zero(),
-                        row,
-                        col: read.register,
-                    });
-                }
-            }
-            if let Some(write) = &access.rd {
-                let col = in_domain(write.register)?;
-                rd_writes.push((row as u32, write.register));
-                let post = write.post_value;
-                if let Some(entry) = entries[start..]
-                    .iter_mut()
-                    .find(|entry| usize::from(entry.col) == col)
-                {
-                    entry.wa = F::one();
-                    entry.next_val = post;
-                } else {
-                    let pre = running[col];
-                    entries.push(FieldSparseEntry {
-                        val: pre,
-                        prev_val: pre,
-                        next_val: post,
-                        ra: F::zero(),
-                        wa: F::one(),
-                        row,
-                        col: write.register,
-                    });
-                }
-                running[col] = post;
-            }
-            entries[start..].sort_unstable_by_key(|entry| entry.col);
+        #[cfg(feature = "parallel")]
+        spans.into_par_iter().enumerate().for_each(fill);
+        #[cfg(not(feature = "parallel"))]
+        spans.into_iter().enumerate().for_each(fill);
+        // SAFETY: each disjoint span was filled completely using the same constructor
+        // that counted it; FieldSeed is Copy and no uninitialized slot is exposed.
+        unsafe {
+            entries.set_len(total);
         }
         Ok(Self {
             entries,
-            rs1_reads,
-            rs2_reads,
-            rd_writes,
+            rs1_reads: rows
+                .iter()
+                .filter_map(|(cycle, access)| access.rs1.map(|read| (*cycle as u32, read.register)))
+                .collect(),
+            rs2_reads: rows
+                .iter()
+                .filter_map(|(cycle, access)| access.rs2.map(|read| (*cycle as u32, read.register)))
+                .collect(),
+            rd_writes: rows
+                .iter()
+                .filter_map(|(cycle, access)| {
+                    access.rd.map(|write| (*cycle as u32, write.register))
+                })
+                .collect(),
         })
     }
 }
@@ -544,17 +553,8 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
                 .ok_or(KernelError::Witness(WitnessError::UnavailableView {
                     label: "field-registers read-write checking field-inline oracle",
                 }))?;
-        let rows = field_register_rows(session, field_inline, cycles, false)?;
-        let inc_table = field_inline.oracle_table(FieldInlinePolynomialId::Committed(
-            FieldInlineCommittedPolynomial::FieldRdInc,
-        ))?;
-        if inc_table.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: "FieldRdInc".to_owned(),
-                expected: cycles,
-                got: inc_table.len(),
-            });
-        }
+        let rows = field_register_rows(session, field_inline, cycles)?;
+        let inc_column = FieldIncrementColumn::resolve(session, field_inline, cycles)?;
         let gamma = inputs
             .challenges
             .resolve_challenge(&FieldInlineChallengeId::from(
@@ -569,24 +569,23 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersReadWriteChecking<F>>
             rs1_reads,
             rs2_reads,
             rd_writes,
-        } = FieldRegisterAccesses::collect(&rows, 1usize << log_k, gamma)?;
+        } = FieldRegisterAccesses::collect(&rows, 1usize << log_k)?;
 
         // Park the rd write slots for the stage-5 field-register value-evaluation
         // kernel.
         session.park(SharedFieldRdWrites(rd_writes));
+        let _ = session.take::<SharedFieldRegisterRows<F>>();
 
         Ok(Box::new(FieldReadWriteKernel {
             log_t,
             log_k,
-            entries,
-            scratch: Vec::new(),
+            entries: FieldEntries::Seeds {
+                entries,
+                reads: [F::zero(), gamma, gamma * gamma, gamma + gamma * gamma],
+            },
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            inc: Polynomial::new(inc_table),
-            ra: Vec::new(),
-            wa: Vec::new(),
-            val: Vec::new(),
-            eq_scalar: F::zero(),
-            inc_scalar: F::zero(),
+            inc: IncrementRounds::new(inc_column),
+            address: RegisterAddressState::default(),
             rs1_reads,
             rs2_reads,
             challenges: RoundChallenges::new(log_t + log_k),
@@ -604,20 +603,10 @@ struct FieldReadWriteKernel<F: JoltField> {
     log_k: usize,
     /// Sparse cycle-major entries, sorted by `(row, col)`; drained at the
     /// cycle→address transition.
-    entries: Vec<FieldSparseEntry<F>>,
-    scratch: Vec<FieldSparseEntry<F>>,
+    entries: FieldEntries<F>,
     gruen: GruenSplitEqPolynomial<F>,
-    inc: Polynomial<F>,
-    // Address-phase dense state (K = 16), materialized at the transition.
-    ra: Vec<F>,
-    wa: Vec<F>,
-    val: Vec<F>,
-    /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    eq_scalar: F,
-    /// Fully bound `FieldRdInc` — constant across the address rounds.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    inc_scalar: F,
+    inc: IncrementRounds<F>,
+    address: RegisterAddressState<F>,
     rs1_reads: Vec<(u32, u8)>,
     rs2_reads: Vec<(u32, u8)>,
     challenges: RoundChallenges<F>,
@@ -628,52 +617,13 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
     /// `[q(0), leading coefficient]` over the remaining sparse rows, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
     fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
-        let quadratic = sparse_quadratic(
-            &self.entries,
+        let quadratic = self.entries.quadratic(
             self.gruen.e_in_current(),
             self.gruen.e_out_current(),
-            self.inc.evals(),
+            &self.inc,
         );
         self.gruen
             .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
-    }
-
-    /// Address-round message over the K-sized dense arrays. Cheap enough to
-    /// sample all `degree + 1` points directly, so the naive tier's running
-    /// claim self-check is kept.
-    fn address_round_message(
-        &self,
-        round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let half = self.ra.len() / 2;
-        let mut evals = [F::zero(); 4];
-        for y in 0..half {
-            let pair = |table: &[F]| {
-                let lo = table[2 * y];
-                (lo, table[2 * y + 1] - lo)
-            };
-            let (ra_0, ra_m) = pair(&self.ra);
-            let (wa_0, wa_m) = pair(&self.wa);
-            let (val_0, val_m) = pair(&self.val);
-            let (mut ra_t, mut wa_t, mut val_t) = (ra_0, wa_0, val_0);
-            for eval in &mut evals {
-                *eval += wa_t * (self.inc_scalar + val_t) + ra_t * val_t;
-                ra_t += ra_m;
-                wa_t += wa_m;
-                val_t += val_m;
-            }
-        }
-        let evals = evals.map(|eval| self.eq_scalar * eval);
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
     }
 
     /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
@@ -682,13 +632,10 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
     fn bind(&mut self, r: F) {
         if self.challenges.bound() < self.log_t {
             self.gruen.bind(r);
-            self.inc.bind_with_order(r, BindingOrder::LowToHigh);
-            bind_sparse_entries(&self.entries, r, &mut self.scratch);
-            core::mem::swap(&mut self.entries, &mut self.scratch);
+            self.inc.bind(r);
+            self.entries.bind(r);
         } else {
-            for table in [&mut self.ra, &mut self.wa, &mut self.val] {
-                bind_pairs(table, r);
-            }
+            self.address.bind(r);
         }
         self.challenges.push(r);
 
@@ -697,19 +644,17 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
             let mut ra = vec![F::zero(); register_count];
             let mut wa = vec![F::zero(); register_count];
             let mut val = vec![F::zero(); register_count];
-            for entry in self.entries.drain(..) {
+            for entry in self.entries.take_bound() {
                 debug_assert_eq!(entry.row, 0);
                 ra[usize::from(entry.col)] = entry.ra;
                 wa[usize::from(entry.col)] = entry.wa;
                 val[usize::from(entry.col)] = entry.val;
             }
-            // Free the scratch here rather than at kernel drop.
-            self.scratch = Vec::new();
-            self.ra = ra;
-            self.wa = wa;
-            self.val = val;
-            self.eq_scalar = self.gruen.current_scalar();
-            self.inc_scalar = self.inc.evals()[0];
+            self.address.ra = ra;
+            self.address.wa = wa;
+            self.address.val = val;
+            self.address.eq_scalar = self.gruen.current_scalar();
+            self.address.inc_scalar = self.inc.value(0);
         }
     }
 
@@ -737,27 +682,24 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
     /// Big-endian joint point `[r_cycle ‖ r_address]`, joint index
     /// `(j << addr_bits) | k`.
     fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
-        let log_t = r_cycle.len();
-        let addr_bits = r_address.len();
-        let n = log_t + addr_bits;
-        let hi_bits = core::cmp::min(log_t, n.div_ceil(2));
-
-        let r_joint: Vec<F> = r_cycle.iter().chain(r_address.iter()).copied().collect();
-        let (r_hi, r_lo) = r_joint.split_at(hi_bits);
-        let e_hi = EqPolynomial::<F>::evals(r_hi, None);
-        let e_lo = EqPolynomial::<F>::evals(r_lo, None);
-
-        let cycle_bits_in_lo = (n - hi_bits) - addr_bits;
-        let cycle_lo_mask = (1usize << cycle_bits_in_lo) - 1;
+        let eq = OperandEq::new(r_address, r_cycle);
 
         let claim = |reads: &[(u32, u8)]| -> F {
-            let mut sum = F::Accumulator::default();
-            for &(j, k) in reads {
-                let j = j as usize;
-                let lo_index = ((j & cycle_lo_mask) << addr_bits) | usize::from(k);
-                sum.fmadd(e_hi[j >> cycle_bits_in_lo], e_lo[lo_index]);
-            }
-            sum.reduce()
+            map_reduce_chunks(
+                reads.len(),
+                1 << 12,
+                |range| {
+                    let mut sum = F::Accumulator::default();
+                    for &(j, k) in &reads[range] {
+                        let j = j as usize;
+                        let lo_index = eq.low_index(j, k);
+                        sum.fmadd(eq.hi[j >> eq.cycle_bits_in_lo], eq.lo[lo_index]);
+                    }
+                    sum.reduce()
+                },
+                |a, b| a + b,
+                F::zero,
+            )
         };
         (claim(&self.rs1_reads), claim(&self.rs2_reads))
     }
@@ -780,7 +722,7 @@ impl<F: JoltField> ProveRounds<F> for FieldReadWriteKernel<F> {
         if self.challenges.bound() < self.log_t {
             Ok(self.cycle_round_message(previous_claim))
         } else {
-            self.address_round_message(round, previous_claim)
+            self.address.round_message(round, previous_claim)
         }
     }
 
@@ -803,11 +745,11 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
         let (r_address, r_cycle) = self.bound_point();
         let (rs1_ra, rs2_ra) = self.one_hot_operand_claims(&r_address, &r_cycle);
         Ok(FieldRegistersReadWriteOutputClaims {
-            registers_val: self.val[0],
+            registers_val: self.address.val[0],
             rs1_ra,
             rs2_ra,
-            rd_wa: self.wa[0],
-            rd_inc: self.inc_scalar,
+            rd_wa: self.address.wa[0],
+            rd_inc: self.address.inc_scalar,
         })
     }
 
@@ -822,24 +764,14 @@ impl<F: JoltField> SumcheckKernel<F> for FieldReadWriteKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let expected = relation.derive_output_term(
-            &FieldInlineDerivedId::from(FieldRegistersReadWritePublic::EqCycle),
+        pin_derived_term(
+            relation,
+            FieldInlineDerivedId::from(FieldRegistersReadWritePublic::EqCycle),
             input_points,
             output_points,
             challenges,
-        )?;
-        let got = self.eq_scalar;
-        if got != expected {
-            return Err(SumcheckKernelError::Verifier(
-                VerifierError::StageClaimSumcheckFailed {
-                    stage: "FieldRegistersReadWriteChecking".to_string(),
-                    reason: format!(
-                        "bound eq scalar {got:?}, but derive_output_term gives {expected:?}"
-                    ),
-                },
-            ));
-        }
-        Ok(())
+            self.address.eq_scalar,
+        )
     }
 }
 
@@ -857,13 +789,15 @@ mod tests {
     use jolt_field::{Fr, Ring};
     use jolt_riscv::FieldInlineOp;
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
+    use jolt_verifier::stages::relations::ConcreteSumcheck as _;
 
     use super::*;
     use crate::optimized::field_registers_testing::{
         inactive_field_register_fixture, structured_field_register_fixture,
         FieldRegisterTraceFixture,
     };
-    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, synthetic_point};
+    use crate::optimized::registers_read_write::test_support::assert_kernel_parity_with_session;
     use crate::ReferenceBackend;
 
     fn run_parity(
@@ -907,14 +841,6 @@ mod tests {
                 &ReferenceBackend, &mut session, backend, inputs()
             )
             .unwrap();
-            let mut optimized = OptimizedFieldRegistersReadWrite
-                .prepare(&mut session, backend, inputs())
-                .unwrap();
-            assert!(
-                session.state::<SharedFieldRdWrites>().is_some(),
-                "the optimized kernel must park the field-register write slots for stage 5",
-            );
-
             let claim = probe_input_claim(reference.as_mut());
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
@@ -930,25 +856,22 @@ mod tests {
                     "claim without field-inline activity must be zero"
                 );
             }
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
+            drop(reference);
+            assert_kernel_parity_with_session(
+                &mut session,
+                &OptimizedFieldRegistersReadWrite,
+                backend,
+                &relation,
+                &claims,
+                &points,
+                &challenges,
                 claim,
                 &round_challenges,
             );
-            assert_eq!(
-                reference.output_claims(&claims).unwrap(),
-                optimized.output_claims(&claims).unwrap()
+            assert!(
+                session.state::<SharedFieldRdWrites>().is_some(),
+                "the optimized kernel must park the field-register write slots for stage 5",
             );
-            let output_points = relation
-                .derive_opening_points(&round_challenges, &points)
-                .unwrap();
-            reference
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
-            optimized
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
         });
     }
 

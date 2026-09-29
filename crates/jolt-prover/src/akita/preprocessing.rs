@@ -125,9 +125,9 @@ pub(crate) fn grouped_setup_params(
         GroupedScheduleParams::new(
             untrusted_physical_vars,
             trusted_physical_vars,
+            mandatory_dense_layouts,
             shape.num_vars,
         )
-        .with_mandatory_dense_layouts(mandatory_dense_layouts)
     });
     let params = AkitaSetupParams::one_hot_only_grouped(
         shape.num_vars,
@@ -165,6 +165,7 @@ pub fn preprocess_committed_with_advice(
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    crate::preprocessing::validate_committed_mode()?;
     validate_trace_order(config)?;
     let metadata =
         program

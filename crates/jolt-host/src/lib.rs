@@ -1,6 +1,8 @@
 //! Host-side guest construction and execution.
 
 pub mod analyze;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 mod program;
 
 use std::path::PathBuf;

@@ -42,8 +42,6 @@
 
 use std::sync::Arc;
 
-#[cfg(all(feature = "field-inline", feature = "allocative"))]
-use allocative::{Allocative, Visitor};
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     self, read_raf_stage_values, BytecodeReadRafStageValueInputs,
 };
@@ -310,10 +308,23 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         // stages) and, with field-inline enabled, the two field-inline cycle sub-points
         // appended as unweighted base stages.
         #[cfg(feature = "field-inline")]
+        let active_legs = field_inline_values
+            .into_iter()
+            .zip([field_read_write_cycle, field_val_evaluation_cycle])
+            .zip([gamma_powers[3], gamma_powers[4]])
+            .filter_map(|((values, point), weight)| {
+                values
+                    .evals()
+                    .iter()
+                    .any(|value| !value.is_zero())
+                    .then_some((values, point, weight))
+            })
+            .collect::<Vec<_>>();
+        #[cfg(feature = "field-inline")]
         let composed_points: Vec<Vec<F>> = stage_cycle_points
             .iter()
             .cloned()
-            .chain([field_read_write_cycle, field_val_evaluation_cycle])
+            .chain(active_legs.iter().map(|(_, point, _)| point.clone()))
             .collect();
         #[cfg(feature = "field-inline")]
         let walk_points: &[Vec<F>] = &composed_points;
@@ -329,21 +340,16 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             row_weight,
         );
         #[cfg(feature = "field-inline")]
-        let field_pushforwards: [Polynomial<F>; 2] = {
-            let missing = || KernelError::InvariantViolation {
-                reason: "field-inline pushforwards missing from the shared walk",
-            };
-            // The two field-inline walks sit between the base and fused blocks (the
-            // walk's output order is [base..., weighted...] and the field-inline points
-            // ride the base list) — on the packed shape the fused pushforwards follow
-            // them, so the global tail is wrong there.
-            let field_start = stage_cycle_points.len();
-            if pushforwards.len() < field_start + 2 {
-                return Err(missing());
-            }
-            let val_evaluation = Polynomial::new(pushforwards.remove(field_start + 1));
-            let read_write = Polynomial::new(pushforwards.remove(field_start));
-            [read_write, val_evaluation]
+        let field_inline = FieldInlineAddressLegs {
+            legs: pushforwards
+                .drain(base_stages..base_stages + active_legs.len())
+                .zip(active_legs)
+                .map(|(pushforward, (values, _, weight))| FieldInlineAddressLeg {
+                    weight,
+                    pushforward: Polynomial::new(pushforward),
+                    values,
+                })
+                .collect(),
         };
         let pushforwards = pushforwards
             .into_iter()
@@ -391,11 +397,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             entry_trace: one_hot(push_pc(&rows[0])),
             entry_expected: one_hot(entry_bytecode_index),
             #[cfg(feature = "field-inline")]
-            field_inline: FieldInlineAddressLegs {
-                weights: [gamma_powers[3], gamma_powers[4]],
-                pushforwards: field_pushforwards,
-                values: field_inline_values,
-            },
+            field_inline,
         }))
     }
 }
@@ -403,59 +405,52 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
 /// The two field-register access terms at the stage-4/5 cycle points and γ³/γ⁴
 /// weights, sharing the ordinary bytecode address domain.
 #[cfg(feature = "field-inline")]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct FieldInlineAddressLegs<F: JoltField> {
-    weights: [F; 2],
-    pushforwards: [Polynomial<F>; 2],
-    values: [Polynomial<F>; 2],
+    legs: Vec<FieldInlineAddressLeg<F>>,
+}
+
+#[cfg(feature = "field-inline")]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
+struct FieldInlineAddressLeg<F: JoltField> {
+    weight: F,
+    pushforward: Polynomial<F>,
+    values: Polynomial<F>,
 }
 
 #[cfg(feature = "field-inline")]
 impl<F: JoltField> FieldInlineAddressLegs<F> {
     fn bind(&mut self, challenge: F) {
-        bind_all(
-            self.pushforwards.iter_mut().chain(self.values.iter_mut()),
-            challenge,
-        );
+        for leg in &mut self.legs {
+            bind_all([&mut leg.pushforward, &mut leg.values], challenge);
+        }
     }
 
-    /// The legs' `[t = 0, t = 2]` contributions summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
         let mut out = [F::zero(); 2];
-        for (weight, (pushforward, value)) in self
-            .weights
-            .iter()
-            .zip(self.pushforwards.iter().zip(&self.values))
-        {
-            let (f_lo, f_hi) = pair(pushforward, y);
-            let (v_lo, v_hi) = pair(value, y);
-            out[0] += *weight * f_lo * v_lo;
-            out[1] += *weight * (f_hi + f_hi - f_lo) * (v_hi + v_hi - v_lo);
+        for leg in &self.legs {
+            let (f_lo, f_hi) = pair(&leg.pushforward, y);
+            let (v_lo, v_hi) = pair(&leg.values, y);
+            out[0] += leg.weight * f_lo * v_lo;
+            out[1] += leg.weight * (f_hi + f_hi - f_lo) * (v_hi + v_hi - v_lo);
         }
         out
     }
 
-    /// The legs' contribution to the fully bound intermediate.
     fn bound_term(&self) -> F {
-        self.weights
+        self.legs
             .iter()
-            .zip(self.pushforwards.iter().zip(&self.values))
-            .map(|(weight, (pushforward, value))| {
-                *weight * pushforward.evals()[0] * value.evals()[0]
-            })
+            .map(|leg| leg.weight * leg.pushforward.evals()[0] * leg.values.evals()[0])
             .sum()
-    }
-}
-
-// Hand impl: the array-of-table fields have no derive-visitable shape.
-#[cfg(all(feature = "field-inline", feature = "allocative"))]
-impl<F: JoltField> Allocative for FieldInlineAddressLegs<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        for table in self.pushforwards.iter().chain(&self.values) {
-            table.visit(&mut visitor);
-        }
-        visitor.exit();
     }
 }
 
@@ -1275,6 +1270,10 @@ mod tests {
             );
 
             let claim = probe_input_claim(reference.as_mut());
+            assert!(
+                claim != Fr::from_u64(0),
+                "bytecode parity fixture must exercise a nonzero relation"
+            );
             let address_sumcheck_challenges = synthetic_point(log_k, 101);
             run_lockstep(
                 reference.as_mut(),
@@ -1362,6 +1361,10 @@ mod tests {
                 .unwrap();
 
             let claim = probe_input_claim(reference.as_mut());
+            assert!(
+                claim != Fr::from_u64(0),
+                "bytecode parity fixture must exercise a nonzero relation"
+            );
             let cycle_sumcheck_challenges = synthetic_point(log_t, 211);
             run_lockstep(
                 reference.as_mut(),
@@ -1491,6 +1494,10 @@ mod akita_tests {
                 .unwrap();
 
             let claim = probe_input_claim(reference.as_mut());
+            assert!(
+                claim != Fr::from_u64(0),
+                "bytecode parity fixture must exercise a nonzero relation"
+            );
             run_lockstep(
                 reference.as_mut(),
                 optimized.as_mut(),

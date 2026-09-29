@@ -147,7 +147,7 @@ mod pipeline {
 
         let mut rows = trace_output.trace.rows().to_vec();
         rows.resize(config.trace_length, TraceRow::default());
-        let padded_output = TraceOutput::new(
+        let witness_output = TraceOutput::new(
             OwnedTrace::new(rows),
             trace_output.device,
             trace_output.final_memory,
@@ -163,7 +163,7 @@ mod pipeline {
                 config.ram_K,
                 config.one_hot_config,
             ),
-            JoltVmWitnessInputs::new(&program, &program_preprocessing, padded_output),
+            JoltVmWitnessInputs::new(&program, &program_preprocessing, witness_output),
         )
         // field-inline proving needs the field-inline witness view; classic-profile
         // guests are refused rather than silently proven without field-inline columns.

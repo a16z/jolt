@@ -3,7 +3,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use common::constants::{ALIGNMENT_FACTOR_BYTECODE, RAM_START_ADDRESS};
 use jolt_riscv::{
     CircuitFlags, Flags, JoltInstruction, JoltInstructionKind, JoltInstructionProfile,
-    JoltInstructionRow, RV64IMAC_JOLT,
+    JoltInstructionRow,
 };
 
 #[cfg(feature = "field-inline")]
@@ -56,19 +56,6 @@ impl BytecodePreprocessing {
             pc_map,
             entry_address,
         })
-    }
-
-    /// Committed bytecode currently binds only the base ISA lanes. Reject
-    /// field instructions before their operand roles are erased by commitment.
-    pub fn validate_committed_profile(&self) -> Result<(), PreprocessingError> {
-        if self
-            .bytecode
-            .iter()
-            .any(|row| !RV64IMAC_JOLT.supports_jolt(row.instruction_kind))
-        {
-            return Err(PreprocessingError::UnsupportedCommittedProfile);
-        }
-        Ok(())
     }
 
     pub fn entry_bytecode_index(&self) -> Option<usize> {
@@ -598,27 +585,6 @@ mod tests {
         assert_eq!(
             preprocessing.bytecode[0].field_operands(),
             NormalizedOperands::default()
-        );
-    }
-
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn committed_profile_rejects_field_instructions() {
-        let base_row = instruction(0x8000_0000, None);
-        let base =
-            BytecodePreprocessing::preprocess(vec![base_row], 0x8000_0000, RV64IMAC_JOLT).unwrap();
-        assert!(base.validate_committed_profile().is_ok());
-        let mut extension = BytecodePreprocessing::preprocess(
-            vec![base_row],
-            0x8000_0000,
-            RV64IMAC_JOLT_FIELD_INLINE,
-        )
-        .unwrap();
-        assert!(extension.validate_committed_profile().is_ok());
-        extension.bytecode[1].instruction_kind = JoltInstructionKind::FIELD_MUL;
-        assert_eq!(
-            extension.validate_committed_profile(),
-            Err(PreprocessingError::UnsupportedCommittedProfile)
         );
     }
 

@@ -109,7 +109,7 @@ impl<F: JoltField> PrepareKernel<F, IncClaimReduction<F>> for OptimizedIncClaimR
 /// `s₁·eq(p₁, ·) + s₂·eq(p₂, ·)` in four ~√T split tables.
 /// Binding folds the exhausted low scalars into one dense high table.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-enum PairedEq<F> {
+pub(crate) enum PairedEq<F> {
     Split {
         lo1: Vec<F>,
         hi1: Vec<F>,
@@ -120,7 +120,7 @@ enum PairedEq<F> {
 }
 
 impl<F: JoltField> PairedEq<F> {
-    fn new(p1: &[F], s1: F, p2: &[F], s2: F) -> Self {
+    pub(crate) fn new(p1: &[F], s1: F, p2: &[F], s2: F) -> Self {
         debug_assert_eq!(p1.len(), p2.len());
         let mid = p1.len() / 2;
         if mid == 0 {
@@ -144,7 +144,7 @@ impl<F: JoltField> PairedEq<F> {
     /// The combined table's `(lo, hi)` sumcheck pair at group `y` under
     /// low-to-high pairing.
     #[inline]
-    fn pair(&self, y: usize) -> (F, F) {
+    pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {
             Self::Split { lo1, hi1, lo2, hi2 } => {
                 let lo_len = lo1.len();
@@ -161,7 +161,7 @@ impl<F: JoltField> PairedEq<F> {
         }
     }
 
-    fn bind(&mut self, r: F) {
+    pub(crate) fn bind(&mut self, r: F) {
         match self {
             Self::Split { lo1, hi1, lo2, hi2 } => {
                 let half = lo1.len() / 2;
@@ -191,6 +191,13 @@ impl<F: JoltField> PairedEq<F> {
                 }
                 table.truncate(half);
             }
+        }
+    }
+    #[cfg(feature = "field-inline")]
+    pub(crate) fn final_value(&self) -> Option<F> {
+        match self {
+            Self::Dense(table) if table.len() == 1 => table.first().copied(),
+            _ => None,
         }
     }
 }

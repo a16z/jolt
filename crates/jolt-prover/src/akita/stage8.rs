@@ -1,7 +1,7 @@
 //! Akita's final opening combines auxiliary groups and the trace in canonical
 //! order `[UntrustedAdvice?, TrustedAdvice?,
-//! FieldInc (field-inline builds), BytecodeChunk(0..C),
-//! ProgramImageInit, OneHotTrace]`.
+//! FieldInc (field-inline) OR BytecodeChunk(0..C), ProgramImageInit (committed),
+//! OneHotTrace]`. Field-inline and committed-program suffixes are exclusive.
 
 use std::collections::BTreeMap;
 
@@ -108,7 +108,8 @@ where
         .transpose()?;
 
     // Canonical public batch order: advice, (field-inline) the field increment polynomial,
-    // then the direct committed-program objects, then OneHotTrace.
+    // or the direct committed-program objects, then OneHotTrace. The suffixes
+    // are exclusive: field-inline rejects committed-program preprocessing.
     let mut auxiliary_groups = Vec::with_capacity(
         2 + usize::from(cfg!(feature = "field-inline")) + program.map_or(0, |p| p.objects.len()),
     );

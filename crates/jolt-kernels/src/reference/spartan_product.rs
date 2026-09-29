@@ -22,8 +22,6 @@ use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
 use std::collections::BTreeMap;
 
-#[cfg(all(feature = "allocative", feature = "field-inline"))]
-use allocative::{Allocative, Key, Visitor};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_BASE_LANES;
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
@@ -38,7 +36,6 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
     write_lookup_output_to_rd_product,
 };
-#[cfg(feature = "field-inline")]
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
 use jolt_field::JoltField;
@@ -46,28 +43,17 @@ use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
-#[cfg(feature = "field-inline")]
-use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
-#[cfg(feature = "field-inline")]
-use jolt_verifier::stages::relations::{
-    ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputClaims, SumcheckOutputPoints,
-};
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
-#[cfg(feature = "field-inline")]
-use jolt_verifier::VerifierError;
 use jolt_witness::JoltWitnessOracle;
 #[cfg(feature = "field-inline")]
 use jolt_witness::WitnessError;
 
 use super::views::{dense_view, eq_table};
 use crate::uniskip::UniskipKernel;
-#[cfg(not(feature = "field-inline"))]
 use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
-#[cfg(feature = "field-inline")]
-use crate::SumcheckKernelError;
 use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
 impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
@@ -278,363 +264,67 @@ impl<F: JoltField> SpartanProductKernel<F> {
             uniskip_challenge,
         )?;
 
-        // The composed member: the rv64 symbolic expression cannot name the
-        // field-inline lane factors (separate id family), so the kernel with
-        // field-inline enabled materializes the two composed weighted factor forms
-        // directly (the weights are scalars, so both forms are plain multilinears).
-        #[cfg(feature = "field-inline")]
-        {
-            let mut left_table = vec![F::zero(); cycles];
-            let mut right_table = vec![F::zero(); cycles];
-            for (j, (left_slot, right_slot)) in left_table
-                .iter_mut()
-                .zip(right_table.iter_mut())
-                .enumerate()
-            {
-                let (left, right) = self.composed_lane_factors(&weights, j)?;
-                *left_slot = left;
-                *right_slot = right;
-            }
-            let tau_kernel_table = self
-                .eq_cycle
-                .iter()
-                .map(|&eq| eq * scale)
-                .collect::<Vec<F>>();
-            let opening_tables = BTreeMap::from([
-                (
-                    left_instruction_input_product(),
-                    Polynomial::new(self.left_instruction_input),
-                ),
-                (lookup_output_product(), Polynomial::new(self.lookup_output)),
-                (jump_flag_product(), Polynomial::new(self.jump_flag)),
-                (
-                    right_instruction_input_product(),
-                    Polynomial::new(self.right_instruction_input),
-                ),
-                (branch_flag_product(), Polynomial::new(self.branch_flag)),
-                (next_is_noop_product(), Polynomial::new(self.next_is_noop)),
-                (
-                    write_lookup_output_to_rd_product(),
-                    Polynomial::new(self.write_lookup_output_to_rd),
-                ),
-                (
-                    virtual_instruction_product(),
-                    Polynomial::new(self.virtual_instruction),
-                ),
-            ]);
-            Ok(Box::new(ComposedProductRemainderKernel {
-                relation: inputs.relation.clone(),
-                tau_kernel: Polynomial::new(tau_kernel_table),
-                left: Polynomial::new(left_table),
-                right: Polynomial::new(right_table),
-                opening_tables,
-                field_inline_tables: [
-                    Polynomial::new(self.field_rs1_value),
-                    Polynomial::new(self.field_rs2_value),
-                    Polynomial::new(self.field_rd_value),
-                ],
-                rounds_bound: 0,
-            }))
-        }
-
-        #[cfg(not(feature = "field-inline"))]
-        {
-            let mut derived_tables = BTreeMap::new();
-            let _ = derived_tables.insert(
-                JoltDerivedId::from(SpartanProductVirtualizationPublic::TauKernel),
-                Polynomial::new(
-                    self.eq_cycle
-                        .iter()
-                        .map(|&eq| eq * scale)
-                        .collect::<Vec<F>>(),
-                ),
-            );
-            for (index, &weight) in weights.iter().enumerate() {
-                let _ = derived_tables.insert(
-                    JoltDerivedId::from(SpartanProductVirtualizationPublic::LagrangeWeight(index)),
-                    Polynomial::new(vec![weight; cycles]),
-                );
-            }
-
-            let opening_tables = BTreeMap::from([
-                (
-                    left_instruction_input_product(),
-                    Polynomial::new(self.left_instruction_input),
-                ),
-                (lookup_output_product(), Polynomial::new(self.lookup_output)),
-                (jump_flag_product(), Polynomial::new(self.jump_flag)),
-                (
-                    right_instruction_input_product(),
-                    Polynomial::new(self.right_instruction_input),
-                ),
-                (branch_flag_product(), Polynomial::new(self.branch_flag)),
-                (next_is_noop_product(), Polynomial::new(self.next_is_noop)),
-                (
-                    write_lookup_output_to_rd_product(),
-                    Polynomial::new(self.write_lookup_output_to_rd),
-                ),
-                (
-                    virtual_instruction_product(),
-                    Polynomial::new(self.virtual_instruction),
-                ),
-            ]);
-
-            Ok(Box::new(NaiveSumcheckProver::new(
-                inputs,
-                opening_tables,
-                derived_tables,
-                BindingOrder::LowToHigh,
-            )?))
-        }
-    }
-}
-
-/// The composed (field-inline) stage-2 product-remainder member.
-///
-/// Proves `TauKernel · LEFT · RIGHT` over the cycle domain with the two weighted factor
-/// forms spanning the composed 5-lane selection (3 ordinary + 2 field-inline lanes).
-/// The rv64 symbolic expression cannot name the field-inline lane factors (a separate
-/// id family, per the protocol ruling), so this kernel materializes `LEFT`/`RIGHT` as
-/// dense tables — exact, because the Lagrange weights are scalars, so both forms are
-/// plain multilinears and their bound values equal the verifier's weight-folded
-/// openings (tied down per proof by [`SumcheckKernel::validate_derived_tables`] and the
-/// driver's composed expected-output fold).
-///
-/// Column tables bind alongside the summand for extraction into the
-/// composed typed output claims.
-#[cfg(feature = "field-inline")]
-struct ComposedProductRemainderKernel<F: JoltField> {
-    relation: ProductRemainder<F>,
-    tau_kernel: Polynomial<F>,
-    left: Polynomial<F>,
-    right: Polynomial<F>,
-    opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
-    /// The field-inline factor tables, in `selected_product_remainder_output_openings`
-    /// order: `FieldRs1Value`, `FieldRs2Value`, `FieldRdValue`.
-    field_inline_tables: [Polynomial<F>; 3],
-    rounds_bound: usize,
-}
-
-// Size arithmetic rather than a derive, like the sibling kernels.
-#[cfg(all(feature = "allocative", feature = "field-inline"))]
-impl<F: JoltField> Allocative for ComposedProductRemainderKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            Key::new("tau_kernel"),
-            self.tau_kernel.len() * size_of::<F>(),
-        );
-        visitor.visit_simple(Key::new("left"), self.left.len() * size_of::<F>());
-        visitor.visit_simple(Key::new("right"), self.right.len() * size_of::<F>());
-        visitor.visit_simple(
-            Key::new("opening_tables"),
-            self.opening_tables
-                .values()
-                .map(|table| table.len() * size_of::<F>())
-                .sum::<usize>(),
-        );
-        visitor.visit_simple(
-            Key::new("field_inline_tables"),
-            self.field_inline_tables
-                .iter()
-                .map(|table| table.len() * size_of::<F>())
-                .sum::<usize>(),
-        );
-        visitor.exit();
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> ComposedProductRemainderKernel<F> {
-    fn remaining_rounds(&self) -> usize {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-        self.relation.rounds() - self.rounds_bound
-    }
-
-    fn bind_tables(&mut self, challenge: F) {
-        self.tau_kernel
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.left
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        self.right
-            .bind_with_order(challenge, BindingOrder::LowToHigh);
-        for table in self.opening_tables.values_mut() {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
-        for table in &mut self.field_inline_tables {
-            table.bind_with_order(challenge, BindingOrder::LowToHigh);
-        }
-        self.rounds_bound += 1;
-    }
-
-    fn require_fully_bound(&self) -> Result<(), SumcheckKernelError<F>> {
-        match self.remaining_rounds() {
-            0 => Ok(()),
-            remaining => Err(SumcheckKernelError::NotFullyBound { remaining }),
-        }
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> ProveRounds<F> for ComposedProductRemainderKernel<F> {
-    fn num_rounds(&self) -> usize {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-        self.relation.rounds()
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<F>,
-        round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
-
-        if let Some(challenge) = bind {
-            self.bind_tables(challenge);
-        }
-        let half = (1usize << self.remaining_rounds()) / 2;
-        let degree = self.relation.degree();
-        let order = BindingOrder::LowToHigh;
-        let mut evals = Vec::with_capacity(degree + 1);
-        for sample in 0..=degree {
-            let point = F::from_u64(sample as u64);
-            let sum = (0..half)
-                .map(|y| {
-                    self.tau_kernel
-                        .sumcheck_round_eval_with_order(y, point, order)
-                        * self.left.sumcheck_round_eval_with_order(y, point, order)
-                        * self.right.sumcheck_round_eval_with_order(y, point, order)
-                })
-                .sum::<F>();
-            evals.push(sum);
-        }
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
-    }
-
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        self.bind_tables(bind);
-        Ok(())
-    }
-}
-
-#[cfg(feature = "field-inline")]
-impl<F: JoltField> SumcheckKernel<F> for ComposedProductRemainderKernel<F> {
-    type Relation = ProductRemainder<F>;
-
-    fn output_claims(
-        &mut self,
-        inputs: &SumcheckInputClaims<F, ProductRemainder<F>>,
-    ) -> Result<SumcheckOutputClaims<F, ProductRemainder<F>>, SumcheckKernelError<F>> {
-        use jolt_claims::{InputClaims as _, OutputClaims as _};
-
-        self.require_fully_bound()?;
-        let field_ids = selected_product_remainder_output_openings();
-        SumcheckOutputClaims::<F, ProductRemainder<F>>::from_opening_values(|id| {
-            match id {
-                ComposedOpeningId::Jolt(id) => {
-                    self.opening_tables.get(id).map(|table| table.evals()[0])
-                }
-                ComposedOpeningId::FieldInline(id) => field_ids
+        let mut derived_tables = BTreeMap::new();
+        let _ = derived_tables.insert(
+            JoltDerivedId::from(SpartanProductVirtualizationPublic::TauKernel),
+            Polynomial::new(
+                self.eq_cycle
                     .iter()
-                    .position(|candidate| candidate == id)
-                    .map(|position| self.field_inline_tables[position].evals()[0]),
-            }
-            .or_else(|| inputs.resolve_input(id))
-        })
-        .map_err(SumcheckKernelError::from)
-    }
+                    .map(|&eq| eq * scale)
+                    .collect::<Vec<F>>(),
+            ),
+        );
+        for (index, &weight) in weights.iter().enumerate() {
+            let _ = derived_tables.insert(
+                JoltDerivedId::from(SpartanProductVirtualizationPublic::LagrangeWeight(index)),
+                Polynomial::new(vec![weight; cycles]),
+            );
+        }
 
-    /// Ties the materialized tables to the verifier's scalar path: the bound
-    /// `TauKernel` must equal `derive_output_term(TauKernel)`, and the bound
-    /// `LEFT`/`RIGHT` factor forms must equal the verifier's Lagrange-weight scalars
-    /// folded over the bound lane columns — ordinary lanes plus the jolt-claims
-    /// composed-lane helper's field-inline contributions, the same fold the composed
-    /// expected-output check performs.
-    fn validate_derived_tables(
-        &self,
-        relation: &ProductRemainder<F>,
-        input_points: &SumcheckInputPoints<F, ProductRemainder<F>>,
-        output_points: &SumcheckOutputPoints<F, ProductRemainder<F>>,
-        challenges: &ConcreteSumcheckChallenges<F, ProductRemainder<F>>,
-    ) -> Result<(), SumcheckKernelError<F>> {
-        use jolt_verifier::stages::relations::ConcreteSumcheck as _;
+        let opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>> = BTreeMap::from([
+            (
+                left_instruction_input_product(),
+                Polynomial::new(self.left_instruction_input),
+            ),
+            (lookup_output_product(), Polynomial::new(self.lookup_output)),
+            (jump_flag_product(), Polynomial::new(self.jump_flag)),
+            (
+                right_instruction_input_product(),
+                Polynomial::new(self.right_instruction_input),
+            ),
+            (branch_flag_product(), Polynomial::new(self.branch_flag)),
+            (next_is_noop_product(), Polynomial::new(self.next_is_noop)),
+            (
+                write_lookup_output_to_rd_product(),
+                Polynomial::new(self.write_lookup_output_to_rd),
+            ),
+            (
+                virtual_instruction_product(),
+                Polynomial::new(self.virtual_instruction),
+            ),
+        ]);
 
-        self.require_fully_bound()?;
-        let resolve = |public: SpartanProductVirtualizationPublic| {
-            relation.derive_output_term(
-                &JoltDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
+        #[cfg(feature = "field-inline")]
+        let opening_tables = opening_tables
+            .into_iter()
+            .map(|(id, table)| (ComposedOpeningId::from(id), table))
+            .chain(
+                selected_product_remainder_output_openings()
+                    .into_iter()
+                    .zip([
+                        self.field_rs1_value,
+                        self.field_rs2_value,
+                        self.field_rd_value,
+                    ])
+                    .map(|(id, table)| (ComposedOpeningId::from(id), Polynomial::new(table))),
             )
-        };
-        let expected_tau_kernel = resolve(SpartanProductVirtualizationPublic::TauKernel)?;
-        let got_tau_kernel = self.tau_kernel.evals()[0];
-        if got_tau_kernel != expected_tau_kernel {
-            return Err(SumcheckKernelError::DerivedTableDrift {
-                id: JoltDerivedId::from(SpartanProductVirtualizationPublic::TauKernel),
-                expected: expected_tau_kernel,
-                got: got_tau_kernel,
-            });
-        }
+            .collect();
 
-        let weights = (0..SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE)
-            .map(|index| resolve(SpartanProductVirtualizationPublic::LagrangeWeight(index)))
-            .collect::<Result<Vec<F>, _>>()?;
-        let bound = |id: JoltOpeningId| -> Result<F, SumcheckKernelError<F>> {
-            self.opening_tables
-                .get(&id)
-                .map(|table| table.evals()[0])
-                .ok_or(SumcheckKernelError::InvariantViolation {
-                    reason: "composed product kernel is missing a lane opening table",
-                })
-        };
-        let [rs1_value, rs2_value, rd_value] = &self.field_inline_tables;
-        let (field_left, field_right) = composed_remainder_factor_contributions(
-            &weights,
-            SPARTAN_PRODUCT_BASE_LANES,
-            &FieldProductLaneFactors {
-                rs1_value: rs1_value.evals()[0],
-                rs2_value: rs2_value.evals()[0],
-                rd_value: rd_value.evals()[0],
-            },
-        )
-        .ok_or(SumcheckKernelError::InvariantViolation {
-            reason: "composed product weights do not cover the field-inline lanes",
-        })?;
-        let expected_left = weights[0] * bound(left_instruction_input_product())?
-            + weights[1] * bound(lookup_output_product())?
-            + weights[2] * bound(jump_flag_product())?
-            + field_left;
-        let expected_right = weights[0] * bound(right_instruction_input_product())?
-            + weights[1] * bound(branch_flag_product())?
-            + weights[2] * (F::one() - bound(next_is_noop_product())?)
-            + field_right;
-        for (label, expected, got) in [
-            ("LEFT", expected_left, self.left.evals()[0]),
-            ("RIGHT", expected_right, self.right.evals()[0]),
-        ] {
-            if got != expected {
-                return Err(SumcheckKernelError::Verifier(
-                    VerifierError::StageClaimSumcheckFailed {
-                        stage: "SpartanProductVirtualization".to_string(),
-                        reason: format!(
-                            "composed {label} factor form bound to {got:?}, but the \
-                             verifier's weight fold gives {expected:?}"
-                        ),
-                    },
-                ));
-            }
-        }
-        Ok(())
+        Ok(Box::new(NaiveSumcheckProver::new(
+            inputs,
+            opening_tables,
+            derived_tables,
+            BindingOrder::LowToHigh,
+        )?))
     }
 }

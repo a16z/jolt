@@ -33,6 +33,8 @@
 //! (`reference::opening`); the in-module tests pin dense equality against
 //! the reference slot on a real synthetic trace.
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldIncrementColumn;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -499,15 +501,17 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
 /// field-inline prover's stage-8 `FieldRdInc` entry opens through this (its
 /// only production caller); the base increment columns ride the shared
 /// [`TraceOpeningPoly`].
+#[cfg(feature = "field-inline")]
 pub struct DenseTraceColumnPoly<F: JoltField> {
-    values: Vec<F>,
+    values: FieldIncrementColumn<F>,
     placement: TracePlacement,
 }
 
+#[cfg(feature = "field-inline")]
 impl<F: JoltField> DenseTraceColumnPoly<F> {
     /// `None` when the column carries more cycles than the grid's trace
     /// dimension.
-    pub fn new(values: Vec<F>, grid: CommitmentGrid) -> Option<Self> {
+    pub fn new(values: FieldIncrementColumn<F>, grid: CommitmentGrid) -> Option<Self> {
         (values.len() <= 1usize << grid.log_t).then(|| Self {
             values,
             placement: TracePlacement::new(grid),
@@ -517,13 +521,12 @@ impl<F: JoltField> DenseTraceColumnPoly<F> {
     #[inline]
     fn entries(&self) -> impl Iterator<Item = (usize, F)> + '_ {
         self.values
-            .iter()
-            .enumerate()
-            .filter(|(_, value)| !value.is_zero())
-            .map(|(cycle, value)| (self.placement.index(cycle, 0), *value))
+            .nonzero_entries()
+            .map(|(cycle, value)| (self.placement.index(cycle, 0), value))
     }
 }
 
+#[cfg(feature = "field-inline")]
 impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
     fn num_vars(&self) -> usize {
         self.placement.total_vars
@@ -535,7 +538,7 @@ impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
         scatter_sum(self.values.len(), |range| {
             let mut acc = F::zero();
             for cycle in range {
-                let value = self.values[cycle];
+                let value = self.values.value(cycle);
                 if !value.is_zero() {
                     acc += value * eq.evaluate_index(self.placement.index(cycle, 0));
                 }
@@ -558,7 +561,7 @@ impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
         let mask = num_cols - 1;
         scatter_fold(self.values.len(), num_cols, |range, acc| {
             for cycle in range {
-                let value = self.values[cycle];
+                let value = self.values.value(cycle);
                 if !value.is_zero() {
                     let index = self.placement.index(cycle, 0);
                     acc[index & mask] += left[index >> sigma] * value;

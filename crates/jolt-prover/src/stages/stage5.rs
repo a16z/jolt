@@ -142,6 +142,7 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use crate::stages::field_inline_fixtures::proving::FixtureProver;
     use jolt_claims::protocols::field_inline::relations::registers::FieldRegistersValEvaluationInputClaims;
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId, FieldInlineVirtualPolynomial,
@@ -163,10 +164,6 @@ mod field_inline_round_trip {
         field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
         test_prover_config, test_public_io, twins, LOG_T,
     };
-    use crate::stages::stage1::prove_stage1;
-    use crate::stages::stage2::prove_stage2;
-    use crate::stages::stage3::prove_stage3;
-    use crate::stages::stage4::prove_stage4;
 
     #[test]
     fn field_arithmetic_stage5_round_trips_the_composed_verifier() {
@@ -180,50 +177,18 @@ mod field_inline_round_trip {
         let preprocessing = field_arithmetic_preprocessing();
 
         let mut prover_transcript = Blake2bTranscript::new(b"stage5-field-inline");
-        let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            LOG_T,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &config,
-            &public_io,
-            &stage1.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &config,
-            &stage1.clear_output,
-            &stage2.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
-        let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-            &backend,
-            &mut session,
-            &mode,
-            &checked,
-            &config,
-            &preprocessing,
-            &stage2.clear_output,
-            &stage3.clear_output,
-            &witness,
-            &mut prover_transcript,
-        )
-        .unwrap();
+        let ((stage1, stage2, stage3), stage4) = FixtureProver {
+            backend: &backend,
+            session: &mut session,
+            mode: &mode,
+            config: &config,
+            public_io: &public_io,
+            checked: &checked,
+            preprocessing: &preprocessing,
+            witness: &witness,
+            transcript: &mut prover_transcript,
+        }
+        .through_stage4();
         let out = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
             &backend,
             &mut session,

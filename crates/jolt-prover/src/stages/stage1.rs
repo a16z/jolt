@@ -144,17 +144,17 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use crate::stages::field_inline_fixtures::twins;
     use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
     use jolt_claims::OutputClaims;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Fr;
     use jolt_poly::Polynomial;
     use jolt_program::execution::OwnedTrace;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::stages::stage2::product_tau_low;
-    use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
@@ -197,42 +197,7 @@ mod field_inline_round_trip {
 
         // The verifier twin.
         let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
-        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
-        let uniskip_challenge = uniskip::verify_clear(
-            &out.uniskip_proof,
-            &UniskipParams::spartan_outer(),
-            Fr::from_u64(0),
-            out.claims.uniskip_output_claim,
-            &mut transcript,
-        )
-        .unwrap();
-        let sumchecks = Stage1BatchSumchecks {
-            outer_remainder: OuterRemainder::new(
-                SpartanOuterDimensions::rv64(LOG_T),
-                tau,
-                uniskip_challenge,
-            ),
-        };
-        let batch_challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
-        let input_points = sumchecks.empty_input_points();
-        sumchecks.validate_output_claims(&out.claims.outer).unwrap();
-        let input_values = Stage1BatchInputClaims {
-            outer_remainder: outer_remainder_input_values_from_uniskip_output(
-                out.claims.uniskip_output_claim,
-            ),
-        };
-        let _output_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &batch_challenges,
-                &out.claims.outer,
-                &out.sumcheck_proof,
-                &mut transcript,
-                1,
-            )
-            .unwrap();
-        sumchecks.append_output_claims(&mut transcript, &out.claims.outer);
+        twins::replay_stage1(&mut transcript, &out);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }

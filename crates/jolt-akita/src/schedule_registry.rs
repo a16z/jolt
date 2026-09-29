@@ -79,22 +79,24 @@ impl GroupedScheduleParams {
     pub fn new(
         untrusted_physical_num_vars: Option<usize>,
         trusted_physical_num_vars: Option<usize>,
+        mandatory_dense_layouts: Vec<DenseGroupLayout>,
         final_num_vars: usize,
     ) -> Self {
         Self {
             untrusted_physical_arity: untrusted_physical_num_vars,
             trusted_physical_arity: trusted_physical_num_vars,
-            mandatory_dense_layouts: Vec::new(),
+            mandatory_dense_layouts,
             final_arity: final_num_vars,
         }
     }
 
-    pub fn with_mandatory_dense_layouts(
-        mut self,
-        mandatory_dense_layouts: Vec<DenseGroupLayout>,
-    ) -> Self {
-        self.mandatory_dense_layouts = mandatory_dense_layouts;
-        self
+    pub(crate) fn full_width_arities(&self) -> impl Iterator<Item = usize> + '_ {
+        self.mandatory_dense_layouts
+            .iter()
+            .filter_map(|layout| match layout {
+                DenseGroupLayout::FullWidth { num_vars } => Some(*num_vars),
+                DenseGroupLayout::Bounded { .. } => None,
+            })
     }
 
     pub(crate) fn final_num_vars(&self) -> usize {
@@ -112,11 +114,8 @@ impl GroupedScheduleParams {
             dense_catalog,
             full_dense_catalog,
             one_hot_catalog,
-            self.untrusted_physical_arity,
-            self.trusted_physical_arity,
-            &self.mandatory_dense_layouts,
+            self,
             one_hot_k,
-            self.final_arity,
         )?;
         match one_hot_k {
             AKITA_ONE_HOT_K16 => extend_catalog::<JoltOneHotK16>(one_hot_catalog, &rows),
@@ -291,9 +290,9 @@ pub fn dense_group_profile(
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct AdvicePrecommitLayouts {
-    pub untrusted: Option<PolynomialGroupLayout>,
-    pub trusted: Option<PolynomialGroupLayout>,
+struct AdvicePrecommitLayouts {
+    untrusted: Option<PolynomialGroupLayout>,
+    trusted: Option<PolynomialGroupLayout>,
 }
 
 impl AdvicePrecommitLayouts {
@@ -333,20 +332,14 @@ pub const FIXTURE_K16_FINAL_NUM_VARS: (usize, usize) = (22, 26);
 
 /// Adapt grouped rows for optional advice followed by mandatory dense objects,
 /// all in canonical group order.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "grouped provisioning combines two dense producer catalogs with trace and object shapes"
-)]
 pub fn provision_groups_for_k(
     dense_catalog: &ValidatedScheduleCatalog,
     full_dense_catalog: &ValidatedScheduleCatalog,
     one_hot_catalog: &ValidatedScheduleCatalog,
-    untrusted_physical_vars: Option<usize>,
-    trusted_physical_vars: Option<usize>,
-    mandatory_dense_layouts: &[DenseGroupLayout],
+    params: &GroupedScheduleParams,
     one_hot_k: usize,
-    final_num_vars: usize,
 ) -> Result<RegisteredRows, AkitaError> {
+    let final_num_vars = params.final_arity;
     akita_config::validate_config_policy::<JoltDenseBounded>()?;
     dense_catalog.validate_binding(
         JoltDenseBounded::schedule_family_name(),
@@ -359,10 +352,15 @@ pub fn provision_groups_for_k(
         JoltDenseFull::ring_challenge_config,
     )?;
     let layouts = AdvicePrecommitLayouts {
-        untrusted: untrusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
-        trusted: trusted_physical_vars.map(|vars| PolynomialGroupLayout::new(vars, 1)),
+        untrusted: params
+            .untrusted_physical_arity
+            .map(|vars| PolynomialGroupLayout::new(vars, 1)),
+        trusted: params
+            .trusted_physical_arity
+            .map(|vars| PolynomialGroupLayout::new(vars, 1)),
     };
-    let mandatory = mandatory_dense_layouts
+    let mandatory = params
+        .mandatory_dense_layouts
         .iter()
         .map(|layout| layout.producer(dense_catalog, full_dense_catalog))
         .collect::<Result<Vec<_>, _>>()?;

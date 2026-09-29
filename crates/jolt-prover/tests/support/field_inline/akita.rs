@@ -2,8 +2,8 @@
 //! specialized parity and soundness suite.
 
 use common::jolt_device::JoltDevice;
+use jolt_akita::AkitaProverSetup;
 use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-use jolt_program::execution::{OwnedTrace, TraceOutput, TraceRow};
 use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
 use jolt_prover::akita::JoltAkitaBackend;
 use jolt_prover::{akita, ProverConfig};
@@ -28,7 +28,11 @@ pub struct ProveOutput {
 pub fn prove<D>(
     case: &GuestCase,
     backend: JoltAkitaBackend<AkitaField, AkitaScheme>,
-    inspect: impl FnOnce(&ProverConfig, &dyn FieldInlineWitnessOracle<AkitaField>) -> D,
+    inspect: impl FnOnce(
+        &ProverConfig,
+        &dyn FieldInlineWitnessOracle<AkitaField>,
+        &AkitaProverSetup,
+    ) -> D,
 ) -> (ProveOutput, D) {
     let PreparedGuest {
         preprocessing: program_preprocessing,
@@ -57,27 +61,21 @@ pub fn prove<D>(
     )
     .expect("field-inline packed preprocessing");
 
-    let mut rows = trace_output.trace.into_rows();
-    rows.resize(config.trace_length, TraceRow::default());
-    let padded_output = TraceOutput::new(
-        OwnedTrace::new(rows),
-        trace_output.device,
-        trace_output.final_memory,
-        trace_output.advice_tape,
-    );
+    let witness_output = trace_output;
     let program_preprocessing = prover_preprocessing
         .program_arc()
         .expect("full program preprocessing");
     let witness = TraceBackend::new(
         JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config)
             .include_untrusted_advice(untrusted_advice),
-        JoltVmWitnessInputs::new(&program, &program_preprocessing, padded_output),
+        JoltVmWitnessInputs::new(&program, &program_preprocessing, witness_output),
     )
     .with_field_inline()
     .expect("field-inline witness view");
     let diagnostics = inspect(
         &config,
         JoltWitnessOracle::<AkitaField>::field_inline(&witness).expect("field-inline oracle"),
+        &prover_preprocessing.pcs_setup,
     );
 
     let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(

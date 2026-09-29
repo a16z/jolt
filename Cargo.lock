@@ -3372,8 +3372,10 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "common",
+ "jolt-field",
  "jolt-program",
  "jolt-riscv",
+ "postcard",
  "serde",
  "tracer",
  "tracing",

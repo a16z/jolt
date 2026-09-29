@@ -17,9 +17,9 @@
 //! `combine_hints`).
 
 #[cfg(feature = "field-inline")]
-use jolt_claims::protocols::field_inline::{
-    FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
-};
+use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::geometry::committed_openings::{
     final_opening_point, final_opening_polynomial_order, FinalOpeningPointInputs,
 };
@@ -28,7 +28,7 @@ use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
-use jolt_kernels::optimized::opening::DenseTraceColumnPoly;
+use jolt_kernels::{field_inline::FieldIncrementColumn, optimized::opening::DenseTraceColumnPoly};
 use std::collections::BTreeMap;
 
 use jolt_kernels::committed_program::{
@@ -83,10 +83,10 @@ pub fn prove_stage8<F, PCS, VC, T>(
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     hints: impl Into<Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>>,
-    #[cfg(feature = "field-inline")] field_inline_hints: &[(
+    #[cfg(feature = "field-inline")] field_inline_hints: Vec<(
         FieldInlineCommittedPolynomial,
         PCS::OpeningHint,
-    )],
+    )>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
@@ -286,30 +286,27 @@ where
     let (polynomials, ordered_hints) = {
         let mut polynomials = polynomials;
         let mut ordered_hints = ordered_hints;
-        let position = order
+        let position = entries
             .iter()
-            .position(|polynomial| *polynomial == JoltCommittedPolynomial::RdInc)
-            .and_then(|position| position.checked_add(1))
+            .position(|entry| entry.id == field_rd_inc_reduced().into())
             .ok_or(ProverError::InvariantViolation {
-                reason: "the final opening order has no RdInc to anchor the FieldRdInc splice",
+                reason: "the final opening batch has no FieldRdInc entry",
             })?;
         let oracle = witness.field_inline().ok_or(ProverError::Unsupported {
             reason:
                 "the stage-8 FieldRdInc opening requires a witness plane serving the field-inline \
                          oracle",
         })?;
-        let table = oracle.oracle_table(FieldInlinePolynomialId::Committed(
-            FieldInlineCommittedPolynomial::FieldRdInc,
-        ))?;
+        let table = FieldIncrementColumn::resolve(session, oracle, 1usize << grid.log_t)?;
         let column =
             DenseTraceColumnPoly::new(table, grid).ok_or(ProverError::InvariantViolation {
                 reason: "FieldRdInc table exceeds the commitment grid",
             })?;
         polynomials.insert(position, Box::new(column) as Box<dyn MultilinearPoly<F>>);
         let hint = field_inline_hints
-            .iter()
+            .into_iter()
             .find(|(id, _)| *id == FieldInlineCommittedPolynomial::FieldRdInc)
-            .map(|(_, hint)| hint.clone())
+            .map(|(_, hint)| hint)
             .ok_or(ProverError::InvariantViolation {
                 reason: "missing stage-0 opening hint for FieldRdInc",
             })?;

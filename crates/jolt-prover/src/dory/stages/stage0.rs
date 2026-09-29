@@ -58,7 +58,7 @@ where
     pub untrusted_advice_commitment: Option<PCS::Output>,
     pub hints: Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>,
     /// The field-inline opening hints, id-disjoint from the jolt hints; the
-    /// field-inline joint-opening wiring consumes them in a later unit.
+    /// stage-8 joint opening splices them after `RdInc@IncClaimReduction`.
     #[cfg(feature = "field-inline")]
     pub field_inline_hints: Vec<(FieldInlineCommittedPolynomial, PCS::OpeningHint)>,
 }
@@ -446,180 +446,16 @@ fn assemble_commitments<PCS: CommitmentScheme>(
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_tests {
-    use std::sync::Arc;
-
-    use common::constants::RAM_START_ADDRESS;
+    use super::*;
+    use crate::stages::field_inline_fixtures::{
+        addi_only_backend, field_arithmetic_backend, LOG_T,
+    };
     use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
-    use jolt_claims::protocols::jolt::JoltOneHotConfig;
-    use jolt_dory::DoryCommitment;
-    use jolt_dory::DoryScheme;
+    use jolt_dory::{DoryCommitment, DoryScheme};
     use jolt_field::{Fr, Ring};
     use jolt_kernels::finish_streamed;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
-    use jolt_program::execution::{JoltProgram, OwnedTrace, TraceOutput, TraceRow};
-    use jolt_program::field_inline::{
-        FieldEncodedValue, FieldInlineTraceData, FieldRegisterRead, FieldRegisterWrite,
-    };
-    use jolt_program::preprocess::{
-        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
-    };
-    use jolt_riscv::{
-        FieldInlineOp, JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow,
-        NormalizedOperands, RV64IMAC_JOLT_FIELD_INLINE,
-    };
     use jolt_transcript::LegacyBlake2bTranscript;
-    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
-
-    use super::*;
-
-    const ENTRY: u64 = RAM_START_ADDRESS;
-    const LOG_T: usize = 2;
-
-    fn instruction(
-        instruction_kind: JoltInstructionKind,
-        offset: usize,
-        rd: Option<u8>,
-        rs1: Option<u8>,
-        rs2: Option<u8>,
-        imm: i128,
-    ) -> JoltInstructionRow {
-        JoltInstructionRow {
-            instruction_kind,
-            address: ENTRY as usize + offset * 4,
-            operands: NormalizedOperands { rd, rs1, rs2, imm },
-            virtual_sequence_remaining: None,
-            is_first_in_sequence: false,
-            is_compressed: false,
-        }
-    }
-
-    fn field_inline_backend(
-        bytecode: Vec<JoltInstructionRow>,
-        rows: Vec<TraceRow>,
-    ) -> TraceBackend<OwnedTrace> {
-        let profile: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
-        let program = Arc::new(JoltProgram::from_parts_with_profile(
-            Vec::new(),
-            bytecode.clone(),
-            Vec::new(),
-            ENTRY + 4,
-            ENTRY,
-            profile,
-        ));
-        let preprocessing = Arc::new(JoltProgramPreprocessing {
-            bytecode: BytecodePreprocessing::preprocess(bytecode, ENTRY, profile).unwrap(),
-            ram: RAMPreprocessing::default(),
-            memory_layout: Default::default(),
-            max_padded_trace_length: 1 << LOG_T,
-        });
-        TraceBackend::new(
-            JoltVmWitnessConfig::new(
-                LOG_T,
-                64,
-                JoltOneHotConfig {
-                    log_k_chunk: 4,
-                    lookups_ra_virtual_log_k_chunk: 16,
-                },
-            ),
-            JoltVmWitnessInputs::new(
-                &program,
-                &preprocessing,
-                TraceOutput::new(OwnedTrace::new(rows), Default::default(), None, None),
-            ),
-        )
-    }
-
-    fn enc(value: u64) -> FieldEncodedValue {
-        FieldEncodedValue::from_u64(value)
-    }
-
-    fn field_row(instruction: JoltInstructionRow, data: FieldInlineTraceData) -> TraceRow {
-        let mut row = TraceRow::from_instruction(instruction).unwrap();
-        row.field_inline = Some(data.into());
-        row
-    }
-
-    /// Two field loads and a multiply: `FieldRdInc` = [13, 17, 221, 0].
-    fn arithmetic_backend() -> TraceBackend<OwnedTrace> {
-        let load_a = instruction(
-            JoltInstructionKind::FIELD_LOAD_IMM,
-            0,
-            Some(1),
-            None,
-            None,
-            13,
-        );
-        let load_b = instruction(
-            JoltInstructionKind::FIELD_LOAD_IMM,
-            1,
-            Some(2),
-            None,
-            None,
-            17,
-        );
-        let mul = instruction(
-            JoltInstructionKind::FIELD_MUL,
-            2,
-            Some(3),
-            Some(1),
-            Some(2),
-            0,
-        );
-        let rows = vec![
-            field_row(
-                load_a,
-                FieldInlineTraceData {
-                    op: Some(FieldInlineOp::LoadImm),
-                    rd: Some(FieldRegisterWrite {
-                        register: 1,
-                        pre_value: enc(0),
-                        post_value: enc(13),
-                    }),
-                    ..FieldInlineTraceData::default()
-                },
-            ),
-            field_row(
-                load_b,
-                FieldInlineTraceData {
-                    op: Some(FieldInlineOp::LoadImm),
-                    rd: Some(FieldRegisterWrite {
-                        register: 2,
-                        pre_value: enc(0),
-                        post_value: enc(17),
-                    }),
-                    ..FieldInlineTraceData::default()
-                },
-            ),
-            field_row(
-                mul,
-                FieldInlineTraceData {
-                    op: Some(FieldInlineOp::Mul),
-                    rs1: Some(FieldRegisterRead {
-                        register: 1,
-                        value: enc(13),
-                    }),
-                    rs2: Some(FieldRegisterRead {
-                        register: 2,
-                        value: enc(17),
-                    }),
-                    rd: Some(FieldRegisterWrite {
-                        register: 3,
-                        pre_value: enc(0),
-                        post_value: enc(221),
-                    }),
-                    ..FieldInlineTraceData::default()
-                },
-            ),
-        ];
-        field_inline_backend(vec![load_a, load_b, mul], rows)
-    }
-
-    /// A field-inline guest that executes zero field-inline instructions.
-    fn no_field_instruction_backend() -> TraceBackend<OwnedTrace> {
-        let addi = instruction(JoltInstructionKind::ADDI, 0, Some(1), Some(2), None, 3);
-        let rows = vec![TraceRow::from_instruction(addi).unwrap()];
-        field_inline_backend(vec![addi], rows)
-    }
 
     fn grid() -> CommitmentGrid {
         CommitmentGrid {
@@ -650,7 +486,7 @@ mod field_inline_tests {
     /// (the field-inline commitment is Fiat-Shamir-bound).
     #[test]
     fn stage0_attaches_and_absorbs_the_field_inline_payload() {
-        let witness = arithmetic_backend().with_field_inline().unwrap();
+        let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let setup = DoryScheme::setup_prover(grid().total_vars);
@@ -698,7 +534,7 @@ mod field_inline_tests {
             .unwrap();
         assert_eq!(
             column,
-            [13u64, 17, 221, 0].map(Fr::from_u64).to_vec(),
+            [13u64, 17, 221, 0, 0, 0, 0, 0].map(Fr::from_u64).to_vec(),
             "fixture column"
         );
         assert_eq!(
@@ -742,7 +578,7 @@ mod field_inline_tests {
     /// still serves the field-inline committed order and commits the all-zero column.
     #[test]
     fn field_inline_guest_without_field_instructions_commits_the_zero_column() {
-        let witness = no_field_instruction_backend().with_field_inline().unwrap();
+        let witness = addi_only_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let setup = DoryScheme::setup_prover(grid().total_vars);
@@ -777,7 +613,7 @@ mod field_inline_tests {
     /// a field-inline proof.
     #[test]
     fn stage0_fails_closed_without_the_field_inline_oracle() {
-        let witness = arithmetic_backend();
+        let witness = field_arithmetic_backend();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let setup = DoryScheme::setup_prover(grid().total_vars);

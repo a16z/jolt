@@ -400,7 +400,7 @@ mod matrix {
             }
             #[cfg(feature = "akita")]
             {
-                let (output, ()) = akita::prove(case, JoltAkitaBackend::optimized(), |_, _| ());
+                let (output, ()) = akita::prove(case, JoltAkitaBackend::optimized(), |_, _, _| ());
                 akita::verify_full(
                     &output.verifier_preprocessing,
                     &output.public_io,

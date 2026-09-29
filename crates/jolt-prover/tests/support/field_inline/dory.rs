@@ -4,7 +4,6 @@ use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
-use jolt_program::execution::{OwnedTrace, TraceOutput, TraceRow};
 use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
 use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_verifier::proof::JoltProof;
@@ -41,21 +40,14 @@ pub fn prove(
         .program_arc()
         .expect("full program preprocessing");
     let public_io = trace.device.clone();
-    let mut rows = trace.trace.into_rows();
-    rows.resize(config.trace_length, TraceRow::default());
-    let padded_output = TraceOutput::new(
-        OwnedTrace::new(rows),
-        trace.device,
-        trace.final_memory,
-        trace.advice_tape,
-    );
+    let witness_output = trace;
     let witness = TraceBackend::new(
         JoltVmWitnessConfig::new(
             config.trace_length.ilog2() as usize,
             config.ram_K,
             config.one_hot_config,
         ),
-        JoltVmWitnessInputs::new(&program, &program_preprocessing, padded_output),
+        JoltVmWitnessInputs::new(&program, &program_preprocessing, witness_output),
     )
     .with_field_inline()
     .expect("field-inline witness view");

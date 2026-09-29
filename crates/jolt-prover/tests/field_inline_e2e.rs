@@ -3,7 +3,8 @@
 //! Acceptance across protocol modes lives in `e2e_matrix.rs`. These tests use
 //! the same guest cases and preparation, and cover distinct field-inline wire
 //! properties: reference/optimized proof equality in clear mode, field commitment
-//! presence, and rejection of corrupted field openings, commitments, and sumchecks.
+//! presence and binding, and rejection of corrupted BlindFold payloads. Claim and
+//! round-polynomial mutations live in the verifier fixture matrix.
 
 #[cfg(all(
     feature = "prover-fixtures",
@@ -25,13 +26,11 @@ mod support;
 )]
 mod clear {
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
-    use jolt_poly::CompressedPoly;
+    use jolt_field::Fr;
     use jolt_prover::JoltBackend;
-    use jolt_sumcheck::{ClearProof, SumcheckProof};
     use jolt_verifier::proof::JoltProofClaims;
 
-    use crate::support::field_inline::dory::{self, Proof};
+    use crate::support::field_inline::dory;
     use crate::support::field_inline::{field_ops, muldiv};
 
     type BackendCase = (&'static str, fn() -> JoltBackend<Fr, DoryScheme>);
@@ -88,83 +87,22 @@ mod clear {
         );
     }
 
-    /// Every field-inline-specific single-field tamper must reject: one proof, four
-    /// mutations on fresh clones. The optimized backend proves here — its
-    /// wire bytes equal the reference's (the parity tests pin both), so one
-    /// backend's tamper matrix covers both.
+    /// The verifier fixture matrix covers claim and round-polynomial mutations;
+    /// this checks that the prover's emitted commitment is transcript-bound.
     #[test]
-    fn field_inline_tampered_proofs_are_rejected() {
-        let (preprocessing, public_io, proof) = dory::prove(&field_ops(), JoltBackend::optimized());
-        dory::verify_full(&preprocessing, &public_io, &proof)
-            .expect("base proof must verify before tampering");
-        let one = Fr::from_u64(1);
-
-        type Tamper = (&'static str, Box<dyn Fn(&mut Proof)>);
-        let tampers: Vec<Tamper> = vec![
-            (
-                "stage1 field-inline rs1_value opening",
-                Box::new(move |proof| {
-                    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-                        panic!("clear proof expected");
-                    };
-                    let outer = &mut claims.stage1.outer.outer_remainder.field_inline;
-                    outer.rs1_value += one;
-                }),
-            ),
-            (
-                "FieldRdInc commitment",
-                Box::new(|proof| {
-                    let replacement = proof.commitments.ram_inc.clone();
-                    let field_inline = proof
-                        .commitments
-                        .field_inline
-                        .as_mut()
-                        .expect("field-inline proof carries the field-inline payload");
-                    assert_ne!(
-                        field_inline.field_registers.rd_inc, replacement,
-                        "replacement commitment must differ",
-                    );
-                    field_inline.field_registers.rd_inc = replacement;
-                }),
-            ),
-            (
-                "stage2 field-inline product appendage rd_value",
-                Box::new(move |proof| {
-                    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
-                        panic!("clear proof expected");
-                    };
-                    let product = &mut claims.stage2.batch_outputs.product_remainder.field_inline;
-                    product.rd_value += one;
-                }),
-            ),
-            (
-                // The composed stage-2 batch (field-inline claim reduction + product
-                // appendage) rejects a corrupted round polynomial like the
-                // base batch does; field-inline, no legacy-fixture suite covers the
-                // round polynomials, so this is the composed batch's guard.
-                "stage2 composed batch round polynomial corrupted",
-                Box::new(|proof| {
-                    let SumcheckProof::Clear(ClearProof::Compressed(batch)) =
-                        &mut proof.stages.stage2_sumcheck_proof
-                    else {
-                        panic!("clear compressed stage-2 batch expected");
-                    };
-                    let round = batch
-                        .round_polynomials
-                        .first_mut()
-                        .expect("stage-2 batch has a first round");
-                    *round = CompressedPoly::new(vec![Fr::from_u64(7)]);
-                }),
-            ),
-        ];
-        for (name, tamper) in tampers {
-            let mut tampered = proof.clone();
-            tamper(&mut tampered);
-            assert!(
-                dory::verify_full(&preprocessing, &public_io, &tampered).is_err(),
-                "tampered proof must be rejected: {name}",
-            );
-        }
+    fn field_inline_tampered_commitment_is_rejected() {
+        let (preprocessing, public_io, mut proof) =
+            dory::prove(&field_ops(), JoltBackend::optimized());
+        dory::verify_full(&preprocessing, &public_io, &proof).expect("honest proof");
+        let replacement = proof.commitments.ram_inc.clone();
+        let field_inline = proof
+            .commitments
+            .field_inline
+            .as_mut()
+            .expect("field-inline commitment");
+        assert_ne!(field_inline.field_registers.rd_inc, replacement);
+        field_inline.field_registers.rd_inc = replacement;
+        assert!(dory::verify_full(&preprocessing, &public_io, &proof).is_err());
     }
 }
 

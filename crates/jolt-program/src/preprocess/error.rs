@@ -46,10 +46,6 @@ pub enum PreprocessingError {
     },
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
-    #[error("committed bytecode supports only the base RV64IMAC Jolt profile")]
-    UnsupportedCommittedProfile,
-    #[error("program preprocessing is already committed")]
-    AlreadyCommitted,
     #[cfg(feature = "field-inline")]
     #[error("invalid field-inline instruction: {0}")]
     InvalidFieldInlineInstruction(#[from] FieldInlineInstructionError),

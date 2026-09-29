@@ -145,6 +145,13 @@ where
             reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
         });
     }
+    let assembled = assemble_one_hot_trace_rows(
+        witness,
+        &plan,
+        formula_dimensions.ra_layout,
+        log_k_chunk,
+        log_t,
+    )?;
     // Auxiliary objects commit before the trace because their frozen
     // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
@@ -159,13 +166,13 @@ where
     };
     #[cfg(feature = "field-inline")]
     let field_inc = super::field_inline::commit_field_inc::<F, PCS>(
-        PCS::transparent_setup_context(&preprocessing.pcs_setup),
+        &preprocessing.pcs_setup,
         log_t,
-        witness,
+        assembled.increments,
     )?;
 
-    // Canonical public batch order: advice, (field-inline) the field increment polynomial,
-    // then the direct committed-program objects, then OneHotTrace.
+    // Canonical batch order: advice, then field increments or direct committed-program
+    // objects (mutually exclusive), then OneHotTrace.
     let mut auxiliary_groups: Vec<(CommitmentGroupRole, &PCS::Output, &PCS::OpeningHint)> =
         untrusted_advice
             .as_ref()
@@ -204,13 +211,6 @@ where
     }
     let (commitment, hint) =
         tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
-            let packed_trace_rows = assemble_one_hot_trace_rows(
-                witness,
-                &plan,
-                formula_dimensions.ra_layout,
-                log_k_chunk,
-                log_t,
-            )?;
             let group_hints = auxiliary_groups
                 .iter()
                 .map(|(_, _, hint)| *hint)
@@ -219,7 +219,7 @@ where
                 &preprocessing.pcs_setup,
                 preprocessing.pcs_setup.default_layout_digest(),
                 plan.packing().slot_capacity(),
-                packed_trace_rows,
+                assembled.rows,
                 &group_hints,
             );
             let (commitment, hint) =

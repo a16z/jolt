@@ -46,13 +46,14 @@ pub struct FieldInlineRegisterReadWriteRow<F: JoltField> {
     pub rs1: Option<FieldInlineRegisterReadRow<F>>,
     pub rs2: Option<FieldInlineRegisterReadRow<F>>,
     pub rd: Option<FieldInlineRegisterWriteRow<F>>,
-    pub rd_increment: F,
 }
 
+/// Payload-carrying rows in increasing cycle order; inactive and padding cycles
+/// are absent. Register values have passed the witness boundary validation.
 pub trait FieldInlineRegisterReadWriteRows<F: JoltField> {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError>;
+    ) -> Result<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>, WitnessError>;
 }
 
 /// One field-inline cycle's five appended value/product columns, in
@@ -91,6 +92,9 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
     /// Materializes the oracle's dense field-element evaluations, row-major
     /// over the domain declared by [`shape`](Self::shape).
     fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError>;
+
+    /// Read one increment during a fused trace walk, including zero padding.
+    fn rd_increment_at(&self, cycle: usize) -> Result<F, WitnessError>;
 
     /// The proof-payload order of the field-inline committed polynomials.
     fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial>;
@@ -148,6 +152,19 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
 
     fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError> {
         TraceBackedFieldInlineWitness::oracle_table::<F>(self, id)
+    }
+
+    fn rd_increment_at(&self, cycle: usize) -> Result<F, WitnessError> {
+        if cycle >= self.rows {
+            return Err(WitnessError::InvalidDimensions {
+                label: FIELD_INLINE_LABEL,
+                reason: "increment cycle exceeds trace domain".to_owned(),
+            });
+        }
+        self.trace_rows.get(cycle).map_or(Ok(F::zero()), |row| {
+            FieldRdInc::<F>::extract(row, None, &WitnessEnv::new(&self.preprocessing))
+                .map(|value| value.0)
+        })
     }
 
     fn committed_order(&self) -> Vec<FieldInlineCommittedPolynomial> {
@@ -432,18 +449,17 @@ impl TraceBackedFieldInlineWitness {
 impl<F: JoltField> FieldInlineRegisterReadWriteRows<F> for TraceBackedFieldInlineWitness {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
-        let env = WitnessEnv::new(&self.preprocessing);
-        // Trace-sized: one parallel pass, padding rows default past the trace.
-        (0..self.rows)
-            .into_par_iter()
-            .map(|index| {
-                self.trace_rows.get(index).map_or_else(
-                    || Ok(FieldInlineRegisterReadWriteRow::default()),
-                    |row| field_register_row(row, &env),
-                )
+    ) -> Result<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>, WitnessError> {
+        Ok(self
+            .trace_rows
+            .par_iter()
+            .enumerate()
+            .filter_map(|(cycle, row)| {
+                row.field_inline
+                    .as_deref()
+                    .map(|data| (cycle, field_register_row(data)))
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -478,19 +494,15 @@ impl<T: TraceSource> TraceBackend<T> {
 impl<F: JoltField, T: TraceSource> FieldInlineRegisterReadWriteRows<F> for TraceBackend<T> {
     fn field_inline_register_read_write_rows(
         &self,
-    ) -> Result<Vec<FieldInlineRegisterReadWriteRow<F>>, WitnessError> {
+    ) -> Result<Vec<(usize, FieldInlineRegisterReadWriteRow<F>)>, WitnessError> {
         self.field_inline_view()?
             .field_inline_register_read_write_rows()
     }
 }
 
 fn field_register_row<F: JoltField>(
-    row: &TraceRow,
-    env: &WitnessEnv<'_>,
-) -> Result<FieldInlineRegisterReadWriteRow<F>, WitnessError> {
-    let Some(data) = row.field_inline.as_deref() else {
-        return Ok(FieldInlineRegisterReadWriteRow::default());
-    };
+    data: &FieldInlineTraceData,
+) -> FieldInlineRegisterReadWriteRow<F> {
     let rs1 = data.rs1.map(|read| FieldInlineRegisterReadRow {
         register: read.register,
         value: decode_value(read.value),
@@ -504,12 +516,7 @@ fn field_register_row<F: JoltField>(
         pre_value: decode_value(write.pre_value),
         post_value: decode_value(write.post_value),
     });
-    Ok(FieldInlineRegisterReadWriteRow {
-        rs1,
-        rs2,
-        rd,
-        rd_increment: FieldRdInc::extract(row, None, env)?.0,
-    })
+    FieldInlineRegisterReadWriteRow { rs1, rs2, rd }
 }
 
 fn validate_trace_data(
@@ -1307,10 +1314,13 @@ mod tests {
             let provider = witness(&program, &preprocessing, rows.clone(), 2)
                 .field_inline_witness()
                 .unwrap();
-            let registers: Vec<FieldInlineRegisterReadWriteRow<Fr>> =
+            let registers: Vec<(usize, FieldInlineRegisterReadWriteRow<Fr>)> =
                 provider.field_inline_register_read_write_rows().unwrap();
-            assert_eq!(registers[1].rs1.unwrap().value, fr(3));
-            assert_eq!(registers[1].rd_increment, Fr::from_u128((3u128 << 64) + 8));
+            assert_eq!(registers[1].1.rs1.unwrap().value, fr(3));
+            assert_eq!(
+                owned_view(&provider, FieldInlineCommittedPolynomial::FieldRdInc)[1],
+                Fr::from_u128((3u128 << 64) + 8)
+            );
 
             for read in [
                 None,

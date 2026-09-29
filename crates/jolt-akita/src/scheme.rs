@@ -11,7 +11,10 @@ use jolt_openings::{
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::Transcript;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    sync::Arc,
+};
 
 use crate::adapters::{
     akita_error, akita_ordered_evaluations, backend_stack, commit_failed, dense_polynomials,
@@ -21,7 +24,7 @@ use crate::adapters::{
     AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment, AkitaHintPolynomials,
     AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupFlavor,
     AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup, BackendVerifierCache,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
+    FullWidthBackendSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
@@ -173,43 +176,6 @@ impl AkitaScheme {
         )
     }
 
-    /// Contextual owned one-hot final commit with auxiliary commitment groups.
-    /// The witness buffers move into the opening hint without cloning.
-    pub fn commit_one_hot_group_owned_with_groups(
-        setup: &AkitaProverSetup,
-        layout_digest: [u8; 32],
-        polynomials: Vec<OneHotPolynomial>,
-        group_hints: &[&AkitaProverHint],
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let first = polynomials
-            .first()
-            .ok_or_else(|| invalid_batch("Akita commitment group must contain a polynomial"))?;
-        let num_vars = first.num_vars();
-        Self::validate_commit_shape(setup, num_vars, polynomials.len())?;
-        let backend_polynomials = polynomials
-            .into_iter()
-            .map(|polynomial| {
-                if polynomial.num_vars() != num_vars {
-                    return Err(invalid_batch(format!(
-                        "Akita commitment group mixes {}-variable and {num_vars}-variable polynomials",
-                        polynomial.num_vars()
-                    )));
-                }
-                owned_one_hot_polynomial(polynomial, setup.one_hot_k())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let profiles = Self::group_profiles(setup, group_hints)?;
-        let (backend_commitment, backend_hint) =
-            Self::commit_one_hot_backend_with_groups(setup, &backend_polynomials, &profiles)?;
-        Self::package_commitment(
-            layout_digest,
-            num_vars,
-            backend_commitment,
-            backend_hint,
-            AkitaHintPolynomials::OneHot(backend_polynomials.into()),
-        )
-    }
-
     /// Commits the prefix-packed trace without constructing padded per-column
     /// index vectors or Akita's generic one-hot block representation.
     pub fn commit_trace_one_hot(
@@ -316,40 +282,6 @@ impl AkitaScheme {
                     polynomials,
                     stack.commitment(),
                     GroupContext::scheduler_without_precommitted_groups(),
-                ),
-            _ => unreachable!("the one-hot setup geometry was validated during setup"),
-        })
-        .map(split_commit_output)
-        .map_err(commit_failed)
-    }
-
-    fn commit_one_hot_backend_with_groups(
-        setup: &AkitaProverSetup,
-        polynomials: &[AkitaBackendOneHotPoly],
-        profiles: &PrecommittedGroupProfiles,
-    ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
-        let (backend_prover_setup, prepared_backend_setup) = setup.one_hot_backend()?;
-        let stack = backend_stack(backend_prover_setup, prepared_backend_setup)?;
-        with_backend_pool(|| match setup.one_hot_k() {
-            AKITA_ONE_HOT_K16 => setup
-                .verifier
-                .one_hot_k16_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit(
-                    backend_prover_setup,
-                    polynomials,
-                    stack.commitment(),
-                    GroupContext::scheduler_with_precommitted_groups(profiles),
-                ),
-            AKITA_ONE_HOT_K256 => setup
-                .verifier
-                .one_hot_k256_scheme()
-                .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                .commit(
-                    backend_prover_setup,
-                    polynomials,
-                    stack.commitment(),
-                    GroupContext::scheduler_with_precommitted_groups(profiles),
                 ),
             _ => unreachable!("the one-hot setup geometry was validated during setup"),
         })
@@ -620,8 +552,30 @@ impl CommitmentScheme for AkitaScheme {
         } else {
             (None, None, None)
         };
+        let mut full_width = BTreeMap::new();
+        if let Some(request) = &params.grouped_schedule {
+            let arities = request.full_width_arities().collect::<Vec<_>>();
+            if !arities.is_empty() {
+                let scheme = artifacts.full_dense_scheme().map_err(invalid_setup)?;
+                for num_vars in arities {
+                    if let Entry::Vacant(entry) = full_width.entry(num_vars) {
+                        let setup = with_backend_pool(|| scheme.setup_prover(num_vars, 1))
+                            .map_err(invalid_setup)?;
+                        let prepared =
+                            with_backend_pool(|| CpuBackend::DEFAULT.prepare_setup(&setup))
+                                .map_err(invalid_setup)?;
+                        let _ = entry.insert(Arc::new(FullWidthBackendSetup {
+                            scheme: scheme.clone(),
+                            setup,
+                            prepared,
+                        }));
+                    }
+                }
+            }
+        }
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup);
         let prover = AkitaProverSetup {
+            full_width,
             backend_prover_setup,
             prepared_backend_setup,
             one_hot_backend_prover_setup,
@@ -809,24 +763,24 @@ impl TransparentObjectSetup for AkitaScheme {
     }
 
     fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
-        context: &Self::SetupContext,
+        setup: &Self::ProverSetup,
         poly: &P,
         layout_digest: [u8; 32],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
-        let scheme = context.full_dense_scheme().map_err(invalid_setup)?;
         let num_vars = poly.num_vars();
+        let cached = setup.full_width.get(&num_vars).ok_or_else(|| {
+            invalid_setup("full-width object arity was not admitted during preprocessing")
+        })?;
         let dense = vec![AkitaBackendDensePoly::from_field_evals(
             num_vars,
             akita_ordered_evaluations(poly)?,
         )
         .map_err(akita_error)?];
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            let setup = scheme.setup_prover(num_vars, 1)?;
-            let prepared = CpuBackend::DEFAULT.prepare_setup(&setup)?;
-            let stack = backend_stack(&setup, &prepared)
+            let stack = backend_stack(&cached.setup, &cached.prepared)
                 .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?;
-            scheme.commit(
-                &setup,
+            cached.scheme.commit(
+                &cached.setup,
                 dense.as_slice(),
                 stack.commitment(),
                 GroupContext::scheduler_without_precommitted_groups(),
@@ -954,11 +908,19 @@ mod tests {
     #[test]
     fn full_width_objects_do_not_widen_bounded_dense_commitments() {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
-        let (bounded, _) = AkitaScheme::transparent_object_setup(&artifacts, 14, [7; 32]).unwrap();
+        use crate::schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
+        let mut params = AkitaSetupParams::dense_only(14, 1, [7; 32], artifacts);
+        params.grouped_schedule = Some(GroupedScheduleParams::new(
+            None,
+            None,
+            vec![DenseGroupLayout::FullWidth { num_vars: 14 }],
+            14,
+        ));
+        let (bounded, _) = AkitaScheme::setup(params).unwrap();
         let polynomial = Polynomial::new(vec![AkitaField::pow2(80); 1 << 14]);
         assert!(AkitaScheme::commit(&polynomial, &bounded).is_err());
         let (commitment, hint) =
-            AkitaScheme::commit_full_width_object(&artifacts, &polynomial, [7; 32]).unwrap();
+            AkitaScheme::commit_full_width_object(&bounded, &polynomial, [7; 32]).unwrap();
         assert_eq!(commitment, hint.commitment);
         assert_eq!(commitment.num_vars, polynomial.num_vars());
     }
@@ -1166,6 +1128,7 @@ mod tests {
         let grouped_schedule = GroupedScheduleParams::new(
             None,
             Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+            Vec::new(),
             final_num_vars,
         );
         let (_, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
@@ -1207,7 +1170,7 @@ mod tests {
     fn grouped_setup_rejects_a_final_arity_different_from_the_main_setup() {
         use crate::schedule_registry::GroupedScheduleParams;
 
-        let request = GroupedScheduleParams::new(None, Some(14), 15);
+        let request = GroupedScheduleParams::new(None, Some(14), Vec::new(), 15);
         let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only_grouped(
             14,
             1,

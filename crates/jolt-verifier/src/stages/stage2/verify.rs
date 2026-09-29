@@ -68,8 +68,8 @@ enum ProductUniskipVerified<F: JoltField, C> {
 pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     stage1: &Stage1ClearOutput<F>,
     product_uniskip_output_claim: F,
-) -> Result<Stage2BatchInputClaims<F>, VerifierError> {
-    Ok(Stage2BatchInputClaims {
+) -> Stage2BatchInputClaims<F> {
+    Stage2BatchInputClaims {
         ram_read_write: ram_read_write_input_values_from_upstream(stage1),
         product_remainder: product_remainder_input_values_from_uniskip_output(
             product_uniskip_output_claim,
@@ -81,7 +81,7 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
         ),
         ram_raf_evaluation: ram_raf_evaluation_input_values_from_upstream(stage1),
         ram_output_check: RamOutputCheckInputClaims::default(),
-    })
+    }
 }
 
 #[jolt_verifier_derive::fs_scope(Stage2)]
@@ -217,7 +217,7 @@ where
     sumchecks.validate_output_claims(&claims.batch_outputs)?;
 
     let input_values =
-        stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim)?;
+        stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
 
     let output_points = sumchecks.verify_clear(
         &input_values,

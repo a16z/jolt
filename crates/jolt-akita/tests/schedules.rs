@@ -5,6 +5,7 @@
 
 //! Coverage and setup-sizing guards for Jolt's external catalogs.
 
+use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::path::PathBuf;
 
 use akita_config::{SetupRequirements, TrustedScheduleCatalog};
@@ -149,11 +150,13 @@ fn grouped_advice_rows_are_setup_owned_not_in_the_base_artifact() {
         &dense,
         &full_dense_catalog(),
         &base,
-        None,
-        Some(TRUSTED_ADVICE_GROUP.num_vars()),
-        &[],
+        &GroupedScheduleParams::new(
+            None,
+            Some(TRUSTED_ADVICE_GROUP.num_vars()),
+            Vec::new(),
+            key.final_group.num_vars(),
+        ),
         AKITA_ONE_HOT_K256,
-        key.final_group.num_vars(),
     )
     .expect("preprocessing must adapt the production grouped row");
     assert_eq!(rows.rows().len(), 1);
@@ -189,11 +192,13 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
             &dense,
             &full_dense_catalog(),
             &base,
-            None,
-            Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
-            &[],
+            &GroupedScheduleParams::new(
+                None,
+                Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+                Vec::new(),
+                final_num_vars,
+            ),
             AKITA_ONE_HOT_K16,
-            final_num_vars,
         )
         .expect("adapt the grouped K=16 row");
         let setup_catalog =
@@ -219,11 +224,13 @@ fn grouped_setup_capacity_covers_precommit_and_complete_schedule() {
         &dense,
         &full_dense_catalog(),
         &base,
-        None,
-        Some(TRUSTED_ADVICE_GROUP.num_vars()),
-        &[],
+        &GroupedScheduleParams::new(
+            None,
+            Some(TRUSTED_ADVICE_GROUP.num_vars()),
+            Vec::new(),
+            key.final_group.num_vars(),
+        ),
         AKITA_ONE_HOT_K256,
-        key.final_group.num_vars(),
     )
     .expect("adapt grouped row");
     let setup_catalog =
@@ -280,11 +287,13 @@ fn grouped_provisioning_rejects_out_of_family_final_arity() {
         &dense,
         &full_dense_catalog(),
         &base,
-        None,
-        Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
-        &[],
+        &GroupedScheduleParams::new(
+            None,
+            Some(FIXTURE_TRUSTED_ADVICE_GROUP.num_vars()),
+            Vec::new(),
+            K16_NUM_VARS.0 - 1,
+        ),
         AKITA_ONE_HOT_K16,
-        K16_NUM_VARS.0 - 1,
     )
     .expect_err("a declared reachable arity outside the family must fail setup");
     assert!(error.to_string().contains("outside the supported range"));
@@ -359,6 +368,7 @@ mod field_inc {
     use akita_config::CommitmentConfig;
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
     use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK256};
+    use jolt_akita::schedule_registry::GroupedScheduleParams;
     use jolt_akita::schedule_registry::{
         dense_group_profile, extend_catalog, provision_groups_for_k, FIXTURE_K16_FINAL_NUM_VARS,
         FIXTURE_TRUSTED_ADVICE_GROUP,
@@ -392,16 +402,7 @@ mod field_inc {
         let reachable_min = (overhead + PROVER_MIN_LOG_T).max(declared_min);
         for final_num_vars in reachable_min..=ceiling {
             let layout = FieldIncLayout::new(final_num_vars - overhead);
-            let rows = provision_groups_for_k(
-                &dense,
-                &full_dense,
-                &base,
-                None,
-                None,
-                &[DenseGroupLayout::FullWidth { num_vars: layout.num_vars() }],
-                one_hot_k,
-                final_num_vars,
-            )
+            let rows = provision_groups_for_k(&dense, &full_dense, &base, &GroupedScheduleParams::new(None, None, vec![DenseGroupLayout::FullWidth { num_vars: layout.num_vars() }], final_num_vars), one_hot_k)
             .unwrap_or_else(|error| {
                 panic!(
                     "K={one_hot_k} final arity {final_num_vars}: field-inline provisioning failed: {error}"
@@ -467,11 +468,8 @@ mod field_inc {
                     &dense,
                     &full_dense,
                     &base,
-                    None,
-                    None,
-                    &layouts,
-                    AKITA_ONE_HOT_K256,
-                    43,
+                    &GroupedScheduleParams::new(None, None, layouts, 43),
+                    AKITA_ONE_HOT_K256
                 )
                 .is_err(),
                 "unsupported batch shapes must retain the guided-planning rejection"
@@ -491,13 +489,15 @@ mod field_inc {
             &dense,
             &full_dense,
             &base,
-            Some(trusted + 1),
-            Some(trusted),
-            &[DenseGroupLayout::FullWidth {
-                num_vars: layout.num_vars(),
-            }],
+            &GroupedScheduleParams::new(
+                Some(trusted + 1),
+                Some(trusted),
+                vec![DenseGroupLayout::FullWidth {
+                    num_vars: layout.num_vars(),
+                }],
+                final_num_vars,
+            ),
             AKITA_ONE_HOT_K16,
-            final_num_vars,
         )
         .expect("provisioning with field-inline must plan every combination");
         assert_eq!(rows.rows().len(), 4);

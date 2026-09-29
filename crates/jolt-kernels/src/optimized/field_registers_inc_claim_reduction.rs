@@ -9,28 +9,25 @@
 //! fused multiply per point, field-identical round messages. Eval-at-1
 //! recovery and rayon walks as per the [`crate::optimized`] module docs.
 
+use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
 use jolt_claims::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineCommittedPolynomial, FieldInlineDerivedId,
-    FieldInlinePolynomialId, FieldRegistersIncClaimReductionChallenge,
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldRegistersIncClaimReductionChallenge,
     FieldRegistersIncClaimReductionPublic,
 };
 use jolt_claims::SumcheckChallenges as _;
 use jolt_field::JoltField;
-use jolt_poly::{Polynomial, UnivariatePoly};
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck as _, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
-use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
+use super::inc_claim_reduction::PairedEq;
 use super::support::{
-    bind_all, pair, par_sum_pair_groups, round_poly_from_skipped_evals, scaled_eq_table,
-    RoundProgress,
+    par_sum_pair_groups, pin_derived_term, round_poly_from_skipped_evals, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -43,7 +40,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
 {
     fn prepare(
         &self,
-        _session: &mut ProofSession,
+        session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, FieldRegistersIncClaimReduction<F>>,
     ) -> Result<
@@ -67,16 +64,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
                 .ok_or(KernelError::Witness(WitnessError::UnavailableView {
                     label: "field-registers increment claim-reduction field-inline oracle",
                 }))?;
-        let inc_table = field_inline.oracle_table(FieldInlinePolynomialId::Committed(
-            FieldInlineCommittedPolynomial::FieldRdInc,
-        ))?;
-        if inc_table.len() != cycles {
-            return Err(KernelError::TableSizeMismatch {
-                table: "FieldRdInc".to_owned(),
-                expected: cycles,
-                got: inc_table.len(),
-            });
-        }
+        let inc_column = FieldIncrementColumn::resolve(session, field_inline, cycles)?;
         let gamma = inputs
             .challenges
             .resolve_challenge(&FieldInlineChallengeId::from(
@@ -86,24 +74,10 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
                 reason: "field-register increment claim reduction is missing its gamma challenge",
             })?;
 
-        // W = eq(r_field_rw) + γ·eq(r_field_val).
-        let mut weights = scaled_eq_table(read_write_cycle, F::one());
-        let scaled = scaled_eq_table(val_evaluation_cycle, gamma);
-        #[cfg(feature = "parallel")]
-        weights
-            .par_iter_mut()
-            .zip(scaled.par_iter())
-            .for_each(|(acc, term)| *acc += *term);
-        #[cfg(not(feature = "parallel"))]
-        weights
-            .iter_mut()
-            .zip(scaled.iter())
-            .for_each(|(acc, term)| *acc += *term);
-
         Ok(Box::new(FieldIncKernel {
             progress: RoundProgress::new(relation.rounds()),
-            inc: Polynomial::new(inc_table),
-            weights: Polynomial::new(weights),
+            inc: IncrementRounds::new(inc_column),
+            weights: PairedEq::new(read_write_cycle, F::one(), val_evaluation_cycle, gamma),
         }))
     }
 }
@@ -115,21 +89,22 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersIncClaimReduction<F>>
 )]
 struct FieldIncKernel<F: JoltField> {
     progress: RoundProgress,
-    inc: Polynomial<F>,
-    weights: Polynomial<F>,
+    inc: IncrementRounds<F>,
+    weights: PairedEq<F>,
 }
 
 impl<F: JoltField> FieldIncKernel<F> {
     fn bind(&mut self, challenge: F) {
-        bind_all([&mut self.inc, &mut self.weights], challenge);
+        self.inc.bind(challenge);
+        self.weights.bind(challenge);
         self.progress.advance();
     }
 
     /// The summand's evaluations at `t ∈ {0, 2}` summed over group `y`.
     #[inline]
     fn group_evals(&self, y: usize) -> [F; 2] {
-        let (inc_lo, inc_hi) = pair(&self.inc, y);
-        let (w_lo, w_hi) = pair(&self.weights, y);
+        let (inc_lo, inc_hi) = self.inc.pair(y);
+        let (w_lo, w_hi) = self.weights.pair(y);
         [
             w_lo * inc_lo,
             (w_hi + w_hi - w_lo) * (inc_hi + inc_hi - inc_lo),
@@ -179,16 +154,11 @@ impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
 
         self.progress.require_complete()?;
         Ok(FieldRegistersIncClaimReductionOutputClaims {
-            rd_inc: self.inc.evals()[0],
+            rd_inc: self.inc.value(0),
         })
     }
 
-    /// The eq-table cross-checks: the fused weight table is the two eq
-    /// leaves' γ-combination, so its bound value must equal
-    /// `EqReadWrite + γ·EqValEvaluation` from the verifier's own
-    /// `derive_output_term` — except γ is not observable here, so both leaves
-    /// pin individually against the SplitEq-free reconstruction: the fused
-    /// scalar equals the γ-weighted sum of the two derived terms.
+    /// Remove the second derived leaf from the fused scalar before pinning the first.
     fn validate_derived_tables(
         &self,
         relation: &Self::Relation,
@@ -197,29 +167,26 @@ impl<F: JoltField> SumcheckKernel<F> for FieldIncKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let derive = |public: FieldRegistersIncClaimReductionPublic| {
-            relation.derive_output_term(
-                &FieldInlineDerivedId::from(public),
-                input_points,
-                output_points,
-                challenges,
-            )
-        };
-        let expected = derive(FieldRegistersIncClaimReductionPublic::EqReadWrite)?
-            + challenges.gamma * derive(FieldRegistersIncClaimReductionPublic::EqValEvaluation)?;
-        let got = self.weights.evals()[0];
-        if got != expected {
-            return Err(SumcheckKernelError::Verifier(
-                VerifierError::StageClaimSumcheckFailed {
-                    stage: "FieldRegistersIncClaimReduction".to_string(),
-                    reason: format!(
-                        "fused eq table bound to {got:?}, but the derived terms fold to \
-                         {expected:?}"
-                    ),
-                },
-            ));
-        }
-        Ok(())
+        let second = relation.derive_output_term(
+            &FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqValEvaluation),
+            input_points,
+            output_points,
+            challenges,
+        )?;
+        let fused = self
+            .weights
+            .final_value()
+            .ok_or(SumcheckKernelError::InvariantViolation {
+                reason: "field increment equality weights are not fully bound",
+            })?;
+        pin_derived_term(
+            relation,
+            FieldInlineDerivedId::from(FieldRegistersIncClaimReductionPublic::EqReadWrite),
+            input_points,
+            output_points,
+            challenges,
+            fused - challenges.gamma * second,
+        )
     }
 }
 
@@ -240,7 +207,8 @@ mod tests {
         inactive_field_register_fixture, structured_field_register_fixture,
         FieldRegisterTraceFixture,
     };
-    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, synthetic_point};
+    use crate::optimized::registers_read_write::test_support::assert_kernel_parity_with_session;
     use crate::ReferenceBackend;
 
     fn run_parity(
@@ -281,10 +249,6 @@ mod tests {
                 &ReferenceBackend, &mut session, backend, inputs()
             )
             .unwrap();
-            let mut optimized = OptimizedFieldRegistersIncClaimReduction
-                .prepare(&mut session, backend, inputs())
-                .unwrap();
-
             let claim = probe_input_claim(reference.as_mut());
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
@@ -300,25 +264,18 @@ mod tests {
                     "claim without field-inline activity must be zero"
                 );
             }
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
+            drop(reference);
+            assert_kernel_parity_with_session(
+                &mut session,
+                &OptimizedFieldRegistersIncClaimReduction,
+                backend,
+                &relation,
+                &claims,
+                &points,
+                &challenges,
                 claim,
                 &round_challenges,
             );
-            assert_eq!(
-                reference.output_claims(&claims).unwrap(),
-                optimized.output_claims(&claims).unwrap()
-            );
-            let output_points = relation
-                .derive_opening_points(&round_challenges, &points)
-                .unwrap();
-            reference
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
-            optimized
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
         });
     }
 

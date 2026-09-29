@@ -776,7 +776,7 @@ mod field_inline {
     use common::jolt_device::{MemoryConfig, MemoryLayout};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{CanonicalBytes, Fr, Ring};
+    use jolt_field::Fr;
     use jolt_program::execution::{
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
@@ -803,21 +803,7 @@ mod field_inline {
     /// guest's FIELD_ASSERT_EQ checks against, passed as canonical
     /// little-endian u64 limbs.
     fn eqpoly_inputs() -> Vec<u8> {
-        let one = Fr::from_u64(1);
-        let value = EQ_PAIRS.iter().fold(one, |acc, [r, x]| {
-            let r = Fr::from_u64(*r);
-            let x = Fr::from_u64(*x);
-            acc * (r * x + (one - r) * (one - x))
-        });
-        let mut bytes = [0u8; 32];
-        value.to_bytes_le(&mut bytes);
-        let mut limbs = [0u64; 4];
-        for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
-            *limb = u64::from_le_bytes(chunk.try_into().expect("8-byte chunk"));
-        }
-        let mut inputs = postcard::to_stdvec(&EQ_PAIRS).expect("serialize pairs");
-        inputs.extend(postcard::to_stdvec(&limbs).expect("serialize limbs"));
-        inputs
+        jolt_host::field_inline::eqpoly_inputs::<Fr>(EQ_PAIRS).expect("field-ops input encoding")
     }
 
     pub(super) fn generate_eqpoly() -> GeneratedVerifierFixture {

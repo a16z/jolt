@@ -150,8 +150,9 @@ pub trait TransparentObjectSetup: CommitmentScheme {
 
     /// Commit an arbitrary field-valued object for a later native group-batch opening.
     /// Its source bound is independent of the default object setup's bound.
+    /// The object arity must have been admitted and prepared by preprocessing.
     fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
-        context: &Self::SetupContext,
+        setup: &Self::ProverSetup,
         poly: &P,
         layout_digest: [u8; 32],
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;

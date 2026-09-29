@@ -57,7 +57,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 #[cfg(feature = "field-inline")]
-use super::spartan_outer::FieldInlineRowCursor;
+use super::spartan_outer::{FieldInlineRowCursor, FieldSpartanCarry};
+#[cfg(feature = "field-inline")]
+use super::support::map_reduce_chunks;
 use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
     RoundChallenges,
@@ -348,12 +350,16 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
     ) -> Result<(), KernelError<F>> {
         let rows = BundleStore::resolve(witness, 1usize << log_t)?;
         #[cfg(feature = "field-inline")]
-        let field_rows = witness
-            .field_inline()
-            .ok_or(KernelError::Witness(WitnessError::UnavailableView {
-                label: "composed Spartan product field-inline oracle",
-            }))?
-            .field_inline_spartan_rows()?;
+        let field_rows = if let Some(carry) = session.take::<FieldSpartanCarry<F>>() {
+            carry.0
+        } else {
+            witness
+                .field_inline()
+                .ok_or(KernelError::Witness(WitnessError::UnavailableView {
+                    label: "composed Spartan product field-inline oracle",
+                }))?
+                .field_inline_spartan_rows()?
+        };
         Self::prepare_from_store(
             session,
             log_t,
@@ -590,7 +596,6 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             challenges: RoundChallenges::new(rounds),
             rows,
             #[cfg(feature = "field-inline")]
-            #[cfg(feature = "field-inline")]
             field_rows,
             lagrange_weights: weights,
         })
@@ -663,14 +668,22 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     /// eq-weighted walk over the sparse field-inline rows.
     #[cfg(feature = "field-inline")]
     fn field_claimed_inputs(&self, weights: &[F]) -> [F; 3] {
-        let mut values = [F::zero(); 3];
-        for (cycle, row) in &self.field_rows {
-            let weight = weights[*cycle];
-            values[0] += weight * row.rs1_value;
-            values[1] += weight * row.rs2_value;
-            values[2] += weight * row.rd_value;
-        }
-        values
+        map_reduce_chunks(
+            self.field_rows.len(),
+            1 << 12,
+            |range| {
+                let mut values = [F::zero(); 3];
+                for (cycle, row) in &self.field_rows[range] {
+                    let weight = weights[*cycle];
+                    values[0] += weight * row.rs1_value;
+                    values[1] += weight * row.rs2_value;
+                    values[2] += weight * row.rd_value;
+                }
+                values
+            },
+            |a, b| std::array::from_fn(|i| a[i] + b[i]),
+            || [F::zero(); 3],
+        )
     }
 }
 

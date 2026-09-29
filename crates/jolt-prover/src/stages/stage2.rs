@@ -120,9 +120,7 @@ where
                 .spartan_product_uniskip
                 .first_round_poly(session, &[tau_high], &uniskip_inputs)
         })?;
-    // The COMPOSED jolt-r1cs uni-skip shape (feature-aware): identical to the
-    // jolt-claims RV64-only constants Without field-inline, the field-inline-extended lane domain
-    // under `field-inline` — the shape the verifier's stage-2 uni-skip checks.
+    // The canonical composed lane domain also determines the verifier's uni-skip check.
     let proved_uniskip = mode.prove_uniskip(
         uniskip_poly,
         uniskip_input_claim,
@@ -172,9 +170,9 @@ where
 
     let input_points = sumchecks.empty_input_points();
     // Under `field-inline` the field-inline claim-reduction inputs wire from the
-    // stage-1 field-inline carrier (fail-closed when absent) through the same shared
+    // stage-1 field-inline carrier through the same shared
     // assembly the verifier runs.
-    let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim)?;
+    let inputs = stage2_batch_input_values_from_upstream(stage1, proved_uniskip.output_claim);
 
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
@@ -222,14 +220,11 @@ where
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
-    use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
+    use crate::stages::field_inline_fixtures::twins;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::Fr;
     use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-    use jolt_verifier::stages::stage1::outputs::{Stage1BatchInputClaims, Stage1BatchSumchecks};
-    use jolt_verifier::stages::uniskip::{self, UniskipParams};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
@@ -284,124 +279,8 @@ mod field_inline_round_trip {
 
         // The verifier twin (stage2::verify's clear body).
         let mut transcript = Blake2bTranscript::new(b"stage2-field-inline");
-        {
-            // Stage 1's twin, to position the transcript at the stage-2
-            // boundary (already round-tripped by stage 1's own tests).
-            let tau =
-                jolt_verifier::stages::uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T);
-            let uniskip_challenge = uniskip::verify_clear(
-                &stage1.uniskip_proof,
-                &UniskipParams::spartan_outer(),
-                Fr::from_u64(0),
-                stage1.claims.uniskip_output_claim,
-                &mut transcript,
-            )
-            .unwrap();
-            let sumchecks = Stage1BatchSumchecks {
-                outer_remainder: OuterRemainder::new(
-                    SpartanOuterDimensions::rv64(LOG_T),
-                    tau,
-                    uniskip_challenge,
-                ),
-            };
-            let batch_challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
-            let input_points = sumchecks.empty_input_points();
-            let input_values = Stage1BatchInputClaims {
-                outer_remainder: jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output(
-                    stage1.claims.uniskip_output_claim,
-                ),
-            };
-            let _stage1_points = sumchecks
-                .verify_clear(
-                    &input_values,
-                    &input_points,
-                    &batch_challenges,
-                    &stage1.claims.outer,
-                    &stage1.sumcheck_proof,
-                    &mut transcript,
-                    1,
-                )
-                .unwrap();
-            sumchecks.append_output_claims(&mut transcript, &stage1.claims.outer);
-        }
-
-        // Stage 2 proper.
-        let log_t = LOG_T;
-        let log_k = config.ram_K.ilog2() as usize;
-        let trace_dimensions = TraceDimensions::new(log_t);
-        let read_write_dimensions = config.rw_config.ram_dimensions(log_t, log_k);
-        let product_dimensions = SpartanProductDimensions::new(log_t);
-        let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap();
-        let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
-
-        let tau_high: Fr = draw_spartan_product_tau_high(&mut transcript);
-        let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
-        let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
-        let uniskip_input_claim = uniskip_relation
-            .input_claim(&uniskip_inputs, &NoChallenges::default())
-            .unwrap();
-        let uniskip_challenge = uniskip::verify_clear(
-            &out.uniskip_proof,
-            &UniskipParams::spartan_product(),
-            uniskip_input_claim,
-            out.claims.product_uniskip_output_claim,
-            &mut transcript,
-        )
-        .unwrap();
-
-        let lowest_address = public_io.memory_layout.get_lowest_address();
-        let public_memory = PublicIoMemory::new(&public_io).unwrap();
-        let sumchecks = Stage2BatchSumchecks {
-            ram_read_write: RamReadWriteChecking::new(
-                read_write_dimensions,
-                log_k,
-                tau_low.clone(),
-            ),
-            product_remainder: ProductRemainder::new(
-                product_dimensions,
-                uniskip_challenge,
-                tau_high,
-                tau_low.clone(),
-            ),
-            instruction_claim_reduction: InstructionClaimReduction::new(
-                trace_dimensions,
-                tau_low.clone(),
-            ),
-            field_registers_claim_reduction: FieldRegistersClaimReduction::new(
-                FieldRegistersTraceDimensions::new(log_t),
-                tau_low.clone(),
-            ),
-            ram_raf_evaluation: RamRafEvaluation::new(
-                read_write_dimensions,
-                raf_dimensions,
-                log_k,
-                lowest_address,
-                tau_low.clone(),
-            ),
-            ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
-        };
-        let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
-        let input_points = sumchecks.empty_input_points();
-        sumchecks
-            .validate_output_claims(&out.claims.batch_outputs)
-            .unwrap();
-        let input_values = stage2_batch_input_values_from_upstream(
-            &stage1.clear_output,
-            out.claims.product_uniskip_output_claim,
-        )
-        .unwrap();
-        let _stage2_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &challenges,
-                &out.claims.batch_outputs,
-                &out.sumcheck_proof,
-                &mut transcript,
-                2,
-            )
-            .unwrap();
-        sumchecks.append_output_claims(&mut transcript, &out.claims.batch_outputs);
+        twins::replay_stage1(&mut transcript, &stage1);
+        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &out);
 
         assert_eq!(transcript.state(), prover_transcript.state());
     }

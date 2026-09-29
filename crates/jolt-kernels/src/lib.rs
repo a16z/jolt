@@ -38,6 +38,8 @@ mod backend;
 mod commitment;
 pub mod committed_program;
 mod error;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 mod kernel;
 pub mod mem;
 pub mod opening;

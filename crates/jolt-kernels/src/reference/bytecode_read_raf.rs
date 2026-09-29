@@ -42,17 +42,16 @@
 //! (pushforward, field-register row table) legs at the ordinary γ³/γ⁴ stage weights —
 //! the stage-4/5 legs over the
 //! field-register read-write / val-evaluation cycle sub-points. The cycle phase swaps
-//! the naive prover for a composed hand kernel over `C(j) · Π_i BytecodeRa_i(j)`, with
-//! every scalar-weighted eq / RAF / entry / field-inline term pre-folded into the
-//! single coefficient multilinear `C` (each term is a scalar times one eq table, so the
-//! pre-fold is exact).
+//! the expression adapter for a kernel over `C(j) · Π_i BytecodeRa_i(j)`. It samples
+//! the complete verifier output on Boolean cycles to construct `C`, then uses the
+//! shared naive round driver. This keeps the reference independent of the optimized
+//! coefficient fold; each term of `C` is multilinear, so Boolean sampling is exact.
 
 #[cfg(not(feature = "field-inline"))]
 use std::collections::BTreeMap;
 
-#[cfg(all(feature = "field-inline", feature = "allocative"))]
-use allocative::{Allocative, Key, Visitor};
-
+#[cfg(feature = "field-inline")]
+use super::naive::sample_dense_round;
 use crate::ProverInputs;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{
@@ -75,9 +74,9 @@ use jolt_claims::protocols::jolt::{JoltPolynomialId, JoltVirtualPolynomial};
 #[cfg(not(feature = "field-inline"))]
 use jolt_claims::{Source, SymbolicSumcheck};
 use jolt_field::JoltField;
-use jolt_poly::{
-    BindingOrder, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
-};
+use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+#[cfg(not(feature = "field-inline"))]
+use jolt_poly::{IdentityPolynomial, MultilinearEvaluation};
 #[cfg(feature = "field-inline")]
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -211,6 +210,11 @@ pub struct BytecodeReadRafAddressKernel<F: JoltField> {
 /// The two field-register access terms at the stage-4/5 cycle points and γ³/γ⁴
 /// weights, sharing the ordinary bytecode address domain.
 #[cfg(feature = "field-inline")]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct FieldInlineAddressLegs<F: JoltField> {
     /// γ³ / γ⁴ — each leg rides the same outer stage weight as its
     /// ordinary stage claim.
@@ -219,18 +223,6 @@ struct FieldInlineAddressLegs<F: JoltField> {
     /// The field-register row values under the extended per-stage gamma powers
     /// (the jolt-claims field-inline `read_raf_stage_values` columns 3/4).
     values: [Polynomial<F>; 2],
-}
-
-// Hand impl: the array-of-table fields have no derive-visitable shape.
-#[cfg(all(feature = "field-inline", feature = "allocative"))]
-impl<F: JoltField> Allocative for FieldInlineAddressLegs<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        for table in self.pushforwards.iter().chain(&self.values) {
-            table.visit(&mut visitor);
-        }
-        visitor.exit();
-    }
 }
 
 #[cfg(feature = "field-inline")]
@@ -597,12 +589,15 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let r_address = relation.r_address();
+        #[cfg(not(feature = "field-inline"))]
         let stage_cycle_points = relation.stage_cycle_points();
+        #[cfg(not(feature = "field-inline"))]
         let entry_bytecode_index = relation.entry_bytecode_index();
         let committed_chunk_bits = relation.committed_chunk_bits();
         // The address-only stage-value fold, off the relation: full mode
         // computed it at construction; committed mode's constants ARE the
         // stage-6a staged raw values.
+        #[cfg(not(feature = "field-inline"))]
         let stage_values_at_r_address = relation.stage_values_at_r_address()?;
         let cycles = 1usize << dimensions.log_t();
 
@@ -620,7 +615,9 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
             })
             .collect::<Result<_, _>>()?;
 
+        #[cfg(not(feature = "field-inline"))]
         let int_at_r_address = IdentityPolynomial::new(r_address.len()).evaluate(r_address);
+        #[cfg(not(feature = "field-inline"))]
         let entry_scalar = eq_table(r_address)[entry_bytecode_index];
 
         // rv64: the naive prover over the anchor committed expression — every
@@ -691,91 +688,52 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
             )?))
         }
 
-        // With field-inline enabled: the composed hand kernel over `C(j) · Π_i
-        // BytecodeRa_i(j)` (see the module doc) — the anchor expression cannot name the
-        // field-inline terms' distinct cycle-eq factors, so every scalar-weighted term
-        // pre-folds into the single coefficient multilinear. The driver's
-        // `expected_final_claim` (the full-mode `expected_output`, which composes the
-        // field-inline public stage values) and the round-0 check against the stage-6a
-        // intermediate pin it from both ends.
+        // The anchor Expr omits composed publics. Sample the verifier's complete
+        // relation on Boolean cycles instead of reproducing the optimized gamma
+        // fold. The result is a multilinear coefficient for the RA product.
         #[cfg(feature = "field-inline")]
         {
-            let fold = relation.field_inline_fold()?;
-            if fold.read_write_address.len() != FIELD_REGISTERS_LOG_K
-                || fold.val_evaluation_address.len() != FIELD_REGISTERS_LOG_K
-                || fold.read_write_cycle.len() != dimensions.log_t()
-                || fold.val_evaluation_cycle.len() != dimensions.log_t()
-            {
-                return Err(KernelError::InvariantViolation {
-                    reason: "field-inline bytecode fold points have the wrong variable counts",
-                });
-            }
-            // The field-inline row values at `r_address`: the composed jolt-claims row
-            // fold under the carried extended gamma powers (stages 4/5; stages 1/2/3
-            // gain no field-inline terms).
-            let field_folds = relation.field_inline_stage_values_at_r_address()?;
-
-            let gamma = inputs.challenges.gamma;
-            // γ^0..γ^{S+2}: the S stage weights (5, or 9 on the packed
-            // shape), then the RAF outer/shift and entry weights.
-            let num_stages = stage_cycle_points.len();
-            let mut gamma_powers = vec![F::one(); num_stages + 3];
-            for i in 1..gamma_powers.len() {
-                gamma_powers[i] = gamma_powers[i - 1] * gamma;
-            }
-            fn accumulate<F: JoltField>(coefficient: &mut [F], cycle_point: &[F], weight: F) {
-                for (slot, eq) in coefficient.iter_mut().zip(eq_table(cycle_point)) {
-                    *slot += weight * eq;
-                }
-            }
-            let mut coefficient = vec![F::zero(); cycles];
-            for (s, cycle_point) in stage_cycle_points.iter().enumerate().take(BASE_STAGES) {
-                // The RAF terms ride the stage-1/3 cycle eq tables at γ^S/γ^{S+1}.
-                let mut weight = gamma_powers[s] * stage_values_at_r_address[s];
-                if s == 0 {
-                    weight += gamma_powers[num_stages] * int_at_r_address;
-                }
-                if s == 2 {
-                    weight += gamma_powers[num_stages + 1] * int_at_r_address;
-                }
-                accumulate(&mut coefficient, cycle_point, weight);
-            }
-            accumulate(
-                &mut coefficient,
-                &fold.read_write_cycle,
-                gamma_powers[3] * field_folds[3],
-            );
-            accumulate(
-                &mut coefficient,
-                &fold.val_evaluation_cycle,
-                gamma_powers[4] * field_folds[4],
-            );
-            coefficient[0] += gamma_powers[num_stages + 2] * entry_scalar;
-
-            // The packed shape's four fused-inc consumer stages cannot
-            // pre-fold into `C` (`FusedInc(j)` is a second cycle multilinear):
-            // they get their own coefficient, the staged store fold for the
-            // two RAM legs and its complement for the two register legs
-            // (the verifier's `fused_stage_value` resolution).
+            let mut coefficient = Vec::with_capacity(cycles);
             #[cfg(feature = "akita")]
-            let fused = {
-                let store = stage_values_at_r_address[BASE_STAGES];
-                let mut fused_coefficient = vec![F::zero(); cycles];
-                for (offset, cycle_point) in stage_cycle_points.iter().skip(BASE_STAGES).enumerate()
+            let mut fused_coefficient = Vec::with_capacity(cycles);
+            for cycle in 0..cycles {
+                let point = (0..dimensions.log_t())
+                    .map(|bit| F::from_bool((cycle >> bit) & 1 != 0))
+                    .collect::<Vec<_>>();
+                let output_points = relation.derive_opening_points(&point, inputs.points)?;
+                #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
+                let mut outputs = BytecodeReadRafCycleOutputClaims {
+                    bytecode_ra: vec![F::one(); dimensions.num_committed_ra_polys()],
+                    #[cfg(feature = "akita")]
+                    fused_inc: F::zero(),
+                };
+                let value = relation.expected_output(
+                    inputs.points,
+                    &outputs,
+                    &output_points,
+                    inputs.challenges,
+                )?;
+                coefficient.push(value);
+                #[cfg(feature = "akita")]
                 {
-                    let address_fold = if offset < 2 { store } else { F::one() - store };
-                    accumulate(
-                        &mut fused_coefficient,
-                        cycle_point,
-                        gamma_powers[BASE_STAGES + offset] * address_fold,
+                    outputs.fused_inc = F::one();
+                    fused_coefficient.push(
+                        relation.expected_output(
+                            inputs.points,
+                            &outputs,
+                            &output_points,
+                            inputs.challenges,
+                        )? - value,
                     );
                 }
-                let fused_values: Vec<F> = witness
-                    .oracle_table(JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc))?;
-                FusedIncCycleLeg {
-                    coefficient: Polynomial::new(fused_coefficient),
-                    values: Polynomial::new(fused_values),
-                }
+            }
+            #[cfg(feature = "akita")]
+            let fused = FusedIncCycleLeg {
+                coefficient: Polynomial::new(fused_coefficient),
+                values: Polynomial::new(
+                    witness
+                        .oracle_table(JoltPolynomialId::Virtual(JoltVirtualPolynomial::FusedInc))?,
+                ),
             };
 
             Ok(Box::new(ComposedBytecodeReadRafCycleKernel {
@@ -797,6 +755,11 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for ReferenceBacken
 /// anchor relation's `degree() + 1` points per round — with the coefficients pre-folded
 /// the true degree is exactly the anchor degree (`num_ra + 1`, or `num_ra + 2` packed).
 #[cfg(feature = "field-inline")]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct ComposedBytecodeReadRafCycleKernel<F: JoltField> {
     rounds: usize,
     degree: usize,
@@ -811,34 +774,14 @@ struct ComposedBytecodeReadRafCycleKernel<F: JoltField> {
 /// stages' scalar-folded coefficient and the `FusedInc` trace column it
 /// multiplies (also the source of the lattice `fused_inc` output claim).
 #[cfg(all(feature = "field-inline", feature = "akita"))]
+#[cfg_attr(
+    feature = "allocative",
+    derive(allocative::Allocative),
+    allocative(bound = "F: JoltField")
+)]
 struct FusedIncCycleLeg<F: JoltField> {
     coefficient: Polynomial<F>,
     values: Polynomial<F>,
-}
-
-// Size arithmetic rather than a derive, like the sibling kernels.
-#[cfg(all(feature = "allocative", feature = "field-inline"))]
-impl<F: JoltField> Allocative for ComposedBytecodeReadRafCycleKernel<F> {
-    fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
-        let mut visitor = visitor.enter_self_sized::<Self>();
-        visitor.visit_simple(
-            Key::new("coefficient"),
-            self.coefficient.len() * size_of::<F>(),
-        );
-        visitor.visit_simple(
-            Key::new("bytecode_ra"),
-            self.bytecode_ra
-                .iter()
-                .map(|table| table.len() * size_of::<F>())
-                .sum::<usize>(),
-        );
-        #[cfg(feature = "akita")]
-        visitor.visit_simple(
-            Key::new("fused"),
-            (self.fused.coefficient.len() + self.fused.values.len()) * size_of::<F>(),
-        );
-        visitor.exit();
-    }
 }
 
 #[cfg(feature = "field-inline")]
@@ -879,42 +822,26 @@ impl<F: JoltField> ProveRounds<F> for ComposedBytecodeReadRafCycleKernel<F> {
         }
         let half = self.coefficient.evals().len() / 2;
         let order = BindingOrder::LowToHigh;
-        let mut evals = Vec::with_capacity(self.degree + 1);
-        for sample in 0..=self.degree {
-            let point = F::from_u64(sample as u64);
-            let sum = (0..half)
-                .map(|y| {
-                    #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
-                    let mut coefficient = self
-                        .coefficient
+        sample_dense_round(half, self.degree, round, previous_claim, |y, point| {
+            #[cfg_attr(not(feature = "akita"), expect(unused_mut))]
+            let mut coefficient = self
+                .coefficient
+                .sumcheck_round_eval_with_order(y, point, order);
+            #[cfg(feature = "akita")]
+            {
+                coefficient += self
+                    .fused
+                    .coefficient
+                    .sumcheck_round_eval_with_order(y, point, order)
+                    * self
+                        .fused
+                        .values
                         .sumcheck_round_eval_with_order(y, point, order);
-                    #[cfg(feature = "akita")]
-                    {
-                        coefficient += self
-                            .fused
-                            .coefficient
-                            .sumcheck_round_eval_with_order(y, point, order)
-                            * self
-                                .fused
-                                .values
-                                .sumcheck_round_eval_with_order(y, point, order);
-                    }
-                    self.bytecode_ra.iter().fold(coefficient, |product, table| {
-                        product * table.sumcheck_round_eval_with_order(y, point, order)
-                    })
-                })
-                .sum::<F>();
-            evals.push(sum);
-        }
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+            }
+            Ok(self.bytecode_ra.iter().fold(coefficient, |product, table| {
+                product * table.sumcheck_round_eval_with_order(y, point, order)
+            }))
+        })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -927,13 +854,6 @@ impl<F: JoltField> ProveRounds<F> for ComposedBytecodeReadRafCycleKernel<F> {
 impl<F: JoltField> SumcheckKernel<F> for ComposedBytecodeReadRafCycleKernel<F> {
     type Relation = BytecodeReadRafCycle<F>;
 
-    #[cfg_attr(
-        not(feature = "field-inline"),
-        expect(
-            clippy::useless_conversion,
-            reason = "field-inline selects composed claims and opening ids"
-        )
-    )]
     fn output_claims(
         &mut self,
         _inputs: &SumcheckInputClaims<F, BytecodeReadRafCycle<F>>,

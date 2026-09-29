@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt,
     io::Cursor,
     path::{Path, PathBuf},
@@ -442,8 +443,16 @@ impl AkitaSetupParams {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct FullWidthBackendSetup {
+    pub(crate) scheme: AkitaCommitmentScheme<JoltDenseFull>,
+    pub(crate) setup: AkitaBackendProverSetup,
+    pub(crate) prepared: AkitaBackendPreparedSetup,
+}
+
 #[derive(Clone, Debug)]
 pub struct AkitaProverSetup {
+    pub(crate) full_width: BTreeMap<usize, Arc<FullWidthBackendSetup>>,
     pub(crate) backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
     pub(crate) prepared_backend_setup: Option<Arc<AkitaBackendPreparedSetup>>,
     pub(crate) one_hot_backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
@@ -482,6 +491,7 @@ impl AkitaProverSetup {
         ]
         .into_iter()
         .flatten()
+        .chain(self.full_width.values().map(|setup| &setup.prepared))
         {
             let _ = prepared
                 .drop_built_ntt_slots()

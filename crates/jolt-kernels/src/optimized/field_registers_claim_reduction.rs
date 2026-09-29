@@ -34,11 +34,12 @@ use jolt_verifier::stages::relations::{
     SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
-use jolt_verifier::VerifierError;
 use jolt_witness::{JoltWitnessPlane, WitnessError};
 
-use super::field_registers_read_write::field_register_rows;
-use super::support::RoundChallenges;
+use super::field_registers_read_write::{field_register_rows, SharedFieldRegisterRows};
+use super::registers_read_write::sparse::layout::Cell;
+use super::registers_read_write::sparse::ops::bind_sparse_entries_in_place;
+use super::support::{map_indices, map_reduce_chunks, pin_derived_term, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -49,6 +50,15 @@ use crate::{
 struct SparseCell<F> {
     row: usize,
     value: F,
+}
+
+impl<F: JoltField> Cell for SparseCell<F> {
+    fn row(&self) -> usize {
+        self.row
+    }
+    fn col(&self) -> u8 {
+        0
+    }
 }
 
 pub struct OptimizedFieldRegistersClaimReduction;
@@ -86,7 +96,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
                 .ok_or(KernelError::Witness(WitnessError::UnavailableView {
                     label: "field-registers claim-reduction field-inline oracle",
                 }))?;
-        let rows = field_register_rows(session, field_inline, cycles, false)?;
+        let rows = field_register_rows(session, field_inline, cycles)?;
         let gamma = inputs
             .challenges
             .resolve_challenge(&FieldInlineChallengeId::from(
@@ -101,27 +111,21 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersClaimReduction<F>>
         // cycles (the oracle's `FieldRdValue`/`FieldRs1Value`/`FieldRs2Value`
         // extractions: write post-value, read values, zero when absent), and their
         // γ-combination as the sparse round column.
-        let mut triples: Vec<(u32, [F; 3])> = Vec::new();
-        let mut cells: Vec<SparseCell<F>> = Vec::new();
-        for (row, access) in rows.iter().enumerate() {
-            if access.rs1.is_none() && access.rs2.is_none() && access.rd.is_none() {
-                continue;
-            }
+        let cells = map_indices(rows.len(), |index| {
+            let (row, access) = &rows[index];
             let rd = access.rd.map_or_else(F::zero, |write| write.post_value);
             let rs1 = access.rs1.map_or_else(F::zero, |read| read.value);
             let rs2 = access.rs2.map_or_else(F::zero, |read| read.value);
-            triples.push((row as u32, [rd, rs1, rs2]));
-            cells.push(SparseCell {
-                row,
+            SparseCell {
+                row: *row,
                 value: rd + gamma * rs1 + gamma_sq * rs2,
-            });
-        }
+            }
+        });
 
         Ok(Box::new(FieldClaimReductionKernel {
             gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             cells,
-            scratch: Vec::new(),
-            triples,
+            rows: SharedFieldRegisterRows(rows),
             challenges: RoundChallenges::new(log_t),
         }))
     }
@@ -136,9 +140,7 @@ struct FieldClaimReductionKernel<F: JoltField> {
     gruen: GruenSplitEqPolynomial<F>,
     /// Sparse combined-column cells, sorted by `row`; merged on each bind.
     cells: Vec<SparseCell<F>>,
-    scratch: Vec<SparseCell<F>>,
-    /// The raw per-cycle value triples, retained for the opening extraction.
-    triples: Vec<(u32, [F; 3])>,
+    rows: SharedFieldRegisterRows<F>,
     challenges: RoundChallenges<F>,
 }
 
@@ -154,55 +156,43 @@ impl<F: JoltField> FieldClaimReductionKernel<F> {
             e_in.len().trailing_zeros() as usize
         };
         let mask = (1usize << in_bits) - 1;
-        let mut sum = F::Accumulator::default();
-        for cell in &self.cells {
-            if cell.row.is_multiple_of(2) {
-                continue;
-            }
-            let z = cell.row / 2;
-            let weight = if e_in.len() <= 1 {
-                e_out[z]
-            } else {
-                e_out[z >> in_bits] * e_in[z & mask]
-            };
-            sum.fmadd(weight, cell.value);
-        }
-        sum.reduce()
+        map_reduce_chunks(
+            self.cells.len(),
+            1 << 12,
+            |range| {
+                let mut sum = F::Accumulator::default();
+                for cell in &self.cells[range] {
+                    if cell.row.is_multiple_of(2) {
+                        continue;
+                    }
+                    let z = cell.row / 2;
+                    let weight = if e_in.len() <= 1 {
+                        e_out[z]
+                    } else {
+                        e_out[z >> in_bits] * e_in[z & mask]
+                    };
+                    sum.fmadd(weight, cell.value);
+                }
+                sum.reduce()
+            },
+            |a, b| a + b,
+            F::zero,
+        )
     }
 
     fn bind(&mut self, r: F) {
-        self.scratch.clear();
-        self.scratch.reserve(self.cells.len());
-        let mut index = 0;
-        while index < self.cells.len() {
-            let cell = self.cells[index];
-            let pair = cell.row / 2;
-            let merged = if cell.row.is_multiple_of(2) {
-                if let Some(odd) = self
-                    .cells
-                    .get(index + 1)
-                    .filter(|next| next.row == cell.row + 1)
-                {
-                    let value = cell.value + r * (odd.value - cell.value);
-                    index += 2;
-                    SparseCell { row: pair, value }
-                } else {
-                    index += 1;
-                    SparseCell {
-                        row: pair,
-                        value: (F::one() - r) * cell.value,
-                    }
-                }
-            } else {
-                index += 1;
-                SparseCell {
-                    row: pair,
-                    value: r * cell.value,
-                }
+        bind_sparse_entries_in_place(&mut self.cells, |even, odd| {
+            let (row, lo, hi) = match (even, odd) {
+                (Some(lo), Some(hi)) => (lo.row / 2, lo.value, hi.value),
+                (Some(lo), None) => (lo.row / 2, lo.value, F::zero()),
+                (None, Some(hi)) => (hi.row / 2, F::zero(), hi.value),
+                (None, None) => unreachable!("sparse merge always has a cell"),
             };
-            self.scratch.push(merged);
-        }
-        core::mem::swap(&mut self.cells, &mut self.scratch);
+            SparseCell {
+                row,
+                value: lo + r * (hi - lo),
+            }
+        });
         self.gruen.bind(r);
         self.challenges.push(r);
     }
@@ -217,15 +207,27 @@ impl<F: JoltField> FieldClaimReductionKernel<F> {
         let e_lo = EqPolynomial::<F>::evals(r_lo, None);
         let lo_bits = reversed.len() - hi_bits;
         let mask = (1usize << lo_bits) - 1;
-        let mut sums: [F::Accumulator; 3] = [F::Accumulator::default(); 3];
-        for &(row, values) in &self.triples {
-            let row = row as usize;
-            let weight = e_hi[row >> lo_bits] * e_lo[row & mask];
-            for (sum, value) in sums.iter_mut().zip(values) {
-                sum.fmadd(weight, value);
-            }
-        }
-        sums.map(Accumulator::reduce)
+        map_reduce_chunks(
+            self.rows.0.len(),
+            1 << 12,
+            |range| {
+                let mut sums: [F::Accumulator; 3] = [F::Accumulator::default(); 3];
+                for (row, access) in &self.rows.0[range] {
+                    let values = [
+                        access.rd.map_or_else(F::zero, |w| w.post_value),
+                        access.rs1.map_or_else(F::zero, |r| r.value),
+                        access.rs2.map_or_else(F::zero, |r| r.value),
+                    ];
+                    let weight = e_hi[row >> lo_bits] * e_lo[row & mask];
+                    for (sum, value) in sums.iter_mut().zip(values) {
+                        sum.fmadd(weight, value);
+                    }
+                }
+                sums.map(Accumulator::reduce)
+            },
+            |a, b| std::array::from_fn(|i| a[i] + b[i]),
+            || [F::zero(); 3],
+        )
     }
 }
 
@@ -304,24 +306,14 @@ impl<F: JoltField> SumcheckKernel<F> for FieldClaimReductionKernel<F> {
         challenges: &ConcreteSumcheckChallenges<F, Self::Relation>,
     ) -> Result<(), SumcheckKernelError<F>> {
         self.challenges.require_complete()?;
-        let expected = relation.derive_output_term(
-            &FieldInlineDerivedId::from(FieldRegistersClaimReductionPublic::EqSpartan),
+        pin_derived_term(
+            relation,
+            FieldInlineDerivedId::from(FieldRegistersClaimReductionPublic::EqSpartan),
             input_points,
             output_points,
             challenges,
-        )?;
-        let got = self.gruen.current_scalar();
-        if got != expected {
-            return Err(SumcheckKernelError::Verifier(
-                VerifierError::StageClaimSumcheckFailed {
-                    stage: "FieldRegistersClaimReduction".to_string(),
-                    reason: format!(
-                        "bound eq scalar {got:?}, but derive_output_term gives {expected:?}"
-                    ),
-                },
-            ));
-        }
-        Ok(())
+            self.gruen.current_scalar(),
+        )
     }
 }
 
@@ -342,7 +334,8 @@ mod tests {
         inactive_field_register_fixture, structured_field_register_fixture,
         FieldRegisterTraceFixture,
     };
-    use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, synthetic_point};
+    use crate::optimized::registers_read_write::test_support::assert_kernel_parity_with_session;
     use crate::ReferenceBackend;
 
     fn run_parity(
@@ -384,10 +377,6 @@ mod tests {
                 &ReferenceBackend, &mut session, backend, inputs()
             )
             .unwrap();
-            let mut optimized = OptimizedFieldRegistersClaimReduction
-                .prepare(&mut session, backend, inputs())
-                .unwrap();
-
             let claim = probe_input_claim(reference.as_mut());
             let round_challenges =
                 synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
@@ -403,25 +392,18 @@ mod tests {
                     "claim without field-inline activity must be zero"
                 );
             }
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
+            drop(reference);
+            assert_kernel_parity_with_session(
+                &mut session,
+                &OptimizedFieldRegistersClaimReduction,
+                backend,
+                &relation,
+                &claims,
+                &points,
+                &challenges,
                 claim,
                 &round_challenges,
             );
-            assert_eq!(
-                reference.output_claims(&claims).unwrap(),
-                optimized.output_claims(&claims).unwrap()
-            );
-            let output_points = relation
-                .derive_opening_points(&round_challenges, &points)
-                .unwrap();
-            reference
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
-            optimized
-                .validate_derived_tables(&relation, &points, &output_points, &challenges)
-                .unwrap();
         });
     }
 
