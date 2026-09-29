@@ -246,7 +246,7 @@ mod matrix {
 
         fn prove_case(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let config = ProverConfig::derive_compact::<Fr>(
+            let mut config = ProverConfig::derive_compact::<Fr>(
                 prepared.trace.trace.as_slice(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
@@ -254,6 +254,8 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
+            config.rw_config.ram_rw_phase1_num_rounds = 0;
+            config.rw_config.registers_rw_phase1_num_rounds = 0;
             let preprocessing = dory::from_shared(
                 JoltSharedPreprocessing::new(prepared.preprocessing).expect("shared preprocessing"),
             )
@@ -308,7 +310,7 @@ mod matrix {
 
         pub fn prove_and_verify(case: &GuestCase) {
             let prepared = support::prepare(case);
-            let config = ProverConfig::derive_compact::<AkitaField>(
+            let mut config = ProverConfig::derive_compact::<AkitaField>(
                 prepared.trace.trace.as_slice(),
                 &prepared.preprocessing.memory_layout,
                 prepared.preprocessing.ram.min_bytecode_address,
@@ -316,6 +318,8 @@ mod matrix {
                 prepared.preprocessing.max_padded_trace_length,
             )
             .expect("derive config");
+            config.rw_config.ram_rw_phase1_num_rounds = 0;
+            config.rw_config.registers_rw_phase1_num_rounds = 0;
             let untrusted_advice = !case.untrusted_advice.is_empty();
             let trusted_advice = !case.trusted_advice.is_empty();
             let preprocessing = preprocessing::preprocess_full_with_advice(

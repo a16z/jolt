@@ -592,7 +592,7 @@ mod chunked_tests {
 #[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
     use super::*;
-    use crate::emulator::elf_analyzer::test_elf::build_elf64;
+    use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
 
@@ -606,7 +606,11 @@ mod tests {
     #[expect(clippy::expect_used, reason = "test-only assertions")]
     fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
         // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
-        let elf = build_elf64(&[0x0010_0093, 0x0020_8113, 0x0000_006f], &[]);
+        let elf = build_elf64(
+            &[0x0010_0093, 0x0020_8113, 0x0000_006f],
+            &[],
+            StrtabOrder::GnuLd,
+        );
         let program = JoltProgram::from_elf_bytes(elf.clone());
         let inputs = TraceInputs {
             memory_config: MemoryConfig {

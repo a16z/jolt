@@ -1275,8 +1275,16 @@ impl Instruction {
                 }
             }
             0b0001111 => {
-                // FENCE: I-type; the immediate encodes "pred" and "succ" flags.
-                Ok(FENCE::new(instr, address, true, compressed).into())
+                // MISC-MEM: FENCE is I-type, with the immediate encoding the
+                // "pred" and "succ" flags. Zifencei's FENCE.I (funct3 = 001) and
+                // the Zicbom/Zicboz CBO instructions (funct3 = 010) share the
+                // opcode but are outside RV64IMAC, and funct3 = 011..111 is
+                // reserved; none of them matches `FENCE::MASK`, so reject them
+                // here rather than letting them reach `FENCE::new`.
+                match (instr >> 12) & 0x7 {
+                    0b000 => Ok(FENCE::new(instr, address, true, compressed).into()),
+                    _ => Err("Invalid MISC-MEM funct3"),
+                }
             }
             0b0101111 => {
                 // Atomic Memory Operations (A-extension): LR, SC, AMOSWAP, AMOADD, etc.
