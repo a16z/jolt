@@ -1269,7 +1269,22 @@ impl Cpu {
             }
 
             JOLT_CYCLE_MARKER_END => {
-                if let Some(mark) = self.active_markers.remove(&ptr) {
+                // Match by label: the same label can live at a different address
+                // than at start (another crate or codegen unit, or a built string).
+                let label = self.read_string(ptr, len)?;
+                let key = if self
+                    .active_markers
+                    .get(&ptr)
+                    .is_some_and(|marker| marker.label == label)
+                {
+                    Some(ptr)
+                } else {
+                    self.active_markers
+                        .iter()
+                        .find(|(_, marker)| marker.label == label)
+                        .map(|(key, _)| *key)
+                };
+                if let Some(mark) = key.and_then(|key| self.active_markers.remove(&key)) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let total = self.trace_len - mark.start_trace_len;
                     let virtual_instrs = total - real as usize;
@@ -1278,7 +1293,7 @@ impl Cpu {
                         mark.label, real, virtual_instrs, total
                     );
                 } else {
-                    warn!("Attempt to end a marker (ptr: 0x{ptr:x}) that was never started");
+                    warn!("Attempt to end a marker '{label}' that was never started");
                 }
             }
             _ => {
@@ -2069,5 +2084,25 @@ mod test_cpu {
         // Ending a marker that was never started is tolerated
         cpu.handle_jolt_cycle_marker(ptr + 64, 0, JOLT_CYCLE_MARKER_END)
             .unwrap();
+    }
+
+    #[test]
+    fn cycle_marker_end_matches_the_label_at_another_address() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        let label = b"span";
+        for (i, byte) in label.iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+            cpu.get_mut_mmu()
+                .store_raw(DRAM_BASE + 32 + i as u64, *byte);
+        }
+        let start_ptr = DRAM_BASE as u32;
+        let end_ptr = start_ptr + 32;
+
+        cpu.handle_jolt_cycle_marker(start_ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+            .unwrap();
+        cpu.handle_jolt_cycle_marker(end_ptr, label.len() as u32, JOLT_CYCLE_MARKER_END)
+            .unwrap();
+        assert!(cpu.active_markers.is_empty());
     }
 }
