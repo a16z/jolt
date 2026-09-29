@@ -720,9 +720,10 @@ impl<F: JoltField> CycleKernel<F> {
     }
 
     /// The summand's evaluations at `t ∈ {0, 2, 3, .., degree}` summed over
-    /// group `y`, written into `acc` (length `degree`); `ra_pairs` is the
-    /// caller's per-group `(lo, hi)` scratch (each RA pair is gathered once
-    /// per group, not once per sample point).
+    /// group `y`, written into `acc` (length `degree`). `ra_pairs` holds the
+    /// caller's per-group `(lo, hi)` scratch, reused as each factor's running
+    /// `(value, step)`: every factor advances by one addition per sample
+    /// point instead of a `t · (hi − lo)` multiplication.
     #[inline]
     fn accumulate_group(&self, y: usize, acc: &mut [F], ra_pairs: &mut [(F, F)]) {
         let (c_lo, c_hi) = pair(&self.combined, y);
@@ -735,9 +736,7 @@ impl<F: JoltField> CycleKernel<F> {
         let (fused_inc_lo, fused_inc_hi) = self.fused_inc.lo_hi(y);
         #[cfg(feature = "akita")]
         let fused_inc_delta = fused_inc_hi - fused_inc_lo;
-        for (i, slot) in ra_pairs.iter_mut().enumerate() {
-            *slot = self.ra.lo_hi(i, y);
-        }
+        self.ra.lo_hi_all(y, ra_pairs);
         #[cfg(not(feature = "akita"))]
         let coefficient_at_zero = c_lo;
         #[cfg(feature = "akita")]
@@ -745,16 +744,32 @@ impl<F: JoltField> CycleKernel<F> {
         acc[0] += ra_pairs
             .iter()
             .fold(coefficient_at_zero, |acc, (lo, _)| acc * *lo);
-        for (slot, t) in (2..=self.degree).enumerate() {
-            let t_value = F::from_u64(t as u64);
-            let coefficient = c_lo + t_value * c_delta;
+
+        // Advance every factor from `t = 0` to `t = 2`.
+        for pair in ra_pairs.iter_mut() {
+            let step = pair.1 - pair.0;
+            *pair = (pair.1 + step, step);
+        }
+        let mut coefficient = c_hi + c_delta;
+        #[cfg(feature = "akita")]
+        let mut fused_inc = fused_inc_hi + fused_inc_delta;
+        #[cfg(feature = "akita")]
+        let mut fused_coefficient = fused_coefficient_hi + fused_coefficient_delta;
+        for slot in &mut acc[1..] {
+            #[cfg(not(feature = "akita"))]
+            let term = coefficient;
             #[cfg(feature = "akita")]
-            let coefficient = coefficient
-                + (fused_inc_lo + t_value * fused_inc_delta)
-                    * (fused_coefficient_lo + t_value * fused_coefficient_delta);
-            acc[slot + 1] += ra_pairs.iter().fold(coefficient, |acc, (lo, hi)| {
-                acc * (*lo + t_value * (*hi - *lo))
-            });
+            let term = coefficient + fused_inc * fused_coefficient;
+            *slot += ra_pairs.iter().fold(term, |acc, (value, _)| acc * *value);
+            for (value, step) in ra_pairs.iter_mut() {
+                *value += *step;
+            }
+            coefficient += c_delta;
+            #[cfg(feature = "akita")]
+            {
+                fused_inc += fused_inc_delta;
+                fused_coefficient += fused_coefficient_delta;
+            }
         }
     }
 }

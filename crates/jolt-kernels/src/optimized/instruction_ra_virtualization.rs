@@ -39,7 +39,8 @@ use std::sync::Arc;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
-    accumulate_product_grid, map_indices, pin_derived_term, GruenRoundMessage, RoundProgress,
+    accumulate_product_grid, map_indices, pin_derived_term, product_grid_scratch_len,
+    GruenRoundMessage, RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -247,6 +248,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             pairs: Vec<(F, F)>,
             evals: Vec<F>,
             steps: Vec<F>,
+            grid: Vec<F>,
         }
 
         let block_lanes = self.gruen.par_fold_out_in(
@@ -256,6 +258,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 pairs: vec![(F::zero(), F::zero()); num_committed],
                 evals: vec![F::zero(); n],
                 steps: vec![F::zero(); n],
+                grid: vec![F::zero(); product_grid_scratch_len(n)],
             },
             |scratch, row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, &mut scratch.pairs);
@@ -272,9 +275,10 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                         *step = pair.1 - pair.0;
                     }
                     accumulate_product_grid(
-                        &mut scratch.evals,
+                        &scratch.evals,
                         &scratch.steps,
                         &mut scratch.row_lanes,
+                        &mut scratch.grid,
                     );
                 }
                 for (lane, row_lane) in scratch.lanes.iter_mut().zip(&scratch.row_lanes) {
