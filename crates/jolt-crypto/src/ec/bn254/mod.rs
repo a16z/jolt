@@ -166,6 +166,18 @@ macro_rules! impl_jolt_group_wrapper {
                 }
                 let inner = <$projective>::deserialize_compressed(&buf[..])
                     .map_err(::serde::de::Error::custom)?;
+                // arkworks ignores the x bytes when the infinity flag is set,
+                // so re-encode to keep a single accepted encoding per point.
+                let mut canonical = Vec::with_capacity(expected_len);
+                inner
+                    .serialize_compressed(&mut canonical)
+                    .map_err(::serde::de::Error::custom)?;
+                if canonical != buf {
+                    return Err(::serde::de::Error::custom(format!(
+                        "{} encoding is not canonical",
+                        stringify!($wrapper)
+                    )));
+                }
                 Ok(Self(inner))
             }
         }
@@ -337,6 +349,7 @@ mod tests {
     use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
 
     use super::{Bn254, Bn254G1, Bn254G2};
+    use crate::JoltGroup;
 
     #[test]
     fn g1_transcript_encoding_uses_compressed_commitment_bytes() {
@@ -395,6 +408,41 @@ mod tests {
         let json = serde_json::to_string(&bytes).expect("encode bytes");
         let err = serde_json::from_str::<Bn254G2>(&json).expect_err("trailing byte");
         assert!(err.to_string().contains("exactly"), "{err}");
+    }
+
+    fn identity_with_junk_x<P: CanonicalSerialize>(identity: &P) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        identity
+            .serialize_compressed(&mut bytes)
+            .expect("serialize identity");
+        *bytes.first_mut().expect("non-empty encoding") = 1;
+        bytes
+    }
+
+    #[test]
+    fn g1_deserialize_rejects_non_canonical_infinity() {
+        let bytes = identity_with_junk_x(&Bn254G1::identity().0);
+        let json = serde_json::to_string(&bytes).expect("encode bytes");
+        let err = serde_json::from_str::<Bn254G1>(&json).expect_err("junk x under infinity flag");
+        assert!(err.to_string().contains("not canonical"), "{err}");
+    }
+
+    #[test]
+    fn g2_deserialize_rejects_non_canonical_infinity() {
+        let bytes = identity_with_junk_x(&Bn254G2::identity().0);
+        let json = serde_json::to_string(&bytes).expect("encode bytes");
+        let err = serde_json::from_str::<Bn254G2>(&json).expect_err("junk x under infinity flag");
+        assert!(err.to_string().contains("not canonical"), "{err}");
+    }
+
+    #[test]
+    fn identity_round_trips_canonically() {
+        let json = serde_json::to_string(&Bn254G1::identity()).expect("encode");
+        let g1: Bn254G1 = serde_json::from_str(&json).expect("decode");
+        assert_eq!(g1, Bn254G1::identity());
+        let json = serde_json::to_string(&Bn254G2::identity()).expect("encode");
+        let g2: Bn254G2 = serde_json::from_str(&json).expect("decode");
+        assert_eq!(g2, Bn254G2::identity());
     }
 
     #[test]
