@@ -115,6 +115,7 @@ fn profile_run_emits_conformant_artifacts() {
     assert_eq!(summary.run.workload, "fibonacci");
     assert_eq!(summary.run.scale_log2, 13);
     assert!(summary.peak_rss_gib.is_some());
+    assert!(summary.peak_footprint_gib.is_some());
 
     // The counter rewrite ran: no raw `counters.*` events survive in the
     // trace, and the monitor's samples aggregated into the summary.

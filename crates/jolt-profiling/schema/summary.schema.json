@@ -19,6 +19,15 @@
       },
       "default": {}
     },
+    "peak_footprint_gib": {
+      "description": "Process-lifetime peak physical footprint, in GiB, sampled with\n`peak_rss_gib`. On macOS it counts pages the kernel compressed under\nmemory pressure, which RSS omits (the `peak memory footprint` of\n`/usr/bin/time -l`); elsewhere it equals `peak_rss_gib`.",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "double",
+      "default": null
+    },
     "peak_rss_gib": {
       "description": "Process-lifetime `getrusage` high-water mark, in GiB, sampled by the\nharness right after the workload — before the flush-time trace\nparse/rewrite can inflate it. Includes guest compile / tracer\nexecution, unlike `root.peak_memory_gib`.",
       "type": [

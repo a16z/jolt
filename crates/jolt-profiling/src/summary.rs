@@ -30,7 +30,9 @@
 //!   minimum 50 ms sampling interval).
 //! - *Per-stage boundary RSS* comes from [`StageMemoryRow`] (retained growth
 //!   per stage, deliberately not within-stage peak); *headline peak RSS* is
-//!   the `getrusage` high-water mark, which sampling cannot miss.
+//!   the `getrusage` high-water mark, which sampling cannot miss, and
+//!   *headline peak footprint* the kernel's physical-footprint high-water
+//!   mark, which also counts pages macOS compressed out of RSS.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -39,6 +41,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::memory::PeakMemory;
 use crate::stage_memory::StageMemoryRow;
 use crate::taxonomy;
 use crate::units::BYTES_PER_GIB;
@@ -90,6 +93,12 @@ pub struct ProfileSummary {
     /// parse/rewrite can inflate it. Includes guest compile / tracer
     /// execution, unlike `root.peak_memory_gib`.
     pub peak_rss_gib: Option<f64>,
+    /// Process-lifetime peak physical footprint, in GiB, sampled with
+    /// `peak_rss_gib`. On macOS it counts pages the kernel compressed under
+    /// memory pressure, which RSS omits (the `peak memory footprint` of
+    /// `/usr/bin/time -l`); elsewhere it equals `peak_rss_gib`.
+    #[serde(default)]
+    pub peak_footprint_gib: Option<f64>,
     /// Per-label aggregates over every span instance on every thread.
     pub spans: BTreeMap<String, SpanAggregate>,
     /// Per-stage rollup in pipeline order (only stages present in the trace).
@@ -487,7 +496,7 @@ pub fn build_summary(
     events: &[Value],
     ctx: &SummaryContext,
     stage_rows: &[StageMemoryRow],
-    peak_rss_bytes: Option<u64>,
+    peak: PeakMemory,
     timestamp_unix_secs: u64,
     git_rev: Option<String>,
     mut heap: BTreeMap<String, HeapSnapshot>,
@@ -599,7 +608,10 @@ pub fn build_summary(
             git_rev,
         },
         root,
-        peak_rss_gib: peak_rss_bytes.map(|bytes| bytes as f64 / BYTES_PER_GIB),
+        peak_rss_gib: peak.rss_bytes.map(|bytes| bytes as f64 / BYTES_PER_GIB),
+        peak_footprint_gib: peak
+            .footprint_bytes
+            .map(|bytes| bytes as f64 / BYTES_PER_GIB),
         spans: aggregate.spans,
         stages,
         counters,
@@ -656,20 +668,19 @@ pub(crate) fn write_atomic(path: &Path, data: &str) -> Result<(), SummaryError> 
 /// Flush-time pipeline entry: rewrite counter events in the trace file
 /// (atomically — temp file + rename, never a truncating in-place write),
 /// then aggregate the same events (folding in the drained
-/// [`StageMemoryRow`]s and the caller-captured `getrusage` peak) into
+/// [`StageMemoryRow`]s and the caller-captured peak memory) into
 /// `summary.json` next to it.
 ///
 /// Call after dropping [`TracingGuards`](crate::TracingGuards) — the chrome
-/// layer finalizes the trace file on guard drop. `peak_rss_bytes` must be
-/// sampled by the caller right after the workload (see
-/// [`peak_rss_bytes`](crate::memory::peak_rss_bytes)): sampling here would
+/// layer finalizes the trace file on guard drop. `peak` must be sampled by
+/// the caller right after the workload (see [`PeakMemory::sample`]): sampling here would
 /// report this function's own trace parse/expand allocations — tooling
 /// memory, not the profiled workload — whenever they exceed the prove's
 /// footprint.
 pub fn finalize_trace(
     trace_path: &Path,
     ctx: &SummaryContext,
-    peak_rss_bytes: Option<u64>,
+    peak: PeakMemory,
 ) -> Result<(PathBuf, ProfileSummary), SummaryError> {
     let events = read_events(trace_path)?;
     let events = convert_counter_events(events);
@@ -698,7 +709,7 @@ pub fn finalize_trace(
         &events,
         ctx,
         &crate::stage_memory::take_stage_memory_rows(),
-        peak_rss_bytes,
+        peak,
         timestamp_unix_secs,
         git_rev(),
         heap,
