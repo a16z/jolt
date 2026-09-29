@@ -1277,7 +1277,10 @@ impl Instruction {
                 let funct5 = (instr >> 27) & 0x1f;
 
                 match (funct3, funct5) {
-                    // LR (Load Reserved)
+                    // LR (Load Reserved) has no rs2 operand and its encoding
+                    // requires rs2 = 0 (see `LRW::MASK`); reject other values
+                    // here rather than letting them reach `LRW::new`/`LRD::new`.
+                    (0b010 | 0b011, 0b00010) if (instr >> 20) & 0x1f != 0 => Err("Invalid LR rs2"),
                     (0b010, 0b00010) => Ok(LRW::new(instr, address, true, compressed).into()),
                     (0b011, 0b00010) => Ok(LRD::new(instr, address, true, compressed).into()),
 
