@@ -1,7 +1,9 @@
 //! Packed stage 0: input validation, commitments, and transcript setup.
 
+use std::sync::Arc;
+
 use common::jolt_device::JoltDevice;
-use jolt_akita::TraceOneHotCommitment;
+use jolt_akita::{TraceOneHotCommitment, TraceOneHotRows};
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
@@ -197,13 +199,13 @@ where
     }
     let (commitment, hint) =
         tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
-            let packed_trace_rows = assemble_one_hot_trace_rows(
+            let trace_rows = Arc::new(assemble_one_hot_trace_rows(
                 witness,
                 &plan,
                 formula_dimensions.ra_layout,
                 log_k_chunk,
                 log_t,
-            )?;
+            )?);
             let precommitted_hints = precommitted
                 .iter()
                 .map(|(_, _, hint)| *hint)
@@ -212,9 +214,10 @@ where
                 &preprocessing.pcs_setup,
                 preprocessing.pcs_setup.default_layout_digest(),
                 plan.packing().slot_capacity(),
-                packed_trace_rows,
+                Arc::clone(&trace_rows) as Arc<dyn TraceOneHotRows>,
                 &precommitted_hints,
             );
+            trace_rows.check_extraction()?;
             let (commitment, hint) =
                 committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                     reason: error.to_string(),
