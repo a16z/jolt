@@ -1634,7 +1634,7 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                         }
                         // imm == 0 is for reserved instruction
                     }
-                    if r != 0 && r != 2 {
+                    if r != 2 {
                         // C.LUI
                         // lui r, nzimm
                         let nzimm = match halfword & 0x1000 {
@@ -1643,14 +1643,15 @@ pub fn uncompress_instruction(halfword: u32) -> u32 {
                             } | // nzimm[31:18] <= [12]
                             ((halfword << 5) & 0x20000) | // nzimm[17] <= [12]
                             ((halfword << 10) & 0x1f000); // nzimm[16:12] <= [6:2]
+                                                          // nzimm == 0 is reserved for every rd; rd == 0 with
+                                                          // nzimm != 0 is a hint, expanded to a NOP.
                         if nzimm != 0 {
-                            return nzimm | (r << 7) | 0x37;
+                            return if r == 0 {
+                                0x13
+                            } else {
+                                nzimm | (r << 7) | 0x37
+                            };
                         }
-                        // nzimm == 0 is for reserved instruction
-                    }
-                    if r == 0 {
-                        // NOP
-                        return 0x13;
                     }
                 }
                 4 => {
@@ -3014,6 +3015,7 @@ mod tests {
             (0x7281, u_type(0xfffe0, 5, 0x37), "c.lui x5, 0xfffe0"),
             (0x6281, INVALID, "c.lui nzimm=0 is reserved"),
             (0x6005, 0x13, "c.lui rd=0 is a nop"),
+            (0x6001, INVALID, "c.lui rd=0 nzimm=0 is reserved"),
             (0x9085, i_type(33, 9, 0b101, 9, 0x13), "c.srli x9, 33"),
             (0x8485, i_type(0x400 | 1, 9, 0b101, 9, 0x13), "c.srai x9, 1"),
             (0x996d, i_type(-5, 10, 0b111, 10, 0x13), "c.andi x10, -5"),

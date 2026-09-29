@@ -125,16 +125,18 @@ pub fn uncompress_rv64_instruction(halfword: u16) -> u32 {
                         return (imm << 20) | (r << 15) | (r << 7) | 0x13;
                     }
                 }
-                if r != 0 && r != 2 {
+                if r != 2 {
                     let nzimm = sign_bit_mask(halfword, 0x1000, 0xfffc_0000)
                         | ((halfword << 5) & 0x20000)
                         | ((halfword << 10) & 0x1f000);
+                    // nzimm = 0 is reserved for every rd; rd = 0 with nzimm != 0 is a hint.
                     if nzimm != 0 {
-                        return nzimm | (r << 7) | 0x37;
+                        return if r == 0 {
+                            0x13
+                        } else {
+                            nzimm | (r << 7) | 0x37
+                        };
                     }
-                }
-                if r == 0 {
-                    return 0x13;
                 }
             }
             4 => {
@@ -798,6 +800,7 @@ mod tests {
         assert_eq!(expand(ci(0b011, 4, 21)), lui(21, 4)); // 0b010101
         assert_eq!(expand(ci(0b011, 1, 0)), 0xffff_ffff); // nzimm=0 reserved
         assert_eq!(expand(ci(0b011, 0, 5)), 0x13); // rd=0 emits canonical nop
+        assert_eq!(expand(ci(0b011, 0, 0)), 0xffff_ffff); // rd=0 nzimm=0 reserved
         for b in 0..=4 {
             let imm = 1 << b;
             assert_eq!(expand(ci(0b011, 5, imm)), lui(imm, 5));
