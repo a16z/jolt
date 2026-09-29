@@ -13,11 +13,15 @@ workspace = true
 default = []
 field-inline = [
   "jolt-program/field-inline",
+  "dep:jolt-field",
+  "dep:postcard",
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
 
 [dependencies]
+jolt-field = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
 bincode.workspace = true
 common.workspace = true
 jolt-program = { workspace = true, features = ["image", "serialization"] }

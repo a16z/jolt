@@ -1,6 +1,8 @@
 //! Shared parity-test support for the registers kernel family.
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
+use core::fmt::Debug;
+
+use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 use jolt_field::{Fr, Ring};
 use jolt_program::execution::{
@@ -10,8 +12,8 @@ use jolt_program::execution::{
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims,
+    ChallengeIdOf, ConcreteSumcheck, ConcreteSumcheckChallenges, OpeningIdOf, SumcheckInputClaims,
+    SumcheckInputPoints, SumcheckOutputClaims,
 };
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessPlane, TraceBackend};
 
@@ -181,9 +183,9 @@ pub(crate) fn assert_kernel_parity<R>(
 ) where
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
-    SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
-    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
+    SumcheckInputClaims<Fr, R>: InputClaims<Fr, OpeningIdOf<Fr, R>>,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr, OpeningIdOf<Fr, R>> + PartialEq + Debug,
+    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, ChallengeIdOf<Fr, R>>,
 {
     assert_kernel_parity_with_session(
         &mut ProofSession::default(),
@@ -217,9 +219,9 @@ pub(crate) fn assert_kernel_parity_with_session<R>(
 ) where
     R: ConcreteSumcheck<Fr>,
     ReferenceBackend: PrepareKernel<Fr, R>,
-    SumcheckInputClaims<Fr, R>: InputClaims<Fr>,
-    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr> + PartialEq + core::fmt::Debug,
-    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, JoltChallengeId>,
+    SumcheckInputClaims<Fr, R>: InputClaims<Fr, OpeningIdOf<Fr, R>>,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr, OpeningIdOf<Fr, R>> + PartialEq + Debug,
+    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, ChallengeIdOf<Fr, R>>,
 {
     let mut reference_session = ProofSession::default();
     let mut reference = ReferenceBackend

@@ -55,10 +55,10 @@ where
 }
 
 /// Guard and decode the ordered grouped root in public order
-/// `[dense precommits.., final streamed one-hot]`.
+/// `[auxiliary dense groups.., final streamed one-hot]`.
 pub(crate) fn deserialize_checked_grouped_backend_payload<Cfg>(
     schedules: &TrustedScheduleCatalog<Cfg>,
-    precommitted: &[&AkitaCommitment],
+    auxiliary_groups: &[&AkitaCommitment],
     main: &AkitaCommitment,
     proof: &AkitaBatchProof,
 ) -> Result<
@@ -74,7 +74,7 @@ where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
     let selection = proof.selection();
-    let mut group_layouts = precommitted
+    let mut group_layouts = auxiliary_groups
         .iter()
         .map(|commitment| PolynomialGroupLayout::new(commitment.num_vars, commitment.poly_count))
         .collect::<Vec<_>>();
@@ -85,14 +85,14 @@ where
         .map_err(|err| invalid_batch(format!("Akita grouped schedule resolution failed: {err}")))?;
     let profiles = resolved.profiles();
 
-    let mut precommitted_backend = Vec::with_capacity(precommitted.len());
-    for (commitment, profile) in precommitted.iter().zip(profiles.precommitteds.iter()) {
+    let mut auxiliary_backend = Vec::with_capacity(auxiliary_groups.len());
+    for (commitment, profile) in auxiliary_groups.iter().zip(profiles.precommitteds.iter()) {
         validate_commitment_profile_len(commitment, profile)?;
         let payload = deserialize_akita::<AkitaBackendCommitmentPayload>(
             &commitment.serialized_backend_bytes,
             &commitment.backend_coeff_len,
         )?;
-        precommitted_backend.push(AkitaBackendCommitment::new(*profile, payload));
+        auxiliary_backend.push(AkitaBackendCommitment::new(*profile, payload));
     }
     validate_commitment_profile_len(main, &profiles.final_group)?;
     let main_payload = deserialize_akita::<AkitaBackendCommitmentPayload>(
@@ -104,7 +104,7 @@ where
 
     Ok((
         resolved.selection(),
-        precommitted_backend,
+        auxiliary_backend,
         main_backend,
         backend_proof,
     ))

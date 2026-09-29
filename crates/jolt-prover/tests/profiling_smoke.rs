@@ -94,7 +94,13 @@ fn profile_run_emits_conformant_artifacts() {
         .filter(|e| e.get("ph").and_then(Value::as_str) == Some("B"))
         .filter_map(|e| e.get("name").and_then(Value::as_str))
         .collect();
-    let missing: Vec<&str> = taxonomy::always_present_spans(mode)
+    let labels = taxonomy::always_present_spans(mode);
+    #[cfg(feature = "field-inline")]
+    let labels: Vec<_> = labels
+        .into_iter()
+        .chain(taxonomy::field_inline_spans(mode).iter().copied())
+        .collect();
+    let missing: Vec<&str> = labels
         .into_iter()
         .filter(|label| !emitted.contains(label))
         .collect();

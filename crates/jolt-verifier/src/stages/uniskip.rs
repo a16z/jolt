@@ -9,11 +9,13 @@
 //! relation's fold of the stage-1 openings), so the verification core is
 //! shared here.
 
+use jolt_claims::protocols::composed::geometry::{
+    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
+};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_r1cs::constraints::jolt::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
-    SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
@@ -118,7 +120,7 @@ where
 /// The ZK uni-skip step's outputs: the committed round consistency and output
 /// claim commitments (carried downstream for BlindFold), plus the reduction
 /// challenge.
-pub(crate) struct UniskipZk<F: JoltField, C> {
+pub struct UniskipZk<F: JoltField, C> {
     pub consistency: CommittedSumcheckConsistency<F, C>,
     pub output_claims: CommittedOutputClaimOutput<C>,
     pub challenge: F,
@@ -173,7 +175,7 @@ where
 /// Verify a ZK-mode uni-skip round: committed round consistency plus the
 /// output-claim commitment count. The claims themselves stay committed
 /// (BlindFold verifies them at stage 8).
-pub(crate) fn verify_zk<F, C, T>(
+pub fn verify_zk<F, C, T>(
     checked: &CheckedInputs,
     proof: &SumcheckProof<F, C>,
     params: &UniskipParams,

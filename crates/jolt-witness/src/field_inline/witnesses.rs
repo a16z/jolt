@@ -7,12 +7,10 @@
 //! scalar witnesses' `ToField`). Rows without a field-inline payload
 //! extract to zero / false.
 
-use jolt_claims::protocols::field_inline::FieldInlineOpFlag;
 use jolt_field::{CanonicalEncoding, JoltField};
 use jolt_program::{execution::TraceRow, field_inline::FieldEncodedValue};
-use jolt_riscv::FieldInlineOp;
 
-use crate::witnesses::{Extract, ExtractIndexed, WitnessEnv};
+use crate::witnesses::{Extract, WitnessEnv};
 use crate::WitnessError;
 
 /// Decoded field value read from field-register rs1; zero when absent.
@@ -35,10 +33,6 @@ pub struct FieldProduct<F>(pub F);
 /// inverse relation's constraint input).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FieldInvProduct<F>(pub F);
-
-/// Whether the row performs the field-inline op bound at the use site.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FieldOpFlag(pub bool);
 
 /// Signed field delta written to field-register rd; zero when absent.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -68,12 +62,6 @@ field_value!(
     FieldInvProduct,
     FieldRdInc,
 );
-
-impl<F: JoltField> FieldValue<F> for FieldOpFlag {
-    fn value(self) -> F {
-        F::from_bool(self.0)
-    }
-}
 
 impl<F: JoltField> Extract<TraceRow> for FieldRs1Value<F> {
     fn extract(
@@ -144,21 +132,6 @@ impl<F: JoltField> Extract<TraceRow> for FieldInvProduct<F> {
     }
 }
 
-impl ExtractIndexed<FieldInlineOpFlag, TraceRow> for FieldOpFlag {
-    fn extract_indexed(
-        flag: FieldInlineOpFlag,
-        row: &TraceRow,
-        _next: Option<&TraceRow>,
-        _env: &WitnessEnv<'_>,
-    ) -> Result<Self, WitnessError> {
-        Ok(Self(
-            row.field_inline
-                .as_deref()
-                .is_some_and(|data| data.op == Some(op(flag))),
-        ))
-    }
-}
-
 impl<F: JoltField> Extract<TraceRow> for FieldRdInc<F> {
     fn extract(
         row: &TraceRow,
@@ -183,17 +156,4 @@ pub(crate) fn decode_value<F: JoltField>(value: FieldEncodedValue) -> F {
         return F::from_u64(u64::from_le_bytes(bytes));
     }
     <F as CanonicalEncoding>::from_bytes_le_reduced(&value.bytes_le)
-}
-
-pub(crate) const fn op(flag: FieldInlineOpFlag) -> FieldInlineOp {
-    match flag {
-        FieldInlineOpFlag::Add => FieldInlineOp::Add,
-        FieldInlineOpFlag::Sub => FieldInlineOp::Sub,
-        FieldInlineOpFlag::Mul => FieldInlineOp::Mul,
-        FieldInlineOpFlag::Inv => FieldInlineOp::Inv,
-        FieldInlineOpFlag::AssertEq => FieldInlineOp::AssertEq,
-        FieldInlineOpFlag::LoadFromX => FieldInlineOp::LoadFromX,
-        FieldInlineOpFlag::StoreToX => FieldInlineOp::StoreToX,
-        FieldInlineOpFlag::LoadImm => FieldInlineOp::LoadImm,
-    }
 }

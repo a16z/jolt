@@ -2,10 +2,18 @@
 //! mode-specific checks (tampering, forced one-hot sizes, committed programs,
 //! trace-order rejection). Plain acceptance across guests is `e2e_matrix.rs`.
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 mod support;
 
-#[cfg(all(feature = "prover-fixtures", feature = "akita"))]
+#[cfg(all(
+    feature = "prover-fixtures",
+    feature = "akita",
+    not(feature = "field-inline")
+))]
 #[expect(
     clippy::expect_used,
     clippy::panic,

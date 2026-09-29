@@ -1,9 +1,16 @@
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "field-inline")]
+use super::field_registers_val_evaluation::{
+    field_registers_val_evaluation_input_points_from_upstream,
+    field_registers_val_evaluation_input_values_from_upstream, FieldRegistersValEvaluation,
+};
 use super::{
     instruction_read_raf::{
         instruction_read_raf_input_points_from_upstream,
@@ -46,6 +53,10 @@ pub fn stage5_input_values_from_upstream<F: JoltField>(
         instruction_read_raf: instruction_read_raf_input_values_from_upstream(stage2),
         ram_ra_claim_reduction: ram_ra_claim_reduction_input_values_from_upstream(stage2, stage4),
         registers_val_evaluation: registers_val_evaluation_input_values_from_upstream(stage4),
+        #[cfg(feature = "field-inline")]
+        field_registers_val_evaluation: field_registers_val_evaluation_input_values_from_upstream(
+            stage4,
+        ),
     }
 }
 
@@ -60,6 +71,10 @@ pub fn stage5_input_points_from_upstream<F: JoltField>(
         instruction_read_raf: instruction_read_raf_input_points_from_upstream(stage2),
         ram_ra_claim_reduction: ram_ra_claim_reduction_input_points_from_upstream(stage2, stage4),
         registers_val_evaluation: registers_val_evaluation_input_points_from_upstream(stage4),
+        #[cfg(feature = "field-inline")]
+        field_registers_val_evaluation: field_registers_val_evaluation_input_points_from_upstream(
+            stage4,
+        ),
     }
 }
 
@@ -84,11 +99,16 @@ where
         instruction_read_raf: InstructionReadRaf::new(formula_dimensions.instruction_read_raf),
         ram_ra_claim_reduction: RamRaClaimReduction::new(trace_dimensions, log_k),
         registers_val_evaluation: RegistersValEvaluation::new(trace_dimensions),
+        #[cfg(feature = "field-inline")]
+        field_registers_val_evaluation: FieldRegistersValEvaluation::new(
+            FieldRegistersTraceDimensions::new(trace_dimensions.log_t()),
+        ),
     };
 
-    // Draw each relation's batching gamma in declaration order (instruction, then
-    // RAM); registers draws nothing. The drawn challenges feed the input/output
-    // claims and populate the stage aggregate carried downstream.
+    // Draw each relation's batching gamma in declaration order (instruction, then RAM);
+    // registers draws nothing, and neither does the `field-inline` value-evaluation member.
+    // The drawn challenges feed the input/output claims and populate the stage aggregate
+    // carried downstream.
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {
