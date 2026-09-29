@@ -20,14 +20,16 @@ packages() {
 
 # Self-test: the pattern must match the crate it guards against, or a
 # rename would make the check below vacuous.
-if ! packages jolt-metal | grep -Eq '^objc2-metal '; then
+graph=$(packages jolt-metal)
+if ! grep -Eq '^objc2-metal ' <<<"$graph"; then
   echo "error: self-test failed: objc2-metal not found in jolt-metal's own graph" >&2
   exit 1
 fi
 
 status=0
 for package in jolt-verifier jolt-field; do
-  if leaked="$(packages "$package" | grep -E "$forbidden")"; then
+  graph=$(packages "$package")
+  if leaked=$(grep -E "$forbidden" <<<"$graph"); then
     echo "error: $package depends on Metal crates:" >&2
     printf '%s\n' "$leaked" >&2
     status=1

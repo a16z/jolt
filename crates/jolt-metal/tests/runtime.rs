@@ -329,6 +329,21 @@ mod gpu {
     }
 
     #[test]
+    fn zero_sized_elements_are_rejected_at_construction() {
+        let (_gpu, device) = gpu("zero_sized_elements_are_rejected_at_construction");
+        for len in [0, 3] {
+            let values = vec![(); len];
+            for error in [
+                DeviceBuffer::<()>::zeroed(&device, len).err().unwrap(),
+                DeviceBuffer::from_slice(&device, &values).err().unwrap(),
+            ] {
+                assert!(matches!(error, MetalError::ZeroSizedElement));
+                assert_eq!(error.class(), ErrorClass::Fault);
+            }
+        }
+    }
+
+    #[test]
     fn empty_buffers_and_grids_are_no_ops() {
         let (_gpu, device) = gpu("empty_buffers_and_grids_are_no_ops");
         let library = runtime_library(&device);
