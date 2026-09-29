@@ -607,27 +607,6 @@ pub(crate) fn map_indices<T: Send>(len: usize, f: impl Fn(usize) -> T + Send + S
     }
 }
 
-/// Indexed in-place update of a slice.
-pub(crate) fn for_each_index_mut<T: Send>(
-    items: &mut [T],
-    f: impl Fn(usize, &mut T) + Send + Sync,
-) {
-    #[cfg(feature = "parallel")]
-    {
-        items
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-    #[cfg(not(feature = "parallel"))]
-    {
-        items
-            .iter_mut()
-            .enumerate()
-            .for_each(|(index, item)| f(index, item));
-    }
-}
-
 /// Pool-scaled chunk size for the chunked scans.
 pub(crate) fn scan_chunk_size(len: usize) -> usize {
     #[cfg(feature = "parallel")]
