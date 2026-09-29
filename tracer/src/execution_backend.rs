@@ -10,7 +10,7 @@ use jolt_program::execution::{
     TraceInputs, TraceOutput, TraceRow,
 };
 use jolt_program::preprocess::BytecodePreprocessing;
-use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
+use jolt_riscv::{Flags, InstructionFlags, JoltInstruction, JoltInstructionRow, JoltTraceRow};
 use rayon::prelude::*;
 
 use common::jolt_device::JoltDevice;
@@ -78,6 +78,11 @@ impl TracerBackend {
             &inputs.memory_config,
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
+        if cycles.last().is_some_and(is_branch_cycle) {
+            return Err(TraceError::Backend(
+                "execution trace ends in a taken branch to its own address; only a jump to itself terminates a provable trace",
+            ));
+        }
         Ok(TraceExecution {
             cycles,
             final_memory: MemoryImage {
@@ -87,6 +92,22 @@ impl TracerBackend {
             advice_tape: advice_tape.into_bytes(),
         })
     }
+}
+
+/// Whether `cycle` executed a conditional branch.
+///
+/// The emulator ends a trace when the PC stops changing, so in a valid guest a
+/// branch is the final cycle only by being taken to its own address. The proof
+/// cannot cover that trace: the padding row after it supplies `NextUnexpandedPC = 0`,
+/// while the `ShouldBranch` constraint demands the branch's own address. Only
+/// `ShouldJump` is exempted for a no-op successor, which is why `j .` works.
+fn is_branch_cycle(cycle: &Cycle) -> bool {
+    cycle
+        .instruction()
+        .try_jolt_instruction_row()
+        .ok()
+        .and_then(|row| JoltInstruction::try_from(row).ok())
+        .is_some_and(|instruction| instruction.instruction_flags()[InstructionFlags::Branch])
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -568,7 +589,8 @@ mod tests {
     use super::*;
     use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
     use common::jolt_device::MemoryConfig;
-    use jolt_program::execution::{TraceError, TraceInputs};
+    use jolt_program::execution::{build_jolt_program, TraceError, TraceInputs};
+    use jolt_riscv::RV64IMAC_JOLT;
 
     #[cfg(feature = "field-inline")]
     use crate::{
@@ -612,6 +634,82 @@ mod tests {
         let image = output.final_memory.expect("memory image present");
         assert!(!image.bytes.is_empty());
         assert!(!output.device.panic);
+    }
+
+    /// `x1 = 1` first, then one branch with `imm = 0` whose comparison holds.
+    fn taken_self_branch_text(funct3: u32, rs1: u32, rs2: u32) -> Vec<u32> {
+        let branch = 0x63 | (funct3 << 12) | (rs1 << 15) | (rs2 << 20);
+        vec![0x0010_0093, branch]
+    }
+
+    fn elf_program(text: &[u32]) -> (JoltProgram, TraceInputs) {
+        let elf = build_elf64(text, &[], StrtabOrder::GnuLd);
+        let inputs = TraceInputs {
+            memory_config: MemoryConfig {
+                program_size: Some(elf.len() as u64),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        (
+            build_jolt_program(&elf).expect("build Jolt program"),
+            inputs,
+        )
+    }
+
+    #[test]
+    fn tracer_backend_rejects_a_trace_ending_in_a_taken_self_branch() {
+        let cases = [
+            ("beq", taken_self_branch_text(0b000, 1, 1)),
+            ("bne", taken_self_branch_text(0b001, 0, 1)),
+            ("blt", taken_self_branch_text(0b100, 0, 1)),
+            ("bge", taken_self_branch_text(0b101, 1, 0)),
+            ("bltu", taken_self_branch_text(0b110, 0, 1)),
+            ("bgeu", taken_self_branch_text(0b111, 1, 0)),
+            // c.beqz s0, 0 with s0 = 0, padded by a c.nop
+            ("c.beqz", vec![0x0001_c001]),
+        ];
+        for (name, text) in cases {
+            let (program, inputs) = elf_program(&text);
+            let result = TracerBackend::new().trace(&program, inputs);
+            assert!(
+                matches!(result, Err(TraceError::Backend(_))),
+                "{name}: got {:?}",
+                result.map(|output| output.trace.rows().len())
+            );
+        }
+    }
+
+    #[test]
+    fn compact_trace_rejects_a_trace_ending_in_a_taken_self_branch() {
+        // beq x0, x0, 0
+        let (program, inputs) = elf_program(&[0x0000_0063]);
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            RV64IMAC_JOLT,
+        )
+        .expect("bytecode preprocessing");
+
+        let result = TracerBackend::new().trace_compact(&program, inputs, &bytecode);
+        assert!(
+            matches!(
+                result,
+                Err(CompactTraceError::Trace(TraceError::Backend(_)))
+            ),
+            "got {:?}",
+            result.map(|output| output.trace.len())
+        );
+    }
+
+    #[test]
+    fn tracer_backend_accepts_an_untaken_self_branch_before_a_jump_to_self() {
+        // addi x1, x0, 1 ; beq x0, x1, 0 (not taken) ; j .
+        let (program, inputs) = elf_program(&[0x0010_0093, 0x0010_0063, 0x0000_006f]);
+        let output = TracerBackend::new()
+            .trace(&program, inputs)
+            .expect("an untaken self-branch is an ordinary row");
+        assert_eq!(output.trace.rows().len(), 3);
     }
 
     #[test]
