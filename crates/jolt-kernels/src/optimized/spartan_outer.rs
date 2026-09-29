@@ -2,16 +2,16 @@
 //! wire behavior:
 //!
 //! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
-//!   rows are evaluated per cycle as integers (`i64` guards, `S192`
-//!   magnitudes) straight off a typed witness bundle — the 35 R1CS input
-//!   tables are never materialized as field vectors
-//!   (`R1CSEval::{eval_az,eval_bz}_*_group`).
+//!   rows are evaluated per cycle as integers (`i64` guards, `i128` B values,
+//!   the ±2^130 second-group ones split as `hi·2^64 + lo`) straight off a
+//!   typed witness bundle — the 35 R1CS input tables are never materialized
+//!   as field vectors (`R1CSEval::{eval_az,eval_bz}_*_group`).
 //! - **Univariate skip over the centered integer domain**: the first-round
 //!   polynomial needs only the 9 extended-node evaluations (in-domain nodes
-//!   vanish); each is an integer Lagrange extension of the row values
-//!   (`COEFFS_PER_J` / `extended_azbz_product_*`), so the whole pass costs 9
-//!   integer dot products and one field fmadd per `(cycle, stream)` instead
-//!   of per-row field multiplies.
+//!   vanish); each is an exact integer extension of the row values, computed
+//!   by finite differences, so the whole pass costs branch-free integer
+//!   additions plus one field × `i128` fmadd per `(cycle, stream, node)` (two
+//!   for the split second stream) instead of per-row field multiplies.
 //! - **Unreduced accumulation**: field × wide-integer products accumulate
 //!   through `jolt-field`'s specialized accumulators and reduce once per block
 //!   (`FullAccumS`/`SmallAccumU`/`WideAccumS` + `barrett_reduce`).
@@ -32,12 +32,13 @@
 //!   through every round.
 //!
 //! Byte parity with the reference kernels holds because every step computes
-//! the same field values by exact integer/field algebra (the integer Lagrange
-//! extension coefficients equal the field Lagrange evaluations at integer
-//! nodes; ring homomorphism does the rest), and the wire assembly reuses the
+//! the same field values by exact integer/field algebra (the integer
+//! extension equals the field Lagrange extension at integer nodes; ring
+//! homomorphism does the rest), and the wire assembly reuses the
 //! reference's own `jolt-poly` interpolation path.
 
 use std::collections::BTreeMap;
+use std::ops::{Add, Sub};
 
 use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::geometry::spartan::{
@@ -47,7 +48,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltOpeningId, JoltPolynomialId, SpartanOuterPublic,
 };
 use jolt_claims::{InputClaims as _, OutputClaims as _};
-use jolt_field::signed::{S128, S192, S256, S64};
+use jolt_field::signed::{S128, S256, S64};
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
@@ -203,14 +204,16 @@ impl WitnessBundle for SpartanOuterRow {
 }
 
 /// One cycle's integer values of the 19 eq-conditional rows, split into the
-/// two uni-skip stream groups (A-side guards as `i64`, B-side magnitudes as
-/// `S192` — wide enough for the `RightLookupOperand`-bearing rows, whose
-/// values reach ±2^130).
+/// two uni-skip stream groups. A-side guards satisfy `|a| ≤ 3`; first-group
+/// B values satisfy `|b| ≤ 2^64`. Second-group B values reach ±2^130 (the
+/// `RightLookupOperand`/`Product`/`Imm`-bearing rows), so each is carried as
+/// `hi·2^64 + lo` with `|lo| < 2^66` and `|hi| < 2^65`.
 struct RowGroupValues {
     a_first: [i64; DOMAIN],
     a_second: [i64; SECOND_GROUP_LEN],
-    b_first: [S192; DOMAIN],
-    b_second: [S192; SECOND_GROUP_LEN],
+    b_first: [i128; DOMAIN],
+    b_second_lo: [i128; SECOND_GROUP_LEN],
+    b_second_hi: [i128; SECOND_GROUP_LEN],
 }
 
 /// Evaluate the 19 constraint rows at one cycle with exact integer
@@ -253,155 +256,188 @@ fn row_group_values(row: &SpartanOuterRow) -> RowGroupValues {
         1 - should_branch - jump,
     ];
 
-    let diff = |a: u64, b: u64| S192::from_i128(i128::from(a) - i128::from(b));
+    let word = |value: u64| i128::from(value);
+    let diff = |a: u64, b: u64| word(a) - word(b);
     let b_first = [
-        S192::from_u64(row.ram_address.0),
+        word(row.ram_address.0),
         diff(row.ram_read_value.0, row.ram_write_value.0),
         diff(row.ram_read_value.0, row.rd_write_value.0),
         diff(row.rs2_value.0, row.ram_write_value.0),
-        S192::from_u64(row.left_lookup_operand.0),
+        word(row.left_lookup_operand.0),
         diff(row.left_lookup_operand.0, row.left_instruction_input.0),
-        S192::from_i128(i128::from(row.lookup_output.0) - 1),
+        word(row.lookup_output.0) - 1,
         diff(row.next_unexpanded_pc.0, row.lookup_output.0),
-        S192::from_i128(i128::from(row.next_pc.0) - i128::from(row.pc.0) - 1),
-        S192::from_i64(1 - flag(row.do_not_update_unexpanded_pc.0)),
+        diff(row.next_pc.0, row.pc.0) - 1,
+        i128::from(1 - flag(row.do_not_update_unexpanded_pc.0)),
     ];
 
-    let flag_i128 = |value: bool| i128::from(value);
-    let right_lookup = S192::from_u128(row.right_lookup_operand.0);
-    let right_input = S192::from_i128(row.right_instruction_input.0);
-    let left_input = S192::from_u64(row.left_instruction_input.0);
-    let imm = S192::from_i128(row.imm.0);
-    let product_limbs = row.product.0.magnitude_limbs();
-    let product = S192::new(
-        [product_limbs[0], product_limbs[1], 0],
-        row.product.0.is_positive,
+    // Wide operands as `hi·2^64 + lo`.
+    let halves = |value: i128| (value >> 64, word(value as u64));
+    let right_lookup = row.right_lookup_operand.0;
+    let (right_lookup_hi, right_lookup_lo) =
+        (word((right_lookup >> 64) as u64), word(right_lookup as u64));
+    let (right_input_hi, right_input_lo) = halves(row.right_instruction_input.0);
+    let (imm_hi, imm_lo) = halves(row.imm.0);
+    let [product_lo, product_hi] = row.product.0.magnitude_limbs();
+    let product_sign: i128 = if row.product.0.is_positive { 1 } else { -1 };
+    let (product_hi, product_lo) = (
+        product_sign * word(product_hi),
+        product_sign * word(product_lo),
     );
-    let two_pow_64 = S192::new([0, 1, 0], true);
-    let b_second = [
-        S192::from_i128(i128::from(row.ram_address.0) - i128::from(row.rs1_value.0)) - imm,
-        right_lookup - left_input - right_input,
-        right_lookup - left_input + right_input - two_pow_64,
-        right_lookup - product,
-        right_lookup - right_input,
-        S192::from_i128(i128::from(row.rd_write_value.0) - i128::from(row.lookup_output.0)),
-        S192::from_i128(
-            i128::from(row.rd_write_value.0) - i128::from(row.unexpanded_pc.0) - 4
-                + 2 * flag_i128(row.is_compressed.0),
-        ),
-        S192::from_i128(i128::from(row.next_unexpanded_pc.0) - i128::from(row.unexpanded_pc.0))
-            - imm,
-        S192::from_i128(
-            i128::from(row.next_unexpanded_pc.0) - i128::from(row.unexpanded_pc.0) - 4
-                + 4 * flag_i128(row.do_not_update_unexpanded_pc.0)
-                + 2 * flag_i128(row.is_compressed.0),
-        ),
+    let left_input = word(row.left_instruction_input.0);
+    let compressed = 2 * i128::from(row.is_compressed.0);
+    let pc_step = diff(row.next_unexpanded_pc.0, row.unexpanded_pc.0);
+    let b_second_lo = [
+        diff(row.ram_address.0, row.rs1_value.0) - imm_lo,
+        right_lookup_lo - left_input - right_input_lo,
+        right_lookup_lo - left_input + right_input_lo,
+        right_lookup_lo - product_lo,
+        right_lookup_lo - right_input_lo,
+        diff(row.rd_write_value.0, row.lookup_output.0),
+        diff(row.rd_write_value.0, row.unexpanded_pc.0) - 4 + compressed,
+        pc_step - imm_lo,
+        pc_step - 4 + 4 * i128::from(row.do_not_update_unexpanded_pc.0) + compressed,
+    ];
+    let b_second_hi = [
+        -imm_hi,
+        right_lookup_hi - right_input_hi,
+        right_lookup_hi + right_input_hi - 1,
+        right_lookup_hi - product_hi,
+        right_lookup_hi - right_input_hi,
+        0,
+        0,
+        -imm_hi,
+        0,
     ];
 
     RowGroupValues {
         a_first,
         a_second,
         b_first,
-        b_second,
+        b_second_lo,
+        b_second_hi,
     }
 }
 
-/// The exact integer Lagrange extension coefficients from the 10-node base
-/// window to each out-of-domain extended node: `coeffs[i] = L_i(node)`.
-/// Consecutive-integer domains make these integers (legacy's `COEFFS_PER_J`);
-/// their field images equal `centered_lagrange_evals` at the node, which is
-/// what ties the integer pipeline to the reference's field pipeline.
-fn extension_coefficients() -> [(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT] {
-    let mut out = [(0usize, [0i64; DOMAIN]); EXTENDED_NODE_COUNT];
+/// Extended nodes left of the base window (`EXTENDED_START..DOMAIN_START`);
+/// the rest lie right of it.
+const LEFT_NODE_COUNT: usize = (DOMAIN_START - EXTENDED_START) as usize;
+
+/// Each extended node's position in the `2·DOMAIN − 1` window, in
+/// [`extend`]'s slot order.
+const EXTENDED_POSITIONS: [usize; EXTENDED_NODE_COUNT] = {
+    let mut positions = [0; EXTENDED_NODE_COUNT];
     let mut slot = 0;
-    for position in 0..EXTENDED_SIZE {
-        let node = EXTENDED_START + position as i64;
-        if node >= DOMAIN_START && node < DOMAIN_START + DOMAIN as i64 {
-            continue;
-        }
-        let mut coefficients = [0i64; DOMAIN];
-        for (i, coefficient) in coefficients.iter_mut().enumerate() {
-            let mut numerator: i128 = 1;
-            let mut denominator: i128 = 1;
-            for j in 0..DOMAIN {
-                if j == i {
-                    continue;
-                }
-                numerator *= i128::from(node - (DOMAIN_START + j as i64));
-                denominator *= i128::from(i as i64 - j as i64);
-            }
-            debug_assert_eq!(numerator % denominator, 0);
-            *coefficient = (numerator / denominator) as i64;
-        }
-        out[slot] = (position, coefficients);
+    while slot < EXTENDED_NODE_COUNT {
+        positions[slot] = if slot < LEFT_NODE_COUNT {
+            slot
+        } else {
+            slot + DOMAIN
+        };
         slot += 1;
     }
-    debug_assert_eq!(slot, EXTENDED_NODE_COUNT);
-    out
-}
+    positions
+};
 
-/// `Az·Bz` at every extended node for one cycle, per stream: integer Lagrange
-/// extension of the group row values, then one wide integer product. Ranges:
-/// `|az| < 2^22`, `|bz| < 2^152`, product `< 2^174` — inside `S256`.
-fn extended_products(
-    values: &RowGroupValues,
-    coefficients: &[(usize, [i64; DOMAIN]); EXTENDED_NODE_COUNT],
-) -> [(S256, S256); EXTENDED_NODE_COUNT] {
-    let mut out = [(S256::zero(), S256::zero()); EXTENDED_NODE_COUNT];
-    for (slot, (_, coefficients)) in coefficients.iter().enumerate() {
-        let mut az_first: i64 = 0;
-        let mut az_second: i64 = 0;
-        let mut bz_first = S192::zero();
-        let mut bz_second = S192::zero();
-        for (i, &c) in coefficients.iter().enumerate() {
-            if c == 0 {
-                continue;
-            }
-            let a_first = values.a_first[i];
-            if a_first != 0 {
-                az_first += c * a_first;
-            }
-            let b_first = &values.b_first[i];
-            if b_first.magnitude_limbs() != [0; 3] {
-                S64::from_i64(c).fmadd_trunc::<3, 3>(b_first, &mut bz_first);
-            }
-            if i < SECOND_GROUP_LEN {
-                let a_second = values.a_second[i];
-                if a_second != 0 {
-                    az_second += c * a_second;
-                }
-                let b_second = &values.b_second[i];
-                if b_second.magnitude_limbs() != [0; 3] {
-                    S64::from_i64(c).fmadd_trunc::<3, 3>(b_second, &mut bz_second);
-                }
-            }
+/// Exact integer extension of the degree-`< DOMAIN` interpolant of `values`
+/// (on the base window's consecutive nodes; missing top values are zero) to
+/// every extended node, in [`EXTENDED_POSITIONS`] order. Finite differences
+/// replace the Lagrange dot products: the base window's difference table
+/// yields the forward diagonal at its first node and the backward diagonal
+/// at its last, and since `Δ^DOMAIN` vanishes, each step outward costs
+/// `DOMAIN − 1` additions. Every intermediate is a `k`-th difference of the
+/// interpolant over the extended window, bounded by `2^9 · max|P|`, and
+/// `max|P| < Σ_i |L_i(node)| · max|value| < 2^20 · max|value|`.
+fn extend<T>(values: &[T]) -> [T; EXTENDED_NODE_COUNT]
+where
+    T: Copy + Default + Add<Output = T> + Sub<Output = T>,
+{
+    let mut row = [T::default(); DOMAIN];
+    row[..values.len()].copy_from_slice(values);
+    let mut forward = row;
+    let mut backward = row;
+    backward[0] = row[DOMAIN - 1];
+    for order in 1..DOMAIN {
+        for j in 0..DOMAIN - order {
+            row[j] = row[j + 1] - row[j];
         }
-        out[slot] = (
-            S64::from_i64(az_first).mul_trunc::<3, 4>(&bz_first),
-            S64::from_i64(az_second).mul_trunc::<3, 4>(&bz_second),
-        );
+        forward[order] = row[0];
+        backward[order] = row[DOMAIN - 1 - order];
     }
-    out
+    let mut extended = [T::default(); EXTENDED_NODE_COUNT];
+    let (left, right) = extended.split_at_mut(LEFT_NODE_COUNT);
+    for value in left.iter_mut().rev() {
+        for order in (0..DOMAIN - 1).rev() {
+            forward[order] = forward[order] - forward[order + 1];
+        }
+        *value = forward[0];
+    }
+    for value in right {
+        for order in (0..DOMAIN - 1).rev() {
+            backward[order] = backward[order] + backward[order + 1];
+        }
+        *value = backward[0];
+    }
+    extended
 }
 
-fn widen(value: &S192) -> S256 {
-    let limbs = value.magnitude_limbs();
-    S256::new([limbs[0], limbs[1], limbs[2], 0], value.is_positive)
+/// One extended node's `Az·Bz` for one cycle: the first stream's product and
+/// the second stream's as `hi·2^64 + lo`. With `|az| < 3·2^20` and every
+/// extended B value (or half) below `2^20·2^66 = 2^86` (difference-table
+/// intermediates below `2^95`), each product stays below 2^108 — exact
+/// `i128` arithmetic throughout.
+#[derive(Clone, Copy)]
+struct NodeProducts {
+    first: i128,
+    second_lo: i128,
+    second_hi: i128,
+}
+
+/// Integer extension of one cycle's group row values to every extended node,
+/// then the per-stream `Az·Bz` products.
+fn extended_products(values: &RowGroupValues) -> [NodeProducts; EXTENDED_NODE_COUNT] {
+    let az_first = extend(&values.a_first);
+    let az_second = extend(&values.a_second);
+    let bz_first = extend(&values.b_first);
+    let bz_second_lo = extend(&values.b_second_lo);
+    let bz_second_hi = extend(&values.b_second_hi);
+    std::array::from_fn(|slot| NodeProducts {
+        first: i128::from(az_first[slot]) * bz_first[slot],
+        second_lo: i128::from(az_second[slot]) * bz_second_lo[slot],
+        second_hi: i128::from(az_second[slot]) * bz_second_hi[slot],
+    })
+}
+
+/// Sign and magnitude of `top·2^64 + low`.
+fn wide_value(top: i128, low: u64) -> S256 {
+    let is_positive = top >= 0;
+    let (top, low) = if is_positive {
+        (top.unsigned_abs(), low)
+    } else {
+        // −(top·2^64 + low) = (|top| − [low ≠ 0])·2^64 + (−low mod 2^64).
+        (
+            top.unsigned_abs() - u128::from(low != 0),
+            low.wrapping_neg(),
+        )
+    };
+    S256::new([low, top as u64, (top >> 64) as u64, 0], is_positive)
 }
 
 /// Fold group row values with the uni-skip challenge's Lagrange weights into
 /// the bound `Az`/`Bz` values for one `(cycle, stream)` cell, through the
-/// unreduced accumulators.
-fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], magnitudes: &[S192]) -> (F, F) {
+/// unreduced accumulators. B values arrive as `hi·2^64 + lo`; the common
+/// case, a value below 2^64 in magnitude, takes the one-limb product.
+fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], lo: &[i128], hi: &[i128]) -> (F, F) {
     let mut az = <F as WithAccumulator>::SmallScalarAccumulator::default();
     let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
-    for ((&weight, &guard), magnitude) in weights.iter().zip(guards).zip(magnitudes) {
+    for (((&weight, &guard), &lo), &hi) in weights.iter().zip(guards).zip(lo).zip(hi) {
         az.fmadd_i64(weight, guard);
-        let limbs = magnitude.magnitude_limbs();
-        if limbs[1] == 0 && limbs[2] == 0 {
-            bz.fmadd_signed_u64(weight, limbs[0], magnitude.is_positive);
-        } else {
-            bz.fmadd_s256(weight, &widen(magnitude));
+        // The same value as `top·2^64 + low` with `low ∈ [0, 2^64)`.
+        let (top, low) = (hi + (lo >> 64), lo as u64);
+        match top {
+            0 => bz.fmadd_signed_u64(weight, low, true),
+            -1 if low != 0 => bz.fmadd_signed_u64(weight, low.wrapping_neg(), false),
+            _ => bz.fmadd_s256(weight, &wide_value(top, low)),
         }
     }
     (az.reduce(), bz.reduce())
@@ -436,31 +472,34 @@ fn extended_t1_values<F: JoltField>(
     // `in_point` always covers the stream bit (τ_low's last entry), so every
     // (cycle, stream) pair sits inside one `x_out` block.
     let pairs_per_block = e_in.len() / 2;
-    let coefficients = extension_coefficients();
+    let two_pow_64 = F::from_u128(1 << 64);
 
     let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
-        let mut accumulators: Vec<<F as WithAccumulator>::SignedProductAccumulator> =
-            vec![Default::default(); EXTENDED_NODE_COUNT];
+        // Per node: the unshifted products, and the `hi` halves (× 2^64).
+        let mut sums = [(
+            <F as WithAccumulator>::SignedProductAccumulator::default(),
+            <F as WithAccumulator>::SignedProductAccumulator::default(),
+        ); EXTENDED_NODE_COUNT];
         for pair in 0..pairs_per_block {
-            let t = x_out * pairs_per_block + pair;
-            let row = rows.row(t)?;
-            let values = row_group_values(&row);
-            let products = extended_products(&values, &coefficients);
-            for (accumulator, (first, second)) in accumulators.iter_mut().zip(&products) {
-                accumulator.fmadd_s256(e_in[2 * pair], first);
-                accumulator.fmadd_s256(e_in[2 * pair + 1], second);
+            let row = rows.row(x_out * pairs_per_block + pair)?;
+            let products = extended_products(&row_group_values(&row));
+            let (e_first, e_second) = (e_in[2 * pair], e_in[2 * pair + 1]);
+            for ((low, high), product) in sums.iter_mut().zip(products) {
+                low.fmadd_i128(e_first, product.first);
+                low.fmadd_i128(e_second, product.second_lo);
+                high.fmadd_i128(e_second, product.second_hi);
             }
         }
-        Ok(accumulators
+        Ok(sums
             .into_iter()
-            .map(|accumulator| e_out[x_out] * accumulator.reduce())
+            .map(|(low, high)| e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce()))
             .collect())
     };
     let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, block)?;
 
     let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
-    for ((position, _), value) in extension_coefficients().iter().zip(extended) {
-        t1_values[*position] = value;
+    for (position, value) in EXTENDED_POSITIONS.into_iter().zip(extended) {
+        t1_values[position] = value;
     }
     Ok(t1_values)
 }
@@ -658,11 +697,13 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
                 let values = row_group_values(&row);
-                let (az_zero, bz_zero) = fold_group(lagrange, &values.a_first, &values.b_first);
+                let (az_zero, bz_zero) =
+                    fold_group(lagrange, &values.a_first, &values.b_first, &[0; DOMAIN]);
                 let (az_one, bz_one) = fold_group(
-                    &lagrange[..SECOND_GROUP_LEN],
+                    lagrange,
                     &values.a_second,
-                    &values.b_second,
+                    &values.b_second_lo,
+                    &values.b_second_hi,
                 );
                 az_chunk[2 * x_in] = az_zero;
                 az_chunk[2 * x_in + 1] = az_one;
@@ -1430,20 +1471,19 @@ mod tests {
         });
     }
 
-    /// The integer extension coefficients are exactly the field Lagrange
-    /// basis evaluations at the extended nodes — the fact that ties the
-    /// integer pipeline to the reference's field pipeline.
+    /// The integer extension of each base-window basis vector is exactly the
+    /// field Lagrange basis evaluated at every extended node — by linearity,
+    /// the fact that ties the integer pipeline to the reference's field
+    /// pipeline.
     #[test]
-    fn extension_coefficients_match_field_lagrange() {
-        for (position, coefficients) in extension_coefficients() {
-            let node = EXTENDED_START + position as i64;
-            let expected = centered_lagrange_evals::<Fr>(DOMAIN, Fr::from_i64(node)).unwrap();
-            for (i, &coefficient) in coefficients.iter().enumerate() {
-                assert_eq!(
-                    Fr::from_i64(coefficient),
-                    expected[i],
-                    "node {node}, basis {i}"
-                );
+    fn extension_matches_field_lagrange() {
+        for i in 0..DOMAIN {
+            let mut basis = [0i128; DOMAIN];
+            basis[i] = 1;
+            for (position, value) in EXTENDED_POSITIONS.into_iter().zip(extend(&basis)) {
+                let node = EXTENDED_START + position as i64;
+                let expected = centered_lagrange_evals::<Fr>(DOMAIN, Fr::from_i64(node)).unwrap();
+                assert_eq!(Fr::from_i128(value), expected[i], "node {node}, basis {i}");
             }
         }
     }
