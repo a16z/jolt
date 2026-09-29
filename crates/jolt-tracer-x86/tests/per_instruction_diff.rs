@@ -769,7 +769,14 @@ difftests! {
     diff_addiw => |r| alu_ri(r, K::ADDIW, false);
     diff_muliw => |r| alu_ri(r, K::VirtualMULIW, true);
     diff_shift_right_bitmask_w => |r| unary(r, kind_by_name("VirtualShiftRightBitmaskW"));
-    diff_srlw => |r| shift_reg_w(r, K::VirtualSRLW);
+    diff_srlw => |r| {
+        let mut instance = shift_reg_w(r, K::VirtualSRLW);
+        if r.gen_ratio(1, 20) {
+            let rs2 = instance.row.operands.rs2.unwrap();
+            instance.pre_regs[rs2 as usize] = if r.gen() { 0 } else { 1u64 << r.gen_range(32..64) };
+        }
+        instance
+    };
     diff_sraw => |r| shift_reg_w(r, K::VirtualSRAW);
     diff_srliw => |r| {
         let mut instance = shift_imm_w(r, K::VirtualSRLIW);

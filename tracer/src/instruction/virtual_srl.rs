@@ -21,10 +21,38 @@ impl VirtualSRL {
             self.operands.rd as usize,
             cpu.sign_extend(
                 cpu.unsigned_data(cpu.x[self.operands.rs1 as usize])
-                    .wrapping_shr(shift) as i64,
+                    .checked_shr(shift)
+                    .unwrap_or(0) as i64,
             ),
         );
     }
 }
 
 impl RISCVTrace for VirtualSRL {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::emulator::terminal::DummyTerminal;
+
+    #[test]
+    fn zero_mask_outputs_zero() {
+        let instruction = VirtualSRL {
+            address: 0,
+            operands: FormatVirtualRightShiftR {
+                rd: 2,
+                rs1: 1,
+                rs2: 3,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: true,
+            is_compressed: false,
+        };
+        let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
+        cpu.x[1] = -1;
+        cpu.x[2] = 1;
+        cpu.x[3] = 0;
+        instruction.trace(&mut cpu, None);
+        assert_eq!(cpu.x[2], 0);
+    }
+}

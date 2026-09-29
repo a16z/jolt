@@ -710,25 +710,46 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSrli(_) => {
-                let shift = ((row.operands.imm as u64).trailing_zeros() % 64) as i8;
-                e.load_reg(RAX, row.operands.rs1);
-                dynasm!(e.ops ; .arch x64 ; shr rax, shift);
+                let shift = (row.operands.imm as u64).trailing_zeros();
+                // x86 masks shift counts modulo 64, so fold empty masks here.
+                if shift < 64 {
+                    e.load_reg(RAX, row.operands.rs1);
+                    dynasm!(e.ops ; .arch x64 ; shr rax, shift as i8);
+                } else {
+                    dynasm!(e.ops ; .arch x64 ; xor eax, eax);
+                }
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSrl(_) => {
-                // Shift = x[rs2].trailing_zeros(); tzcnt(0) = 64 → shr masks to
-                // 0, matching wrapping_shr(64). Requires BMI1 (checked once).
+                // Shift = x[rs2].trailing_zeros(); tzcnt(0) = 64 and a shift by
+                // 64 or more yields 0, but shr masks cl mod 64, so the result is
+                // ANDed with 0 when cl == 64. Requires BMI1 (checked once).
                 e.load_reg(RCX, row.operands.rs2);
                 e.load_reg(RAX, row.operands.rs1);
-                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr rax, cl);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; tzcnt rcx, rcx
+                    ; cmp rcx, 64
+                    ; sbb rdx, rdx
+                    ; shr rax, cl
+                    ; and rax, rdx
+                );
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSrlw(_) => {
-                // rd = sext32((x[rs1] as u32) >> tz(x[rs2])); the W bitmask
-                // producer guarantees tz(x[rs2]) ≤ 31, within shr's cl mod 32.
+                // rd = sext32((x[rs1] as u32) >> tz(x[rs2])), 0 when tz ≥ 32
+                // (an empty word mask); shr masks cl mod 32, so AND with 0 then.
                 e.load_reg(RCX, row.operands.rs2);
                 e.load_reg(RAX, row.operands.rs1);
-                dynasm!(e.ops ; .arch x64 ; tzcnt rcx, rcx ; shr eax, cl ; movsxd rax, eax);
+                dynasm!(e.ops
+                    ; .arch x64
+                    ; tzcnt rcx, rcx
+                    ; cmp rcx, 32
+                    ; sbb rdx, rdx
+                    ; shr eax, cl
+                    ; and eax, edx
+                    ; movsxd rax, eax
+                );
                 e.store_rd(RAX, row.operands.rd);
             }
             K::VirtualSraw(_) => {
