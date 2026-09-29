@@ -22,7 +22,15 @@
 //! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
 //! instead of multiplied per cycle. Only the fourth bind materializes dense
 //! vectors, at `T/16` length, and drops the index source. Peak memory falls
-//! from `N·T` field elements to the index source plus `N·T/16`.
+//! from `N·T` field elements to the index source plus `N·T/16`. A consumer
+//! whose base tables are too large to stay cache-resident as they double
+//! materializes a bind earlier, at `T/8` (`max_width`).
+//!
+//! A polynomial whose base table is too large to tensor out (a virtual RA
+//! over a wide lookup-index chunk) is served as the product of `factors`
+//! point-mass columns: only its lead column's table carries the branch
+//! weights, and every branch multiplies in the trailing columns' unscaled
+//! entries — `factors − 1` multiplications per branch.
 //!
 //! Byte parity: every gathered value is the same polynomial of the same
 //! table entries and challenges as the iterated `lo + r·(hi − lo)` dense
@@ -31,61 +39,93 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Per-cycle hot indices of `N` committed one-hot selector polynomials over
-/// a shared compact backing store (typed witness rows, packed columns).
+/// The default widest lazy branch set: the fourth bind materializes `T/16`.
+const DEFAULT_MAX_WIDTH: usize = 8;
+
+/// Per-cycle hot indices of `N` point-mass columns (one per committed
+/// one-hot selector, or `factors` per factored polynomial) over a shared
+/// compact backing store (typed witness rows, packed columns).
 pub(crate) trait ChunkIndexSource: Send + Sync {
-    /// Number of selector polynomials served.
-    fn num_polys(&self) -> usize;
+    /// Number of point-mass columns served.
+    fn num_columns(&self) -> usize;
 
     /// The unbound cycle-domain length.
     fn cycles(&self) -> usize;
 
-    /// The scale-table index of polynomial `i`'s hot address at unbound
-    /// cycle `j`; `None` when the cycle is cold for that polynomial.
+    /// The scale-table index of column `i`'s hot address at unbound cycle
+    /// `j`; `None` when the cycle is cold for that column.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
 }
 
-/// `N` address-folded selector columns bound `LowToHigh`, lazily until the
-/// fourth bind materializes dense.
+/// `N` address-folded selector polynomials bound `LowToHigh`, lazily until
+/// the bind past `max_width` branches (by default the fourth) materializes
+/// dense.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
     allocative(bound = "F: JoltField, S: allocative::Allocative")
 )]
 pub(crate) enum LazyFoldedRa<F: JoltField, S> {
-    /// Fewer than four binds: per-polynomial branch scale tables (the base
-    /// table pre-scaled by each bound-bit pattern's eq weight), flattened
-    /// offset-major — `tables[i][offset · stride_i + k]` with
-    /// `stride_i = tables[i].len() / width` — plus the compact index source.
+    /// Up to `log2(max_width)` binds: per-column scale tables plus the compact
+    /// index source. Polynomial `i` is the product of columns
+    /// `i·factors … (i+1)·factors − 1`; its lead column's table holds the
+    /// branch tables (the base table pre-scaled by each bound-bit pattern's
+    /// eq weight), flattened offset-major — `tables[c][offset · stride_c + k]`
+    /// with `stride_c = tables[c].len() / width` — and trailing columns keep
+    /// their unscaled base tables.
     Lazy {
         tables: Vec<Vec<F>>,
-        /// Bound-bit branch count (`2^binds`: 1, 2, 4, or 8).
+        /// Bound-bit branch count (`2^binds`: 1, 2, …, `max_width`).
         width: usize,
+        /// The widest lazy branch set; the next bind materializes dense.
+        max_width: usize,
+        /// Point-mass columns per polynomial.
+        factors: usize,
         source: S,
     },
-    /// Four or more binds: plain dense multilinears (`T/16` at entry).
+    /// Past `max_width`: plain dense multilinears (`T/(2·max_width)` at
+    /// entry).
     Dense(Vec<Polynomial<F>>),
 }
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
-    /// One scale table per selector polynomial, in polynomial order.
+    /// One scale table per selector polynomial, in polynomial order; the
+    /// fourth bind materializes dense.
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
-        debug_assert_eq!(tables.len(), source.num_polys());
+        Self::factored(tables, 1, DEFAULT_MAX_WIDTH, source)
+    }
+
+    /// One base table per column, in column order; each run of `factors`
+    /// consecutive columns is one polynomial. The bind past branch width
+    /// `max_width` (a power of two) materializes dense.
+    pub(crate) fn factored(
+        tables: Vec<Vec<F>>,
+        factors: usize,
+        max_width: usize,
+        source: S,
+    ) -> Self {
+        debug_assert_eq!(tables.len(), source.num_columns());
+        debug_assert!(factors > 0 && tables.len().is_multiple_of(factors));
+        debug_assert!(max_width.is_power_of_two());
         Self::Lazy {
             tables,
             width: 1,
+            max_width,
+            factors,
             source,
         }
     }
 
     pub(crate) fn num_polys(&self) -> usize {
         match self {
-            Self::Lazy { tables, .. } => tables.len(),
+            Self::Lazy {
+                tables, factors, ..
+            } => tables.len() / factors,
             Self::Dense(polys) => polys.len(),
         }
     }
@@ -99,8 +139,10 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             Self::Lazy {
                 tables,
                 width,
+                factors,
                 source,
-            } => gather(&tables[i], *width, source, i, j),
+                ..
+            } => gather_poly(tables, *factors, *width, source, i, j),
             Self::Dense(polys) => polys[i].evals()[j],
         }
     }
@@ -122,14 +164,28 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             Self::Lazy {
                 tables,
                 width,
+                factors,
                 source,
+                ..
             } => {
-                let width = *width;
-                for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
-                    *out = (
-                        gather(table, width, source, i, 2 * row),
-                        gather(table, width, source, i, 2 * row + 1),
-                    );
+                let (width, factors) = (*width, *factors);
+                if factors == 1 {
+                    for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
+                        *out = (
+                            gather(table, width, source, i, 2 * row),
+                            gather(table, width, source, i, 2 * row + 1),
+                        );
+                    }
+                } else {
+                    for (i, (out, tables)) in
+                        out.iter_mut().zip(tables.chunks_exact(factors)).enumerate()
+                    {
+                        let column = i * factors;
+                        *out = (
+                            gather_product(tables, width, source, column, 2 * row),
+                            gather_product(tables, width, source, column, 2 * row + 1),
+                        );
+                    }
                 }
             }
             Self::Dense(polys) => {
@@ -148,25 +204,29 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     }
 
     /// Bind the next cycle variable `LowToHigh`: re-scale the branch tables
-    /// until the fourth bind materializes dense (and drops the source), then
-    /// use plain multilinear binds.
+    /// until the bind past `max_width` materializes dense (and drops the
+    /// source), then use plain multilinear binds.
     pub(crate) fn bind(&mut self, challenge: F) {
         *self = match std::mem::replace(self, Self::Dense(Vec::new())) {
             Self::Lazy {
                 tables,
                 width,
+                max_width,
+                factors,
                 source,
             } => {
-                let tables = double_branches(tables, challenge);
-                if width < 8 {
+                let tables = double_branches(tables, factors, challenge);
+                if width < max_width {
                     Self::Lazy {
                         tables,
                         width: width * 2,
+                        max_width,
+                        factors,
                         source,
                     }
                 } else {
                     let log_t = source.cycles().ilog2() as usize;
-                    let dense = Self::Dense(materialize(&tables, &source, width * 2));
+                    let dense = Self::Dense(materialize(&tables, factors, &source, width * 2));
                     // Return branch tables and the final shared index handle.
                     drop(tables);
                     drop(source);
@@ -181,6 +241,24 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 Self::Dense(polys)
             }
         };
+    }
+}
+
+/// Polynomial `i`'s gather at unbound width `width`.
+#[inline]
+fn gather_poly<F: JoltField, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    factors: usize,
+    width: usize,
+    source: &S,
+    i: usize,
+    j: usize,
+) -> F {
+    if factors == 1 {
+        gather(&tables[i], width, source, i, j)
+    } else {
+        let column = i * factors;
+        gather_product(&tables[column..column + factors], width, source, column, j)
     }
 }
 
@@ -210,13 +288,56 @@ fn gather<F: JoltField, S: ChunkIndexSource>(
     sum
 }
 
+/// A factored polynomial's gather (its column `tables`, lead column
+/// `column`): per hot branch, the pre-scaled lead entry times the trailing
+/// columns' unscaled entries, the last product accumulated unreduced. Kept
+/// out of line so single-factor gathers inline as small as before.
+#[inline(never)]
+fn gather_product<F: JoltField, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    width: usize,
+    source: &S,
+    column: usize,
+    j: usize,
+) -> F {
+    let (lead, middle, last) = (
+        &tables[0],
+        &tables[1..tables.len() - 1],
+        &tables[tables.len() - 1],
+    );
+    let last_column = column + tables.len() - 1;
+    let stride = lead.len() / width;
+    let mut sum = F::Accumulator::default();
+    'branches: for offset in 0..width {
+        let cycle = j * width + offset;
+        let Some(k) = source.index(column, cycle) else {
+            continue;
+        };
+        let mut term = lead[offset * stride + k];
+        for (next, table) in middle.iter().enumerate() {
+            let Some(k) = source.index(column + 1 + next, cycle) else {
+                continue 'branches;
+            };
+            term *= table[k];
+        }
+        if let Some(k) = source.index(last_column, cycle) {
+            sum.fmadd(term, last[k]);
+        }
+    }
+    sum.reduce()
+}
+
 /// Doubles every polynomial's branch set for the next bound bit: the first
 /// half keeps the existing branches scaled by `1 − challenge` (bit 0), the
 /// second half by `challenge` (bit 1) — offset layout
 /// `b0 + 2·b1 + 4·b2`, matching the low bits of the original cycle index.
-fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F>> {
+/// Only lead columns carry branches; trailing columns pass through.
+fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, factors: usize, challenge: F) -> Vec<Vec<F>> {
     let one_minus = F::one() - challenge;
-    let double = |table: Vec<F>| -> Vec<F> {
+    let double = |(column, table): (usize, Vec<F>)| -> Vec<F> {
+        if !column.is_multiple_of(factors) {
+            return table;
+        }
         let mut next = Vec::with_capacity(table.len() * 2);
         next.extend(table.iter().map(|value| one_minus * *value));
         next.extend(table.iter().map(|value| challenge * *value));
@@ -224,11 +345,11 @@ fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F
     };
     #[cfg(feature = "parallel")]
     {
-        tables.into_par_iter().map(double).collect()
+        tables.into_par_iter().enumerate().map(double).collect()
     }
     #[cfg(not(feature = "parallel"))]
     {
-        tables.into_iter().map(double).collect()
+        tables.into_iter().enumerate().map(double).collect()
     }
 }
 
@@ -240,29 +361,27 @@ fn double_branches<F: JoltField>(tables: Vec<Vec<F>>, challenge: F) -> Vec<Vec<F
 /// measured on a 64-thread host, T/16 beats the original T/8 on both axes.
 fn materialize<F: JoltField, S: ChunkIndexSource>(
     tables: &[Vec<F>],
+    factors: usize,
     source: &S,
     branches: usize,
 ) -> Vec<Polynomial<F>> {
     debug_assert!(source.cycles() >= branches);
     let new_len = source.cycles() / branches;
     let materialize_poly = |i: usize| -> Polynomial<F> {
-        let table = tables[i].as_slice();
-        let eval = |j: usize| gather(table, branches, source, i, j);
+        let eval = |j: usize| gather_poly(tables, factors, branches, source, i, j);
         #[cfg(feature = "parallel")]
         let evals: Vec<F> = (0..new_len).into_par_iter().map(eval).collect();
         #[cfg(not(feature = "parallel"))]
         let evals: Vec<F> = (0..new_len).map(eval).collect();
         Polynomial::new(evals)
     };
+    let polys = tables.len() / factors;
     #[cfg(feature = "parallel")]
     {
-        (0..tables.len())
-            .into_par_iter()
-            .map(materialize_poly)
-            .collect()
+        (0..polys).into_par_iter().map(materialize_poly).collect()
     }
     #[cfg(not(feature = "parallel"))]
     {
-        (0..tables.len()).map(materialize_poly).collect()
+        (0..polys).map(materialize_poly).collect()
     }
 }

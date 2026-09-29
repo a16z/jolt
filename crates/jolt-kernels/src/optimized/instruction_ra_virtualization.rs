@@ -36,8 +36,8 @@
 
 use std::sync::Arc;
 
-use super::instruction_read_raf::InstructionCycleRow;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
+use super::lazy_ra::LazyFoldedRa;
 use super::support::{
     accumulate_product_grid, map_indices, pin_derived_term, GruenRoundMessage, RoundProgress,
 };
@@ -84,32 +84,6 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
             rows,
             inputs.challenges.gamma,
         )?))
-    }
-}
-
-/// Lazy-RA index source: chunk `i` of the per-cycle lookup index (always
-/// hot), off the stage-5 shared rows.
-#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct LookupIndexChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
-    num_committed: usize,
-    committed_chunk_bits: usize,
-}
-
-impl ChunkIndexSource for LookupIndexChunks {
-    fn num_polys(&self) -> usize {
-        self.num_committed
-    }
-
-    fn cycles(&self) -> usize {
-        self.rows.len()
-    }
-
-    #[inline]
-    fn index(&self, i: usize, j: usize) -> Option<usize> {
-        let shift = (self.num_committed - 1 - i) * self.committed_chunk_bits;
-        let mask = (1u128 << self.committed_chunk_bits) - 1;
-        Some(((self.rows[j].lookup_index() >> shift) & mask) as usize)
     }
 }
 
@@ -203,11 +177,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         });
         let folded_ra = LazyFoldedRa::new(
             chunk_tables,
-            LookupIndexChunks {
-                rows,
-                num_committed,
-                committed_chunk_bits,
-            },
+            LookupIndexChunks::new(rows, num_committed, committed_chunk_bits),
         );
 
         Ok(Self {

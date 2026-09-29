@@ -35,7 +35,7 @@ struct RamAddressIndices {
 }
 
 impl ChunkIndexSource for RamAddressIndices {
-    fn num_polys(&self) -> usize {
+    fn num_columns(&self) -> usize {
         1
     }
 

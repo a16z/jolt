@@ -110,7 +110,7 @@ struct RamAddressChunks {
 }
 
 impl ChunkIndexSource for RamAddressChunks {
-    fn num_polys(&self) -> usize {
+    fn num_columns(&self) -> usize {
         self.num_committed
     }
 

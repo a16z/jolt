@@ -679,7 +679,7 @@ struct BytecodePcChunks {
 }
 
 impl ChunkIndexSource for BytecodePcChunks {
-    fn num_polys(&self) -> usize {
+    fn num_columns(&self) -> usize {
         self.selectors.len()
     }
 
