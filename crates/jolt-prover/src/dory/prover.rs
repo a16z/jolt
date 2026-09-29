@@ -2,38 +2,19 @@
 //! transcript and one backend session, and their wire outputs assemble into
 //! the complete [`JoltProof`].
 
-use core::any::Any;
-
-#[cfg(feature = "allocative")]
-use allocative::FlameGraphBuilder;
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
-use jolt_kernels::{JoltBackend, ProofSession};
+use jolt_kernels::JoltBackend;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use jolt_verifier::config::JoltProtocolConfig;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::proof::ClearProofClaims;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage1::outputs::Stage1ClearOutput;
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage5::outputs::Stage5ClearOutput;
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
-#[cfg(feature = "allocative")]
-use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_witness::JoltWitnessPlane;
 
+use crate::boundary::{stage_boundary, stage_flamegraph};
 use crate::dory::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
 use crate::dory::stages::stage8::prove_stage8;
 use crate::recorder::ProofMode;
@@ -46,46 +27,6 @@ use crate::stages::stage6a::prove_stage6a;
 use crate::stages::stage6b::prove_stage6b;
 use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
-
-/// Write a profile-only heap snapshot. Downcasting avoids an `Allocative`
-/// bound on the generic prover field.
-#[cfg(feature = "allocative")]
-fn stage_flamegraph(stage: &str, session: &ProofSession, output: &dyn Any) {
-    use jolt_field::Fr;
-
-    let Some(prefix) = jolt_profiling::flamegraph_prefix() else {
-        return;
-    };
-    let mut flamegraph = FlameGraphBuilder::default();
-    macro_rules! visit_downcast {
-        ($($ty:ty),+ $(,)?) => {$(
-            if let Some(concrete) = output.downcast_ref::<$ty>() {
-                flamegraph.visit_root(concrete);
-            }
-        )+};
-    }
-    visit_downcast!(
-        Stage1ClearOutput<Fr>,
-        Stage2ClearOutput<Fr>,
-        Stage3ClearOutput<Fr>,
-        Stage4ClearOutput<Fr>,
-        Stage5ClearOutput<Fr>,
-        Stage6aClearOutput<Fr>,
-        Stage6bClearOutput<Fr>,
-        Stage7ClearOutput<Fr>,
-    );
-    flamegraph.visit_root(session);
-    jolt_profiling::write_flamegraph_folded(flamegraph, format!("{prefix}{stage}.folded"));
-}
-
-#[cfg(not(feature = "allocative"))]
-fn stage_flamegraph(_stage: &str, _session: &ProofSession, _output: &dyn Any) {}
-
-/// Purge allocator-retained pages after a stage drops its temporaries.
-fn stage_boundary(stage: &str, log_t: usize) {
-    let _span = tracing::info_span!("release_retained_memory", stage).entered();
-    jolt_kernels::mem::purge_retained_memory(log_t);
-}
 
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
 /// backend session, and assemble the [`JoltProof`] in the compiled proof

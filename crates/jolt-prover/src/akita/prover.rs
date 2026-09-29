@@ -18,6 +18,7 @@ use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
 use super::witness::AdviceObject;
 use super::JoltAkitaBackend;
+use crate::boundary::{stage_boundary, stage_flamegraph};
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
 use crate::stages::stage3::prove_stage3;
@@ -60,9 +61,11 @@ where
         witness,
         public_io,
     )?;
+    stage_flamegraph("stage0", &session, &());
+    let log_t = config.trace_length.ilog2() as usize;
+    stage_boundary("stage0", log_t);
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
-    let log_t = config.trace_length.ilog2() as usize;
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(
         &backend.base,
@@ -72,6 +75,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage1", &session, &stage1.clear_output);
+    stage_boundary("stage1", log_t);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -82,6 +87,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage2", &session, &stage2.clear_output);
+    stage_boundary("stage2", log_t);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -92,6 +99,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage3", &session, &stage3.clear_output);
+    stage_boundary("stage3", log_t);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -104,6 +113,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage4", &session, &stage4.clear_output);
+    stage_boundary("stage4", log_t);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -116,6 +127,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage5", &session, &stage5.clear_output);
+    stage_boundary("stage5", log_t);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -131,6 +144,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage6a", &session, &stage6a.clear_output);
+    stage_boundary("stage6a", log_t);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -147,6 +162,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage6b", &session, &stage6b.clear_output);
+    stage_boundary("stage6b", log_t);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -159,6 +176,8 @@ where
         witness,
         &mut transcript,
     )?;
+    stage_flamegraph("stage7", &session, &stage7.clear_output);
+    stage_boundary("stage7", log_t);
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
@@ -176,6 +195,8 @@ where
         &stage7.clear_output,
         &mut transcript,
     )?;
+    stage_flamegraph("stage8", &session, &());
+    stage_boundary("stage8", log_t);
 
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
