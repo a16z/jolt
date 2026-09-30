@@ -1591,8 +1591,7 @@ mod akita_tests {
             },
             0,
         );
-        // All-inactive and well-formed, mirroring `run_pair`: the geometry
-        // composition is required fail-closed under `field-inline`.
+        // The relation requires field-inline geometry even for inactive fixtures.
         #[cfg(feature = "field-inline")]
         let relation = relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
             read_write_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 61),
