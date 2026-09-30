@@ -14,6 +14,7 @@ use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_field::JoltField;
 use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
@@ -202,6 +203,11 @@ where
         log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         order: config.trace_polynomial_order,
     };
+    backend.ram_read_write.preflight(
+        session,
+        witness,
+        TraceDimensions::new(grid.log_t),
+    )?;
     // The `commit_witness` kernel-seam span sits at this call boundary, not
     // on any one backend impl, so every `CommitWitness` backend inherits it
     // (the taxonomy advertises it as backend-neutral).

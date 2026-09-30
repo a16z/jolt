@@ -2,10 +2,12 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
+use jolt_kernels::ProofSession;
 use jolt_openings::{
     CommitmentGroupRole, CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup,
 };
@@ -20,6 +22,7 @@ use jolt_witness::JoltWitnessPlane;
 use super::field_inline::FieldIncObject;
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use super::JoltAkitaBackend;
 
 /// Outputs retained for later prover stages.
 pub struct Stage0Output<PCS, T>
@@ -39,6 +42,8 @@ where
 /// Validate inputs, commit the packed objects, and seed the transcript.
 #[tracing::instrument(skip_all)]
 pub fn prove_stage0<F, PCS, VC, T, W>(
+    backend: &JoltAkitaBackend<F, PCS>,
+    session: &mut ProofSession,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
@@ -145,6 +150,26 @@ where
             reason: "the packed setup's layout digest is not the canonical OneHotTrace digest",
         });
     }
+    let required_batch_polys = 1
+        + usize::from(untrusted_advice_present)
+        + usize::from(trusted_advice.is_some())
+        + usize::from(cfg!(feature = "field-inline"))
+        + preprocessing.committed_program.as_ref().map_or(0, |data| data.direct_program.objects.len());
+    // The setup is shape-exact for the canonical OneHotTrace group.
+    if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
+        || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
+        || preprocessing.pcs_setup.max_total_batch_polys() < required_batch_polys
+        || preprocessing.pcs_setup.one_hot_k() != 1usize << log_k_chunk
+    {
+        return Err(ProverError::Unsupported {
+            reason: "the packed setup's dimensions disagree with the canonical OneHotTrace shape",
+        });
+    }
+    backend.base.ram_read_write.preflight(
+        session,
+        witness,
+        TraceDimensions::new(log_t),
+    )?;
     let assembled = assemble_one_hot_trace_rows(
         witness,
         &plan,
@@ -198,17 +223,7 @@ where
             auxiliary_groups.push((object.plan.group_role(), &object.commitment, &object.hint));
         }
     }
-    let required_batch_polys = auxiliary_groups.len() + 1;
-    // The setup is shape-exact for the canonical OneHotTrace group.
-    if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
-        || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
-        || preprocessing.pcs_setup.max_total_batch_polys() < required_batch_polys
-        || preprocessing.pcs_setup.one_hot_k() != 1usize << log_k_chunk
-    {
-        return Err(ProverError::Unsupported {
-            reason: "the packed setup's dimensions disagree with the canonical OneHotTrace shape",
-        });
-    }
+
     let (commitment, hint) =
         tracing::info_span!("akita_main_commit_with_precommitted").in_scope(|| {
             let group_hints = auxiliary_groups
