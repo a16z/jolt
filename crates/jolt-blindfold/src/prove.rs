@@ -738,9 +738,13 @@ where
             });
         }
     }
+    // Cross-pool waits can steal further outer row jobs. Limit our outer leaf jobs
+    // to the current worker count so their nesting does not scale with row count.
+    let min_rows_per_job = rows.len().div_ceil(rayon::current_num_threads()).max(1);
     Ok(rows
         .par_iter()
         .zip(blindings.par_iter())
+        .with_min_len(min_rows_per_job)
         .map(|(row, blinding)| VC::commit(setup, row, blinding))
         .collect())
 }
