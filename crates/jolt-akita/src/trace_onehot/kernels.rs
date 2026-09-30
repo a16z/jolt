@@ -6,8 +6,9 @@ use akita_pcs::custom_source::{
     CpuFoldResponses, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     DecomposeFoldWitness, ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
     ExternalInnerCommitmentOperation, ExternalOperationIdentity, OpeningBatchKernel,
-    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
+    OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootPolyShape,
+    SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPartials,
+    SubringCoefficientPackingPlan,
 };
 use akita_pcs::CpuBackend;
 use akita_types::{dispatch_for_field, FpExtEncoding, RingVec};
@@ -89,9 +90,13 @@ impl<E, const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaFie
         decompose_fold_packed::<D>(
             source.source(),
             plan.challenges,
+            None,
             plan.num_positions_per_block,
             plan.num_digits,
-        )
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| AkitaError::InvalidInput("decompose fold returned no witness".to_string()))
     }
 }
 
@@ -105,24 +110,46 @@ impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Ak
         plan: DecomposeFoldBatchPlan<'_>,
     ) -> Result<CpuFoldResponses, AkitaError> {
         let source = source.source();
+        let (num_positions_per_block, num_digits, _) = plan.scalar_params();
+        if num_positions_per_block == 0 {
+            return Err(AkitaError::InvalidInput(
+                "batched decompose_fold requires positive block geometry".into(),
+            ));
+        }
+        let _num_blocks = plan.validate_uniform_batch(std::iter::once(
+            RootPolyShape::<AkitaField, D>::num_live_ring_elems(source)
+                .div_ceil(num_positions_per_block),
+        ))?;
         match plan {
-            DecomposeFoldBatchPlan::Sparse {
+            DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
+                let witness = decompose_fold_packed::<D>(
+                    source,
+                    challenges,
+                    None,
+                    num_positions_per_block,
+                    num_digits,
+                )?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("decompose fold returned no witness".into())
+                })?;
+                Ok(CpuFoldResponses::sparse(witness))
+            }
+            DecomposeFoldBatchPlan::SparseChunked {
                 challenges,
-                num_positions_per_block,
-                num_digits,
+                chunk_ranges,
                 ..
-            } => Ok(CpuFoldResponses::sparse(decompose_fold_packed::<D>(
-                source,
-                challenges,
-                num_positions_per_block,
-                num_digits,
-            )?)),
-            // Jolt's one-hot configs delegate to the single-chunk `fp128::OneHot`
-            // witness policy, so no admitted schedule row asks for chunked
-            // responses.
-            DecomposeFoldBatchPlan::SparseChunked { .. } => Err(AkitaError::InvalidInput(
-                "trace-packed one-hot sources fold as a single chunk".into(),
-            )),
+            } => {
+                let chunks = decompose_fold_packed::<D>(
+                    source,
+                    challenges.as_slice(),
+                    Some(chunk_ranges),
+                    num_positions_per_block,
+                    num_digits,
+                )?;
+                CpuFoldResponses::chunked::<D>(chunks)
+            }
         }
     }
 }

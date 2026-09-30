@@ -5,7 +5,7 @@
 //! `akita_planner::emit` machinery that produces Akita's shipped catalogs.
 //!
 //! ```text
-//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules [k16|k256|dense]
+//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules [selector]
 //! ```
 
 use std::path::PathBuf;
@@ -25,26 +25,25 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let output_dir = PathBuf::from(
         args.next()
-            .expect("usage: gen_jolt_schedules <output-dir> [k16|k256|dense]"),
+            .expect("usage: gen_jolt_schedules <output-dir> [selector]"),
     );
     let only = args.next();
     std::fs::create_dir_all(&output_dir).expect("create artifact output directory");
 
-    // Family names are `jolt-fp128-onehot-k16`, `jolt-fp128-onehot-k256`, and
-    // `jolt-fp128-dense-bounded`, so the documented selectors are infixes,
-    // not suffixes.
+    // The documented selectors are family-name infixes, except the explicit
+    // `*-single` selectors that distinguish base one-hot catalogs from their
+    // multi-chunk companions.
     let specs = family_specs(output_dir)
         .expect("every family must declare a valid contract")
         .into_iter()
-        .filter(|family| {
-            only.as_deref()
-                .is_none_or(|only| family.family_name.contains(only))
+        .filter(|family| match only.as_deref() {
+            None => true,
+            Some("k16-single") => family.family_name == "jolt-fp128-onehot-k16",
+            Some("k256-single") => family.family_name == "jolt-fp128-onehot-k256",
+            Some(only) => family.family_name.contains(only),
         })
         .collect::<Vec<_>>();
-    assert!(
-        !specs.is_empty(),
-        "no schedule family matches {only:?}; expected k16, k256, or dense"
-    );
+    assert!(!specs.is_empty(), "no schedule family matches {only:?}");
     for family in &specs {
         println!(
             "generating {} ({} keys)…",
