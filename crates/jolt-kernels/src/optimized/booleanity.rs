@@ -1598,6 +1598,10 @@ mod tests {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test module asserts successful categorical round reconstruction"
+)]
 mod categorical_tests {
     use crate::optimized::parity::ExceptionalEq;
     #[cfg(feature = "akita")]
