@@ -1250,8 +1250,8 @@ mod stage_pushforward_tests {
     #[cfg(feature = "akita")]
     #[test]
     fn fp128_weighted_tiles_and_batches_match_the_cycle_eq_mle() {
-        use jolt_field::Fp128;
-        tiled_weighted_pushforwards::<Fp128>(19, 7);
+        use jolt_field::Prime128OffsetA7F7;
+        tiled_weighted_pushforwards::<Prime128OffsetA7F7>(19, 7);
     }
 }
 
