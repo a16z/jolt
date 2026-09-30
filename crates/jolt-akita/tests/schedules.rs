@@ -524,3 +524,27 @@ mod field_inc {
         }
     }
 }
+
+#[test]
+fn maximum_k256_trace_catalog_has_complete_setup_metadata() {
+    let catalog = one_hot_catalog(AKITA_ONE_HOT_K256);
+    let maximum = 31 + K256_PACKING_VARIABLES;
+    for num_polys in [1, 2] {
+        let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(maximum, num_polys));
+        let row = catalog.resolve_key(&key).expect("2^31 trace row");
+        assert!(uses_setup_offloading(row.schedule()));
+        let trusted = TrustedScheduleCatalog::<JoltOneHotK256>::new(catalog.clone())
+            .expect("audited maximum trace catalog");
+        let requirements = SetupRequirements::from_catalog(&trusted, maximum, num_polys)
+            .expect("maximum trace setup requirements");
+        let capacity = setup_matrix_capacity_for_schedule(row.schedule())
+            .expect("maximum trace schedule capacity");
+        assert!(requirements.matrix_capacity.num_field_elements >= capacity.num_field_elements);
+        assert!(catalog
+            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                maximum + 1,
+                num_polys
+            )))
+            .is_err());
+    }
+}

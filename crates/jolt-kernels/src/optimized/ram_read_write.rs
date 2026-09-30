@@ -33,12 +33,12 @@
 //! O(T + K) storage, but with a larger peak constant than cycle-first.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
+use super::ram_trace::SharedRamAddresses;
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
-use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-use super::ram_trace::SharedRamAddresses;
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};

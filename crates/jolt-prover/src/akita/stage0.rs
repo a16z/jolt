@@ -21,8 +21,8 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "field-inline")]
 use super::field_inline::FieldIncObject;
 use super::witness::{assemble_one_hot_trace_rows, commit_advice, AdviceObject};
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 use super::JoltAkitaBackend;
+use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Outputs retained for later prover stages.
 pub struct Stage0Output<PCS, T>
@@ -154,7 +154,10 @@ where
         + usize::from(untrusted_advice_present)
         + usize::from(trusted_advice.is_some())
         + usize::from(cfg!(feature = "field-inline"))
-        + preprocessing.committed_program.as_ref().map_or(0, |data| data.direct_program.objects.len());
+        + preprocessing
+            .committed_program
+            .as_ref()
+            .map_or(0, |data| data.direct_program.objects.len());
     // The setup is shape-exact for the canonical OneHotTrace group.
     if preprocessing.pcs_setup.max_num_vars() != plan.packing().packed_num_vars()
         || preprocessing.pcs_setup.max_num_polys_per_commitment_group() != 1
@@ -165,11 +168,10 @@ where
             reason: "the packed setup's dimensions disagree with the canonical OneHotTrace shape",
         });
     }
-    backend.base.ram_read_write.preflight(
-        session,
-        witness,
-        TraceDimensions::new(log_t),
-    )?;
+    backend
+        .base
+        .ram_read_write
+        .preflight(session, witness, TraceDimensions::new(log_t))?;
     let assembled = assemble_one_hot_trace_rows(
         witness,
         &plan,

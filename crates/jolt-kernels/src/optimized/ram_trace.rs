@@ -379,10 +379,10 @@ mod tests {
 
     #[test]
     fn preflight_reuses_the_stage_two_address_column() {
+        use crate::optimized::OptimizedBackend;
+        use crate::{PrepareKernel, ReferenceBackend};
         use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
         use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
-        use crate::{PrepareKernel, ReferenceBackend};
-        use crate::optimized::OptimizedBackend;
 
         with_sample_backend(|witness| {
             let mut session = ProofSession::default();
@@ -391,14 +391,16 @@ mod tests {
                 &mut session,
                 witness,
                 TraceDimensions::new(2),
-            ).unwrap();
+            )
+            .unwrap();
             assert!(session.state::<SharedRamAddresses>().is_none());
             <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
                 &OptimizedBackend,
                 &mut session,
                 witness,
                 TraceDimensions::new(2),
-            ).unwrap();
+            )
+            .unwrap();
             let admitted = SharedRamAddresses::shared::<Fr>(&mut session, witness, 2).unwrap();
             let stage_two = RamAccessColumns::collect_full::<Fr>(&mut session, witness, 2).unwrap();
             assert!(Arc::ptr_eq(&admitted, &stage_two.addresses));
