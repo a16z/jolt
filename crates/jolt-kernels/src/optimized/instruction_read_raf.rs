@@ -37,6 +37,7 @@
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
+use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
 };
@@ -320,6 +321,15 @@ impl InstructionCycleRow {
 pub struct OptimizedInstructionReadRaf;
 
 impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstructionReadRaf {
+    fn preflight(
+        &self,
+        _session: &mut ProofSession,
+        _witness: &dyn JoltWitnessPlane<F>,
+        dimensions: ReadWriteDimensions,
+    ) -> Result<(), KernelError<F>> {
+        validate_cycle_bucket_domain(dimensions.log_t())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,
@@ -327,6 +337,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
+        validate_cycle_bucket_domain::<F>(dimensions.log_t())?;
         let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(InstructionCycleRow::collect(
             witness,
             1 << dimensions.log_t(),
@@ -662,6 +673,15 @@ fn build_cycle_buckets<F: JoltField>(
     }
 }
 
+fn validate_cycle_bucket_domain<F: JoltField>(log_t: usize) -> Result<(), KernelError<F>> {
+    if log_t >= u32::BITS as usize {
+        return Err(KernelError::Unsupported {
+            reason: "cycle bucket counts and offsets are u32",
+        });
+    }
+    Ok(())
+}
+
 impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
@@ -685,11 +705,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 reason: "virtual RA chunk width must be a multiple of the phase width",
             });
         }
-        if log_t >= 32 {
-            return Err(KernelError::Unsupported {
-                reason: "cycle bucket indices are u32",
-            });
-        }
+        validate_cycle_bucket_domain::<F>(log_t)?;
         if rows.len() != 1 << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "stage-5 instruction rows".to_owned(),
@@ -1472,9 +1488,18 @@ mod tests {
         InstructionReadRafKernel, InstructionReadRafWitness,
     };
     use crate::reference::views::eq_table;
-    use crate::SumcheckKernel;
+    use crate::{KernelError, SumcheckKernel};
 
     use super::{build_cycle_buckets, InstructionCycleRow, OptimizedInstructionReadRafKernel};
+
+    #[test]
+    fn cycle_bucket_domain_accepts_2_to_31_and_rejects_2_to_32() {
+        assert!(super::validate_cycle_bucket_domain::<Fr>(31).is_ok());
+        assert!(matches!(
+            super::validate_cycle_bucket_domain::<Fr>(32),
+            Err(KernelError::Unsupported { .. }),
+        ));
+    }
 
     /// Packs reference-typed fixture rows into the optimized kernel's shared
     /// row form (the stage-5 kernel reads no PC/RAM columns).

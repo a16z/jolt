@@ -202,13 +202,15 @@ where
         log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         order: config.trace_polynomial_order,
     };
-    backend.ram_read_write.preflight(
-        session,
-        witness,
-        config
-            .rw_config
-            .ram_dimensions(grid.log_t, config.ram_K.ilog2() as usize),
-    )?;
+    let preflight_dimensions = config
+        .rw_config
+        .ram_dimensions(grid.log_t, config.ram_K.ilog2() as usize);
+    backend
+        .instruction_read_raf
+        .preflight(session, witness, preflight_dimensions)?;
+    backend
+        .ram_read_write
+        .preflight(session, witness, preflight_dimensions)?;
     // The `commit_witness` kernel-seam span sits at this call boundary, not
     // on any one backend impl, so every `CommitWitness` backend inherits it
     // (the taxonomy advertises it as backend-neutral).

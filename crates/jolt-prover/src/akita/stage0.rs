@@ -167,13 +167,17 @@ where
             reason: "the packed setup's dimensions disagree with the canonical OneHotTrace shape",
         });
     }
-    backend.base.ram_read_write.preflight(
-        session,
-        witness,
-        config
-            .rw_config
-            .ram_dimensions(log_t, config.ram_K.ilog2() as usize),
-    )?;
+    let preflight_dimensions = config
+        .rw_config
+        .ram_dimensions(log_t, config.ram_K.ilog2() as usize);
+    backend
+        .base
+        .instruction_read_raf
+        .preflight(session, witness, preflight_dimensions)?;
+    backend
+        .base
+        .ram_read_write
+        .preflight(session, witness, preflight_dimensions)?;
     let assembled = assemble_one_hot_trace_rows(
         witness,
         &plan,
