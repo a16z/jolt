@@ -1,6 +1,6 @@
 use akita_pcs::{AkitaError, ComputeBackendSetup};
 use akita_prover::{CommitOutput, CommitmentSource, CpuBackend, GroupContext};
-use akita_types::PrecommittedGroupProfiles;
+use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PrecommittedGroupProfiles};
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
@@ -466,6 +466,14 @@ impl CommitmentScheme for AkitaScheme {
         let one_hot_schedule_artifact = || {
             let base = artifacts
                 .one_hot_catalog(params.one_hot_k)
+                .map_err(invalid_setup)?;
+            let final_group = OpeningClaimsLayout::new(
+                params.max_num_vars,
+                params.max_num_polys_per_commitment_group,
+            )
+            .and_then(|layout| layout.root_final_group_layout())
+            .map_err(invalid_setup)?;
+            base.resolve_key(&AkitaScheduleLookupKey::single(final_group))
                 .map_err(invalid_setup)?;
             let catalog = params
                 .grouped_schedule
