@@ -37,6 +37,8 @@ use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+use super::ram_trace::SharedRamAddresses;
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -384,6 +386,23 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
 }
 
 impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBackend {
+    fn preflight(
+        &self,
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        trace: TraceDimensions,
+    ) -> Result<(), KernelError<F>> {
+        if trace.log_t() > 32 {
+            return Err(KernelError::Unsupported {
+                reason: "optimized RAM read-write checking packs cycle indices as u32",
+            });
+        }
+        // Stage 2 consumes this same column; moving its extraction forward
+        // admits actual addresses without another trace walk or address copy.
+        let _ = SharedRamAddresses::shared(session, witness, trace.log_t())?;
+        Ok(())
+    }
+
     fn prepare(
         &self,
         session: &mut ProofSession,

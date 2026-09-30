@@ -362,6 +362,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn address_encoding_reserves_only_the_no_access_sentinel() {
+        assert_eq!(encode_address::<Fr>(None).unwrap(), NO_ACCESS);
+        assert_eq!(encode_address::<Fr>(Some(0)).unwrap(), 0);
+        assert_eq!(
+            encode_address::<Fr>(Some(u64::from(u32::MAX) - 1)).unwrap(),
+            u32::MAX - 1,
+        );
+        for address in [u64::from(u32::MAX), u64::from(u32::MAX) + 1] {
+            assert!(matches!(
+                encode_address::<Fr>(Some(address)),
+                Err(KernelError::Unsupported { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn preflight_reuses_the_stage_two_address_column() {
+        use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+        use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
+        use crate::{PrepareKernel, ReferenceBackend};
+        use crate::optimized::OptimizedBackend;
+
+        with_sample_backend(|witness| {
+            let mut session = ProofSession::default();
+            <ReferenceBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
+                &ReferenceBackend,
+                &mut session,
+                witness,
+                TraceDimensions::new(2),
+            ).unwrap();
+            assert!(session.state::<SharedRamAddresses>().is_none());
+            <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
+                &OptimizedBackend,
+                &mut session,
+                witness,
+                TraceDimensions::new(2),
+            ).unwrap();
+            let admitted = SharedRamAddresses::shared::<Fr>(&mut session, witness, 2).unwrap();
+            let stage_two = RamAccessColumns::collect_full::<Fr>(&mut session, witness, 2).unwrap();
+            assert!(Arc::ptr_eq(&admitted, &stage_two.addresses));
+        });
+    }
+
+    #[test]
     fn rejects_session_carry_from_another_cycle_domain() {
         with_sample_backend(|witness| {
             let mut session = ProofSession::default();

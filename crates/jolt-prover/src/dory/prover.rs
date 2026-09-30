@@ -8,6 +8,7 @@ use core::any::Any;
 use allocative::FlameGraphBuilder;
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
@@ -131,6 +132,16 @@ where
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let mut session = backend.begin_proof();
+    if !config.trace_length.is_power_of_two() {
+        return Err(ProverError::Unsupported {
+            reason: "trace length must be a power of two",
+        });
+    }
+    backend.ram_read_write.preflight(
+        &mut session,
+        witness,
+        TraceDimensions::new(config.trace_length.ilog2() as usize),
+    )?;
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
         backend,
         &mut session,

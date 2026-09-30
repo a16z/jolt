@@ -5,6 +5,7 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
@@ -53,6 +54,16 @@ where
     // recipes still thread it to mint their clear recorders.
     let mode = ProofMode::<VC>::new(None)?;
     let mut session = backend.begin_proof();
+    if !config.trace_length.is_power_of_two() {
+        return Err(ProverError::Unsupported {
+            reason: "trace length must be a power of two",
+        });
+    }
+    backend.base.ram_read_write.preflight(
+        &mut session,
+        witness,
+        TraceDimensions::new(config.trace_length.ilog2() as usize),
+    )?;
     let stage0 = prove_stage0::<F, PCS, VC, T, W>(
         preprocessing,
         config,
