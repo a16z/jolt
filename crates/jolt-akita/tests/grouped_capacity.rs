@@ -25,8 +25,8 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use support::{f, layout, polynomial};
 
 const FINAL_NUM_VARS: usize = 16;
-/// Six variables above the trace group: a 32 MiB advice buffer against a
-/// 2^12-row K=16 trace.
+/// Six variables above this one-column trace group. The canonical Jolt trace
+/// adds selector variables; this smaller adapter fixture isolates capacity.
 const ADVICE_NUM_VARS: usize = 22;
 const TRUSTED_ADVICE: CommitmentGroupRole =
     CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice");
