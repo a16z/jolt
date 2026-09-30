@@ -117,9 +117,8 @@ impl ChunkIndexSource for LookupIndexChunks {
 pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     progress: RoundProgress,
     num_committed_per_virtual: usize,
-    /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
-    /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
-    /// exactly, so unscaling is byte-exact).
+    /// Inverse batch weights for active columns, and one for disabled columns
+    /// retained unscaled so their final opening values remain available.
     opening_unscale: Vec<F>,
     active_virtuals: usize,
     /// Address-folded committed RA selectors, one per committed chunk:
@@ -720,6 +719,13 @@ mod tests {
             reference_outputs.committed_instruction_ra,
             optimized_outputs.committed_instruction_ra
         );
+        if gamma == fr(0) {
+            assert!(reference_outputs
+                .committed_instruction_ra
+                .iter()
+                .skip(per_virtual)
+                .any(|value| *value != fr(0)));
+        }
 
         // The optimized eq scalar passes the same derived-table cross-check
         // the naive tier's materialized table does.
