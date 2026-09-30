@@ -10,12 +10,14 @@
 )]
 mod support;
 
+use std::sync::Arc;
+
 use jolt_akita::{
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
-    PrecommittedScheduleParams, AKITA_ONE_HOT_K16,
+    GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
-    CommitmentScheme, GroupOpeningClaim, PrecommittedClaim, PrecommittedRole,
+    CommitmentGroupRole, CommitmentScheme, GroupOpeningClaim, TaggedGroupOpeningClaim,
     TransparentObjectSetup,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
@@ -26,8 +28,30 @@ const FINAL_NUM_VARS: usize = 16;
 /// Six variables above the trace group: a 32 MiB advice buffer against a
 /// 2^12-row K=16 trace.
 const ADVICE_NUM_VARS: usize = 22;
-const TRUSTED_ADVICE: PrecommittedRole =
-    PrecommittedRole::new(1, b"trusted_advice", "trusted-advice");
+const TRUSTED_ADVICE: CommitmentGroupRole =
+    CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice");
+
+struct TraceRows {
+    rows: usize,
+}
+
+impl TraceOneHotRows for TraceRows {
+    fn num_rows(&self) -> usize {
+        self.rows
+    }
+
+    fn num_columns(&self) -> usize {
+        1
+    }
+
+    fn fill_row(&self, row: usize, selected_rows: &mut [u8]) {
+        selected_rows.fill((row * 7 % 16) as u8);
+    }
+
+    fn committed_digit_zero_mask(&self, row: usize) -> u64 {
+        u64::from(row.is_multiple_of(16))
+    }
+}
 
 #[test]
 fn grouped_opening_proves_advice_larger_than_the_trace_group() {
@@ -39,9 +63,10 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
             2,
             layout(5),
             AKITA_ONE_HOT_K16,
-            Some(PrecommittedScheduleParams::new(
+            Some(GroupedScheduleParams::new(
                 None,
                 Some(ADVICE_NUM_VARS),
+                Vec::new(),
                 FINAL_NUM_VARS,
             )),
             artifacts.clone(),
@@ -55,7 +80,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     let (advice_commitment, advice_hint) =
         AkitaScheme::commit(&advice, &advice_setup).expect("advice should commit");
     let advice_point: Vec<_> = (0..ADVICE_NUM_VARS).map(|i| f(7 + 5 * i as u64)).collect();
-    let advice_claim = PrecommittedClaim::new(
+    let advice_claim = TaggedGroupOpeningClaim::new(
         TRUSTED_ADVICE,
         GroupOpeningClaim::new(
             advice_commitment,
@@ -71,10 +96,11 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
     );
     let trace_point: Vec<_> = (0..FINAL_NUM_VARS).map(|i| f(3 + 2 * i as u64)).collect();
     let trace_evaluation = trace.evaluate(&trace_point);
-    let (trace_commitment, trace_hint) = AkitaScheme::commit_one_hot_group_owned_with_precommitted(
+    let (trace_commitment, trace_hint) = AkitaScheme::commit_trace_one_hot(
         &prover_setup,
         layout(5),
-        vec![trace],
+        1,
+        Arc::new(TraceRows { rows }),
         &[&advice_hint],
     )
     .expect("trace group should commit against the larger advice object");
