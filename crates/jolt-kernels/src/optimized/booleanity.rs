@@ -95,7 +95,7 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{gamma_power_pairs, pin_derived_term_if_derived, RoundProgress};
+use super::support::{gamma_powers, pin_derived_term_if_derived, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -528,14 +528,23 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
             }
         })?;
         let eq_address = eq_table(r_address);
-        let (gamma_powers, gamma_powers_inv) = gamma_power_pairs(
-            inputs.challenges.gamma,
-            columns.selectors.len(),
-            "booleanity batching gamma must be invertible",
-        )?;
+        let count = columns.selectors.len();
+        let opening_unscale = inputs.challenges.gamma.inverse().map_or_else(
+            || vec![F::one(); count],
+            |gamma_inv| gamma_powers(gamma_inv, count),
+        );
+        let gamma_powers = gamma_powers(inputs.challenges.gamma, count);
+        // Zero gamma disables all but the first summand, but every RA opening is
+        // still required. Keep disabled columns unscaled rather than losing them.
         let tables: Vec<Vec<F>> = gamma_powers
             .iter()
-            .map(|rho| eq_address.iter().map(|eq| *rho * *eq).collect())
+            .map(|rho| {
+                if rho.is_zero() {
+                    eq_address.clone()
+                } else {
+                    eq_address.iter().map(|eq| *rho * *eq).collect()
+                }
+            })
             .collect();
 
         Ok(Box::new(OptimizedBooleanityCycleKernel {
@@ -553,7 +562,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
                 },
             ),
             gamma_powers,
-            gamma_powers_inv,
+            opening_unscale,
             openings: columns.openings,
         }))
     }
@@ -594,7 +603,7 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     /// the first four binds (dense at `T/16` after).
     tables: LazyFoldedRa<F, BooleanityChunks>,
     gamma_powers: Vec<F>,
-    gamma_powers_inv: Vec<F>,
+    opening_unscale: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     openings: Vec<JoltOpeningId>,
 }
@@ -643,6 +652,7 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         let products = tables
             .iter()
             .zip(rho)
+            .take_while(|(_, rho)| !rho.is_zero())
             .map(|(table, rho)| {
                 let values: Vec<F> = (0..states)
                     .map(|mut state| {
@@ -758,6 +768,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         let tables = &self.tables;
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
+        let active_polys = gamma_powers.iter().take_while(|rho| !rho.is_zero()).count();
 
         struct Scratch<F: JoltField> {
             /// Within-block `Σ e_in · (constant, leading)` lanes, deferred.
@@ -780,7 +791,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 tables.lo_hi_all(row, &mut scratch.pairs);
                 let mut constant = F::Accumulator::default();
                 let mut leading = F::Accumulator::default();
-                for ((h_0, h_1), rho) in scratch.pairs.iter().zip(gamma_powers) {
+                for ((h_0, h_1), rho) in scratch.pairs.iter().zip(gamma_powers).take(active_polys) {
                     let delta = *h_1 - *h_0;
                     constant.fmadd(*h_0, *h_0 - *rho);
                     leading.fmadd(delta, delta);
@@ -821,15 +832,14 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedBooleanityCycleKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<SumcheckOutputClaims<F, Self::Relation>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        // Unscale the pre-scaled tables back to the committed polynomials'
-        // claims; resolve by id so the output struct shape stays the
-        // relation's business.
+        // Disabled columns were retained unscaled; the unit factor preserves
+        // their opening values when gamma is zero.
         let values: BTreeMap<JoltOpeningId, F> = self
             .openings
             .iter()
             .copied()
             .enumerate()
-            .map(|(i, id)| (id, self.tables.value(i, 0) * self.gamma_powers_inv[i]))
+            .map(|(i, id)| (id, self.tables.value(i, 0) * self.opening_unscale[i]))
             .collect();
         SumcheckOutputClaims::<F, Self::Relation>::from_opening_values(|id| values.get(id).copied())
             .map_err(SumcheckKernelError::from)
@@ -1251,11 +1261,14 @@ mod tests {
     }
 
     fn cycle_parity(log_t: usize, log_k_chunk: u8, carried_indices: bool) {
+        cycle_parity_with_gamma(log_t, log_k_chunk, carried_indices, Fr::from_u64(31));
+    }
+
+    fn cycle_parity_with_gamma(log_t: usize, log_k_chunk: u8, carried_indices: bool, gamma: Fr) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, dimensions| {
             let r_address = point(110, dimensions.log_k_chunk);
             let reference_address = point(700, dimensions.log_k_chunk);
             let reference_cycle = point(400, log_t);
-            let gamma = Fr::from_u64(31);
             let relation = cycle_relation(
                 dimensions,
                 r_address.clone(),
@@ -1320,6 +1333,13 @@ mod tests {
             let reference_outputs = reference.output_claims(&claims).unwrap();
             let optimized_outputs = optimized.output_claims(&claims).unwrap();
             assert_eq!(reference_outputs, optimized_outputs);
+            if gamma.is_zero() {
+                assert!(reference_outputs
+                    .opening_values()
+                    .iter()
+                    .skip(1)
+                    .any(|value| !value.is_zero()));
+            }
 
             let output_points = relation
                 .derive_opening_points(&challenges_drawn, &points)
@@ -1331,6 +1351,11 @@ mod tests {
                 .validate_derived_tables(&relation, &points, &output_points, &challenges)
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn cycle_kernel_matches_reference_with_zero_batching_gamma() {
+        cycle_parity_with_gamma(5, 4, false, Fr::from_u64(0));
     }
 
     #[test]
@@ -1530,7 +1555,7 @@ mod categorical_tests {
         }
     }
 
-    fn check_categorical_cubics<F: JoltField>() {
+    fn check_categorical_cubics<F: JoltField>(gamma: F) {
         for addresses in [2, 16, 256] {
             for bind in [F::zero(), F::one(), F::from_u64(13)] {
                 // All-cold, alternating hot/cold, and fully hot families.
@@ -1551,19 +1576,26 @@ mod categorical_tests {
                         })
                         .collect(),
                 );
-                let rho: Vec<F> = (0..3).map(|i| F::from_u64(3_u64.pow(i))).collect();
-                let tables: Vec<Vec<F>> = rho
-                    .iter()
-                    .map(|r| {
+                let rho: Vec<F> = [F::one(), gamma, gamma * gamma].to_vec();
+                let unscaled: Vec<Vec<F>> = (0..3)
+                    .map(|_| {
                         (0..addresses)
-                            .map(|i| *r * F::from_u64((i * i + 3 * i + 11) as u64))
+                            .map(|i| F::from_u64((i * i + 3 * i + 11) as u64))
                             .collect()
+                    })
+                    .collect();
+                let tables: Vec<Vec<F>> = unscaled
+                    .iter()
+                    .zip(&rho)
+                    .map(|(table, rho)| {
+                        let scale = if rho.is_zero() { F::one() } else { *rho };
+                        table.iter().map(|value| *value * scale).collect()
                     })
                     .collect();
                 let mut dense: Vec<Vec<F>> = source
                     .0
                     .iter()
-                    .zip(&tables)
+                    .zip(&unscaled)
                     .map(|(column, table)| {
                         column
                             .iter()
@@ -1592,7 +1624,7 @@ mod categorical_tests {
                                 for (column, r) in dense.iter().zip(&rho) {
                                     let v = column[2 * row]
                                         + x * (column[2 * row + 1] - column[2 * row]);
-                                    sum += *weight * v * (v - *r);
+                                    sum += *weight * *r * *r * v * (v - F::one());
                                 }
                             }
                             prefix * (bit * x + (F::one() - bit) * (F::one() - x)) * sum
@@ -1641,12 +1673,14 @@ mod categorical_tests {
 
     #[test]
     fn categorical_booleanity_matches_direct_cubic_dory() {
-        check_categorical_cubics::<Fr>();
+        check_categorical_cubics::<Fr>(Fr::zero());
+        check_categorical_cubics::<Fr>(Fr::from_u64(3));
     }
 
     #[test]
     #[cfg(feature = "akita")]
     fn categorical_booleanity_matches_direct_cubic_akita() {
-        check_categorical_cubics::<Prime128OffsetA7F7>();
+        check_categorical_cubics::<Prime128OffsetA7F7>(Prime128OffsetA7F7::zero());
+        check_categorical_cubics::<Prime128OffsetA7F7>(Prime128OffsetA7F7::from_u64(3));
     }
 }

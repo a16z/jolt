@@ -190,31 +190,6 @@ pub(crate) fn gamma_powers<F: JoltField>(gamma: F, count: usize) -> Vec<F> {
     powers
 }
 
-/// `(γ^i, γ^{-i})` pairs for pre-scaled shared tables. The inverse powers
-/// unscale the final claims back to the committed polynomials' values;
-/// `γ^i · γ^{-i} = 1` exactly, so unscaling is byte-exact. `reason` names
-/// the batching challenge in the (unreachable) non-invertible error.
-pub(crate) fn gamma_power_pairs<F: JoltField>(
-    gamma: F,
-    count: usize,
-    reason: &'static str,
-) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
-    let gamma_inv = gamma
-        .inverse()
-        .ok_or(KernelError::InvariantViolation { reason })?;
-    let mut powers = Vec::with_capacity(count);
-    let mut powers_inv = Vec::with_capacity(count);
-    let mut power = F::one();
-    let mut power_inv = F::one();
-    for _ in 0..count {
-        powers.push(power);
-        powers_inv.push(power_inv);
-        power *= gamma;
-        power_inv *= gamma_inv;
-    }
-    Ok((powers, powers_inv))
-}
-
 /// `scale · eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index
 /// MSB) — the scaled variant of the reference tier's `eq_table`.
 pub(crate) fn scaled_eq_table<F: JoltField>(point: &[F], scale: F) -> Vec<F> {
