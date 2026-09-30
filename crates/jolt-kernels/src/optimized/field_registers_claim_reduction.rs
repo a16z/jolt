@@ -315,7 +315,7 @@ mod tests {
         inactive_field_register_fixture, structured_field_register_fixture,
         FieldRegisterTraceFixture,
     };
-    use crate::optimized::parity::{probe_input_claim, synthetic_point};
+    use crate::optimized::parity::{probe_input_claim, synthetic_point, ExceptionalEq};
     use crate::optimized::registers_read_write::test_support::assert_kernel_parity_with_session;
     use crate::ReferenceBackend;
 
@@ -325,10 +325,25 @@ mod tests {
         seed: u64,
         expect_active: bool,
     ) {
+        run_parity_case(fixture, log_t, seed, expect_active, None);
+    }
+
+    fn run_parity_case(
+        fixture: FieldRegisterTraceFixture,
+        log_t: usize,
+        seed: u64,
+        expect_active: bool,
+        exceptional: Option<ExceptionalEq>,
+    ) {
         fixture.with_plane(log_t, |backend| {
+            let round_challenges = synthetic_point(log_t, seed.wrapping_mul(0x9E37_79B9));
+            let reference = exceptional.map_or_else(
+                || synthetic_point(log_t, seed),
+                |case| case.point(log_t, round_challenges[0]),
+            );
             let relation = FieldRegistersClaimReduction::<Fr>::new(
                 FieldRegistersTraceDimensions::new(log_t),
-                synthetic_point(log_t, seed),
+                reference,
             );
             let claims = FieldRegistersClaimReductionInputClaims {
                 rd_value: Fr::from_u64(0),
@@ -359,14 +374,13 @@ mod tests {
             )
             .unwrap();
             let claim = probe_input_claim(reference.as_mut());
-            let round_challenges =
-                synthetic_point(relation.rounds(), seed.wrapping_mul(0x9E37_79B9));
-            if expect_active {
+
+            if exceptional.is_none() && expect_active {
                 assert!(
                     claim != Fr::from_u64(0),
                     "fixture with field-inline activity degenerated"
                 );
-            } else {
+            } else if exceptional.is_none() {
                 assert_eq!(
                     claim,
                     Fr::from_u64(0),
@@ -409,5 +423,19 @@ mod tests {
     #[test]
     fn parity_inactive_trace_is_degenerate() {
         run_parity(inactive_field_register_fixture(4), 3, 421, false);
+    }
+    #[test]
+    fn parity_exceptional_equality_points_and_prefix() {
+        for log_t in [3usize, 4] {
+            for case in ExceptionalEq::ALL {
+                run_parity_case(
+                    structured_field_register_fixture(1 << log_t),
+                    log_t,
+                    89,
+                    true,
+                    Some(case),
+                );
+            }
+        }
     }
 }

@@ -806,6 +806,7 @@ impl<F: JoltField> SumcheckKernel<F> for ProductRemainderKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::composed::{ComposedClaims, FieldProductUniskipInputs};
     #[cfg(feature = "field-inline")]
@@ -1053,6 +1054,16 @@ mod tests {
     }
 
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
+        parity_case_with_eq(dummy_plane, log_t, seed, None, false);
+    }
+
+    fn parity_case_with_eq(
+        dummy_plane: &dyn JoltWitnessPlane<Fr>,
+        log_t: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+        zero_scale: bool,
+    ) {
         parity_run(
             dummy_plane,
             ParityInputs {
@@ -1061,11 +1072,16 @@ mod tests {
                 rows: synthetic_rows(log_t, seed),
                 #[cfg(feature = "field-inline")]
                 field_rows: synthetic_field_rows(log_t, seed ^ 0xF1E1D),
-                tau_low: (0..log_t)
-                    .map(|i| Fr::from_u64(5 + seed + 11 * i as u64))
-                    .collect(),
-                tau_high: Fr::from_u64(6007 + seed),
-                r0: Fr::from_u64(31337 + seed),
+                tau_low: exceptional.map_or_else(
+                    || {
+                        (0..log_t)
+                            .map(|i| Fr::from_u64(5 + seed + 11 * i as u64))
+                            .collect()
+                    },
+                    |case| case.point(log_t, Fr::from_u64(1201 + seed)),
+                ),
+                tau_high: Fr::from_u64(if zero_scale { 0 } else { 6007 + seed }),
+                r0: Fr::from_u64(if zero_scale { 1 } else { 31337 + seed }),
             },
         );
     }
@@ -1197,6 +1213,16 @@ mod tests {
         optimized_kernel
             .validate_derived_tables(&relation, &points, &output_points, &no_challenges)
             .unwrap();
+    }
+
+    #[test]
+    fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
+        with_sample_backend(|dummy| {
+            for case in ExceptionalEq::ALL {
+                parity_case_with_eq(dummy, 4, 379, Some(case), false);
+            }
+            parity_case_with_eq(dummy, 4, 379, None, true);
+        });
     }
 
     #[test]

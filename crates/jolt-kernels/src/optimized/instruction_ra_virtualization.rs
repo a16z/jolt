@@ -447,6 +447,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     use std::sync::Arc;
 
     use std::collections::BTreeMap;
@@ -589,6 +590,32 @@ mod tests {
         with_session: bool,
         gamma: Fr,
     ) {
+        assert_parity_case(
+            log_t,
+            num_virtual,
+            per_virtual,
+            chunk_bits,
+            seed,
+            with_session,
+            gamma,
+            None,
+        );
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test shape plus exceptional equality case"
+    )]
+    fn assert_parity_case(
+        log_t: usize,
+        num_virtual: usize,
+        per_virtual: usize,
+        chunk_bits: usize,
+        seed: u64,
+        with_session: bool,
+        gamma: Fr,
+        exceptional: Option<ExceptionalEq>,
+    ) {
         let num_committed = num_virtual * per_virtual;
         let dimensions = InstructionRaVirtualizationDimensions::new(
             log_t,
@@ -600,7 +627,10 @@ mod tests {
         let instruction_address: Vec<Fr> = (0..num_committed * chunk_bits)
             .map(|i| fr(300 + 13 * i as u64))
             .collect();
-        let r_cycle: Vec<Fr> = (0..log_t).map(|i| fr(7000 + 29 * i as u64)).collect();
+        let r_cycle: Vec<Fr> = exceptional.map_or_else(
+            || (0..log_t).map(|i| fr(7000 + 29 * i as u64)).collect(),
+            |case| case.point(log_t, challenge(0)),
+        );
         let relation = InstructionRaVirtualization::<Fr>::new(
             dimensions,
             instruction_address.clone(),
@@ -797,5 +827,13 @@ mod tests {
     #[test]
     fn parity_with_carried_session_rows() {
         assert_parity(4, 8, 4, 4, 42, true);
+    }
+    #[test]
+    fn parity_exceptional_eq_in_lazy_and_dense_virtualization() {
+        for factors in [1usize, 2, 4] {
+            for case in ExceptionalEq::ALL {
+                assert_parity_case(6, 2, factors, 2, 277, true, fr(31), Some(case));
+            }
+        }
     }
 }

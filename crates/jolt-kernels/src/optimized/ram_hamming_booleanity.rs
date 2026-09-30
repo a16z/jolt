@@ -20,10 +20,9 @@
 //!   (complement-merged) patterns — no division, exact coefficients. After
 //!   the last startup challenge the bound table is read off a subset-sum
 //!   lookup indexed by pattern, and the dense Gruen rounds resume on it.
-//!   Dense rounds still invert `current_scalar · c_j`
-//!   (`gruen_poly_deg_3`), so a zero cycle coordinate past the startup
-//!   depth panics as before; the startup rounds themselves accept any
-//!   coordinate.
+//!   Dense rounds recover their missing endpoint from the retained `H`
+//!   table when the equality endpoint vanishes; a zero equality prefix
+//!   produces the degree-preserving zero round polynomial.
 //!
 //! Byte parity with the reference kernel holds because field arithmetic is
 //! exact: the Gruen-reconstructed evaluations equal the true round
@@ -474,6 +473,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
     use jolt_field::{Fr, One, Ring, Zero};
@@ -730,5 +730,13 @@ mod tests {
                     if expected == Fr::from_u64(1) && actual == Fr::from_u64(0)
             ));
         });
+    }
+    #[test]
+    fn matches_reference_at_exceptional_points_through_dense_rounds() {
+        let log_t = STARTUP_ROUNDS + 3;
+        let bits: Vec<bool> = (0..1 << log_t).map(|row| row % 5 < 2).collect();
+        for case in ExceptionalEq::ALL {
+            hamming_parity(log_t, &bits, case.point(log_t, test_challenge(0)));
+        }
     }
 }

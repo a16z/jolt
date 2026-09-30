@@ -1471,6 +1471,7 @@ impl<F: JoltField> SumcheckKernel<F> for OuterRemainderKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::{
         geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS, FieldInlinePolynomialId,
@@ -1792,12 +1793,34 @@ mod tests {
     /// optimized fed identical `ProverInputs` (with field-inline enabled: the composed
     /// 50-column selection over synthetic field-inline rows too).
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
+        parity_case_with_eq(dummy_plane, log_t, seed, None, false);
+    }
+
+    fn parity_case_with_eq(
+        dummy_plane: &dyn JoltWitnessPlane<Fr>,
+        log_t: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+        zero_scale: bool,
+    ) {
         let rows = synthetic_rows(log_t, seed);
         #[cfg(feature = "field-inline")]
         let field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
-        let tau: Vec<Fr> = (0..log_t + 2)
-            .map(|i| Fr::from_u64(3 + seed + 7 * i as u64))
-            .collect();
+        let mut tau: Vec<Fr> = exceptional.map_or_else(
+            || {
+                (0..log_t + 2)
+                    .map(|i| Fr::from_u64(3 + seed + 7 * i as u64))
+                    .collect()
+            },
+            |case| {
+                let mut point = case.point(log_t + 1, Fr::from_u64(7919 + seed));
+                point.push(Fr::from_u64(3 + seed + 7 * (log_t + 1) as u64));
+                point
+            },
+        );
+        if zero_scale {
+            tau[log_t + 1] = Fr::from_u64(0);
+        }
         let backend = fixed_backend_from_rows(
             log_t,
             &rows,
@@ -1839,7 +1862,7 @@ mod tests {
             "uni-skip first-round polynomial, log_t = {log_t}"
         );
 
-        let r0 = Fr::from_u64(40961 + seed);
+        let r0 = Fr::from_u64(if zero_scale { 1 } else { 40961 + seed });
         let input_claim = true_input_claim(
             &rows,
             #[cfg(feature = "field-inline")]
@@ -1919,6 +1942,16 @@ mod tests {
     /// Synthetic parity across sizes spanning the uni-skip boundary and
     /// degenerate small domains. The sample backend only supplies the (never
     /// read) witness-plane argument of the remainder `prepare` calls.
+    #[test]
+    fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
+        with_sample_backend(|dummy| {
+            for case in ExceptionalEq::ALL {
+                parity_case_with_eq(dummy, 4, 389, Some(case), false);
+            }
+            parity_case_with_eq(dummy, 4, 389, None, true);
+        });
+    }
+
     #[test]
     fn synthetic_parity_with_reference_kernels() {
         with_sample_backend(|dummy| {

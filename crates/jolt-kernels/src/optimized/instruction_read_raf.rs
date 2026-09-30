@@ -1479,6 +1479,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     use std::num::NonZeroUsize;
     use std::sync::Arc;
 
@@ -1645,13 +1646,25 @@ mod tests {
     /// canonical coefficient vectors of equal length) every round and equal
     /// output claims.
     fn assert_parity(log_t: usize, num_virtual_ra_polys: usize, seed: u64) {
+        assert_parity_case(log_t, num_virtual_ra_polys, seed, None);
+    }
+
+    fn assert_parity_case(
+        log_t: usize,
+        num_virtual_ra_polys: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+    ) {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
             NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
         );
         let rows = fixture_rows(log_t, seed);
-        let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect();
+        let r_reduction: Vec<Fr> = exceptional.map_or_else(
+            || (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect(),
+            |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),
+        );
         let gamma = fr(0xACE1_57EF);
 
         let mut reference =
@@ -1749,6 +1762,14 @@ mod tests {
                 "round {round}"
             );
             claim = reference_poly.evaluate(challenge(round));
+        }
+    }
+    #[test]
+    fn parity_exceptional_eq_in_pending_and_dense_cycle_tables() {
+        for virtuals in [4usize, 8] {
+            for case in ExceptionalEq::ALL {
+                assert_parity_case(6, virtuals, 257, Some(case));
+            }
         }
     }
 }

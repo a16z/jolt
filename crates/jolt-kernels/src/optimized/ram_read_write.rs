@@ -485,6 +485,7 @@ mod tests {
         assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
     use super::*;
+    use crate::optimized::parity::ExceptionalEq;
     use crate::ReferenceBackend;
 
     /// The independently computed true input claim:
@@ -526,8 +527,27 @@ mod tests {
         ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
     ) {
+        run_parity_case(shape, init_words, ops, phase_splits, None);
+    }
+
+    fn run_parity_case(
+        shape: FixtureShape,
+        init_words: Vec<u64>,
+        ops: Vec<RamOp>,
+        phase_splits: &[(usize, usize)],
+        exceptional: Option<ExceptionalEq>,
+    ) {
         with_ram_fixture_init(shape, init_words, ops, |witness| {
-            let tau_low = random_scalars(shape.log_t, 17);
+            let first_cycle = if phase_splits[0].0 == 0 {
+                phase_splits[0].1
+            } else {
+                0
+            };
+            let binds = random_scalars(shape.log_t + shape.log_k(), 71);
+            let tau_low = exceptional.map_or_else(
+                || random_scalars(shape.log_t, 17),
+                |case| case.point(shape.log_t, binds[first_cycle]),
+            );
             let gamma = random_scalars(1, 23)[0];
             let claims = RamReadWriteInputClaims {
                 ram_read_value: Fr::from_u64(0),
@@ -716,5 +736,30 @@ mod tests {
                 Err(KernelError::InvariantViolation { .. })
             ));
         });
+    }
+    #[test]
+    fn matches_reference_at_exceptional_cycle_points_in_both_orders() {
+        let shape = FixtureShape {
+            log_t: 4,
+            ram_k: 16,
+        };
+        for phase in [(shape.log_t, shape.log_k()), (0, shape.log_k())] {
+            for case in ExceptionalEq::ALL {
+                run_parity_case(
+                    shape,
+                    vec![0, 7, 3, 11],
+                    vec![
+                        RamOp::Read { word: 1 },
+                        RamOp::None,
+                        RamOp::Write { word: 1, post: 29 },
+                        RamOp::Read { word: 3 },
+                        RamOp::Write { word: 2, post: 37 },
+                        RamOp::Read { word: 1 },
+                    ],
+                    &[phase],
+                    Some(case),
+                );
+            }
+        }
     }
 }

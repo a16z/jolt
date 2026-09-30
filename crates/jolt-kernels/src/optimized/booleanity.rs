@@ -1129,6 +1129,7 @@ pub(crate) mod testing {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
     use jolt_field::{Fr, Ring, Zero};
@@ -1306,10 +1307,23 @@ mod tests {
     }
 
     fn cycle_parity_with_gamma(log_t: usize, log_k_chunk: u8, carried_indices: bool, gamma: Fr) {
+        cycle_parity_case(log_t, log_k_chunk, carried_indices, gamma, None);
+    }
+
+    fn cycle_parity_case(
+        log_t: usize,
+        log_k_chunk: u8,
+        carried_indices: bool,
+        gamma: Fr,
+        exceptional: Option<ExceptionalEq>,
+    ) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, dimensions| {
             let r_address = point(110, dimensions.log_k_chunk);
             let reference_address = point(700, dimensions.log_k_chunk);
-            let reference_cycle = point(400, log_t);
+            let reference_cycle = exceptional.map_or_else(
+                || point(400, log_t),
+                |case| case.point(log_t, test_challenge(0)),
+            );
             let relation = cycle_relation(
                 dimensions,
                 r_address.clone(),
@@ -1392,6 +1406,17 @@ mod tests {
                 .validate_derived_tables(&relation, &points, &output_points, &challenges)
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn cycle_kernel_matches_reference_at_exceptional_eq_points() {
+        for bits in [4u8, 8] {
+            for gamma in [Fr::from_u64(0), Fr::from_u64(31)] {
+                for case in ExceptionalEq::ALL {
+                    cycle_parity_case(6, bits, true, gamma, Some(case));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1574,6 +1599,7 @@ mod tests {
 
 #[cfg(test)]
 mod categorical_tests {
+    use crate::optimized::parity::ExceptionalEq;
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Fr, JoltField, Ring, Zero};
@@ -1597,6 +1623,13 @@ mod categorical_tests {
     }
 
     fn check_categorical_cubics<F: JoltField>(gamma: F) {
+        check_categorical_case(gamma, None);
+        for case in ExceptionalEq::ALL {
+            check_categorical_case(gamma, Some(case));
+        }
+    }
+
+    fn check_categorical_case<F: JoltField>(gamma: F, exceptional: Option<ExceptionalEq>) {
         for addresses in [2, 16, 256] {
             for bind in [F::zero(), F::one(), F::from_u64(13)] {
                 // All-cold, alternating hot/cold, and fully hot families.
@@ -1645,7 +1678,10 @@ mod categorical_tests {
                     })
                     .collect();
                 let mut lazy = LazyFoldedRa::new(tables, source);
-                let reference: Vec<F> = (0..5).map(|i| F::from_u64(7 + 3 * i)).collect();
+                let reference: Vec<F> = exceptional.map_or_else(
+                    || (0..5).map(|i| F::from_u64(7 + 3 * i)).collect(),
+                    |case| case.point(5, bind),
+                );
                 let mut prefix = F::from_u64(19);
                 let mut eq = GruenSplitEqPolynomial::new_with_scaling(
                     &reference,

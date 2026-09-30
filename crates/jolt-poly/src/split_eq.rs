@@ -404,6 +404,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     }
 
     /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.
+    /// `q_evals` must contain at least two entries.
     /// The missing `q(0)` is evaluated only when `l(0)` vanishes.
     pub fn gruen_poly_from_evals(
         &self,
@@ -418,9 +419,8 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let mut full_q_evals = Vec::with_capacity(q_evals.len() + 1);
         full_q_evals.push(q_zero);
         full_q_evals.extend_from_slice(q_evals);
-        Ok(self.multiply_linear_factor(
-            UnivariatePoly::from_evals_toom(&full_q_evals).into_coefficients(),
-        ))
+        let q_coeffs = UnivariatePoly::from_evals_toom(&full_q_evals).into_coefficients();
+        Ok(self.multiply_linear_factor(&q_coeffs))
     }
 
     /// Degree-two message for a linear inner factor, with lazy `q(0)` recovery.
@@ -434,7 +434,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
             return Self::zero_round(3, s_0_plus_s_1);
         }
         let q_zero = self.recover_q_zero(q_one, s_0_plus_s_1, q_at_zero)?;
-        Ok(self.multiply_linear_factor(vec![q_zero, q_one - q_zero]))
+        Ok(self.multiply_linear_factor(&[q_zero, q_one - q_zero]))
     }
 
     fn recover_q_zero(&self, q_one: F, hint: F, q_at_zero: impl FnOnce() -> F) -> Result<F, F> {
@@ -453,11 +453,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
-    fn multiply_linear_factor(&self, q_coeffs: Vec<F>) -> UnivariatePoly<F> {
+    fn multiply_linear_factor(&self, q_coeffs: &[F]) -> UnivariatePoly<F> {
         let (l_zero, l_one) = self.current_linear_evals();
         let l_slope = l_one - l_zero;
         let mut coefficients = vec![F::zero(); q_coeffs.len() + 1];
-        for (index, q_coeff) in q_coeffs.into_iter().enumerate() {
+        for (index, q_coeff) in q_coeffs.iter().copied().enumerate() {
             coefficients[index] += q_coeff * l_zero;
             coefficients[index + 1] += q_coeff * l_slope;
         }
@@ -811,6 +811,29 @@ mod tests {
                                     .unwrap()
                             };
                             assert_eq!(called.get(), !scalar.is_zero() && l_zero.is_zero());
+                            if !scalar.is_zero() && l_zero.is_zero() {
+                                let bad_hint = hint + F::one();
+                                if degree == 1 {
+                                    assert_eq!(
+                                        split.gruen_poly_deg_2(
+                                            q.evaluate(F::one()),
+                                            bad_hint,
+                                            || q.evaluate(F::zero())
+                                        ),
+                                        Err(hint)
+                                    );
+                                } else {
+                                    let mut samples: Vec<F> = (1..degree)
+                                        .map(|i| q.evaluate(F::from_u64(i as u64)))
+                                        .collect();
+                                    samples.push(q.coefficients()[degree]);
+                                    assert_eq!(
+                                        split.gruen_poly_from_evals(&samples, bad_hint, || q
+                                            .evaluate(F::zero())),
+                                        Err(hint)
+                                    );
+                                }
+                            }
                             assert_eq!(polynomial.coefficients().len(), degree + 2);
                             for x in (0..8).map(F::from_u64) {
                                 let linear = l_zero + (l_one - l_zero) * x;
@@ -832,6 +855,17 @@ mod tests {
                                 assert_eq!(called.get(), !scalar.is_zero() && l_one.is_zero());
                                 assert_eq!(cubic.coefficients().len(), 4);
                                 assert_eq!(cubic.coefficients(), polynomial.coefficients());
+                                if !scalar.is_zero() && l_one.is_zero() {
+                                    assert_eq!(
+                                        split.gruen_poly_deg_3(
+                                            q.coefficients()[0],
+                                            q.coefficients()[2],
+                                            hint + F::one(),
+                                            || q.evaluate(F::one())
+                                        ),
+                                        Err(hint)
+                                    );
+                                }
                             }
                         }
                         if scalar.is_zero() {
