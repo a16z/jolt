@@ -653,6 +653,29 @@ impl AkitaVerifierSetup {
             .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
     }
 
+    /// Variables the one-hot backend setup covers: the exact final arity, or
+    /// the largest precommitted group of this setup's grouped rows when that
+    /// is larger. Akita sizes a setup only from the catalog rows whose every
+    /// group fits its capacity (`SetupRequirements::from_catalog`), and an
+    /// advice or committed-program object may exceed the trace group it is
+    /// opened with.
+    pub(crate) fn one_hot_backend_num_vars(&self) -> Result<usize, OpeningsError> {
+        let largest_precommitted = match self.one_hot_k {
+            AKITA_ONE_HOT_K16 => {
+                largest_precommitted_num_vars(self.one_hot_k16_scheme()?.schedules())
+            }
+            AKITA_ONE_HOT_K256 => {
+                largest_precommitted_num_vars(self.one_hot_k256_scheme()?.schedules())
+            }
+            other => {
+                return Err(invalid_batch(format!(
+                    "unsupported Akita one-hot K={other}"
+                )))
+            }
+        };
+        Ok(self.max_num_vars.max(largest_precommitted))
+    }
+
     /// Backend verifier key for `flavor`, cached after the first use.
     /// [`AkitaScheme::setup`](crate::AkitaScheme) primes the cache with the
     /// freshly built keys; a serde-transported setup re-derives them from the
@@ -690,9 +713,7 @@ impl AkitaVerifierSetup {
                 if self.max_num_vars < log_k {
                     return Err(invalid_batch("Akita verifier setup has no one-hot backend"));
                 }
-                let prover_setup =
-                    one_hot_setup_prover(self, self.max_num_vars, self.max_total_batch_polys)
-                        .map_err(invalid_setup)?;
+                let prover_setup = one_hot_setup_prover(self)?;
                 one_hot_setup_verifier(self, &prover_setup)
             }
         }
@@ -1103,11 +1124,13 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
     }
 }
 
+/// The one-hot backend prover setup `setup` describes, sized by
+/// [`AkitaVerifierSetup::one_hot_backend_num_vars`].
 pub(crate) fn one_hot_setup_prover(
     setup: &AkitaVerifierSetup,
-    max_num_vars: usize,
-    max_num_polys: usize,
-) -> Result<AkitaBackendProverSetup, AkitaError> {
+) -> Result<AkitaBackendProverSetup, OpeningsError> {
+    let max_num_vars = setup.one_hot_backend_num_vars()?;
+    let max_num_polys = setup.max_total_batch_polys;
     with_backend_pool(|| match setup.one_hot_k {
         AKITA_ONE_HOT_K16 => setup
             .one_hot_k16_scheme()
@@ -1119,6 +1142,18 @@ pub(crate) fn one_hot_setup_prover(
             .setup_prover(max_num_vars, max_num_polys),
         _ => unreachable!("one-hot K is validated before backend setup"),
     })
+    .map_err(invalid_setup)
+}
+
+fn largest_precommitted_num_vars<Cfg: CommitmentConfig>(
+    catalog: &TrustedScheduleCatalog<Cfg>,
+) -> usize {
+    catalog
+        .rows()
+        .flat_map(|row| &row.profiles().precommitteds)
+        .map(|profile| profile.group.num_vars())
+        .max()
+        .unwrap_or(0)
 }
 
 pub(crate) fn one_hot_setup_verifier(
