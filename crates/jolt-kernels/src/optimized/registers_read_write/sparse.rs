@@ -148,8 +148,8 @@ impl<F: JoltField> OneHotCoeff<F> for LutIndex {
     }
 }
 
-mod layout;
-mod ops;
+pub(crate) mod layout;
+pub(crate) mod ops;
 
 pub(super) use layout::SeedEntry;
 use layout::{merge_bind, split_pair_group, Cell, IndexedMeta, SparseEntry};

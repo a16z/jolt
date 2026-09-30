@@ -8,12 +8,12 @@ use akita_types::{AkitaScheduleLookupKey, FoldSchedule};
 
 pub(crate) fn plan_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
-    precommitted_source_contracts: &[CommittedSourceContract],
+    auxiliary_source_contracts: &[CommittedSourceContract],
 ) -> Result<FoldSchedule, AkitaError> {
     let planned = find_schedule(
         key,
         Cfg::committed_source_contract()?,
-        precommitted_source_contracts,
+        auxiliary_source_contracts,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
     )?;

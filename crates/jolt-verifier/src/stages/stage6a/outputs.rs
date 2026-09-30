@@ -46,6 +46,22 @@ pub struct Stage6aSumchecks<F: JoltField> {
     pub booleanity: BooleanityAddressPhase<F>,
 }
 
+impl<F: JoltField> Stage6aOutputClaims<F> {
+    /// Project base-protocol claims into the verifier's selected output shape.
+    pub fn from_base(
+        bytecode_read_raf: BytecodeReadRafAddressPhaseOutputClaims<F>,
+        booleanity: BooleanityAddressPhaseOutputClaims<F>,
+    ) -> Self {
+        Self {
+            #[cfg(feature = "field-inline")]
+            bytecode_read_raf: bytecode_read_raf.into(),
+            #[cfg(not(feature = "field-inline"))]
+            bytecode_read_raf,
+            booleanity,
+        }
+    }
+}
+
 /// The stage-6a Fiat-Shamir draws sampled by the batch's `draw_challenges` but
 /// consumed downstream too. The prover's booleanity subprotocol samples its
 /// gamma (and the reference-address padding) before the 6a batch runs, and the

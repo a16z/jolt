@@ -47,7 +47,7 @@ pub use configs::AkitaOneHotChunkProfile;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
-pub use schedule_registry::PrecommittedScheduleParams;
+pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotRows, TracePackedOneHot};
 

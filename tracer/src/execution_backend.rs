@@ -9,6 +9,8 @@ use jolt_program::execution::{
     RamWrite as ProgramRamWrite, RegisterRead, RegisterState, RegisterWrite, TraceError,
     TraceInputs, TraceOutput, TraceRow,
 };
+#[cfg(feature = "field-inline")]
+use jolt_program::field_inline::FieldInlineTraceData;
 use jolt_program::preprocess::BytecodePreprocessing;
 use jolt_riscv::{JoltInstructionRow, JoltTraceRow};
 use rayon::prelude::*;
@@ -17,6 +19,8 @@ use common::jolt_device::JoltDevice;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
+#[cfg(feature = "field-inline")]
+use crate::instruction::RISCVCycle;
 use crate::instruction::{Cycle, RAMAccess};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 use crate::trace_row::{cycle_to_trace_row, CycleConversionError};
@@ -369,6 +373,28 @@ fn trace_row_from_cycle(cycle: Cycle) -> Result<TraceRow, TraceError> {
     Ok(row)
 }
 
+#[cfg(feature = "field-inline")]
+impl Cycle {
+    pub fn field_inline_trace(&self) -> Option<FieldInlineTraceData> {
+        let register_state = match self {
+            Self::FIELD_ADD(RISCVCycle { register_state, .. })
+            | Self::FIELD_SUB(RISCVCycle { register_state, .. })
+            | Self::FIELD_MUL(RISCVCycle { register_state, .. })
+            | Self::FIELD_INV(RISCVCycle { register_state, .. })
+            | Self::FIELD_ASSERT_EQ(RISCVCycle { register_state, .. })
+            | Self::FIELD_ASSERT_ZERO(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_ACCUMULATE_FROM_REGISTER(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(RISCVCycle { register_state, .. })
+            | Self::FIELD_LOAD_IMM(RISCVCycle { register_state, .. })
+            | Self::FIELD_ADVICE_LIMB(RISCVCycle { register_state, .. }) => register_state,
+            _ => return None,
+        };
+        let op =
+            jolt_riscv::field_inline_source_op(self.instruction().source_instruction().kind())?;
+        Some(register_state.to_field_inline_trace(op))
+    }
+}
+
 fn jolt_instruction_row(cycle: &Cycle) -> Result<JoltInstructionRow, TraceError> {
     let instruction = cycle.instruction();
     instruction
@@ -566,7 +592,7 @@ mod chunked_tests {
 #[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
     use super::*;
-    use crate::emulator::elf_analyzer::test_elf::build_elf64;
+    use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
     use common::jolt_device::MemoryConfig;
     use jolt_program::execution::{TraceError, TraceInputs};
 
@@ -580,7 +606,11 @@ mod tests {
     #[expect(clippy::expect_used, reason = "test-only assertions")]
     fn tracer_backend_traces_a_guest_elf_into_jolt_rows() {
         // addi x1, x0, 1 ; addi x2, x1, 2 ; j .
-        let elf = build_elf64(&[0x0010_0093, 0x0020_8113, 0x0000_006f], &[]);
+        let elf = build_elf64(
+            &[0x0010_0093, 0x0020_8113, 0x0000_006f],
+            &[],
+            StrtabOrder::GnuLd,
+        );
         let program = JoltProgram::from_elf_bytes(elf.clone());
         let inputs = TraceInputs {
             memory_config: MemoryConfig {
@@ -626,11 +656,16 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
-        u32::from(FIELD_INLINE_OPCODE)
-            | (u32::from(rd) << 7)
-            | (u32::from(op.funct3()) << 12)
-            | (u32::from(rs1) << 15)
-            | (u32::from(rs2_or_imm) << 20)
+        let base =
+            u32::from(FIELD_INLINE_OPCODE) | (u32::from(rd) << 7) | (u32::from(op.funct3()) << 12);
+        match op.funct7() {
+            Some(funct7) => {
+                base | (u32::from(rs1) << 15)
+                    | (u32::from(rs2_or_imm & 0x1f) << 20)
+                    | (u32::from(funct7) << 25)
+            }
+            None => base | (u32::from(rs2_or_imm & 0x0fff) << 20),
+        }
     }
 
     #[cfg(feature = "field-inline")]
@@ -639,7 +674,7 @@ mod tests {
         let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
         cpu.write_register(5, 11);
         let instruction = Instruction::decode(
-            field_inline_word(FieldInlineOp::LoadFromX, 2, 5, 0),
+            field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 2, 5, 0),
             0x8000_0000,
             false,
         )
@@ -654,10 +689,13 @@ mod tests {
         assert!(row.rs2_read().is_none());
         assert!(row.rd_write().is_none());
         let field_trace = row.field_inline.unwrap();
-        assert_eq!(field_trace.op, Some(FieldInlineOp::LoadFromX));
+        assert_eq!(
+            field_trace.op,
+            Some(FieldInlineOp::LoadAccumulateFromRegister)
+        );
         assert_eq!(
             field_trace.bridge,
-            Some(FieldInlineBridge::LoadFromX {
+            Some(FieldInlineBridge::LoadAccumulateFromRegister {
                 x_register: 5,
                 x_value: 11,
                 field_value: FieldEncodedValue::from_u64(11),

@@ -1,10 +1,7 @@
-use crate::emulator::cpu::Cpu;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
-use super::{
-    normalize_register_value, InstructionFormat, InstructionRegisterState, NormalizedOperands,
-};
+use super::{InstructionFormat, NormalizedOperands};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FormatB {
@@ -13,46 +10,7 @@ pub struct FormatB {
     pub imm: i128,
 }
 
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RegisterStateFormatB {
-    pub rs1: u64,
-    pub rs2: u64,
-}
-
-impl InstructionRegisterState for RegisterStateFormatB {
-    #[cfg(any(feature = "test-utils", test))]
-    fn random(rng: &mut rand::rngs::StdRng, operands: &NormalizedOperands) -> Self {
-        use rand::RngCore;
-        let rs1_value = if operands.rs1.unwrap() == 0 {
-            0
-        } else {
-            rng.next_u64()
-        };
-
-        Self {
-            rs1: rs1_value,
-            rs2: if operands.rs2.unwrap() == 0 {
-                0
-            } else if operands.rs2 == operands.rs1 {
-                rs1_value
-            } else {
-                rng.next_u64()
-            },
-        }
-    }
-
-    fn rs1_value(&self) -> Option<u64> {
-        Some(self.rs1)
-    }
-
-    fn rs2_value(&self) -> Option<u64> {
-        Some(self.rs2)
-    }
-}
-
 impl InstructionFormat for FormatB {
-    type RegisterState = RegisterStateFormatB;
-
     fn parse(word: u32) -> Self {
         FormatB {
             rs1: ((word >> 15) & 0x1f) as u8, // [19:15]
@@ -68,15 +26,6 @@ impl InstructionFormat for FormatB {
                 // imm[4:1] = [11:8]
             ) as i32 as i128,
         }
-    }
-
-    fn capture_pre_execution_state(&self, state: &mut Self::RegisterState, cpu: &mut Cpu) {
-        state.rs1 = normalize_register_value(cpu, self.rs1 as usize);
-        state.rs2 = normalize_register_value(cpu, self.rs2 as usize);
-    }
-
-    fn capture_post_execution_state(&self, _: &mut Self::RegisterState, _: &mut Cpu) {
-        // No register write
     }
 
     #[cfg(any(feature = "test-utils", test))]

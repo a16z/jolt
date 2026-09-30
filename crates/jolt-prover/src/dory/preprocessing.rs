@@ -97,6 +97,7 @@ pub fn preprocess_committed_with_order(
     bytecode_chunk_count: usize,
     trace_order: TracePolynomialOrder,
 ) -> Result<DoryProverPreprocessing, PreprocessingError> {
+    crate::preprocessing::validate_committed_mode()?;
     let metadata = full
         .metadata()
         .ok_or_else(|| PreprocessingError::InvalidCommittedProgram {
@@ -281,6 +282,8 @@ fn commit_program_image(
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    #[cfg(feature = "field-inline")]
+    use crate::PreprocessingError;
     use common::jolt_device::MemoryLayout;
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_riscv::RV64IMAC_JOLT;
@@ -321,6 +324,7 @@ mod tests {
         assert_prover_preprocessing_round_trips(&preprocessing);
     }
 
+    #[cfg(not(feature = "field-inline"))]
     #[test]
     fn committed_prover_preprocessing_round_trips() {
         let full = JoltProgramPreprocessing::new(
@@ -334,5 +338,22 @@ mod tests {
         .unwrap();
         let preprocessing = preprocess_committed(full, 1).unwrap();
         assert_prover_preprocessing_round_trips(&preprocessing);
+    }
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn committed_preprocessing_rejects_field_inline_mode() {
+        let full = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        assert!(matches!(
+            preprocess_committed(full, 1),
+            Err(PreprocessingError::InvalidCommittedProgram { .. })
+        ));
     }
 }

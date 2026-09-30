@@ -21,8 +21,8 @@ use akita_types::{
     BasisMode, GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
 };
 use jolt_openings::{
-    BatchOpeningScheme, GroupOpeningClaim, OpeningsError, PrecommittedClaim, PrecommittedOpening,
-    VerifierOpeningClaim,
+    BatchOpeningScheme, GroupOpeningClaim, GroupOpeningWithHint, OpeningsError,
+    TaggedGroupOpeningClaim, VerifierOpeningClaim,
 };
 use jolt_poly::MultilinearPoly;
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
@@ -36,7 +36,7 @@ use crate::adapters::{
     AkitaField, AkitaHintSource, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
     AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
-use crate::scheme::validate_precommitted_order;
+use crate::scheme::validate_group_order;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
 /// opening protocol.
@@ -82,11 +82,11 @@ fn validate_grouped_hint(
 
 fn validate_trace_batch_statement(
     setup: &AkitaVerifierSetup,
-    precommitted: &[PrecommittedClaim<AkitaField, AkitaCommitment>],
+    auxiliary_groups: &[TaggedGroupOpeningClaim<AkitaField, AkitaCommitment>],
     main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
 ) -> Result<(), OpeningsError> {
-    validate_precommitted_order(precommitted.iter().map(|entry| entry.role))?;
-    for entry in precommitted {
+    validate_group_order(auxiliary_groups.iter().map(|entry| entry.role))?;
+    for entry in auxiliary_groups {
         validate_grouped_claim(entry.role.diagnostic_name(), &entry.claim)?;
         if entry.claim.commitment.backend_flavor != AkitaBackendFlavor::Dense
             || entry.claim.commitment.one_hot_k != 0
@@ -97,7 +97,11 @@ fn validate_trace_batch_statement(
                 entry.role.diagnostic_name()
             )));
         }
-        if entry.claim.commitment.num_vars > setup.max_num_vars {
+        // Only an object above the final arity needs the catalog-derived
+        // capacity; the common case stays a pure shape check.
+        if entry.claim.commitment.num_vars > setup.max_num_vars
+            && entry.claim.commitment.num_vars > setup.one_hot_backend_num_vars()?
+        {
             return Err(invalid_batch(format!(
                 "Akita {} arity exceeds grouped setup capacity",
                 entry.role.diagnostic_name()
@@ -124,7 +128,7 @@ fn validate_trace_batch_statement(
         ));
     }
     if main.commitment.poly_count > setup.max_num_polys_per_commitment_group
-        || precommitted.iter().any(|entry| {
+        || auxiliary_groups.iter().any(|entry| {
             entry.claim.commitment.poly_count > setup.max_num_polys_per_commitment_group
         })
     {
@@ -135,7 +139,7 @@ fn validate_trace_batch_statement(
     let total = main
         .commitment
         .poly_count
-        .checked_add(precommitted.len())
+        .checked_add(auxiliary_groups.len())
         .ok_or_else(|| invalid_batch("Akita grouped polynomial count overflows"))?;
     if total > setup.max_total_batch_polys {
         return Err(invalid_batch(format!(
@@ -152,7 +156,7 @@ fn bind_grouped_statement_transcripts<T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,
     selection: OpeningScheduleSelection,
-    precommitted: &[PrecommittedClaim<AkitaField, AkitaCommitment>],
+    auxiliary_groups: &[TaggedGroupOpeningClaim<AkitaField, AkitaCommitment>],
     main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
 ) -> Result<Vec<u8>, OpeningsError>
 where
@@ -161,12 +165,12 @@ where
     append_verifier_setup(transcript, setup, AkitaBackendFlavor::OneHot)?;
     transcript.append(&Label(b"akita_precommit_batch_v3"));
     transcript.append_bytes(&serialize_akita(&selection)?);
-    let group_count = precommitted
+    let group_count = auxiliary_groups
         .len()
         .checked_add(1)
         .ok_or_else(|| invalid_batch("Akita grouped statement group count overflows"))?;
     transcript.append(&LabelWithCount(b"akita_groups", group_count as u64));
-    let groups = precommitted
+    let groups = auxiliary_groups
         .iter()
         .map(|entry| (Some(entry.role), &entry.claim))
         .chain(std::iter::once((None, main)));
@@ -208,13 +212,15 @@ fn prove_one_hot_opening(
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let scheme = setup.verifier.one_hot_scheme()?;
     with_backend_pool(|| {
-        with_one_hot_scheme!(scheme, |scheme| scheme.batched_prove(
+        let proof = with_one_hot_scheme!(scheme, |scheme| scheme.batched_prove(
             backend_prover_setup,
             opening,
             backend,
             session,
             BasisMode::Lagrange,
-        ))
+        ))?;
+        let _ = backend.trim_caches()?;
+        Ok::<_, AkitaError>(proof)
     })
     .map_err(prove_failed)
 }
@@ -242,7 +248,7 @@ fn verify_one_hot_statement(
 impl AkitaNativeBatching {
     pub(crate) fn prove_trace_batch<T>(
         setup: &AkitaProverSetup,
-        precommitted: Vec<PrecommittedOpening<AkitaField, AkitaCommitment, AkitaProverHint>>,
+        auxiliary_groups: Vec<GroupOpeningWithHint<AkitaField, AkitaCommitment, AkitaProverHint>>,
         main: GroupOpeningClaim<AkitaField, AkitaCommitment>,
         main_hint: AkitaProverHint,
         transcript: &mut T,
@@ -250,21 +256,21 @@ impl AkitaNativeBatching {
     where
         T: Transcript<Challenge = AkitaField>,
     {
-        let precommitted_claims = precommitted
+        let auxiliary_claims = auxiliary_groups
             .iter()
             .map(|(entry, _)| entry.clone())
             .collect::<Vec<_>>();
-        validate_trace_batch_statement(&setup.verifier, &precommitted_claims, &main)?;
-        for (entry, hint) in &precommitted {
+        validate_trace_batch_statement(&setup.verifier, &auxiliary_claims, &main)?;
+        for (entry, hint) in &auxiliary_groups {
             validate_grouped_hint(entry.role.diagnostic_name(), &entry.claim, hint)?;
         }
         validate_grouped_hint("main-trace", &main, &main_hint)?;
 
-        // Group order is canonical: every precommitted group, then the final
+        // Group order is canonical: every auxiliary group, then the final
         // trace group. Claims and backend handles stay index-aligned.
-        let mut group_claims = Vec::with_capacity(precommitted.len() + 1);
-        let mut handles = Vec::with_capacity(precommitted.len() + 1);
-        for (entry, hint) in precommitted {
+        let mut group_claims = Vec::with_capacity(auxiliary_groups.len() + 1);
+        let mut handles = Vec::with_capacity(auxiliary_groups.len() + 1);
+        for (entry, hint) in auxiliary_groups {
             if !matches!(hint.source, AkitaHintSource::Dense { poly_count: 1 }) {
                 return Err(invalid_batch(format!(
                     "Akita {} hint must retain one dense source",
@@ -306,7 +312,7 @@ impl AkitaNativeBatching {
             )
             .map_err(akita_error)?,
         );
-        // Precommitted objects were committed on their own setups' dense
+        // Auxiliary objects were committed on their own setups' dense
         // backends, but a handle only proves on the backend that owns it and the
         // grouped argument runs on the trace backend. Akita re-derives each
         // imported handle from its retained source and checks the recomputed
@@ -314,7 +320,7 @@ impl AkitaNativeBatching {
         // setup through the deterministic setup seed).
         let (_, backend) = setup.one_hot_backend()?;
         let mut handles = with_backend_pool(|| {
-            let _span = info_span!("AkitaNativeBatching::import_precommitted_handles").entered();
+            let _span = info_span!("AkitaNativeBatching::import_auxiliary_handles").entered();
             handles
                 .iter()
                 .map(|handle| backend.import_commitment(handle))
@@ -336,7 +342,7 @@ impl AkitaNativeBatching {
             transcript,
             &setup.verifier,
             selection,
-            &precommitted_claims,
+            &auxiliary_claims,
             &main,
         )?;
         let backend_proof = prove_one_hot_opening(setup, opening, &session)?;
@@ -345,7 +351,7 @@ impl AkitaNativeBatching {
 
     pub(crate) fn verify_trace_batch<T>(
         setup: &AkitaVerifierSetup,
-        precommitted: &[PrecommittedClaim<AkitaField, AkitaCommitment>],
+        auxiliary_groups: &[TaggedGroupOpeningClaim<AkitaField, AkitaCommitment>],
         main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
         proof: &AkitaBatchProof,
         transcript: &mut T,
@@ -353,26 +359,31 @@ impl AkitaNativeBatching {
     where
         T: Transcript<Challenge = AkitaField>,
     {
-        validate_trace_batch_statement(setup, precommitted, main)?;
+        validate_trace_batch_statement(setup, auxiliary_groups, main)?;
         let backend_main_point = reverse_point(&main.point);
-        let precommitted_commitments = precommitted
+        let auxiliary_commitments = auxiliary_groups
             .iter()
             .map(|entry| &entry.claim.commitment)
             .collect::<Vec<_>>();
-        let (precommitted_backend, main_backend) =
+        let (auxiliary_backend, main_backend) =
             with_one_hot_scheme!(setup.one_hot_scheme()?, |scheme| {
                 crate::shape_guard::deserialize_checked_grouped_backend_payload(
                     scheme.schedules(),
-                    &precommitted_commitments,
+                    &auxiliary_commitments,
                     &main.commitment,
                     proof.selection(),
                 )
             })?;
         let selection = proof.selection();
-        let session =
-            bind_grouped_statement_transcripts(transcript, setup, selection, precommitted, main)?;
-        let mut group_claims = Vec::with_capacity(precommitted.len() + 1);
-        for (entry, backend) in precommitted.iter().zip(&precommitted_backend) {
+        let session = bind_grouped_statement_transcripts(
+            transcript,
+            setup,
+            selection,
+            auxiliary_groups,
+            main,
+        )?;
+        let mut group_claims = Vec::with_capacity(auxiliary_groups.len() + 1);
+        for (entry, backend) in auxiliary_groups.iter().zip(&auxiliary_backend) {
             group_claims.push(
                 PolynomialGroupClaims::new(
                     entry.claim.point.clone(),
@@ -644,13 +655,15 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 let (backend_prover_setup, backend) = setup.dense_backend()?;
                 let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
                 let proof = with_backend_pool(|| {
-                    scheme.batched_prove(
+                    let proof = scheme.batched_prove(
                         backend_prover_setup,
                         opening,
                         backend,
                         &session,
                         BasisMode::Lagrange,
-                    )
+                    )?;
+                    let _ = backend.trim_caches()?;
+                    Ok::<_, AkitaError>(proof)
                 })
                 .map_err(prove_failed)?;
                 (selection, proof)
@@ -743,7 +756,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
 mod tests {
     use super::*;
     use jolt_field::Zero;
-    use jolt_openings::PrecommittedRole;
+    use jolt_openings::CommitmentGroupRole;
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::configs::AkitaOneHotChunkProfile;
@@ -790,10 +803,10 @@ mod tests {
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
-        let precommitted = (0_u64..259)
+        let auxiliary_groups = (0_u64..259)
             .map(|order| {
-                PrecommittedClaim::new(
-                    PrecommittedRole::new(order, b"precommitted", "precommitted"),
+                TaggedGroupOpeningClaim::new(
+                    CommitmentGroupRole::new(order, b"precommitted", "auxiliary group"),
                     claim(dense()),
                 )
             })
@@ -805,8 +818,8 @@ mod tests {
             AKITA_ONE_HOT_K256,
         ));
 
-        assert!(validate_trace_batch_statement(&setup, &precommitted, &main).is_ok());
+        assert!(validate_trace_batch_statement(&setup, &auxiliary_groups, &main).is_ok());
         setup.max_total_batch_polys = 259;
-        assert!(validate_trace_batch_statement(&setup, &precommitted, &main).is_err());
+        assert!(validate_trace_batch_statement(&setup, &auxiliary_groups, &main).is_err());
     }
 }

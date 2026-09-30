@@ -4,7 +4,7 @@
 //! as external `.aks` artifacts and are bound to an `AkitaCommitmentScheme`
 //! instance.
 
-use akita_config::proof_optimized::fp128::{DenseBounded, OneHot};
+use akita_config::proof_optimized::fp128::{Dense, DenseBounded, OneHot};
 use akita_config::recursive_commitment::RecursiveScheduleConfig;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_types::sis::CommittedSourceClass;
@@ -247,6 +247,15 @@ delegate_preset!(
     <DenseBounded as CommitmentConfig>::committed_source_class(),
     ChunkedWitnessCfg::default_non_chunked(),
     "jolt-fp128-dense-bounded"
+);
+
+delegate_preset!(
+    /// Dense config for arbitrary field values, including field-register increments.
+    JoltDenseFull,
+    Dense,
+    <Dense as CommitmentConfig>::committed_source_class(),
+    ChunkedWitnessCfg::default_non_chunked(),
+    "jolt-fp128-dense-full"
 );
 
 #[cfg(test)]

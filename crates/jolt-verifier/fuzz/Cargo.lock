@@ -813,6 +813,7 @@ dependencies = [
  "jolt-claims",
  "jolt-field",
  "jolt-poly",
+ "jolt-riscv",
  "num-traits",
  "rayon",
  "serde",

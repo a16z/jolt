@@ -4,7 +4,7 @@ This directory contains Jolt's base Akita schedule catalogs as canonical
 `.aks` files. They are runtime data, not generated Rust modules and not
 embedded into the executable.
 
-Application preprocessing loads the three original files and any present
+Application preprocessing loads the four original files and any present
 multi-chunk companions once, wraps the resulting
 `AkitaScheduleArtifacts` in `Arc`, and passes that immutable bundle explicitly
 to every `AkitaSetupParams` constructor. Production deployments should call
@@ -14,8 +14,13 @@ path. `shared_from_default_directory` is the host/dev loader: it reads
 aborts if the catalogs cannot be read. Protocol setup and verification never
 discover files or consult the environment.
 
-During preprocessing, Jolt adapts rows whose shapes depend on advice or direct
-committed-program sizes. Those rows are merged with the relevant base catalog.
+Advice and committed-program objects use the bounded dense catalog. Field-register
+increments use the full-width dense catalog, with each group's source contract
+preserved in the joint opening.
+
+During preprocessing, Jolt adapts rows whose shapes depend on advice, field
+increments, or direct committed-program sizes. Those rows are merged with the
+relevant base catalog.
 The resulting exact catalog is serialized inside `AkitaVerifierSetup`, so a
 transported verifier setup does not depend on process-global state or on these
 source-tree files.
@@ -31,7 +36,7 @@ catalogs. The selected profile splits the root and first recursive fold into
 two, four, or eight chunks, while later folds remain single-chunk; their
 smallest admitted physical arity is 16 variables. The original one-hot
 catalogs and the dense advice and committed-program catalog remain
-single-chunk. Existing three-file directories continue to support `Single`;
+single-chunk. Existing four-file directories continue to support `Single`;
 selecting a profile whose companion catalog is absent fails during setup.
 Grouped precommit setups inherit the selected trace profile.
 
@@ -51,11 +56,21 @@ regeneration under akita `db5efa20`. The regenerated hybrid catalogs switch
 from direct to setup-offloaded rows at the same logical trace length; the
 table was not re-measured.
 
-Program-specific grouped rows keep the selected trace row's fold geometry,
-opening parameters, relation modes, and direct/offloaded topology. Only the
-advice and committed-program profiles and the sizes they induce are adapted.
-If that frozen skeleton cannot admit the new profiles, preprocessing fails
-closed instead of silently falling back to a different trace schedule.
+Grouped planning first preserves the selected trace row's fold geometry,
+opening parameters, relation modes, and direct/offloaded topology, adapting
+only the auxiliary object profiles and the sizes they induce. Requests with
+only bounded dense objects fail if that fixed geometry is infeasible.
+
+A full-width field increment can require different trace fold geometry. If
+guided planning returns `UnsupportedSchedule` for the supported field batch—
+exactly one full-width field increment and at most two bounded advice groups—
+preprocessing runs the full planner under the same audited policy. Larger
+batches and batches with multiple full-width objects retain the guided-planning
+rejection, including its opening-assignment budget. Every auxiliary commitment's
+profile stays fixed, and the resulting grouped row passes the usual schedule
+audit before entering the setup-owned catalog. Other errors propagate. The
+checked-in base catalogs are unchanged; proving and verification use the
+resulting frozen grouped row.
 
 Regenerate all base catalogs from the planner with:
 
@@ -63,6 +78,6 @@ Regenerate all base catalogs from the planner with:
 cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
 ```
 
-Pass `k16`, `k256`, `w2r2`, `w4r2`, `multi-chunk`, or `dense` as a final
+Pass `k16`, `k256`, `w2r2`, `w4r2`, `multi-chunk`, `dense-bounded`, `dense-full`, or `dense` as a final
 argument to narrow regeneration to matching families. `k16-single` and
 `k256-single` select only the corresponding standard single-chunk catalog.

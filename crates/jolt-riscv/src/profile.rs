@@ -291,6 +291,8 @@ const fn inline_extension_code(extension: InlineExtension) -> u8 {
 #[cfg_attr(feature = "field-inline", expect(clippy::unwrap_used))]
 mod tests {
     use super::*;
+    #[cfg(feature = "field-inline")]
+    use crate::NormalizedOperands;
 
     #[test]
     fn default_profile_matches_current_source_shape() {
@@ -380,7 +382,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn field_inline_profile_enables_field_rows_without_changing_fr_off() {
+    fn field_inline_profile_enables_field_rows_without_changing_base_profile() {
         assert!(!RV64IMAC_JOLT.supports_source(SourceInstructionKind::FIELD_ADD));
         assert!(!RV64IMAC_JOLT.supports_jolt(JoltInstructionKind::FIELD_ADD));
         assert!(RV64IMAC_JOLT_FIELD_INLINE.supports_source(SourceInstructionKind::FIELD_ADD));
@@ -397,30 +399,94 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn field_inline_operand_shapes_match_bridge_and_product_roles() {
+    fn field_inline_operand_shapes_separate_field_and_integer_registers() {
+        let operands = NormalizedOperands {
+            rs1: Some(6),
+            rs2: Some(7),
+            rd: Some(5),
+            imm: 0,
+        };
         let mul = crate::field_inline_operand_shape(JoltInstructionKind::FIELD_MUL).unwrap();
-        assert!(mul.reads_fr_rs1);
-        assert!(mul.reads_fr_rs2);
-        assert!(mul.writes_fr_rd);
-        assert!(mul.requires_product_payload());
-        assert_eq!(mul.bridge_x_register_role, None);
+        assert!(mul.reads_field_rs1);
+        assert!(mul.reads_field_rs2);
+        assert!(mul.writes_field_rd);
+        assert!(mul.is_pure_field_op());
+        assert_eq!(mul.x_operands(operands), NormalizedOperands::default());
+        assert_eq!(mul.field_operands(operands), operands);
 
-        let load =
-            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_LOAD_FROM_X).unwrap();
-        assert!(!load.reads_fr_rs1);
-        assert!(load.writes_fr_rd);
+        let load = crate::field_inline_operand_shape(
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
+        )
+        .unwrap();
+        assert!(load.reads_field_rs1);
+        assert!(load.field_rs1_is_field_rd);
+        assert!(load.writes_field_rd);
+        assert!(!load.is_pure_field_op());
         assert_eq!(
-            load.bridge_x_register_role,
-            Some(crate::FieldInlineXRegisterRole::ReadRs1)
+            load.x_operands(operands),
+            NormalizedOperands {
+                rs1: Some(6),
+                ..NormalizedOperands::default()
+            }
         );
 
-        let store =
-            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_STORE_TO_X).unwrap();
-        assert!(store.reads_fr_rs1);
-        assert!(!store.writes_fr_rd);
         assert_eq!(
-            store.bridge_x_register_role,
-            Some(crate::FieldInlineXRegisterRole::WriteRd)
+            load.field_operands(operands),
+            NormalizedOperands {
+                rs1: Some(5),
+                rd: Some(5),
+                ..NormalizedOperands::default()
+            }
+        );
+
+        let assert_zero =
+            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_ASSERT_ZERO).unwrap();
+        assert!(assert_zero.reads_field_rs1);
+        assert!(!assert_zero.reads_field_rs2);
+        assert!(!assert_zero.writes_field_rd);
+        assert!(assert_zero.is_pure_field_op());
+        assert_eq!(
+            assert_zero.x_operands(operands),
+            NormalizedOperands::default()
+        );
+        let write_operands = NormalizedOperands {
+            rd: Some(5),
+            ..NormalizedOperands::default()
+        };
+
+        let load_memory = crate::field_inline_operand_shape(
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+        )
+        .unwrap();
+        assert!(!load_memory.is_pure_field_op());
+        assert_eq!(
+            load_memory.x_operands(operands),
+            NormalizedOperands {
+                rs1: Some(6),
+                ..write_operands
+            }
+        );
+
+        assert_eq!(
+            load_memory.field_operands(operands),
+            NormalizedOperands {
+                rs1: Some(7),
+                rd: Some(7),
+                ..NormalizedOperands::default()
+            }
+        );
+
+        let advice =
+            crate::field_inline_operand_shape(JoltInstructionKind::FIELD_ADVICE_LIMB).unwrap();
+        assert!(!advice.is_pure_field_op());
+        assert_eq!(advice.x_operands(operands), write_operands);
+        assert_eq!(
+            advice.field_operands(operands),
+            NormalizedOperands {
+                rs1: Some(6),
+                rd: Some(7),
+                ..NormalizedOperands::default()
+            }
         );
     }
 }

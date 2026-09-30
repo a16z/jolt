@@ -5,6 +5,8 @@
 //!
 //! ```text
 //! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules
+//! # Only the full-field dense family:
+//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules dense-full
 //! ```
 
 /// Emit-spec construction shared by the generator and drift tests.
@@ -20,11 +22,11 @@ pub mod emit {
     };
 
     use crate::configs::{
-        JoltDenseBounded, JoltOneHotK16, JoltOneHotK16Direct, JoltOneHotK16MultiChunk,
-        JoltOneHotK16MultiChunkDirect, JoltOneHotK16W2R2, JoltOneHotK16W2R2Direct,
-        JoltOneHotK16W4R2, JoltOneHotK16W4R2Direct, JoltOneHotK256, JoltOneHotK256Direct,
-        JoltOneHotK256MultiChunk, JoltOneHotK256MultiChunkDirect, JoltOneHotK256W2R2,
-        JoltOneHotK256W2R2Direct, JoltOneHotK256W4R2, JoltOneHotK256W4R2Direct,
+        JoltDenseBounded, JoltDenseFull, JoltOneHotK16, JoltOneHotK16Direct,
+        JoltOneHotK16MultiChunk, JoltOneHotK16MultiChunkDirect, JoltOneHotK16W2R2,
+        JoltOneHotK16W2R2Direct, JoltOneHotK16W4R2, JoltOneHotK16W4R2Direct, JoltOneHotK256,
+        JoltOneHotK256Direct, JoltOneHotK256MultiChunk, JoltOneHotK256MultiChunkDirect,
+        JoltOneHotK256W2R2, JoltOneHotK256W2R2Direct, JoltOneHotK256W4R2, JoltOneHotK256W4R2Direct,
     };
     use crate::planning::plan_schedule;
 
@@ -242,6 +244,13 @@ pub mod emit {
                 ONE_HOT_TRACE_NUM_POLYS,
                 DENSE_NUM_VARS,
                 regen::<JoltDenseBounded>,
+                output_dir.clone(),
+            )?,
+            spec::<JoltDenseFull>(
+                JoltDenseFull::schedule_family_name(),
+                &[1],
+                DENSE_NUM_VARS,
+                regen::<JoltDenseFull>,
                 output_dir,
             )?,
         ])
