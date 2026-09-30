@@ -299,7 +299,31 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         );
 
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
-        Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+        self.gruen
+            .checked_toom(&q_evals, previous_claim, round, || {
+                self.gruen.par_fold_out_in(
+                    || {
+                        (
+                            vec![(F::zero(), F::zero()); num_committed],
+                            F::Accumulator::default(),
+                        )
+                    },
+                    |(pairs, sum), row, _, weight| {
+                        folded_ra.lo_hi_all(row, pairs);
+                        let value = pairs.chunks_exact(n).take(self.active_virtuals).fold(
+                            F::zero(),
+                            |sum, factors| {
+                                sum + factors
+                                    .iter()
+                                    .fold(F::one(), |product, pair| product * pair.0)
+                            },
+                        );
+                        sum.fmadd(weight, value);
+                    },
+                    |_, weight, (_, sum)| weight * sum.reduce(),
+                    |a, b| a + b,
+                )
+            })
     }
 
     /// Degenerate `N = 1` geometry (virtual = committed): the grid recovery

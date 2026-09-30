@@ -60,7 +60,7 @@ use rayon::prelude::*;
 
 use super::support::{
     accumulate_product_grid, collect_par_map, for_each_index_mut, map_indices, map_reduce_chunks,
-    scan_chunk_size, RoundProgress,
+    scan_chunk_size, GruenRoundMessage, RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -1069,7 +1069,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     /// to explicit-point interpolation.
     fn cycle_message(
         &self,
-        _round: usize,
+        round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let cycle = self
@@ -1149,7 +1149,32 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             },
         );
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
-        Ok(cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+        cycle
+            .gruen
+            .checked_toom(&q_evals, previous_claim, round, || {
+                cycle.gruen.par_fold_out_in(
+                    F::Accumulator::default,
+                    |sum, row, _, weight| {
+                        let row = 2 * row;
+                        let value = match &cycle.tables {
+                            CycleTables::Dense { combined_val, ra } => {
+                                ra.iter().fold(combined_val.evals()[row], |product, ra| {
+                                    product * ra.evals()[row]
+                                })
+                            }
+                            CycleTables::Pending(pending) => {
+                                (0..self.dimensions.num_virtual_ra_polys())
+                                    .fold(self.pending_combined_base(pending, row), |product, i| {
+                                        product * self.pending_ra_base(i, row)
+                                    })
+                            }
+                        };
+                        sum.fmadd(weight, value);
+                    },
+                    |_, weight, sum| weight * sum.reduce(),
+                    |a, b| a + b,
+                )
+            })
     }
 
     /// Handoff at the address/cycle boundary — same collapse as the

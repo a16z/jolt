@@ -46,7 +46,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 
 use super::support::{
     collect_rows, map_indices, map_reduce_chunks, pin_derived_term_if_derived, scan_chunk_size,
-    RoundProgress,
+    GruenRoundMessage, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -411,7 +411,18 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
             |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
             |left, right| [left[0] + right[0], left[1] + right[1]],
         );
-        Ok(self.eq.gruen_poly_deg_3(constant, leading, previous_claim))
+        self.eq
+            .checked_cubic(constant, leading, previous_claim, round, || {
+                self.eq.par_fold_out_in(
+                    F::zero,
+                    |sum, row, _, weight| {
+                        let (_, high) = hamming.sumcheck_eval_pair(row, BindingOrder::LowToHigh);
+                        *sum += weight * (high * high - high);
+                    },
+                    |_, weight, sum| weight * sum,
+                    |a, b| a + b,
+                )
+            })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {

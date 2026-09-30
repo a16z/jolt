@@ -95,7 +95,7 @@ use rayon::prelude::*;
 
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::support::{gamma_powers, pin_derived_term_if_derived, RoundProgress};
+use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -702,7 +702,12 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         }
     }
 
-    fn lookup(&self, eq: &GruenSplitEqPolynomial<F>, claim: F) -> UnivariatePoly<F> {
+    fn lookup(
+        &self,
+        eq: &GruenSplitEqPolynomial<F>,
+        round: usize,
+        claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let lanes = eq.par_fold_out_in(
             || [F::Accumulator::default(); 2],
             |lanes, row, _, weight| {
@@ -730,7 +735,22 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                 a
             },
         );
-        eq.gruen_poly_deg_3(lanes[0].reduce(), lanes[1].reduce(), claim)
+        eq.checked_cubic(lanes[0].reduce(), lanes[1].reduce(), claim, round, || {
+            eq.par_fold_out_in(
+                F::zero,
+                |sum, row, _, weight| {
+                    let value = self.products.iter().enumerate().fold(
+                        F::zero(),
+                        |value, (family, (constants, _))| {
+                            value + constants[self.state(family, 2 * row + 1)]
+                        },
+                    );
+                    *sum += weight * value;
+                },
+                |_, weight, sum| weight * sum,
+                |a, b| a + b,
+            )
+        })
     }
 }
 
@@ -742,7 +762,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
     fn prove_round(
         &mut self,
         bind: Option<F>,
-        _round: usize,
+        round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
@@ -762,7 +782,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 )
             {
                 let products = CategoricalProducts::new(tables, *width, source, &self.gamma_powers);
-                return Ok(products.lookup(&self.eq, previous_claim));
+                return products.lookup(&self.eq, round, previous_claim);
             }
         }
         let tables = &self.tables;
@@ -811,11 +831,32 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 a
             },
         );
-        Ok(self.eq.gruen_poly_deg_3(
+        self.eq.checked_cubic(
             block_lanes[0].reduce(),
             block_lanes[1].reduce(),
             previous_claim,
-        ))
+            round,
+            || {
+                self.eq.par_fold_out_in(
+                    || {
+                        (
+                            vec![(F::zero(), F::zero()); num_polys],
+                            F::Accumulator::default(),
+                        )
+                    },
+                    |(pairs, sum), row, _, weight| {
+                        tables.lo_hi_all(row, pairs);
+                        let mut value = F::Accumulator::default();
+                        for ((_, hi), rho) in pairs.iter().zip(gamma_powers).take(active_polys) {
+                            value.fmadd(*hi, *hi - *rho);
+                        }
+                        sum.fmadd(weight, value.reduce());
+                    },
+                    |_, weight, (_, sum)| weight * sum.reduce(),
+                    |a, b| a + b,
+                )
+            },
+        )
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -1639,7 +1680,7 @@ mod categorical_tests {
                         unreachable!()
                     };
                     let products = CategoricalProducts::new(tables, *width, source, &rho);
-                    let polynomial = products.lookup(&eq, direct[0] + direct[1]);
+                    let polynomial = products.lookup(&eq, round, direct[0] + direct[1]).unwrap();
                     for (x, value) in direct.iter().enumerate() {
                         assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
                     }

@@ -344,6 +344,34 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
 
+    fn checked_cubic(
+        &self,
+        q_zero: F,
+        q_leading: F,
+        previous_claim: F,
+        round: usize,
+        q_at_one: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    fn checked_toom(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    #[cfg(feature = "field-inline")]
+    fn checked_linear(
+        &self,
+        q_one: F,
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F;
+
     /// `(q(0), q(∞))` of the two-table product summand
     /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
     /// pairs — the endpoints `gruen_poly_deg_3` completes into the cubic
@@ -376,6 +404,64 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
             });
         }
         Ok(UnivariatePoly::from_evals(q_evals))
+    }
+
+    fn checked_cubic(
+        &self,
+        q_zero: F,
+        q_leading: F,
+        previous_claim: F,
+        round: usize,
+        q_at_one: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.gruen_poly_deg_3(q_zero, q_leading, previous_claim, q_at_one)
+            .map_err(|actual| SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual,
+            })
+    }
+
+    fn checked_toom(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.gruen_poly_from_evals(q_evals, previous_claim, q_at_zero)
+            .map_err(|actual| SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual,
+            })
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn checked_linear(
+        &self,
+        q_one: F,
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.gruen_poly_deg_2(q_one, previous_claim, q_at_zero)
+            .map_err(|actual| SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual,
+            })
+    }
+
+    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F {
+        self.par_fold_out_in(
+            F::zero,
+            |sum, row, _, weight| {
+                *sum += weight * a.evals()[2 * row + 1] * b.evals()[2 * row + 1];
+            },
+            |_, weight, sum| weight * sum,
+            |left, right| left + right,
+        )
     }
 
     fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {

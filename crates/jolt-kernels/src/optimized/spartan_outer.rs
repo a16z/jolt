@@ -1338,7 +1338,7 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
     fn prove_round(
         &mut self,
         bind: Option<F>,
-        _round: usize,
+        round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
@@ -1348,9 +1348,10 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
             Some(endpoints) => endpoints,
             None => self.split_eq.product_endpoints(&self.az, &self.bz),
         };
-        Ok(self
-            .split_eq
-            .gruen_poly_deg_3(q_zero, q_infinity, previous_claim))
+        self.split_eq
+            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+                self.split_eq.product_at_one(&self.az, &self.bz)
+            })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {

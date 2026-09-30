@@ -59,7 +59,9 @@ use rayon::prelude::*;
 use super::registers_read_write::address::{OperandEq, RegisterAddressState};
 use super::registers_read_write::sparse::layout::{merge_bind, split_pair_group, Cell};
 use super::registers_read_write::sparse::ops::{bind_sparse_entries_in_place, pair_aligned_bounds};
-use super::support::{map_indices, map_reduce_chunks, pin_derived_term, RoundChallenges};
+use super::support::{
+    map_indices, map_reduce_chunks, pin_derived_term, GruenRoundMessage, RoundChallenges,
+};
 use std::sync::Arc;
 
 use crate::{
@@ -193,6 +195,18 @@ impl<F: JoltField> FieldEntries<F> {
         }
     }
 
+    fn q_at_one(&self, e_in: &[F], e_out: &[F], inc: &IncrementRounds<F>) -> F {
+        match self {
+            Self::Seeds { entries, reads } => sparse_at_one(
+                entries.iter().map(|entry| entry.expand(reads)),
+                e_in,
+                e_out,
+                inc,
+            ),
+            Self::Bound(entries) => sparse_at_one(entries.iter().copied(), e_in, e_out, inc),
+        }
+    }
+
     fn bind(&mut self, challenge: F) {
         if let Self::Seeds { entries, reads } = self {
             let expanded = map_indices(entries.len(), |index| entries[index].expand(reads));
@@ -304,6 +318,35 @@ impl<F: JoltField> Cell for FieldSparseEntry<F> {
     fn col(&self) -> u8 {
         self.col
     }
+}
+
+fn sparse_at_one<F: JoltField>(
+    entries: impl IntoIterator<Item = FieldSparseEntry<F>>,
+    e_in: &[F],
+    e_out: &[F],
+    inc: &IncrementRounds<F>,
+) -> F {
+    let in_bits = e_in.len().trailing_zeros() as usize;
+    let mask = e_in.len() - 1;
+    let mut sum = F::Accumulator::default();
+    for entry in entries {
+        if entry.row.is_multiple_of(2) {
+            continue;
+        }
+        let pair = entry.row / 2;
+        let weight = e_out[pair >> in_bits] * e_in[pair & mask];
+        let mut lanes = [F::Accumulator::default(), F::Accumulator::default()];
+        FieldSparseEntry::accumulate_pair_evals(
+            Some(&entry),
+            None,
+            [inc.value(entry.row), F::zero()],
+            weight,
+            &mut lanes,
+        );
+        let [constant, _] = lanes;
+        sum.merge(constant);
+    }
+    sum.reduce()
 }
 
 /// The cycle-round quadratic inner factor `[q(0), leading coefficient]` over the sparse
@@ -616,14 +659,24 @@ impl<F: JoltField> FieldReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining sparse rows, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
-    fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
+    fn cycle_round_message(
+        &self,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let quadratic = self.entries.quadratic(
             self.gruen.e_in_current(),
             self.gruen.e_out_current(),
             &self.inc,
         );
         self.gruen
-            .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
+            .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
+                self.entries.q_at_one(
+                    self.gruen.e_in_current(),
+                    self.gruen.e_out_current(),
+                    &self.inc,
+                )
+            })
     }
 
     /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
@@ -720,7 +773,7 @@ impl<F: JoltField> ProveRounds<F> for FieldReadWriteKernel<F> {
             self.bind(challenge);
         }
         if self.challenges.bound() < self.log_t {
-            Ok(self.cycle_round_message(previous_claim))
+            self.cycle_round_message(round, previous_claim)
         } else {
             self.address.round_message(round, previous_claim)
         }

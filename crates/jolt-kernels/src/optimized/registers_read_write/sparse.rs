@@ -1,7 +1,7 @@
 //! Sparse register entries: compact round-specific layouts, in-place binds,
 //! and quadratic round evaluation.
 
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -152,7 +152,9 @@ pub(crate) mod layout;
 pub(crate) mod ops;
 
 pub(super) use layout::SeedEntry;
-use layout::{merge_bind, split_pair_group, Cell, IndexedMeta, SparseEntry};
+use layout::{
+    load_indexed, merge_bind, split_pair_group, Cell, IndexedMeta, MatrixEntry, SparseEntry,
+};
 use ops::{
     bind_indexed_in_place_soa, bind_indexed_to_direct, bind_seed_entries_fused,
     bind_sparse_entries_in_place, sparse_quadratic, sparse_quadratic_fused, sparse_quadratic_soa,
@@ -276,6 +278,73 @@ impl<F: JoltField> CycleState<F> {
                     let inc_0 = inc[2 * z];
                     [inc_0, inc[2 * z + 1] - inc_0]
                 })
+            }
+        }
+    }
+
+    pub(super) fn q_at_one(&self, e_in: &[F], e_out: &[F]) -> F {
+        match &self.0 {
+            CyclePhase::Seed {
+                entries,
+                ra_lut,
+                wa_lut,
+                rd_inc,
+            } => sparse_at_one(
+                entries.iter().copied(),
+                ra_lut,
+                wa_lut,
+                e_in,
+                e_out,
+                |row| F::from_i128(rd_inc[row]),
+            ),
+            CyclePhase::SeedBound {
+                entries,
+                seed_ra_lut,
+                seed_wa_lut,
+                ra_lut,
+                wa_lut,
+                r1,
+                rd_inc,
+            } => {
+                let mut scratch = ops::fused_scratch();
+                let mut sum = F::zero();
+                for group in entries.chunk_by(|a, b| a.row() / 4 == b.row() / 4) {
+                    ops::fused_intermediates(group, seed_ra_lut, seed_wa_lut, *r1, &mut scratch);
+                    sum += sparse_at_one(
+                        scratch.1.iter().copied(),
+                        ra_lut,
+                        wa_lut,
+                        e_in,
+                        e_out,
+                        |row| raw_bound_inc(rd_inc, *r1, row),
+                    );
+                }
+                sum
+            }
+            CyclePhase::Indexed {
+                vals,
+                metas,
+                ra_lut,
+                wa_lut,
+                inc,
+            } => sparse_at_one(
+                (0..metas.len()).map(|i| load_indexed((vals, metas), i)),
+                ra_lut,
+                wa_lut,
+                e_in,
+                e_out,
+                |row| inc.evals()[row],
+            ),
+            CyclePhase::Direct { entries, inc } => {
+                let unused = Self::unused_lut();
+                sparse_at_one(
+                    entries.iter().copied(),
+                    &unused,
+                    &unused,
+                    e_in,
+                    e_out,
+                    |row| inc.evals()[row],
+                )
             }
         }
     }
@@ -461,4 +530,35 @@ impl<F: JoltField> CycleState<F> {
         };
         (ra, wa, val, inc)
     }
+}
+
+fn sparse_at_one<F: JoltField, E: MatrixEntry<F>>(
+    entries: impl IntoIterator<Item = E>,
+    ra_lut: &CoeffLut<F>,
+    wa_lut: &CoeffLut<F>,
+    e_in: &[F],
+    e_out: &[F],
+    inc_at: impl Fn(usize) -> F,
+) -> F {
+    let in_bits = e_in.len().trailing_zeros() as usize;
+    let mask = e_in.len() - 1;
+    let mut sum = F::Accumulator::default();
+    for entry in entries {
+        if entry.row().is_multiple_of(2) {
+            continue;
+        }
+        let pair = entry.row() / 2;
+        let weight = e_out[pair >> in_bits] * e_in[pair & mask];
+        let mut lanes = [F::Accumulator::default(), F::Accumulator::default()];
+        E::accumulate_pair_evals(
+            Some(&entry),
+            None,
+            [inc_at(entry.row()), F::zero()],
+            &mut lanes,
+            ra_lut,
+            wa_lut,
+        );
+        sum.fmadd(weight, lanes[0].reduce());
+    }
+    sum.reduce()
 }

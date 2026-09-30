@@ -39,7 +39,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessError};
 use super::field_registers_read_write::{field_register_rows, SharedFieldRegisterRows};
 use super::registers_read_write::sparse::layout::Cell;
 use super::registers_read_write::sparse::ops::bind_sparse_entries_in_place;
-use super::support::{map_indices, map_reduce_chunks, pin_derived_term, RoundChallenges};
+use super::support::{
+    map_indices, map_reduce_chunks, pin_derived_term, GruenRoundMessage, RoundChallenges,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -145,9 +147,8 @@ struct FieldClaimReductionKernel<F: JoltField> {
 }
 
 impl<F: JoltField> FieldClaimReductionKernel<F> {
-    /// `q(1) = Σ_z E(z) · V(2z + 1)` over the remaining domain — only cells
-    /// on odd rows contribute.
-    fn q_at_one(&self) -> F {
+    /// Equality-weighted sparse value at the selected Boolean endpoint.
+    fn q_endpoint(&self, at_one: bool) -> F {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
         let in_bits = if e_in.len() <= 1 {
@@ -162,7 +163,7 @@ impl<F: JoltField> FieldClaimReductionKernel<F> {
             |range| {
                 let mut sum = F::Accumulator::default();
                 for cell in &self.cells[range] {
-                    if cell.row.is_multiple_of(2) {
+                    if cell.row.is_multiple_of(2) == at_one {
                         continue;
                     }
                     let z = cell.row / 2;
@@ -239,36 +240,16 @@ impl<F: JoltField> ProveRounds<F> for FieldClaimReductionKernel<F> {
     fn prove_round(
         &mut self,
         bind: Option<F>,
-        _round: usize,
+        round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        // s(t) = l(t)·q(t) with q linear: q(1) from the sparse walk, q(0)
-        // recovered from `s(0) + s(1) = previous_claim` (the eval-at-1
-        // trade — a dishonest input claim surfaces at the driver's
-        // final-claim check). The exact degree-2 coefficient vector is the
-        // l·q product, which is what the reference's 3-point interpolation
-        // reconstructs.
-        let q_one = self.q_at_one();
-        let (l_zero, l_one) = self.gruen.current_linear_evals();
-        #[expect(
-            clippy::expect_used,
-            reason = "l(0) = eq-prefix·(1 − r_round) vanishes only on a zero transcript challenge — \
-                      the split-eq recovery precedent"
-        )]
-        let q_zero = (previous_claim - l_one * q_one)
-            * l_zero
-                .inverse()
-                .expect("current eq evaluation at zero must be invertible");
-        let q_slope = q_one - q_zero;
-        let l_slope = l_one - l_zero;
-        Ok(UnivariatePoly::new(vec![
-            l_zero * q_zero,
-            l_zero * q_slope + l_slope * q_zero,
-            l_slope * q_slope,
-        ]))
+        self.gruen
+            .checked_linear(self.q_endpoint(true), previous_claim, round, || {
+                self.q_endpoint(false)
+            })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
