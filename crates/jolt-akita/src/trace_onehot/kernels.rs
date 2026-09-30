@@ -1,18 +1,16 @@
 use std::any::Any;
 
 use akita_error::AkitaError;
-use akita_prover::compute::{
-    CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
+use akita_pcs::custom_source::{
+    cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup, CommitInnerPlan,
+    CpuFoldResponses, CpuPreparedSetup, DecomposeFoldBatchPlan, DecomposeFoldPlan,
+    DecomposeFoldWitness, ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
+    ExternalInnerCommitmentOperation, ExternalOperationIdentity, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, SubringCoefficientPackingBatchKernel,
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-use akita_prover::{
-    cpu_external_inner_commitment_capability, cpu_external_inner_prepared_setup,
-    BatchDecomposeFoldOutcome, CommitInnerWitness, CpuBackend, CpuPreparedSetup,
-    DecomposeFoldWitness, ExternalInnerCommitmentCapability, ExternalInnerCommitmentInput,
-    ExternalInnerCommitmentOperation, ExternalOperationIdentity,
-};
-use akita_types::{dispatch_for_field, FpExtEncoding};
+use akita_pcs::CpuBackend;
+use akita_types::{dispatch_for_field, FpExtEncoding, RingVec};
 #[expect(
     unused_imports,
     reason = "dispatch_for_field matches these nominal slot tokens without resolving them"
@@ -53,7 +51,7 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TracePackedOneHotCommitOpe
         plan: &CommitInnerPlan,
         sources: &[ExternalInnerCommitmentInput<'_>],
         context: &dyn Any,
-    ) -> Result<Vec<CommitInnerWitness<AkitaField>>, AkitaError> {
+    ) -> Result<Vec<RingVec<AkitaField>>, AkitaError> {
         let prepared = cpu_external_inner_prepared_setup::<AkitaField>(context)?;
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -63,14 +61,16 @@ impl ExternalInnerCommitmentOperation<AkitaField> for TracePackedOneHotCommitOpe
                 .par_iter()
                 .map(|source| {
                     let source = source.payload::<TracePackedOneHot>()?;
-                    commit_packed::<D>(&CpuBackend::DEFAULT, prepared, source, *plan)
+                    commit_packed::<D>(prepared.expanded(), source, *plan)
                 })
                 .collect()
         )
     }
 }
 
-impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField, D> for CpuBackend {
+impl<E, const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField, D>
+    for CpuBackend<AkitaField, E>
+{
     fn evaluate_and_fold(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
@@ -85,7 +85,7 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
         _prepared: Option<&Self::PreparedSetup>,
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
-    ) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
+    ) -> Result<DecomposeFoldWitness, AkitaError> {
         decompose_fold_packed::<D>(
             source.source(),
             plan.challenges,
@@ -95,15 +95,15 @@ impl<const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaField,
     }
 }
 
-impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, D>
-    for CpuBackend
+impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, D>
+    for CpuBackend<AkitaField, E>
 {
     fn decompose_fold_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: TracePackedOneHotBatchView<'_, D>,
         plan: DecomposeFoldBatchPlan<'_>,
-    ) -> Result<BatchDecomposeFoldOutcome<AkitaField, D>, AkitaError> {
+    ) -> Result<CpuFoldResponses, AkitaError> {
         let source = source.source();
         match plan {
             DecomposeFoldBatchPlan::Sparse {
@@ -111,13 +111,17 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
                 num_positions_per_block,
                 num_digits,
                 ..
-            } => Ok(BatchDecomposeFoldOutcome::Fused(
-                decompose_fold_packed::<D>(
-                    source,
-                    challenges,
-                    num_positions_per_block,
-                    num_digits,
-                )?,
+            } => Ok(CpuFoldResponses::sparse(decompose_fold_packed::<D>(
+                source,
+                challenges,
+                num_positions_per_block,
+                num_digits,
+            )?)),
+            // Jolt's one-hot configs delegate to the single-chunk `fp128::OneHot`
+            // witness policy, so no admitted schedule row asks for chunked
+            // responses.
+            DecomposeFoldBatchPlan::SparseChunked { .. } => Err(AkitaError::InvalidInput(
+                "trace-packed one-hot sources fold as a single chunk".into(),
             )),
         }
     }
@@ -125,7 +129,7 @@ impl<const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Akita
 
 impl<E, const D: usize>
     SubringCoefficientPackingBatchKernel<TracePackedOneHotBatchView<'_, D>, AkitaField, E, D>
-    for CpuBackend
+    for CpuBackend<AkitaField, E>
 where
     E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
 {
