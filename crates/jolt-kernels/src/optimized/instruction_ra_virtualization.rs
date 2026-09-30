@@ -120,7 +120,8 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
     /// `γ^{-v}` per virtual batch — unscales the batch-first final claims
     /// back to the committed polynomials' values (`γ^v · γ^{-v} = 1`
     /// exactly, so unscaling is byte-exact).
-    gamma_powers_inv: Vec<F>,
+    opening_unscale: Vec<F>,
+    active_virtuals: usize,
     /// Address-folded committed RA selectors, one per committed chunk:
     /// `folded[i][j] = eq(r_chunk_i, chunk_i(k_j))` — with each virtual
     /// batch's first table pre-scaled by `γ^v` so the round loop needs no
@@ -171,16 +172,14 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             });
         }
 
-        let gamma_inv = gamma.inverse().ok_or(KernelError::InvariantViolation {
-            reason: "instruction RA batching gamma must be invertible",
-        })?;
+        let gamma_inv = gamma.inverse().unwrap_or_else(F::one);
         let mut gamma_powers = Vec::with_capacity(num_virtual);
-        let mut gamma_powers_inv = Vec::with_capacity(num_virtual);
+        let mut opening_unscale = Vec::with_capacity(num_virtual);
         let mut power = F::one();
         let mut power_inv = F::one();
         for _ in 0..num_virtual {
             gamma_powers.push(power);
-            gamma_powers_inv.push(power_inv);
+            opening_unscale.push(power_inv);
             power *= gamma;
             power_inv *= gamma_inv;
         }
@@ -193,7 +192,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
             let mut table = eq_table(&chunks[i]);
             if i % num_committed_per_virtual == 0 {
                 let weight = gamma_powers[i / num_committed_per_virtual];
-                if weight != F::one() {
+                if !weight.is_zero() && weight != F::one() {
                     for value in &mut table {
                         *value *= weight;
                     }
@@ -213,7 +212,11 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         Ok(Self {
             progress: RoundProgress::new(log_t),
             num_committed_per_virtual,
-            gamma_powers_inv,
+            opening_unscale,
+            active_virtuals: gamma_powers
+                .iter()
+                .take_while(|power| !power.is_zero())
+                .count(),
             folded_ra,
             gruen: GruenSplitEqPolynomial::new(instruction_read_raf_cycle, BindingOrder::LowToHigh),
         })
@@ -262,7 +265,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 for lane in &mut scratch.row_lanes {
                     *lane = F::Accumulator::default();
                 }
-                for pairs in scratch.pairs.chunks_exact(n) {
+                for pairs in scratch.pairs.chunks_exact(n).take(self.active_virtuals) {
                     for ((pair, eval), step) in pairs
                         .iter()
                         .zip(scratch.evals.iter_mut())
@@ -317,7 +320,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                 let mut at_0 = F::zero();
                 let mut at_1 = F::zero();
                 let mut at_2 = F::zero();
-                for (lo, hi) in pairs.iter() {
+                for (lo, hi) in pairs.iter().take(self.active_virtuals) {
                     at_0 += *lo;
                     at_1 += *hi;
                     at_2 += *hi + *hi - *lo;
@@ -387,7 +390,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionRaVirtualizationKer
         let mut committed_instruction_ra = self.folded_ra.final_values();
         for (index, value) in committed_instruction_ra.iter_mut().enumerate() {
             if index % self.num_committed_per_virtual == 0 {
-                *value *= self.gamma_powers_inv[index / self.num_committed_per_virtual];
+                *value *= self.opening_unscale[index / self.num_committed_per_virtual];
             }
         }
         Ok(InstructionRaVirtualizationOutputClaims {
@@ -543,6 +546,26 @@ mod tests {
         seed: u64,
         with_session: bool,
     ) {
+        assert_parity_with_gamma(
+            log_t,
+            num_virtual,
+            per_virtual,
+            chunk_bits,
+            seed,
+            with_session,
+            fr(0xFEED_5EED),
+        );
+    }
+
+    fn assert_parity_with_gamma(
+        log_t: usize,
+        num_virtual: usize,
+        per_virtual: usize,
+        chunk_bits: usize,
+        seed: u64,
+        with_session: bool,
+        gamma: Fr,
+    ) {
         let num_committed = num_virtual * per_virtual;
         let dimensions = InstructionRaVirtualizationDimensions::new(
             log_t,
@@ -555,7 +578,6 @@ mod tests {
             .map(|i| fr(300 + 13 * i as u64))
             .collect();
         let r_cycle: Vec<Fr> = (0..log_t).map(|i| fr(7000 + 29 * i as u64)).collect();
-        let gamma = fr(0xFEED_5EED);
         let relation = InstructionRaVirtualization::<Fr>::new(
             dimensions,
             instruction_address.clone(),
@@ -731,6 +753,12 @@ mod tests {
         // log_t = 6: three lazy binds, dense materialization at the fourth
         // (`T/16` = 4 entries), then two plain multilinear binds.
         assert_parity(6, 2, 2, 4, 7, false);
+    }
+
+    #[test]
+    fn parity_zero_batching_challenge_preserves_all_openings() {
+        assert_parity_with_gamma(6, 2, 2, 4, 7, false, fr(0));
+        assert_parity_with_gamma(3, 3, 1, 2, 1337, false, fr(0));
     }
 
     /// Through the `prepare` slot with pre-parked stage-5 rows: the session
