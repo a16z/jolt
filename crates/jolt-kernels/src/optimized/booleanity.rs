@@ -1090,7 +1090,7 @@ pub(crate) mod testing {
 mod tests {
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, Ring, Zero};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
@@ -1535,7 +1535,7 @@ mod tests {
 mod categorical_tests {
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
-    use jolt_field::{Fr, JoltField};
+    use jolt_field::{Fr, JoltField, Ring, Zero};
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial};
 
     use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};
