@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790789055898,
+  "lastUpdate": 1790791975973,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -170698,6 +170698,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 861292,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7a01307b02407d0bb7905f68d8a09cb20b7b2654",
+          "message": "feat(metal): add jolt-metal spec and runtime (#1938)\n\n* spec(metal): define the shared Metal field arithmetic crate\n\nSpecify jolt-metal: generic MSL templates for jolt_field::solinas fields\nthat are bit-identical to the CPU implementation, lazy accumulators with\ntested capacities, and a typed non-panicking objc2-metal runtime. The\ncrate is prover-only and cannot enter a verifier dependency graph.\n\n* feat(metal): add the jolt-metal runtime\n\nExecution step 1 of specs/jolt-metal-field.md: a typed, non-panicking\nobjc2-metal runtime. LibrarySpec assembles sources and explicit template\ninstantiations; ShaderLibrary builds every pipeline at setup and records\neach kernel's reflected buffer arguments; Batch checks every dispatch\nagainst them before encoding; DeviceBuffer reads back through a checked\nbit-pattern conversion. Failures are MetalError values classed as\nUnavailable, Setup, Capacity, Transient, or Fault.\n\nOff macOS the backend is uninhabited and the crate has no Objective-C\ndependency. CI checks that jolt-verifier and jolt-field never depend on\njolt-metal or objc2, lints the macOS backend on a hosted runner, and runs\nthe GPU tests there when the runner has a supported device.\nscripts/metal-report.sh produces the local report, including a run under\nthe validation layers with MTL_SHADER_VALIDATION_ABORT_ON_FAULT=1.\n\nCo-authored-by: Markos Georghiades <53157953+markosg04@users.noreply.github.com>\n\n* refactor(metal): import backend handles by name\n\nRename the platform backend's types to RawDevice, RawLibrary, RawPipeline,\nRawBuffer, and RawCommandBatch so they import without clashing with the\npublic Device and Pipeline, and derive CommandBufferError's Display with\nthiserror. Fixes the nominal-imports style check.\n\nCo-authored-by: Markos Georghiades <53157953+markosg04@users.noreply.github.com>\n\n* docs(metal): add a performance model and a per-machine direction to the spec\n\n- Performance model: a machine-limits benchmark (multiply,\n  multiply-accumulate, memory and threadgroup bandwidth, round trip);\n  kernel criteria from step 3 on (the bounding limit, the measured\n  fraction of it, knobs as template parameters or function constants\n  with small valid ranges, conformance at every knob value); measurement\n  hygiene (idle machine, recorded load, paired comparisons with a rule\n  fixed in advance); no runtime autotuning.\n- Direction: per-machine plans that never change the output or the proof\n  bytes. A device descriptor beyond GPU family, checked-in plan tables,\n  an offline tuner, a pipeline cache, fusion once three kernel families\n  exist, and CPU/GPU splits over unified memory.\n- Step 3 now also adds the machine-limits benchmark.\n- The CI question is resolved: the hosted runner's paravirtual device is\n  below Apple GPU family 7, so GPU evidence comes from the local report.\n\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\n\n* fix(metal): enforce raw dispatch and uncertain-completion safety\n\n* fix(metal): fail closed on graph errors and reject zero-sized buffers\n\n---------\n\nCo-authored-by: Markos Georghiades <53157953+markosg04@users.noreply.github.com>\nCo-authored-by: Andrew Tretyakov <42178850+0xAndoroid@users.noreply.github.com>\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>",
+          "timestamp": "2026-09-30T13:29:12-04:00",
+          "tree_id": "90860129378fbe2f40a29be5389a92058049c7e5",
+          "url": "https://github.com/a16z/jolt/commit/7a01307b02407d0bb7905f68d8a09cb20b7b2654"
+        },
+        "date": 1790791969990,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.2128,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 859756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.0122,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 499412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 499324,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 509072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.5806,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 498560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 999244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.4932,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 500148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.6813,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 499128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.452,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 153796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.2167,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 861320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5086,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 501004,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3433,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 506980,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 15.0287,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 501112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 2.9935,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 498872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 25.5971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1957700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.6891,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 622560,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 57.3481,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1103840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0621,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 501996,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2443,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 499320,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.1601,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 861180,
             "unit": "KB",
             "extra": ""
           }
