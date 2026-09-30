@@ -11,7 +11,7 @@ mod support;
 
 use jolt_akita::{
     AkitaBackendFlavor, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
-    AKITA_ONE_HOT_K16,
+    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
@@ -65,6 +65,19 @@ fn setup_rejects_unsupported_one_hot_chunk_sizes() {
             "unexpected error for K={bad_k}: {err}"
         );
     }
+}
+
+#[test]
+fn setup_rejects_the_unprovisioned_2_to_32_trace_shape() {
+    let error = AkitaScheme::setup(AkitaSetupParams::one_hot_only(
+        45,
+        1,
+        layout(2),
+        AKITA_ONE_HOT_K256,
+        AkitaScheduleArtifacts::shared_from_default_directory(),
+    ))
+    .expect_err("2^32 cycles plus thirteen packing variables have no schedule");
+    assert!(matches!(error, OpeningsError::InvalidSetup(_)));
 }
 
 /// A `one_hot_only` setup skips the dense-flavor backend entirely, so a
