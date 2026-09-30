@@ -34,7 +34,7 @@
 //! Mixed cycle/address schedules are explicitly unsupported.
 
 use super::ram_trace::SharedRamAddresses;
-use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
@@ -390,16 +390,16 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
         &self,
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
-        trace: TraceDimensions,
+        dimensions: ReadWriteDimensions,
     ) -> Result<(), KernelError<F>> {
-        if trace.log_t() > 32 {
+        if dimensions.log_t() > 32 || dimensions.log_k() > 32 {
             return Err(KernelError::Unsupported {
-                reason: "optimized RAM read-write checking packs cycle indices as u32",
+                reason: "optimized RAM read-write checking packs cycle and address indices as u32",
             });
         }
         // Stage 2 consumes this same column; moving its extraction forward
         // admits actual addresses without another trace walk or address copy.
-        let _ = SharedRamAddresses::shared(session, witness, trace.log_t())?;
+        let _ = SharedRamAddresses::shared(session, witness, dimensions.log_t())?;
         Ok(())
     }
 

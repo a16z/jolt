@@ -381,7 +381,7 @@ mod tests {
     fn preflight_reuses_the_stage_two_address_column() {
         use crate::optimized::OptimizedBackend;
         use crate::{PrepareKernel, ReferenceBackend};
-        use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+        use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
         use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 
         with_sample_backend(|witness| {
@@ -390,7 +390,7 @@ mod tests {
                 &ReferenceBackend,
                 &mut session,
                 witness,
-                TraceDimensions::new(2),
+                ReadWriteDimensions::new(2, 3, 2, 3),
             )
             .unwrap();
             assert!(session.state::<SharedRamAddresses>().is_none());
@@ -398,7 +398,7 @@ mod tests {
                 &OptimizedBackend,
                 &mut session,
                 witness,
-                TraceDimensions::new(2),
+                ReadWriteDimensions::new(2, 3, 2, 3),
             )
             .unwrap();
             let admitted = SharedRamAddresses::shared::<Fr>(&mut session, witness, 2).unwrap();

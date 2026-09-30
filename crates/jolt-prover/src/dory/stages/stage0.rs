@@ -11,7 +11,6 @@
 use common::jolt_device::JoltDevice;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
-use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_claims::protocols::jolt::JoltPolynomialId;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;

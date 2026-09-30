@@ -2,7 +2,6 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
-use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;

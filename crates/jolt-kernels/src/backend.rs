@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 #[cfg(feature = "allocative")]
 use allocative::{Allocative, Key, Visitor};
-use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
+use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
 use jolt_field::JoltField;
 use jolt_kernels_derive::KernelSlots;
 use jolt_openings::CommitmentScheme;
@@ -120,7 +120,7 @@ where
         &self,
         _session: &mut ProofSession,
         _witness: &dyn JoltWitnessPlane<F>,
-        _trace: TraceDimensions,
+        _dimensions: ReadWriteDimensions,
     ) -> Result<(), KernelError<F>> {
         Ok(())
     }
