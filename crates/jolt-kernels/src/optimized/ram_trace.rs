@@ -394,6 +394,16 @@ mod tests {
             )
             .unwrap();
             assert!(session.state::<SharedRamAddresses>().is_none());
+            assert!(matches!(
+                <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
+                    &OptimizedBackend,
+                    &mut session,
+                    witness,
+                    ReadWriteDimensions::new(2, 3, 1, 1),
+                ),
+                Err(KernelError::Unsupported { .. })
+            ));
+            assert!(session.state::<SharedRamAddresses>().is_none());
             <OptimizedBackend as PrepareKernel<Fr, RamReadWriteChecking<Fr>>>::preflight(
                 &OptimizedBackend,
                 &mut session,
