@@ -24,7 +24,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{KernelError, SumcheckKernelError};
+use crate::SumcheckKernelError;
 
 /// A kernel's bound-round count against its total — the one home of the
 /// "claims only after every round is bound" invariant.
