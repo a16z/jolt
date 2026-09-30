@@ -354,7 +354,7 @@ pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k:
 }
 
 #[cfg(test)]
-#[expect(clippy::panic, reason = "test module")]
+#[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_field::Fr;
     use jolt_witness::testing::with_sample_backend;

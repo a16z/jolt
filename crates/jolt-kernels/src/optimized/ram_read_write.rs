@@ -397,7 +397,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
                 reason: "optimized RAM read-write checking packs cycle and address indices as u32",
             });
         }
-        ReadWriteOrder::new::<F>(dimensions)?;
+        let _ = ReadWriteOrder::new::<F>(dimensions)?;
         // Stage 2 consumes this same column; moving its extraction forward
         // admits actual addresses without another trace walk or address copy.
         let _ = SharedRamAddresses::shared(session, witness, dimensions.log_t())?;
