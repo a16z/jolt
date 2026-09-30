@@ -1636,7 +1636,9 @@ mod tests {
 mod akita_tests {
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
-    use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
+    use jolt_claims::protocols::jolt::geometry::bytecode::{
+        BytecodeReadRafDimensions, LATTICE_FUSED_INC_STAGES,
+    };
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
@@ -1683,7 +1685,7 @@ mod akita_tests {
                 }),
                 register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 23),
                 register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 29),
-                fused_inc_cycle_points: (0..bytecode::LATTICE_FUSED_INC_STAGES)
+                fused_inc_cycle_points: (0..LATTICE_FUSED_INC_STAGES)
                     .map(|stage| synthetic_point(log_t, 41 + stage as u64))
                     .collect(),
             },
