@@ -380,16 +380,15 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         let eq_eval_3 = eq_eval_2 + eq_m;
         let cubic_eval_0 = eq_eval_0 * q_constant;
         let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
-        let quadratic_eval_1 = match eq_eval_1.inverse() {
-            Some(inverse) => cubic_eval_1 * inverse,
-            None => {
-                let endpoint = q_at_one();
-                let actual = cubic_eval_0 + eq_eval_1 * endpoint;
-                if actual != s_0_plus_s_1 {
-                    return Err(actual);
-                }
-                endpoint
+        let quadratic_eval_1 = if let Some(inverse) = eq_eval_1.inverse() {
+            cubic_eval_1 * inverse
+        } else {
+            let endpoint = q_at_one();
+            let actual = cubic_eval_0 + eq_eval_1 * endpoint;
+            if actual != s_0_plus_s_1 {
+                return Err(actual);
             }
+            endpoint
         };
         let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
         let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
@@ -439,16 +438,15 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 
     fn recover_q_zero(&self, q_one: F, hint: F, q_at_zero: impl FnOnce() -> F) -> Result<F, F> {
         let (l_zero, l_one) = self.current_linear_evals();
-        match l_zero.inverse() {
-            Some(inverse) => Ok((hint - l_one * q_one) * inverse),
-            None => {
-                let q_zero = q_at_zero();
-                let actual = l_zero * q_zero + l_one * q_one;
-                if actual == hint {
-                    Ok(q_zero)
-                } else {
-                    Err(actual)
-                }
+        if let Some(inverse) = l_zero.inverse() {
+            Ok((hint - l_one * q_one) * inverse)
+        } else {
+            let q_zero = q_at_zero();
+            let actual = l_zero * q_zero + l_one * q_one;
+            if actual == hint {
+                Ok(q_zero)
+            } else {
+                Err(actual)
             }
         }
     }
@@ -537,6 +535,11 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "test module asserts successful reconstruction and forbidden lazy endpoint evaluation"
+)]
 mod tests {
     use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
     use num_traits::{One, Zero};
