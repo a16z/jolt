@@ -599,8 +599,8 @@ struct OptimizedBooleanityCycleKernel<F: JoltField> {
     /// `eq(r_address, reference_address)` — together the reference's
     /// `EqAddressCycle` derived table.
     eq: GruenSplitEqPolynomial<F>,
-    /// Pre-scaled (`γ^i`) shared address-folded tables, index-encoded for
-    /// the first four binds (dense at `T/16` after).
+    /// Shared address-folded tables, scaled by nonzero `γ^i` and left unscaled
+    /// for disabled columns; index-encoded until dense at `T/16`.
     tables: LazyFoldedRa<F, BooleanityChunks>,
     gamma_powers: Vec<F>,
     opening_unscale: Vec<F>,
