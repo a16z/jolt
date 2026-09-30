@@ -100,6 +100,25 @@ pub(crate) fn grouped_setup_params(
                 reason: error.to_string(),
             }
         })?;
+    let catalog = schedule_artifacts
+        .one_hot_catalog(one_hot_k)
+        .map_err(|error| PreprocessingError::InvalidConfiguration {
+            reason: error.to_string(),
+        })?;
+    let admitted = catalog.rows().any(|row| {
+        let profiles = row.profiles();
+        profiles.precommitteds.is_empty()
+            && profiles.final_group.group.num_vars() == shape.num_vars
+            && profiles.final_group.group.num_polynomials() == shape.num_polys
+    });
+    if !admitted {
+        return Err(PreprocessingError::InvalidConfiguration {
+            reason: format!(
+                "Akita K={one_hot_k} catalog has no canonical trace schedule for {} variables and {} polynomials",
+                shape.num_vars, shape.num_polys,
+            ),
+        });
+    }
     let untrusted_physical_vars = untrusted_advice
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Untrusted))
         .transpose()?;
@@ -284,4 +303,42 @@ fn validate_trace_order(config: &ProverConfig) -> Result<(), PreprocessingError>
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "tests assert preprocessing metadata admission"
+)]
+mod tests {
+    use super::*;
+    use crate::config::{one_hot_config, read_write_config};
+    use common::jolt_device::MemoryLayout;
+    use jolt_riscv::RV64IMAC_JOLT;
+
+    #[test]
+    fn trace_schedule_admission_rejects_2_to_32_before_setup() {
+        let program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1usize << 32,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let config = ProverConfig {
+            trace_length: 1usize << 32,
+            ram_K: 1 << 12,
+            rw_config: read_write_config(32, 12),
+            one_hot_config: one_hot_config(32),
+            trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+        };
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        assert!(matches!(
+            grouped_setup_params(&artifacts, &program, &config, false, false, &[]),
+            Err(PreprocessingError::InvalidConfiguration { reason })
+                if reason.contains("no canonical trace schedule"),
+        ));
+    }
 }
