@@ -367,6 +367,10 @@ impl core::fmt::Debug for MemoryLayout {
 impl MemoryLayout {
     /// Constructs a layout, panicking if the configuration is invalid.
     /// Host preprocessing should use [`Self::try_new`] to report configuration errors.
+    #[expect(
+        clippy::panic,
+        reason = "the existing infallible constructor retains its documented panic contract; host preprocessing uses try_new"
+    )]
     pub fn new(config: &MemoryConfig) -> Self {
         Self::try_new(config).unwrap_or_else(|error| panic!("{error}"))
     }
