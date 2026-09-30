@@ -64,8 +64,7 @@ impl<const XLEN: usize> ZkLeanLookupTable<XLEN> {
             num_variables: 2 * XLEN,
             mle: self.evaluate_mle::<F>('x'),
         };
-        let _ = write!(f, "{printable}");
-        Ok(())
+        write!(f, "{printable}")
     }
 }
 
@@ -172,6 +171,29 @@ mod test {
 
             (Just(instr), inputs)
         })
+    }
+
+    /// A writer that fails every write, so tests can assert that I/O errors are propagated
+    /// instead of being silently discarded.
+    struct FailingWriter;
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("write failed"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn zklean_pretty_print_propagates_write_errors() {
+        let table = ZkLeanLookupTable::<XLEN>::iter().next().unwrap();
+
+        assert!(table
+            .zklean_pretty_print::<TestField>(&mut FailingWriter)
+            .is_err());
     }
 
     proptest! {
