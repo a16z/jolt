@@ -126,7 +126,19 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     // fixed per-call budget, so adding Rayon workers cannot multiply scratch
     // without bound even when the whole domain fits in one direct tile.
     const DIRECT_ADDRESSES: usize = 1 << 16;
-    if addresses <= DIRECT_ADDRESSES {
+    const SCRATCH_BYTES: usize = 256 << 20;
+    let scratch_per_job = num_stages
+        .saturating_mul(addresses)
+        .saturating_mul(std::mem::size_of::<F>())
+        .saturating_mul(2)
+        .saturating_add(addresses)
+        .saturating_add(addresses.min(in_len) * std::mem::size_of::<usize>())
+        .saturating_add(
+            num_stages
+                .saturating_mul(2)
+                .saturating_mul(std::mem::size_of::<Vec<F>>()),
+        );
+    if addresses <= DIRECT_ADDRESSES && scratch_per_job <= SCRATCH_BYTES {
         struct Tile<F> {
             partial: Vec<Vec<F>>,
             inner: Vec<Vec<F>>,
@@ -185,18 +197,10 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                 }
                 left
             };
-            const SCRATCH_BYTES: usize = 256 << 20;
-            let scratch_per_job = num_stages
-                .saturating_mul(addresses)
-                .saturating_mul(std::mem::size_of::<F>())
-                .saturating_mul(2)
-                .saturating_add(addresses)
-                .saturating_add(addresses.min(in_len) * std::mem::size_of::<usize>())
-                .saturating_add(2 * num_stages * std::mem::size_of::<Vec<F>>());
             let out_len = 1usize << hi_bits;
             let jobs = rayon::current_num_threads()
                 .min(out_len)
-                .min((SCRATCH_BYTES / scratch_per_job).max(1));
+                .min(SCRATCH_BYTES / scratch_per_job);
             let chunk = out_len.div_ceil(jobs);
             return (0..out_len)
                 .into_par_iter()
