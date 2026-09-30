@@ -122,6 +122,97 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     const BATCH_ROWS: usize = 1 << 18;
     const FRAGMENT_ROWS: usize = 4096;
 
+    // Small domains avoid routing overhead. Their direct accumulators share a
+    // fixed per-call budget, so adding Rayon workers cannot multiply scratch
+    // without bound even when the whole domain fits in one direct tile.
+    const DIRECT_ADDRESSES: usize = 1 << 16;
+    if addresses <= DIRECT_ADDRESSES {
+        struct Tile<F> {
+            partial: Vec<Vec<F>>,
+            inner: Vec<Vec<F>>,
+            seen: Vec<bool>,
+            touched: Vec<usize>,
+        }
+        let tile = || Tile {
+            partial: (0..num_stages)
+                .map(|_| vec![F::zero(); addresses])
+                .collect(),
+            inner: (0..num_stages)
+                .map(|_| vec![F::zero(); addresses])
+                .collect(),
+            seen: vec![false; addresses],
+            touched: Vec::with_capacity(addresses.min(in_len)),
+        };
+        let accumulate = |mut tile: Tile<F>, hi: usize| {
+            for address in tile.touched.drain(..) {
+                for inner in &mut tile.inner {
+                    inner[address] = F::zero();
+                }
+                tile.seen[address] = false;
+            }
+            for lo in 0..in_len {
+                let row = &rows[hi * in_len + lo];
+                let address = pc(row);
+                if !tile.seen[address] {
+                    tile.seen[address] = true;
+                    tile.touched.push(address);
+                }
+                let (base, weighted) = tile.inner.split_at_mut(base_stages);
+                for (inner, eq) in base.iter_mut().zip(&e_lo[..base_stages]) {
+                    inner[address] += eq[lo];
+                }
+                if !weighted.is_empty() {
+                    let weight = row_weight(row);
+                    for (inner, eq) in weighted.iter_mut().zip(&e_lo[base_stages..]) {
+                        inner[address] += eq[lo] * weight;
+                    }
+                }
+            }
+            for &address in &tile.touched {
+                for ((partial, inner), eq) in tile.partial.iter_mut().zip(&tile.inner).zip(&e_hi) {
+                    partial[address] += inner[address] * eq[hi];
+                }
+            }
+            tile
+        };
+        #[cfg(feature = "parallel")]
+        {
+            let merge = |mut left: Vec<Vec<F>>, right: Vec<Vec<F>>| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left += right;
+                    }
+                }
+                left
+            };
+            const SCRATCH_BYTES: usize = 256 << 20;
+            let scratch_per_job = num_stages
+                .saturating_mul(addresses)
+                .saturating_mul(std::mem::size_of::<F>())
+                .saturating_mul(2)
+                .saturating_add(addresses)
+                .saturating_add(addresses.min(in_len) * std::mem::size_of::<usize>())
+                .saturating_add(2 * num_stages * std::mem::size_of::<Vec<F>>());
+            let out_len = 1usize << hi_bits;
+            let jobs = rayon::current_num_threads()
+                .min(out_len)
+                .min((SCRATCH_BYTES / scratch_per_job).max(1));
+            let chunk = out_len.div_ceil(jobs);
+            return (0..out_len)
+                .into_par_iter()
+                .step_by(chunk)
+                .map(|start| {
+                    (start..(start + chunk).min(out_len))
+                        .fold(tile(), accumulate)
+                        .partial
+                })
+                .reduce_with(merge)
+                .unwrap_or_default();
+        }
+        #[cfg(not(feature = "parallel"))]
+        return (0..1usize << hi_bits).fold(tile(), accumulate).partial;
+    }
+
     struct RoutedRow<F> {
         cycle: usize,
         address: usize,
@@ -1188,8 +1279,11 @@ mod stage_pushforward_tests {
         );
     }
 
-    fn tiled_weighted_pushforwards<F: JoltField>(log_t: usize, base_stages: usize) {
-        let addresses = 4096;
+    fn tiled_weighted_pushforwards<F: JoltField>(
+        log_t: usize,
+        base_stages: usize,
+        addresses: usize,
+    ) {
         let weighted_stages = if base_stages == 7 { 4 } else { 1 };
         let points = (0..base_stages + weighted_stages)
             .map(|stage| {
@@ -1239,19 +1333,19 @@ mod stage_pushforward_tests {
 
     #[test]
     fn weighted_tiles_and_fragments_match_the_cycle_eq_mle() {
-        tiled_weighted_pushforwards::<Fr>(15, 7);
+        tiled_weighted_pushforwards::<Fr>(15, 7, 1 << 17);
     }
 
     #[test]
-    fn batches_match_the_cycle_eq_mle() {
-        tiled_weighted_pushforwards::<Fr>(19, 1);
+    fn bounded_direct_domain_matches_the_cycle_eq_mle() {
+        tiled_weighted_pushforwards::<Fr>(19, 1, 1 << 16);
     }
 
     #[cfg(feature = "akita")]
     #[test]
     fn fp128_weighted_tiles_and_batches_match_the_cycle_eq_mle() {
         use jolt_field::Prime128OffsetA7F7;
-        tiled_weighted_pushforwards::<Prime128OffsetA7F7>(19, 7);
+        tiled_weighted_pushforwards::<Prime128OffsetA7F7>(19, 7, 1 << 17);
     }
 }
 
