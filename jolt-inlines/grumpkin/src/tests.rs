@@ -316,3 +316,36 @@ mod sequence_tests {
         }
     }
 }
+
+mod u64_arr_tests {
+    use crate::sdk::{GrumpkinFq, GrumpkinPoint, GrumpkinPointExt};
+    use ark_ec::AffineRepr;
+    use ark_ff::PrimeField;
+    use ark_grumpkin::Affine;
+    use jolt_inlines_sdk::ec::ECField;
+
+    /// `to_u64_arr`, `from_u64_arr` and `from_u64_arr_unchecked` all use the
+    /// canonical integer limbs, as for the other curves.
+    #[test]
+    fn field_u64_arr_uses_canonical_limbs() {
+        let five = GrumpkinFq::from_u64_arr(&[5, 0, 0, 0]).expect("canonical limbs");
+        assert_eq!(ECField::to_u64_arr(&five), [5, 0, 0, 0]);
+        let unchecked = <GrumpkinFq as ECField>::from_u64_arr_unchecked(&[5, 0, 0, 0]);
+        assert_eq!(ECField::to_u64_arr(&unchecked), [5, 0, 0, 0]);
+    }
+
+    #[test]
+    fn point_u64_arr_round_trips() {
+        let g = GrumpkinPoint::generator();
+        let arr = g.to_u64_arr();
+        let ark = Affine::generator();
+        assert_eq!(arr[..4], ark.x.into_bigint().0);
+        assert_eq!(arr[4..], ark.y.into_bigint().0);
+        let back = GrumpkinPoint::from_u64_arr(&arr).expect("generator is on the curve");
+        assert_eq!(back.to_u64_arr(), arr);
+        assert_eq!(
+            GrumpkinPoint::from_u64_arr_unchecked(&arr).to_u64_arr(),
+            arr
+        );
+    }
+}

@@ -26,7 +26,7 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::read_write::ReadWriteOrder;
-use super::support::{pin_derived_term, RoundChallenges};
+use super::support::{pin_derived_term, GruenRoundMessage, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -139,12 +139,19 @@ impl<F: JoltField> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
-    fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
+    fn cycle_round_message(
+        &self,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let e_in = self.gruen.e_in_current();
         let e_out = self.gruen.e_out_current();
         let quadratic = self.cycle.quadratic(e_in, e_out);
         self.gruen
-            .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
+            .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
+                self.cycle
+                    .q_at_one(self.gruen.e_in_current(), self.gruen.e_out_current())
+            })
     }
 
     /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
@@ -242,7 +249,7 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
             self.bind(challenge);
         }
         if self.challenges.bound() < self.dimensions.log_t() {
-            Ok(self.cycle_round_message(previous_claim))
+            self.cycle_round_message(round, previous_claim)
         } else {
             self.address.round_message(round, previous_claim)
         }

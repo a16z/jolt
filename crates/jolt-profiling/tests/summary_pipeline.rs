@@ -11,6 +11,7 @@ use jolt_profiling::summary::{
     SummaryContext, SUMMARY_SCHEMA_JSON,
 };
 use jolt_profiling::taxonomy;
+use jolt_profiling::PeakMemory;
 use serde_json::Value;
 
 const FIXTURE: &str = include_str!("fixtures/simple_trace.json");
@@ -36,12 +37,19 @@ fn fixture_stage_rows() -> Vec<StageMemoryRow> {
     }]
 }
 
+fn fixture_peak() -> PeakMemory {
+    PeakMemory {
+        rss_bytes: Some(4 * GIB as u64),
+        footprint_bytes: Some(6 * GIB as u64),
+    }
+}
+
 fn fixture_summary(events: &[Value]) -> ProfileSummary {
     build_summary(
         events,
         &fixture_context(),
         &fixture_stage_rows(),
-        Some(4 * GIB as u64),
+        fixture_peak(),
         1_700_000_000,
         Some("abc1234".to_string()),
         // Exercise the heap section through the same strict-schema tests:
@@ -155,6 +163,7 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage1.peak_memory_gib, Some(3.0));
 
     assert_eq!(summary.peak_rss_gib, Some(4.0));
+    assert_eq!(summary.peak_footprint_gib, Some(6.0));
     let memory = summary.counters.get("memory_gib").unwrap();
     assert_eq!(memory.samples, 3);
     assert_eq!(memory.max, 3.0);
@@ -250,7 +259,7 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
         &events,
         &fixture_context(),
         &rows,
-        None,
+        PeakMemory::default(),
         0,
         None,
         Default::default(),
@@ -283,12 +292,9 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
     let trace_path = dir.join("trace.json");
     std::fs::write(&trace_path, FIXTURE).unwrap();
 
-    let (out_path, summary) = jolt_profiling::summary::finalize_trace(
-        &trace_path,
-        &fixture_context(),
-        Some(4 * GIB as u64),
-    )
-    .unwrap();
+    let (out_path, summary) =
+        jolt_profiling::summary::finalize_trace(&trace_path, &fixture_context(), fixture_peak())
+            .unwrap();
 
     assert_eq!(out_path, summary_path(&trace_path));
     assert_eq!(summary.peak_rss_gib, Some(4.0));
@@ -311,6 +317,7 @@ fn finalize_trace_rewrites_and_summarizes_atomically() {
     let reparsed: ProfileSummary =
         serde_json::from_str(&std::fs::read_to_string(&out_path).unwrap()).unwrap();
     assert_eq!(reparsed.peak_rss_gib, Some(4.0));
+    assert_eq!(reparsed.peak_footprint_gib, Some(6.0));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

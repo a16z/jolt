@@ -54,6 +54,15 @@ fn real_prover_roundtrip_verifies() {
 }
 
 #[test]
+fn real_prover_roundtrip_verifies_with_two_final_openings() {
+    let mut rng = ChaCha20Rng::from_seed([107; 32]);
+    let instance = build_protocol_backed_instance_with_bindings(&mut rng, 2);
+    assert_eq!(instance.protocol.eval_commitments.len(), 2);
+    let proof = prove_real(&instance, &mut rng).expect("real prover succeeds on a valid witness");
+    verify_real(&instance, &proof).expect("real prover's proof verifies with two bindings");
+}
+
+#[test]
 fn real_prover_proof_shape_matches_harness_prover() {
     let mut rng = ChaCha20Rng::from_seed([102; 32]);
     let instance = build_protocol_backed_instance(&mut rng);
