@@ -3,25 +3,15 @@
 use std::io::Cursor;
 
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use dory::backends::arkworks::{
-    ArkDoryProof, ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup,
-};
+use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT, ArkworksProverSetup, ArkworksVerifierSetup};
 use jolt_crypto::{Bn254G1, Bn254GT, HomomorphicCommitment};
-use jolt_field::Fr;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_field::{CanonicalBytes, CanonicalDecode, Fr};
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 
-/// Caps the upstream `Vec::with_capacity(num_rounds)` allocation against
-/// attacker-supplied round counts during proof deserialization. Real Dory
-/// proofs use `num_rounds = ceil(log2(N/2))` for an N-coefficient polynomial,
-/// so 64 covers polynomials up to 2^65 evaluations.
-pub const MAX_SERIALIZED_PROOF_ROUNDS: usize = 64;
-
-/// Byte-size cap on a serialized proof, checked before any parsing. A
-/// well-formed proof is ~4.7 KiB per round (12 group elements, GT-dominated)
-/// plus a small fixed prefix/suffix, so `MAX_SERIALIZED_PROOF_ROUNDS` rounds
-/// stay well under 512 KiB.
-pub const MAX_SERIALIZED_PROOF_BYTES: usize = 512 * 1024;
+/// Bounds the rounds any supported proof can use, and so the verifier setup's
+/// per-round tables. Dory runs `ceil(num_vars / 2)` rounds, so 64 covers
+/// polynomials up to 2^128 evaluations.
+const MAX_PROOF_ROUNDS: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoryCommitment(pub Bn254GT);
@@ -48,13 +38,18 @@ impl<'de> Deserialize<'de> for DoryCommitment {
     }
 }
 
-impl AppendToTranscript for DoryCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.0.append_to_transcript(transcript);
-    }
+/// The commitment's GT element is its transcript atom.
+impl CanonicalBytes for DoryCommitment {
+    const NUM_BYTES: usize = Bn254GT::NUM_BYTES;
 
-    fn transcript_payload_len(&self) -> Option<u64> {
-        self.0.transcript_payload_len()
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        self.0.to_bytes_le(out);
+    }
+}
+
+impl CanonicalDecode for DoryCommitment {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        Bn254GT::from_bytes_le_checked(bytes).map(Self)
     }
 }
 
@@ -67,37 +62,6 @@ impl<F: jolt_field::JoltField> HomomorphicCommitment<F> for DoryCommitment {
     #[inline]
     fn linear_combine(c1: &Self, c2: &Self, scalar: &F) -> Self {
         Self(HomomorphicCommitment::linear_combine(&c1.0, &c2.0, scalar))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DoryProof(pub ArkDoryProof);
-
-impl Eq for DoryProof {}
-
-impl Serialize for DoryProof {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        canonical_serialize(&self.0, serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for DoryProof {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let buf: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if buf.len() > MAX_SERIALIZED_PROOF_BYTES {
-            return Err(Error::custom(format!(
-                "Dory proof ({} bytes) exceeds maximum ({MAX_SERIALIZED_PROOF_BYTES})",
-                buf.len()
-            )));
-        }
-        validate_proof_round_count(&buf).map_err(Error::custom)?;
-        let mut cursor = Cursor::new(&buf[..]);
-        let proof = ArkDoryProof::deserialize_compressed(&mut cursor).map_err(Error::custom)?;
-        // Canonical encoding: a valid parse must consume the entire buffer.
-        if cursor.position() != buf.len() as u64 {
-            return Err(Error::custom("Dory proof encoding has trailing bytes"));
-        }
-        Ok(Self(proof))
     }
 }
 
@@ -180,9 +144,8 @@ fn canonical_serialize<T: CanonicalSerialize, S: Serializer>(
 }
 
 /// Caps each GT vector in a serialized verifier setup. The delta/chi tables
-/// hold `max_num_rounds + 1` entries, and `MAX_SERIALIZED_PROOF_ROUNDS`
-/// bounds the rounds any supported proof can use.
-const MAX_SETUP_GT_VECTOR_LEN: usize = MAX_SERIALIZED_PROOF_ROUNDS + 1;
+/// hold `max_num_rounds + 1` entries.
+const MAX_SETUP_GT_VECTOR_LEN: usize = MAX_PROOF_ROUNDS + 1;
 
 /// Pre-validates a serialized `ArkworksVerifierSetup` before delegating to
 /// the upstream parser, whose `Vec<T>` deserialization reads a u64 length
@@ -227,48 +190,17 @@ fn validate_verifier_setup_structure(buf: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Pre-validates the round count from the proof's wire bytes before invoking
-/// the upstream `CanonicalDeserialize`, which calls `Vec::with_capacity(num_rounds)`
-/// and would OOM on attacker-supplied lengths near `u32::MAX`.
-///
-/// The prefix elements are parsed with `Validate::No`: this scan only needs
-/// their wire width to locate the round count, and the real parse that
-/// follows re-reads them with full (expensive, for GT) subgroup validation.
-fn validate_proof_round_count(buf: &[u8]) -> Result<(), String> {
-    use ark_serialize::{Compress, Validate};
-    let mut cursor = Cursor::new(buf);
-    let _: ArkGT =
-        CanonicalDeserialize::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No)
-            .map_err(|e| format!("invalid Dory proof VMV.c: {e}"))?;
-    let _: ArkGT =
-        CanonicalDeserialize::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No)
-            .map_err(|e| format!("invalid Dory proof VMV.d2: {e}"))?;
-    let _: ArkG1 =
-        CanonicalDeserialize::deserialize_with_mode(&mut cursor, Compress::Yes, Validate::No)
-            .map_err(|e| format!("invalid Dory proof VMV.e1: {e}"))?;
-    let num_rounds: u32 = CanonicalDeserialize::deserialize_compressed(&mut cursor)
-        .map_err(|e| format!("invalid Dory proof round count: {e}"))?;
-    if num_rounds as usize > MAX_SERIALIZED_PROOF_ROUNDS {
-        return Err(format!(
-            "Dory proof round count ({num_rounds}) exceeds maximum ({MAX_SERIALIZED_PROOF_ROUNDS})"
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
     clippy::unwrap_used,
     reason = "tests may panic on assertion failures"
 )]
-#[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
     use jolt_field::Field;
     use jolt_openings::CommitmentScheme;
     use jolt_poly::Polynomial;
-    use jolt_transcript::Transcript;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -310,8 +242,8 @@ mod tests {
         let (commitment, hint) =
             crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut prove_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
-        let proof = crate::DoryScheme::open(
+        let mut prove_transcript = crate::test_support::prover(b"serde-vs");
+        crate::DoryScheme::open(
             &poly,
             &point,
             eval,
@@ -321,12 +253,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-vs");
+        let narg = prove_transcript.finish();
+        let mut verify_transcript = crate::test_support::verifier(b"serde-vs", &narg);
         let result = crate::DoryScheme::verify(
             &commitment,
             &point,
             eval,
-            &proof,
             &deserialized,
             &mut verify_transcript,
         );
@@ -368,129 +300,5 @@ mod tests {
             .expect("serialize verifier setup");
         bytes.push(0);
         assert_rejected_with::<DoryVerifierSetup>(&bytes, "length mismatch");
-    }
-
-    #[test]
-    fn dory_proof_serde_round_trip() {
-        let num_vars = 2;
-        let mut rng = ChaCha20Rng::seed_from_u64(402);
-
-        let prover_setup = crate::DoryScheme::setup_prover(num_vars);
-
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
-            .collect();
-        let eval = poly.evaluate(&point);
-
-        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
-        let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
-                .unwrap();
-
-        let serialized = serde_json::to_vec(&proof).expect("serialize proof");
-        let deserialized: DoryProof =
-            serde_json::from_slice(&serialized).expect("deserialize proof");
-
-        let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
-        let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
-
-        let mut verify_transcript = jolt_transcript::Blake2bTranscript::new(b"serde-bp");
-        let result = crate::DoryScheme::verify(
-            &commitment,
-            &point,
-            eval,
-            &deserialized,
-            &verifier_setup,
-            &mut verify_transcript,
-        );
-        assert!(result.is_ok(), "deserialized proof must verify correctly");
-    }
-
-    #[test]
-    fn dory_proof_rejects_oversized_buffer() {
-        let bytes = vec![0u8; MAX_SERIALIZED_PROOF_BYTES + 1];
-        assert_rejected_with::<DoryProof>(&bytes, "exceeds maximum");
-    }
-
-    #[test]
-    fn dory_proof_rejects_trailing_bytes() {
-        let num_vars = 2;
-        let mut rng = ChaCha20Rng::seed_from_u64(404);
-
-        let prover_setup = crate::DoryScheme::setup_prover(num_vars);
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
-            .collect();
-        let eval = poly.evaluate(&point);
-
-        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-trailing");
-        let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
-                .unwrap();
-
-        let mut bytes = Vec::new();
-        proof
-            .0
-            .serialize_compressed(&mut bytes)
-            .expect("serialize proof");
-        bytes.push(0);
-        assert_rejected_with::<DoryProof>(&bytes, "trailing bytes");
-    }
-
-    #[test]
-    fn dory_proof_rejects_oversized_round_count() {
-        let num_vars = 2;
-        let mut rng = ChaCha20Rng::seed_from_u64(403);
-
-        let prover_setup = crate::DoryScheme::setup_prover(num_vars);
-        let poly = Polynomial::<Fr>::random(num_vars, &mut rng);
-        let point: Vec<Fr> = (0..num_vars)
-            .map(|_| <Fr as Field>::random(&mut rng))
-            .collect();
-        let eval = poly.evaluate(&point);
-
-        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"serde-oversized");
-        let proof =
-            crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
-                .unwrap();
-
-        let mut bytes = Vec::new();
-        proof
-            .0
-            .serialize_compressed(&mut bytes)
-            .expect("serialize proof");
-
-        let mut prefix = Vec::new();
-        proof
-            .0
-            .vmv_message
-            .c
-            .serialize_compressed(&mut prefix)
-            .expect("serialize VMV.c");
-        proof
-            .0
-            .vmv_message
-            .d2
-            .serialize_compressed(&mut prefix)
-            .expect("serialize VMV.d2");
-        proof
-            .0
-            .vmv_message
-            .e1
-            .serialize_compressed(&mut prefix)
-            .expect("serialize VMV.e1");
-
-        let mut oversized_rounds = Vec::new();
-        u32::MAX
-            .serialize_compressed(&mut oversized_rounds)
-            .expect("serialize round count");
-        bytes[prefix.len()..prefix.len() + oversized_rounds.len()]
-            .copy_from_slice(&oversized_rounds);
-
-        let encoded = serde_json::to_vec(&bytes).expect("encode proof bytes");
-        let result = serde_json::from_slice::<DoryProof>(&encoded);
-        assert!(result.is_err(), "oversized round count must be rejected");
     }
 }

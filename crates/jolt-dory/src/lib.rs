@@ -20,7 +20,6 @@
 //!   [`PedersenSetup<Bn254G1>`](jolt_crypto::PedersenSetup) (use
 //!   `PedersenSetup::derive(&prover_setup, capacity)`).
 //! - [`DoryCommitment`] — BN254 pairing target element (GT).
-//! - [`DoryProof`] — single opening proof.
 //! - [`DoryProverSetup`] / [`DoryVerifierSetup`] — prover and verifier SRS.
 //! - [`DoryPartialCommitment`] — intermediate state for streaming commitment.
 //! - [`DoryHint`] — row commitments and commitment blind reusable as opening proof hint.
@@ -44,6 +43,8 @@
 mod routines;
 mod scheme;
 mod streaming;
+#[cfg(test)]
+mod test_support;
 mod transcript;
 mod types;
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,5 +52,5 @@ mod urs_lock;
 
 pub use scheme::DoryScheme;
 pub use types::{
-    DoryCommitment, DoryHint, DoryPartialCommitment, DoryProof, DoryProverSetup, DoryVerifierSetup,
+    DoryCommitment, DoryHint, DoryPartialCommitment, DoryProverSetup, DoryVerifierSetup,
 };

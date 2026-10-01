@@ -10,7 +10,19 @@ use jolt_dory::{DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field, Fr};
 use jolt_openings::{CommitmentScheme, StreamingCommitment, ZkOpeningScheme};
 use jolt_poly::{OneHotPolynomial, Polynomial};
-use jolt_transcript::Transcript;
+use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, VerifierTranscript};
+
+fn prover(session: &[u8]) -> ProverTranscript<Blake2b512> {
+    ProverTranscript::new(&ProtocolId::new::<Blake2b512>("jolt-dory/bench"), session)
+}
+
+fn verifier<'a>(session: &[u8], narg: &'a [u8]) -> VerifierTranscript<'a, Blake2b512> {
+    VerifierTranscript::new(
+        &ProtocolId::new::<Blake2b512>("jolt-dory/bench"),
+        session,
+        narg,
+    )
+}
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -68,7 +80,7 @@ fn bench_open(c: &mut Criterion) {
                         (poly, point, eval)
                     },
                     |(poly, point, eval)| {
-                        let mut transcript = jolt_transcript::Blake2bTranscript::new(b"bench-open");
+                        let mut transcript = prover(b"bench-open");
                         DoryScheme::open(&poly, &point, eval, &setup, None, &mut transcript)
                     },
                     criterion::BatchSize::SmallInput,
@@ -97,21 +109,17 @@ fn bench_verify(c: &mut Criterion) {
                         let eval = poly.evaluate(&point);
                         let (commitment, _) =
                             DoryScheme::commit(poly.evaluations(), &setup).unwrap();
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify");
-                        let proof =
-                            DoryScheme::open(&poly, &point, eval, &setup, None, &mut transcript)
-                                .unwrap();
-                        (commitment, point, eval, proof)
+                        let mut transcript = prover(b"bench-verify");
+                        DoryScheme::open(&poly, &point, eval, &setup, None, &mut transcript)
+                            .unwrap();
+                        (commitment, point, eval, transcript.finish())
                     },
-                    |(commitment, point, eval, proof)| {
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify");
+                    |(commitment, point, eval, narg)| {
+                        let mut transcript = verifier(b"bench-verify", &narg);
                         DoryScheme::verify(
                             &commitment,
                             &point,
                             eval,
-                            &proof,
                             &verifier_setup,
                             &mut transcript,
                         )
@@ -236,8 +244,7 @@ fn bench_open_zk(c: &mut Criterion) {
                         (poly, point, eval, hint)
                     },
                     |(poly, point, eval, hint)| {
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-open-zk");
+                        let mut transcript = prover(b"bench-open-zk");
                         DoryScheme::open_zk(&poly, &point, eval, &setup, hint, &mut transcript)
                     },
                     criterion::BatchSize::SmallInput,
@@ -267,23 +274,15 @@ fn bench_verify_zk(c: &mut Criterion) {
                         let (commitment, hint) =
                             <DoryScheme as ZkOpeningScheme>::commit_zk(poly.evaluations(), &setup)
                                 .unwrap();
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify-zk");
-                        let (proof, _eval_com, _blind) =
+                        let mut transcript = prover(b"bench-verify-zk");
+                        let (_eval_com, _blind) =
                             DoryScheme::open_zk(&poly, &point, eval, &setup, hint, &mut transcript)
                                 .unwrap();
-                        (commitment, point, proof)
+                        (commitment, point, transcript.finish())
                     },
-                    |(commitment, point, proof)| {
-                        let mut transcript =
-                            jolt_transcript::Blake2bTranscript::new(b"bench-verify-zk");
-                        DoryScheme::verify_zk(
-                            &commitment,
-                            &point,
-                            &proof,
-                            &verifier_setup,
-                            &mut transcript,
-                        )
+                    |(commitment, point, narg)| {
+                        let mut transcript = verifier(b"bench-verify-zk", &narg);
+                        DoryScheme::verify_zk(&commitment, &point, &verifier_setup, &mut transcript)
                     },
                     criterion::BatchSize::SmallInput,
                 );
