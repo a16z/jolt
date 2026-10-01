@@ -3,15 +3,15 @@
 //!
 //! - **Typed small-scalar row evaluation**: the 19 eq-conditional constraint
 //!   rows are evaluated per cycle as integers (`i64` guards, `i128` B values,
-//!   the ±2^130 second-group ones split as `hi·2^64 + lo`) straight off a
+//!   the second-group values split as `hi·2^64 + lo`) straight off a
 //!   typed witness bundle — the ordinary R1CS input tables are never
 //!   materialized as field vectors (`R1CSEval::{eval_az,eval_bz}_*_group`).
 //! - **Univariate skip over the centered integer domain**: the first-round
-//!   polynomial needs only the 9 extended-node evaluations (in-domain nodes
-//!   vanish); each is an exact integer extension of the row values, computed
-//!   by finite differences, so the whole pass costs branch-free integer
-//!   additions plus one field × `i128` fmadd per `(cycle, stream, node)` (two
-//!   for the split second stream) instead of per-row field multiplies.
+//!   polynomial needs only `DOMAIN − 1` extended-node evaluations (in-domain
+//!   nodes vanish). Finite differences extend the row values exactly.
+//!   Ordinary cycles use integer additions plus one field × `i128` fmadd
+//!   per `(cycle, stream, node)` (two for the split second stream). Active
+//!   field-inline cycles extend the B values in the field.
 //! - **Unreduced accumulation**: field × wide-integer products accumulate
 //!   through `jolt-field`'s specialized accumulators and reduce once per block
 //!   (`FullAccumS`/`SmallAccumU`/`WideAccumS` + `barrett_reduce`).
@@ -313,11 +313,16 @@ impl WitnessBundle for SpartanOuterRow {
 /// One cycle's integer values of the composed eq-conditional rows, split into
 /// the two uni-skip stream groups. A-side guards satisfy `|a| ≤ 3`, with at
 /// most two per group above 1 in magnitude (one ≤ 2, one ≤ 3); first-group B
-/// values satisfy `|b| ≤ 2^64`. Second-group B values reach ±2^130 (the
+/// values satisfy `|b| ≤ 2^64`. Second-group B magnitudes are below 2^129 (the
 /// `RightLookupOperand`/`Product`/`Imm`-bearing rows), so each is carried as
 /// `hi·2^64 + lo` with `|lo|, |hi| < 2^65`. Under `field-inline` the arrays
 /// span the composed groups including field-inline rows with inactive
 /// columns; active field-inline cycles use [`FieldGroupValues`] instead.
+/// These bounds follow from the bundle's scalar types, without flag exclusivity:
+/// first-group exceptions are `Add + Sub + Mul` and its complement; second-group
+/// exceptions are `Load + Store` and `1 − Add − Sub − Mul − Advice`. Appended
+/// guards are booleans; their integer B passengers are `−1`, negated words,
+/// and the two halves of `−Imm`, including `Imm = i128::MIN`.
 struct RowGroupValues {
     a_first: [i64; DOMAIN],
     a_second: [i64; SECOND_GROUP_LEN],
@@ -339,33 +344,32 @@ struct FieldGroupValues<F> {
 
 #[cfg(feature = "field-inline")]
 impl<F: JoltField> FieldGroupValues<F> {
-    fn extended_products(
-        &self,
-        field_coefficients: &[[F; DOMAIN]; EXTENDED_NODE_COUNT],
-    ) -> [(F, F); EXTENDED_NODE_COUNT] {
+    fn extended_products(&self) -> [(F, F); EXTENDED_NODE_COUNT] {
         let az_first = extend(&self.integer.a_first);
         let az_second = extend(&self.integer.a_second);
-        let bz_first = extend(&self.integer.b_first);
-        let bz_second_lo = extend(&self.integer.b_second_lo);
-        let bz_second_hi = extend(&self.integer.b_second_hi);
-        let two_pow_64 = F::from_u128(1 << 64);
+        let mut bz_first = self.integer.b_first.map(F::from_i128);
+        let mut bz_second: [F; SECOND_GROUP_LEN] = std::array::from_fn(|i| {
+            F::from_i128(self.integer.b_second_lo[i])
+                + F::from_i128(self.integer.b_second_hi[i]).mul_pow_2(64)
+        });
+        for (b, correction) in bz_first[RV64_FIRST_GROUP_LEN..]
+            .iter_mut()
+            .zip(self.b_first)
+        {
+            *b += correction;
+        }
+        for (b, correction) in bz_second[RV64_SECOND_GROUP_LEN..]
+            .iter_mut()
+            .zip(self.b_second)
+        {
+            *b += correction;
+        }
+        let bz_first = extend(&bz_first);
+        let bz_second = extend(&bz_second);
         std::array::from_fn(|slot| {
-            let fields = &field_coefficients[slot];
-            let correction0: F = fields[RV64_FIRST_GROUP_LEN..]
-                .iter()
-                .zip(self.b_first)
-                .map(|(c, b)| *c * b)
-                .sum();
-            let correction1: F = fields[RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
-                .iter()
-                .zip(self.b_second)
-                .map(|(c, b)| *c * b)
-                .sum();
-            let bz_second =
-                F::from_i128(bz_second_lo[slot]) + two_pow_64 * F::from_i128(bz_second_hi[slot]);
             (
-                F::from_i64(az_first[slot]) * (F::from_i128(bz_first[slot]) + correction0),
-                F::from_i64(az_second[slot]) * (bz_second + correction1),
+                F::from_i64(az_first[slot]) * bz_first[slot],
+                F::from_i64(az_second[slot]) * bz_second[slot],
             )
         })
     }
@@ -399,23 +403,6 @@ impl<F: JoltField> FieldGroupValues<F> {
             .sum();
         (a, b + correction)
     }
-}
-
-/// The field Lagrange basis at every extended node, `[slot][i] = L_i(node)` in
-/// [`EXTENDED_POSITIONS`] order: the integer extension of each base-window
-/// basis vector. It ties the active field-inline field path to the same
-/// extension the integer pipeline uses.
-#[cfg(feature = "field-inline")]
-fn extension_coefficient_fields<F: JoltField>() -> [[F; DOMAIN]; EXTENDED_NODE_COUNT] {
-    let mut fields = [[F::zero(); DOMAIN]; EXTENDED_NODE_COUNT];
-    for i in 0..DOMAIN {
-        let mut basis = [0i64; DOMAIN];
-        basis[i] = 1;
-        for (node, coefficient) in fields.iter_mut().zip(extend(&basis)) {
-            node[i] = F::from_i64(coefficient);
-        }
-    }
-    fields
 }
 
 /// Transfers the extracted field rows from the outer kernel to the product kernel.
@@ -656,16 +643,17 @@ const EXTENDED_POSITIONS: [usize; EXTENDED_NODE_COUNT] = {
     positions
 };
 
-/// Exact integer extension of the degree-`< DOMAIN` interpolant of `values`
+/// Exact extension of the degree-`< DOMAIN` interpolant of `values`
 /// (on the base window's consecutive nodes; missing top values are zero) to
 /// every extended node, in [`EXTENDED_POSITIONS`] order. Finite differences
 /// replace the Lagrange dot products: the base window's difference table
 /// yields the forward diagonal at its first node and the backward diagonal
 /// at its last, and since `Δ^DOMAIN` vanishes, each step outward costs
-/// `DOMAIN − 1` additions. Every intermediate is a `k`-th difference of the
-/// interpolant over the extended window, bounded by `2^(DOMAIN−1) · max|P|`,
+/// `DOMAIN − 1` additions. For integer inputs, every intermediate is a `k`-th
+/// difference over the extended window, bounded by `2^(DOMAIN−1) · max|P|`,
 /// and `max|P| ≤ Λ · max|value|` with `Λ = max_node Σ_i |L_i(node)|`:
 /// `Λ < 2^20` on the 10-node rv64 domain, `Λ < 2^30` on `field-inline`'s 15.
+/// Thus guard intermediates are below `3·2^44 < 2^46`, within `i64`.
 fn extend<T>(values: &[T]) -> [T; EXTENDED_NODE_COUNT]
 where
     T: Copy + Default + Add<Output = T> + Sub<Output = T>,
@@ -865,10 +853,11 @@ impl OptimizedOuterUniskip {
         // (cycle, stream) pair sits inside one `x_out` block.
         let pairs_per_block = e_in.len() / 2;
         let two_pow_64 = F::from_u128(1 << 64);
-        #[cfg(feature = "field-inline")]
-        let field_coefficients = extension_coefficient_fields::<F>();
 
         let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, |x_out| {
+            // At most e_in.len() fmadds per accumulator: on 64-bit hosts the
+            // split gives ≤ 2^32 terms. BN254 slots grow by < 2^66 per i128
+            // term; fp128 slots by < 2^65, leaving ample carry headroom.
             // Per node: the unshifted products, and the `hi` halves (× 2^64).
             let mut sums = [(
                 <F as WithAccumulator>::SignedProductAccumulator::default(),
@@ -885,7 +874,7 @@ impl OptimizedOuterUniskip {
                 #[cfg(feature = "field-inline")]
                 if let Some(field_row) = field_cursor.advance(t) {
                     let values = row.field_group_values(field_row);
-                    let products = values.extended_products(&field_coefficients);
+                    let products = values.extended_products();
                     for (sum, (first, second)) in field_sums.iter_mut().zip(&products) {
                         *sum += e_first * *first + e_second * *second;
                     }
@@ -1654,13 +1643,11 @@ mod tests {
                     }
                 };
                 let wide = |low: u64, high: u64| (u128::from(high) << 64) | u128::from(low);
-                let signed = |value: u64| {
-                    let magnitude = i128::from(value >> 1) << 33;
-                    if value & 1 == 1 {
-                        -magnitude
-                    } else {
-                        magnitude
-                    }
+                let signed = |value: u64| match value & 3 {
+                    0 => i128::MIN,
+                    1 => i128::MAX,
+                    2 => -(i128::from(value) << 63),
+                    _ => i128::from(value) << 63,
                 };
                 SpartanOuterRow {
                     left_instruction_input: LeftInstructionInput(next()),
@@ -1669,7 +1656,7 @@ mod tests {
                     should_branch: ShouldBranch(bit()),
                     pc: Pc(next() >> 20),
                     unexpanded_pc: UnexpandedPc(next()),
-                    imm: Imm(signed(next()) >> 40),
+                    imm: Imm(signed(next())),
                     ram_address: RamAddress(next()),
                     rs1_value: Rs1Value(next()),
                     rs2_value: Rs2Value(next()),
@@ -2184,6 +2171,22 @@ mod tests {
     /// B values (or halves) below 2^65.
     #[test]
     fn extension_products_fit_i128() {
+        for row in synthetic_rows(8, 0xB0_0D) {
+            let values = row.group_values();
+            for guards in [values.a_first.as_slice(), values.a_second.as_slice()] {
+                let excess: u64 = guards
+                    .iter()
+                    .map(|guard| guard.unsigned_abs().saturating_sub(1))
+                    .sum();
+                assert!(excess <= 3);
+            }
+            assert!(values.b_first.iter().all(|b| b.unsigned_abs() <= 1 << 64));
+            assert!(values
+                .b_second_lo
+                .iter()
+                .chain(&values.b_second_hi)
+                .all(|b| b.unsigned_abs() < 1 << 65));
+        }
         let mut gain = [0u128; EXTENDED_NODE_COUNT];
         let mut max_coefficient = 0u128;
         for i in 0..DOMAIN {
@@ -2198,8 +2201,9 @@ mod tests {
         let az = gain + 3 * max_coefficient;
         let bz = gain << 65;
         assert!(az < 1 << 63);
+        assert!((3 * gain) << (DOMAIN - 1) < 1 << 63);
         assert!(bz << (DOMAIN - 1) < 1 << 127);
-        assert!(az.checked_mul(bz).unwrap() < 1 << 127);
+        assert!(az.checked_mul(bz).unwrap() < 1 << 126);
     }
 
     /// The typed bundle's columns equal the oracle tables the reference
