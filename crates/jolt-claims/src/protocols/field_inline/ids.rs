@@ -1,4 +1,4 @@
-use derive_more::From;
+use derive_more::{From, TryInto};
 use serde::{Deserialize, Serialize};
 
 use crate::Expr;
@@ -63,18 +63,6 @@ pub enum FieldInlineCommittedPolynomial {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum FieldInlineOpFlag {
-    Add,
-    Sub,
-    Mul,
-    Inv,
-    AssertEq,
-    LoadFromX,
-    StoreToX,
-    LoadImm,
-}
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum FieldInlineVirtualPolynomial {
     FieldRs1Value,
     FieldRs2Value,
@@ -85,7 +73,6 @@ pub enum FieldInlineVirtualPolynomial {
     FieldRs2Ra,
     FieldRdWa,
     FieldRegistersVal,
-    FieldOpFlag(FieldInlineOpFlag),
 }
 
 #[derive(
@@ -136,8 +123,11 @@ pub enum FieldRegistersIncClaimReductionPublic {
     EqValEvaluation,
 }
 
+// `TryInto` is the `From` embeddings' inverse: each relation's
+// `derive_output_term` projects the family id onto its own public enum through
+// the generated `TryFrom` impls instead of a hand-written destructure.
 #[derive(
-    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
+    Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From, TryInto,
 )]
 pub enum FieldInlineDerivedId {
     FieldRegistersClaimReduction(FieldRegistersClaimReductionPublic),

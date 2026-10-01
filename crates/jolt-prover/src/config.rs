@@ -200,7 +200,7 @@ pub fn remap_address(address: u64, memory_layout: &MemoryLayout) -> Option<u64> 
 /// Read-write checking phase splits: cycle variables in phase 1, address
 /// variables in phase 2 (registers have a fixed 2^7 address space).
 #[expect(non_snake_case)]
-fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
+pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
     JoltReadWriteConfig {
         ram_rw_phase1_num_rounds: log_T as u8,
         ram_rw_phase2_num_rounds: ram_log_K as u8,
@@ -214,7 +214,7 @@ fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWriteConfig {
 /// above it, 8-bit committed chunks and `LOG_K/4 = 32`-bit virtual-RA chunks
 /// (a branch that requires a 2^25-cycle trace).
 #[expect(non_snake_case)]
-fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
+pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
     if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
         JoltOneHotConfig {
             log_k_chunk: 4,

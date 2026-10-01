@@ -9,6 +9,8 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+# Enables field-inline schedule coverage alongside the prover's field profile.
+field-inline = []
 profiling = []
 
 [dependencies]
@@ -18,7 +20,6 @@ akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
 akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
-akita-prover = { workspace = true, features = ["parallel"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
@@ -43,4 +44,8 @@ bincode.workspace = true
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }
+# Schedule tests use the canonical field-increment and trace layouts. No
+# features: an akita edge here would leak into workspace-wide unification and
+# flip jolt-claims' packed-mode geometry for every `--all` lane.
+jolt-claims = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }

@@ -1,3 +1,4 @@
+use crate::instruction::registers::amo::RegisterStateAMO;
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -11,6 +12,7 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x6000302f,
     format = FormatAMO,
+    registers = RegisterStateAMO,
     ram    = RAMWrite
 );
 
