@@ -4,14 +4,16 @@
 //! boolean. It runs in two phases: the stage-6a address phase binds the
 //! `log_k_chunk` address variables and stages the `BooleanityAddrClaim`
 //! intermediate; this stage-6b cycle phase binds the `log_t` cycle variables and
-//! opens the committed per-family `Ra` claims. The cycle phase's single public,
+//! opens the committed per-family `Ra` claims. The cycle phase's eq public,
 //! `EqAddressCycle`, ties the full two-phase sumcheck point to the reference
 //! address/cycle drawn from the stage-5 instruction opening.
 //!
 //! Under the `akita` feature the symbolic swaps to the lattice cycle phase,
 //! which extends the same boolean fold over the increment digit and carry
 //! one-hot columns, all opened at the shared `(r_address ‖ r_cycle)` point.
+//! Their batching weights are resolved as derived gamma powers.
 
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::relations::booleanity as lattice_booleanity;
 #[cfg(not(feature = "akita"))]
@@ -146,8 +148,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
         id: &JoltDerivedId,
         _input_points: &SumcheckInputPoints<F, Self>,
         output_points: &SumcheckOutputPoints<F, Self>,
-        _challenges: &BooleanityCyclePhaseChallenges<F>,
+        challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
+        if let JoltDerivedId::Booleanity(BooleanityPublic::GammaPow { exponent }) = id {
+            return Ok(gamma_pow(challenges.gamma, *exponent));
+        }
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };

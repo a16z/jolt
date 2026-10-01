@@ -192,7 +192,23 @@ mod tests {
                 }
                 _ => zero,
             },
-            |_| zero,
+            |id| match *id {
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                    challenge,
+                    exponent,
+                }) => gamma_power(
+                    match challenge {
+                        BytecodeReadRafChallenge::Gamma => gamma,
+                        BytecodeReadRafChallenge::Stage1Gamma => stage1_gamma,
+                        BytecodeReadRafChallenge::Stage2Gamma => stage2_gamma,
+                        BytecodeReadRafChallenge::Stage3Gamma => stage3_gamma,
+                        BytecodeReadRafChallenge::Stage4Gamma => stage4_gamma,
+                        BytecodeReadRafChallenge::Stage5Gamma => stage5_gamma,
+                    },
+                    exponent,
+                ),
+                _ => zero,
+            },
         );
 
         let mut stage1 = Fr::from_u64(19) + stage1_gamma * Fr::from_u64(23);
@@ -269,6 +285,10 @@ mod tests {
                     spartan_shift_raf
                 }
                 JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => entry,
+                JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                    exponent,
+                    ..
+                }) => gamma_power(gamma, exponent),
                 _ => zero,
             },
         );

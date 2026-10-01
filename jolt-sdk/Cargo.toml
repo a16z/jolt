@@ -22,6 +22,7 @@ guest-size-class-alloc = []
 guest-fast-mem = ["jolt-platform/fast-mem"]
 blake2-inline = [
   "jolt-transcript?/blake2-inline",
+  "jolt-verifier?/blake2-inline",
 ]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
