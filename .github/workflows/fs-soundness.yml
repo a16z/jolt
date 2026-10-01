@@ -56,13 +56,12 @@ jobs:
           cargo nextest run
           -p jolt-verifier
           --test fs_obligations
-          --features fs-audit
           --cargo-quiet
       - name: Probe Akita ZK support
         shell: bash
         run: |
           set -euo pipefail
-          if cargo check -p jolt-verifier --lib --features akita,fs-audit,zk 2>akita-zk.log; then
+          if cargo check -p jolt-verifier --lib --features akita,zk 2>akita-zk.log; then
             echo "Akita+ZK now builds; add it to the Fiat-Shamir fixture matrix."
             exit 1
           fi
