@@ -345,12 +345,12 @@ mod tests {
     use jolt_field::{Fr, Ring};
 
     /// The produced `OuterRemainderOutputClaims` field (declaration) order is the
-    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated absorb
-    /// (`append_output_claims`) reproduces the input order,
-    /// byte-identically. `canonical_order()` surfaces that field order as opening ids,
+    /// canonical `SPARTAN_OUTER_R1CS_INPUTS` order, so the generated opening
+    /// order (`opening_values`, the order the prover sends) reproduces the input
+    /// order. `canonical_order()` surfaces that field order as opening ids,
     /// which must line up one-for-one with the R1CS inputs.
     #[test]
-    fn append_order_matches_r1cs_input_order() {
+    fn opening_order_matches_r1cs_input_order() {
         let expected = SPARTAN_OUTER_R1CS_INPUTS
             .iter()
             .copied()

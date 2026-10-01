@@ -608,115 +608,41 @@ pub fn stage_claim_failed(stage: impl Debug, reason: impl ToString) -> VerifierE
     }
 }
 
-/// Test-only transcript double for asserting [`ConcreteSumcheck::draw_challenges`]
-/// reproduces a stage's inline Fiat-Shamir draw exactly.
-///
-/// Unlike the `append_openings` recorder, challenge *squeezes*
-/// (`challenge`/`challenge_scalar`/`challenge_scalar_powers`) append no bytes, so a
-/// byte-chunk recorder cannot observe them. This double instead records an ordered
-/// event log that distinguishes a squeeze from a byte-append (e.g. the
-/// `ram_val_check` gamma domain separator), and returns a *distinct sequential*
-/// scalar from each squeeze so a relation's stored challenge can be checked against
-/// the squeeze that produced it.
+/// Test-only transcripts for pinning a production Fiat-Shamir draw against
+/// its documented sequence. Every transcript starts from the same protocol and
+/// session, so two of them yield equal challenges and equal sponge fingerprints
+/// exactly when they performed the same operations.
 #[cfg(test)]
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "tests use plain arithmetic on fixture data"
-)]
-pub(crate) mod draw_recording {
-    use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+pub(crate) mod test_transcript {
+    use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript};
 
-    /// One observable transcript operation a `draw_challenges` performs.
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    pub(crate) enum DrawEvent {
-        /// A challenge squeeze (`challenge`/`challenge_scalar`/the single squeeze
-        /// inside `challenge_scalar_powers`). Carries the 1-based squeeze index so
-        /// the value a relation kept can be matched to its squeeze.
-        Squeeze(u64),
-        /// A raw byte append (a domain separator preceding a squeeze).
-        Append(Vec<u8>),
+    pub(crate) type TestTranscript = ProverTranscript<Blake2b512>;
+
+    pub(crate) fn fresh() -> TestTranscript {
+        ProverTranscript::new(
+            &ProtocolId::new::<Blake2b512>("jolt-verifier/unit-tests"),
+            b"unit-tests",
+        )
     }
 
-    /// A `Transcript` that logs every squeeze and byte-append in order. Each
-    /// squeeze returns `Fr(index)` for the 1-based squeeze counter, so the powers
-    /// `challenge_scalar_powers` derives are distinct and a stored `gamma` can be
-    /// asserted to equal the squeezed value.
-    #[derive(Clone, Default)]
-    pub(crate) struct DrawRecordingTranscript {
-        pub(crate) events: Vec<DrawEvent>,
-        squeezes: u64,
-    }
-
-    impl Transcript for DrawRecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.events.push(DrawEvent::Append(bytes.to_vec()));
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            self.squeezes += 1;
-            self.events.push(DrawEvent::Squeeze(self.squeezes));
-            Fr::from_u64(self.squeezes)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
-    }
-
-    /// Run `draw` against a fresh recorder, returning its ordered event log and the
-    /// draw's result. A `draw_challenges` and a hand-written replica of the inline
-    /// draw, each passed through this, are directly comparable: equal event logs
-    /// prove the same squeeze/append sequence, and the recorder's distinct
-    /// sequential squeeze values let the returned challenge be checked against the
-    /// replica's captured value.
-    pub(crate) fn record<R>(
-        draw: impl FnOnce(&mut DrawRecordingTranscript) -> R,
-    ) -> (Vec<DrawEvent>, R) {
-        let mut transcript = DrawRecordingTranscript::default();
-        let result = draw(&mut transcript);
-        (transcript.events, result)
-    }
-}
-
-/// The append-order recorder shared by the stage `append_output_claims` ordering
-/// locks: unlike the challenge recorder, it observes only byte appends.
-#[cfg(test)]
-pub(crate) mod append_recording {
-    use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
-
-    /// A minimal `Transcript` double that records each appended byte chunk, so
-    /// that append order can be compared without depending on the digest.
-    #[derive(Clone, Default)]
-    pub(crate) struct RecordingTranscript {
-        pub(crate) chunks: Vec<Vec<u8>>,
-    }
-
-    impl Transcript for RecordingTranscript {
-        type Challenge = Fr;
-
-        fn new(_label: &'static [u8]) -> Self {
-            Self::default()
-        }
-
-        fn append_bytes(&mut self, bytes: &[u8]) {
-            self.chunks.push(bytes.to_vec());
-        }
-
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(0)
-        }
-
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
+    /// Runs `production` and `documented` on identical fresh transcripts and
+    /// asserts they leave the sponge in the same state, which pins the number,
+    /// kind, and order of their operations. Returns both results so the caller
+    /// can compare the values `production` kept against the documented draws.
+    pub(crate) fn assert_same_draws<A, B>(
+        production: impl FnOnce(&mut TestTranscript) -> A,
+        documented: impl FnOnce(&mut TestTranscript) -> B,
+    ) -> (A, B) {
+        let mut left = fresh();
+        let produced = production(&mut left);
+        let mut right = fresh();
+        let expected = documented(&mut right);
+        assert_eq!(
+            left.preview().squeeze::<32>(),
+            right.preview().squeeze::<32>(),
+            "production and documented draws diverge"
+        );
+        (produced, expected)
     }
 }
 
@@ -748,22 +674,6 @@ mod tests {
         JoltOpeningId::committed(polynomial, relation)
     }
 
-    use super::append_recording::RecordingTranscript;
-
-    /// The chunk stream produced by appending `opening_values()` one-by-one is
-    /// the reference Fiat-Shamir order; `append_openings` must reproduce it.
-    fn assert_append_matches_values<C: OutputClaims<Fr>>(claims: &C) {
-        let mut via_append = RecordingTranscript::default();
-        claims.append_openings(&mut via_append);
-
-        let mut via_values = RecordingTranscript::default();
-        for value in claims.opening_values() {
-            via_values.append_labeled(b"opening_claim", &value);
-        }
-
-        assert_eq!(via_append.chunks, via_values.chunks);
-    }
-
     #[derive(OutputClaims)]
     #[relation(InstructionReadRaf)]
     struct InstructionLeaf<C> {
@@ -792,7 +702,6 @@ mod tests {
             claims.canonical_order().len(),
             claims.opening_values().len()
         );
-        assert_append_matches_values(&claims);
     }
 
     #[test]
@@ -860,7 +769,6 @@ mod tests {
             )),
             Some(fr(9)),
         );
-        assert_append_matches_values(&claims);
     }
 
     #[derive(OutputClaims)]
@@ -901,7 +809,6 @@ mod tests {
             )),
             None,
         );
-        assert_append_matches_values(&claims);
     }
 
     #[derive(OutputClaims)]
@@ -930,10 +837,9 @@ mod tests {
             present.resolve_output(&committed(JoltCommittedPolynomial::RamInc, relation)),
             Some(fr(8)),
         );
-        assert_append_matches_values(&present);
 
         // An absent optional opening drops out of the count, the value stream,
-        // the transcript appends, and id resolution.
+        // and id resolution.
         let absent = OptionalOutput {
             untrusted: None,
             ram_inc: fr(8),
@@ -944,7 +850,6 @@ mod tests {
             absent.resolve_output(&JoltOpeningId::untrusted_advice(relation)),
             None,
         );
-        assert_append_matches_values(&absent);
     }
 
     #[test]
@@ -1361,7 +1266,7 @@ mod sumcheck_batch_derive_tests {
 
     // The opt-out fixture: `#[sumcheck_batch(no_opening_values)]` must still
     // generate the five aggregate structs but emit NO `opening_values` /
-    // `append_output_claims` on the source struct. The inherent `opening_values`
+    // `receive_output_claims` / `verify_clear` on the source struct. The inherent `opening_values`
     // below would collide with a generated one (the compiler rejects two inherent
     // methods of the same name), so this module compiling at all proves the
     // opt-out suppressed it.
@@ -1444,7 +1349,7 @@ mod sumcheck_batch_derive_tests {
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod begin_batch_tests {
-    use super::draw_recording::{record, DrawEvent};
+    use super::test_transcript::{assert_same_draws, fresh};
     use super::ConcreteSumcheck as _;
     use crate::stages::stage5::{InstructionReadRaf, RegistersValEvaluation};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -1452,8 +1357,8 @@ mod begin_batch_tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationInputClaims;
     use jolt_field::{Fr, JoltField, Ring};
-    use jolt_sumcheck::{append_sumcheck_claim, BatchMember, ClearSumcheckRecorder};
-    use jolt_transcript::Transcript;
+    use jolt_sumcheck::{BatchMember, ClearSumcheckRecorder};
+    use jolt_transcript::Channel;
 
     #[derive(super::SumcheckBatch)]
     #[sumcheck_batch(crate = "crate")]
@@ -1481,13 +1386,12 @@ mod begin_batch_tests {
         }
     }
 
-    /// `begin_batch` with a clear recorder must reproduce the exact head
-    /// Fiat-Shamir sequence `verify_clear` performed before the factoring —
-    /// per-member `input_claim` absorbed under `b"sumcheck_claim"` in
-    /// declaration order, then one coefficient squeeze per member — and pack
-    /// the prelude's engine and named views consistently.
+    /// `begin_batch` with a clear recorder absorbs every member's
+    /// `input_claim` as public values in declaration order, then draws one
+    /// uniform batching coefficient per member, and packs the prelude from
+    /// exactly those values.
     #[test]
-    fn begin_batch_matches_head_replica_and_packs_prelude() {
+    fn begin_batch_absorbs_input_claims_then_draws_coefficients() {
         let sumchecks = fixture(true);
         let inputs = HeadFixtureInputClaims::<Fr> {
             instruction_read_raf: instruction_inputs(),
@@ -1495,17 +1399,10 @@ mod begin_batch_tests {
                 registers_val: Fr::from_u64(7),
             }),
         };
-        let (_, challenges) = record(|t| sumchecks.draw_challenges(t));
-        let challenges = challenges.unwrap();
+        let challenges = sumchecks.draw_challenges(&mut fresh()).unwrap();
 
-        let (events, head) = record(|t| {
-            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
-            sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
-        });
-        let (batch, coefficients) = head.unwrap();
-
-        // The replica head: input_claim is transcript-pure, so only the absorbs
-        // and coefficient squeezes are observable events.
+        // `input_claim` is transcript-pure, so the expected sums come from the
+        // members directly.
         let instruction_sum = sumchecks
             .instruction_read_raf
             .input_claim(
@@ -1522,12 +1419,17 @@ mod begin_batch_tests {
                 challenges.registers_val_evaluation.as_ref().unwrap(),
             )
             .unwrap();
-        let (replica_events, (instruction_coeff, registers_coeff)) = record(|t| {
-            append_sumcheck_claim(t, &instruction_sum);
-            append_sumcheck_claim(t, &registers_sum);
-            (t.challenge_scalar(), t.challenge_scalar())
-        });
-        assert_eq!(events, replica_events);
+        let (head, (instruction_coeff, registers_coeff)) = assert_same_draws(
+            |t| {
+                let mut recorder = ClearSumcheckRecorder::<Fr>::new();
+                sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
+            },
+            |t| {
+                t.public_all(&[instruction_sum, registers_sum]);
+                (t.challenge::<Fr>(), t.challenge::<Fr>())
+            },
+        );
+        let (batch, coefficients) = head.unwrap();
 
         let instruction_rounds = sumchecks.instruction_read_raf.rounds();
         let registers_rounds = sumchecks
@@ -1563,7 +1465,7 @@ mod begin_batch_tests {
         assert_eq!(coefficients.registers_val_evaluation, Some(registers_coeff));
     }
 
-    /// An absent `Option` member contributes no absorb, no coefficient squeeze,
+    /// An absent `Option` member contributes no absorb, no coefficient draw,
     /// and no batch entry.
     #[test]
     fn begin_batch_skips_absent_option_member() {
@@ -1572,24 +1474,30 @@ mod begin_batch_tests {
             instruction_read_raf: instruction_inputs(),
             registers_val_evaluation: None,
         };
-        let (_, challenges) = record(|t| sumchecks.draw_challenges(t));
-        let challenges = challenges.unwrap();
+        let challenges = sumchecks.draw_challenges(&mut fresh()).unwrap();
+        let instruction_sum = sumchecks
+            .instruction_read_raf
+            .input_claim(
+                &inputs.instruction_read_raf,
+                &challenges.instruction_read_raf,
+            )
+            .unwrap();
 
-        let (events, head) = record(|t| {
-            let mut recorder = ClearSumcheckRecorder::<Fr, Fr>::new();
-            sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
-        });
+        let (head, instruction_coeff) = assert_same_draws(
+            |t| {
+                let mut recorder = ClearSumcheckRecorder::<Fr>::new();
+                sumchecks.begin_batch(&inputs, &challenges, &mut recorder, t)
+            },
+            |t| {
+                t.public_all(&[instruction_sum]);
+                t.challenge::<Fr>()
+            },
+        );
         let (batch, coefficients) = head.unwrap();
 
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| matches!(event, DrawEvent::Squeeze(_)))
-                .count(),
-            1,
-        );
         assert_eq!(batch.members.len(), 1);
         assert_eq!(batch.max_num_vars, sumchecks.instruction_read_raf.rounds());
+        assert_eq!(coefficients.instruction_read_raf, instruction_coeff);
         assert_eq!(coefficients.registers_val_evaluation, None);
     }
 }

@@ -497,7 +497,6 @@ pub fn stage6b_opening_values<F: JoltField>(
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;

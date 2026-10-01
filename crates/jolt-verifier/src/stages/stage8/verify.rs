@@ -539,10 +539,16 @@ mod tests {
         use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
         use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 
-        let commitments = JoltCommitments::new((), (), vec![(), ()], vec![(), ()], vec![()])
-            .with_field_inline(FieldInlineCommitments {
+        let commitments = JoltCommitments {
+            rd_inc: (),
+            ram_inc: (),
+            instruction_ra: vec![(), ()],
+            ram_ra: vec![(), ()],
+            bytecode_ra: vec![()],
+            field_inline: FieldInlineCommitments {
                 field_registers: FieldRegistersCommitments { rd_inc: () },
-            });
+            },
+        };
         let opening_point = [2u64, 3, 5].map(Fr::from_u64);
         let field_point = [3u64, 5].map(Fr::from_u64);
 
@@ -598,33 +604,23 @@ mod tests {
         );
     }
 
-    /// The splice fails closed on a missing field-inline commitment payload and on a plan
-    /// without its RdInc anchor.
+    /// The splice fails closed on a plan without its RdInc anchor.
     #[cfg(feature = "field-inline")]
     #[test]
-    fn field_inline_splice_fails_closed() {
+    fn field_inline_splice_fails_closed_without_anchor() {
         use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
 
         let opening_point = [2u64, 3].map(Fr::from_u64);
-        let without_payload = JoltCommitments::new((), (), Vec::new(), Vec::new(), Vec::new());
-        assert!(matches!(
-            crate::stages::stage8::field_inline::splice_final_opening(
-                &mut base_entries(false),
-                &without_payload,
-                TracePolynomialOrder::CycleMajor,
-                &opening_point,
-                &opening_point,
-                None,
-            ),
-            Err(VerifierError::MissingProofPayload {
-                field: "commitments.field_inline"
-            })
-        ));
-
-        let commitments = JoltCommitments::new((), (), Vec::new(), Vec::new(), Vec::new())
-            .with_field_inline(FieldInlineCommitments {
+        let commitments = JoltCommitments {
+            rd_inc: (),
+            ram_inc: (),
+            instruction_ra: Vec::new(),
+            ram_ra: Vec::new(),
+            bytecode_ra: Vec::new(),
+            field_inline: FieldInlineCommitments {
                 field_registers: FieldRegistersCommitments { rd_inc: () },
-            });
+            },
+        };
         let mut anchorless: Vec<Stage8BatchEntry<'_, Fr, ()>> = Vec::new();
         assert!(matches!(
             crate::stages::stage8::field_inline::splice_final_opening(

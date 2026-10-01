@@ -231,7 +231,7 @@ impl<F: JoltField, C> Stage2Output<F, C> {
 )]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::test_transcript::assert_same_draws;
     use crate::stages::relations::ConcreteSumcheck;
     use common::jolt_device::{JoltDevice, MemoryConfig};
     #[cfg(feature = "field-inline")]
@@ -243,7 +243,7 @@ mod tests {
     };
     use jolt_field::{Fr, Ring};
     use jolt_program::preprocess::PublicIoMemory;
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -287,38 +287,31 @@ mod tests {
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the pre-port inline draw: the RAM read-write
-    /// gamma, the instruction claim-reduction gamma (each a single `challenge_scalar`), under
-    /// `field-inline` the field-inline claim-reduction gamma (the spec's draw slot: after the
-    /// instruction claim-reduction gamma, before the RAM output address challenges), then the
-    /// RAM output-check address reference point — one raw `challenge()` per RAM address
-    /// variable, via the last member's `draw_challenges` override (the other members draw
-    /// nothing).
+    /// The batch draws the RAM read-write gamma, the instruction claim-reduction
+    /// gamma, under `field-inline` the field-inline claim-reduction gamma (the
+    /// spec's draw slot: after the instruction claim-reduction gamma, before the
+    /// RAM output address challenges), each one uniform challenge, then the RAM
+    /// output-check address reference point — one small challenge per RAM
+    /// address variable, via the last member's `draw_challenges` override (the
+    /// other members draw nothing).
     #[test]
-    fn draw_challenges_matches_inline_draw_sequence() {
+    fn draw_challenges_follow_member_order() {
         let sumchecks = sumchecks();
         let log_k = sumchecks.ram_output_check.read_write_dimensions().log_k();
         #[cfg(not(feature = "field-inline"))]
         let gamma_draws = 2usize;
         #[cfg(feature = "field-inline")]
         let gamma_draws = 3usize;
-        let (inline_events, (inline_gammas, inline_output_address)) = record(|t| {
-            (
-                (0..gamma_draws)
-                    .map(|_| t.challenge_scalar())
-                    .collect::<Vec<Fr>>(),
-                (0..log_k).map(|_| t.challenge()).collect::<Vec<Fr>>(),
-            )
-        });
-        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
-
-        assert_eq!(draw_events, inline_events);
-        assert_eq!(
-            draw_events,
-            (1..=(gamma_draws + log_k) as u64)
-                .map(DrawEvent::Squeeze)
-                .collect::<Vec<_>>()
+        let (challenges, (gammas, output_address)) = assert_same_draws(
+            |t| sumchecks.draw_challenges(t).unwrap(),
+            |t| {
+                (
+                    (0..gamma_draws).map(|_| t.challenge()).collect::<Vec<Fr>>(),
+                    t.challenges_small::<Fr>(log_k),
+                )
+            },
         );
+
         #[cfg(not(feature = "field-inline"))]
         let drawn_gammas = vec![
             challenges.ram_read_write.gamma,
@@ -330,19 +323,16 @@ mod tests {
             challenges.instruction_claim_reduction.gamma,
             challenges.field_registers_claim_reduction.gamma,
         ];
-        assert_eq!(drawn_gammas, inline_gammas);
-        assert_eq!(
-            challenges.ram_output_check.output_address,
-            inline_output_address
-        );
+        assert_eq!(drawn_gammas, gammas);
+        assert_eq!(challenges.ram_output_check.output_address, output_address);
     }
 
     /// A stage-2 batch output whose reduced instruction openings equal the
     /// product-remainder ones they alias (`lookup_output`,
     /// `left`/`right_instruction_input`). `validate_aliases` accepts it; the tests
     /// below perturb one alias each to assert rejection. The aliased cells carry
-    /// the product values; the absorb test overrides them with sentinels to prove
-    /// they are skipped.
+    /// the product values; the opening-order tests override them with sentinels
+    /// to prove they are skipped.
     #[cfg_attr(
         not(feature = "field-inline"),
         expect(

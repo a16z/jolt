@@ -244,7 +244,7 @@ impl<F: JoltField, C> Stage4Output<F, C> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::test_transcript::assert_same_draws;
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::geometry::dimensions::{
@@ -254,7 +254,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -333,6 +333,23 @@ mod tests {
         assert_eq!(claims_with_advice(true).opening_values(), expected);
     }
 
+    /// The openings sent after the rounds exclude the staged advice and
+    /// program-image openings, which travel before the batch: the five register
+    /// openings, under `field-inline` the five field-inline openings, then
+    /// `ram_ra`/`ram_inc`.
+    #[test]
+    fn post_round_opening_values_omit_staged_openings() {
+        let expected: Vec<Fr> = (3..=7)
+            .map(fr)
+            .chain(field_inline_splice())
+            .chain([fr(8), fr(9)])
+            .collect();
+        assert_eq!(
+            sumchecks().post_round_opening_values(&claims_with_advice(true)),
+            expected
+        );
+    }
+
     fn sumchecks() -> Stage4Sumchecks<Fr> {
         let log_t = 4usize;
         let ram_log_k = 3usize;
@@ -355,45 +372,34 @@ mod tests {
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the inline draw order: one `challenge_scalar` per
-    /// leading member — the registers gamma, under `field-inline` the field-register
-    /// read-write gamma (the spec's draw slot: after the registers gamma, before the RAM
-    /// value-check draw) — then the RAM value-check draw (its domain separator + gamma; that
-    /// draw's byte exactness is pinned by its own member test). The replica reuses the RAM
-    /// member's `draw_challenges` so this test pins the member ORDER.
+    /// The batch draws one uniform gamma per member in declaration order: the
+    /// registers gamma, under `field-inline` the field-register read-write gamma
+    /// (the spec's draw slot: after the registers gamma, before the RAM
+    /// value-check gamma), then the RAM value-check gamma.
     #[test]
-    fn draw_challenges_matches_inline_draw_sequence() {
-        use crate::stages::relations::ConcreteSumcheck as _;
-
+    fn draw_challenges_follow_member_order() {
         let sumchecks = sumchecks();
         #[cfg(not(feature = "field-inline"))]
-        let leading_gamma_draws = 1usize;
+        let gamma_draws = 2usize;
         #[cfg(feature = "field-inline")]
-        let leading_gamma_draws = 2usize;
-        let (inline_events, (inline_gammas, inline_ram_gamma)) = record(|t| {
-            let gammas = (0..leading_gamma_draws)
-                .map(|_| t.challenge_scalar())
-                .collect::<Vec<Fr>>();
-            let ram = sumchecks.ram_val_check.draw_challenges(t).unwrap();
-            (gammas, ram.gamma)
-        });
-        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
+        let gamma_draws = 3usize;
+        let (challenges, gammas) = assert_same_draws(
+            |t| sumchecks.draw_challenges(t).unwrap(),
+            |t| (0..gamma_draws).map(|_| t.challenge()).collect::<Vec<Fr>>(),
+        );
 
-        assert_eq!(draw_events, inline_events);
-        // The RAM value-check domain separator lands after the leading gammas.
-        assert!(matches!(draw_events.first(), Some(DrawEvent::Squeeze(1))));
-        assert!(draw_events
-            .iter()
-            .any(|event| matches!(event, DrawEvent::Append(_))));
         #[cfg(not(feature = "field-inline"))]
-        let drawn_gammas = vec![challenges.registers_read_write.gamma];
+        let drawn_gammas = vec![
+            challenges.registers_read_write.gamma,
+            challenges.ram_val_check.gamma,
+        ];
         #[cfg(feature = "field-inline")]
         let drawn_gammas = vec![
             challenges.registers_read_write.gamma,
             challenges.field_registers_read_write.gamma,
+            challenges.ram_val_check.gamma,
         ];
-        assert_eq!(drawn_gammas, inline_gammas);
-        assert_eq!(challenges.ram_val_check.gamma, inline_ram_gamma);
+        assert_eq!(drawn_gammas, gammas);
     }
 
     /// The generated `output_claim_count` sums the members' wire sets: the five register

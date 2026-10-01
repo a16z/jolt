@@ -21,13 +21,13 @@ use jolt_transcript::{Channel, ProtocolId, Sponge, VerifierTranscript};
 #[cfg(not(feature = "akita"))]
 use crate::sites::BLINDFOLD;
 use crate::{
-    sites::{COMMITMENTS, PREAMBLE},
     config::{
         validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
     },
     num,
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltProof, ProofCommitments, ProofHeader},
+    sites::{COMMITMENTS, PREAMBLE},
     stages::{
         build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7,
         stage8, CommittedProgramSchedule, PrecommittedSchedule,
@@ -658,52 +658,22 @@ fn validate_ram_remap_base(
 }
 
 #[cfg(test)]
-#[cfg_attr(
-    not(feature = "field-inline"),
-    expect(
-        clippy::useless_conversion,
-        reason = "field-inline selects composed claim and opening types"
-    )
-)]
 mod tests {
     use std::sync::Arc;
 
     use common::constants::RAM_START_ADDRESS;
 
     use super::*;
-    #[cfg(not(feature = "akita"))]
-    use crate::proof::JoltCommitments;
-    use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
-    #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
-    use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
-    use crate::stages::stage1::outputs::Stage1OutputClaims;
-    use crate::stages::stage1::OuterRemainderOutputClaims;
-    use crate::stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims};
-    #[cfg(feature = "field-inline")]
-    use crate::stages::{
-        stage2::outputs::FieldRegistersClaimReductionOutputClaims,
-        stage4::FieldRegistersReadWriteOutputClaims,
-        stage5::FieldRegistersValEvaluationOutputClaims,
-        stage6b::outputs::FieldRegistersIncClaimReductionOutputClaims,
-    };
-    #[cfg(any(feature = "field-inline", feature = "zk"))]
-    use common::constants::MAX_BLINDFOLD_GENERATORS;
+    use crate::preprocessing::ProgramPreprocessing;
     use common::jolt_device::{JoltDevice, MemoryConfig};
-    use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
     #[cfg(feature = "zk")]
     use jolt_crypto::PedersenSetup;
-    use jolt_crypto::{Bn254G1, Commitment, Pedersen, VectorCommitmentOpening};
+    use jolt_crypto::{Bn254G1, Commitment, Pedersen};
     use jolt_field::Fr;
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_poly::MultilinearPoly;
     use jolt_program::preprocess::JoltProgramPreprocessing;
-    use jolt_sumcheck::{
-        ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
-    };
-    use jolt_transcript::Transcript;
-    use num_traits::Zero;
-
-    use crate::preprocessing::ProgramPreprocessing;
+    use jolt_transcript::{ProverTranscript, VerifierTranscript};
 
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestPcs;
@@ -717,7 +687,6 @@ mod tests {
 
     impl CommitmentScheme for TestPcs {
         type Field = Fr;
-        type Proof = ();
         type ProverSetup = ();
         type VerifierSetup = ();
         type OpeningHint = ();
@@ -738,35 +707,95 @@ mod tests {
             Ok((TestCommitment, ()))
         }
 
-        fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
+        fn send_commitment<H: Sponge>(
+            _commitment: &Self::Output,
+            _transcript: &mut ProverTranscript<H>,
+        ) {
+        }
+
+        fn receive_commitment<H: Sponge>(
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut VerifierTranscript<'_, H>,
+        ) -> Result<Self::Output, OpeningsError> {
+            Ok(TestCommitment)
+        }
+
+        fn absorb_commitment<C: Channel>(_commitment: &Self::Output, _channel: &mut C) {}
+
+        fn open<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
             _poly: &P,
             _point: &[Self::Field],
             _eval: Self::Field,
             _setup: &Self::ProverSetup,
             _hint: Option<Self::OpeningHint>,
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
-        ) -> Result<Self::Proof, OpeningsError> {
+            _transcript: &mut ProverTranscript<H>,
+        ) -> Result<(), OpeningsError> {
             Ok(())
         }
 
-        fn verify(
+        fn verify<H: Sponge>(
             _commitment: &Self::Output,
             _point: &[Self::Field],
             _eval: Self::Field,
-            _proof: &Self::Proof,
             _setup: &Self::VerifierSetup,
-            _transcript: &mut impl Transcript<Challenge = Self::Field>,
+            _transcript: &mut VerifierTranscript<'_, H>,
         ) -> Result<(), OpeningsError> {
             Ok(())
         }
     }
 
-    impl jolt_transcript::AppendToTranscript for TestCommitment {
-        fn append_to_transcript<T: Transcript>(&self, _transcript: &mut T) {}
+    // The homomorphic-build entry point's bounds; never reached by the tests,
+    // which reject before any commitment arithmetic.
+    #[cfg(not(feature = "akita"))]
+    impl HomomorphicCommitment<Fr> for TestCommitment {
+        fn add(_c1: &Self, _c2: &Self) -> Self {
+            Self
+        }
+
+        fn linear_combine(_c1: &Self, _c2: &Self, _scalar: &Fr) -> Self {
+            Self
+        }
     }
 
-    type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
-    type TestClaims = JoltProofClaims<Fr, jolt_blindfold::BlindFoldProof<Fr, Bn254G1>>;
+    #[cfg(not(feature = "akita"))]
+    impl AdditivelyHomomorphic for TestPcs {
+        fn combine(_commitments: &[Self::Output], _scalars: &[Self::Field]) -> Self::Output {
+            TestCommitment
+        }
+    }
+
+    #[cfg(not(feature = "akita"))]
+    impl ZkOpeningScheme for TestPcs {
+        type HidingCommitment = Bn254G1;
+        type Blind = ();
+
+        fn commit_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+            _poly: &P,
+            _setup: &Self::ProverSetup,
+        ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+            Ok((TestCommitment, ()))
+        }
+
+        fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
+            _poly: &P,
+            _point: &[Self::Field],
+            _eval: Self::Field,
+            _setup: &Self::ProverSetup,
+            _hint: Self::OpeningHint,
+            _transcript: &mut ProverTranscript<H>,
+        ) -> Result<(Self::HidingCommitment, Self::Blind), OpeningsError> {
+            Ok((Bn254G1::default(), ()))
+        }
+
+        fn verify_zk<H: Sponge>(
+            _commitment: &Self::Output,
+            _point: &[Self::Field],
+            _setup: &Self::VerifierSetup,
+            _transcript: &mut VerifierTranscript<'_, H>,
+        ) -> Result<Self::HidingCommitment, OpeningsError> {
+            Ok(Bn254G1::default())
+        }
+    }
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -784,73 +813,20 @@ mod tests {
         {
         }
 
-        assert_proof_traits::<TestProof>();
+        assert_proof_traits::<JoltProof>();
     }
 
-    #[test]
-    fn accepts_standard_proof_consistency() {
-        let proof = proof_with_zk(false, clear_claims());
-
-        assert!(validate_proof_consistency(&proof, false).is_ok());
-    }
-
-    /// A zk proof cannot exist on the akita build (`zk` and `akita` are
-    /// mutually exclusive), so the accept case is base-only; the reject cases
-    /// below run on both builds.
+    /// `verify` rejects a proof produced under other protocol axes as a
+    /// configuration mismatch before reading the argument string or
+    /// validating the preprocessing: here the argument string is empty and
+    /// the bytecode is invalid, each of which would fail later.
     #[cfg(not(feature = "akita"))]
     #[test]
-    fn accepts_zk_proof_consistency() {
-        let proof = proof_with_zk(true, zk_claims());
-
-        assert!(validate_proof_consistency(&proof, true).is_ok());
-    }
-
-    #[test]
-    fn rejects_wrong_stage_representation() {
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.stages.stage5_sumcheck_proof =
-            SumcheckProof::Committed(CommittedSumcheckProof::default());
-
-        assert!(matches!(
-            validate_proof_consistency(&proof, false),
-            Err(VerifierError::ExpectedClearProof {
-                field: "stage5_sumcheck_proof",
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_wrong_verifier_zk_flag() {
-        let proof = proof_with_zk(false, clear_claims());
-
-        assert!(matches!(
-            validate_proof_consistency(&proof, true),
-            Err(VerifierError::ExpectedCommittedProof {
-                field: "stage1_uni_skip_first_round_proof",
-            })
-        ));
-    }
-
-    #[test]
-    fn checks_payload_for_selected_zk_flag() {
-        assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(false, zk_claims()), false),
-            Err(VerifierError::UnexpectedBlindFoldProof)
-        ));
-        assert!(matches!(
-            validate_proof_consistency(&proof_with_zk(true, clear_claims()), true),
-            Err(VerifierError::UnexpectedOpeningClaims)
-        ));
-    }
-
-    #[test]
-    fn protocol_and_payload_reject_before_preprocessing_validation() {
+    fn protocol_mismatch_rejects_before_transcript_and_preprocessing() {
         #[cfg(feature = "field-inline")]
         use jolt_riscv::JoltInstructionKind;
-        use jolt_transcript::LegacyBlake2bTranscript;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut preprocessing = test_preprocessing();
-        // Invalid metadata and layout give independent later-stage failures.
         #[cfg(feature = "field-inline")]
         if let ProgramPreprocessing::Full(full) = &mut preprocessing.program {
             let bytecode = &mut Arc::make_mut(full).bytecode.bytecode;
@@ -859,37 +835,24 @@ mod tests {
                 instruction.operands.rs1 = Some(u8::MAX);
             }
         }
-        let is_zk = JOLT_VERIFIER_CONFIG.zk == ZkConfig::BlindFold;
-        let mut proof = proof_with_zk(is_zk, if is_zk { zk_claims() } else { clear_claims() });
-        proof.protocol.zk = if is_zk {
-            ZkConfig::Transparent
-        } else {
-            ZkConfig::BlindFold
+        let mut protocol = JOLT_VERIFIER_CONFIG;
+        protocol.zk = match protocol.zk {
+            ZkConfig::BlindFold => ZkConfig::Transparent,
+            ZkConfig::Transparent => ZkConfig::BlindFold,
         };
-        let public_io = JoltDevice::default();
+        let proof = JoltProof {
+            protocol,
+            narg: Vec::new(),
+        };
+
         assert!(matches!(
-            validate_and_seed_transcript::<_, _, LegacyBlake2bTranscript, _>(
+            verify::<Fr, TestPcs, Pedersen<Bn254G1>, JoltSponge>(
                 &preprocessing,
-                &public_io,
+                &JoltDevice::default(),
                 &proof,
-                None
+                None,
             ),
             Err(VerifierError::ProtocolConfigMismatch { .. })
-        ));
-        proof.protocol = JOLT_VERIFIER_CONFIG;
-        proof.stages.stage1_sumcheck_proof = sumcheck_proof(!is_zk);
-        assert!(matches!(
-            validate_and_seed_transcript::<_, _, LegacyBlake2bTranscript, _>(
-                &preprocessing,
-                &public_io,
-                &proof,
-                None
-            ),
-            Err(VerifierError::ExpectedClearProof {
-                field: "stage1_sumcheck_proof"
-            } | VerifierError::ExpectedCommittedProof {
-                field: "stage1_sumcheck_proof"
-            })
         ));
     }
 
@@ -903,17 +866,17 @@ mod tests {
             outputs: vec![3, 0, 0],
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(false, clear_claims());
+        let header = test_header();
 
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
+        let checked = validate_inputs(&preprocessing, &public_io, &header, false).unwrap();
 
         assert_eq!(checked.public_io.inputs, vec![1, 2]);
         assert_eq!(checked.public_io.outputs, vec![3]);
-        assert_eq!(checked.trace_length, proof.trace_length);
-        assert_eq!(checked.ram_K, proof.ram_K);
+        assert_eq!(checked.trace_length, header.trace_length);
+        assert_eq!(checked.ram_K, header.ram_K);
 
         public_io.outputs = vec![0, 0];
-        let checked = validate_inputs(&preprocessing, &public_io, &proof, false).unwrap();
+        let checked = validate_inputs(&preprocessing, &public_io, &header, false).unwrap();
         assert!(checked.public_io.outputs.is_empty());
     }
 
@@ -921,10 +884,9 @@ mod tests {
     fn validate_inputs_rejects_public_io_layout_mismatch() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice::default();
-        let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false),
+            validate_inputs(&preprocessing, &public_io, &test_header(), false),
             Err(VerifierError::MemoryLayoutMismatch)
         ));
     }
@@ -941,10 +903,9 @@ mod tests {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(false, clear_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false),
+            validate_inputs(&preprocessing, &public_io, &test_header(), false),
             Err(VerifierError::InvalidMemoryLayout { reason })
                 if reason.contains("lowest remapped RAM address")
         ));
@@ -957,11 +918,13 @@ mod tests {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.ram_K = 2;
+        let header = ProofHeader {
+            ram_K: 2,
+            ..test_header()
+        };
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false),
+            validate_inputs(&preprocessing, &public_io, &header, false),
             Err(VerifierError::InvalidRamK { got: 2, min: 4, .. })
         ));
     }
@@ -973,11 +936,13 @@ mod tests {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
-        let mut proof = proof_with_zk(false, clear_claims());
-        proof.ram_K = 1 << 20;
+        let header = ProofHeader {
+            ram_K: 1 << 20,
+            ..test_header()
+        };
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false),
+            validate_inputs(&preprocessing, &public_io, &header, false),
             Err(VerifierError::InvalidRamK {
                 got,
                 min: 4,
@@ -1013,10 +978,9 @@ mod tests {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false),
+            validate_inputs(&preprocessing, &public_io, &test_header(), false),
             Err(VerifierError::MissingVectorCommitmentSetup)
         ));
     }
@@ -1033,30 +997,15 @@ mod tests {
             memory_layout: preprocessing.program.memory_layout().clone(),
             ..JoltDevice::default()
         };
-        let proof = proof_with_zk(true, zk_claims());
 
         assert!(matches!(
-            validate_inputs(&preprocessing, &public_io, &proof, false),
+            validate_inputs(&preprocessing, &public_io, &test_header(), false),
             Err(VerifierError::InvalidVectorCommitmentCapacity { got: 1, .. })
         ));
     }
 
-    fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
-        JoltProof {
-            protocol: crate::config::JoltProtocolConfig::for_zk(claims.is_zk()),
-            #[cfg(not(feature = "akita"))]
-            commitments: test_commitments(),
-            #[cfg(feature = "akita")]
-            commitments: TestCommitment,
-            stages: stage_proofs(is_zk),
-            #[cfg(not(feature = "akita"))]
-            joint_opening_proof: (),
-            #[cfg(feature = "akita")]
-            joint_opening_proof: (),
-            untrusted_advice_commitment: None,
-            #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc_commitment: Some(TestCommitment),
-            claims,
+    fn test_header() -> ProofHeader {
+        ProofHeader {
             trace_length: 1,
             ram_K: 4,
             rw_config: JoltReadWriteConfig {
@@ -1069,299 +1018,8 @@ mod tests {
                 log_k_chunk: 0,
                 lookups_ra_virtual_log_k_chunk: 0,
             },
-            trace_polynomial_order: crate::proof::TracePolynomialOrder::CycleMajor,
-        }
-    }
-
-    #[cfg(not(feature = "akita"))]
-    fn test_commitments() -> JoltCommitments<TestCommitment> {
-        #[cfg(feature = "field-inline")]
-        {
-            JoltCommitments::new(
-                TestCommitment,
-                TestCommitment,
-                Vec::<TestCommitment>::new(),
-                Vec::<TestCommitment>::new(),
-                Vec::<TestCommitment>::new(),
-            )
-            .with_field_inline(FieldInlineCommitments {
-                field_registers: FieldRegistersCommitments {
-                    rd_inc: TestCommitment,
-                },
-            })
-        }
-        #[cfg(not(feature = "field-inline"))]
-        JoltCommitments::new(
-            TestCommitment,
-            TestCommitment,
-            Vec::<TestCommitment>::new(),
-            Vec::<TestCommitment>::new(),
-            Vec::<TestCommitment>::new(),
-        )
-    }
-
-    fn clear_claims() -> TestClaims {
-        let zero = Fr::zero();
-
-        JoltProofClaims::Clear(ClearProofClaims {
-            stage1: Stage1OutputClaims::new(zero, empty_spartan_outer_claims()),
-            stage2: Stage2OutputClaims::new(
-                zero,
-                Stage2BatchOutputClaims {
-                    ram_read_write: stage2::outputs::RamReadWriteOutputClaims {
-                        val: zero,
-                        ra: zero,
-                        inc: zero,
-                    },
-                    product_remainder: stage2::outputs::ProductRemainderOutputClaims {
-                        left_instruction_input: zero,
-                        right_instruction_input: zero,
-                        jump_flag: zero,
-                        write_lookup_output_to_rd: zero,
-                        lookup_output: zero,
-                        branch_flag: zero,
-                        next_is_noop: zero,
-                        virtual_instruction: zero,
-                    }.into(),
-                    instruction_claim_reduction:
-                        stage2::outputs::InstructionClaimReductionOutputClaims {
-                            lookup_output: zero,
-                            left_lookup_operand: zero,
-                            right_lookup_operand: zero,
-                            left_instruction_input: zero,
-                            right_instruction_input: zero,
-                        },
-                    #[cfg(feature = "field-inline")]
-                    field_registers_claim_reduction:
-                        FieldRegistersClaimReductionOutputClaims {
-                            rd_value: zero,
-                            rs1_value: zero,
-                            rs2_value: zero,
-                        },
-                    ram_raf_evaluation: stage2::outputs::RamRafEvaluationOutputClaims {
-                        ram_ra: zero,
-                    },
-                    ram_output_check: stage2::outputs::RamOutputCheckOutputClaims {
-                        val_final: zero,
-                    },
-                },
-            ),
-            stage3: stage3::outputs::Stage3OutputClaims {
-                shift: stage3::outputs::SpartanShiftOutputClaims {
-                    unexpanded_pc: zero,
-                    pc: zero,
-                    is_virtual: zero,
-                    is_first_in_sequence: zero,
-                    is_noop: zero,
-                },
-                instruction_input: stage3::outputs::InstructionInputOutputClaims {
-                    left_operand_is_rs1: zero,
-                    rs1_value: zero,
-                    left_operand_is_pc: zero,
-                    unexpanded_pc: zero,
-                    right_operand_is_rs2: zero,
-                    rs2_value: zero,
-                    right_operand_is_imm: zero,
-                    imm: zero,
-                },
-                registers_claim_reduction: stage3::outputs::RegistersClaimReductionOutputClaims {
-                    rd_write_value: zero,
-                    rs1_value: zero,
-                    rs2_value: zero,
-                },
-            },
-            stage4: stage4::outputs::Stage4OutputClaims {
-                registers_read_write: stage4::RegistersReadWriteOutputClaims {
-                    registers_val: zero,
-                    rs1_ra: zero,
-                    rs2_ra: zero,
-                    rd_wa: zero,
-                    rd_inc: zero,
-                },
-                #[cfg(feature = "field-inline")]
-                field_registers_read_write: FieldRegistersReadWriteOutputClaims {
-                    registers_val: zero,
-                    rs1_ra: zero,
-                    rs2_ra: zero,
-                    rd_wa: zero,
-                    rd_inc: zero,
-                },
-                ram_val_check: stage4::RamValCheckOutputClaims {
-                    untrusted_advice: None,
-                    trusted_advice: None,
-                    program_image: None,
-                    ram_ra: zero,
-                    ram_inc: zero,
-                },
-            },
-            stage5: stage5::outputs::Stage5OutputClaims {
-                instruction_read_raf: stage5::InstructionReadRafOutputClaims {
-                    lookup_table_flags: Vec::new(),
-                    instruction_ra: Vec::new(),
-                    instruction_raf_flag: zero,
-                },
-                ram_ra_claim_reduction: stage5::RamRaClaimReductionOutputClaims { ram_ra: zero },
-                registers_val_evaluation: stage5::RegistersValEvaluationOutputClaims {
-                    rd_inc: zero,
-                    rd_wa: zero,
-                },
-                #[cfg(feature = "field-inline")]
-                field_registers_val_evaluation: FieldRegistersValEvaluationOutputClaims {
-                    rd_inc: zero,
-                    rd_wa: zero,
-                },
-            },
-            stage6a: stage6a::outputs::Stage6aOutputClaims {
-                bytecode_read_raf: stage6a::outputs::BytecodeReadRafAddressPhaseOutputClaims {
-                    intermediate: zero,
-                    val_stages: Vec::new(),
-                }.into(),
-                booleanity: stage6a::outputs::BooleanityAddressPhaseOutputClaims {
-                    intermediate: zero,
-                },
-            },
-            stage6b: stage6b::outputs::Stage6bOutputClaims {
-                #[cfg(not(feature = "akita"))]
-                bytecode_read_raf: stage6b::outputs::BytecodeReadRafOutputClaims {
-                    bytecode_ra: Vec::new(),
-                },
-                #[cfg(feature = "akita")]
-                bytecode_read_raf:
-                    stage6b::bytecode_read_raf::LatticeBytecodeReadRafOutputClaims {
-                        bytecode_ra: Vec::new(),
-                        fused_inc: zero,
-                    },
-                #[cfg(not(feature = "akita"))]
-                booleanity: stage6b::outputs::BooleanityOutputClaims {
-                    instruction_ra: Vec::new(),
-                    bytecode_ra: Vec::new(),
-                    ram_ra: Vec::new(),
-                },
-                #[cfg(feature = "akita")]
-                booleanity:
-                    jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
-                        instruction_ra: Vec::new(),
-                        bytecode_ra: Vec::new(),
-                        ram_ra: Vec::new(),
-                        balanced_inc_digits: Vec::new(),
-                        balanced_inc_carry: zero,
-                    },
-                ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
-                    ram_hamming_weight: zero,
-                },
-                ram_ra_virtualization: stage6b::outputs::RamRaVirtualizationOutputClaims {
-                    ram_ra: Vec::new(),
-                },
-                instruction_ra_virtualization:
-                    stage6b::outputs::InstructionRaVirtualizationOutputClaims {
-                        committed_instruction_ra: Vec::new(),
-                    },
-                #[cfg(not(feature = "akita"))]
-                inc_claim_reduction: stage6b::outputs::IncClaimReductionOutputClaims {
-                    ram_inc: zero,
-                    rd_inc: zero,
-                },
-                #[cfg(feature = "field-inline")]
-                field_registers_inc_claim_reduction:
-                    FieldRegistersIncClaimReductionOutputClaims { rd_inc: zero },
-                #[cfg(not(feature = "akita"))]
-                trusted_advice: None,
-                #[cfg(not(feature = "akita"))]
-                untrusted_advice: None,
-                bytecode_reduction: None,
-                program_image_reduction: None,
-            },
-            stage7: stage7::outputs::Stage7OutputClaims {
-                hamming_weight_claim_reduction:
-                    stage7::hamming_weight_claim_reduction::HammingWeightClaimReductionOutputClaims {
-                        instruction_ra: Vec::new(),
-                        bytecode_ra: Vec::new(),
-                        ram_ra: Vec::new(),
-                        #[cfg(feature = "akita")]
-                        balanced_inc_digits: Vec::new(),
-                        #[cfg(feature = "akita")]
-                        balanced_inc_carry: zero,
-                    },
-                #[cfg(not(feature = "akita"))]
-                trusted_advice: None,
-                #[cfg(not(feature = "akita"))]
-                untrusted_advice: None,
-                bytecode_address_phase: None,
-                program_image_address_phase: None,
-            },
-        })
-    }
-
-    fn empty_spartan_outer_claims() -> stage1::outputs::Stage1BatchOutputClaims<Fr> {
-        stage1::outputs::Stage1BatchOutputClaims {
-            outer_remainder: OuterRemainderOutputClaims::<Fr>::default().into(),
-        }
-    }
-
-    fn zk_claims() -> TestClaims {
-        JoltProofClaims::Zk {
-            blindfold_proof: empty_blindfold_proof(),
-        }
-    }
-
-    fn empty_blindfold_proof() -> jolt_blindfold::BlindFoldProof<Fr, Bn254G1> {
-        jolt_blindfold::BlindFoldProof {
-            auxiliary_row_commitments: Vec::new(),
-            random_round_commitments: Vec::new(),
-            random_output_claim_row_commitments: Vec::new(),
-            random_auxiliary_row_commitments: Vec::new(),
-            random_error_row_commitments: Vec::new(),
-            random_eval_commitments: Vec::new(),
-            random_u: Fr::zero(),
-            cross_term_error_row_commitments: Vec::new(),
-            outer_sumcheck: CompressedSumcheckProof::default(),
-            az_rx: Fr::zero(),
-            bz_rx: Fr::zero(),
-            cz_rx: Fr::zero(),
-            inner_sumcheck: CompressedSumcheckProof::default(),
-            witness_opening: VectorCommitmentOpening {
-                combined_vector: Vec::new(),
-                combined_blinding: Fr::zero(),
-            },
-            error_opening: VectorCommitmentOpening {
-                combined_vector: Vec::new(),
-                combined_blinding: Fr::zero(),
-            },
-            folded_eval_outputs: Vec::new(),
-            folded_eval_blindings: Vec::new(),
-            folded_eval_output_openings: Vec::new(),
-            folded_eval_blinding_openings: Vec::new(),
-        }
-    }
-
-    fn stage_proofs(is_zk: bool) -> JoltStageProofs<Fr, Pedersen<Bn254G1>> {
-        JoltStageProofs {
-            stage1_uni_skip_first_round_proof: uniskip_proof(is_zk),
-            stage1_sumcheck_proof: sumcheck_proof(is_zk),
-            stage2_uni_skip_first_round_proof: uniskip_proof(is_zk),
-            stage2_sumcheck_proof: sumcheck_proof(is_zk),
-            stage3_sumcheck_proof: sumcheck_proof(is_zk),
-            stage4_sumcheck_proof: sumcheck_proof(is_zk),
-            stage5_sumcheck_proof: sumcheck_proof(is_zk),
-            stage6a_sumcheck_proof: sumcheck_proof(is_zk),
-            stage6b_sumcheck_proof: sumcheck_proof(is_zk),
-            stage7_sumcheck_proof: sumcheck_proof(is_zk),
-        }
-    }
-
-    fn uniskip_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
-        if is_zk {
-            SumcheckProof::Committed(CommittedSumcheckProof::default())
-        } else {
-            SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default()))
-        }
-    }
-
-    fn sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
-        if is_zk {
-            SumcheckProof::Committed(CommittedSumcheckProof::default())
-        } else {
-            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()))
+            trace_polynomial_order: TracePolynomialOrder::CycleMajor,
+            untrusted_advice: false,
         }
     }
 

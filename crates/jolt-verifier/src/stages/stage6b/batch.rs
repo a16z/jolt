@@ -559,54 +559,47 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::as_conversions,
-    reason = "tests use plain arithmetic on fixture data"
-)]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::test_transcript::assert_same_draws;
     use jolt_field::Fr;
 
-    /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
-    /// (base) the inc gamma, under `field-inline` the field-inline inc gamma (the spec's `eta`
-    /// draw slot: after the ordinary inc gamma, before the optional committed-bytecode eta),
-    /// then the committed bytecode eta exactly when the bytecode layout is committed.
+    /// Pins the post-6a draw schedule to member declaration order, one uniform
+    /// challenge each: the instruction-RA gamma, (base) the inc gamma, under
+    /// `field-inline` the field-inline inc gamma (the spec's `eta` draw slot:
+    /// after the ordinary inc gamma, before the optional committed-bytecode
+    /// eta), then the committed bytecode eta exactly when the bytecode layout is
+    /// committed.
     #[test]
     fn stage6b_draws_follow_member_declaration_order() {
         for committed_bytecode in [false, true] {
-            let mut expected_squeezes = 1usize;
+            let mut expected_draws = 1usize;
             #[cfg(not(feature = "akita"))]
             {
-                expected_squeezes += 1;
+                expected_draws += 1;
             }
             #[cfg(feature = "field-inline")]
             {
-                expected_squeezes += 1;
+                expected_draws += 1;
             }
-            expected_squeezes += usize::from(committed_bytecode);
+            expected_draws += usize::from(committed_bytecode);
 
-            let (inline_events, inline_values) = record(|t| {
-                (0..expected_squeezes)
-                    .map(|_| t.challenge())
-                    .collect::<Vec<Fr>>()
-            });
-            let (draw_events, draws) = record(|t| Stage6bDraws::<Fr>::draw(t, committed_bytecode));
-
-            assert_eq!(draw_events, inline_events);
-            assert_eq!(
-                draw_events,
-                (1..=expected_squeezes as u64)
-                    .map(DrawEvent::Squeeze)
-                    .collect::<Vec<_>>()
+            let (draws, values) = assert_same_draws(
+                |t| Stage6bDraws::<Fr>::draw(t, committed_bytecode),
+                |t| {
+                    (0..expected_draws)
+                        .map(|_| t.challenge())
+                        .collect::<Vec<Fr>>()
+                },
             );
+
             let mut ordered = vec![draws.instruction_ra_gamma];
             #[cfg(not(feature = "akita"))]
             ordered.push(draws.inc_gamma);
             #[cfg(feature = "field-inline")]
             ordered.push(draws.field_registers_inc_gamma);
             ordered.extend(draws.eta);
-            assert_eq!(ordered, inline_values);
+            assert_eq!(ordered, values);
             assert_eq!(draws.eta.is_some(), committed_bytecode);
         }
     }

@@ -179,8 +179,7 @@ mod tests {
     };
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
-    use crate::stages::relations::append_recording::RecordingTranscript;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::test_transcript::{assert_same_draws, fresh};
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
@@ -231,33 +230,26 @@ mod tests {
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the retired hand pre-batch draw:
-    /// the bytecode member's six gammas, then the booleanity member's override —
-    /// the reference-address pad draw (the reversed stage-5 instruction address
-    /// is narrower than the committed chunk width here) and the booleanity
-    /// gamma. The reference vectors are pure computation (reversal, pad slot)
-    /// off the stage-5 point the relation carries.
+    /// The batch draws the bytecode member's six uniform gammas, then the
+    /// booleanity member's reference-address pad (the reversed stage-5
+    /// instruction address is narrower than the committed chunk width here, so
+    /// one small challenge fills the missing slot) and its small gamma.
     #[test]
     #[expect(clippy::unwrap_used)]
-    fn draw_challenges_matches_inline_draw_sequence() {
+    fn draw_challenges_pads_narrow_reference_address() {
         let address = vec![fr(11)];
         let cycle = vec![fr(21), fr(22), fr(23), fr(24)];
         let sumchecks = sumchecks(address.clone(), cycle.clone());
 
-        let (inline_events, (inline_gammas, inline_reference_address, inline_gamma)) =
-            record(|t| {
-                let gammas: Vec<Fr> = (0..6).map(|_| t.challenge_scalar()).collect();
-                let mut reference_address: Vec<Fr> = address.iter().rev().copied().collect();
-                reference_address.extend(t.challenge_vector(1));
-                (gammas, reference_address, t.challenge())
-            });
-        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
-
-        assert_eq!(draw_events, inline_events);
-        assert_eq!(
-            draw_events,
-            (1..=8u64).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+        let (challenges, (gammas, pad, gamma)) = assert_same_draws(
+            |t| sumchecks.draw_challenges(t).unwrap(),
+            |t| {
+                let gammas: Vec<Fr> = (0..6).map(|_| t.challenge()).collect();
+                let pad: Vec<Fr> = t.challenges_small(1);
+                (gammas, pad, t.challenge_small::<Fr>())
+            },
         );
+
         assert_eq!(
             vec![
                 challenges.bytecode_read_raf.gamma,
@@ -267,22 +259,22 @@ mod tests {
                 challenges.bytecode_read_raf.stage4_gamma,
                 challenges.bytecode_read_raf.stage5_gamma,
             ],
-            inline_gammas,
+            gammas,
         );
         assert_eq!(
             challenges.booleanity.reference_address,
-            inline_reference_address
+            [fr(11)].into_iter().chain(pad).collect::<Vec<_>>()
         );
         assert_eq!(
             sumchecks.booleanity.reference_cycle(),
             cycle.iter().rev().copied().collect::<Vec<_>>()
         );
-        assert_eq!(challenges.booleanity.gamma, inline_gamma);
+        assert_eq!(challenges.booleanity.gamma, gamma);
     }
 
     /// The truncate branch: a stage-5 instruction address wider than the
     /// committed chunk width keeps its reversed tail and draws no pad — only
-    /// the booleanity gamma squeeze follows the bytecode member's six.
+    /// the booleanity gamma follows the bytecode member's six.
     #[test]
     #[expect(
         clippy::unwrap_used,
@@ -293,69 +285,45 @@ mod tests {
         let address = vec![fr(11), fr(12), fr(13)];
         let sumchecks = sumchecks(address.clone(), vec![fr(21)]);
 
-        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
-
-        assert_eq!(
-            draw_events,
-            (1..=7u64).map(DrawEvent::Squeeze).collect::<Vec<_>>()
+        let (challenges, gamma) = assert_same_draws(
+            |t| sumchecks.draw_challenges(t).unwrap(),
+            |t| {
+                for _ in 0..6 {
+                    let _: Fr = t.challenge();
+                }
+                t.challenge_small::<Fr>()
+            },
         );
+
         let reversed: Vec<Fr> = address.iter().rev().copied().collect();
         assert_eq!(challenges.booleanity.reference_address, reversed[1..]);
         assert_eq!(sumchecks.booleanity.reference_cycle(), vec![fr(21)]);
-        assert_eq!(challenges.booleanity.gamma, fr(7));
+        assert_eq!(challenges.booleanity.gamma, gamma);
     }
 
-    /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
-    /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
-    /// booleanity `intermediate`. Single-sourced from the generated
-    /// `append_output_claims`.
+    /// Locks the stage-6a address-phase opening order: bytecode read-RAF
+    /// `intermediate`, each `val_stages` entry, then booleanity `intermediate`.
     #[test]
-    fn stage6a_output_claims_append_follows_canonical_order() {
+    fn stage6a_opening_values_follow_canonical_order() {
         let sumchecks = sumchecks(Vec::new(), Vec::new());
         let mut claims = sample_claims();
         claims.bytecode_read_raf.val_stages = (903..908).map(fr).collect();
 
-        let mut got = RecordingTranscript::default();
-        sumchecks.append_output_claims(&mut got, &claims);
-
-        let mut want = RecordingTranscript::default();
-        for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
-            want.append_labeled(b"opening_claim", &value);
-        }
-
-        assert_eq!(got.chunks, want.chunks);
+        assert_eq!(
+            sumchecks.opening_values(&claims),
+            [901, 903, 904, 905, 906, 907, 902].map(fr).to_vec()
+        );
     }
 
-    /// A transcript double whose every squeeze returns the same nontrivial
-    /// scalar, so `challenge_scalar_powers`' output is a genuine power vector.
-    #[derive(Clone, Default)]
-    struct ConstantChallengeTranscript;
-
-    impl Transcript for ConstantChallengeTranscript {
-        type Challenge = Fr;
-        fn new(_label: &'static [u8]) -> Self {
-            Self
-        }
-        fn append_bytes(&mut self, _bytes: &[u8]) {}
-        fn challenge(&mut self) -> Self::Challenge {
-            Fr::from_u64(7)
-        }
-        fn state(&self) -> [u8; 32] {
-            [0u8; 32]
-        }
-    }
-
-    /// The `stage_gamma_powers` expansion of a drawn scalar must equal
-    /// `challenge_scalar_powers`' output for the same squeezed scalar — the
-    /// value-identity the stage-6a generated draw substitution relies on
-    /// (the prover draws each stage's power vector inline; the verifier stores
-    /// the scalar and expands at the stage-6b folds).
+    /// `stage_gamma_powers` expands each stored stage gamma into the power
+    /// vector `[1, gamma, ...]` of the stage's fold width, the vector
+    /// `challenge_powers` yields from the same uniform draw.
     #[test]
-    fn stage_gamma_powers_matches_challenge_scalar_powers() {
+    fn stage_gamma_powers_expand_each_stage_gamma() {
         use jolt_claims::protocols::jolt::geometry::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
         use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 
-        let gamma = Fr::from_u64(7);
+        let gamma: Fr = fresh().challenge();
         let challenges = BytecodeReadRafAddressPhaseChallenges {
             gamma,
             stage1_gamma: gamma,
@@ -364,13 +332,12 @@ mod tests {
             stage4_gamma: gamma,
             stage5_gamma: gamma,
         };
-        let mut transcript = ConstantChallengeTranscript;
         for (powers, len) in challenges
             .stage_gamma_powers()
             .into_iter()
             .zip(BYTECODE_STAGE_GAMMA_COUNTS)
         {
-            assert_eq!(powers, transcript.challenge_scalar_powers(len));
+            assert_eq!(powers, fresh().challenge_powers::<Fr>(len));
         }
     }
 }
