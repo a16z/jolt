@@ -10,12 +10,23 @@ use std::sync::Arc;
 #[cfg(feature = "zk")]
 use std::thread::Builder;
 
-use common::jolt_device::{MemoryConfig, MemoryLayout};
+use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_host::{JoltProgramSource, Program};
+#[cfg(feature = "field-inline")]
+use jolt_program::execution::{ExecutionBackend, OwnedTrace};
 use jolt_program::execution::{JoltProgram, TraceInputs, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
+#[cfg(not(feature = "field-inline"))]
 use jolt_riscv::JoltTraceRow;
 use tracer::execution_backend::TracerBackend;
+
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
+
+#[cfg(not(feature = "field-inline"))]
+type GuestTrace = Arc<Vec<JoltTraceRow>>;
+#[cfg(feature = "field-inline")]
+type GuestTrace = OwnedTrace;
 
 /// One guest execution to prove: the example crate, its entry point, memory
 /// overrides, the postcard-encoded inputs and advice, and the postcard-encoded
@@ -34,6 +45,8 @@ pub struct GuestCase {
     pub expected_output: Option<Vec<u8>>,
     /// Padded trace bound baked into preprocessing.
     pub max_padded_trace_length: usize,
+    #[cfg(feature = "field-inline")]
+    pub field_inline_active: bool,
 }
 
 impl GuestCase {
@@ -48,6 +61,24 @@ impl GuestCase {
             trusted_advice: Vec::new(),
             expected_output: None,
             max_padded_trace_length: 1 << 16,
+            #[cfg(feature = "field-inline")]
+            field_inline_active: false,
+        }
+    }
+
+    fn assert_output(&self, device: &JoltDevice) {
+        assert!(!device.panic, "{} panicked during execution", self.name);
+        if let Some(expected) = &self.expected_output {
+            let (head, tail) = device
+                .outputs
+                .split_at(expected.len().min(device.outputs.len()));
+            assert!(
+                head == expected.as_slice() && tail.iter().all(|byte| *byte == 0),
+                "{}: guest output {:?} does not match the expected {:?}",
+                self.name,
+                head,
+                expected,
+            );
         }
     }
 }
@@ -55,7 +86,7 @@ impl GuestCase {
 pub struct PreparedGuest {
     pub program: Arc<JoltProgram>,
     pub preprocessing: JoltProgramPreprocessing,
-    pub trace: TraceOutput<Arc<Vec<JoltTraceRow>>>,
+    pub trace: TraceOutput<GuestTrace>,
 }
 
 fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
@@ -75,6 +106,8 @@ fn memory_config(layout: &MemoryLayout) -> MemoryConfig {
 /// prover result, so all three fail here before any proving starts.
 pub fn prepare(case: &GuestCase) -> PreparedGuest {
     let mut source = Program::new(case.name);
+    #[cfg(feature = "field-inline")]
+    source.enable_field_inline();
     if let Some(func) = case.func {
         source.set_func(func);
     }
@@ -84,19 +117,7 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
     }
     let (_, sizing_trace, _, device) =
         source.trace(&case.inputs, &case.untrusted_advice, &case.trusted_advice);
-    assert!(!device.panic, "{} panicked during execution", case.name);
-    if let Some(expected) = &case.expected_output {
-        let (head, tail) = device
-            .outputs
-            .split_at(expected.len().min(device.outputs.len()));
-        assert!(
-            head == expected.as_slice() && tail.iter().all(|byte| *byte == 0),
-            "{}: guest output {:?} does not match the expected {:?}",
-            case.name,
-            &device.outputs[..expected.len().min(device.outputs.len())],
-            expected,
-        );
-    }
+    case.assert_output(&device);
     // Same padding law as `ProverConfig::derive`: one row is reserved beyond
     // the executed trace.
     assert!(
@@ -117,18 +138,33 @@ pub fn prepare(case: &GuestCase) -> PreparedGuest {
         source.instruction_profile(),
     )
     .expect("program preprocessing");
+    let inputs = TraceInputs::new(
+        case.inputs.clone(),
+        case.untrusted_advice.clone(),
+        case.trusted_advice.clone(),
+        memory_config(&layout),
+    );
+    #[cfg(not(feature = "field-inline"))]
     let trace = TracerBackend::new()
-        .trace_compact(
-            &program,
-            TraceInputs::new(
-                case.inputs.clone(),
-                case.untrusted_advice.clone(),
-                case.trusted_advice.clone(),
-                memory_config(&layout),
-            ),
-            &preprocessing.bytecode,
-        )
+        .trace_compact(&program, inputs, &preprocessing.bytecode)
         .expect("modular trace");
+    // Field witnesses still consume the field-register payloads on rich rows.
+    #[cfg(feature = "field-inline")]
+    let trace = TracerBackend::new()
+        .trace(&program, inputs)
+        .expect("modular field-inline trace");
+    case.assert_output(&trace.device);
+    #[cfg(feature = "field-inline")]
+    assert_eq!(
+        trace
+            .trace
+            .rows()
+            .iter()
+            .any(|row| row.field_inline.is_some()),
+        case.field_inline_active,
+        "{}: unexpected field-register activity",
+        case.name,
+    );
     PreparedGuest {
         program,
         preprocessing,

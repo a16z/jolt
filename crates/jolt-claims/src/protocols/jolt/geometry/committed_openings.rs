@@ -3,8 +3,8 @@
 use jolt_field::JoltField;
 
 use super::super::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
-use super::dimensions::TracePolynomialOrder;
-use super::error::JoltFormulaPointError;
+use super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
+use super::error::PointGeometryError;
 use super::ra::JoltRaPolynomialLayout;
 
 pub fn proof_commitment_order(layout: JoltRaPolynomialLayout) -> Vec<JoltCommittedPolynomial> {
@@ -81,29 +81,64 @@ fn final_opening_relation(polynomial: JoltCommittedPolynomial) -> JoltRelationId
     }
 }
 
-/// Lagrange factor for embedding a smaller polynomial's opening into the
-/// top-left block of the unified final opening point: `1` on variables the
-/// embedded point binds, `1 - r` on the rest.
+/// Coefficient placement in the unified commitment grid.
+#[derive(Clone, Copy, Debug)]
+pub enum CommitmentEmbedding {
+    /// Native points are `[address, cycle]`; dense increments have no address variables.
+    Trace {
+        order: TracePolynomialOrder,
+        log_t: usize,
+    },
+    /// A balanced matrix placed in the top-left corner of the unified balanced matrix.
+    Precommitted,
+}
+
+/// Check the embedded point at its layout-selected coordinates and multiply
+/// `(1-r)` over the zero-padding coordinates. Returns `None` for an oversized
+/// domain, invalid trace width, or mismatched coordinate. Equal challenge values
+/// at different coordinates remain distinct variables.
 pub fn commitment_embedding_scale<F: JoltField>(
     opening_point: &[F],
     embedded_opening_point: &[F],
-) -> F {
-    debug_assert!(
-        embedded_opening_point
-            .iter()
-            .all(|challenge| opening_point.contains(challenge)),
-        "embedded opening point must be a subset of the unified opening point"
-    );
-    opening_point
-        .iter()
-        .map(|challenge| {
-            if embedded_opening_point.contains(challenge) {
-                F::one()
-            } else {
-                F::one() - challenge
+    embedding: CommitmentEmbedding,
+) -> Option<F> {
+    let total = opening_point.len();
+    let native = embedded_opening_point.len();
+    let padding = total.checked_sub(native)?;
+    let positions = match embedding {
+        CommitmentEmbedding::Trace { order, log_t } => {
+            let _ = native.checked_sub(log_t)?;
+            match order {
+                TracePolynomialOrder::CycleMajor => [padding..total, 0..0],
+                TracePolynomialOrder::AddressMajor => [log_t..native, 0..log_t],
             }
-        })
-        .product()
+        }
+        CommitmentEmbedding::Precommitted => {
+            let grid = CommitmentMatrixShape::balanced(total);
+            let poly = CommitmentMatrixShape::balanced(native);
+            [
+                grid.row_vars().checked_sub(poly.row_vars())?..grid.row_vars(),
+                total.checked_sub(poly.column_vars())?..total,
+            ]
+        }
+    };
+    if !positions
+        .iter()
+        .cloned()
+        .flatten()
+        .zip(embedded_opening_point)
+        .all(|(index, value)| opening_point.get(index) == Some(value))
+    {
+        return None;
+    }
+    Some(
+        opening_point
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !positions.iter().any(|range| range.contains(index)))
+            .map(|(_, value)| F::one() - value)
+            .product(),
+    )
 }
 
 /// Inputs to [`final_opening_point`], gathered from earlier verification
@@ -131,7 +166,7 @@ pub struct FinalOpeningPointInputs<'a, F: JoltField> {
 /// expects.
 pub fn final_opening_point<F: JoltField>(
     inputs: FinalOpeningPointInputs<'_, F>,
-) -> Result<Vec<F>, JoltFormulaPointError> {
+) -> Result<Vec<F>, PointGeometryError> {
     let native_main_vars = inputs.log_t + inputs.log_k_chunk;
     let mut dominant: Option<(usize, &[F])> = None;
     for (index, point) in inputs.precommitted_anchor_points.iter().enumerate() {
@@ -143,7 +178,7 @@ pub fn final_opening_point<F: JoltField>(
         if dominant_point.len() > native_main_vars {
             for (index, point) in inputs.precommitted_anchor_points.iter().enumerate() {
                 if point.len() == dominant_point.len() && *point != dominant_point {
-                    return Err(JoltFormulaPointError::IncompatibleDominantAnchors {
+                    return Err(PointGeometryError::IncompatibleDominantAnchors {
                         first,
                         second: index,
                     });
@@ -154,7 +189,7 @@ pub fn final_opening_point<F: JoltField>(
     }
 
     if inputs.hamming_weight_opening_point.len() < inputs.log_k_chunk {
-        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+        return Err(PointGeometryError::OpeningPointLengthMismatch {
             expected: inputs.log_k_chunk,
             got: inputs.hamming_weight_opening_point.len(),
         });
@@ -166,15 +201,13 @@ pub fn final_opening_point<F: JoltField>(
         TracePolynomialOrder::CycleMajor => {
             let native_cycle = &inputs.hamming_weight_opening_point[inputs.log_k_chunk..];
             if r_cycle_stage6.len() < native_cycle.len() {
-                return Err(
-                    JoltFormulaPointError::CycleChallengesShorterThanNativeCycle {
-                        expected: native_cycle.len(),
-                        got: r_cycle_stage6.len(),
-                    },
-                );
+                return Err(PointGeometryError::CycleChallengesShorterThanNativeCycle {
+                    expected: native_cycle.len(),
+                    got: r_cycle_stage6.len(),
+                });
             }
             if &r_cycle_stage6[..native_cycle.len()] != native_cycle {
-                return Err(JoltFormulaPointError::CycleMajorCyclePrefixMismatch);
+                return Err(PointGeometryError::CycleMajorCyclePrefixMismatch);
             }
             let cycle_extra = &r_cycle_stage6[native_cycle.len()..];
             Ok([cycle_extra, r_address_stage7, native_cycle].concat())
@@ -184,10 +217,14 @@ pub fn final_opening_point<F: JoltField>(
 
 #[cfg(test)]
 mod tests {
-    #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
+    #![expect(
+        clippy::panic,
+        clippy::unwrap_used,
+        reason = "tests fail loudly on unexpected errors"
+    )]
 
     use super::*;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, Ring, Zero};
 
     fn layout() -> JoltRaPolynomialLayout {
         JoltRaPolynomialLayout::new(2, 1, 2).unwrap_or_else(|error| {
@@ -272,14 +309,66 @@ mod tests {
     }
 
     #[test]
-    fn embedding_scale_selects_variables_outside_embedded_point() {
-        let opening_point = [Fr::from_u64(2), Fr::from_u64(3), Fr::from_u64(5)];
-        let embedded_point = [Fr::from_u64(3)];
+    fn embedding_scale_checks_positions_and_repeated_coordinates() {
+        use jolt_poly::Polynomial;
+        let r = Fr::from_u64(3);
+        let embedding = CommitmentEmbedding::Trace {
+            order: TracePolynomialOrder::CycleMajor,
+            log_t: 1,
+        };
+        let value = Polynomial::new(vec![Fr::from_u64(5), Fr::from_u64(7)]).evaluate(&[r]);
+        let padded = Polynomial::new(vec![
+            Fr::from_u64(5),
+            Fr::from_u64(7),
+            Fr::zero(),
+            Fr::zero(),
+        ]);
+        let scale = commitment_embedding_scale(&[r, r], &[r], embedding).unwrap();
+        assert_eq!(scale * value, padded.evaluate(&[r, r]));
+        let point = [Fr::from_u64(2), r];
+        assert!(commitment_embedding_scale(&point, &[r, point[0]], embedding).is_none());
+        assert!(commitment_embedding_scale(&point, &[point[0], r, r], embedding).is_none());
+        assert!(commitment_embedding_scale(&point, &[point[0]], embedding).is_none());
+    }
 
-        assert_eq!(
-            commitment_embedding_scale(&opening_point, &embedded_point),
-            (Fr::from_u64(1) - Fr::from_u64(2)) * (Fr::from_u64(1) - Fr::from_u64(5))
-        );
+    #[test]
+    fn embedding_scales_match_independently_placed_tables() {
+        use jolt_poly::Polynomial;
+        // Native table [1,2,3,4]: two trace cycles at each of two addresses,
+        // or the rows of a 2x2 precommitted matrix in a 4x4 grid.
+        let native = [1, 2, 3, 4].map(Fr::from_u64).to_vec();
+        let cases = [
+            (
+                CommitmentEmbedding::Trace {
+                    order: TracePolynomialOrder::CycleMajor,
+                    log_t: 1,
+                },
+                [0, 1, 2, 3],
+                [2, 3],
+            ),
+            (
+                CommitmentEmbedding::Trace {
+                    order: TracePolynomialOrder::AddressMajor,
+                    log_t: 1,
+                },
+                [0, 8, 4, 12],
+                [1, 0],
+            ),
+            (CommitmentEmbedding::Precommitted, [0, 1, 4, 5], [1, 3]),
+        ];
+        for point in [[2, 3, 5, 7], [3, 3, 3, 3]] {
+            let point = point.map(Fr::from_u64);
+            for (embedding, indices, coordinates) in cases {
+                let mut padded = vec![Fr::zero(); 16];
+                for (index, value) in indices.into_iter().zip(&native) {
+                    padded[index] = *value;
+                }
+                let own = coordinates.map(|index| point[index]);
+                let value = Polynomial::new(native.clone()).evaluate(&own);
+                let scale = commitment_embedding_scale(&point, &own, embedding).unwrap();
+                assert_eq!(scale * value, Polynomial::new(padded).evaluate(&point));
+            }
+        }
     }
 
     #[test]
@@ -350,7 +439,7 @@ mod tests {
                 inc_claim_reduction_opening_point: &inc_point,
                 precommitted_anchor_points: &[&dominant, &conflicting],
             }),
-            Err(JoltFormulaPointError::IncompatibleDominantAnchors {
+            Err(PointGeometryError::IncompatibleDominantAnchors {
                 first: 0,
                 second: 1
             })

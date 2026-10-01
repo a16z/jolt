@@ -5,7 +5,7 @@
 //! `akita_planner::emit` machinery that produces Akita's shipped catalogs.
 //!
 //! ```text
-//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules [k16|k256|dense]
+//! cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/schedules [k16|k256|dense|dense-bounded|dense-full]
 //! ```
 
 use std::path::PathBuf;
@@ -23,15 +23,14 @@ use jolt_akita::schedules::emit::family_specs;
 )]
 fn main() {
     let mut args = std::env::args().skip(1);
-    let output_dir = PathBuf::from(
-        args.next()
-            .expect("usage: gen_jolt_schedules <output-dir> [k16|k256|dense]"),
-    );
+    let output_dir = PathBuf::from(args.next().expect(
+        "usage: gen_jolt_schedules <output-dir> [k16|k256|dense|dense-bounded|dense-full]",
+    ));
     let only = args.next();
     std::fs::create_dir_all(&output_dir).expect("create artifact output directory");
 
     // Family names are `jolt-fp128-onehot-k16`, `jolt-fp128-onehot-k256`, and
-    // `jolt-fp128-dense-bounded`, so the documented selectors are infixes,
+    // `jolt-fp128-dense-{bounded,full}`, so the documented selectors are infixes,
     // not suffixes.
     let specs = family_specs(output_dir)
         .expect("every family must declare a valid contract")

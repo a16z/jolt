@@ -737,6 +737,11 @@ mod tests {
             )
             .unwrap();
             let input_claim = intermediate(&throwaway.output_claims(self.cycle_claims).unwrap());
+            assert_ne!(
+                input_claim,
+                fr(0),
+                "precommitted fixture must have a nonzero cycle claim"
+            );
 
             let cycle_challenges = synthetic_point(cycle_rounds, seed);
             run_lockstep(
@@ -752,6 +757,11 @@ mod tests {
                 "cycle outputs diverged"
             );
             let handoff_claim = intermediate(&reference_outputs);
+            assert_ne!(
+                handoff_claim,
+                fr(0),
+                "precommitted fixture must have a nonzero address claim"
+            );
 
             reference.park_residue(&mut session_ref);
             optimized.park_residue(&mut session_opt);

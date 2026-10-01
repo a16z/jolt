@@ -1,15 +1,15 @@
 use std::{
+    borrow::Cow,
     fmt::{Debug, Formatter, Result as FmtResult},
     sync::Arc,
 };
 
 use akita_error::AkitaError;
-use akita_prover::compute::CommitInnerPlan;
-use akita_prover::{
-    AvailablePolynomialTypes, BackendKindId, CommitSourceClass, CommitSourceDescriptor,
-    CommitmentSource, ExternalInnerCommitmentCapability, PolynomialRepresentation,
-    PolynomialTypeSelection, PreparedExternalInnerCommitment, RootOpeningSource, RootPolyMeta,
-    RootPolyShape,
+use akita_pcs::custom_source::{
+    AvailablePolynomialTypes, BackendKindId, CommitInnerPlan, CommitSourceClass,
+    CommitSourceDescriptor, CommitmentSource, ExternalInnerCommitmentCapability,
+    PolynomialRepresentation, PolynomialTypeSelection, PreparedExternalInnerCommitment,
+    RootOpeningSource, RootPolyMeta, RootPolyShape, SourceCoefficients,
 };
 
 use super::kernels::{trace_commitment_capability, TracePackedOneHotCommitOperation};
@@ -199,6 +199,18 @@ impl<const D: usize> RootPolyShape<AkitaField, D> for TracePackedOneHot {
     }
 }
 
+/// The packed trace streams hot positions from its rows. The canonical
+/// coefficient table feeds only tensor-style extension openings, which
+/// Jolt's base-field configs (`ExtField = Field`) never schedule.
+impl SourceCoefficients<AkitaField> for TracePackedOneHot {
+    fn source_coefficients(&self) -> Result<Cow<'_, [AkitaField]>, AkitaError> {
+        Err(AkitaError::InvalidInput(
+            "trace-packed one-hot sources stream their coefficients and expose no canonical table"
+                .into(),
+        ))
+    }
+}
+
 impl CommitmentSource<AkitaField> for TracePackedOneHot {
     fn descriptor(&self) -> Result<CommitSourceDescriptor, AkitaError> {
         CommitSourceDescriptor::new(
@@ -226,7 +238,7 @@ impl CommitmentSource<AkitaField> for TracePackedOneHot {
         &self,
         _plan: &CommitInnerPlan,
     ) -> Result<AvailablePolynomialTypes, AkitaError> {
-        AvailablePolynomialTypes::new(Vec::new())
+        Ok(AvailablePolynomialTypes::external_only())
     }
 
     fn represent_as(

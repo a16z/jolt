@@ -128,8 +128,7 @@ fn rusage_info() -> Option<rusage_info_v4> {
 
 /// Current physical footprint in bytes, sampled from the kernel's
 /// `ri_phys_footprint` counter. Unlike RSS it includes pages macOS has
-/// compressed under memory pressure. `None` off macOS, where RSS is already
-/// the physical measure.
+/// compressed under memory pressure. `None` off macOS; no separate footprint counter is provided.
 pub fn current_footprint_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
@@ -146,8 +145,8 @@ pub fn current_footprint_bytes() -> Option<u64> {
 /// On macOS, memory pressure makes the kernel compress cold pages, which
 /// drop out of RSS: [`peak_rss_bytes`] can under-report a compressed run by
 /// half. `ri_lifetime_max_phys_footprint` counts them, and is the figure
-/// `/usr/bin/time -l` prints as "peak memory footprint". Elsewhere there is
-/// no compression-blind gap and this is [`peak_rss_bytes`].
+/// `/usr/bin/time -l` prints as "peak memory footprint". Elsewhere this falls back to [`peak_rss_bytes`]; it does not account
+/// for swapped or compressed pages.
 pub fn peak_footprint_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
@@ -207,6 +206,7 @@ mod tests {
         assert!(map.contains_key("test_span_lifecycle"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn footprint_covers_a_live_allocation() {
         const BYTES: usize = 64 << 20;

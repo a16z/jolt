@@ -31,7 +31,7 @@ impl MetricsMonitor {
     /// Spawns a background thread named `"metrics-monitor"` that logs:
     /// - `counters.memory_gib` — resident set size
     /// - `counters.footprint_gib` — physical footprint including compressed
-    ///   pages (macOS only; RSS already is the physical measure elsewhere)
+    ///   pages (macOS only)
     /// - `counters.cpu_percent` — global CPU utilization
     /// - `counters.cores_active_avg` — average active cores
     /// - `counters.cores_active` — cores with >0.1% usage
