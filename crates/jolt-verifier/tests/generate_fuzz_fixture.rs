@@ -6,7 +6,10 @@
 //! `cargo nextest run -p jolt-verifier --features prover-fixtures \
 //!   --test generate_fuzz_fixture --run-ignored ignored-only`
 
-#![cfg(all(feature = "prover-fixtures", not(feature = "akita")))]
+#![cfg(all(
+    feature = "prover-fixtures",
+    not(any(feature = "akita", feature = "field-inline"))
+))]
 #![expect(
     clippy::expect_used,
     clippy::print_stdout,

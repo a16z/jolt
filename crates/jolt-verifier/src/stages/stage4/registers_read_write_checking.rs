@@ -13,8 +13,8 @@ use jolt_claims::protocols::jolt::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_poly::try_eq_mle;
 
+use crate::stages::derivations;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage3::{Stage3OutputClaims, Stage3OutputPoints};
 use crate::VerifierError;
@@ -108,22 +108,16 @@ impl<F: JoltField> ConcreteSumcheck<F> for RegistersReadWriteChecking<F> {
         _challenges: &RegistersReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RegistersReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
-            RegistersReadWritePublic::EqCycle => {
-                let fixed_cycle = input_points.rd_write_value();
-                let registers_cycle = output_points
-                    .registers_val()
-                    .get(REGISTER_ADDRESS_BITS..)
-                    .ok_or_else(|| {
-                        public_input_failed(
-                            "register read-write opening point is shorter than the register \
-                             address width",
-                        )
-                    })?;
-                try_eq_mle(fixed_cycle, registers_cycle).map_err(public_input_failed)
-            }
+            RegistersReadWritePublic::EqCycle => derivations::eq_at_cycle(
+                input_points.rd_write_value(),
+                output_points.registers_val(),
+                REGISTER_ADDRESS_BITS,
+                "register",
+            )
+            .map_err(public_input_failed),
         }
     }
 }

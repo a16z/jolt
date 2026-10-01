@@ -17,6 +17,8 @@
 //!   before executing `mret`, so the virtual register holds the correct value
 //!   without MRET needing to manipulate it.
 
+use crate::instruction::registers::i::RegisterStateI;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -28,6 +30,7 @@ declare_riscv_instr!(
     mask   = 0xffffffff,  // Exact match
     match  = 0x30200073,  // MRET encoding: priv=0x302, funct3=000, opcode=1110011
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 

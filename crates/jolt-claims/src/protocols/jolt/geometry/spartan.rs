@@ -1,5 +1,5 @@
 use jolt_field::Ring;
-use jolt_riscv::{CircuitFlags, InstructionFlags};
+use jolt_riscv::{CircuitFlags, InstructionFlags, NUM_CIRCUIT_FLAGS};
 
 use crate::derived;
 
@@ -12,7 +12,7 @@ pub(crate) const OUTER_REMAINDER_DEGREE: usize = 3;
 pub(crate) const PRODUCT_REMAINDER_DEGREE: usize = 3;
 pub(crate) const SHIFT_DEGREE: usize = 2;
 
-pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
+pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 21 + NUM_CIRCUIT_FLAGS] = [
     JoltVirtualPolynomial::LeftInstructionInput,
     JoltVirtualPolynomial::RightInstructionInput,
     JoltVirtualPolynomial::Product,
@@ -48,6 +48,26 @@ pub const SPARTAN_OUTER_R1CS_INPUTS: [JoltVirtualPolynomial; 35] = [
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsCompressed),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsFirstInSequence),
     JoltVirtualPolynomial::OpFlags(CircuitFlags::IsLastInSequence),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldAdd),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldSub),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldMul),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldInv),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldAssertEq),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldLoadAccumulateFromRegister),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldAssertZero),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldLoadImm),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldLoadAccumulateFromMemory),
+    #[cfg(feature = "field-inline")]
+    JoltVirtualPolynomial::OpFlags(CircuitFlags::FieldAdviceLimb),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

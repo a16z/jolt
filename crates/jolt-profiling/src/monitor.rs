@@ -12,6 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use sysinfo::System;
 
+use crate::memory::current_footprint_bytes;
 use crate::units::BYTES_PER_GIB;
 
 /// Background monitor that samples system metrics at a fixed interval.
@@ -28,7 +29,9 @@ impl MetricsMonitor {
     /// Starts the monitor with the given sampling interval (in seconds).
     ///
     /// Spawns a background thread named `"metrics-monitor"` that logs:
-    /// - `counters.memory_gib` — physical memory usage
+    /// - `counters.memory_gib` — resident set size
+    /// - `counters.footprint_gib` — physical footprint including compressed
+    ///   pages (macOS only)
     /// - `counters.cpu_percent` — global CPU utilization
     /// - `counters.cores_active_avg` — average active cores
     /// - `counters.cores_active` — cores with >0.1% usage
@@ -50,6 +53,8 @@ impl MetricsMonitor {
 
                     let memory_gib =
                         memory_stats().map_or(0.0, |s| s.physical_mem as f64 / BYTES_PER_GIB);
+                    let footprint_gib =
+                        current_footprint_bytes().map(|bytes| bytes as f64 / BYTES_PER_GIB);
                     let cpu_percent = system.global_cpu_usage();
                     let cores_active_avg = cpu_percent / 100.0 * (system.cpus().len() as f32);
                     let active_cores = system
@@ -67,6 +72,7 @@ impl MetricsMonitor {
 
                     tracing::debug!(
                         counters.memory_gib = memory_gib,
+                        counters.footprint_gib = footprint_gib,
                         counters.cpu_percent = cpu_percent,
                         counters.cores_active_avg = cores_active_avg,
                         counters.cores_active = active_cores,

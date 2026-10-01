@@ -1,46 +1,62 @@
 //! The Spartan product-virtualization (stage 2) kernels: the product uni-skip
 //! first-round polynomial and the product-remainder batch member.
 //!
-//! The uni-skip row polynomial
-//! `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)` — with `left_Y`/`right_Y`
-//! the centered-Lagrange-weighted combinations of the three left/right factor
-//! columns — is brute-forced at all five nodes of the extended centered window
-//! (domain size 3). Unlike stage 1's outer uni-skip, the in-domain values do
-//! not vanish: they equal the three stage-1 product claims, and the engine's
-//! round-sum check pins them against the folded input claim. The transmitted
-//! polynomial is `LK(τ_high, ·) × t1` (degree 6).
+//! The uni-skip row polynomial `t1(Y) = Σ_j eq(τ_low, j) · left_Y(j) · right_Y(j)` —
+//! with `left_Y`/`right_Y` the centered-Lagrange-weighted combinations of the selected
+//! left/right factor columns (the three rv64 lanes, plus the two field-inline lanes
+//! under `field-inline`) — is brute-forced at every node of the extended centered
+//! window over the COMPOSED lane domain. Unlike stage 1's outer uni-skip, the in-domain
+//! values do not vanish: they equal the per-lane stage-1 claims, and the engine's
+//! round-sum check pins them against the folded input claim. The transmitted polynomial
+//! is `LK(τ_high, ·) × t1`.
 //!
-//! The remainder member needs no composite treatment: every leaf of the
-//! product-remainder `Expr` is multilinear over the cycle domain (the Lagrange
-//! weights are scalars — there is no stage-1-style quadratic stream
-//! coefficient), so it is a plain [`NaiveSumcheckProver`], bound `LowToHigh`.
+//! The rv64 remainder member needs no composite treatment: every leaf of the
+//! product-remainder `Expr` is multilinear over the cycle domain (the Lagrange weights
+//! are scalars — there is no stage-1-style quadratic stream coefficient), so it is a
+//! plain [`NaiveSumcheckProver`], bound `LowToHigh`. With field-inline enabled, the
+//! member is the composed kernel at the bottom of this file.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::ComposedOpeningId;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::product::selected_product_remainder_output_openings;
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_BASE_LANES;
+use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::product::{
+    composed_remainder_factor_contributions, FieldProductLaneFactors,
+};
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::{FieldInlinePolynomialId, FieldInlineVirtualPolynomial};
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
     write_lookup_output_to_rd_product,
 };
+use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
 use jolt_field::JoltField;
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
-use jolt_verifier::stages::stage2::product_uniskip::ProductUniskipInputClaims;
+use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_witness::JoltWitnessOracle;
+#[cfg(feature = "field-inline")]
+use jolt_witness::WitnessError;
 
 use super::views::{dense_view, eq_table};
 use crate::uniskip::UniskipKernel;
+use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
-use crate::{
-    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
-};
+use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
-impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, ProductUniskipInputClaims<F>>
+impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, ProductUniskip<F>>>
     for ReferenceBackend
 {
     /// Runs on `tau_low` only — `τ_high` is drawn after this call and reaches
@@ -65,7 +81,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, ProductUniskipInputClai
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
-        _inputs: &ProductUniskipInputClaims<F>,
+        _inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -116,6 +132,15 @@ pub struct SpartanProductKernel<F: JoltField> {
     next_is_noop: Vec<F>,
     write_lookup_output_to_rd: Vec<F>,
     virtual_instruction: Vec<F>,
+    /// The field-inline lane factor columns (`FieldRs1Value`, `FieldRs2Value`,
+    /// `FieldRdValue`), cycle-indexed — the composed lanes' left/right factors per
+    /// `FieldRegistersProductLane::factor_openings`.
+    #[cfg(feature = "field-inline")]
+    field_rs1_value: Vec<F>,
+    #[cfg(feature = "field-inline")]
+    field_rs2_value: Vec<F>,
+    #[cfg(feature = "field-inline")]
+    field_rd_value: Vec<F>,
 }
 
 impl<F: JoltField> SpartanProductKernel<F> {
@@ -124,6 +149,17 @@ impl<F: JoltField> SpartanProductKernel<F> {
         tau_low: &[F],
         witness: &dyn JoltWitnessOracle<F>,
     ) -> Result<Self, KernelError<F>> {
+        #[cfg(feature = "field-inline")]
+        let field_inline =
+            witness
+                .field_inline()
+                .ok_or(KernelError::Witness(WitnessError::UnavailableView {
+                    label: "composed Spartan product field-inline oracle",
+                }))?;
+        #[cfg(feature = "field-inline")]
+        let field_table = |polynomial: FieldInlineVirtualPolynomial| {
+            field_inline.oracle_table(FieldInlinePolynomialId::Virtual(polynomial))
+        };
         Ok(Self {
             log_t,
             eq_cycle: eq_table(tau_low),
@@ -135,12 +171,50 @@ impl<F: JoltField> SpartanProductKernel<F> {
             next_is_noop: dense_view(witness, next_is_noop_product())?,
             write_lookup_output_to_rd: dense_view(witness, write_lookup_output_to_rd_product())?,
             virtual_instruction: dense_view(witness, virtual_instruction_product())?,
+            #[cfg(feature = "field-inline")]
+            field_rs1_value: field_table(FieldInlineVirtualPolynomial::FieldRs1Value)?,
+            #[cfg(feature = "field-inline")]
+            field_rs2_value: field_table(FieldInlineVirtualPolynomial::FieldRs2Value)?,
+            #[cfg(feature = "field-inline")]
+            field_rd_value: field_table(FieldInlineVirtualPolynomial::FieldRdValue)?,
         })
     }
 
+    /// The composed left/right factor values at cycle `j` under `weights` (the
+    /// centered-Lagrange weights over the composed lane domain): the three ordinary
+    /// lanes, plus (under `field-inline`) the field-inline lanes via the jolt-claims
+    /// composed-lane helper — the same helper the verifier's composed checks fold with,
+    /// so the lane order cannot drift.
+    fn composed_lane_factors(&self, weights: &[F], j: usize) -> Result<(F, F), KernelError<F>> {
+        let left = weights[0] * self.left_instruction_input[j]
+            + weights[1] * self.lookup_output[j]
+            + weights[2] * self.jump_flag[j];
+        let right = weights[0] * self.right_instruction_input[j]
+            + weights[1] * self.branch_flag[j]
+            + weights[2] * (F::one() - self.next_is_noop[j]);
+        #[cfg(feature = "field-inline")]
+        {
+            let (field_left, field_right) = composed_remainder_factor_contributions(
+                weights,
+                SPARTAN_PRODUCT_BASE_LANES,
+                &FieldProductLaneFactors {
+                    rs1_value: self.field_rs1_value[j],
+                    rs2_value: self.field_rs2_value[j],
+                    rd_value: self.field_rd_value[j],
+                },
+            )
+            .ok_or(KernelError::InvariantViolation {
+                reason: "composed product weights do not cover the field-inline lanes",
+            })?;
+            Ok((left + field_left, right + field_right))
+        }
+        #[cfg(not(feature = "field-inline"))]
+        Ok((left, right))
+    }
+
     fn uniskip_first_round_poly(&self, tau_high: F) -> Result<UnivariatePoly<F>, KernelError<F>> {
-        let extended_size = 2 * PRODUCT_UNISKIP_DOMAIN_SIZE - 1;
-        let domain_start = -((PRODUCT_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
+        let extended_size = 2 * SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE - 1;
+        let domain_start = -((SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
         let extended_start = -((extended_size as i64 - 1) / 2);
         let cycles = 1usize << self.log_t;
 
@@ -152,21 +226,18 @@ impl<F: JoltField> SpartanProductKernel<F> {
             } else {
                 -F::from_u64(node.unsigned_abs())
             };
-            let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, node_field)?;
+            let weights =
+                centered_lagrange_evals::<F>(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, node_field)?;
             let mut sum = F::zero();
             for j in 0..cycles {
-                let left = weights[0] * self.left_instruction_input[j]
-                    + weights[1] * self.lookup_output[j]
-                    + weights[2] * self.jump_flag[j];
-                let right = weights[0] * self.right_instruction_input[j]
-                    + weights[1] * self.branch_flag[j]
-                    + weights[2] * (F::one() - self.next_is_noop[j]);
+                let (left, right) = self.composed_lane_factors(&weights, j)?;
                 sum += self.eq_cycle[j] * left * right;
             }
             *value = sum;
         }
 
-        let kernel_values = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)?;
+        let kernel_values =
+            centered_lagrange_evals::<F>(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)?;
         let kernel_coefficients = interpolate_to_coeffs(domain_start, &kernel_values);
         let t1_coefficients = interpolate_to_coeffs(extended_start, &t1_values);
         Ok(UnivariatePoly::new(poly_mul(
@@ -185,9 +256,10 @@ impl<F: JoltField> SpartanProductKernel<F> {
         let tau_high = inputs.relation.tau_high();
         let uniskip_challenge = inputs.relation.uniskip_challenge();
         let cycles = 1usize << self.log_t;
-        let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)?;
+        let weights =
+            centered_lagrange_evals::<F>(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip_challenge)?;
         let scale = centered_lagrange_kernel::<F>(
-            PRODUCT_UNISKIP_DOMAIN_SIZE,
+            SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
             tau_high,
             uniskip_challenge,
         )?;
@@ -209,7 +281,7 @@ impl<F: JoltField> SpartanProductKernel<F> {
             );
         }
 
-        let opening_tables = BTreeMap::from([
+        let opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>> = BTreeMap::from([
             (
                 left_instruction_input_product(),
                 Polynomial::new(self.left_instruction_input),
@@ -231,6 +303,22 @@ impl<F: JoltField> SpartanProductKernel<F> {
                 Polynomial::new(self.virtual_instruction),
             ),
         ]);
+
+        #[cfg(feature = "field-inline")]
+        let opening_tables = opening_tables
+            .into_iter()
+            .map(|(id, table)| (ComposedOpeningId::from(id), table))
+            .chain(
+                selected_product_remainder_output_openings()
+                    .into_iter()
+                    .zip([
+                        self.field_rs1_value,
+                        self.field_rs2_value,
+                        self.field_rd_value,
+                    ])
+                    .map(|(id, table)| (ComposedOpeningId::from(id), Polynomial::new(table))),
+            )
+            .collect();
 
         Ok(Box::new(NaiveSumcheckProver::new(
             inputs,

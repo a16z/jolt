@@ -23,7 +23,7 @@ use super::super::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
 use super::super::dimensions::{
     CommitmentMatrixShape, TracePolynomialOrder, REGISTER_ADDRESS_BITS,
 };
-use super::super::error::{require_len, require_opening_point_len, JoltFormulaPointError};
+use super::super::error::{require_len, require_opening_point_len, PointGeometryError};
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
@@ -148,9 +148,9 @@ pub const BYTECODE_LANE_LAYOUT: BytecodeLaneLayout = BytecodeLaneLayout::new();
 pub fn precommitted_candidate(
     bytecode_len: usize,
     chunk_count: usize,
-) -> Result<usize, JoltFormulaPointError> {
+) -> Result<usize, PointGeometryError> {
     if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-        return Err(JoltFormulaPointError::InvalidBytecodeChunking {
+        return Err(PointGeometryError::InvalidBytecodeChunking {
             bytecode_len,
             chunk_count,
         });
@@ -175,9 +175,9 @@ impl BytecodeClaimReductionLayout {
         scheduling_reference: PrecommittedSchedulingReference,
         bytecode_len: usize,
         chunk_count: usize,
-    ) -> Result<Self, JoltFormulaPointError> {
+    ) -> Result<Self, PointGeometryError> {
         if !is_valid_committed_bytecode_chunking_for_len(bytecode_len, chunk_count) {
-            return Err(JoltFormulaPointError::InvalidBytecodeChunking {
+            return Err(PointGeometryError::InvalidBytecodeChunking {
                 bytecode_len,
                 chunk_count,
             });
@@ -229,10 +229,10 @@ impl BytecodeClaimReductionLayout {
     pub fn split_address_point<F: JoltField>(
         &self,
         r_bc_full: &[F],
-    ) -> Result<BytecodeAddressPoint<F>, JoltFormulaPointError> {
+    ) -> Result<BytecodeAddressPoint<F>, PointGeometryError> {
         let expected = self.dropped_address_bits + self.log_bytecode_chunk_size;
         if r_bc_full.len() != expected {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected,
                 got: r_bc_full.len(),
             });
@@ -258,7 +258,7 @@ impl BytecodeClaimReductionLayout {
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
@@ -274,7 +274,7 @@ impl BytecodeClaimReductionLayout {
         inputs: BytecodeOutputWeightInputs<'_, F>,
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
@@ -290,7 +290,7 @@ impl BytecodeClaimReductionLayout {
         &self,
         inputs: BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let scale = self.eq_combined(&inputs, opening_point)?
             * precommitted_skip_round_scale::<F>(&self.precommitted);
         self.chunk_output_weights(inputs.chunk_rbc_weights, scale)
@@ -303,23 +303,23 @@ impl BytecodeClaimReductionLayout {
         &self,
         inputs: &BytecodeOutputWeightInputs<'_, F>,
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let lane_vars = committed_lane_vars();
         let expected = lane_vars + self.log_bytecode_chunk_size;
         if opening_point.len() != expected {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected,
                 got: opening_point.len(),
             });
         }
         if inputs.r_bc.len() != self.log_bytecode_chunk_size {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected: self.log_bytecode_chunk_size,
                 got: inputs.r_bc.len(),
             });
         }
         if inputs.lane_weights.len() != COMMITTED_BYTECODE_LANE_CAPACITY {
-            return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+            return Err(PointGeometryError::EvaluationDomainLengthMismatch {
                 expected: COMMITTED_BYTECODE_LANE_CAPACITY,
                 got: inputs.lane_weights.len(),
             });
@@ -349,9 +349,9 @@ impl BytecodeClaimReductionLayout {
         &self,
         chunk_rbc_weights: &[F],
         scale: F,
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if chunk_rbc_weights.len() != self.chunk_count {
-            return Err(JoltFormulaPointError::EvaluationDomainLengthMismatch {
+            return Err(PointGeometryError::EvaluationDomainLengthMismatch {
                 expected: self.chunk_count,
                 got: chunk_rbc_weights.len(),
             });
@@ -406,7 +406,7 @@ pub struct BytecodeLaneWeightInputs<'a, F> {
 /// `sum_stage eta^stage * stage_value(row)` for every bytecode row.
 pub fn lane_weights<F: JoltField>(
     inputs: BytecodeLaneWeightInputs<'_, F>,
-) -> Result<Vec<F>, JoltFormulaPointError> {
+) -> Result<Vec<F>, PointGeometryError> {
     require_len(inputs.stage1_gammas, BYTECODE_STAGE_GAMMA_COUNTS[0])?;
     require_len(inputs.stage2_gammas, BYTECODE_STAGE_GAMMA_COUNTS[1])?;
     require_len(inputs.stage3_gammas, BYTECODE_STAGE_GAMMA_COUNTS[2])?;
@@ -712,7 +712,7 @@ mod tests {
         );
         assert_eq!(
             precommitted_candidate(1024, 3),
-            Err(JoltFormulaPointError::InvalidBytecodeChunking {
+            Err(PointGeometryError::InvalidBytecodeChunking {
                 bytecode_len: 1024,
                 chunk_count: 3,
             })
@@ -808,7 +808,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected: REGISTER_ADDRESS_BITS,
                 got: REGISTER_ADDRESS_BITS - 1,
             })

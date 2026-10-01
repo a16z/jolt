@@ -10,7 +10,7 @@
 use jolt_field::JoltField;
 
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
-use super::super::error::JoltFormulaPointError;
+use super::super::error::PointGeometryError;
 
 /// Degree bound shared by all two-phase precommitted reduction sumchecks.
 pub const TWO_PHASE_DEGREE_BOUND: usize = 2;
@@ -70,14 +70,14 @@ pub trait PrecommittedReductionLayout {
     fn cycle_phase_opening_point<F: JoltField>(
         &self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         self.precommitted().cycle_phase_opening_point(challenges)
     }
 
     fn cycle_phase_variable_challenges<F: JoltField>(
         &self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         self.precommitted()
             .cycle_phase_variable_challenges(challenges)
     }
@@ -86,7 +86,7 @@ pub trait PrecommittedReductionLayout {
         &self,
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         self.precommitted()
             .address_phase_opening_point(cycle_var_challenges, challenges)
     }
@@ -153,7 +153,7 @@ impl PrecommittedClaimReduction {
         scheduling_reference: PrecommittedSchedulingReference,
         trace_order: TracePolynomialOrder,
         log_t: usize,
-    ) -> Result<Self, JoltFormulaPointError> {
+    ) -> Result<Self, PointGeometryError> {
         let has_precommitted_dominance =
             scheduling_reference.reference_total_vars > scheduling_reference.main_total_vars;
         let dense_cycle_prefix_rounds = if has_precommitted_dominance { log_t } else { 0 };
@@ -222,18 +222,18 @@ impl PrecommittedClaimReduction {
         reference: &PrecommittedSchedulingReference,
         poly_row_vars: usize,
         poly_col_vars: usize,
-    ) -> Result<Vec<usize>, JoltFormulaPointError> {
+    ) -> Result<Vec<usize>, PointGeometryError> {
         let total_full = reference.reference_total_vars;
         let sigma_full = reference.joint_col_vars;
         let nu_full = total_full.saturating_sub(sigma_full);
         if dory_opening_round_permutation_be.len() != total_full {
-            return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            return Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected: total_full,
                 got: dory_opening_round_permutation_be.len(),
             });
         }
         if poly_row_vars > nu_full || poly_col_vars > sigma_full {
-            return Err(JoltFormulaPointError::PolyDimsExceedReference {
+            return Err(PointGeometryError::PolyDimsExceedReference {
                 poly_row_vars,
                 poly_col_vars,
                 reference_row_vars: nu_full,
@@ -327,17 +327,18 @@ impl PrecommittedClaimReduction {
         &self,
         cycle_var_challenges: &[F],
         round: usize,
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let idx = self
             .cycle_phase_rounds
             .binary_search(&round)
-            .map_err(|_| JoltFormulaPointError::InactiveCycleRound { round })?;
-        cycle_var_challenges.get(idx).copied().ok_or(
-            JoltFormulaPointError::ChallengeLengthMismatch {
+            .map_err(|_| PointGeometryError::InactiveCycleRound { round })?;
+        cycle_var_challenges
+            .get(idx)
+            .copied()
+            .ok_or(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.cycle_phase_rounds.len(),
                 got: cycle_var_challenges.len(),
-            },
-        )
+            })
     }
 
     /// Cycle-phase challenges this polynomial actively binds, in ascending
@@ -345,9 +346,9 @@ impl PrecommittedClaimReduction {
     pub fn cycle_phase_variable_challenges<F: JoltField>(
         &self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if challenges.len() != self.cycle_phase_total_rounds {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.cycle_phase_total_rounds,
                 got: challenges.len(),
             });
@@ -363,7 +364,7 @@ impl PrecommittedClaimReduction {
     pub fn cycle_phase_opening_point<F: JoltField>(
         &self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let mut point = self.cycle_phase_variable_challenges(challenges)?;
         point.reverse();
         Ok(point)
@@ -375,9 +376,9 @@ impl PrecommittedClaimReduction {
     pub fn cycle_phase_permuted_opening_point<F: JoltField>(
         &self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if challenges.len() != self.cycle_phase_total_rounds {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.cycle_phase_total_rounds,
                 got: challenges.len(),
             });
@@ -389,7 +390,7 @@ impl PrecommittedClaimReduction {
                 if global_round < cycle_round_limit {
                     Ok(challenges[global_round])
                 } else {
-                    Err(JoltFormulaPointError::CyclePhaseNotFinal {
+                    Err(PointGeometryError::CyclePhaseNotFinal {
                         active_address_rounds: self.num_address_phase_rounds(),
                     })
                 }
@@ -412,9 +413,9 @@ impl PrecommittedClaimReduction {
     pub fn cycle_phase_permuted_from_opening_point<F: JoltField>(
         &self,
         opening_point: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if opening_point.len() != self.cycle_phase_rounds.len() {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.cycle_phase_rounds.len(),
                 got: opening_point.len(),
             });
@@ -428,7 +429,7 @@ impl PrecommittedClaimReduction {
                 if global_round < cycle_round_limit {
                     self.cycle_challenge_for_round(&cycle_var_challenges, global_round)
                 } else {
-                    Err(JoltFormulaPointError::CyclePhaseNotFinal {
+                    Err(PointGeometryError::CyclePhaseNotFinal {
                         active_address_rounds: self.num_address_phase_rounds(),
                     })
                 }
@@ -443,15 +444,15 @@ impl PrecommittedClaimReduction {
         &self,
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if cycle_var_challenges.len() != self.cycle_phase_rounds.len() {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.cycle_phase_rounds.len(),
                 got: cycle_var_challenges.len(),
             });
         }
         if challenges.len() != self.address_phase_total_rounds {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.address_phase_total_rounds,
                 got: challenges.len(),
             });
