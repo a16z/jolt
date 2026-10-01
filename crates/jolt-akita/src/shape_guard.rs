@@ -157,7 +157,7 @@ mod tests {
 
     use super::*;
     use akita_config::TrustedScheduleCatalog;
-    use akita_types::AkitaScheduleLookupKey;
+    use akita_types::ScheduleLookupKey;
     use jolt_field::Ring;
 
     use crate::{
@@ -195,7 +195,7 @@ mod tests {
         poly_count: usize,
     ) -> OpeningScheduleSelection {
         schedules
-            .resolve_key(&AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+            .resolve_key(&ScheduleLookupKey::single(PolynomialGroupLayout::new(
                 num_vars, poly_count,
             )))
             .expect("test schedule")

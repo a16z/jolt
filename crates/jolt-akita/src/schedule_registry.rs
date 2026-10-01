@@ -16,8 +16,8 @@ use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use akita_planner::find_adapted_schedule;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, GroupCommitPhaseParams,
-    PolynomialGroupLayout, ScheduleRowDigest,
+    CommittedGroupBatchProfile, GroupCommitPhaseParams, PolynomialGroupLayout, ScheduleLookupKey,
+    ScheduleRowDigest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -184,7 +184,7 @@ fn plan_row<Cfg: CommitmentConfig>(
     if base.resolve_key(&key).is_ok() {
         return Ok(None);
     }
-    let main_row = base.resolve_key(&AkitaScheduleLookupKey::single(key.final_group))?;
+    let main_row = base.resolve_key(&ScheduleLookupKey::single(key.final_group))?;
     let adapted = find_adapted_schedule(
         main_row,
         &request,
@@ -271,7 +271,7 @@ pub fn dense_group_profile(
     layout: PolynomialGroupLayout,
 ) -> Result<GroupCommitPhaseParams, AkitaError> {
     Ok(dense_catalog
-        .resolve_key(&AkitaScheduleLookupKey::single(layout))?
+        .resolve_key(&ScheduleLookupKey::single(layout))?
         .profiles()
         .final_group)
 }

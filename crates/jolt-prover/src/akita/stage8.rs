@@ -13,7 +13,7 @@ use jolt_field::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
@@ -35,14 +35,14 @@ fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
     })
 }
 
-fn reduce_precommitted<F, T>(
+fn reduce_precommitted<F, C>(
     plan: &PrefixPackedObjectPlan,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-    transcript: &mut T,
+    transcript: &mut C,
 ) -> Result<EvaluationClaim<F>, ProverError<F>>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    C: Channel,
 {
     let claims = object_leaf_claims(plan, leaves).map_err(ProverError::Verifier)?;
     let semantic = plan.packed_claims(&claims).map_err(batch_failed::<F>)?;
@@ -53,7 +53,7 @@ where
 
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage8<F, PCS, VC, T>(
+pub fn prove_stage8<F, PCS, VC, H>(
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -66,14 +66,14 @@ pub fn prove_stage8<F, PCS, VC, T>(
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
-    transcript: &mut T,
-) -> Result<PCS::Proof, ProverError<F>>
+    transcript: &mut ProverTranscript<H>,
+) -> Result<(), ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let chunk_width = config.one_hot_config.committed_chunk_bits();
@@ -159,7 +159,7 @@ where
         packed_claim.point.as_slice().to_vec(),
         vec![packed_claim.value],
     );
-    let joint_opening_proof = tracing::info_span!("akita_main_batched_prove").in_scope(|| {
+    tracing::info_span!("akita_main_batched_prove").in_scope(|| {
         PCS::prove_batch(
             &preprocessing.pcs_setup,
             auxiliary_groups,
@@ -168,6 +168,5 @@ where
             transcript,
         )
         .map_err(batch_failed::<F>)
-    })?;
-    Ok(joint_opening_proof)
+    })
 }

@@ -198,12 +198,14 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
-# The refreshed Akita cutover consumes jolt-field from this exact Git source.
-# Redirect that package to the workspace member so Cargo resolves one shared
-# field identity rather than separate path and Git copies.
+# Akita consumes jolt-field, jolt-poly, and jolt-transcript from this exact
+# Git source. Redirect those packages to the workspace members so Cargo
+# resolves one shared identity for each rather than separate path and Git
+# copies.
 [patch."https://github.com/a16z/jolt"]
 jolt-field = { path = "crates/jolt-field" }
 jolt-poly = { path = "crates/jolt-poly" }
+jolt-transcript = { path = "crates/jolt-transcript" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]

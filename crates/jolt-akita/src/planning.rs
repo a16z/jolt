@@ -4,10 +4,10 @@ use akita_config::{policy_of, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_planner::find_schedule;
 use akita_types::sis::CommittedSourceContract;
-use akita_types::{AkitaScheduleLookupKey, FoldSchedule};
+use akita_types::{FoldSchedule, ScheduleLookupKey};
 
 pub(crate) fn plan_schedule<Cfg: CommitmentConfig>(
-    key: &AkitaScheduleLookupKey,
+    key: &ScheduleLookupKey,
     auxiliary_source_contracts: &[CommittedSourceContract],
 ) -> Result<FoldSchedule, AkitaError> {
     let planned = find_schedule(

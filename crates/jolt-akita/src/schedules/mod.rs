@@ -18,7 +18,7 @@ pub mod emit {
     use akita_planner::emit::GroupedGenerationRequest;
     use akita_planner::EmitSpec;
     use akita_types::{
-        AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+        FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
     };
 
     use crate::configs::{
@@ -56,7 +56,7 @@ pub mod emit {
     fn regen<Cfg: CommitmentConfig>(
         key: PolynomialGroupLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        plan_schedule::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
+        plan_schedule::<Cfg>(&ScheduleLookupKey::single(key), &[])
     }
 
     fn regen_one_hot_k16(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {

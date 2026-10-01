@@ -301,9 +301,10 @@ mod matrix {
     mod mode {
         use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
         use jolt_program::execution::OwnedTrace;
-        use jolt_prover::akita::preprocessing::{self, AkitaTranscript, AkitaVc};
+        use jolt_prover::akita::preprocessing::{self, AkitaVc};
         use jolt_prover::akita::{self, JoltAkitaBackend};
         use jolt_prover::ProverConfig;
+        use jolt_verifier::JoltSponge;
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
         use crate::support::{self, GuestCase};
@@ -348,7 +349,7 @@ mod matrix {
                 .include_trusted_advice(trusted_advice),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
                 &JoltAkitaBackend::optimized(),
                 &preprocessing,
                 &config,
@@ -357,7 +358,7 @@ mod matrix {
                 &public_io,
             )
             .expect("Akita proof");
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

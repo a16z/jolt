@@ -20,10 +20,10 @@ use akita_types::{
     AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup, OpeningScheduleSelection, ScheduleRowDigest,
 };
-use jolt_field::{CanonicalBytes, Zero};
-use jolt_openings::{OpeningsError, VerifierOpeningClaim};
+use jolt_field::{CanonicalBytes, CanonicalDecode, Zero};
+use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -195,7 +195,6 @@ pub(crate) type AkitaBackend = CpuBackend<AkitaField, AkitaBackendExtField>;
 pub(crate) type AkitaBackendProverSetup = BackendProverSetup<AkitaField>;
 
 pub(crate) type AkitaLayoutDigest = [u8; 32];
-const SCHEDULE_SELECTION_BYTES: usize = 32;
 
 /// Worker stack size for [`with_backend_pool`]. Stacks are lazily committed,
 /// so oversizing costs virtual address space only.
@@ -777,23 +776,16 @@ impl PartialEq for BackendVerifierCache {
 
 impl Eq for BackendVerifierCache {}
 
-/// Binds one backend flavor's setup identity into the transcript. The backend
-/// key is determined by the absorbed dimensions and admitted catalog; binding
-/// the validated catalog digest avoids hashing the large serialized key while
-/// preventing cross-catalog replay.
-pub(crate) fn append_verifier_setup<T: Transcript>(
-    transcript: &mut T,
+/// Absorbs the identity of the schedule catalog `flavor` admits under `setup`.
+///
+/// Akita's instance descriptor binds the setup seed and the selected row, but
+/// not the catalog the verifier resolved that row in; this digest pins it, so
+/// a proof never replays across verifier setups with different catalogs.
+pub(crate) fn absorb_setup_catalog<C: Channel>(
+    channel: &mut C,
     setup: &AkitaVerifierSetup,
     flavor: AkitaBackendFlavor,
 ) -> Result<(), OpeningsError> {
-    transcript.append(&Label(b"akita_setup_key"));
-    transcript.append_bytes(b"akita/fp128");
-    transcript.append_bytes(flavor.transcript_label());
-    transcript.append(&U64Word(setup.max_num_vars as u64));
-    transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
-    transcript.append(&U64Word(setup.max_total_batch_polys as u64));
-    transcript.append(&U64Word(setup.one_hot_k as u64));
-    transcript.append_bytes(&setup.default_layout_digest);
     let catalog_digest = match flavor {
         AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
         AkitaBackendFlavor::OneHot => match setup.one_hot_k {
@@ -806,26 +798,26 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
             }
         },
     };
-    transcript.append_bytes(&catalog_digest);
+    channel.public(&catalog_digest);
     Ok(())
 }
 
-/// Binds the batch statement (commitment group, point, per-claim data) into
-/// the transcript.
-pub(crate) fn append_batch_statement<T: Transcript>(
-    transcript: &mut T,
-    statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
-    commitment: &AkitaCommitment,
-    point: &[AkitaField],
+/// Sends the schedule row the prover selected. The verifier needs it to
+/// resolve the commitment profiles before Akita's own messages.
+pub(crate) fn send_selection<H: Sponge>(
+    transcript: &mut ProverTranscript<H>,
+    selection: OpeningScheduleSelection,
 ) {
-    transcript.append(&Label(b"akita_batch_statement"));
-    commitment.append_to_transcript(transcript);
-    transcript.append_values(b"akita_pcs_point", point);
-    transcript.append(&LabelWithCount(b"akita_claims", statement.len() as u64));
-    for claim in statement {
-        claim.commitment.append_to_transcript(transcript);
-        claim.evaluation.value.append_to_transcript(transcript);
-    }
+    transcript.send(selection.row_digest.as_bytes());
+}
+
+/// Receives the schedule row written by [`send_selection`].
+pub(crate) fn receive_selection<H: Sponge>(
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<OpeningScheduleSelection, OpeningsError> {
+    Ok(OpeningScheduleSelection {
+        row_digest: ScheduleRowDigest::from_bytes(transcript.receive()?),
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -837,10 +829,18 @@ pub enum AkitaBackendFlavor {
 }
 
 impl AkitaBackendFlavor {
-    pub(crate) const fn transcript_label(self) -> &'static [u8] {
+    const fn wire_tag(self) -> u8 {
         match self {
-            Self::Dense => b"dense",
-            Self::OneHot => b"one_hot",
+            Self::Dense => 0,
+            Self::OneHot => 1,
+        }
+    }
+
+    const fn from_wire_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Dense),
+            1 => Some(Self::OneHot),
+            _ => None,
         }
     }
 }
@@ -947,79 +947,154 @@ impl AkitaCommitment {
     }
 }
 
-impl AppendToTranscript for AkitaCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_commitment"));
-        transcript.append_bytes(self.backend_flavor.transcript_label());
-        transcript.append_bytes(&self.layout_digest);
-        transcript.append(&U64Word(self.num_vars as u64));
-        transcript.append(&U64Word(self.poly_count as u64));
-        transcript.append(&U64Word(self.one_hot_k as u64));
-        transcript.append(&U64Word(self.backend_coeff_len as u64));
-        transcript.append(&LabelWithCount(
-            b"akita_commitment_bytes",
-            self.serialized_backend_bytes.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_backend_bytes);
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AkitaBatchProof {
-    /// Fixed-width public identity of the exact generated row selected by the
-    /// prover. The verifier resolves this digest under its configured catalog;
-    /// the backend proof body does not encode the selection itself.
-    pub(crate) schedule_selection: [u8; SCHEDULE_SELECTION_BYTES],
-    pub(crate) backend_proof: Vec<u8>,
-}
-
-impl AkitaBatchProof {
-    pub(crate) fn new(selection: OpeningScheduleSelection, backend_proof: Vec<u8>) -> Self {
-        Self {
-            schedule_selection: *selection.row_digest.as_bytes(),
-            backend_proof,
+impl AkitaCommitment {
+    fn header(&self) -> CommitmentHeader {
+        CommitmentHeader {
+            backend_flavor: self.backend_flavor,
+            layout_digest: self.layout_digest,
+            num_vars: self.num_vars,
+            poly_count: self.poly_count,
+            one_hot_k: self.one_hot_k,
+            backend_coeff_len: self.backend_coeff_len,
         }
     }
 
-    pub(crate) fn selection(&self) -> OpeningScheduleSelection {
-        OpeningScheduleSelection {
-            row_digest: ScheduleRowDigest::from_bytes(self.schedule_selection),
-        }
+    /// Writes the commitment as a prover message: the fixed-width header,
+    /// then exactly the backend coefficient bytes it sizes.
+    pub(crate) fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
+        transcript.send(&self.header());
+        transcript.send_bytes(&self.serialized_backend_bytes);
     }
 
-    /// Headerless backend proof body: Akita's Spongefish argument bytes.
-    pub fn backend_proof_body_size(&self) -> usize {
-        self.backend_proof.len()
+    /// Reads a commitment written by [`send`](Self::send). The header and
+    /// every backend coefficient decode canonically; the payload is read only
+    /// after its declared length fits the remaining proof.
+    pub(crate) fn receive<H: Sponge>(
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Self, OpeningsError> {
+        let header: CommitmentHeader = transcript.receive()?;
+        let payload_len = header
+            .backend_coeff_len
+            .checked_mul(<AkitaField as CanonicalBytes>::NUM_BYTES)
+            .ok_or(TranscriptError::OutOfBounds)?;
+        let payload = transcript.receive_bytes(payload_len)?;
+        let _: AkitaBackendCommitmentPayload =
+            deserialize_akita(payload, &header.backend_coeff_len)?;
+        Ok(Self {
+            backend_flavor: header.backend_flavor,
+            layout_digest: header.layout_digest,
+            num_vars: header.num_vars,
+            poly_count: header.poly_count,
+            one_hot_k: header.one_hot_k,
+            backend_coeff_len: header.backend_coeff_len,
+            serialized_backend_bytes: payload.to_vec(),
+        })
     }
 
-    /// Sum of the raw component bytes before the enclosing Jolt serializer
-    /// adds container tags or length prefixes.
-    pub fn unframed_payload_size(&self) -> Option<usize> {
-        SCHEDULE_SELECTION_BYTES.checked_add(self.backend_proof.len())
+    /// Absorbs a commitment both sides hold.
+    pub(crate) fn absorb<C: Channel>(&self, channel: &mut C) {
+        channel.public(&self.header());
+        channel.public_bytes(&self.serialized_backend_bytes);
     }
 }
 
+/// Fixed-width prefix of a commitment's wire form: its metadata and the
+/// backend coefficient count that sizes the payload after it.
+struct CommitmentHeader {
+    backend_flavor: AkitaBackendFlavor,
+    layout_digest: AkitaLayoutDigest,
+    num_vars: usize,
+    poly_count: usize,
+    one_hot_k: usize,
+    backend_coeff_len: usize,
+}
+
+impl CommitmentHeader {
+    const DIGEST_BYTES: usize = 32;
+    const WORDS: usize = 4;
+
+    fn words(&self) -> [usize; Self::WORDS] {
+        [
+            self.num_vars,
+            self.poly_count,
+            self.one_hot_k,
+            self.backend_coeff_len,
+        ]
+    }
+}
+
+impl CanonicalBytes for CommitmentHeader {
+    const NUM_BYTES: usize = 1 + Self::DIGEST_BYTES + Self::WORDS * u64::NUM_BYTES;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        let (tag, rest) = out.split_at_mut(1);
+        tag.copy_from_slice(&[self.backend_flavor.wire_tag()]);
+        let (digest, words) = rest.split_at_mut(Self::DIGEST_BYTES);
+        digest.copy_from_slice(&self.layout_digest);
+        for (out, word) in words.chunks_exact_mut(u64::NUM_BYTES).zip(self.words()) {
+            (word as u64).to_bytes_le(out);
+        }
+    }
+}
+
+impl CanonicalDecode for CommitmentHeader {
+    /// Accepts only headers [`AkitaScheme`](crate::AkitaScheme) can produce: a
+    /// known flavor, word values that fit `usize`, and the flavor's one-hot
+    /// chunk size (zero for dense, 16 or 256 for one-hot).
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != Self::NUM_BYTES {
+            return None;
+        }
+        let (&tag, rest) = bytes.split_first()?;
+        let (digest, words) = rest.split_first_chunk::<{ Self::DIGEST_BYTES }>()?;
+        let mut words = words.chunks_exact(u64::NUM_BYTES).map(|word| {
+            u64::from_bytes_le_checked(word).and_then(|word| usize::try_from(word).ok())
+        });
+        let mut next = || words.next().flatten();
+        let header = Self {
+            backend_flavor: AkitaBackendFlavor::from_wire_tag(tag)?,
+            layout_digest: *digest,
+            num_vars: next()?,
+            poly_count: next()?,
+            one_hot_k: next()?,
+            backend_coeff_len: next()?,
+        };
+        let one_hot_k_matches = match header.backend_flavor {
+            AkitaBackendFlavor::Dense => header.one_hot_k == 0,
+            AkitaBackendFlavor::OneHot => validate_one_hot_k(header.one_hot_k).is_ok(),
+        };
+        one_hot_k_matches.then_some(header)
+    }
+}
+
+/// The transparent stand-in for a hiding evaluation commitment: the
+/// evaluation's canonical encoding. Akita has no ZK opening, so nothing
+/// verifies against it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaHidingCommitment {
-    pub(crate) eval: Vec<u8>,
+    pub(crate) eval: [u8; <AkitaField as CanonicalBytes>::NUM_BYTES],
 }
 
 impl AkitaHidingCommitment {
-    pub(crate) fn new(eval: Vec<u8>) -> Self {
-        Self { eval }
+    pub(crate) fn new(eval: AkitaField) -> Self {
+        let mut bytes = [0; <AkitaField as CanonicalBytes>::NUM_BYTES];
+        eval.to_bytes_le(&mut bytes);
+        Self { eval: bytes }
     }
 }
 
-impl AppendToTranscript for AkitaHidingCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_hiding_commitment"));
-        transcript.append(&LabelWithCount(
-            b"akita_hiding_eval",
-            self.eval.len() as u64,
-        ));
-        transcript.append_bytes(&self.eval);
+impl CanonicalBytes for AkitaHidingCommitment {
+    const NUM_BYTES: usize = <AkitaField as CanonicalBytes>::NUM_BYTES;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.eval);
+    }
+}
+
+impl CanonicalDecode for AkitaHidingCommitment {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        AkitaField::from_bytes_le_checked(bytes).map(Self::new)
     }
 }
 
@@ -1313,26 +1388,6 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
     OpeningsError::InvalidBatch(
         "Akita backend adapter is transparent-only and does not support ZK openings yet".to_owned(),
     )
-}
-
-/// Ends outer Jolt challenge derivation at one statement-bound challenge and
-/// uses it to domain-separate the nested Akita argument's session. No
-/// subsequent Jolt challenge consumes the terminal opening proof, so
-/// reabsorbing that proof into the outer transcript could not affect
-/// acceptance.
-pub(crate) fn bridged_akita_session<T>(jolt_transcript: &mut T, session_label: &[u8]) -> Vec<u8>
-where
-    T: Transcript<Challenge = AkitaField>,
-{
-    let bridge = jolt_transcript.challenge_scalar();
-    let bridge_bytes = bridge.to_bytes_le_vec();
-    // Akita binds the concrete instance into its own Fiat-Shamir state but
-    // keeps the session bytes as domain separator, so the cross-protocol
-    // bridge belongs here.
-    let mut bridged_session = Vec::with_capacity(session_label.len() + bridge_bytes.len());
-    bridged_session.extend_from_slice(session_label);
-    bridged_session.extend_from_slice(&bridge_bytes);
-    bridged_session
 }
 
 #[cfg(test)]

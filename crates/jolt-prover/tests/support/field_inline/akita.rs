@@ -4,17 +4,17 @@
 use common::jolt_device::JoltDevice;
 use jolt_akita::AkitaProverSetup;
 use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_prover::akita::JoltAkitaBackend;
 use jolt_prover::{akita, ProverConfig};
 use jolt_verifier::proof::JoltProof;
-use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
+use jolt_verifier::{JoltSponge, JoltVerifierPreprocessing, VerifierError};
 use jolt_witness::field_inline::FieldInlineWitnessOracle;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
 
 use crate::support::{GuestCase, PreparedGuest};
 
-pub type Proof = JoltProof<AkitaScheme, AkitaVc>;
+pub type Proof = JoltProof;
 
 pub struct ProveOutput {
     pub verifier_preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
@@ -78,7 +78,7 @@ pub fn prove<D>(
         &prover_preprocessing.pcs_setup,
     );
 
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript, _>(
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge, _>(
         &backend,
         &prover_preprocessing,
         &config,
@@ -102,7 +102,7 @@ pub fn verify_full(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
         preprocessing,
         public_io,
         proof,
