@@ -40,6 +40,7 @@ pub enum InlineExtension {
     Secp256k1,
     Grumpkin,
     P256,
+    Ntt,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -88,6 +89,7 @@ pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionPro
         InlineExtension::Secp256k1,
         InlineExtension::Grumpkin,
         InlineExtension::P256,
+        InlineExtension::Ntt,
     ],
 };
 
@@ -284,6 +286,7 @@ const fn inline_extension_code(extension: InlineExtension) -> u8 {
         InlineExtension::Secp256k1 => 5,
         InlineExtension::Grumpkin => 6,
         InlineExtension::P256 => 7,
+        InlineExtension::Ntt => 8,
     }
 }
 

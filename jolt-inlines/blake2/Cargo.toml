@@ -10,9 +10,13 @@ repository = "https://github.com/a16z/jolt"
 [features]
 default = []
 host = ["jolt-inlines-sdk/host"]
+# `digest` trait adapter over the inline hasher, for `Digest`-generic users
+# such as Fiat-Shamir transcripts.
+digest = ["dep:digest"]
 
 [dependencies]
 jolt-inlines-sdk = { workspace = true, optional = true }
+digest = { workspace = true, optional = true }
 
 [dev-dependencies]
 hex-literal.workspace = true

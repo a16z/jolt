@@ -8,7 +8,7 @@
 //! [`MulBaseUnreduced`] is the deferred ext×base multiply, stated in terms
 //! of [`Unreduced::Product`].
 
-use crate::{Field, PseudoMersenne, Ring, Unreduced};
+use crate::{Field, PseudoMersenne, Ring, Unreduced, Zero};
 use std::ops::{Add, Mul, Sub};
 
 /// An algebraic extension of the base field `F`.
@@ -88,10 +88,59 @@ pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
     fn mul_base_unreduced(self, x: F) -> Self::Product {
         self.mul_unreduced(Self::lift_base(x))
     }
+
+    /// `Σ pows[i]·coeffs[i]` (extension times base), reduced once.
+    #[inline]
+    fn dot_base(pows: &[Self], coeffs: &[F]) -> Self {
+        dot_base_fold(pows, coeffs)
+    }
+
+    /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]`: each row's dot product with
+    /// the shared powers, weighted and summed.
+    #[inline]
+    fn weighted_dot_base_rows(rows: &[&[F]], weights: &[Self], pows: &[Self]) -> Self {
+        weighted_dot_base_rows_fold(rows, weights, pows)
+    }
+}
+
+/// The fold behind [`MulBaseUnreduced::weighted_dot_base_rows`].
+#[inline]
+pub fn weighted_dot_base_rows_fold<F: Field, E: MulBaseUnreduced<F>>(
+    rows: &[&[F]],
+    weights: &[E],
+    pows: &[E],
+) -> E {
+    rows.iter()
+        .zip(weights)
+        .fold(<E as Zero>::zero(), |acc, (row, weight)| {
+            acc + *weight * E::dot_base(pows, row)
+        })
+}
+
+/// The deferred-reduction fold behind [`MulBaseUnreduced::dot_base`].
+#[inline]
+pub fn dot_base_fold<F: Field, E: MulBaseUnreduced<F>>(pows: &[E], coeffs: &[F]) -> E {
+    let accum = pows.iter().zip(coeffs).fold(
+        <<E as Unreduced>::Product as Zero>::zero(),
+        |acc, (pow, coeff)| acc + pow.mul_base_unreduced(*coeff),
+    );
+    E::reduce_product(accum)
 }
 
 /// A base field is its own degree-1 extension; the default body is exact.
-impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {}
+impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {
+    /// Takes the field-inline register-resident path when the field has one.
+    #[inline]
+    fn dot_base(pows: &[Self], coeffs: &[F]) -> Self {
+        F::inline_dot(pows, coeffs).unwrap_or_else(|| dot_base_fold(pows, coeffs))
+    }
+
+    #[inline]
+    fn weighted_dot_base_rows(rows: &[&[F]], weights: &[Self], pows: &[Self]) -> Self {
+        F::inline_weighted_dot(rows, weights, pows)
+            .unwrap_or_else(|| weighted_dot_base_rows_fold(rows, weights, pows))
+    }
+}
 
 /// Arithmetic form of an [`Ext2Config`] non-residue.
 ///
