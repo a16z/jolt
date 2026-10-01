@@ -28,6 +28,7 @@ use crate::adapters::{
     AKITA_ONE_HOT_K256, AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
+use crate::prepared::PreparedBytes;
 use crate::trace_onehot::{TraceOneHotRows, TracePackedOneHot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -450,7 +451,12 @@ impl CommitmentScheme for AkitaScheme {
         }
         let artifacts = &params.schedule_artifacts;
         let dense_catalog = artifacts.dense_catalog().map_err(invalid_setup)?;
-        let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
+        let dense_schedule_artifact = || {
+            dense_catalog
+                .to_artifact_bytes()
+                .map(PreparedBytes::Owned)
+                .map_err(invalid_setup)
+        };
         let one_hot_schedule_artifact = || {
             let base = artifacts
                 .one_hot_catalog(params.one_hot_k)
@@ -470,7 +476,10 @@ impl CommitmentScheme for AkitaScheme {
                     },
                 )
                 .map_err(invalid_setup)?;
-            catalog.to_artifact_bytes().map_err(invalid_setup)
+            catalog
+                .to_artifact_bytes()
+                .map(PreparedBytes::Owned)
+                .map_err(invalid_setup)
         };
         let schedule_artifacts = match params.flavor {
             AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
@@ -493,6 +502,7 @@ impl CommitmentScheme for AkitaScheme {
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
             schedule_artifacts,
+            prepared: None,
             backend_cache: BackendVerifierCache::default(),
         };
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
@@ -916,17 +926,22 @@ mod tests {
             default_layout_digest: [7; 32],
             one_hot_k: AKITA_ONE_HOT_K256,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
-                dense: artifacts
-                    .dense_catalog()
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
-                one_hot: artifacts
-                    .one_hot_catalog(AKITA_ONE_HOT_K256)
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
+                dense: PreparedBytes::Owned(
+                    artifacts
+                        .dense_catalog()
+                        .unwrap()
+                        .to_artifact_bytes()
+                        .unwrap(),
+                ),
+                one_hot: PreparedBytes::Owned(
+                    artifacts
+                        .one_hot_catalog(AKITA_ONE_HOT_K256)
+                        .unwrap()
+                        .to_artifact_bytes()
+                        .unwrap(),
+                ),
             },
+            prepared: None,
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -1263,6 +1278,94 @@ mod tests {
             &mut original_transcript,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn prepared_verifier_verifies_the_selected_row_after_transport() {
+        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            14,
+            1,
+            [7; 32],
+            Arc::clone(&artifacts),
+        ))
+        .unwrap();
+        let polynomial = Polynomial::new(
+            (0..(1u64 << 14))
+                .map(|i| AkitaField::from_u64(3 + 7 * i))
+                .collect(),
+        );
+        let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover_setup).unwrap();
+        let point = (5..19).map(AkitaField::from_u64).collect::<Vec<_>>();
+        let value = polynomial.evaluate(&point);
+        let statement = vec![VerifierOpeningClaim {
+            commitment,
+            evaluation: EvaluationClaim::new(point, value),
+        }];
+        let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"prepared");
+        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            statement.clone(),
+            vec![&polynomial],
+            hint,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        let mut prepared = verifier_setup.clone();
+        assert!(prepared.prepare_verifier([0; 32]).is_err());
+        assert!(
+            prepared
+                .prepare_verifier(proof.schedule_row_digest())
+                .unwrap()
+                > 0
+        );
+        let full_digest = verifier_setup
+            .dense_scheme()
+            .unwrap()
+            .schedules()
+            .catalog_digest();
+        let encoded =
+            bincode::serde::encode_to_vec(&prepared, bincode::config::standard()).unwrap();
+        let (transported, _): (AkitaVerifierSetup, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        for setup in [prepared, transported] {
+            // The view keeps the complete catalog's transcript identity.
+            assert_eq!(
+                setup.dense_scheme().unwrap().schedules().catalog_digest(),
+                full_digest
+            );
+            let mut transcript = Blake2bTranscript::<AkitaField>::new(b"prepared");
+            <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+                &setup,
+                &statement,
+                &proof,
+                &mut transcript,
+            )
+            .unwrap();
+        }
+
+        let mut detached = verifier_setup;
+        let _ = detached
+            .prepare_verifier(proof.schedule_row_digest())
+            .unwrap();
+        let bodies = detached.detach_prepared_payloads().unwrap();
+        let mut transcript = Blake2bTranscript::<AkitaField>::new(b"prepared");
+        assert!(<AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &detached,
+            &statement,
+            &proof,
+            &mut transcript,
+        )
+        .is_err());
+        let leaked: Vec<&'static [u8]> = bodies
+            .into_iter()
+            .map(|body| &*Box::leak(body.into_boxed_slice()))
+            .collect();
+        assert!(detached
+            .clone()
+            .attach_prepared_payloads(&leaked[1..])
+            .is_err());
     }
 
     #[test]
