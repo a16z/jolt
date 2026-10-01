@@ -125,7 +125,7 @@ fn deep_recursive_fold_schedule_roundtrips() {
 /// argument stream against the selected row's grammar and rejects leftover
 /// bytes.
 #[test]
-fn proof_payloads_with_trailing_garbage_reject() {
+fn proof_payloads_with_trailing_or_missing_bytes_reject() {
     let fixture = fold_roundtrip(14, b"akita-fold-trailing");
 
     let mut value = serde_json::to_value(&fixture.proof).expect("proof should serialize to JSON");
@@ -136,7 +136,7 @@ fn proof_payloads_with_trailing_garbage_reject() {
         .expect("payload should serialize as a byte array")
         .push(serde_json::json!(0));
     let extended: AkitaBatchProof =
-        serde_json::from_value(value).expect("extended proof should deserialize");
+        serde_json::from_value(value.clone()).expect("extended proof should deserialize");
 
     let err = fixture
         .verify(&extended)
@@ -145,4 +145,22 @@ fn proof_payloads_with_trailing_garbage_reject() {
         matches!(&err, OpeningsError::VerificationFailed),
         "expected a verification failure, got: {err}"
     );
+
+    let proof_len = fixture.proof.backend_proof_body_size();
+    for length in [0, 1, proof_len / 2, proof_len - 1] {
+        let mut truncated = value.clone();
+        truncated["backend_proof"]
+            .as_array_mut()
+            .expect("payload should serialize as a byte array")
+            .truncate(length);
+        let truncated: AkitaBatchProof =
+            serde_json::from_value(truncated).expect("truncated proof should deserialize");
+        assert!(
+            matches!(
+                fixture.verify(&truncated),
+                Err(OpeningsError::VerificationFailed)
+            ),
+            "proof truncated to {length} bytes must reject"
+        );
+    }
 }

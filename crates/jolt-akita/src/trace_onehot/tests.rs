@@ -407,10 +407,11 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     let view =
         <TracePackedOneHot as RootOpeningSource<AkitaField, D>>::opening_view(&source).unwrap();
     let source = view.source();
+    let single_chunk = akita_types::dyadic_block_ranges(num_blocks, 1).unwrap();
     let dense = decompose_fold_packed_with_mode::<D>(
         source,
         &challenges,
-        None,
+        &single_chunk,
         num_positions,
         2,
         DecomposeRotationMode::Dense,
@@ -421,7 +422,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     let sparse = decompose_fold_packed_with_mode::<D>(
         source,
         &challenges,
-        None,
+        &single_chunk,
         num_positions,
         2,
         DecomposeRotationMode::Sparse,
@@ -432,7 +433,7 @@ fn assert_opening_kernels_match_materialized<const D: usize>(
     let compact = decompose_fold_packed_with_mode::<D>(
         source,
         &challenges,
-        None,
+        &single_chunk,
         num_positions,
         2,
         DecomposeRotationMode::Compact,

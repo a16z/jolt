@@ -21,7 +21,7 @@ use jolt_field::ExtField;
 use rayon::prelude::*;
 
 use super::commit::commit_packed;
-use super::decomposition::decompose_fold_packed;
+use super::decomposition::{decompose_fold_packed_with_mode, DecomposeRotationMode};
 use super::opening::opening_fold_packed;
 use super::source::{TracePackedOneHot, TracePackedOneHotBatchView, TracePackedOneHotView};
 use super::traversal::coefficient_packing_partials_packed;
@@ -87,12 +87,14 @@ impl<E, const D: usize> OpeningFoldKernel<TracePackedOneHotView<'_, D>, AkitaFie
         source: TracePackedOneHotView<'_, D>,
         plan: DecomposeFoldPlan<'_>,
     ) -> Result<DecomposeFoldWitness, AkitaError> {
-        decompose_fold_packed::<D>(
+        let chunk_ranges = akita_types::dyadic_block_ranges(plan.challenges.len(), 1)?;
+        decompose_fold_packed_with_mode::<D>(
             source.source(),
             plan.challenges,
-            None,
+            &chunk_ranges,
             plan.num_positions_per_block,
             plan.num_digits,
+            DecomposeRotationMode::from_env()?,
         )?
         .into_iter()
         .next()
@@ -116,18 +118,21 @@ impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Ak
                 "batched decompose_fold requires positive block geometry".into(),
             ));
         }
-        let _num_blocks = plan.validate_uniform_batch(std::iter::once(
+        let num_blocks = plan.validate_uniform_batch(std::iter::once(
             RootPolyShape::<AkitaField, D>::num_live_ring_elems(source)
                 .div_ceil(num_positions_per_block),
         ))?;
+        let rotation_mode = DecomposeRotationMode::from_env()?;
         match plan {
             DecomposeFoldBatchPlan::Sparse { challenges, .. } => {
-                let witness = decompose_fold_packed::<D>(
+                let chunk_ranges = akita_types::dyadic_block_ranges(num_blocks, 1)?;
+                let witness = decompose_fold_packed_with_mode::<D>(
                     source,
                     challenges,
-                    None,
+                    &chunk_ranges,
                     num_positions_per_block,
                     num_digits,
+                    rotation_mode,
                 )?
                 .into_iter()
                 .next()
@@ -141,12 +146,13 @@ impl<E, const D: usize> OpeningBatchKernel<TracePackedOneHotBatchView<'_, D>, Ak
                 chunk_ranges,
                 ..
             } => {
-                let chunks = decompose_fold_packed::<D>(
+                let chunks = decompose_fold_packed_with_mode::<D>(
                     source,
                     challenges.as_slice(),
-                    Some(chunk_ranges),
+                    chunk_ranges,
                     num_positions_per_block,
                     num_digits,
+                    rotation_mode,
                 )?;
                 CpuFoldResponses::chunked::<D>(chunks)
             }

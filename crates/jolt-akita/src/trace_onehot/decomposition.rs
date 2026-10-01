@@ -471,12 +471,12 @@ fn fill_compact_rotation_table<const D: usize>(table: &mut [[i16; D]], dense: &[
 pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
     source: &TracePackedOneHot,
     challenges: &[SparseChallenge],
-    chunk_ranges: Option<&[Range<usize>]>,
+    chunk_ranges: &[Range<usize>],
     num_positions: usize,
     num_digits: usize,
     rotation_mode: DecomposeRotationMode,
 ) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
-    let num_chunks = chunk_ranges.map_or(1, <[_]>::len);
+    let num_chunks = chunk_ranges.len();
     let _span = tracing::info_span!(
         "TracePackedOneHot::decompose_fold_batch",
         ring_dimension = D,
@@ -506,12 +506,11 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         challenge.validate::<D>()?;
     }
     let expected_ranges = akita_types::dyadic_block_ranges(num_blocks, num_chunks)?;
-    if chunk_ranges.is_some_and(|ranges| ranges != expected_ranges) {
+    if chunk_ranges != expected_ranges {
         return Err(AkitaError::InvalidInput(
             "noncanonical fold chunk ranges".into(),
         ));
     }
-    let chunk_ranges = chunk_ranges.unwrap_or(&expected_ranges);
     let mut block_chunks = vec![0usize; num_blocks];
     for (chunk, range) in chunk_ranges.iter().enumerate() {
         for block_chunk in &mut block_chunks[range.clone()] {
@@ -797,21 +796,4 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         .into_iter()
         .map(DecomposeFoldWitness::from_centered_rows::<D>)
         .collect())
-}
-
-pub(super) fn decompose_fold_packed<const D: usize>(
-    source: &TracePackedOneHot,
-    challenges: &[SparseChallenge],
-    chunk_ranges: Option<&[Range<usize>]>,
-    num_positions: usize,
-    num_digits: usize,
-) -> Result<Vec<DecomposeFoldWitness>, AkitaError> {
-    decompose_fold_packed_with_mode::<D>(
-        source,
-        challenges,
-        chunk_ranges,
-        num_positions,
-        num_digits,
-        DecomposeRotationMode::from_env()?,
-    )
 }

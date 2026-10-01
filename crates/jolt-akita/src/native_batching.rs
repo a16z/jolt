@@ -30,11 +30,11 @@ use tracing::info_span;
 
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, bridged_akita_session,
-    invalid_batch, prove_failed, reverse_point, serialize_akita, with_backend_pool,
-    with_one_hot_scheme, with_one_hot_verifier, AkitaBackendCommitment, AkitaBackendExtField,
-    AkitaBackendFlavor, AkitaBackendHint, AkitaBatchProof, AkitaCommitment, AkitaConfig,
-    AkitaField, AkitaHintSource, AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup,
-    AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    invalid_batch, prove_failed, reverse_point, serialize_akita, validate_one_hot_k,
+    with_backend_pool, with_one_hot_scheme, with_one_hot_verifier, AkitaBackendCommitment,
+    AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint, AkitaBatchProof, AkitaCommitment,
+    AkitaConfig, AkitaField, AkitaHintSource, AkitaProverHint, AkitaProverSetup,
+    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::scheme::validate_group_order;
 
@@ -433,18 +433,6 @@ fn validate_statement(
             commitment.num_vars
         )));
     }
-    for claim in statement {
-        if claim.commitment != *commitment {
-            return Err(invalid_batch(
-                "Akita batch statement must use exactly one commitment group",
-            ));
-        }
-        if claim.evaluation.point.as_slice() != point {
-            return Err(invalid_batch(
-                "Akita native batching claims must use one common point",
-            ));
-        }
-    }
     if commitment.poly_count != statement.len() {
         return Err(invalid_batch(format!(
             "Akita commitment covers {} polynomials but statement has {} claims",
@@ -470,13 +458,28 @@ fn validate_statement(
                 "Akita dense commitment has invalid one-hot metadata",
             ));
         }
-        AkitaBackendFlavor::OneHot if commitment.one_hot_k != one_hot_k => {
-            return Err(invalid_batch(format!(
-                "Akita commitment one-hot K={} does not match setup K={one_hot_k}",
-                commitment.one_hot_k
-            )));
+        AkitaBackendFlavor::OneHot => {
+            let _ = validate_one_hot_k(one_hot_k)?;
+            if commitment.one_hot_k != one_hot_k {
+                return Err(invalid_batch(format!(
+                    "Akita commitment one-hot K={} does not match setup K={one_hot_k}",
+                    commitment.one_hot_k
+                )));
+            }
         }
-        AkitaBackendFlavor::Dense | AkitaBackendFlavor::OneHot => {}
+        AkitaBackendFlavor::Dense => {}
+    }
+    for claim in statement {
+        if claim.commitment != *commitment {
+            return Err(invalid_batch(
+                "Akita batch statement must use exactly one commitment group",
+            ));
+        }
+        if claim.evaluation.point.as_slice() != point {
+            return Err(invalid_batch(
+                "Akita native batching claims must use one common point",
+            ));
+        }
     }
     Ok(ValidatedStatement { commitment, point })
 }
@@ -754,9 +757,16 @@ impl BatchOpeningScheme for AkitaNativeBatching {
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "tests assert successful fixture construction and verifier rejection"
+    )]
+
     use super::*;
     use jolt_field::Zero;
-    use jolt_openings::CommitmentGroupRole;
+    use jolt_openings::{CommitmentGroupRole, EvaluationClaim};
+    use jolt_transcript::Blake2bTranscript;
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::configs::AkitaOneHotChunkProfile;
@@ -784,6 +794,42 @@ mod tests {
             vec![AkitaField::zero(); commitment.num_vars],
             vec![AkitaField::zero()],
         )
+    }
+
+    #[test]
+    fn verifier_rejects_transported_unsupported_one_hot_setup() {
+        let setup = AkitaVerifierSetup {
+            max_num_vars: 4,
+            max_num_polys_per_commitment_group: 1,
+            max_total_batch_polys: 1,
+            default_layout_digest: [9; 32],
+            one_hot_k: AKITA_ONE_HOT_K16,
+            one_hot_chunk_profile: AkitaOneHotChunkProfile::Single,
+            schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
+                one_hot: Vec::new(),
+            },
+            backend_cache: Default::default(),
+        };
+        let mut serialized = serde_json::to_value(setup).unwrap();
+        *serialized.get_mut("one_hot_k").unwrap() = serde_json::json!(8);
+        let transported: AkitaVerifierSetup = serde_json::from_value(serialized).unwrap();
+        let statement = vec![VerifierOpeningClaim {
+            commitment: commitment(AkitaBackendFlavor::OneHot, 4, [9; 32], 8),
+            evaluation: EvaluationClaim::new(vec![AkitaField::zero(); 4], AkitaField::zero()),
+        }];
+        let proof = AkitaBatchProof {
+            schedule_selection: [0; 32],
+            backend_proof: Vec::new(),
+        };
+        let mut transcript = Blake2bTranscript::new(b"invalid-transported-setup");
+        let error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+            &transported,
+            &statement,
+            &proof,
+            &mut transcript,
+        )
+        .expect_err("unsupported setup K must reject before backend dispatch");
+        assert!(matches!(error, OpeningsError::InvalidBatch(_)));
     }
 
     #[test]
