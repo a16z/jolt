@@ -1,7 +1,7 @@
 use akita_algebra::{ring::WideCyclotomicRing, CyclotomicRing};
 use akita_error::AkitaError;
-use akita_prover::compute::CommitInnerPlan;
-use akita_prover::{CommitInnerWitness, ComputeBackendSetup, CpuBackend};
+use akita_pcs::custom_source::CommitInnerPlan;
+use akita_types::{AkitaExpandedSetup, RingVec};
 use jolt_field::Fp128x8i32;
 use rayon::prelude::*;
 
@@ -16,11 +16,10 @@ use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
 use crate::AkitaField;
 
 pub(super) fn commit_packed<const D: usize>(
-    backend: &CpuBackend,
-    prepared: &<CpuBackend as ComputeBackendSetup<AkitaField>>::PreparedSetup,
+    expanded: &AkitaExpandedSetup<AkitaField>,
     source: &TracePackedOneHot,
     plan: CommitInnerPlan,
-) -> Result<CommitInnerWitness<AkitaField>, AkitaError> {
+) -> Result<RingVec<AkitaField>, AkitaError> {
     let _span = tracing::info_span!(
         "TracePackedOneHot::commit_inner",
         ring_dimension = D,
@@ -44,7 +43,6 @@ pub(super) fn commit_packed<const D: usize>(
         .num_positions_per_block
         .checked_mul(plan.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-    let expanded = backend.prepared_expanded_setup(prepared);
     let a_view = expanded
         .shared_matrix()
         .ring_view::<D>(plan.n_a, active_cols)?;
@@ -299,5 +297,17 @@ pub(super) fn commit_packed<const D: usize>(
             .collect()
     };
 
-    Ok(CommitInnerWitness::from_rows(rows))
+    let coefficient_count = rows
+        .iter()
+        .map(Vec::len)
+        .sum::<usize>()
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidInput("inner commitment output overflow".into()))?;
+    let mut coefficients = Vec::with_capacity(coefficient_count);
+    for block in rows {
+        for row in block {
+            coefficients.extend_from_slice(row.coefficients());
+        }
+    }
+    RingVec::from_coeffs_with_ring_dim(coefficients, D)
 }

@@ -54,7 +54,7 @@ use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
-    format_memory_size, peak_rss_bytes, report_stage_memory, setup_tracing_with_trace_path,
+    format_memory_size, report_stage_memory, setup_tracing_with_trace_path, PeakMemory,
     TracingFormat, BYTES_PER_GIB,
 };
 #[cfg(feature = "field-inline")]
@@ -420,7 +420,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
 
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
-    let peak_rss = peak_rss_bytes();
+    let peak = PeakMemory::sample();
 
     // Dropping the guards flushes the chrome trace; only then can the
     // flush-time pipeline parse it.
@@ -438,7 +438,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         backend: args.backend.as_str().to_string(),
     };
     let (summary_file, summary) =
-        finalize_trace(&trace_path, &ctx, peak_rss).expect("finalize chrome trace");
+        finalize_trace(&trace_path, &ctx, peak).expect("finalize chrome trace");
 
     if let Some(root) = &summary.root {
         println!(
@@ -720,13 +720,17 @@ fn run_workload(workload: Workload, scale: u32, backend: BackendKind, run_dir: &
         run.verifier_parallel.threads,
         run.verifier_single_threaded.seconds() * 1e3,
     );
-    if let Some(peak) = peak_rss_bytes() {
-        println!(
-            "modular {} (2^{}, {backend_label}): Peak RSS {}",
-            bench_name,
-            scale,
-            format_memory_size(peak as f64 / BYTES_PER_GIB),
-        );
+    let peak = PeakMemory::sample();
+    for (label, bytes) in [
+        ("Peak RSS", peak.rss_bytes),
+        ("Peak footprint", peak.footprint_bytes),
+    ] {
+        if let Some(bytes) = bytes {
+            println!(
+                "modular {bench_name} (2^{scale}, {backend_label}): {label} {}",
+                format_memory_size(bytes as f64 / BYTES_PER_GIB),
+            );
+        }
     }
 
     // Keep the historical columns first; setup and verifier measurements follow.
