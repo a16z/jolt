@@ -52,9 +52,10 @@ use jolt_witness::JoltWitnessPlane;
 use super::ram_trace::RamAccessColumns;
 use super::read_write::ReadWriteOrder;
 use super::rw_matrix::{
-    round0_bind, round0_quadratic_coefficients, AddressMajorMatrix, CycleMajorMatrix,
+    round0_bind, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
+    AddressMajorMatrix, CycleMajorMatrix,
 };
-use super::support::pin_derived_term_if_derived;
+use super::support::{pin_derived_term_if_derived, GruenRoundMessage};
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -229,6 +230,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
     /// factor and the running claim.
     fn cycle_round_message(
         &self,
+        round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let (gruen, [q_0, q_infty]) = match &self.phase {
@@ -273,7 +275,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                         let val = pair(val);
                         let inc = pair(&self.inc);
                         for i in 0..2 {
-                            acc[i] += e_in * ra[i] * (val[i] + self.gamma * (val[i] + inc[i]));
+                            acc[i] += e_in * ra[i] * val_slope_term(val[i], inc[i], self.gamma);
                         }
                     },
                     |_x_out, e_out, acc| acc.map(|value| e_out * value),
@@ -283,7 +285,28 @@ impl<F: JoltField> RamReadWriteKernel<F> {
             }
             _ => return Err(Phase::error()),
         };
-        Ok(gruen.gruen_poly_deg_3(q_0, q_infty, previous_claim))
+        gruen.checked_cubic(q_0, q_infty, previous_claim, round, || {
+            let e_in = gruen.e_in_current();
+            let e_out = gruen.e_out_current();
+            let in_bits = e_in.len().trailing_zeros() as usize;
+            let in_mask = e_in.len() - 1;
+            let weight = |pair| e_out[pair >> in_bits] * e_in[pair & in_mask];
+            match &self.phase {
+                Some(Phase::Round0 { columns, .. }) => {
+                    round0_q_at_one(columns, weight, &self.inc, self.gamma)
+                }
+                Some(Phase::Cycle { matrix, .. }) => matrix.q_at_one(weight, &self.inc, self.gamma),
+                Some(Phase::DenseCycle { ra, val, .. }) => {
+                    (0..ra.evals().len() / 2).fold(F::zero(), |sum, pair| {
+                        let row = 2 * pair + 1;
+                        sum + weight(pair)
+                            * ra.evals()[row]
+                            * val_slope_term(val.evals()[row], self.inc.evals()[row], self.gamma)
+                    })
+                }
+                _ => unreachable!("cycle phase was checked above"),
+            }
+        })
     }
 
     /// Quadratic address message: `[s(0), s(2)]` over the sparse matrix,
@@ -318,7 +341,7 @@ impl<F: JoltField> ProveRounds<F> for RamReadWriteKernel<F> {
         }
         match &self.phase {
             Some(Phase::Round0 { .. } | Phase::Cycle { .. } | Phase::DenseCycle { .. }) => {
-                self.cycle_round_message(previous_claim)
+                self.cycle_round_message(round, previous_claim)
             }
             Some(Phase::Address { .. } | Phase::AddressFirst { .. }) => {
                 self.address_round_message(previous_claim)
@@ -462,6 +485,7 @@ mod tests {
         assert_parity, random_scalars, with_ram_fixture, with_ram_fixture_init, FixtureShape, RamOp,
     };
     use super::*;
+    use crate::optimized::parity::ExceptionalEq;
     use crate::ReferenceBackend;
 
     /// The independently computed true input claim:
@@ -503,8 +527,27 @@ mod tests {
         ops: Vec<RamOp>,
         phase_splits: &[(usize, usize)],
     ) {
+        run_parity_case(shape, init_words, ops, phase_splits, None);
+    }
+
+    fn run_parity_case(
+        shape: FixtureShape,
+        init_words: Vec<u64>,
+        ops: Vec<RamOp>,
+        phase_splits: &[(usize, usize)],
+        exceptional: Option<ExceptionalEq>,
+    ) {
         with_ram_fixture_init(shape, init_words, ops, |witness| {
-            let tau_low = random_scalars(shape.log_t, 17);
+            let first_cycle = if phase_splits[0].0 == 0 {
+                phase_splits[0].1
+            } else {
+                0
+            };
+            let binds = random_scalars(shape.log_t + shape.log_k(), 71);
+            let tau_low = exceptional.map_or_else(
+                || random_scalars(shape.log_t, 17),
+                |case| case.point(shape.log_t, binds[first_cycle]),
+            );
             let gamma = random_scalars(1, 23)[0];
             let claims = RamReadWriteInputClaims {
                 ram_read_value: Fr::from_u64(0),
@@ -693,5 +736,30 @@ mod tests {
                 Err(KernelError::InvariantViolation { .. })
             ));
         });
+    }
+    #[test]
+    fn matches_reference_at_exceptional_cycle_points_in_both_orders() {
+        let shape = FixtureShape {
+            log_t: 4,
+            ram_k: 16,
+        };
+        for phase in [(shape.log_t, shape.log_k()), (0, shape.log_k())] {
+            for case in ExceptionalEq::ALL {
+                run_parity_case(
+                    shape,
+                    vec![0, 7, 3, 11],
+                    vec![
+                        RamOp::Read { word: 1 },
+                        RamOp::None,
+                        RamOp::Write { word: 1, post: 29 },
+                        RamOp::Read { word: 3 },
+                        RamOp::Write { word: 2, post: 37 },
+                        RamOp::Read { word: 1 },
+                    ],
+                    &[phase],
+                    Some(case),
+                );
+            }
+        }
     }
 }

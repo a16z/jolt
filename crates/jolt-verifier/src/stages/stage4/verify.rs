@@ -12,6 +12,11 @@ use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_transcript::Transcript;
 
+#[cfg(feature = "field-inline")]
+use super::field_registers_read_write_checking::{
+    field_registers_read_write_input_points_from_upstream,
+    field_registers_read_write_input_values_from_upstream, FieldRegistersReadWriteChecking,
+};
 use super::{
     outputs::{
         Stage4ClearOutput, Stage4InputClaims, Stage4InputPoints, Stage4Output, Stage4Sumchecks,
@@ -27,6 +32,8 @@ use super::{
         registers_read_write_input_values_from_upstream, RegistersReadWriteChecking,
     },
 };
+#[cfg(feature = "field-inline")]
+use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
@@ -39,12 +46,12 @@ use crate::{
     VerifierError,
 };
 
-/// Assemble the stage-4 consumed opening *values* from the upstream outputs into
-/// the generated `Stage4InputClaims` aggregate. This is the single place the
-/// stage's Outputs→Inputs dataflow is expressed: the register read-write inputs
-/// come from stage 3's registers claim-reduction, and the RAM value-check inputs
-/// come from stage 2's RAM `val`/`val_final` plus the reconstructed `Val_init`
-/// decomposition (advice / program-image contributions).
+/// Assemble the stage-4 consumed opening *values* from the upstream outputs into the generated
+/// `Stage4InputClaims` aggregate. This is the single place the stage's Outputs→Inputs dataflow
+/// is expressed: the register read-write inputs come from stage 3's registers claim-reduction,
+/// the field-register read-write inputs (under `field-inline`) from stage 2's field-inline
+/// claim-reduction, and the RAM value-check inputs come from stage 2's RAM `val`/`val_final`
+/// plus the reconstructed `Val_init` decomposition (advice / program-image contributions).
 pub fn stage4_input_values_from_upstream<F: JoltField>(
     stage2: &Stage2BatchOutputClaims<F>,
     stage3: &Stage3OutputClaims<F>,
@@ -52,6 +59,8 @@ pub fn stage4_input_values_from_upstream<F: JoltField>(
 ) -> Stage4InputClaims<F> {
     Stage4InputClaims {
         registers_read_write: registers_read_write_input_values_from_upstream(stage3),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write: field_registers_read_write_input_values_from_upstream(stage2),
         ram_val_check: ram_val_check_input_values_from_upstream(stage2, ram_val_check_init),
     }
 }
@@ -67,6 +76,8 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
 ) -> Stage4InputPoints<F> {
     Stage4InputPoints {
         registers_read_write: registers_read_write_input_points_from_upstream(stage3),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write: field_registers_read_write_input_points_from_upstream(stage2),
         ram_val_check: ram_val_check_input_points_from_upstream(stage2, structure),
     }
 }
@@ -120,8 +131,8 @@ where
     if ram_output_check_opening_point != r_address {
         return Err(VerifierError::StageClaimOpeningMismatch {
             stage: format!("{:?}", JoltRelationId::RamValCheck),
-            left: ram::ram_val(),
-            right: ram::ram_val_final(),
+            left: ram::ram_val().into(),
+            right: ram::ram_val_final().into(),
         });
     }
 
@@ -137,15 +148,23 @@ where
         ram_val_check_public_eval,
     )?;
 
+    // Field-register dimensions use the compile-time config's phase split, so they need
+    // no validation of a proof-supplied split like the ordinary register dimensions above.
     let sumchecks = Stage4Sumchecks {
         registers_read_write: RegistersReadWriteChecking::new(register_dimensions),
+        #[cfg(feature = "field-inline")]
+        field_registers_read_write: FieldRegistersReadWriteChecking::new(
+            JOLT_VERIFIER_CONFIG
+                .field_inline
+                .read_write_dimensions(log_t),
+        ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
 
-    // Draw the batching gammas in declaration order: the registers gamma (a single
-    // `challenge_scalar`), then the RAM value-check gamma behind its
-    // `b"ram_val_check_gamma"` domain separator (the relation's `draw_challenges`
-    // override replays the separator at its exact transcript position).
+    // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
+    // the field-register read-write gamma (each a single `challenge_scalar`), then the RAM
+    // value-check gamma behind its `b"ram_val_check_gamma"` domain separator (the relation's
+    // `draw_challenges` override replays the separator at its exact transcript position).
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

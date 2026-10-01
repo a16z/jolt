@@ -149,8 +149,9 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
     /// evaluated on the grid `[1, …, N−1, ∞]` through
     /// [`accumulate_product_grid`]: `e_in` rides in the first factor, so the
     /// products accumulate unreduced across each inner block, and
-    /// [`GruenSplitEqPolynomial::gruen_poly_from_evals`] recovers `q(0)`
-    /// from the running claim.
+    /// [`GruenRoundMessage::checked_toom`] recovers `q(0)` from the running
+    /// claim, evaluating it directly only when the linear factor vanishes
+    /// at zero.
     fn message(
         &self,
         round: usize,
@@ -214,7 +215,26 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         );
 
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
-        Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+        self.gruen
+            .checked_toom(&q_evals, previous_claim, round, || {
+                self.gruen.par_fold_out_in(
+                    || {
+                        (
+                            vec![(F::zero(), F::zero()); num_committed],
+                            F::Accumulator::default(),
+                        )
+                    },
+                    |(pairs, sum), row, _, weight| {
+                        folded_ra.lo_hi_all(row, pairs);
+                        let value = pairs
+                            .iter()
+                            .fold(F::one(), |product, pair| product * pair.0);
+                        sum.fmadd(weight, value);
+                    },
+                    |_, weight, (_, sum)| weight * sum.reduce(),
+                    |a, b| a + b,
+                )
+            })
     }
 
     /// Fewer than two committed chunks: the grid needs `q(1)` among its
