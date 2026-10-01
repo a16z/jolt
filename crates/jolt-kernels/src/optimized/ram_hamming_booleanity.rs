@@ -736,7 +736,16 @@ mod tests {
         let log_t = STARTUP_ROUNDS + 3;
         let bits: Vec<bool> = (0..1 << log_t).map(|row| row % 5 < 2).collect();
         for case in ExceptionalEq::ALL {
-            hamming_parity(log_t, &bits, case.point(log_t, test_challenge(0)));
+            // `case.point` is the eq table's big-endian point, whose last
+            // coordinate binds first; the kernel reverses the stage-1 binding
+            // to get it.
+            let eq_point = case.point(log_t, test_challenge(0));
+            if matches!(case, ExceptionalEq::ZeroPrefix) {
+                let mut eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);
+                eq.bind(test_challenge(0));
+                assert_eq!(eq.current_scalar(), Fr::zero(), "round 0 zeroes the prefix");
+            }
+            hamming_parity(log_t, &bits, eq_point.into_iter().rev().collect());
         }
     }
 }
