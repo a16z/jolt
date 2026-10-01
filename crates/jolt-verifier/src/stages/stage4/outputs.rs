@@ -1,17 +1,24 @@
 //! Typed inputs consumed and outputs produced by stage 4 verification.
 
+use std::collections::BTreeMap;
+
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Sponge, VerifierTranscript};
 
-use crate::stages::relations::{OutputClaims, SumcheckBatch};
+use crate::stages::relations::{
+    assemble_member_claims, receive_member_openings, OutputClaims, SumcheckBatch,
+};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
 pub use super::field_registers_read_write_checking::{
     FieldRegistersReadWriteChecking, FieldRegistersReadWriteOutputClaims,
 };
-use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims};
+use super::ram_val_check::{
+    RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims, RamValCheckStagedOpenings,
+};
 use super::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
@@ -71,25 +78,74 @@ impl<F: JoltField> Stage4OutputClaims<F> {
 
 impl<F: JoltField> Stage4Sumchecks<F> {
     /// The hand-written replacement for the absorb method the
-    /// `no_opening_values` opt-out suppresses: stage 4's canonical order
-    /// interleaves the RAM value-check's staged openings around the register
-    /// openings, so it delegates to the claims aggregate's curated order.
+    /// `no_opening_values` opt-out suppresses: the committed (ZK) output rows
+    /// follow the claims aggregate's curated canonical order.
     /// Same signature as the generated method, so the generated prove
     /// driver's default curation serves this stage unchanged.
     pub fn opening_values(&self, claims: &Stage4OutputClaims<F>) -> Vec<F> {
         claims.opening_values()
     }
+
+    /// The openings a clear proof sends after the stage-4 rounds: the register
+    /// members' openings, then the RAM value-check's `ram_ra`/`ram_inc`. The
+    /// staged contributions travel before the batch
+    /// ([`RamValCheckStagedOpenings`]).
+    pub fn post_round_opening_values(&self, claims: &Stage4OutputClaims<F>) -> Vec<F> {
+        let mut values = claims.registers_read_write.opening_values();
+        #[cfg(feature = "field-inline")]
+        values.extend(claims.field_registers_read_write.opening_values());
+        values.extend([claims.ram_val_check.ram_ra, claims.ram_val_check.ram_inc]);
+        values
+    }
+
+    /// Receives the post-round openings in
+    /// [`post_round_opening_values`](Self::post_round_opening_values) order and
+    /// completes the claims with the already-received `staged` openings.
+    pub fn receive_output_claims<H: Sponge>(
+        &self,
+        staged: RamValCheckStagedOpenings<F>,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Stage4OutputClaims<F>, VerifierError> {
+        let registers: BTreeMap<_, _> =
+            receive_member_openings(&self.registers_read_write, transcript)?
+                .into_iter()
+                .collect();
+        let registers_read_write =
+            assemble_member_claims::<F, RegistersReadWriteChecking<F>>(&registers)?;
+        #[cfg(feature = "field-inline")]
+        let field_registers_read_write = {
+            let received: BTreeMap<_, _> =
+                receive_member_openings(&self.field_registers_read_write, transcript)?
+                    .into_iter()
+                    .collect();
+            assemble_member_claims::<F, FieldRegistersReadWriteChecking<F>>(&received)?
+        };
+
+        Ok(Stage4OutputClaims {
+            registers_read_write,
+            #[cfg(feature = "field-inline")]
+            field_registers_read_write,
+            ram_val_check: RamValCheckOutputClaims {
+                untrusted_advice: staged.untrusted_advice,
+                trusted_advice: staged.trusted_advice,
+                program_image: staged.program_image,
+                ram_ra: transcript.receive()?,
+                ram_inc: transcript.receive()?,
+            },
+        })
+    }
 }
 
 impl<F: JoltField> Stage4OutputClaims<F> {
-    /// The produced opening claims in canonical (Fiat-Shamir) order, matching the prover's
-    /// commitment (flush) order exactly: the `Val_init` advice openings, the committed
-    /// program-image contribution, the register read-write openings, under `field-inline` the
-    /// five field-register read-write openings (the spec's committed row order: after the
-    /// ordinary register openings, before the RAM value-check ones), then the RAM value-check
-    /// `ram_ra`/`ram_inc` openings. The advice and program-image openings are produced by the
-    /// RAM value-check instance but are *appended first* (before the registers), so this is
-    /// hand-written rather than a per-instance concatenation — see [`Stage4Sumchecks`].
+    /// The produced opening claims in canonical order, the committed (ZK) output
+    /// row order: the `Val_init` advice openings, the committed program-image
+    /// contribution, the register read-write openings, under `field-inline` the
+    /// five field-register read-write openings (the spec's committed row order:
+    /// after the ordinary register openings, before the RAM value-check ones),
+    /// then the RAM value-check `ram_ra`/`ram_inc` openings. The advice and
+    /// program-image openings are produced by the RAM value-check instance but
+    /// come first (before the registers), so this is hand-written rather than a
+    /// per-instance concatenation — see [`Stage4Sumchecks`].
     pub fn opening_values(&self) -> Vec<F> {
         let ram = &self.ram_val_check;
         let mut values: Vec<F> = ram
@@ -103,14 +159,6 @@ impl<F: JoltField> Stage4OutputClaims<F> {
         values.extend(self.field_registers_read_write.opening_values());
         values.extend([ram.ram_ra, ram.ram_inc]);
         values
-    }
-
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label, matching the prover's commitment order.
-    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
     }
 }
 

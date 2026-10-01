@@ -2,6 +2,7 @@
 
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_riscv::JoltInstructionKind;
+use jolt_transcript::TranscriptError;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
@@ -9,6 +10,15 @@ use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifierError {
+    #[error("proof transcript: {0}")]
+    Transcript(#[from] TranscriptError),
+
+    #[error("proof header field {field} is outside its encoding")]
+    MalformedProofHeader { field: &'static str },
+
+    #[error("proof commitment is malformed: {reason}")]
+    MalformedCommitment { reason: String },
+
     #[error("proof protocol config {got:?} does not match verifier config {expected:?}")]
     ProtocolConfigMismatch {
         expected: JoltProtocolConfig,

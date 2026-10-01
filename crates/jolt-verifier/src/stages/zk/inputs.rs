@@ -2,7 +2,6 @@ use jolt_openings::CommitmentScheme;
 
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
-    proof::JoltProof,
     stages::{
         stage1::Stage1ZkOutput, stage2::Stage2ZkOutput, stage3::Stage3ZkOutput,
         stage4::Stage4ZkOutput, stage5::Stage5ZkOutput, stage6a::Stage6aZkOutput,
@@ -11,14 +10,13 @@ use crate::{
     verifier::CheckedInputs,
 };
 
-pub struct BlindFoldInputs<'a, PCS, VC, ZkProof>
+pub struct BlindFoldInputs<'a, PCS, VC>
 where
     PCS: CommitmentScheme,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
 {
     pub checked: &'a CheckedInputs,
     pub preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
-    pub proof: &'a JoltProof<PCS, VC, ZkProof>,
     pub stage1: &'a Stage1ZkOutput<PCS::Field, VC::Output>,
     pub stage2: &'a Stage2ZkOutput<PCS::Field, VC::Output>,
     pub stage3: &'a Stage3ZkOutput<PCS::Field, VC::Output>,

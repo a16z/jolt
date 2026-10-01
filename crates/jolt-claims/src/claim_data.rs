@@ -10,10 +10,11 @@
 //! (the verifier-derived opening point); the derives emit the value resolver on
 //! the `F` form and the point accessors on the `Vec<F>` form.
 //!
-//! Transcript I/O (`append_openings`, `draw_challenges`) deliberately lives in
-//! `jolt-verifier`: `jolt-claims` stays free of any `Transcript` dependency. The
-//! verifier-side `append_openings` is a thin consumer of [`OutputClaims::opening_values`],
-//! so it cannot disagree with the canonical order defined here.
+//! Transcript I/O (receiving openings, `draw_challenges`) deliberately lives in
+//! `jolt-verifier`: `jolt-claims` stays free of any transcript dependency. The
+//! verifier receives openings in [`OutputClaims::canonical_order`] and the prover
+//! sends [`OutputClaims::opening_values`], so neither can disagree with the
+//! canonical order defined here.
 
 use jolt_field::JoltField;
 use thiserror::Error;
@@ -53,9 +54,8 @@ pub struct MissingOpeningValue<O: core::fmt::Debug> {
 ///
 /// The implementor's field declaration order is the single definition of
 /// canonical opening order: [`opening_values`](Self::opening_values) and
-/// [`canonical_order`](Self::canonical_order) derive from it, so the Fiat-Shamir
-/// `append_openings` (in `jolt-verifier`) that iterates `opening_values()` cannot
-/// disagree.
+/// [`canonical_order`](Self::canonical_order) derive from it, so the prover's
+/// sends and the verifier's receives (in `jolt-verifier`) cannot disagree.
 ///
 /// Generic over the opening-id type `O` (defaulting to [`JoltOpeningId`]) so the
 /// trait can live in the framework half and be reused by other protocol families.

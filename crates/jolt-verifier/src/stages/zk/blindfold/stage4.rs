@@ -6,8 +6,8 @@ use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutput
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
-pub(super) fn add_stage4<F, PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage4<F, PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<F, VC::Output>,
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
@@ -21,7 +21,7 @@ where
     let log_k = crate::num::ilog2(input.checked.ram_K);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
     let register_dimensions = input
-        .proof
+        .checked
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
     // Eager: the proof-supplied phase split feeds round-count subtractions
@@ -132,7 +132,7 @@ where
     )?;
 
     let output_ids = stage4_output_ids::<PCS::Field>(
-        input.proof.untrusted_advice_commitment.is_some(),
+        input.checked.untrusted_advice_commitment_present,
         input.checked.trusted_advice_commitment_present,
         input.checked.precommitted.program_image.is_some(),
     );

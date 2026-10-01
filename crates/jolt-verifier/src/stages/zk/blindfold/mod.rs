@@ -205,8 +205,8 @@ struct SourceValues<F: JoltField> {
     publics: Vec<(VerifierPublicId, F)>,
 }
 
-pub fn build<PCS, VC, ZkProof>(
-    input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub fn build<PCS, VC>(
+    input: BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<BlindFoldProtocol<PCS::Field, VC::Output>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -522,15 +522,14 @@ fn domain_spec(domain: SumcheckDomain) -> SumcheckDomainSpec {
     }
 }
 
-fn formula_dimensions<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn formula_dimensions<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<JoltFormulaDimensions, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
     crate::stages::build_formula_dimensions(
-        input.proof,
         input.preprocessing,
         input.checked,
         crate::num::ilog2(input.checked.trace_length),
@@ -542,8 +541,8 @@ where
     clippy::type_complexity,
     reason = "the three RAM output-check publics (eq, mask, val_io)"
 )]
-fn ram_output_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_output_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     output_address_challenges: &[PCS::Field],
     ram_output_address: &[PCS::Field],
 ) -> Result<(PCS::Field, PCS::Field, PCS::Field), VerifierError>
@@ -567,8 +566,8 @@ where
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field negations in the body.
-fn ram_val_check_init<F, PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_init<F, PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<ram::RamValCheckInit<F>, VerifierError>
 where
     F: JoltField,
@@ -582,7 +581,7 @@ where
     if input.checked.precommitted.program_image.is_some() {
         contributions.push(ram::RamValCheckInitContribution::program_image(-F::one()));
     }
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.checked.untrusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
         contributions.push(ram::RamValCheckInitContribution::untrusted(-selector.0));
     }
@@ -596,8 +595,8 @@ where
     ))
 }
 
-fn ram_val_check_address<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_address<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -616,8 +615,8 @@ where
         })
 }
 
-fn advice_selector<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_selector<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
     r_address: &[PCS::Field],
 ) -> Result<(PCS::Field, Vec<PCS::Field>), VerifierError>
@@ -670,8 +669,8 @@ where
     Ok((selector, opening_point))
 }
 
-fn advice_source_point<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_source_point<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
@@ -682,8 +681,8 @@ where
     advice_selector(input, kind, &r_address).map(|(_, point)| point)
 }
 
-fn advice_layout<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_layout<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Option<AdviceClaimReductionLayout>
 where
@@ -697,8 +696,8 @@ where
     clippy::too_many_arguments,
     reason = "Stage 6 has several protocol components."
 )]
-fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_stage6_publics_and_challenges<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     bytecode_address_rounds: usize,
     bytecode_rounds: usize,
@@ -1086,8 +1085,8 @@ where
     Ok(())
 }
 
-fn bytecode_reduction_weights<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn bytecode_reduction_weights<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     layout: &BytecodeClaimReductionLayout,
 ) -> Result<BytecodeReductionWeights<PCS::Field>, VerifierError>
 where
@@ -1143,8 +1142,8 @@ fn add_bytecode_chunk_weight_publics<F: JoltField>(
     Ok(())
 }
 
-fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_bytecode_reduction_cycle_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
 ) -> Result<(), VerifierError>
@@ -1172,8 +1171,8 @@ where
     add_bytecode_chunk_weight_publics(values, chunk_weights)
 }
 
-fn add_bytecode_reduction_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_bytecode_reduction_address_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
     sumcheck_point: &[PCS::Field],
@@ -1200,8 +1199,8 @@ where
     add_bytecode_chunk_weight_publics(values, chunk_weights)
 }
 
-fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_program_image_reduction_cycle_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
 ) -> Result<(), VerifierError>
@@ -1231,8 +1230,8 @@ where
     )
 }
 
-fn add_program_image_reduction_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_program_image_reduction_address_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
     sumcheck_point: &[PCS::Field],
@@ -1258,8 +1257,8 @@ where
     )
 }
 
-fn add_advice_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_cycle_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1291,8 +1290,8 @@ where
     )
 }
 
-fn add_advice_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_address_publics<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1319,8 +1318,8 @@ where
     )
 }
 
-fn stage6_virtualization_points<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn stage6_virtualization_points<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
 ) -> Result<Vec<Vec<PCS::Field>>, VerifierError>
 where

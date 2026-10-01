@@ -13,7 +13,7 @@ pub use jolt_claims::protocols::jolt::relations::booleanity::{
 };
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_transcript::Transcript;
+use jolt_transcript::Channel;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
@@ -80,9 +80,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
     /// both decode the same 16-byte squeeze, but differently, so switching
     /// would silently change the reference/gamma values without changing the
     /// transcript bytes.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
+    fn draw_challenges<C: Channel>(
         &self,
-        transcript: &mut T,
+        transcript: &mut C,
     ) -> Result<BooleanityAddressPhaseChallenges<F>, VerifierError> {
         let chunk_bits = self.dimensions.log_k_chunk;
         let mut reference_address: Vec<F> =
@@ -91,7 +91,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         // only settles the (unreachable) underflow for the arithmetic lint.
         if reference_address.len() < chunk_bits {
             let missing = chunk_bits.saturating_sub(reference_address.len());
-            reference_address.extend(transcript.challenge_vector(missing));
+            reference_address.extend(transcript.challenges_small::<F>(missing));
         } else {
             // Keep the trailing `chunk_bits` entries.
             let excess = reference_address.len().saturating_sub(chunk_bits);
@@ -99,7 +99,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         }
         Ok(BooleanityAddressPhaseChallenges {
             reference_address,
-            gamma: transcript.challenge(),
+            gamma: transcript.challenge_small(),
         })
     }
 

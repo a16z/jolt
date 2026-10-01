@@ -3,8 +3,8 @@ use super::*;
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
-pub(super) fn add_stage1<F, PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage1<F, PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     mut builder: Builder<F, VC::Output>,
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>

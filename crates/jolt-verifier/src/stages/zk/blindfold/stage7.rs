@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn add_stage7<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage7<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -13,7 +13,7 @@ where
     let formula_dimensions = formula_dimensions(input)?;
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.checked.one_hot_config.committed_chunk_bits(),
     );
     let hamming_claims =
         relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);

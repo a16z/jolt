@@ -8,10 +8,8 @@ use jolt_claims::protocols::jolt::{
     },
     JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
-use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_field::{CanonicalDecode, JoltField};
+use jolt_transcript::{Sponge, VerifierTranscript};
 
 #[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{
@@ -33,11 +31,10 @@ use super::outputs::{
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
 use crate::{
-    proof::JoltProof,
     stages::{
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
-        zk::committed,
+        zk::{committed, outputs::CommittedOutputClaimOutput},
         PrecommittedSchedule,
     },
     verifier::CheckedInputs,
@@ -49,22 +46,21 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 
 #[jolt_verifier_derive::fs_scope(Stage7)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<F, C, H>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
-    transcript: &mut T,
-    stage4: &Stage4Output<PCS::Field, VC::Output>,
-    stage6: &Stage6bOutput<PCS::Field, VC::Output>,
-) -> Result<Stage7Output<PCS::Field, VC::Output>, VerifierError>
+    transcript: &mut VerifierTranscript<'_, H>,
+    stage4: &Stage4Output<F, C>,
+    stage6: &Stage6bOutput<F, C>,
+) -> Result<Stage7Output<F, C>, VerifierError>
 where
-    PCS: CommitmentScheme,
-    VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    F: JoltField,
+    C: CanonicalDecode,
+    H: Sponge,
 {
     let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
-        proof.one_hot_config.committed_chunk_bits(),
+        checked.one_hot_config.committed_chunk_bits(),
     )?;
 
     // The clear-only reference geometry each address phase's expected-output term
@@ -90,7 +86,7 @@ where
         clear,
     )?;
 
-    // Draw the hamming-weight reduction's batching gamma (a single `challenge_scalar`,
+    // Draw the hamming-weight reduction's batching gamma (a single `challenge`,
     // matching the relation's default `draw_challenges`) path-agnostically before the
     // ZK/clear branch; the advice and committed-program address phases draw nothing
     // (`NoChallenges`). BlindFold sources the gamma from
@@ -98,14 +94,9 @@ where
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk {
-        let consistency = sumchecks.verify_zk(&proof.stages.stage7_sumcheck_proof, transcript)?;
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage7_sumcheck_proof,
-            "stage7_sumcheck_proof",
-            sumchecks.output_claim_count(),
-            JoltRelationId::HammingWeightClaimReduction,
-        )?;
+        let shape = committed::output_claim_shape(checked, sumchecks.output_claim_count())?;
+        let (consistency, commitments) = sumchecks.verify_zk(shape.row_count(), transcript)?;
+        let batch_output_claims = CommittedOutputClaimOutput { shape, commitments };
 
         // The produced opening points, derived off the committed batch consistency;
         // stage 8 reads the hamming point and resolves the precommitted finals off
@@ -124,30 +115,14 @@ where
     }
 
     let stage6 = stage6.clear()?;
-    let claims = &proof.clear_claims()?.stage7;
-
-    // Also rejects claims supplied for phases that did not run, with the same
-    // `UnexpectedOpeningClaim` ids the former hand-written guards used (the id is
-    // derived from the supplied claims' canonical order).
-    sumchecks.validate_output_claims(claims)?;
-
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
     let input_points = sumchecks.empty_input_points();
 
-    let output_points = sumchecks.verify_clear(
-        &input_values,
-        &input_points,
-        &challenges,
-        claims,
-        &proof.stages.stage7_sumcheck_proof,
-        transcript,
-        7,
-    )?;
-
-    sumchecks.append_output_claims(transcript, claims);
+    let (output_points, output_values) =
+        sumchecks.verify_clear(&input_values, &input_points, &challenges, transcript, 7)?;
 
     Ok(Stage7Output::Clear(Stage7ClearOutput {
-        output_values: claims.clone(),
+        output_values,
         output_points,
     }))
 }

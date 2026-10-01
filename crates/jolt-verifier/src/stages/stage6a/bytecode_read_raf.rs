@@ -410,7 +410,7 @@ mod tests {
     use jolt_field::Fr;
     use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_riscv::NUM_CIRCUIT_FLAGS;
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     // The address phase has the only multi-field `Challenges` (gamma + five stage
     // gammas), so it exercises that the default draws one `challenge_scalar` per
@@ -437,12 +437,12 @@ mod tests {
         // degree-1 power.
         let (inline_events, inline_gammas) = record(|t| {
             [
-                t.challenge_scalar_powers(8)[1],
-                t.challenge_scalar_powers(2 + NUM_CIRCUIT_FLAGS)[1],
-                t.challenge_scalar_powers(4)[1],
-                t.challenge_scalar_powers(9)[1],
-                t.challenge_scalar_powers(3)[1],
-                t.challenge_scalar_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT)[1],
+                t.challenge_powers(8)[1],
+                t.challenge_powers(2 + NUM_CIRCUIT_FLAGS)[1],
+                t.challenge_powers(4)[1],
+                t.challenge_powers(9)[1],
+                t.challenge_powers(3)[1],
+                t.challenge_powers(2 + LookupTableKind::<RISCV_XLEN>::COUNT)[1],
             ]
         });
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());

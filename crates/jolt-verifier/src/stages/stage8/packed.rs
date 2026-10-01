@@ -19,7 +19,7 @@ use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use super::precommitted::precommitted_final_openings;
 #[cfg(feature = "akita")]
@@ -143,14 +143,14 @@ struct ResolvedObject<'a, PCS: CommitmentScheme> {
     commitment: &'a PCS::Output,
 }
 
-fn reduce_object<PCS, T>(
+fn reduce_object<PCS, C>(
     object: &ResolvedObject<'_, PCS>,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<PCS::Field>>,
-    transcript: &mut T,
+    transcript: &mut C,
 ) -> Result<EvaluationClaim<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    T: Transcript<Challenge = PCS::Field>,
+    C: Channel,
 {
     let claims = object_leaf_claims(&object.plan, leaves)?;
     let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
@@ -217,16 +217,15 @@ pub fn field_inc_claim<F: JoltField, C: Clone>(
     clippy::too_many_arguments,
     reason = "the stage inputs are passed separately by the verifier driver"
 )]
-pub fn verify<PCS, VC, T>(
+pub fn verify<PCS, VC, H>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
-    proof: &PCS::Proof,
-    transcript: &mut T,
+    #[cfg(feature = "field-inline")] field_inc_commitment: &PCS::Output,
+    transcript: &mut VerifierTranscript<'_, H>,
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
@@ -234,10 +233,10 @@ pub fn verify<PCS, VC, T>(
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: Clone + AppendToTranscript + OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: jolt_crypto::VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    H: Sponge,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
@@ -339,9 +338,7 @@ where
     }
     #[cfg(feature = "field-inline")]
     {
-        let commitment = field_inc_commitment.ok_or(VerifierError::MissingProofPayload {
-            field: "field_inc_commitment",
-        })?;
+        let commitment = field_inc_commitment;
         let layout = FieldIncLayout::new(formula_dimensions.trace.log_t());
         validate_group_commitment_metadata(commitment, layout.layout_digest(), layout.num_vars())?;
         auxiliary_groups.push(field_inc_claim(commitment, stage6b)?);
@@ -372,7 +369,6 @@ where
         &preprocessing.pcs_setup,
         &auxiliary_groups,
         &main_group,
-        proof,
         transcript,
     )
     .map_err(opening_failed)?;

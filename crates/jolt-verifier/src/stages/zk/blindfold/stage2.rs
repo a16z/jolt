@@ -22,8 +22,8 @@ use crate::stages::stage2::outputs::InstructionClaimReduction;
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field arithmetic in the body.
-pub(super) fn add_stage2<F, PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage2<F, PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     mut builder: Builder<F, VC::Output>,
     values: &mut SourceValues<F>,
 ) -> Result<Builder<F, VC::Output>, VerifierError>
@@ -36,7 +36,7 @@ where
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let log_k = crate::num::ilog2(input.checked.ram_K);
     let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
-    let read_write_dimensions = input.proof.rw_config.ram_dimensions(log_t, log_k);
+    let read_write_dimensions = input.checked.rw_config.ram_dimensions(log_t, log_k);
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
         ram::RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {

@@ -29,14 +29,12 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
-use jolt_transcript::{LabelWithCount, Transcript};
+use jolt_transcript::{Sponge, VerifierTranscript};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
-
-use super::outputs::Stage4OutputClaims;
 
 /// Wire the consumed opening *values* from stage 2's RAM read-write `val` and
 /// output-check `val_final`, plus the reconstructed init contributions (the
@@ -176,20 +174,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         let mut openings = self.symbolic().expected_output_openings::<F>();
         openings.extend(self.contribution_openings.iter().copied());
         openings
-    }
-
-    /// Reproduces the stage-4 inline RAM value-check gamma draw: the
-    /// `b"ram_val_check_gamma"` domain separator (an empty labeled append) followed
-    /// by `ram_val_check_gamma = challenge_scalar()`. The separator's empty append
-    /// is part of the soundness-critical byte stream, so it is replayed here too.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
-        &self,
-        transcript: &mut T,
-    ) -> Result<RamValCheckChallenges<F>, VerifierError> {
-        append_ram_val_check_gamma_domain_separator(transcript);
-        Ok(RamValCheckChallenges {
-            gamma: transcript.challenge_scalar(),
-        })
     }
 
     fn derive_opening_points(
@@ -411,6 +395,24 @@ impl<F: JoltField> RamValCheckInitialEvaluation<F> {
             .iter()
             .find(|contribution| contribution.kind == kind)
     }
+
+    /// The staged opening values this evaluation decomposes `Val_init` into:
+    /// the inverse of attaching [`RamValCheckStagedOpenings`] to the init
+    /// structure.
+    pub fn staged_openings(&self) -> RamValCheckStagedOpenings<F> {
+        let advice = |kind| {
+            self.advice_contribution(kind)
+                .map(|contribution| contribution.opening_value)
+        };
+        RamValCheckStagedOpenings {
+            untrusted_advice: advice(JoltAdviceKind::Untrusted),
+            trusted_advice: advice(JoltAdviceKind::Trusted),
+            program_image: self
+                .program_image_contribution
+                .as_ref()
+                .map(|(_, value)| *value),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -425,16 +427,63 @@ pub struct VerifiedRamValCheckAdviceContribution<F: JoltField> {
     pub opening_value: F,
 }
 
-/// Attach the proof's staged advice / program-image opening *values* to the
-/// pre-branch [`RamValCheckInitStructure`], validating that each claim is present
-/// exactly when its contribution is. Clear-only (the values come from proof
-/// claims); mirrors the prover's own init reconstruction so both decompose
-/// `Val_init` identically.
+/// The RAM value-check's staged `Val_init` contribution openings, each present
+/// exactly when the init structure has that contribution. A clear proof sends
+/// them before the stage-4 batch, because the RAM value-check input claim
+/// consumes them; a committed proof carries them in its output-claim rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RamValCheckStagedOpenings<F> {
+    pub untrusted_advice: Option<F>,
+    pub trusted_advice: Option<F>,
+    pub program_image: Option<F>,
+}
+
+impl<F: JoltField> RamValCheckStagedOpenings<F> {
+    /// The staged openings of a produced claims struct.
+    pub fn from_claims(claims: &RamValCheckOutputClaims<F>) -> Self {
+        Self {
+            untrusted_advice: claims.untrusted_advice,
+            trusted_advice: claims.trusted_advice,
+            program_image: claims.program_image,
+        }
+    }
+
+    /// The present openings, in send order.
+    pub fn values(&self) -> Vec<F> {
+        self.untrusted_advice
+            .into_iter()
+            .chain(self.trusted_advice)
+            .chain(self.program_image)
+            .collect()
+    }
+
+    /// Receives the openings `structure` has contributions for.
+    pub fn receive<H: Sponge>(
+        structure: &RamValCheckInitStructure<F>,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Self, VerifierError> {
+        let mut receive = |present: bool| -> Result<Option<F>, VerifierError> {
+            present
+                .then(|| transcript.receive())
+                .transpose()
+                .map_err(Into::into)
+        };
+        Ok(Self {
+            untrusted_advice: receive(structure.advice_block(JoltAdviceKind::Untrusted).is_some())?,
+            trusted_advice: receive(structure.advice_block(JoltAdviceKind::Trusted).is_some())?,
+            program_image: receive(structure.program_image_point.is_some())?,
+        })
+    }
+}
+
+/// Attach the staged advice / program-image opening *values* to the pre-branch
+/// [`RamValCheckInitStructure`], validating that each is present exactly when
+/// its contribution is. Clear-only; mirrors the prover's own init reconstruction
+/// so both decompose `Val_init` identically.
 pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
     structure: &RamValCheckInitStructure<F>,
-    claims: &Stage4OutputClaims<F>,
+    ram: &RamValCheckStagedOpenings<F>,
 ) -> Result<RamValCheckInitialEvaluation<F>, VerifierError> {
-    let ram = &claims.ram_val_check;
     let program_image_opening = program_image::ram_val_check_contribution_opening();
     let program_image_contribution = match (&structure.program_image_point, ram.program_image) {
         (None, Some(_)) => {
@@ -551,16 +600,6 @@ fn ram_val_check_advice_block<F: JoltField>(
         selector,
         opening_point,
     })
-}
-
-/// Absorb the Fiat-Shamir domain separator for the RAM value-check gamma: an empty
-/// message labeled `b"ram_val_check_gamma"`. The prover appends this empty labeled
-/// chunk before sampling the gamma, so [`RamValCheck::draw_challenges`] must
-/// reproduce it byte-for-byte (label chunk + empty payload) or every challenge from
-/// here on diverges.
-fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
-    transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
-    transcript.append_bytes(&[]);
 }
 
 #[cfg(test)]

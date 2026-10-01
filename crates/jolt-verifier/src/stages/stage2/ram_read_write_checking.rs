@@ -128,7 +128,7 @@ mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use jolt_field::Fr;
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     // Representative of the 14 single-`challenge_scalar` relations that inherit the
     // default `draw_challenges`: the inline `ram_read_write_gamma = challenge_scalar()`
@@ -139,7 +139,7 @@ mod tests {
         let relation =
             RamReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(4, 3, 2, 1), 3, Vec::new());
 
-        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar());
+        let (inline_events, inline_gamma) = record(|t| t.challenge());
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);

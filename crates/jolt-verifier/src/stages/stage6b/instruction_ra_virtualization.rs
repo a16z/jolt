@@ -160,7 +160,7 @@ mod tests {
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use core::num::NonZeroUsize;
     use jolt_field::Fr;
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     fn relation(num_virtual_ra_polys: usize) -> InstructionRaVirtualization<Fr> {
         let dimensions = InstructionRaVirtualizationDimensions::new(
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn default_draw_challenges_matches_inline_instruction_ra_gamma() {
         let relation = relation(2);
-        let (inline_events, inline_gamma) = record(|t| t.challenge_scalar());
+        let (inline_events, inline_gamma) = record(|t| t.challenge());
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);

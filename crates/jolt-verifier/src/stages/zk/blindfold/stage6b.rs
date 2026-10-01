@@ -5,8 +5,8 @@ use jolt_claims::protocols::jolt::relations::ram::{
     RamHammingBooleanityOutputClaims, RamRaVirtualizationOutputClaims,
 };
 
-pub(super) fn add_stage6b<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage6b<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -23,7 +23,7 @@ where
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.checked.one_hot_config.committed_chunk_bits(),
     );
     let booleanity_claims = relations::booleanity::BooleanityCyclePhase::new(booleanity_dimensions);
     let ram_hamming_claims = relations::ram::HammingBooleanity::new(trace_dimensions);

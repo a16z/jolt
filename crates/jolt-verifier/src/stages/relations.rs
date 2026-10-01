@@ -9,9 +9,10 @@
 //! This makes the canonical opening **order** and **count** a single-sourced
 //! consequence of a struct's field declaration order.
 //!
-//! Transcript I/O stays here: [`OutputAppend::append_openings`] is a thin
-//! verifier-side consumer of [`OutputClaims::opening_values`], so `jolt-claims`
-//! stays transcript-free while the Fiat-Shamir order remains single-sourced.
+//! Transcript I/O stays here: [`receive_member_openings`] reads a relation's
+//! produced openings in the canonical order [`OutputClaims::opening_values`]
+//! defines, so `jolt-claims` stays transcript-free while the Fiat-Shamir order
+//! remains single-sourced.
 
 pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 
@@ -21,11 +22,11 @@ pub use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
 pub use jolt_verifier_derive::SumcheckBatch;
 
 use core::fmt::Debug;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
 use crate::VerifierError;
@@ -34,27 +35,6 @@ use crate::VerifierError;
 /// resolver, whose closure is typed at the composite id so members from any
 /// protocol family can chain into it.
 pub use jolt_claims::protocols::composed::ComposedOpeningId;
-
-/// Transcript-side companion to [`OutputClaims`]: append a relation's produced
-/// openings to the Fiat-Shamir transcript in canonical order.
-///
-/// This lives in `jolt-verifier` (not `jolt-claims`) because it needs a
-/// `Transcript`; `jolt-claims` stays transcript-free. It is a blanket extension
-/// over every `OutputClaims` implementor, so the Fiat-Shamir order is
-/// single-sourced by [`OutputClaims::opening_values`] and cannot disagree with it.
-pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
-    /// Append every produced opening to the transcript in canonical
-    /// ([`OutputClaims::opening_values`]) order, each under the `b"opening_claim"`
-    /// label. This is the Fiat-Shamir order and MUST match the order in which the
-    /// prover commits the openings.
-    fn append_openings<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
-    }
-}
-
-impl<F: JoltField, C: OutputClaims<F>> OutputAppend<F> for C {}
 
 /// The drawn Fiat-Shamir challenges of a [`ConcreteSumcheck`] instance: a readable
 /// alias for the relation's `Challenges<F>` projection through its symbolic
@@ -137,27 +117,27 @@ where
     /// transcript, in the exact order the stage's inline draw uses. Batch-level
     /// coefficients and the shared binding vector are NOT drawn here.
     ///
-    /// The default draws one `challenge_scalar` per `Challenges` field, in
-    /// declaration order, via [`SumcheckChallenges::from_transcript_values`]. This is
-    /// the correct draw for the common case — a relation whose challenges are each a
-    /// single `challenge_scalar` (and for [`NoChallenges`](::jolt_claims::NoChallenges),
-    /// which has no fields, it draws nothing). A `challenge_scalar_powers(n)` draw
-    /// reduces to this case: it performs exactly one squeeze and the relation keeps
-    /// the degree-1 power, which equals that squeezed scalar. Only relations whose
-    /// draw is genuinely different — an extra transcript append (a domain
-    /// separator), a value re-roll, or a powers draw whose kept value is not the
-    /// squeezed scalar — override this.
+    /// The default draws one exactly uniform `challenge` per `Challenges` field,
+    /// in declaration order, via [`SumcheckChallenges::from_transcript_values`].
+    /// This is the correct draw for the common case — a relation whose challenges
+    /// are each a single `challenge` (and for
+    /// [`NoChallenges`](::jolt_claims::NoChallenges), which has no fields, it draws
+    /// nothing). A `challenge_powers(n)` draw reduces to this case: it performs
+    /// exactly one draw and the relation keeps the degree-1 power, which equals
+    /// that drawn scalar. Only relations whose draw is genuinely different — an
+    /// extra transcript absorb (a domain separator), a value re-roll, or a powers
+    /// draw whose kept value is not the drawn scalar — override this.
     ///
     /// The bound is `SumcheckChallenges` — which every `Challenges` already
     /// implements — so the default needs no separate `Default` derive. It errors
     /// only if the per-field draw cannot populate the struct, which cannot happen for
-    /// the infinite `challenge_scalar` stream the default supplies.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
+    /// the infinite `challenge` stream the default supplies.
+    fn draw_challenges<C: Channel>(
         &self,
-        transcript: &mut T,
+        transcript: &mut C,
     ) -> Result<ConcreteSumcheckChallenges<F, Self>, VerifierError> {
         SumcheckChallenges::from_transcript_values(::core::iter::repeat_with(|| {
-            transcript.challenge_scalar()
+            transcript.challenge()
         }))
         .map_err(VerifierError::from)
     }
@@ -372,8 +352,7 @@ where
 /// Assert an optional member's output-claims presence agrees with the instance:
 /// reject a present instance missing its claims cell, and reject claims
 /// supplied for an absent instance. Called by the generated
-/// `validate_output_claims` for each `Option` member (before its shape check),
-/// and directly by a stage that curates its own shape checks (stage 6b).
+/// `validate_output_claims` for each `Option` member (before its shape check).
 pub fn validate_member_presence<F, I>(
     member: Option<&I>,
     claims: Option<&SumcheckOutputClaims<F, I>>,
@@ -420,6 +399,107 @@ where
 {
     let native = OpeningIdOf::<F, I>::try_from(*id).ok()?;
     claims.resolve_output(&native)
+}
+
+/// Receive one batch member's produced openings: its
+/// [`wire_output_openings`](ConcreteSumcheck::wire_output_openings) in canonical
+/// order, which is the order the prover's clear recorder sends them. Aliased
+/// openings are not sent; [`assemble_member_claims`] fills them from their
+/// sources. Called by the generated `receive_output_claims` per member.
+pub fn receive_member_openings<F, I, H>(
+    member: &I,
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<Vec<(ComposedOpeningId, F)>, VerifierError>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    H: Sponge,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Copy + Ord + Debug + Into<ComposedOpeningId>,
+{
+    let aliased: BTreeSet<ComposedOpeningId> = I::aliased_output_openings()
+        .into_iter()
+        .map(|(aliased, _)| aliased.into())
+        .collect();
+    receive_member_openings_except(member, |id| aliased.contains(id), transcript)
+}
+
+/// [`receive_member_openings`] with the skipped (aliased) openings chosen by
+/// `skip` instead of the member's static alias declaration, for a stage whose
+/// dedup is decided at runtime by opening-point equality.
+pub fn receive_member_openings_except<F, I, H>(
+    member: &I,
+    skip: impl Fn(&ComposedOpeningId) -> bool,
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<Vec<(ComposedOpeningId, F)>, VerifierError>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    H: Sponge,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Copy + Ord + Debug + Into<ComposedOpeningId>,
+{
+    let wire = member.wire_output_openings();
+    let aliased: BTreeSet<_> = I::aliased_output_openings()
+        .into_iter()
+        .map(|(aliased, _)| aliased)
+        .collect();
+    // A placeholder struct holding exactly the produced openings yields their
+    // canonical order without restating the relation's field layout.
+    let shape = SumcheckOutputClaims::<F, I>::from_opening_values(|id| {
+        (wire.contains(id) || aliased.contains(id)).then(F::zero)
+    })
+    .map_err(|missing| VerifierError::MissingOpeningClaim {
+        id: missing.id.into(),
+    })?;
+    shape
+        .canonical_order()
+        .into_iter()
+        .map(Into::into)
+        .filter(|id| !skip(id))
+        .map(|id| Ok((id, transcript.receive()?)))
+        .collect()
+}
+
+/// Assemble one batch member's claims from the batch's received openings
+/// (keyed by composite id). Each aliased opening takes its canonical source's
+/// value, so an alias can never disagree with its source. Called by the
+/// generated `receive_output_claims` per member.
+pub fn assemble_member_claims<F, I>(
+    received: &BTreeMap<ComposedOpeningId, F>,
+) -> Result<SumcheckOutputClaims<F, I>, VerifierError>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Copy + Ord + Debug + Into<ComposedOpeningId>,
+{
+    let sources: BTreeMap<ComposedOpeningId, ComposedOpeningId> = I::aliased_output_openings()
+        .into_iter()
+        .map(|(aliased, source)| (aliased.into(), source.into()))
+        .collect();
+    assemble_member_claims_with::<F, I>(received, |id| sources.get(id).copied())
+}
+
+/// [`assemble_member_claims`] with each aliased opening's source chosen by
+/// `source` instead of the member's static alias declaration.
+pub fn assemble_member_claims_with<F, I>(
+    received: &BTreeMap<ComposedOpeningId, F>,
+    source: impl Fn(&ComposedOpeningId) -> Option<ComposedOpeningId>,
+) -> Result<SumcheckOutputClaims<F, I>, VerifierError>
+where
+    F: JoltField,
+    I: ConcreteSumcheck<F>,
+    SumcheckOutputClaims<F, I>: OutputClaims<F, OpeningIdOf<F, I>>,
+    OpeningIdOf<F, I>: Copy + Ord + Debug + Into<ComposedOpeningId>,
+{
+    SumcheckOutputClaims::<F, I>::from_opening_values(|id| {
+        let id: ComposedOpeningId = (*id).into();
+        received.get(&source(&id).unwrap_or(id)).copied()
+    })
+    .map_err(|missing| VerifierError::MissingOpeningClaim {
+        id: missing.id.into(),
+    })
 }
 
 /// Enforce one member's declared cross-relation opening aliases: each aliased

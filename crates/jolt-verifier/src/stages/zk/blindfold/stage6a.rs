@@ -4,8 +4,8 @@ use jolt_claims::protocols::composed::ComposedClaims;
 
 use super::*;
 
-pub(super) fn add_stage6a<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+pub(super) fn add_stage6a<PCS, VC>(
+    input: &BlindFoldInputs<'_, PCS, VC>,
     builder: Builder<PCS::Field, VC::Output>,
     values: &mut SourceValues<PCS::Field>,
 ) -> Result<Builder<PCS::Field, VC::Output>, VerifierError>
@@ -28,7 +28,7 @@ where
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
-        input.proof.one_hot_config.committed_chunk_bits(),
+        input.checked.one_hot_config.committed_chunk_bits(),
     );
     let booleanity_address_claims =
         relations::booleanity::BooleanityAddressPhase::new(booleanity_dimensions);

@@ -187,7 +187,7 @@ mod tests {
     use crate::stages::relations::draw_recording::{record, DrawEvent};
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
     use jolt_field::Fr;
-    use jolt_transcript::Transcript;
+    use jolt_transcript::Channel;
 
     // Booleanity inherits the default `draw_challenges` (one `challenge_scalar`): the
     // inline draw is a single `challenge()`. The historical zero-gamma re-roll was
@@ -201,7 +201,7 @@ mod tests {
         let dimensions = lattice_booleanity::LatticeBooleanityDimensions::new(dimensions).unwrap();
         let relation = Booleanity::<Fr>::new(dimensions, Vec::new(), Vec::new(), Vec::new());
 
-        let (inline_events, inline_gamma) = record(|t| t.challenge());
+        let (inline_events, inline_gamma) = record(|t| t.challenge_small());
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);

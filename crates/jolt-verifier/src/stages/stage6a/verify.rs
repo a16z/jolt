@@ -3,8 +3,9 @@ use jolt_claims::protocols::composed::ComposedClaims;
 
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
+use jolt_field::CanonicalDecode;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::{Sponge, VerifierTranscript};
 
 #[cfg(feature = "field-inline")]
 use super::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
@@ -19,10 +20,13 @@ use super::{
 };
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
-    proof::JoltProof,
     stages::{
-        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
-        stage5::Stage5Output, zk::committed,
+        stage1::Stage1Output,
+        stage2::Stage2Output,
+        stage3::Stage3Output,
+        stage4::Stage4Output,
+        stage5::Stage5Output,
+        zk::{committed, outputs::CommittedOutputClaimOutput},
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -33,12 +37,11 @@ use crate::{
     reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
 #[jolt_verifier_derive::fs_scope(Stage6a)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, H>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
-    transcript: &mut T,
+    transcript: &mut VerifierTranscript<'_, H>,
     stage1: &Stage1Output<PCS::Field, VC::Output>,
     stage2: &Stage2Output<PCS::Field, VC::Output>,
     stage3: &Stage3Output<PCS::Field, VC::Output>,
@@ -48,7 +51,8 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    VC::Output: CanonicalDecode,
+    H: Sponge,
 {
     // The upstream cycle/register points and entry index ride on the relation
     // (full geometry at construction) for the prover's address-phase kernel;
@@ -59,7 +63,7 @@ where
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let address_sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
         formula_dimensions,
-        committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
+        committed_chunk_bits: checked.one_hot_config.committed_chunk_bits(),
         committed_program: checked.precommitted.bytecode.is_some(),
         entry_bytecode_index,
         stage1_cycle_binding: &stage1_cycle_binding,
@@ -71,8 +75,8 @@ where
 
     // The generated per-member draw: the bytecode member's six squeezes (the
     // fold gamma plus the five per-stage folding gammas, each formerly an
-    // inline `challenge_scalar_powers(..)` whose single squeeze's degree-1
-    // power equals the squeezed scalar; byte- and value-equal, test-locked in
+    // inline `challenge_powers(..)` whose single draw's degree-1
+    // power equals the drawn scalar; byte- and value-equal, test-locked in
     // `bytecode_read_raf.rs` — stage 6b's folds expand the power vectors via
     // `stage_gamma_powers`, test-locked below), then the booleanity member's
     // override (the reference-address pad draw and the gamma; schedule-locked
@@ -88,15 +92,10 @@ where
     let address_input_points = address_sumchecks.empty_input_points();
 
     if checked.zk {
-        let consistency =
-            address_sumchecks.verify_zk(&proof.stages.stage6a_sumcheck_proof, transcript)?;
-        let output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage6a_sumcheck_proof,
-            "stage6a_sumcheck_proof",
-            address_sumchecks.output_claim_count(),
-            JoltRelationId::BytecodeReadRaf,
-        )?;
+        let shape = committed::output_claim_shape(checked, address_sumchecks.output_claim_count())?;
+        let (consistency, commitments) =
+            address_sumchecks.verify_zk(shape.row_count(), transcript)?;
+        let output_claims = CommittedOutputClaimOutput { shape, commitments };
         let output_points = address_sumchecks
             .derive_opening_points(&consistency.challenges(), &address_input_points)?;
         return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
@@ -106,12 +105,6 @@ where
             output_points,
         }));
     }
-
-    let claims = &proof.clear_claims()?.stage6a;
-    // Rejects val-stage claims whose presence or count disagrees with the
-    // committed-program mode (the bytecode member's wire set carries the staged
-    // `BytecodeValClaim` ids exactly when the program is committed).
-    address_sumchecks.validate_output_claims(claims)?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening (plus, under akita, the four reduced `Inc`
@@ -148,24 +141,22 @@ where
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
-    let output_points = address_sumchecks.verify_clear(
+    // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
+    // then booleanity `intermediate`) is single-sourced from the generated
+    // `receive_output_claims` (member declaration order = canonical Fiat-Shamir
+    // order; no alias dedup in the address phase). The bytecode member's wire set
+    // carries the staged `BytecodeValClaim` ids exactly when the program is
+    // committed.
+    let (output_points, output_values) = address_sumchecks.verify_clear(
         &address_input_values,
         &address_input_points,
         &address_challenges,
-        claims,
-        &proof.stages.stage6a_sumcheck_proof,
         transcript,
         6,
     )?;
 
-    // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
-    // then booleanity `intermediate`) is single-sourced from the generated
-    // `append_output_claims` (member declaration order = canonical Fiat-Shamir
-    // order; no alias dedup in the address phase).
-    address_sumchecks.append_output_claims(transcript, claims);
-
     Ok(Stage6aOutput::Clear(Stage6aClearOutput {
-        output_values: claims.clone(),
+        output_values,
         output_points,
         challenges: carried,
     }))

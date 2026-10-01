@@ -61,16 +61,18 @@
 //!   impls (`StageProver`/`KernelSource`), so no stage's member list, order,
 //!   or presence is ever restated. See `specs/prover-stage-drivers.md`.
 //! - `verify_clear` — the composed clear-path driver: `begin_batch` with a clear
-//!   recorder, reduce the combined claim through the single-instance
-//!   `SumcheckProof::verify_compressed_boolean`, `derive_opening_points` at the
-//!   reduced point, then the `expected_final_claim` equality check. The batching
-//!   lives in the generated head; `jolt-sumcheck` provides only the single-instance
-//!   verifier. Returns the stage's produced `OutputPoints`.
+//!   recorder, read the combined claim's compressed rounds through
+//!   `jolt_sumcheck::SumcheckVerifier::verify_compressed`, receive the output
+//!   claims (`receive_output_claims`), `derive_opening_points` at the reduced
+//!   point, then the `expected_final_claim` equality check. The batching lives
+//!   in the generated head; `jolt-sumcheck` provides only the single-instance
+//!   verifier. Returns the stage's produced `OutputPoints` and `OutputClaims`.
 //! - `verify_zk` — the ZK-path driver: fold the members' dimensions, draw the
-//!   batching coefficients, and check committed consistency through
-//!   `SumcheckProof::verify_committed_consistency_dims`. Committed proofs reveal no
-//!   claim scalars, so the caller must have absorbed claim COMMITMENTS beforehand
-//!   (the coefficients are squeezed before the consistency rounds).
+//!   batching coefficients, and read the committed rounds and output-claim
+//!   commitments through `jolt_sumcheck::SumcheckVerifier::verify_committed`.
+//!   Committed proofs reveal no claim scalars, so the caller must have absorbed
+//!   claim COMMITMENTS beforehand (the coefficients are drawn before the
+//!   committed rounds).
 //! - `derive_opening_points` — slice each member's point from the batch challenge
 //!   vector (`ConcreteSumcheck::instance_point`, at the member's overridable
 //!   `instance_point_offset`) and map it through the member's
@@ -86,9 +88,11 @@
 //! - `output_claim_count` / `validate_output_claims` — the wire-shape helpers
 //!   (via `relations::validate_member_{presence, output_shape}`), deriving each
 //!   member's expected openings from `ConcreteSumcheck::wire_output_openings`.
-//! - `draw_challenges`, `empty_input_points`, and the absorb plumbing
-//!   (`opening_values` / `append_output_claims`, via
-//!   `relations::absorbed_opening_values`).
+//! - `draw_challenges`, `empty_input_points`, and the claim plumbing
+//!   (`opening_values` via `relations::absorbed_opening_values`, the order the
+//!   prover sends; `receive_output_claims` via
+//!   `relations::{receive_member_openings, assemble_member_claims}`, which reads
+//!   that order back).
 //!
 //! Every `#[sumcheck_batch(...)]` flag is an opt-OUT (`StageOptions` below is
 //! the canonical reference): `no_opening_values`, `no_output_shape`, and
@@ -384,6 +388,38 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         )
     });
 
+    let receive_members = plans.iter().map(|plan| {
+        let id = &plan.ident;
+        let instance = &plan.instance;
+        per_member(
+            plan.is_option,
+            &[(&member_ident, quote!(self.#id))],
+            quote! {
+                __received.extend(#relations::receive_member_openings::<#f, #instance, __H>(
+                    __member, transcript,
+                )?);
+            },
+        )
+    });
+    let assemble_fields = plans
+        .iter()
+        .map(|plan| {
+            let id = &plan.ident;
+            let instance = &plan.instance;
+            if plan.is_option {
+                quote! {
+                    #id: self
+                        .#id
+                        .as_ref()
+                        .map(|_| #relations::assemble_member_claims::<#f, #instance>(&__received))
+                        .transpose()?
+                }
+            } else {
+                quote!(#id: #relations::assemble_member_claims::<#f, #instance>(&__received)?)
+            }
+        })
+        .collect::<Vec<_>>();
+
     // Per-instance driver plumbing on the source `StageNSumchecks` struct itself:
     // draw each member's challenges into the stage's challenge aggregate, delegating
     // to each member's `ConcreteSumcheck::draw_challenges` in declaration order;
@@ -502,10 +538,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 .map(|(plan, (sum, coeff))| {
                     if plan.is_option {
                         quote! {
-                            let #coeff = #sum.as_ref().map(|_| transcript.challenge_scalar());
+                            let #coeff = #sum.as_ref().map(|_| transcript.challenge());
                         }
                     } else {
-                        quote!(let #coeff = transcript.challenge_scalar();)
+                        quote!(let #coeff = transcript.challenge();)
                     }
                 });
 
@@ -563,21 +599,22 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// no-ops), never by a runtime flag. Returns the engine-form
             /// `jolt_sumcheck::BatchPrelude` paired with the stage's named
             /// batching coefficients.
-            pub fn begin_batch<__R, __T>(
+            pub fn begin_batch<__R, __C>(
                 &self,
                 inputs: &#input_claims_name<#f>,
                 challenges: &#challenges_name<#f>,
                 recorder: &mut __R,
-                transcript: &mut __T,
+                transcript: &mut __C,
             ) -> ::core::result::Result<
                 (::jolt_sumcheck::BatchPrelude<#f>, #batching_coefficients_name<#f>),
                 #krate::VerifierError,
             >
             where
                 __R: ::jolt_sumcheck::SumcheckRecorder<#f>,
-                __T: ::jolt_transcript::Transcript<Challenge = #f>,
+                __C: ::jolt_transcript::Channel,
             {
                 use #relations::ConcreteSumcheck as _;
+                use ::jolt_transcript::Channel as _;
 
                 #(#sum_bindings)*
 
@@ -606,70 +643,118 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     // The composed clear-path driver: begin the batch (clear recorder, so the
-    // claim absorbs are appended), verify the single-instance compressed-boolean
-    // sumcheck, derive the produced opening points at the reduced point, and check
-    // the reduced claim against the expected final-claim fold — the tail every
-    // stage repeats verbatim. Validation (`validate_output_claims`,
-    // member-presence guards) and the canonical opening absorb stay with the
-    // caller: their position and form are stage-specific.
-    let verify_clear_method = quote! {
-        /// Run the clear-path batched verification in one call: `begin_batch`
-        /// (with a clear recorder, so the claim absorbs are appended), the
-        /// single-instance `SumcheckProof::verify_compressed_boolean`,
-        /// [`Self::derive_opening_points`] at the reduced point, then the
-        /// [`Self::expected_final_claim`] equality check (attributed to `stage`
-        /// on mismatch). Returns the produced opening points.
-        #[expect(
-            clippy::too_many_arguments,
-            reason = "the composed tail threads every per-stage aggregate once"
-        )]
-        pub fn verify_clear<__C, __T>(
-            &self,
-            inputs: &#input_claims_name<#f>,
-            input_points: &#input_points_name<#f>,
-            challenges: &#challenges_name<#f>,
-            claims: &#output_claims_name<#f>,
-            proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
-            transcript: &mut __T,
-            stage: usize,
-        ) -> ::core::result::Result<#output_points_name<#f>, #krate::VerifierError>
-        where
-            __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
-            __T: ::jolt_transcript::Transcript<Challenge = #f>,
-        {
-            use #relations::ConcreteSumcheck as _;
+    // input claims are absorbed), verify the compressed Boolean-hypercube rounds,
+    // derive the produced opening points at the reduced point, receive the output
+    // claims, and check the reduced claim against the expected final-claim fold —
+    // the tail every stage repeats verbatim. It is parameterized by how the output
+    // claims are received; `verify_clear` (emitted unless `no_opening_values`) passes the
+    // generated `receive_output_claims`, and a stage with a curated claim order
+    // passes its own receive.
+    let verify_clear_method = {
+        let verify_clear = if options.no_opening_values {
+            quote!()
+        } else {
+            quote! {
+                /// [`Self::verify_clear_with`] receiving the output claims through
+                /// [`Self::receive_output_claims`].
+                #[expect(
+                    clippy::type_complexity,
+                    reason = "the produced points and claims are the stage's two outputs"
+                )]
+                pub fn verify_clear<__H>(
+                    &self,
+                    inputs: &#input_claims_name<#f>,
+                    input_points: &#input_points_name<#f>,
+                    challenges: &#challenges_name<#f>,
+                    transcript: &mut ::jolt_transcript::VerifierTranscript<'_, __H>,
+                    stage: usize,
+                ) -> ::core::result::Result<
+                    (#output_points_name<#f>, #output_claims_name<#f>),
+                    #krate::VerifierError,
+                >
+                where
+                    __H: ::jolt_transcript::Sponge,
+                {
+                    self.verify_clear_with(
+                        inputs,
+                        input_points,
+                        challenges,
+                        transcript,
+                        stage,
+                        |__sumchecks, _, __transcript| __sumchecks.receive_output_claims(__transcript),
+                    )
+                }
+            }
+        };
+        quote! {
+            /// Run the clear-path batched verification in one call: `begin_batch`
+            /// (with a clear recorder, so the input claims are absorbed publicly),
+            /// the compressed Boolean-hypercube rounds, [`Self::derive_opening_points`]
+            /// at the reduced point, the output claims read by `receive_claims`
+            /// (given those points), then the [`Self::expected_final_claim`] check
+            /// (attributed to `stage` on mismatch). Returns the produced opening
+            /// points with the received output claims.
+            #[expect(
+                clippy::type_complexity,
+                reason = "the produced points and claims are the stage's two outputs"
+            )]
+            pub fn verify_clear_with<__H, __R>(
+                &self,
+                inputs: &#input_claims_name<#f>,
+                input_points: &#input_points_name<#f>,
+                challenges: &#challenges_name<#f>,
+                transcript: &mut ::jolt_transcript::VerifierTranscript<'_, __H>,
+                stage: usize,
+                receive_claims: __R,
+            ) -> ::core::result::Result<
+                (#output_points_name<#f>, #output_claims_name<#f>),
+                #krate::VerifierError,
+            >
+            where
+                __H: ::jolt_transcript::Sponge,
+                __R: ::core::ops::FnOnce(
+                    &Self,
+                    &#output_points_name<#f>,
+                    &mut ::jolt_transcript::VerifierTranscript<'_, __H>,
+                ) -> ::core::result::Result<#output_claims_name<#f>, #krate::VerifierError>,
+            {
+                use #relations::ConcreteSumcheck as _;
 
-            let mut __recorder = ::jolt_sumcheck::ClearSumcheckRecorder::<#f, __C>::new();
-            let (__batch, __coefficients) =
-                self.begin_batch(inputs, challenges, &mut __recorder, transcript)?;
+                let mut __recorder = ::jolt_sumcheck::ClearSumcheckRecorder::<#f>::new();
+                let (__batch, __coefficients) =
+                    self.begin_batch(inputs, challenges, &mut __recorder, transcript)?;
 
-            let __reduction = proof
-                .verify_compressed_boolean(
-                    __batch.max_num_vars,
-                    __batch.max_degree,
-                    __batch.claimed_sum,
+                let __reduction = ::jolt_sumcheck::SumcheckVerifier::verify_compressed(
+                    &::jolt_sumcheck::SumcheckClaim::new(
+                        __batch.max_num_vars,
+                        __batch.max_degree,
+                        __batch.claimed_sum,
+                    ),
                     transcript,
                 )
                 .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
                     stage: #base_lit.to_string(),
                     reason: error.to_string(),
                 })?;
-
-            let __output_points =
-                self.derive_opening_points(__reduction.point.as_slice(), input_points)?;
-            let __expected_final_claim = self.expected_final_claim(
-                &__coefficients,
-                input_points,
-                claims,
-                &__output_points,
-                challenges,
-            )?;
-            if __reduction.value != __expected_final_claim {
-                return ::core::result::Result::Err(
-                    #krate::VerifierError::StageClaimOutputMismatch { stage },
-                );
+                let __output_points =
+                    self.derive_opening_points(__reduction.point.as_slice(), input_points)?;
+                let __claims = receive_claims(self, &__output_points, transcript)?;
+                let __expected_final_claim = self.expected_final_claim(
+                    &__coefficients,
+                    input_points,
+                    &__claims,
+                    &__output_points,
+                    challenges,
+                )?;
+                if __reduction.value != __expected_final_claim {
+                    return ::core::result::Result::Err(
+                        #krate::VerifierError::StageClaimOutputMismatch { stage },
+                    );
+                }
+                ::core::result::Result::Ok((__output_points, __claims))
             }
-            ::core::result::Result::Ok(__output_points)
+
+            #verify_clear
         }
     };
 
@@ -694,28 +779,67 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             if plan.is_option {
                 quote! {
                     if self.#id.is_some() {
-                        __batching_coefficients.push(transcript.challenge_scalar());
+                        __batching_coefficients.push(transcript.challenge());
                     }
                 }
             } else {
-                quote!(__batching_coefficients.push(transcript.challenge_scalar());)
+                quote!(__batching_coefficients.push(transcript.challenge());)
             }
         });
 
         quote! {
-            pub fn verify_zk<__C, __T>(
+            /// Run the ZK-path batched verification: draw the batching
+            /// coefficients, then read the committed rounds and the
+            /// `num_output_commitments` output-claim row commitments.
+            #[expect(
+                clippy::type_complexity,
+                reason = "the batched consistency and the output-claim commitments are read together"
+            )]
+            pub fn verify_zk<__C, __H>(
                 &self,
-                proof: &::jolt_sumcheck::SumcheckProof<#f, __C>,
-                transcript: &mut __T,
+                num_output_commitments: usize,
+                transcript: &mut ::jolt_transcript::VerifierTranscript<'_, __H>,
             ) -> ::core::result::Result<
-                ::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
+                (
+                    ::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
+                    ::jolt_sumcheck::CommittedOutputClaims<__C>,
+                ),
                 #krate::VerifierError,
             >
             where
-                __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
-                __T: ::jolt_transcript::Transcript<Challenge = #f>,
+                __C: ::jolt_field::CanonicalDecode,
+                __H: ::jolt_transcript::Sponge,
+            {
+                self.verify_zk_with(|_| ::core::result::Result::Ok(num_output_commitments), transcript)
+            }
+
+            /// [`Self::verify_zk`] with the output-claim commitment count derived
+            /// from the verified rounds, for a stage whose committed-claim count
+            /// depends on its own opening points.
+            #[expect(
+                clippy::type_complexity,
+                reason = "the batched consistency and the output-claim commitments are read together"
+            )]
+            pub fn verify_zk_with<__C, __H, __N>(
+                &self,
+                num_output_commitments: __N,
+                transcript: &mut ::jolt_transcript::VerifierTranscript<'_, __H>,
+            ) -> ::core::result::Result<
+                (
+                    ::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
+                    ::jolt_sumcheck::CommittedOutputClaims<__C>,
+                ),
+                #krate::VerifierError,
+            >
+            where
+                __C: ::jolt_field::CanonicalDecode,
+                __H: ::jolt_transcript::Sponge,
+                __N: ::core::ops::FnOnce(
+                    &::jolt_sumcheck::BatchedCommittedSumcheckConsistency<#f, __C>,
+                ) -> ::core::result::Result<usize, #krate::VerifierError>,
             {
                 use #relations::ConcreteSumcheck as _;
+                use ::jolt_transcript::Channel as _;
 
                 let mut __max_num_vars = 0usize;
                 let mut __max_degree = 0usize;
@@ -724,19 +848,27 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 let mut __batching_coefficients = ::std::vec::Vec::new();
                 #(#coeff_draws_zk)*
 
-                let __consistency = proof
-                    .verify_committed_consistency_dims(__max_num_vars, __max_degree, transcript)
+                let (__consistency, _) =
+                    ::jolt_sumcheck::SumcheckVerifier::verify_committed::<#f, __H, __C>(
+                        ::jolt_sumcheck::SumcheckStatement::new(__max_num_vars, __max_degree),
+                        0,
+                        transcript,
+                    )
                     .map_err(|error| #krate::VerifierError::StageClaimSumcheckFailed {
                         stage: #base_lit.to_string(),
                         reason: error.to_string(),
                     })?;
-
-                ::core::result::Result::Ok(::jolt_sumcheck::BatchedCommittedSumcheckConsistency {
+                let __consistency = ::jolt_sumcheck::BatchedCommittedSumcheckConsistency {
                     consistency: __consistency,
                     batching_coefficients: __batching_coefficients,
                     max_num_vars: __max_num_vars,
                     max_degree: __max_degree,
-                })
+                };
+                let __count = num_output_commitments(&__consistency)?;
+                let __output_claims = ::jolt_sumcheck::CommittedOutputClaims {
+                    commitments: transcript.receive_n(__count)?,
+                };
+                ::core::result::Result::Ok((__consistency, __output_claims))
             }
         }
     };
@@ -978,9 +1110,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // The output-claim shape helpers: the total produced-opening count (for the ZK
     // commitment count) and a validator that the proof-supplied output claims match
     // the dims-derived expected shape. Both delegate per member to the generic
-    // `relations` helpers; an `Option` member's presence guards run first (a stage
-    // that curates its own shape checks calls `validate_member_presence` by hand —
-    // stage 6b). Suppressed by `#[sumcheck_batch(no_output_shape)]` for a stage
+    // `relations` helpers; an `Option` member's presence guards run first.
+    // Suppressed by `#[sumcheck_batch(no_output_shape)]` for a stage
     // whose wire shape is runtime-deduped (the count/validator would be wrong).
     let output_shape_methods = if options.no_output_shape {
         quote!()
@@ -1060,9 +1191,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// challenges draw nothing; `Option` members draw only when present.
             /// This single-sources the stage's inline per-instance draw, so its
             /// Fiat-Shamir order follows member declaration order.
-            pub fn draw_challenges<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
+            pub fn draw_challenges<__C: ::jolt_transcript::Channel>(
                 &self,
-                transcript: &mut __T,
+                transcript: &mut __C,
             ) -> ::core::result::Result<#challenges_name<#f>, #krate::VerifierError> {
                 use #relations::ConcreteSumcheck as _;
                 ::core::result::Result::Ok(#challenges_name {
@@ -1093,17 +1224,19 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 __values
             }
 
-            /// Append every absorbed opening to the transcript in canonical order,
-            /// each under the `b"opening_claim"` label, matching the prover's
-            /// commitment order.
-            pub fn append_output_claims<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
+            /// Receive every member's produced openings in canonical order (the
+            /// order of [`Self::opening_values`], which the prover sends), then
+            /// assemble the stage's output claims, filling each aliased opening
+            /// from its canonical source.
+            pub fn receive_output_claims<__H: ::jolt_transcript::Sponge>(
                 &self,
-                transcript: &mut __T,
-                claims: &#output_claims_name<#f>,
-            ) {
-                for value in self.opening_values(claims) {
-                    transcript.append_labeled(b"opening_claim", &value);
-                }
+                transcript: &mut ::jolt_transcript::VerifierTranscript<'_, __H>,
+            ) -> ::core::result::Result<#output_claims_name<#f>, #krate::VerifierError> {
+                let mut __received = ::std::collections::BTreeMap::new();
+                #(#receive_members)*
+                ::core::result::Result::Ok(#output_claims_name {
+                    #(#assemble_fields,)*
+                })
             }
         }
     };
