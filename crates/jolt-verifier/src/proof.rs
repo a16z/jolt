@@ -12,7 +12,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 use serde::{Deserialize, Serialize};
 
-use crate::{config::JoltProtocolConfig, num, VerifierError};
+use crate::{config::JoltProtocolConfig, jolt_protocol_id, num, VerifierError, JOLT_SESSION};
 
 /// A Jolt proof: the argument string, plus the protocol axes it was produced
 /// under so a build mismatch is reported as such instead of as a transcript
@@ -22,6 +22,16 @@ use crate::{config::JoltProtocolConfig, num, VerifierError};
 pub struct JoltProof {
     pub protocol: JoltProtocolConfig,
     pub narg: Vec<u8>,
+}
+
+impl JoltProof {
+    /// Decodes the proof header (the argument string's first message) on
+    /// sponge `H`, without verifying the proof.
+    pub fn header<H: Sponge>(&self) -> Result<ProofHeader, VerifierError> {
+        let mut transcript =
+            VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, &self.narg);
+        ProofHeader::receive(&mut transcript)
+    }
 }
 
 /// The prover-chosen shape parameters, sent first.

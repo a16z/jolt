@@ -25,7 +25,10 @@ pub fn main() {
     let prove_time = now.elapsed();
     info!("Prover runtime: {} s", prove_time.as_secs_f64());
 
-    let trace_length_advice = proof.trace_length;
+    let trace_length_advice = proof
+        .header::<jolt_sdk::ProtocolSponge>()
+        .expect("proof header")
+        .trace_length;
 
     let is_valid_advice = verify_advice_demo(n, a, b, output, program_io.panic, proof);
 

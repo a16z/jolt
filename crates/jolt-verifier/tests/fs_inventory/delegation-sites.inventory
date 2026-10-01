@@ -143,6 +143,7 @@ jolt-sumcheck::recorder.rs::CommittedSumcheckRecorder<'_,F,VC,R>::absorb_round::
 jolt-sumcheck::recorder.rs::CommittedSumcheckRecorder<'_,F,VC,R>::finish::.finish#0
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::receive_full_round#0
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::receive_compressed_round#0
+jolt-verifier::proof.rs::JoltProof::header::ProofHeader::receive#0
 jolt-verifier::stages/relations.rs::receive_member_openings::receive_member_openings_except#0
 jolt-verifier::stages/stage1/verify.rs::verify::.draw_challenges#2
 jolt-verifier::stages/stage1/verify.rs::verify::.verify_clear#3
