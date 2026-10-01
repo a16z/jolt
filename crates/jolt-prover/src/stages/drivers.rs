@@ -204,7 +204,9 @@ mod twin_tests {
         ClearSumcheckRecorder, CommittedSumcheckRecorder, ProveRounds, RoundScheduler,
         SequentialRounds, SumcheckError,
     };
-    use jolt_transcript::{Blake2bTranscript, Transcript};
+    use jolt_transcript::{
+        Blake2b512, Channel as _, ProtocolId, ProverTranscript, VerifierTranscript,
+    };
     use jolt_verifier::stages::relations::{ConcreteSumcheck, SumcheckBatch, SumcheckOutputClaims};
     use jolt_verifier::VerifierError;
     use jolt_witness::{
@@ -757,9 +759,14 @@ mod twin_tests {
         }
     }
 
-    /// Drive the macro-expanded `prove` and its `verify_clear` twin, assert
-    /// byte-identical transcript states, and return the driver's output plus
-    /// the recorded prepare and residue call orders.
+    fn protocol(name: &str) -> ProtocolId {
+        ProtocolId::new::<Blake2b512>(name)
+    }
+
+    /// Drive the macro-expanded `prove`, verify its argument string with the
+    /// `verify_clear` twin (which must consume every byte, receive the proved
+    /// claims, and land on the prover's sponge state), and return the driver's
+    /// output plus the recorded prepare and residue call orders.
     #[expect(
         clippy::type_complexity,
         reason = "the twin driver's aggregate return: the proved carrier plus the two recorded call orders"
@@ -767,7 +774,7 @@ mod twin_tests {
     fn drive(
         beta: bool,
     ) -> (
-        Proved<Fr, ToyDriverSumchecks<Fr>, Fr>,
+        Proved<Fr, ToyDriverSumchecks<Fr>, ()>,
         Vec<&'static str>,
         Vec<JoltRelationId>,
     ) {
@@ -781,7 +788,8 @@ mod twin_tests {
             23,
         )));
 
-        let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-twin");
+        let mut prover_transcript =
+            ProverTranscript::<Blake2b512>::new(&protocol("prove-driver-twin"), b"");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
@@ -793,30 +801,35 @@ mod twin_tests {
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
 
         // Verifier twin: generated draw + composed verify_clear (which runs the
-        // derive-opening-points and expected-final-claim checks internally) +
-        // output-claim absorbs.
-        let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-twin");
+        // derive-opening-points and expected-final-claim checks internally and
+        // receives the output claims).
+        let mut verifier_transcript = VerifierTranscript::<Blake2b512>::new(
+            &protocol("prove-driver-twin"),
+            b"",
+            prover_transcript.narg(),
+        );
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-        let _ = sumchecks
+        let (_, received_claims) = sumchecks
             .verify_clear(
                 &inputs,
                 &input_points,
                 &verifier_challenges,
-                &proved.output_claims,
-                &proved.recorded.proof,
                 &mut verifier_transcript,
                 0,
             )
             .unwrap();
-        sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
-
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(received_claims, proved.output_claims);
+        assert_eq!(
+            verifier_transcript.preview().squeeze::<32>(),
+            prover_transcript.preview().squeeze::<32>()
+        );
+        verifier_transcript.finish().unwrap();
 
         let calls = session.take::<PrepareCallLog>().unwrap().0;
         let residues = session.take::<ResidueCallLog>().unwrap().0;
@@ -886,7 +899,8 @@ mod twin_tests {
         };
         let mut session = ProofSession::default();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
+        let mut prover_transcript =
+            ProverTranscript::<Blake2b512>::new(&protocol("prove-driver-head-twin"), b"");
         let challenges = sumchecks.draw_challenges(&mut prover_transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
@@ -898,27 +912,32 @@ mod twin_tests {
                 &inputs,
                 &input_points,
                 &challenges,
-                ClearSumcheckRecorder::<Fr, Fr>::new(),
+                ClearSumcheckRecorder::<Fr>::new(),
                 &mut prover_transcript,
             )
             .unwrap();
 
-        let mut verifier_transcript = Blake2bTranscript::new(b"prove-driver-head-twin");
+        let mut verifier_transcript = VerifierTranscript::<Blake2b512>::new(
+            &protocol("prove-driver-head-twin"),
+            b"",
+            prover_transcript.narg(),
+        );
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
-        let verified_points = sumchecks
+        let (verified_points, received_claims) = sumchecks
             .verify_clear(
                 &inputs,
                 &input_points,
                 &verifier_challenges,
-                &proved.output_claims,
-                &proved.recorded.proof,
                 &mut verifier_transcript,
                 0,
             )
             .unwrap();
-        sumchecks.append_output_claims(&mut verifier_transcript, &proved.output_claims);
-
-        assert_eq!(prover_transcript.state(), verifier_transcript.state());
+        assert_eq!(received_claims, proved.output_claims);
+        assert_eq!(
+            verifier_transcript.preview().squeeze::<32>(),
+            prover_transcript.preview().squeeze::<32>()
+        );
+        verifier_transcript.finish().unwrap();
         assert_eq!(verified_points, proved.output_points);
         // The head member is bound on the batch point's PREFIX: its opening
         // point is the leading entries of the full-window member's point.
@@ -950,7 +969,8 @@ mod twin_tests {
         let kernels = toy_kernels();
         let mut session = ProofSession::default();
 
-        let mut transcript = Blake2bTranscript::new(b"prove-driver-twin");
+        let mut transcript =
+            ProverTranscript::<Blake2b512>::new(&protocol("prove-driver-twin"), b"");
         let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let result = sumchecks.prove(
@@ -961,7 +981,7 @@ mod twin_tests {
             &inputs,
             &input_points,
             &challenges,
-            ClearSumcheckRecorder::<Fr, Fr>::new(),
+            ClearSumcheckRecorder::<Fr>::new(),
             &mut transcript,
         );
         assert!(matches!(
@@ -1020,8 +1040,11 @@ mod twin_tests {
             jolt_crypto::Pedersen<jolt_crypto::Bn254G1>,
             rand_core::OsRng,
         >,
-        transcript: &mut Blake2bTranscript,
-    ) -> Result<Proved<Fr, ToyDriverSumchecks<Fr>, jolt_crypto::Bn254G1>, ProverError<Fr>> {
+        transcript: &mut ProverTranscript<Blake2b512>,
+    ) -> Result<
+        Proved<Fr, ToyDriverSumchecks<Fr>, jolt_sumcheck::CommittedSumcheckWitness<Fr>>,
+        ProverError<Fr>,
+    > {
         sumchecks.prove(
             kernels,
             session,
