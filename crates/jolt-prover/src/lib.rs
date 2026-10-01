@@ -40,6 +40,7 @@ compile_error!("the `akita` and `zk` features are mutually exclusive");
 pub mod akita;
 #[cfg(feature = "zk")]
 mod blindfold;
+mod boundary;
 mod config;
 #[cfg(not(feature = "akita"))]
 pub mod dory;

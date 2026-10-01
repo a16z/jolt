@@ -21,6 +21,8 @@
 //!
 //! See `specs/prover-stage-drivers.md`.
 
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_kernels::{
@@ -175,19 +177,12 @@ where
 pub fn mid_stage_flamegraph(
     label: &str,
     session: &ProofSession,
-    visit_members: impl FnOnce(&mut allocative::FlameGraphBuilder),
+    visit_members: impl FnOnce(&mut FlameGraphBuilder),
 ) {
-    let Some(prefix) = jolt_profiling::flamegraph_prefix() else {
-        return;
-    };
-    // Timestamp the snapshot on the trace's own clock so the summary (and
-    // the memory-timeline viz) can situate the composition against the
-    // continuous memory counters.
-    tracing::info!(snapshot = label, "heap_snapshot");
-    let mut flamegraph = allocative::FlameGraphBuilder::default();
-    flamegraph.visit_root(session);
-    visit_members(&mut flamegraph);
-    jolt_profiling::write_flamegraph_folded(flamegraph, format!("{prefix}{label}.folded"));
+    jolt_profiling::capture_heap_snapshot(label, |snapshot| {
+        snapshot.visit_root(session);
+        visit_members(snapshot);
+    });
 }
 
 /// Mint one required member's kernel through the source's [`PrepareKernel`]
