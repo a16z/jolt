@@ -1641,6 +1641,7 @@ fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::
 
 #[cfg(test)]
 mod test_cpu {
+    use std::io::{Result as IoResult, Write};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -2102,13 +2103,13 @@ mod test_cpu {
     #[derive(Clone, Default)]
     struct LogBuffer(Arc<Mutex<Vec<u8>>>);
 
-    impl std::io::Write for LogBuffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+    impl Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> IoResult<usize> {
             self.0.lock().unwrap().extend_from_slice(bytes);
             Ok(bytes.len())
         }
 
-        fn flush(&mut self) -> std::io::Result<()> {
+        fn flush(&mut self) -> IoResult<()> {
             Ok(())
         }
     }
