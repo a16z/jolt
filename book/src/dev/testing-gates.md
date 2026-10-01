@@ -55,12 +55,15 @@ soon as that verifier combination becomes supported.
 
 An attack test is valid only when all four steps hold:
 
-1. The original fixture verifies and records typed challenge calls.
-2. A coordinated mutation makes an individual protocol claim false.
-3. Verification with the recorded challenges replayed succeeds. This proves the
-   mutation preserves the verifier's algebraic checks when Fiat-Shamir binding
-   is removed.
-4. Verification with the production transcript changes a relevant challenge and
+1. The original fixture verifies on a recording sponge, which saves every
+   squeezed challenge byte.
+2. A coordinated mutation of the argument string or the statement makes an
+   individual protocol claim false. Messages are located through the
+   `logging` transcript event log.
+3. Verification with the recorded challenge bytes replayed succeeds and
+   consumes the whole recording. This proves the mutation preserves the
+   verifier's algebraic checks when Fiat-Shamir binding is removed.
+4. Verification with the production transcript changes a challenge and
    rejects.
 
 Production acceptance is a soundness finding. Frozen-challenge rejection is a
@@ -83,7 +86,7 @@ regenerate the inventories with:
 
 ```bash
 JOLT_FS_BLESS=1 cargo nextest run -p jolt-verifier \
-  --test fs_obligations --features fs-audit --cargo-quiet
+  --test fs_obligations --cargo-quiet
 ```
 
 Review the resulting diff as a list of new or removed security obligations.

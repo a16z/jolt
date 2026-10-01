@@ -9,19 +9,19 @@ cargo nextest run \
 cargo nextest run \
   -p jolt-verifier \
   --test fs_attacks \
-  --features fs-audit,prover-fixtures \
+  --features logging,prover-fixtures \
   --cargo-quiet
 
 cargo nextest run \
   -p jolt-verifier \
   --test fs_attacks \
-  --features fs-audit,prover-fixtures,zk \
+  --features logging,prover-fixtures,zk \
   --cargo-quiet
 
 cargo nextest run \
   -p jolt-verifier \
   --test fs_attacks \
-  --features akita,fs-audit,prover-fixtures \
+  --features akita,logging,prover-fixtures \
   --cargo-quiet
 
 unsupported_log="$(mktemp)"

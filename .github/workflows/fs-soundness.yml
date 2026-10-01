@@ -75,11 +75,11 @@ jobs:
       matrix:
         include:
           - instance: dory-clear
-            features: fs-audit,prover-fixtures
+            features: logging,prover-fixtures
           - instance: dory-zk
-            features: fs-audit,prover-fixtures,zk
+            features: logging,prover-fixtures,zk
           - instance: akita-clear
-            features: akita,fs-audit,prover-fixtures
+            features: akita,logging,prover-fixtures
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
