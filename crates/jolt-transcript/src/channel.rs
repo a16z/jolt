@@ -56,6 +56,19 @@ pub trait Channel {
     /// set by the small set's size, not `|F|`.
     fn challenge_small<F: CanonicalEncoding>(&mut self) -> F;
 
+    /// Draws `len` challenges from `F`'s small challenge set, in order.
+    fn challenges_small<F: CanonicalEncoding>(&mut self, len: usize) -> Vec<F> {
+        (0..len).map(|_| self.challenge_small()).collect()
+    }
+
+    /// Draws one exactly uniform `gamma` and returns `[1, gamma, ..., gamma^(len-1)]`.
+    fn challenge_powers<F: Field>(&mut self, len: usize) -> Vec<F> {
+        let gamma: F = self.challenge();
+        std::iter::successors(Some(F::one()), |power| Some(*power * gamma))
+            .take(len)
+            .collect()
+    }
+
     /// Squeezes `N` raw challenge bytes.
     fn challenge_bytes<const N: usize>(&mut self) -> [u8; N];
 
