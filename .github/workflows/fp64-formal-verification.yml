@@ -166,7 +166,7 @@ jobs:
             --clean
 
       - name: Upload proof evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fp64-aarch64-linux-gnu-evidence
           path: ${{ runner.temp }}/fp64-aarch64-linux-gnu.json
@@ -217,7 +217,7 @@ jobs:
             --clean
 
       - name: Upload proof evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fp64-aarch64-apple-darwin-evidence
           path: ${{ runner.temp }}/fp64-aarch64-apple-darwin.json
@@ -263,7 +263,7 @@ jobs:
             --clean
 
       - name: Upload proof evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fp64-x86-64-linux-gnu-evidence
           path: ${{ runner.temp }}/fp64-x86-64-linux-gnu.json
