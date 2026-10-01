@@ -33,9 +33,7 @@ use jolt_verifier::stages::stage1::Stage1ClearOutput;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::field_registers_claim_reduction::FieldRegistersClaimReduction;
 use jolt_verifier::stages::stage2::instruction_claim_reduction::InstructionClaimReduction;
-use jolt_verifier::stages::stage2::outputs::{
-    Stage2BatchSumchecks, Stage2ClearOutput, Stage2OutputClaims,
-};
+use jolt_verifier::stages::stage2::outputs::{Stage2BatchSumchecks, Stage2ClearOutput};
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::product_uniskip::{
     product_uniskip_input_values_from_stage1, ProductUniskip,
@@ -51,10 +49,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::recorder::ProofMode;
 use crate::{ProverConfig, ProverError, StageProver as _};
 
-/// Stage 2's outputs: the two wire proofs, the wire claims, and the
-/// verifier-typed cross-stage carrier downstream stages consume.
+/// Stage 2's outputs: the verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage2ProverOutput<F: JoltField> {
-    pub claims: Stage2OutputClaims<F>,
     pub clear_output: Stage2ClearOutput<F>,
     #[cfg(feature = "zk")]
     pub uniskip_witness: CommittedSumcheckWitness<F>,
@@ -188,9 +184,7 @@ where
     #[cfg(feature = "zk")]
     let committed_witness = proved.witness;
 
-    let claims = Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     Ok(Stage2ProverOutput {
-        claims,
         clear_output: Stage2ClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,
@@ -254,8 +248,15 @@ mod field_inline_round_trip {
         // The field-inline product appendage is carried, and the spec's alias table
         // holds on honest data: the field-inline claim-reduction member outputs equal
         // the appendage values polynomial-for-polynomial.
-        let appendage = &out.claims.batch_outputs.product_remainder.field_inline;
-        let reduction = &out.claims.batch_outputs.field_registers_claim_reduction;
+        let appendage = &out
+            .clear_output
+            .output_values
+            .product_remainder
+            .field_inline;
+        let reduction = &out
+            .clear_output
+            .output_values
+            .field_registers_claim_reduction;
         assert_eq!(reduction.rs1_value, appendage.rs1_value);
         assert_eq!(reduction.rs2_value, appendage.rs2_value);
         assert_eq!(reduction.rd_value, appendage.rd_value);

@@ -27,9 +27,7 @@ use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage5::field_registers_val_evaluation::FieldRegistersValEvaluation;
 use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
-use jolt_verifier::stages::stage5::outputs::{
-    Stage5ClearOutput, Stage5OutputClaims, Stage5Sumchecks,
-};
+use jolt_verifier::stages::stage5::outputs::{Stage5ClearOutput, Stage5Sumchecks};
 use jolt_verifier::stages::stage5::ram_ra_claim_reduction::RamRaClaimReduction;
 use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluation;
 use jolt_verifier::stages::stage5::{
@@ -41,10 +39,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
-/// Stage 5's outputs: the wire proof, the wire claims, and the verifier-typed
-/// cross-stage carrier downstream stages consume.
+/// Stage 5's outputs: the verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage5ProverOutput<F: JoltField> {
-    pub claims: Stage5OutputClaims<F>,
     pub clear_output: Stage5ClearOutput<F>,
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
@@ -116,7 +112,6 @@ where
 
     let instruction_r_address = proved.output_points.instruction_r_address();
     Ok(Stage5ProverOutput {
-        claims: proved.output_claims.clone(),
         clear_output: Stage5ClearOutput {
             challenges,
             output_values: proved.output_claims,

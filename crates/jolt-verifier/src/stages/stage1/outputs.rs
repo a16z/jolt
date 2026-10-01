@@ -3,29 +3,11 @@
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
-use serde::{Deserialize, Serialize};
 
 use super::outer_remainder::{OuterRemainder, OuterRemainderOutputClaims};
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
 use crate::VerifierError;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct Stage1OutputClaims<F: JoltField> {
-    pub uniskip_output_claim: F,
-    pub outer: Stage1BatchOutputClaims<F>,
-}
-
-impl<F: JoltField> Stage1OutputClaims<F> {
-    /// Construct the stage-1 claims from the uni-skip and remainder outputs.
-    pub fn new(uniskip_output_claim: F, outer: Stage1BatchOutputClaims<F>) -> Self {
-        Self {
-            uniskip_output_claim,
-            outer,
-        }
-    }
-}
 
 /// Source-of-truth for stage 1's singleton sumcheck batch: the Spartan outer
 /// *remainder* sumcheck (the companion uni-skip first round is a separate

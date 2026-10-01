@@ -2,7 +2,6 @@
 
 use jolt_field::JoltField;
 use jolt_sumcheck::{BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency};
-use serde::{Deserialize, Serialize};
 
 use crate::stages::relations::SumcheckBatch;
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -21,25 +20,6 @@ pub use super::ram_read_write_checking::{RamReadWriteChecking, RamReadWriteOutpu
 
 #[cfg(feature = "field-inline")]
 pub use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
-pub struct Stage2OutputClaims<F: JoltField> {
-    pub product_uniskip_output_claim: F,
-    #[cfg_attr(feature = "field-inline", serde(with = "canonical_batch"))]
-    pub batch_outputs: Stage2BatchOutputClaims<F>,
-}
-
-impl<F: JoltField> Stage2OutputClaims<F> {
-    /// Combine the product uni-skip claim with the selected batch's output claims.
-    /// Field-inline builds carry mandatory composed product and register-reduction fields.
-    pub fn new(product_uniskip_output_claim: F, batch_outputs: Stage2BatchOutputClaims<F>) -> Self {
-        Self {
-            product_uniskip_output_claim,
-            batch_outputs,
-        }
-    }
-}
 
 impl<F: JoltField> Stage2BatchOutputClaims<F> {
     /// Construct the ordinary stage-2 batch claims. Producers without field-inline semantics
@@ -500,24 +480,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "field-inline")]
-    #[test]
-    fn wire_claims_reconstruct_reduction_aliases_from_the_product() {
-        let claims = Stage2OutputClaims::new(fr(19), consistent_values());
-        let bytes = postcard::to_stdvec(&claims).unwrap();
-        let decoded: Stage2OutputClaims<Fr> = postcard::from_bytes(&bytes).unwrap();
-        assert_eq!(decoded, claims);
-        let mut inconsistent = claims;
-        inconsistent
-            .batch_outputs
-            .field_registers_claim_reduction
-            .rs1_value += fr(1);
-        assert!(sumchecks()
-            .validate_aliases(&inconsistent.batch_outputs)
-            .is_err());
-        assert_eq!(postcard::to_stdvec(&inconsistent).unwrap(), bytes);
-    }
-
     #[test]
     fn validate_aliases_accepts_consistent_reduction() {
         assert!(sumchecks().validate_aliases(&consistent_values()).is_ok());
@@ -615,66 +577,5 @@ mod tests {
         );
         assert_eq!(reduction_points.rd_value, reduction_points.rs1_value);
         assert_eq!(reduction_points.rd_value, reduction_points.rs2_value);
-    }
-}
-
-#[cfg(feature = "field-inline")]
-mod canonical_batch {
-    use super::*;
-    use jolt_claims::protocols::composed::ProductOutputs;
-    use serde::ser::SerializeStruct;
-    use serde::{Deserializer, Serializer};
-
-    // Alias values remain available to the generic batch evaluator, but are
-    // reconstructed from their canonical source when decoding the wire proof.
-    pub fn serialize<F: JoltField, S: Serializer>(
-        claims: &Stage2BatchOutputClaims<F>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let mut wire = serializer.serialize_struct("Stage2BatchOutputClaims", 5)?;
-        wire.serialize_field("ram_read_write", &claims.ram_read_write)?;
-        wire.serialize_field("product_remainder", &claims.product_remainder)?;
-        wire.serialize_field(
-            "instruction_claim_reduction",
-            &claims.instruction_claim_reduction,
-        )?;
-        wire.serialize_field("ram_raf_evaluation", &claims.ram_raf_evaluation)?;
-        wire.serialize_field("ram_output_check", &claims.ram_output_check)?;
-        wire.end()
-    }
-
-    #[derive(Deserialize)]
-    #[serde(bound = "F: JoltField")]
-    struct CanonicalBatch<F: JoltField> {
-        ram_read_write: RamReadWriteOutputClaims<F>,
-        product_remainder: ProductOutputs<F>,
-        instruction_claim_reduction: InstructionClaimReductionOutputClaims<F>,
-        ram_raf_evaluation: RamRafEvaluationOutputClaims<F>,
-        ram_output_check: RamOutputCheckOutputClaims<F>,
-    }
-
-    pub fn deserialize<'de, F: JoltField, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Stage2BatchOutputClaims<F>, D::Error> {
-        let CanonicalBatch {
-            ram_read_write,
-            product_remainder,
-            instruction_claim_reduction,
-            ram_raf_evaluation,
-            ram_output_check,
-        } = CanonicalBatch::<F>::deserialize(deserializer)?;
-        let field_registers_claim_reduction = FieldRegistersClaimReductionOutputClaims {
-            rs1_value: product_remainder.field_inline.rs1_value,
-            rs2_value: product_remainder.field_inline.rs2_value,
-            rd_value: product_remainder.field_inline.rd_value,
-        };
-        Ok(Stage2BatchOutputClaims {
-            ram_read_write,
-            product_remainder,
-            instruction_claim_reduction,
-            field_registers_claim_reduction,
-            ram_raf_evaluation,
-            ram_output_check,
-        })
     }
 }

@@ -20,8 +20,7 @@ use jolt_verifier::sites::STAGE3;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::{
-    InstructionInput, RegistersClaimReduction, SpartanShift, Stage3ClearOutput, Stage3OutputClaims,
-    Stage3Sumchecks,
+    InstructionInput, RegistersClaimReduction, SpartanShift, Stage3ClearOutput, Stage3Sumchecks,
 };
 use jolt_verifier::stages::stage3::stage3_input_values_from_upstream;
 use jolt_witness::JoltWitnessPlane;
@@ -29,11 +28,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::recorder::ProofMode;
 use crate::{ProverConfig, ProverError, StageProver as _};
 
-/// Stage 3's outputs: the wire proof, the wire claims (the raw batch
-/// aggregate — no uni-skip wrapper), and the verifier-typed cross-stage
-/// carrier downstream stages consume.
+/// Stage 3's outputs: the verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage3ProverOutput<F: JoltField> {
-    pub claims: Stage3OutputClaims<F>,
     pub clear_output: Stage3ClearOutput<F>,
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
@@ -94,7 +90,6 @@ where
     let committed_witness = proved.witness;
 
     Ok(Stage3ProverOutput {
-        claims: proved.output_claims.clone(),
         clear_output: Stage3ClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,

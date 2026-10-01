@@ -40,9 +40,7 @@ use jolt_verifier::stages::stage6a::outputs::Stage6aClearOutput;
 use jolt_verifier::stages::stage6b::batch::{Stage6bBuildParts, Stage6bDraws};
 #[cfg(not(feature = "akita"))]
 use jolt_verifier::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
-use jolt_verifier::stages::stage6b::outputs::{
-    Stage6bClearOutput, Stage6bOutputClaims, Stage6bSumchecks,
-};
+use jolt_verifier::stages::stage6b::outputs::{Stage6bClearOutput, Stage6bSumchecks};
 use jolt_verifier::stages::stage6b::{
     stage6b_input_points_from_upstream, stage6b_input_values_from_upstream,
 };
@@ -52,12 +50,10 @@ use jolt_witness::JoltWitnessPlane;
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
-/// Stage 6b's outputs: the wire proof, the wire claims, and the verifier-typed
-/// cross-stage carrier stage 7 consumes. The precommitted reduction state
-/// that spans into stage 7's address phase travels as `ProofSession` carries,
-/// not output fields.
+/// Stage 6b's outputs: the verifier-typed cross-stage carrier stage 7
+/// consumes. The precommitted reduction state that spans into stage 7's
+/// address phase travels as `ProofSession` carries, not output fields.
 pub struct Stage6bProverOutput<F: JoltField> {
-    pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
@@ -191,7 +187,6 @@ where
     let committed_witness = proved.witness;
 
     Ok(Stage6bProverOutput {
-        claims: proved.output_claims.clone(),
         clear_output: Stage6bClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,
@@ -476,7 +471,12 @@ mod field_inline_zk {
             cycle_points.point_count().saturating_sub(aliased)
         );
         assert_eq!(
-            OutputClaims::opening_values(&out.claims.field_registers_inc_claim_reduction).len(),
+            OutputClaims::opening_values(
+                &out.clear_output
+                    .output_values
+                    .field_registers_inc_claim_reduction
+            )
+            .len(),
             1
         );
 

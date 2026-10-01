@@ -37,8 +37,7 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage6a::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
 use jolt_verifier::stages::stage6a::outputs::{
-    Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutputClaims,
-    Stage6aSumchecks,
+    Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aSumchecks,
 };
 use jolt_verifier::CheckedInputs;
 use jolt_witness::JoltWitnessPlane;
@@ -46,10 +45,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
-/// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
-/// cross-stage carrier stage 6b consumes.
+/// Stage 6a's outputs: the verifier-typed cross-stage carrier stage 6b consumes.
 pub struct Stage6aProverOutput<F: JoltField> {
-    pub claims: Stage6aOutputClaims<F>,
     pub clear_output: Stage6aClearOutput<F>,
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
@@ -172,7 +169,6 @@ where
     let committed_witness = proved.witness;
 
     Ok(Stage6aProverOutput {
-        claims: proved.output_claims.clone(),
         clear_output: Stage6aClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,

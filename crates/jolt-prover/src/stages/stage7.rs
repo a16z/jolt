@@ -23,7 +23,7 @@ use jolt_verifier::sites::STAGE7;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
-use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
+use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage7::{build_stage7_sumchecks, stage7_input_values_from_upstream};
 use jolt_verifier::CheckedInputs;
 use jolt_witness::JoltWitnessPlane;
@@ -31,10 +31,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
-/// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
-/// cross-stage carrier stage 8 consumes.
+/// Stage 7's outputs: the verifier-typed cross-stage carrier stage 8 consumes.
 pub struct Stage7ProverOutput<F: JoltField> {
-    pub claims: Stage7OutputClaims<F>,
     pub clear_output: Stage7ClearOutput<F>,
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
@@ -101,7 +99,6 @@ where
     let committed_witness = proved.witness;
 
     Ok(Stage7ProverOutput {
-        claims: proved.output_claims.clone(),
         clear_output: Stage7ClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,

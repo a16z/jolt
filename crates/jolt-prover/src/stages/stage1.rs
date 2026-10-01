@@ -23,7 +23,7 @@ use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
 use jolt_verifier::stages::stage1::outputs::{
-    Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
+    Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
 use jolt_witness::JoltWitnessPlane;
@@ -31,10 +31,8 @@ use jolt_witness::JoltWitnessPlane;
 use crate::recorder::ProofMode;
 use crate::{ProverError, StageProver as _};
 
-/// Stage 1's outputs: the two wire proofs, the wire claims, and the
-/// verifier-typed cross-stage carrier downstream stages consume.
+/// Stage 1's outputs: the verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage1ProverOutput<F: JoltField> {
-    pub claims: Stage1OutputClaims<F>,
     pub clear_output: Stage1ClearOutput<F>,
     #[cfg(feature = "zk")]
     pub uniskip_witness: CommittedSumcheckWitness<F>,
@@ -116,10 +114,8 @@ where
     #[cfg(feature = "zk")]
     let committed_witness = proved.witness;
 
-    let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
     Ok(Stage1ProverOutput {
-        claims,
         clear_output,
         #[cfg(feature = "zk")]
         uniskip_witness: proved_uniskip.witness,
@@ -168,7 +164,7 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        let field_inline_outer = &out.claims.outer.outer_remainder.field_inline;
+        let field_inline_outer = &out.clear_output.output_values.outer_remainder.field_inline;
 
         // The appendage values are honest evaluations: each field-inline cycle-domain
         // column's MLE at the stage-1 cycle binding (`tau_low`, the point
