@@ -205,7 +205,6 @@ const MIP_SSIP: u64 = 0x002;
 
 #[derive(Clone, Debug)]
 struct ActiveMarker {
-    label: String,
     start_instrs: u64,      // executed_instrs  at ‘start’
     start_trace_len: usize, // trace.len()      at ‘start’
 }
@@ -358,7 +357,7 @@ pub struct Cpu {
     // pub trace: Vec<Cycle>,
     pub trace_len: usize,
     executed_instrs: u64, // "real" RV64IMAC cycles
-    active_markers: FnvHashMap<u32, ActiveMarker>,
+    active_markers: FnvHashMap<String, ActiveMarker>,
     pub vr_allocator: VirtualRegisterAllocator,
     /// Call stack tracking (circular buffer)
     call_stack: VecDeque<CallFrame>,
@@ -1248,49 +1247,23 @@ impl Cpu {
         match event {
             JOLT_CYCLE_MARKER_START => {
                 let label = self.read_string(ptr, len)?; // guest NUL-string
-
-                // Check if there's already an active marker with the same label
-                let duplicate = self
-                    .active_markers
-                    .values()
-                    .any(|marker| marker.label == label);
-                if duplicate {
-                    warn!("Marker with label '{}' is already active", &label);
+                let marker = ActiveMarker {
+                    start_instrs: self.executed_instrs,
+                    start_trace_len: self.trace_len,
+                };
+                if self.active_markers.insert(label.clone(), marker).is_some() {
+                    warn!("Marker with label '{label}' is already active; restarting it");
                 }
-
-                self.active_markers.insert(
-                    ptr,
-                    ActiveMarker {
-                        label,
-                        start_instrs: self.executed_instrs,
-                        start_trace_len: self.trace_len,
-                    },
-                );
             }
 
             JOLT_CYCLE_MARKER_END => {
-                // Match by label: the same label can live at a different address
-                // than at start (another crate or codegen unit, or a built string).
                 let label = self.read_string(ptr, len)?;
-                let key = if self
-                    .active_markers
-                    .get(&ptr)
-                    .is_some_and(|marker| marker.label == label)
-                {
-                    Some(ptr)
-                } else {
-                    self.active_markers
-                        .iter()
-                        .find(|(_, marker)| marker.label == label)
-                        .map(|(key, _)| *key)
-                };
-                if let Some(mark) = key.and_then(|key| self.active_markers.remove(&key)) {
+                if let Some(mark) = self.active_markers.remove(&label) {
                     let real = self.executed_instrs - mark.start_instrs;
                     let total = self.trace_len - mark.start_trace_len;
                     let virtual_instrs = total - real as usize;
                     info!(
-                        "\"{}\": {} RV64IMAC cycles + {} virtual instructions = {} total cycles",
-                        mark.label, real, virtual_instrs, total
+                        "\"{label}\": {real} RV64IMAC cycles + {virtual_instrs} virtual instructions = {total} total cycles"
                     );
                 } else {
                     warn!("Attempt to end a marker '{label}' that was never started");
@@ -1605,10 +1578,10 @@ impl Drop for Cpu {
                 "Warning: Found {} unclosed cycle tracking marker(s):",
                 self.active_markers.len()
             );
-            for (ptr, marker) in &self.active_markers {
+            for (label, marker) in &self.active_markers {
                 warn!(
-                    "  - '{}' (at ptr: 0x{:x}), started at {} RV64IMAC cycles",
-                    marker.label, ptr, marker.start_instrs
+                    "  - '{}', started at {} RV64IMAC cycles",
+                    label, marker.start_instrs
                 );
             }
         }
@@ -1668,6 +1641,8 @@ fn decode_failure(word: u32, address: u64, compressed: bool, e: impl core::fmt::
 
 #[cfg(test)]
 mod test_cpu {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use crate::emulator::mmu::DRAM_BASE;
     use crate::emulator::terminal::DummyTerminal;
@@ -2070,9 +2045,9 @@ mod test_cpu {
         cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
             .unwrap();
         assert_eq!(cpu.active_markers.len(), 1);
-        assert_eq!(cpu.active_markers[&ptr].label, "my_marker");
+        assert!(cpu.active_markers.contains_key("my_marker"));
 
-        // A second start with the same label logs a warning but replaces nothing
+        // A second start with the same label restarts the span
         cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
             .unwrap();
         assert_eq!(cpu.active_markers.len(), 1);
@@ -2104,5 +2079,73 @@ mod test_cpu {
         cpu.handle_jolt_cycle_marker(end_ptr, label.len() as u32, JOLT_CYCLE_MARKER_END)
             .unwrap();
         assert!(cpu.active_markers.is_empty());
+    }
+
+    #[test]
+    fn cycle_marker_label_reusing_an_address_keeps_the_earlier_span() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        let ptr = DRAM_BASE as u32;
+        // Both labels are built in the same buffer, as a freed block reused by
+        // a runtime-built label would be.
+        for label in [b"aaaa", b"bbbb"] {
+            for (i, byte) in label.iter().enumerate() {
+                cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+            }
+            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+                .unwrap();
+        }
+        assert!(cpu.active_markers.contains_key("aaaa"));
+        assert!(cpu.active_markers.contains_key("bbbb"));
+    }
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn cycle_marker_restart_overwrites_the_active_span_and_warns() {
+        let mut cpu = create_cpu();
+        cpu.get_mut_mmu().init_memory(1 << 16);
+        let label = b"span";
+        for (i, byte) in label.iter().enumerate() {
+            cpu.get_mut_mmu().store_raw(DRAM_BASE + i as u64, *byte);
+        }
+        let ptr = DRAM_BASE as u32;
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .with_ansi(false)
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+                .unwrap();
+            cpu.executed_instrs = 3;
+            cpu.trace_len = 5;
+            cpu.handle_jolt_cycle_marker(ptr, label.len() as u32, JOLT_CYCLE_MARKER_START)
+                .unwrap();
+        });
+
+        let marker = &cpu.active_markers["span"];
+        assert_eq!((marker.start_instrs, marker.start_trace_len), (3, 5));
+        let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            logs.contains("Marker with label 'span' is already active"),
+            "{logs}"
+        );
     }
 }
