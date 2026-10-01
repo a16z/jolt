@@ -10,7 +10,9 @@ use jolt_field::{CanonicalDecode, JoltField};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE4;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_read_write_checking::{
@@ -82,7 +84,6 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
     }
 }
 
-#[jolt_verifier_derive::fs_scope(Stage4)]
 pub fn verify<PCS, VC, H>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -96,6 +97,7 @@ where
     VC::Output: CanonicalDecode,
     H: Sponge,
 {
+    transcript.site(STAGE4);
     let log_t = crate::num::ilog2(checked.trace_length);
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);

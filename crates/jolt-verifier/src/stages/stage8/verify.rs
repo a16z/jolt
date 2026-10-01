@@ -44,9 +44,9 @@ use jolt_openings::{
 };
 #[cfg(not(feature = "akita"))]
 use jolt_poly::Point;
-#[cfg(not(feature = "akita"))]
-use jolt_transcript::Channel;
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE8;
 
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
@@ -69,7 +69,6 @@ pub struct Stage8BatchEntry<'a, F: JoltField, C> {
     reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
 )]
 #[cfg(not(feature = "akita"))]
-#[jolt_verifier_derive::fs_scope(Stage8)]
 pub fn verify<F, PCS, VC, H>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -89,6 +88,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE8);
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
@@ -645,7 +645,6 @@ mod tests {
     clippy::too_many_arguments,
     reason = "same signature as the homomorphic build's verify"
 )]
-#[jolt_verifier_derive::fs_scope(Stage8)]
 pub fn verify<F, PCS, VC, H>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -665,6 +664,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE8);
     super::packed::verify(
         formula_dimensions,
         checked.one_hot_config,

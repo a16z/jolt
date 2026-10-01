@@ -17,7 +17,9 @@ default = ["transcript-blake2b"]
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = []
-fs-audit = []
+# Records every transcript operation with its protocol site (crate::sites)
+# and argument-string range, for the transcript test suites.
+logging = ["jolt-transcript/logging"]
 fuzzing = []
 field-inline = [
   "common/field-inline",

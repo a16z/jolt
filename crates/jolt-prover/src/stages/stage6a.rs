@@ -24,7 +24,8 @@ use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_verifier::sites::STAGE6A;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -78,6 +79,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE6A);
     let formula_dimensions = super::formula_dimensions(
         checked,
         config,

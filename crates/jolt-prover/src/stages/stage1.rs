@@ -17,7 +17,8 @@ use jolt_r1cs::constraints::jolt::{
 };
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_verifier::sites::STAGE1;
 use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
@@ -57,6 +58,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE1);
     let tau = draw_spartan_outer_tau(transcript, log_t);
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's

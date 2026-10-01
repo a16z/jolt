@@ -20,9 +20,10 @@ use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
 #[cfg(feature = "field-inline")]
 use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
+use jolt_verifier::sites::STAGE4;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
 #[cfg(feature = "field-inline")]
@@ -73,6 +74,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE4);
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);

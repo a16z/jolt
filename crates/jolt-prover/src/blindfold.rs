@@ -25,6 +25,7 @@ use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_r1cs::constraints::jolt::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_verifier::sites::BLINDFOLD;
 use jolt_verifier::{jolt_protocol_id, verify_stages, VerifiedStages, VerifierError, JOLT_SESSION};
 
 use crate::{JoltProverPreprocessing, ProverError};
@@ -150,6 +151,7 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
+    transcript.site(BLINDFOLD);
     jolt_blindfold::prove::<F, VC, H, _>(
         vc_setup,
         &protocol,

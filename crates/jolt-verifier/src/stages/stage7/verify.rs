@@ -9,7 +9,9 @@ use jolt_claims::protocols::jolt::{
     JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
 use jolt_field::{CanonicalDecode, JoltField};
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE7;
 
 #[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{
@@ -45,7 +47,6 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 
-#[jolt_verifier_derive::fs_scope(Stage7)]
 pub fn verify<F, C, H>(
     checked: &CheckedInputs,
     formula_dimensions: &JoltFormulaDimensions,
@@ -58,6 +59,7 @@ where
     C: CanonicalDecode,
     H: Sponge,
 {
+    transcript.site(STAGE7);
     let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
         checked.one_hot_config.committed_chunk_bits(),

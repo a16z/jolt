@@ -47,11 +47,9 @@ pub(crate) mod num {
 
 pub mod config;
 pub mod error;
-#[cfg(feature = "fs-audit")]
-#[doc(hidden)]
-pub mod fs_audit;
 pub mod preprocessing;
 pub mod proof;
+pub mod sites;
 pub mod stages;
 pub mod verifier;
 

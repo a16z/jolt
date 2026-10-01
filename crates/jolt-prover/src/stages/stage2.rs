@@ -26,7 +26,8 @@ use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_verifier::sites::STAGE2;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 #[cfg(feature = "field-inline")]
@@ -80,6 +81,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE2);
     let log_t = config.trace_length.ilog2() as usize;
     let log_k = config.ram_K.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);

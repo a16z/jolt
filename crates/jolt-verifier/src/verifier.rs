@@ -18,7 +18,10 @@ use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_transcript::{Channel, ProtocolId, Sponge, VerifierTranscript};
 
+#[cfg(not(feature = "akita"))]
+use crate::sites::BLINDFOLD;
 use crate::{
+    sites::{COMMITMENTS, PREAMBLE},
     config::{
         validate_proof_config, ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE,
     },
@@ -73,6 +76,7 @@ where
     )? {
         VerifiedStages::Clear => {}
         VerifiedStages::Zk(blindfold) => {
+            transcript.site(BLINDFOLD);
             let vc_setup = preprocessing
                 .vc_setup
                 .as_ref()
@@ -312,6 +316,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
     H: Sponge,
 {
+    transcript.site(PREAMBLE);
     let header = ProofHeader::receive(transcript)?;
     let checked = validate_inputs(
         preprocessing,
@@ -326,6 +331,7 @@ where
         num::ilog2(checked.trace_length),
         JoltRelationId::InstructionReadRaf,
     )?;
+    transcript.site(COMMITMENTS);
     let commitments = ProofCommitments::receive::<PCS, H>(
         &preprocessing.pcs_setup,
         &header,

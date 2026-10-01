@@ -48,8 +48,9 @@ use jolt_openings::{
 #[cfg(feature = "field-inline")]
 use jolt_poly::MultilinearPoly;
 use jolt_poly::Point;
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use jolt_verifier::proof::ProofCommitments;
+use jolt_verifier::sites::STAGE8;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage8::{batch_entries, precommitted_final_openings};
@@ -101,6 +102,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE8);
     let log_t = checked.trace_length.ilog2() as usize;
     let precommitted = &checked.precommitted;
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(

@@ -5,7 +5,9 @@ use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, 
 use jolt_crypto::VectorCommitment;
 use jolt_field::CanonicalDecode;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE6A;
 
 #[cfg(feature = "field-inline")]
 use super::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
@@ -36,7 +38,6 @@ use crate::{
     clippy::too_many_arguments,
     reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
-#[jolt_verifier_derive::fs_scope(Stage6a)]
 pub fn verify<PCS, VC, H>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
@@ -54,6 +55,7 @@ where
     VC::Output: CanonicalDecode,
     H: Sponge,
 {
+    transcript.site(STAGE6A);
     // The upstream cycle/register points and entry index ride on the relation
     // (full geometry at construction) for the prover's address-phase kernel;
     // the verifier itself never evaluates them here.

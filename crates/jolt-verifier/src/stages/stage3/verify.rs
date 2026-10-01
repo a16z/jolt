@@ -2,7 +2,9 @@
 
 use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_field::{CanonicalDecode, JoltField};
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE3;
 
 use super::{
     instruction_input::{instruction_input_input_values_from_upstream, InstructionInput},
@@ -39,7 +41,6 @@ pub fn stage3_input_values_from_upstream<F: JoltField>(
     }
 }
 
-#[jolt_verifier_derive::fs_scope(Stage3)]
 pub fn verify<F, C, H>(
     checked: &CheckedInputs,
     transcript: &mut VerifierTranscript<'_, H>,
@@ -51,6 +52,7 @@ where
     C: CanonicalDecode,
     H: Sponge,
 {
+    transcript.site(STAGE3);
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = TraceDimensions::new(log_t);
 

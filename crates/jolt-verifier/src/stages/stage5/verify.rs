@@ -2,7 +2,9 @@
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_field::{CanonicalDecode, JoltField};
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE5;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_val_evaluation::{
@@ -75,7 +77,6 @@ pub fn stage5_input_points_from_upstream<F: JoltField>(
     }
 }
 
-#[jolt_verifier_derive::fs_scope(Stage5)]
 pub fn verify<F, C, H>(
     checked: &CheckedInputs,
     formula_dimensions: &JoltFormulaDimensions,
@@ -88,6 +89,7 @@ where
     C: CanonicalDecode,
     H: Sponge,
 {
+    transcript.site(STAGE5);
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = formula_dimensions.trace;
 

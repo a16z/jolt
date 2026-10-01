@@ -1,6 +1,8 @@
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_field::{CanonicalDecode, JoltField};
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE1;
 
 use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
 use super::outputs::{
@@ -13,7 +15,6 @@ use crate::{
     VerifierError,
 };
 
-#[jolt_verifier_derive::fs_scope(Stage1)]
 pub fn verify<F, C, H>(
     checked: &CheckedInputs,
     transcript: &mut VerifierTranscript<'_, H>,
@@ -23,6 +24,7 @@ where
     C: CanonicalDecode,
     H: Sponge,
 {
+    transcript.site(STAGE1);
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);

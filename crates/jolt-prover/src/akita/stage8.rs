@@ -14,6 +14,7 @@ use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_transcript::{Channel, ProverTranscript, Sponge};
+use jolt_verifier::sites::STAGE8;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
@@ -75,6 +76,7 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
+    transcript.site(STAGE8);
     let log_t = checked.trace_length.ilog2() as usize;
     let chunk_width = config.one_hot_config.committed_chunk_bits();
     let formula_dimensions = crate::stages::formula_dimensions(

@@ -10,7 +10,9 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::NoChallenges;
 use jolt_field::{CanonicalDecode, JoltField};
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+
+use crate::sites::STAGE2;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_claim_reduction::{
@@ -81,7 +83,6 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     }
 }
 
-#[jolt_verifier_derive::fs_scope(Stage2)]
 pub fn verify<F, C, H>(
     checked: &CheckedInputs,
     transcript: &mut VerifierTranscript<'_, H>,
@@ -92,6 +93,7 @@ where
     C: CanonicalDecode,
     H: Sponge,
 {
+    transcript.site(STAGE2);
     match (checked.zk, stage1) {
         (true, Stage1Output::Clear(_)) => {
             return Err(VerifierError::ExpectedCommittedProof { field: "stage1" });

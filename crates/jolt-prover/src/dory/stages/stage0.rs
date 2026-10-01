@@ -20,10 +20,11 @@ use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
 use jolt_verifier::proof::JoltCommitments;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::proof::{FieldInlineCommitments, FieldRegistersCommitments};
+use jolt_verifier::sites::{COMMITMENTS, PREAMBLE};
 use jolt_verifier::{
     absorb_public_commitments, absorb_public_preamble, jolt_protocol_id, validate_inputs,
     CheckedInputs, ProofCommitments, ProofHeader, JOLT_SESSION,
@@ -160,6 +161,7 @@ where
     }
 
     let mut transcript = ProverTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION);
+    transcript.site(PREAMBLE);
     header.send(&mut transcript);
     absorb_public_preamble(&checked, &mut transcript);
 
@@ -288,6 +290,7 @@ where
         trace,
         untrusted_advice: untrusted_advice_commitment,
     };
+    transcript.site(COMMITMENTS);
     commitments.send::<PCS, H>(&mut transcript);
     absorb_public_commitments(
         &preprocessing.verifier,
