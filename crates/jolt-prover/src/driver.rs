@@ -29,10 +29,8 @@ use jolt_kernels::{
     PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{
-    ProveRounds, RecordedSumcheck, RoundScheduler, SumcheckError, SumcheckRecorder,
-};
-use jolt_transcript::Transcript;
+use jolt_sumcheck::{ProveRounds, RoundScheduler, SumcheckError, SumcheckRecorder};
+use jolt_transcript::{ProverTranscript, Sponge};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -58,13 +56,13 @@ pub trait StageProver<F: JoltField>: Sized {
 
     /// Prove this stage's batch on `transcript`, recorder-generically: the
     /// recorder type decides clear vs. committed recording, never a runtime
-    /// flag. Returns the [`Proved`] carrier (recorded proof, typed output
+    /// flag. Returns the [`Proved`] carrier (recorder witness, typed output
     /// claims, derived points, hard-checked final claim).
     #[expect(
         clippy::too_many_arguments,
         reason = "the driver's fixed protocol signature: upstream carriers in, recorded proof out"
     )]
-    fn prove<B, Rec, T>(
+    fn prove<B, Rec, H>(
         &self,
         kernels: &B,
         session: &mut ProofSession,
@@ -74,14 +72,14 @@ pub trait StageProver<F: JoltField>: Sized {
         input_points: &Self::InputPoints,
         challenges: &Self::Challenges,
         recorder: Rec,
-        transcript: &mut T,
-    ) -> Result<Proved<F, Self, Rec::Commitment>, ProverError<F>>
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<Proved<F, Self, Rec::Witness>, ProverError<F>>
     where
         B: KernelSource<F, Self> + ?Sized,
         Rec: SumcheckRecorder<F>,
-        T: Transcript<Challenge = F>;
+        H: Sponge;
 
-    /// The stage's absorbed opening scalars, in the stage's curated order
+    /// The stage's sent (clear) or committed (ZK) opening scalars, in the stage's curated order
     /// (stage 6b's runtime point dedup reorders the returned values). The
     /// default emitted by `impl_stage_prover!` returns the derive-generated
     /// canonical order (`opening_values`); curated stages supply an override
@@ -113,12 +111,12 @@ pub trait KernelSource<F: JoltField, S: StageProver<F>> {
 }
 
 /// A proved stage batch, as assembled by the generated
-/// [`prove`](StageProver::prove): the recorded wire proof (plus retained
-/// witness for a committed recorder), the typed output claims and derived
-/// opening points, and the batch's final running claim (already hard-checked
-/// against the generated `expected_final_claim`).
-pub struct Proved<F: JoltField, S: StageProver<F>, C> {
-    pub recorded: RecordedSumcheck<F, C>,
+/// [`prove`](StageProver::prove): the recorder's retained witness (nothing for
+/// a clear recorder), the typed output claims and derived opening points, and
+/// the batch's final running claim (already hard-checked against the generated
+/// `expected_final_claim`).
+pub struct Proved<F: JoltField, S: StageProver<F>, W> {
+    pub witness: W,
     pub output_claims: S::OutputClaims,
     pub output_points: S::OutputPoints,
     pub final_claim: F,
@@ -479,7 +477,7 @@ macro_rules! impl_stage_prover {
             type OutputPoints = $output_points<F>;
             type Kernels = ( $($crate::driver::__stage_member!(kernel_ty $presence $relation),)+ );
 
-            fn prove<B, Rec, T>(
+            fn prove<B, Rec, H>(
                 &self,
                 kernels: &B,
                 session: &mut ::jolt_kernels::ProofSession,
@@ -489,15 +487,15 @@ macro_rules! impl_stage_prover {
                 input_points: &Self::InputPoints,
                 challenges: &Self::Challenges,
                 mut recorder: Rec,
-                transcript: &mut T,
+                transcript: &mut ::jolt_transcript::ProverTranscript<H>,
             ) -> ::core::result::Result<
-                $crate::driver::Proved<F, Self, Rec::Commitment>,
+                $crate::driver::Proved<F, Self, Rec::Witness>,
                 $crate::ProverError<F>,
             >
             where
                 B: $crate::driver::KernelSource<F, Self> + ?Sized,
                 Rec: ::jolt_sumcheck::SumcheckRecorder<F>,
-                T: ::jolt_transcript::Transcript<Challenge = F>,
+                H: ::jolt_transcript::Sponge,
             {
                 let __stage_span =
                     ::tracing::info_span!(concat!($label, "::prove")).entered();
@@ -576,9 +574,9 @@ macro_rules! impl_stage_prover {
                     );
                 }
 
-                let __recorded = recorder.finish(&__opening_values, transcript)?;
+                let __witness = recorder.finish(&__opening_values, transcript)?;
                 ::core::result::Result::Ok($crate::driver::Proved {
-                    recorded: __recorded,
+                    witness: __witness,
                     output_claims: __output_claims,
                     output_points: __output_points,
                     final_claim: __proved.final_claim,

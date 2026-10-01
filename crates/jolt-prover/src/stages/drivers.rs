@@ -60,10 +60,18 @@ mod stage4 {
 
     use crate::driver::impl_stage_prover;
 
-    // Stage 4's `no_opening_values` replacement keeps the generated
-    // signature (the claims aggregate's hand-ordered `opening_values`, which
-    // splices the field-inline openings under `field-inline`), so the driver's default
-    // curation serves both feature arms unchanged.
+    // A clear proof sent the staged openings before the batch, so only the
+    // post-round openings follow the rounds.
+    #[cfg(not(feature = "zk"))]
+    jolt_verifier::stage4_sumchecks_members!(impl_stage_prover
+        curate = |batch, claims, _points| {
+            Ok(batch.post_round_opening_values(claims))
+        },
+    );
+    // A committed proof commits every opening in the claims aggregate's
+    // canonical order (the `no_opening_values` replacement keeps the generated
+    // signature, so the driver's default curation serves it).
+    #[cfg(feature = "zk")]
     jolt_verifier::stage4_sumchecks_members!(impl_stage_prover);
 }
 

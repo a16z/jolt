@@ -26,8 +26,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{ProverTranscript, Sponge};
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 #[cfg(feature = "field-inline")]
@@ -53,9 +52,7 @@ use crate::{ProverConfig, ProverError, StageProver as _};
 
 /// Stage 2's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage2ProverOutput<F: JoltField, C> {
-    pub uniskip_proof: SumcheckProof<F, C>,
-    pub sumcheck_proof: SumcheckProof<F, C>,
+pub struct Stage2ProverOutput<F: JoltField> {
     pub claims: Stage2OutputClaims<F>,
     pub clear_output: Stage2ClearOutput<F>,
     #[cfg(feature = "zk")]
@@ -67,7 +64,7 @@ pub struct Stage2ProverOutput<F: JoltField, C> {
 /// Prove stage 2 on `transcript` (positioned at the stage-1 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage2<F, PCS, VC, T>(
+pub fn prove_stage2<F, PCS, VC, H>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
@@ -75,13 +72,13 @@ pub fn prove_stage2<F, PCS, VC, T>(
     public_io: &JoltDevice,
     stage1: &Stage1ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
-    transcript: &mut T,
-) -> Result<Stage2ProverOutput<F, VC::Output>, ProverError<F>>
+    transcript: &mut ProverTranscript<H>,
+) -> Result<Stage2ProverOutput<F>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
 {
     let log_t = config.trace_length.ilog2() as usize;
     let log_k = config.ram_K.ilog2() as usize;
@@ -187,14 +184,10 @@ where
         transcript,
     )?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
-    let sumcheck_proof = proved.recorded.proof;
+    let committed_witness = proved.witness;
 
     let claims = Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     Ok(Stage2ProverOutput {
-        uniskip_proof: proved_uniskip.proof,
-        sumcheck_proof,
         claims,
         clear_output: Stage2ClearOutput {
             output_values: proved.output_claims,

@@ -29,8 +29,7 @@ use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{ProverTranscript, Sponge};
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -56,8 +55,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// cross-stage carrier stage 7 consumes. The precommitted reduction state
 /// that spans into stage 7's address phase travels as `ProofSession` carries,
 /// not output fields.
-pub struct Stage6bProverOutput<F: JoltField, C> {
-    pub sumcheck_proof: SumcheckProof<F, C>,
+pub struct Stage6bProverOutput<F: JoltField> {
     pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
     #[cfg(feature = "zk")]
@@ -67,7 +65,7 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
 /// Prove stage 6b on `transcript` (positioned at the stage-6a boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage6b<F, PCS, VC, T>(
+pub fn prove_stage6b<F, PCS, VC, H>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
@@ -81,13 +79,13 @@ pub fn prove_stage6b<F, PCS, VC, T>(
     stage5: &Stage5ClearOutput<F>,
     stage6a: &Stage6aClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
-    transcript: &mut T,
-) -> Result<Stage6bProverOutput<F, VC::Output>, ProverError<F>>
+    transcript: &mut ProverTranscript<H>,
+) -> Result<Stage6bProverOutput<F>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
 {
     let log_k = checked.ram_K.ilog2() as usize;
     let precommitted = &checked.precommitted;
@@ -188,12 +186,9 @@ where
         transcript,
     )?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
-    let sumcheck_proof = proved.recorded.proof;
+    let committed_witness = proved.witness;
 
     Ok(Stage6bProverOutput {
-        sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage6bClearOutput {
             output_values: proved.output_claims,

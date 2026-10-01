@@ -5,14 +5,14 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
 use jolt_verifier::proof::JoltProof;
+use jolt_verifier::JoltSponge;
 use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 use crate::support::{self, GuestCase, PreparedGuest};
 
-pub type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
+pub type Proof = JoltProof;
 pub type VerifierPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
 pub fn prove(
@@ -51,7 +51,7 @@ pub fn prove(
     )
     .with_field_inline()
     .expect("field-inline witness view");
-    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
         &backend,
         &preprocessing,
         &config,
@@ -68,7 +68,7 @@ pub fn verify_full(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
         preprocessing,
         public_io,
         proof,

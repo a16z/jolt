@@ -17,8 +17,7 @@ use jolt_r1cs::constraints::jolt::{
 };
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{ProverTranscript, Sponge};
 use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
@@ -33,9 +32,7 @@ use crate::{ProverError, StageProver as _};
 
 /// Stage 1's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage1ProverOutput<F: JoltField, C> {
-    pub uniskip_proof: SumcheckProof<F, C>,
-    pub sumcheck_proof: SumcheckProof<F, C>,
+pub struct Stage1ProverOutput<F: JoltField> {
     pub claims: Stage1OutputClaims<F>,
     pub clear_output: Stage1ClearOutput<F>,
     #[cfg(feature = "zk")]
@@ -46,19 +43,19 @@ pub struct Stage1ProverOutput<F: JoltField, C> {
 
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
-pub fn prove_stage1<F, PCS, VC, T>(
+pub fn prove_stage1<F, PCS, VC, H>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
     log_t: usize,
     witness: &dyn JoltWitnessPlane<F>,
-    transcript: &mut T,
-) -> Result<Stage1ProverOutput<F, VC::Output>, ProverError<F>>
+    transcript: &mut ProverTranscript<H>,
+) -> Result<Stage1ProverOutput<F>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
 {
     let tau = draw_spartan_outer_tau(transcript, log_t);
     // Backend-neutral kernel-seam spans at the call boundary, so every
@@ -115,15 +112,11 @@ where
         transcript,
     )?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
-    let sumcheck_proof = proved.recorded.proof;
+    let committed_witness = proved.witness;
 
     let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
     Ok(Stage1ProverOutput {
-        uniskip_proof: proved_uniskip.proof,
-        sumcheck_proof,
         claims,
         clear_output,
         #[cfg(feature = "zk")]

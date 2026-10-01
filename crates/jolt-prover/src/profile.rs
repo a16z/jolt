@@ -74,7 +74,7 @@ type FieldInlineField = Fr;
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 type FieldInlineField = AkitaField;
 #[cfg(not(feature = "akita"))]
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_verifier::JoltSponge;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 #[cfg(not(feature = "akita"))]
 use rayon::ThreadPoolBuilder;
@@ -839,7 +839,7 @@ fn prove_workload(
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
         &backend,
         &prover_preprocessing,
         &config,
@@ -866,7 +866,7 @@ fn prove_workload(
         .build()
         .expect("single-threaded verifier pool must build");
     let verify = || {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,

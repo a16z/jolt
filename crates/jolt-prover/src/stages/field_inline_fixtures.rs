@@ -528,7 +528,7 @@ pub(crate) mod twins {
     /// positions the transcript at the stage-2 boundary.
     pub(crate) fn replay_stage1<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
-        stage1: &Stage1ProverOutput<Fr, C>,
+        stage1: &Stage1ProverOutput<Fr>,
     ) {
         let tau = draw_spartan_outer_tau(transcript, LOG_T);
         let uniskip_challenge = uniskip::verify_clear(
@@ -573,8 +573,8 @@ pub(crate) mod twins {
         transcript: &mut Blake2bTranscript,
         config: &ProverConfig,
         public_io: &JoltDevice,
-        stage1: &Stage1ProverOutput<Fr, C>,
-        stage2: &Stage2ProverOutput<Fr, C>,
+        stage1: &Stage1ProverOutput<Fr>,
+        stage2: &Stage2ProverOutput<Fr>,
     ) {
         let log_t = LOG_T;
         let log_k = config.ram_K.ilog2() as usize;
@@ -657,9 +657,9 @@ pub(crate) mod twins {
     /// member): positions the transcript at the stage-4 boundary.
     pub(crate) fn replay_stage3<C: Clone + AppendToTranscript>(
         transcript: &mut Blake2bTranscript,
-        stage1: &Stage1ProverOutput<Fr, C>,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage3: &Stage3ProverOutput<Fr, C>,
+        stage1: &Stage1ProverOutput<Fr>,
+        stage2: &Stage2ProverOutput<Fr>,
+        stage3: &Stage3ProverOutput<Fr>,
     ) {
         let dimensions = TraceDimensions::new(LOG_T);
         let tau_low = stage2.clear_output.product_tau_low.clone();
@@ -704,9 +704,9 @@ pub(crate) mod twins {
         config: &ProverConfig,
         checked: &CheckedInputs,
         preprocessing: &FixturePreprocessing,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage3: &Stage3ProverOutput<Fr, C>,
-        stage4: &Stage4ProverOutput<Fr, C>,
+        stage2: &Stage2ProverOutput<Fr>,
+        stage3: &Stage3ProverOutput<Fr>,
+        stage4: &Stage4ProverOutput<Fr>,
     ) {
         let register_dimensions = config
             .rw_config
@@ -768,9 +768,9 @@ pub(crate) mod twins {
         config: &ProverConfig,
         checked: &CheckedInputs,
         preprocessing: &FixturePreprocessing,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage4: &Stage4ProverOutput<Fr, C>,
-        stage5: &Stage5ProverOutput<Fr, C>,
+        stage2: &Stage2ProverOutput<Fr>,
+        stage4: &Stage4ProverOutput<Fr>,
+        stage5: &Stage5ProverOutput<Fr>,
     ) {
         let formula_dimensions = crate::stages::formula_dimensions(
             checked,
@@ -820,12 +820,12 @@ pub(crate) mod twins {
         config: &ProverConfig,
         checked: &CheckedInputs,
         preprocessing: &FixturePreprocessing,
-        stage1: &Stage1ProverOutput<Fr, C>,
-        stage2: &Stage2ProverOutput<Fr, C>,
-        stage3: &Stage3ProverOutput<Fr, C>,
-        stage4: &Stage4ProverOutput<Fr, C>,
-        stage5: &Stage5ProverOutput<Fr, C>,
-        stage6a: &Stage6aProverOutput<Fr, C>,
+        stage1: &Stage1ProverOutput<Fr>,
+        stage2: &Stage2ProverOutput<Fr>,
+        stage3: &Stage3ProverOutput<Fr>,
+        stage4: &Stage4ProverOutput<Fr>,
+        stage5: &Stage5ProverOutput<Fr>,
+        stage6a: &Stage6aProverOutput<Fr>,
     ) {
         let formula_dimensions = crate::stages::formula_dimensions(
             checked,
@@ -919,13 +919,13 @@ pub(crate) mod proving {
     use jolt_witness::JoltWitnessPlane;
     type Commitment = Bn254G1;
     type Stages3 = (
-        Stage1ProverOutput<Fr, Commitment>,
-        Stage2ProverOutput<Fr, Commitment>,
-        Stage3ProverOutput<Fr, Commitment>,
+        Stage1ProverOutput<Fr>,
+        Stage2ProverOutput<Fr>,
+        Stage3ProverOutput<Fr>,
     );
-    type Stages4 = (Stages3, Stage4ProverOutput<Fr, Commitment>);
-    type Stages5 = (Stages4, Stage5ProverOutput<Fr, Commitment>);
-    type Stages6a = (Stages5, Stage6aProverOutput<Fr, Commitment>);
+    type Stages4 = (Stages3, Stage4ProverOutput<Fr>);
+    type Stages5 = (Stages4, Stage5ProverOutput<Fr>);
+    type Stages6a = (Stages5, Stage6aProverOutput<Fr>);
 
     pub(crate) struct FixtureProver<'a> {
         pub(crate) backend: &'a JoltBackend<Fr, DoryScheme>,

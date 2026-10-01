@@ -14,30 +14,25 @@ use core::marker::PhantomData;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::SumcheckProof;
 #[cfg(not(feature = "zk"))]
 use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder};
 #[cfg(feature = "zk")]
-use jolt_sumcheck::{
-    prove_uniskip_committed, CommittedSumcheckRecorder, CommittedSumcheckWitness, RecordedSumcheck,
-};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_sumcheck::{prove_uniskip_committed, CommittedSumcheckRecorder, CommittedSumcheckWitness};
+use jolt_transcript::{ProverTranscript, Sponge};
 
 use crate::ProverError;
 
-/// The compiled mode's batch recorder type; `Commitment = VC::Output` in both
-/// modes, so everything downstream of the recorder is mode-independent.
+/// The compiled mode's batch recorder type.
 #[cfg(feature = "zk")]
-pub type ModeRecorder<'a, F, VC> = CommittedSumcheckRecorder<'a, F, VC, rand_core::OsRng>;
+pub type ModeRecorder<'a, VC> =
+    CommittedSumcheckRecorder<'a, <VC as VectorCommitment>::Field, VC, rand_core::OsRng>;
 #[cfg(not(feature = "zk"))]
-pub type ModeRecorder<'a, F, VC> =
-    ClearSumcheckRecorder<F, <VC as jolt_crypto::Commitment>::Output>;
+pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::Field>;
 
-/// A proved uni-skip round in the compiled mode: the wire proof, the
-/// reduction challenge, and the prover-internal output claim (absorbed by the
-/// clear arm, committed and retained by the ZK arm).
-pub struct ProvedUniskipMode<F: JoltField, C> {
-    pub proof: SumcheckProof<F, C>,
+/// A proved uni-skip round in the compiled mode: the reduction challenge and
+/// the output claim (sent by the clear arm, committed and retained by the ZK
+/// arm).
+pub struct ProvedUniskipMode<F: JoltField> {
     pub challenge: F,
     pub output_claim: F,
     #[cfg(feature = "zk")]
@@ -73,7 +68,7 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
     }
 
     /// A fresh batch recorder for one stage.
-    pub fn recorder(&self) -> Result<ModeRecorder<'a, VC::Field, VC>, ProverError<VC::Field>> {
+    pub fn recorder(&self) -> Result<ModeRecorder<'a, VC>, ProverError<VC::Field>> {
         #[cfg(feature = "zk")]
         {
             Ok(CommittedSumcheckRecorder::new(
@@ -88,28 +83,20 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
         }
     }
 
-    /// Prove a uni-skip first round in the compiled mode. The clear arm
-    /// absorbs the full labeled polynomial and the output claim; the ZK arm
-    /// commits the coefficients and the output claim and retains the witness.
-    #[expect(
-        clippy::type_complexity,
-        reason = "the associated-type projections spell out one small struct"
-    )]
-    pub fn prove_uniskip<T>(
+    /// Prove a uni-skip first round in the compiled mode. The clear arm sends
+    /// the full polynomial and the output claim; the ZK arm commits the
+    /// coefficients and the output claim and retains the witness.
+    pub fn prove_uniskip<H: Sponge>(
         &self,
         round_poly: UnivariatePoly<VC::Field>,
         input_claim: VC::Field,
         degree: usize,
         domain_size: usize,
-        transcript: &mut T,
-    ) -> Result<ProvedUniskipMode<VC::Field, VC::Output>, ProverError<VC::Field>>
-    where
-        VC::Output: Clone + AppendToTranscript,
-        T: Transcript<Challenge = VC::Field>,
-    {
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<ProvedUniskipMode<VC::Field>, ProverError<VC::Field>> {
         #[cfg(feature = "zk")]
         {
-            let proved = prove_uniskip_committed::<VC::Field, VC, T, _>(
+            let proved = prove_uniskip_committed::<VC::Field, VC, H, _>(
                 round_poly,
                 input_claim,
                 degree,
@@ -119,7 +106,6 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
                 transcript,
             )?;
             Ok(ProvedUniskipMode {
-                proof: proved.proof,
                 challenge: proved.challenge,
                 output_claim: proved.output_claim,
                 witness: proved.witness,
@@ -128,7 +114,7 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
         #[cfg(not(feature = "zk"))]
         {
             let _ = self;
-            let proved = prove_uniskip_clear::<VC::Field, VC::Output, T>(
+            let proved = prove_uniskip_clear::<VC::Field, H>(
                 round_poly,
                 input_claim,
                 degree,
@@ -136,28 +122,9 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
                 transcript,
             )?;
             Ok(ProvedUniskipMode {
-                proof: proved.proof,
                 challenge: proved.challenge,
                 output_claim: proved.output_claim,
             })
         }
     }
-}
-
-/// Split a recorded sumcheck into its wire proof and the ZK-retained
-/// witness; an absent witness is a recorder-contract violation in a ZK build.
-#[cfg(feature = "zk")]
-#[expect(
-    clippy::type_complexity,
-    reason = "the pair is the two halves of RecordedSumcheck, nothing more"
-)]
-pub(crate) fn split_recorded<F: JoltField, C>(
-    recorded: RecordedSumcheck<F, C>,
-) -> Result<(SumcheckProof<F, C>, CommittedSumcheckWitness<F>), ProverError<F>> {
-    let witness = recorded
-        .committed_witness
-        .ok_or(ProverError::InvariantViolation {
-            reason: "the committed recorder retained no witness",
-        })?;
-    Ok((recorded.proof, witness))
 }

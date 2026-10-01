@@ -2,11 +2,12 @@
 //! commitment.
 //!
 //! The transcript work is the verifier's own exported code
-//! ([`validate_inputs_from_parts`], [`absorb_transcript_preamble`],
-//! [`absorb_transcript_commitments`]) — the two sides share the absorb
-//! sequence structurally, so stage-0 Fiat-Shamir drift is impossible by
-//! construction. The commitment compute is delegated to the `jolt-kernels`
-//! witness-commitment kernel; only the absorbs happen here.
+//! ([`validate_inputs`], [`ProofHeader::send`], [`absorb_public_preamble`],
+//! [`ProofCommitments::send`], [`absorb_public_commitments`]), mirroring the
+//! verifier's `seed_transcript` step for step, so the two sides share the
+//! stage-0 order structurally. The commitment compute is delegated to the
+//! `jolt-kernels` witness-commitment kernel; only the transcript work happens
+//! here.
 
 use common::jolt_device::JoltDevice;
 #[cfg(feature = "field-inline")]
@@ -19,13 +20,13 @@ use jolt_kernels::reference::bytecode_read_raf::BytecodeReadRafWitness;
 use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, ProofSession, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{ProverTranscript, Sponge};
 use jolt_verifier::proof::JoltCommitments;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::proof::{FieldInlineCommitments, FieldRegistersCommitments};
 use jolt_verifier::{
-    absorb_committed_program_commitments, absorb_transcript_commitments,
-    absorb_transcript_preamble, validate_inputs_from_parts, CheckedInputs, ProofTranscriptConfig,
+    absorb_public_commitments, absorb_public_preamble, jolt_protocol_id, validate_inputs,
+    CheckedInputs, ProofCommitments, ProofHeader, JOLT_SESSION,
 };
 use jolt_witness::{
     validate_servable, JoltWitnessOracle, JoltWitnessPlane, RowSource, WitnessBundle,
@@ -44,18 +45,17 @@ pub struct TrustedAdviceCommitment<PCS: CommitmentScheme> {
 }
 
 /// Stage 0's outputs: the validated inputs, the seeded transcript (positioned
-/// exactly where the verifier's `verify_until_stage1` leaves its own), the
-/// witness commitments in wire form, the untrusted-advice commitment (proved
-/// at prove time, carried on the proof), and the per-polynomial opening hints
-/// the stage-8 joint opening will consume (advice hints included).
-pub struct Stage0Output<PCS, T>
+/// exactly where the verifier's `seed_transcript` leaves its own), the sent
+/// commitments, and the per-polynomial opening hints the stage-8 joint opening
+/// will consume (advice hints included).
+pub struct Stage0Output<PCS, H>
 where
     PCS: CommitmentScheme,
+    H: Sponge,
 {
     pub checked: CheckedInputs,
-    pub transcript: T,
-    pub commitments: JoltCommitments<PCS::Output>,
-    pub untrusted_advice_commitment: Option<PCS::Output>,
+    pub transcript: ProverTranscript<H>,
+    pub commitments: ProofCommitments<PCS::Output>,
     pub hints: Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>,
     /// The field-inline opening hints, id-disjoint from the jolt hints; the
     /// stage-8 joint opening splices them after `RdInc@IncClaimReduction`.
@@ -63,13 +63,12 @@ where
     pub field_inline_hints: Vec<(FieldInlineCommittedPolynomial, PCS::OpeningHint)>,
 }
 
-/// Validate inputs, seed the transcript, commit the witness (the untrusted
-/// advice polynomial in its own balanced grid), and absorb the commitments
-/// (main, untrusted advice, trusted advice, then the preprocessing-held
-/// committed-program chunk/image commitments — the verifier's own absorb
-/// order).
+/// Validate inputs, send the proof header and absorb the public preamble,
+/// commit the witness (the untrusted advice polynomial in its own balanced
+/// grid), send the commitments, and absorb the public ones (trusted advice,
+/// then the preprocessing-held committed-program commitments).
 #[tracing::instrument(skip_all)]
-pub fn prove_stage0<F, PCS, VC, T, W>(
+pub fn prove_stage0<F, PCS, VC, H, W>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -77,13 +76,12 @@ pub fn prove_stage0<F, PCS, VC, T, W>(
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
     witness: &W,
     public_io: &JoltDevice,
-) -> Result<Stage0Output<PCS, T>, ProverError<F>>
+) -> Result<Stage0Output<PCS, H>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: AppendToTranscript,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
     W: JoltWitnessPlane<F>,
 {
     // Committed-program mode needs the prover-retained full program + hints;
@@ -118,21 +116,22 @@ where
             reason: "trusted-advice commitment presence disagrees with the trusted advice bytes",
         });
     }
-    // The verifier's own input validation doubles as the prover's self-check
-    // and produces the normalized `CheckedInputs` the preamble absorbs. The
-    // zk axis is the compiled feature — the co-compiled verifier's
-    // `SELECTED_ZK_CONFIG` flips with the same feature, so both sides always
-    // agree.
-    let checked = validate_inputs_from_parts(
+    // The verifier's own input validation of the header about to be sent
+    // doubles as the prover's self-check and produces the normalized
+    // `CheckedInputs` the preamble absorbs.
+    let header = ProofHeader {
+        trace_length: config.trace_length,
+        ram_K: config.ram_K,
+        rw_config: config.rw_config,
+        one_hot_config: config.one_hot_config,
+        trace_polynomial_order: config.trace_polynomial_order,
+        untrusted_advice: untrusted_advice_present,
+    };
+    let checked = validate_inputs(
         &preprocessing.verifier,
         public_io,
-        config.trace_length,
-        config.ram_K,
-        config.trace_polynomial_order,
-        config.one_hot_config,
+        &header,
         trusted_advice.is_some(),
-        untrusted_advice_present,
-        cfg!(feature = "zk"),
     )?;
 
     // The dominant-advice regime (an advice grid wider than every other
@@ -160,16 +159,9 @@ where
         }
     }
 
-    let mut transcript = T::new(b"Jolt");
-    absorb_transcript_preamble(
-        &checked,
-        ProofTranscriptConfig {
-            rw_config: config.rw_config,
-            one_hot_config: config.one_hot_config,
-            trace_polynomial_order: config.trace_polynomial_order,
-        },
-        &mut transcript,
-    );
+    let mut transcript = ProverTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION);
+    header.send(&mut transcript);
+    absorb_public_preamble(&checked, &mut transcript);
 
     let ids: Vec<JoltCommittedPolynomial> = witness
         .committed_order()?
@@ -219,25 +211,22 @@ where
             &preprocessing.pcs_setup,
         )
     })?;
-    let (commitments, mut hints) = assemble_commitments::<PCS>(committed)?;
-
     // The field-inline committed columns follow the base commitments and
     // precede the advice commitments — the same appended-extension position
-    // `absorb_transcript_commitments` absorbs them in.
+    // `ProofCommitments::send` sends them in.
     #[cfg(feature = "field-inline")]
-    let (commitments, field_inline_hints) = {
-        let (field_inline, field_inline_hints) = commit_field_inline::<F, PCS>(
-            backend,
-            session,
-            witness as &dyn JoltWitnessPlane<F>,
-            grid,
-            &preprocessing.pcs_setup,
-        )?;
-        (
-            commitments.with_field_inline(field_inline),
-            field_inline_hints,
-        )
-    };
+    let (field_inline, field_inline_hints) = commit_field_inline::<F, PCS>(
+        backend,
+        session,
+        witness as &dyn JoltWitnessPlane<F>,
+        grid,
+        &preprocessing.pcs_setup,
+    )?;
+    let (trace, mut hints) = assemble_commitments::<PCS>(
+        committed,
+        #[cfg(feature = "field-inline")]
+        field_inline,
+    )?;
 
     // The untrusted advice polynomial is committed at prove time in its OWN
     // balanced grid (its variable count comes from the memory layout's maximum
@@ -295,25 +284,21 @@ where
         ));
     }
 
-    absorb_transcript_commitments(
-        &commitments,
-        untrusted_advice_commitment.as_ref(),
+    let commitments = ProofCommitments {
+        trace,
+        untrusted_advice: untrusted_advice_commitment,
+    };
+    commitments.send::<PCS, H>(&mut transcript);
+    absorb_public_commitments(
+        &preprocessing.verifier,
         trusted_advice.map(|trusted| &trusted.commitment),
         &mut transcript,
     );
-    if let Some(committed) = preprocessing.verifier.program.committed() {
-        absorb_committed_program_commitments(
-            &committed.bytecode_chunk_commitments,
-            &committed.program_image_commitment,
-            &mut transcript,
-        );
-    }
 
     Ok(Stage0Output {
         checked,
         transcript,
         commitments,
-        untrusted_advice_commitment,
         hints,
         #[cfg(feature = "field-inline")]
         field_inline_hints,
@@ -389,6 +374,7 @@ where
 )]
 fn assemble_commitments<PCS: CommitmentScheme>(
     committed: Vec<WitnessCommitment<PCS>>,
+    #[cfg(feature = "field-inline")] field_inline: FieldInlineCommitments<PCS::Output>,
 ) -> Result<
     (
         JoltCommitments<PCS::Output>,
@@ -436,7 +422,15 @@ fn assemble_commitments<PCS: CommitmentScheme>(
         });
     };
     Ok((
-        JoltCommitments::new(rd_inc, ram_inc, instruction, ram, bytecode),
+        JoltCommitments {
+            rd_inc,
+            ram_inc,
+            instruction_ra: instruction,
+            ram_ra: ram,
+            bytecode_ra: bytecode,
+            #[cfg(feature = "field-inline")]
+            field_inline,
+        },
         hints,
     ))
 }

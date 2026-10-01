@@ -18,8 +18,7 @@ use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{ProverTranscript, Sponge};
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
@@ -33,8 +32,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier stage 8 consumes.
-pub struct Stage7ProverOutput<F: JoltField, C> {
-    pub sumcheck_proof: SumcheckProof<F, C>,
+pub struct Stage7ProverOutput<F: JoltField> {
     pub claims: Stage7OutputClaims<F>,
     pub clear_output: Stage7ClearOutput<F>,
     #[cfg(feature = "zk")]
@@ -44,7 +42,7 @@ pub struct Stage7ProverOutput<F: JoltField, C> {
 /// Prove stage 7 on `transcript` (positioned at the stage-6b boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage7<F, PCS, VC, T>(
+pub fn prove_stage7<F, PCS, VC, H>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
@@ -54,13 +52,13 @@ pub fn prove_stage7<F, PCS, VC, T>(
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
-    transcript: &mut T,
-) -> Result<Stage7ProverOutput<F, VC::Output>, ProverError<F>>
+    transcript: &mut ProverTranscript<H>,
+) -> Result<Stage7ProverOutput<F>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
 {
     let precommitted = &checked.precommitted;
     let formula_dimensions = super::formula_dimensions(
@@ -98,12 +96,9 @@ where
         transcript,
     )?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
-    let sumcheck_proof = proved.recorded.proof;
+    let committed_witness = proved.witness;
 
     Ok(Stage7ProverOutput {
-        sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage7ClearOutput {
             output_values: proved.output_claims,

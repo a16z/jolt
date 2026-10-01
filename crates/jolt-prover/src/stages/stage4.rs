@@ -6,10 +6,10 @@
 //! with the verifier's own promoted helpers; the private opening VALUES
 //! are evaluated through the backend as one batch (program image and advice,
 //! staged transcript-silently before the RAM
-//! value-check gamma draw). The stage's one curated behavior: the batch
-//! carries `no_opening_values`, so the final absorbs use the claims struct's
-//! hand-ordered `opening_values()` (staged advice/program-image openings
-//! first, then registers, then RAM).
+//! value-check gamma draw). The stage's one curated behavior: a clear proof
+//! sends the staged advice/program-image openings after the gamma draws and
+//! the register and RAM openings after the rounds, while a committed proof
+//! commits all of them in the claims struct's canonical order.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltRelationId, TraceDimensions};
@@ -20,8 +20,7 @@ use jolt_kernels::{JoltBackend, ProofSession};
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
-use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{ProverTranscript, Sponge};
 #[cfg(feature = "field-inline")]
 use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
@@ -46,8 +45,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
-pub struct Stage4ProverOutput<F: JoltField, C> {
-    pub sumcheck_proof: SumcheckProof<F, C>,
+pub struct Stage4ProverOutput<F: JoltField> {
     pub claims: Stage4OutputClaims<F>,
     pub clear_output: Stage4ClearOutput<F>,
     #[cfg(feature = "zk")]
@@ -57,7 +55,7 @@ pub struct Stage4ProverOutput<F: JoltField, C> {
 /// Prove stage 4 on `transcript` (positioned at the stage-3 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage4<F, PCS, VC, T>(
+pub fn prove_stage4<F, PCS, VC, H>(
     backend: &JoltBackend<F, PCS>,
     session: &mut ProofSession,
     mode: &ProofMode<'_, VC>,
@@ -67,13 +65,13 @@ pub fn prove_stage4<F, PCS, VC, T>(
     stage2: &Stage2ClearOutput<F>,
     stage3: &Stage3ClearOutput<F>,
     witness: &dyn JoltWitnessPlane<F>,
-    transcript: &mut T,
-) -> Result<Stage4ProverOutput<F, VC::Output>, ProverError<F>>
+    transcript: &mut ProverTranscript<H>,
+) -> Result<Stage4ProverOutput<F>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    H: Sponge,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let log_k = checked.ram_K.ilog2() as usize;
@@ -188,6 +186,11 @@ where
     // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
     // separator (replayed by the relation's `draw_challenges` override).
     let challenges = sumchecks.draw_challenges(transcript)?;
+    // The RAM value-check input claim consumes the staged openings, so a clear
+    // proof sends them before the batch; a committed proof carries them in its
+    // output-claim rows instead.
+    #[cfg(not(feature = "zk"))]
+    transcript.send_all(&ram_val_check_init.staged_openings().values());
 
     let inputs = stage4_input_values_from_upstream(
         &stage2.output_values,
@@ -200,11 +203,10 @@ where
         &init_structure,
     );
 
-    // No curation hook: the staged advice/program-image openings ride in from
-    // the RAM value-check kernel (captured off its own consumed input claims
-    // at prepare), and the stage's `no_opening_values` absorb order is the
-    // batch's hand-written `opening_values` replacement (staged openings
-    // first, then registers, then RAM) — the driver's default curation.
+    // The staged advice/program-image openings ride in from the RAM
+    // value-check kernel (captured off its own consumed input claims at
+    // prepare). The driver's curation sends the post-round openings in a clear
+    // build and commits the full canonical order in a ZK build.
     let mut scheduler = backend.round_scheduler.build(session);
     let proved = sumchecks.prove(
         backend,
@@ -218,12 +220,9 @@ where
         transcript,
     )?;
     #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
-    let sumcheck_proof = proved.recorded.proof;
+    let committed_witness = proved.witness;
 
     Ok(Stage4ProverOutput {
-        sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage4ClearOutput {
             output_values: proved.output_claims,
