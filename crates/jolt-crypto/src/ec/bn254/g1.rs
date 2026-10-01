@@ -4,5 +4,6 @@ super::impl_jolt_group_wrapper!(
     Bn254G1,
     G1Projective,
     G1Affine,
+    32,
     "BN254 G1 group element (projective coordinates)."
 );

@@ -3218,7 +3218,6 @@ dependencies = [
  "criterion",
  "jolt-field",
  "jolt-poly",
- "jolt-transcript",
  "num-bigint 0.4.6",
  "num-integer",
  "num-traits",

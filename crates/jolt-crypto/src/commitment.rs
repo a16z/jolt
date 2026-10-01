@@ -4,9 +4,8 @@ use std::{
     marker::PhantomData,
 };
 
-use jolt_field::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
+use jolt_field::{Accumulator, CanonicalBytes, CanonicalDecode, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
-use jolt_transcript::AppendToTranscript;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[cfg(feature = "parallel")]
@@ -54,6 +53,12 @@ impl CanonicalBytes for NoCommitment {
     const NUM_BYTES: usize = 0;
 
     fn to_bytes_le(&self, _out: &mut [u8]) {}
+}
+
+impl CanonicalDecode for NoCommitment {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        bytes.is_empty().then_some(Self)
+    }
 }
 
 impl<F: JoltField> HomomorphicCommitment<F> for NoCommitment {
@@ -106,7 +111,7 @@ impl<F: JoltField> VectorCommitment for NoVectorCommitment<F> {
 /// elements with a blinding factor. Uses `Self::Output` from the supertrait
 /// as the commitment value type.
 pub trait VectorCommitment:
-    Commitment<Output: Copy + AppendToTranscript + Serialize + DeserializeOwned>
+    Commitment<Output: Copy + CanonicalBytes + CanonicalDecode + Serialize + DeserializeOwned>
 {
     type Field: JoltField;
 
