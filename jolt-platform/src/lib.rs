@@ -29,3 +29,6 @@ pub mod size_class_alloc;
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 mod malloc_shim;
+
+#[cfg(all(feature = "fast-mem", target_arch = "riscv64"))]
+mod fast_mem;
