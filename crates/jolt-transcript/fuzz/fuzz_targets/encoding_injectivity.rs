@@ -1,17 +1,16 @@
 #![no_main]
 
-//! Injectivity of the length-framed absorption convention: two op sequences
-//! whose payloads concatenate to the same raw bytes but with different
-//! chunk boundaries must reach different transcript states.
+//! Injectivity of the public-bytes framing: two chunk sequences whose payloads
+//! concatenate to the same raw bytes but with different chunk boundaries must
+//! reach different transcript states.
 //!
-//! Each chunk is absorbed the way production code absorbs variable-length
-//! payloads — a `LabelWithCount` frame followed by the payload — so a
-//! boundary move changes the framing and MUST change the state. A matching
-//! state would mean the framing convention fails to separate `[ab]` from
-//! `[a][b]`, the classic transcript-malleability footgun.
+//! Each chunk is absorbed with `public_bytes`, which frames it with its length,
+//! so a boundary move changes the framing and MUST change the state. A matching
+//! state would mean the framing fails to separate `[ab]` from `[a][b]`, the
+//! classic transcript-malleability footgun.
 
 use jolt_transcript::{
-    Blake2bTranscript, KeccakTranscript, LabelWithCount, PoseidonTranscript, Transcript,
+    Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -32,13 +31,13 @@ fn parse_chunks(data: &[u8]) -> Vec<&[u8]> {
     chunks
 }
 
-fn framed_state<T: Transcript>(chunks: &[Vec<u8>]) -> [u8; 32] {
-    let mut transcript = T::new(b"fuzz-injectivity");
+fn framed_state<H: Sponge>(chunks: &[Vec<u8>]) -> [u8; 32] {
+    let mut transcript =
+        ProverTranscript::<H>::new(&ProtocolId::new::<H>("fuzz-injectivity"), b"");
     for chunk in chunks {
-        transcript.append(&LabelWithCount(b"chunk", chunk.len() as u64));
-        transcript.append_bytes(chunk);
+        transcript.public_bytes(chunk);
     }
-    transcript.state()
+    transcript.preview().squeeze()
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -63,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let position = 1 + split_at % original[index].len();
     if position >= original[index].len() {
-        // Splitting at the end appends an extra empty-chunk frame rather than
+        // Splitting at the end appends an extra empty chunk rather than
         // moving a payload boundary; that is outside this harness's morph class.
         return;
     }
@@ -75,18 +74,18 @@ fuzz_target!(|data: &[u8]| {
     debug_assert_eq!(original.concat(), morphed.concat());
 
     assert_ne!(
-        framed_state::<Blake2bTranscript>(&original),
-        framed_state::<Blake2bTranscript>(&morphed),
+        framed_state::<Blake2b512>(&original),
+        framed_state::<Blake2b512>(&morphed),
         "Blake2b framed absorption is not boundary-injective"
     );
     assert_ne!(
-        framed_state::<KeccakTranscript>(&original),
-        framed_state::<KeccakTranscript>(&morphed),
+        framed_state::<Keccak>(&original),
+        framed_state::<Keccak>(&morphed),
         "Keccak framed absorption is not boundary-injective"
     );
     assert_ne!(
-        framed_state::<PoseidonTranscript>(&original),
-        framed_state::<PoseidonTranscript>(&morphed),
+        framed_state::<PoseidonSponge>(&original),
+        framed_state::<PoseidonSponge>(&morphed),
         "Poseidon framed absorption is not boundary-injective"
     );
 });
