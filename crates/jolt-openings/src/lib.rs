@@ -20,7 +20,7 @@
 //! ```text
 //!                 Commitment              (jolt-crypto: Output type)
 //!                     │
-//!             CommitmentScheme            (+ Field, Proof, commit/open/verify)
+//!             CommitmentScheme            (+ Field, commitment codec, commit/open/verify)
 //!        ╱          │          ╲
 //! Additively   Streaming       ZkOpeningScheme
 //! Homomorphic  Commitment            │

@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 
 use jolt_field::JoltField;
 use jolt_poly::{eq_index_msb, Point, HIGH_TO_LOW};
-use jolt_transcript::{Label, Transcript, U64Word};
+use jolt_transcript::Channel;
 
 use crate::{EvaluationClaim, OpeningsError};
 
@@ -185,14 +185,14 @@ where
 
     /// Binds the semantic statement, samples the selector, and returns the
     /// corresponding claim on the physical polynomial.
-    pub fn reduce_claims<F, T>(
+    pub fn reduce_claims<F, C>(
         &self,
         claims: &PrefixPackedClaims<F>,
-        transcript: &mut T,
+        transcript: &mut C,
     ) -> Result<EvaluationClaim<F>, OpeningsError>
     where
         F: JoltField,
-        T: Transcript<Challenge = F>,
+        C: Channel,
     {
         if claims.point.len() != self.logical_num_vars {
             return Err(OpeningsError::InvalidBatch(format!(
@@ -209,15 +209,13 @@ where
             )));
         }
 
-        transcript.append(&Label(b"prefix_packed_claim"));
-        transcript.append(&U64Word(self.logical_num_vars as u64));
-        transcript.append(&U64Word(self.slot_capacity as u64));
-        transcript.append(&Label(b"prefix_pack_layout"));
-        transcript.append_bytes(&claims.layout_digest);
-        transcript.append_values(b"prefix_pack_point", claims.point.as_slice());
-        transcript.append_values(b"prefix_pack_evals", &claims.evaluations);
+        transcript.public(&(self.logical_num_vars as u64));
+        transcript.public(&(self.slot_capacity as u64));
+        transcript.public(&claims.layout_digest);
+        transcript.public_all(claims.point.as_slice());
+        transcript.public_all(&claims.evaluations);
 
-        let selector = transcript.challenge_vector(self.selector_num_vars);
+        let selector = transcript.challenges_small(self.selector_num_vars);
         let point = self.pack_point(&selector, claims.point.as_slice())?;
         let evaluation = self.reduce_evaluations(&selector, &claims.evaluations)?;
         Ok(EvaluationClaim::new(point, evaluation))

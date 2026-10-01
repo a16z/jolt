@@ -16,7 +16,15 @@ use jolt_openings::{
     ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
+
+fn prover(session: &[u8]) -> ProverTranscript<Blake2b512> {
+    ProverTranscript::new(&ProtocolId::new::<Blake2b512>("jolt-openings/fuzz"), session)
+}
+
+fn verifier<'a>(session: &[u8], narg: &'a [u8]) -> VerifierTranscript<'a, Blake2b512> {
+    VerifierTranscript::new(&ProtocolId::new::<Blake2b512>("jolt-openings/fuzz"), session, narg)
+}
 use libfuzzer_sys::fuzz_target;
 
 const MAX_NUM_VARS: usize = 4;
@@ -102,8 +110,8 @@ fn prove_clear(
     claims: Vec<DoryClaim>,
     polynomials: &[Polynomial<Fr>],
     hints: Vec<DoryHint>,
-) -> <DoryBatch as BatchOpeningScheme>::Proof {
-    let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+) -> Vec<u8> {
+    let mut transcript = prover(CLEAR_LABEL);
     <DoryBatch as BatchOpeningScheme>::prove_batch(
         setup,
         claims,
@@ -111,7 +119,8 @@ fn prove_clear(
         hints,
         &mut transcript,
     )
-    .unwrap_or_else(|error| panic!("Dory clear batch proof failed: {error}"))
+    .unwrap_or_else(|error| panic!("Dory clear batch proof failed: {error}"));
+    transcript.finish()
 }
 
 fn shifted_point(point: &Point<HIGH_TO_LOW, Fr>) -> Point<HIGH_TO_LOW, Fr> {
@@ -148,8 +157,8 @@ fuzz_target!(|data: &[u8]| {
     match data[2] % 10 {
         0 => {
             let (claims, hints) = commit_clear(&polynomials, &point, prover_setup);
-            let mut prover_transcript = Blake2bTranscript::new(CLEAR_LABEL);
-            let proof = <DoryBatch as BatchOpeningScheme>::prove_batch(
+            let mut prover_transcript = prover(CLEAR_LABEL);
+            <DoryBatch as BatchOpeningScheme>::prove_batch(
                 prover_setup,
                 claims.clone(),
                 sources(&polynomials),
@@ -158,27 +167,32 @@ fuzz_target!(|data: &[u8]| {
             )
             .unwrap_or_else(|error| panic!("Dory clear batch proof failed: {error}"));
 
-            let mut verifier_transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let narg = prover_transcript.narg().to_vec();
+            let mut verifier_transcript = verifier(CLEAR_LABEL, &narg);
             <DoryBatch as BatchOpeningScheme>::verify_batch(
                 verifier_setup,
                 &claims,
-                &proof,
                 &mut verifier_transcript,
             )
             .unwrap_or_else(|error| panic!("honest clear batch verification failed: {error}"));
-            assert_eq!(prover_transcript.state(), verifier_transcript.state());
+            assert_eq!(
+                prover_transcript.preview().squeeze::<32>(),
+                verifier_transcript.preview().squeeze::<32>()
+            );
+            verifier_transcript
+                .finish()
+                .unwrap_or_else(|error| panic!("honest proof left bytes unread: {error}"));
         }
         1 => {
             let (mut claims, hints) = commit_clear(&polynomials, &point, prover_setup);
             let proof = prove_clear(prover_setup, claims.clone(), &polynomials, hints);
             claims[0].evaluation.value += Fr::from_u64(1);
 
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = verifier(CLEAR_LABEL, &proof);
             assert!(
                 <DoryBatch as BatchOpeningScheme>::verify_batch(
                     verifier_setup,
                     &claims,
-                    &proof,
                     &mut transcript,
                 )
                 .is_err(),
@@ -197,12 +211,11 @@ fuzz_target!(|data: &[u8]| {
 
             let mut tampered = claims;
             tampered[0].commitment = wrong_commitment;
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = verifier(CLEAR_LABEL, &proof);
             assert!(
                 <DoryBatch as BatchOpeningScheme>::verify_batch(
                     verifier_setup,
                     &tampered,
-                    &proof,
                     &mut transcript,
                 )
                 .is_err(),
@@ -212,7 +225,7 @@ fuzz_target!(|data: &[u8]| {
         3 => {
             let (mut claims, hints) = commit_clear(&polynomials, &point, prover_setup);
             claims[1].evaluation.point = shifted_point(&point);
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover(CLEAR_LABEL);
             assert!(
                 <DoryBatch as BatchOpeningScheme>::prove_batch(
                     prover_setup,
@@ -230,7 +243,7 @@ fuzz_target!(|data: &[u8]| {
             let wrong = Polynomial::new(vec![Fr::from_u64(1); 1usize << (num_vars + 1)]);
             let mut polynomial_sources = sources(&polynomials);
             polynomial_sources[0] = &wrong;
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover(CLEAR_LABEL);
             assert!(
                 <DoryBatch as BatchOpeningScheme>::prove_batch(
                     prover_setup,
@@ -248,7 +261,7 @@ fuzz_target!(|data: &[u8]| {
             let mut polynomial_sources = sources(&polynomials);
             polynomial_sources.pop();
             hints.pop();
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover(CLEAR_LABEL);
             assert!(
                 <DoryBatch as BatchOpeningScheme>::prove_batch(
                     prover_setup,
@@ -264,12 +277,11 @@ fuzz_target!(|data: &[u8]| {
         6 => {
             let (claims, hints) = commit_clear(&polynomials, &point, prover_setup);
             let proof = prove_clear(prover_setup, claims.clone(), &polynomials, hints);
-            let mut transcript = Blake2bTranscript::new(b"fuzz-openings-clear-alt");
+            let mut transcript = verifier(b"fuzz-openings-clear-alt", &proof);
             assert!(
                 <DoryBatch as BatchOpeningScheme>::verify_batch(
                     verifier_setup,
                     &claims,
-                    &proof,
                     &mut transcript,
                 )
                 .is_err(),
@@ -278,7 +290,7 @@ fuzz_target!(|data: &[u8]| {
         }
         7 => {
             let (commitments, hints, evaluations) = commit_zk(&polynomials, &point, prover_setup);
-            let mut prover_transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut prover_transcript = prover(ZK_LABEL);
             let opening = <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
                 prover_setup,
                 point.clone(),
@@ -290,17 +302,23 @@ fuzz_target!(|data: &[u8]| {
             )
             .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
 
-            let mut verifier_transcript = Blake2bTranscript::new(ZK_LABEL);
+            let narg = prover_transcript.narg().to_vec();
+            let mut verifier_transcript = verifier(ZK_LABEL, &narg);
             let verifier_hiding = <DoryBatch as ZkBatchOpeningScheme>::verify_batch_zk(
                 verifier_setup,
                 point,
                 commitments,
-                &opening.proof,
                 &mut verifier_transcript,
             )
             .unwrap_or_else(|error| panic!("honest ZK batch verification failed: {error}"));
             assert_eq!(opening.hiding_commitment, verifier_hiding);
-            assert_eq!(prover_transcript.state(), verifier_transcript.state());
+            assert_eq!(
+                prover_transcript.preview().squeeze::<32>(),
+                verifier_transcript.preview().squeeze::<32>()
+            );
+            verifier_transcript
+                .finish()
+                .unwrap_or_else(|error| panic!("honest proof left bytes unread: {error}"));
         }
         8 => {
             let (commitments, mut hints, mut evaluations) =
@@ -309,7 +327,7 @@ fuzz_target!(|data: &[u8]| {
             polynomial_sources.pop();
             hints.pop();
             evaluations.pop();
-            let mut transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut transcript = prover(ZK_LABEL);
             assert!(
                 <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
                     prover_setup,
@@ -327,8 +345,8 @@ fuzz_target!(|data: &[u8]| {
         _ => {
             let (mut commitments, hints, evaluations) =
                 commit_zk(&polynomials, &point, prover_setup);
-            let mut prover_transcript = Blake2bTranscript::new(ZK_LABEL);
-            let opening = <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
+            let mut prover_transcript = prover(ZK_LABEL);
+            let _opening = <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
                 prover_setup,
                 point.clone(),
                 commitments.clone(),
@@ -338,6 +356,7 @@ fuzz_target!(|data: &[u8]| {
                 &mut prover_transcript,
             )
             .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
+            let narg = prover_transcript.finish();
 
             let alternate = alternate_polynomial(&polynomials[0]);
             let (wrong_commitment, _) =
@@ -348,13 +367,12 @@ fuzz_target!(|data: &[u8]| {
             }
             commitments[0] = wrong_commitment;
 
-            let mut verifier_transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut verifier_transcript = verifier(ZK_LABEL, &narg);
             assert!(
                 <DoryBatch as ZkBatchOpeningScheme>::verify_batch_zk(
                     verifier_setup,
                     point,
                     commitments,
-                    &opening.proof,
                     &mut verifier_transcript,
                 )
                 .is_err(),

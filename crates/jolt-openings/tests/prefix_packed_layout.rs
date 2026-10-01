@@ -3,7 +3,7 @@
 use jolt_field::{Fr, Ring};
 use jolt_openings::{OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript};
 
 fn fr(value: u64) -> Fr {
     Fr::from_u64(value)
@@ -82,7 +82,10 @@ fn claim_reduction_binds_statement_before_drawing_selector() {
     let layout = PrefixPackedLayout::new(2, 4, [0_u64, 1, 2]).unwrap();
     let claims =
         PrefixPackedClaims::new([9_u8; 32], vec![fr(3), fr(5)], vec![fr(7), fr(11), fr(13)]);
-    let mut transcript = Blake2bTranscript::new(b"prefix-packed-claim");
+    let mut transcript = ProverTranscript::<Blake2b512>::new(
+        &ProtocolId::new::<Blake2b512>("jolt-openings/tests"),
+        b"prefix-packed-claim",
+    );
     let reduced = layout.reduce_claims(&claims, &mut transcript).unwrap();
 
     assert_eq!(reduced.point.len(), layout.packed_num_vars());
@@ -100,7 +103,10 @@ fn claim_reduction_binds_statement_before_drawing_selector() {
             .unwrap()
     );
 
-    let mut changed_transcript = Blake2bTranscript::new(b"prefix-packed-claim");
+    let mut changed_transcript = ProverTranscript::<Blake2b512>::new(
+        &ProtocolId::new::<Blake2b512>("jolt-openings/tests"),
+        b"prefix-packed-claim",
+    );
     let changed =
         PrefixPackedClaims::new([9_u8; 32], vec![fr(3), fr(5)], vec![fr(7), fr(11), fr(17)]);
     let changed_reduced = layout

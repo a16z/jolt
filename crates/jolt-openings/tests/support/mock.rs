@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::JoltField;
+use jolt_field::{CanonicalBytes, CanonicalDecode, JoltField};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, Polynomial};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,18 +25,21 @@ impl<F: JoltField> Default for MockCommitment<F> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
-pub struct MockProof<F: JoltField> {
-    evaluations: Vec<F>,
+/// The mock "opening proof" is the polynomial itself, sent in the clear.
+fn send_evaluations<F: JoltField, H: Sponge>(
+    evaluations: &[F],
+    transcript: &mut ProverTranscript<H>,
+) {
+    transcript.send(&(evaluations.len() as u64));
+    transcript.send_all(evaluations);
 }
 
-impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        for evaluation in &self.evaluations {
-            evaluation.append_to_transcript(transcript);
-        }
-    }
+fn receive_evaluations<F: JoltField, H: Sponge>(
+    transcript: &mut VerifierTranscript<'_, H>,
+) -> Result<Vec<F>, OpeningsError> {
+    let len = usize::try_from(transcript.receive::<u64>()?)
+        .map_err(|_| OpeningsError::VerificationFailed)?;
+    Ok(transcript.receive_n(len)?)
 }
 
 impl<F> Commitment for MockCommitmentScheme<F>
@@ -51,7 +54,6 @@ where
     F: JoltField + Serialize + DeserializeOwned,
 {
     type Field = F;
-    type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
     type OpeningHint = ();
@@ -71,31 +73,47 @@ where
         Ok((MockCommitment { evaluations }, ()))
     }
 
-    fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
+    fn send_commitment<H: Sponge>(commitment: &Self::Output, transcript: &mut ProverTranscript<H>) {
+        send_evaluations(&commitment.evaluations, transcript);
+    }
+
+    fn receive_commitment<H: Sponge>(
+        _setup: &Self::VerifierSetup,
+        transcript: &mut VerifierTranscript<'_, H>,
+    ) -> Result<Self::Output, OpeningsError> {
+        Ok(MockCommitment {
+            evaluations: receive_evaluations(transcript)?,
+        })
+    }
+
+    fn absorb_commitment<C: Channel>(commitment: &Self::Output, channel: &mut C) {
+        channel.public_all(&commitment.evaluations);
+    }
+
+    fn open<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
         poly: &P,
         _point: &[Self::Field],
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Option<()>,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<Self::Proof, OpeningsError> {
-        let evaluations = poly.to_dense().into_owned();
-        Ok(MockProof { evaluations })
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(), OpeningsError> {
+        send_evaluations(&poly.to_dense(), transcript);
+        Ok(())
     }
 
-    fn verify(
+    fn verify<H: Sponge>(
         commitment: &Self::Output,
         point: &[Self::Field],
         eval: Self::Field,
-        proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), OpeningsError> {
-        if commitment.evaluations != proof.evaluations {
+        let evaluations = receive_evaluations(transcript)?;
+        if commitment.evaluations != evaluations {
             return Err(OpeningsError::VerificationFailed);
         }
-        let poly = Polynomial::new(proof.evaluations.clone());
-        if poly.evaluate(point) != eval {
+        if Polynomial::new(evaluations).evaluate(point) != eval {
             return Err(OpeningsError::VerificationFailed);
         }
         Ok(())
@@ -146,9 +164,17 @@ pub struct MockHidingCommitment<F: JoltField> {
     pub eval: F,
 }
 
-impl<F: JoltField> AppendToTranscript for MockHidingCommitment<F> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.eval.append_to_transcript(transcript);
+impl<F: JoltField> CanonicalBytes for MockHidingCommitment<F> {
+    const NUM_BYTES: usize = F::NUM_BYTES;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        self.eval.to_bytes_le(out);
+    }
+}
+
+impl<F: JoltField> CanonicalDecode for MockHidingCommitment<F> {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        F::from_bytes_le_checked(bytes).map(|eval| Self { eval })
     }
 }
 
@@ -166,31 +192,30 @@ where
         Self::commit(poly, setup)
     }
 
-    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
+    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
         poly: &P,
         _point: &[Self::Field],
         eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Self::OpeningHint,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
-    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
-        let evaluations = poly.to_dense().into_owned();
-        Ok((MockProof { evaluations }, MockHidingCommitment { eval }, ()))
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<(Self::HidingCommitment, Self::Blind), OpeningsError> {
+        send_evaluations(&poly.to_dense(), transcript);
+        Ok((MockHidingCommitment { eval }, ()))
     }
 
-    fn verify_zk(
+    fn verify_zk<H: Sponge>(
         commitment: &Self::Output,
         point: &[Self::Field],
-        proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
-        if commitment.evaluations != proof.evaluations {
+        let evaluations = receive_evaluations(transcript)?;
+        if commitment.evaluations != evaluations {
             return Err(OpeningsError::VerificationFailed);
         }
-        let poly = Polynomial::new(proof.evaluations.clone());
         Ok(MockHidingCommitment {
-            eval: poly.evaluate(point),
+            eval: Polynomial::new(evaluations).evaluate(point),
         })
     }
 }

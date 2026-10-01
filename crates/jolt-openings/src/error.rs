@@ -1,5 +1,7 @@
 //! PCS error types.
 
+use jolt_transcript::TranscriptError;
+
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum OpeningsError {
     #[error("opening proof verification failed")]
@@ -22,4 +24,7 @@ pub enum OpeningsError {
 
     #[error("polynomial size {poly_size} exceeds setup max {setup_max}")]
     PolynomialTooLarge { poly_size: usize, setup_max: usize },
+
+    #[error("opening proof transcript: {0}")]
+    Transcript(#[from] TranscriptError),
 }

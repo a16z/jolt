@@ -3232,15 +3232,11 @@ dependencies = [
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
- "akita-config",
- "akita-pcs",
- "akita-types",
  "ark-bn254",
  "ark-ec",
  "ark-serialize 0.5.0",
  "criterion",
  "dory-pcs",
- "jolt-akita",
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
@@ -3601,7 +3597,6 @@ dependencies = [
  "bincode 2.0.1",
  "criterion",
  "jolt-field",
- "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand 0.8.7",

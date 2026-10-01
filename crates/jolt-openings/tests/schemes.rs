@@ -9,14 +9,13 @@ use jolt_openings::{
     BatchOpeningScheme, HomomorphicBatch, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{Point, Polynomial, HIGH_TO_LOW};
-use jolt_transcript::{Blake2bTranscript, Transcript};
 
 #[path = "support/common.rs"]
 pub mod common;
 #[path = "support/mock.rs"]
 pub mod mock;
 
-use common::{clear_claims, fr, sources};
+use common::{clear_claims, fingerprint, fr, prover, sources, verifier};
 use mock::{MockCommitment, MockCommitmentScheme};
 
 type MockPCS = MockCommitmentScheme<Fr>;
@@ -40,8 +39,8 @@ fn homomorphic_batch_opening_roundtrip_clear() {
     let (polynomials, point) = batch_polynomials();
     let (claims, _) = clear_claims::<MockPCS>(&polynomials, &point, &());
 
-    let mut prover_transcript = Blake2bTranscript::new(b"batch-clear");
-    let proof = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
+    let mut prover_transcript = prover(b"batch-clear");
+    <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims.clone(),
         sources(&polynomials),
@@ -50,16 +49,20 @@ fn homomorphic_batch_opening_roundtrip_clear() {
     )
     .expect("batch proof should be produced");
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"batch-clear");
+    let narg = prover_transcript.narg().to_vec();
+    let mut verifier_transcript = verifier(b"batch-clear", &narg);
     <HomomorphicTestBatch as BatchOpeningScheme>::verify_batch(
         &(),
         &claims,
-        &proof,
         &mut verifier_transcript,
     )
     .expect("batch proof should verify");
 
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        fingerprint(&prover_transcript),
+        fingerprint(&verifier_transcript)
+    );
+    verifier_transcript.finish().expect("proof fully consumed");
 }
 
 #[test]
@@ -67,8 +70,8 @@ fn homomorphic_batch_opening_rejects_tampered_clear_claim() {
     let (polynomials, point) = batch_polynomials();
     let (claims, _) = clear_claims::<MockPCS>(&polynomials, &point, &());
 
-    let mut prover_transcript = Blake2bTranscript::new(b"batch-clear-tampered");
-    let proof = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
+    let mut prover_transcript = prover(b"batch-clear-tampered");
+    <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims.clone(),
         sources(&polynomials),
@@ -80,11 +83,11 @@ fn homomorphic_batch_opening_rejects_tampered_clear_claim() {
     let mut tampered = claims;
     tampered[1].evaluation.value += fr(1);
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"batch-clear-tampered");
+    let narg = prover_transcript.finish();
+    let mut verifier_transcript = verifier(b"batch-clear-tampered", &narg);
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::verify_batch(
         &(),
         &tampered,
-        &proof,
         &mut verifier_transcript,
     );
     assert!(result.is_err(), "tampered claim should fail");
@@ -92,7 +95,7 @@ fn homomorphic_batch_opening_rejects_tampered_clear_claim() {
 
 #[test]
 fn homomorphic_batch_opening_rejects_empty_claims() {
-    let mut transcript = Blake2bTranscript::new(b"batch-empty");
+    let mut transcript = prover(b"batch-empty");
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         Vec::new(),
@@ -109,7 +112,7 @@ fn homomorphic_batch_opening_rejects_mismatched_points() {
     let (mut claims, _) = clear_claims::<MockPCS>(&polynomials, &point, &());
     claims[1].evaluation.point = Point::new(vec![fr(8), fr(13), fr(21)]);
 
-    let mut transcript = Blake2bTranscript::new(b"batch-point-mismatch");
+    let mut transcript = prover(b"batch-point-mismatch");
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims,
@@ -125,7 +128,7 @@ fn homomorphic_batch_opening_rejects_mismatched_witness_count() {
     let (polynomials, point) = batch_polynomials();
     let (claims, _) = clear_claims::<MockPCS>(&polynomials, &point, &());
 
-    let mut transcript = Blake2bTranscript::new(b"batch-mismatch");
+    let mut transcript = prover(b"batch-mismatch");
     let result = <HomomorphicTestBatch as BatchOpeningScheme>::prove_batch(
         &(),
         claims,
@@ -159,7 +162,7 @@ fn homomorphic_batch_opening_roundtrip_zk() {
     let (polynomials, point) = batch_polynomials();
     let commitments = zk_commitments(&polynomials);
 
-    let mut prover_transcript = Blake2bTranscript::new(b"batch-zk");
+    let mut prover_transcript = prover(b"batch-zk");
     let opening = <HomomorphicTestBatch as ZkBatchOpeningScheme>::prove_batch_zk(
         &(),
         point.clone(),
@@ -171,18 +174,22 @@ fn homomorphic_batch_opening_roundtrip_zk() {
     )
     .expect("ZK batch proof should be produced");
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"batch-zk");
+    let narg = prover_transcript.narg().to_vec();
+    let mut verifier_transcript = verifier(b"batch-zk", &narg);
     let verifier_hiding = <HomomorphicTestBatch as ZkBatchOpeningScheme>::verify_batch_zk(
         &(),
         point,
         commitments,
-        &opening.proof,
         &mut verifier_transcript,
     )
     .expect("ZK batch proof should verify");
 
     assert_eq!(verifier_hiding, opening.hiding_commitment);
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        fingerprint(&prover_transcript),
+        fingerprint(&verifier_transcript)
+    );
+    verifier_transcript.finish().expect("proof fully consumed");
 }
 
 #[test]
@@ -190,7 +197,7 @@ fn homomorphic_zk_batch_opening_rejects_witness_count_mismatch() {
     let (polynomials, point) = batch_polynomials();
     let commitments = zk_commitments(&polynomials);
 
-    let mut transcript = Blake2bTranscript::new(b"batch-zk-mismatch");
+    let mut transcript = prover(b"batch-zk-mismatch");
     let result = <HomomorphicTestBatch as ZkBatchOpeningScheme>::prove_batch_zk(
         &(),
         point.clone(),
