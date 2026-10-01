@@ -200,17 +200,14 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-6b recipe against the verifier's own
-/// public constituents — `stage6b::verify`'s clear body (the post-6a draws,
-/// the batch with the field-inline increment-reduction member built by the promoted
-/// `build_from_parts`, the curated `stage6b_opening_values` absorb with the
-/// spliced reduced `FieldRdInc`) on a twin transcript positioned by the
-/// stage-1..6a replays — on both fixture profiles: the field-inactive ADDI
-/// trace (every field-inline fold zero) and the field-active arithmetic trace (the
-/// composed bytecode read-RAF kernels' field-inline stage-value legs carry real
-/// values). A further test drives the field-inline increment-reduction kernel directly
-/// on the field-inline-arithmetic replay and ties the extracted opening to a direct
-/// MLE evaluation.
+/// Clear round-trips with field-inline enabled of the stage-6b recipe through
+/// the production stage-1..6b verifiers over the prover's argument string — on
+/// both fixture profiles: the field-inactive ADDI trace (every field-inline
+/// fold zero) and the field-active arithmetic trace (the composed bytecode
+/// read-RAF kernels' field-inline stage-value legs carry real values). A
+/// further test drives the field-inline increment-reduction kernel directly on
+/// the field-inline-arithmetic replay and ties the extracted opening to a
+/// direct MLE evaluation.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -227,41 +224,31 @@ mod field_inline_round_trip {
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
     use jolt_program::execution::OwnedTrace;
-    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
     use jolt_verifier::stages::stage6b::field_registers_inc_claim_reduction::FieldRegistersIncClaimReduction;
+    use jolt_verifier::JoltSponge;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
-    use crate::stages::field_inline_fixtures::twins::FixturePreprocessing;
     use crate::stages::field_inline_fixtures::{
         addi_only_backend, addi_only_preprocessing, field_arithmetic_backend,
-        field_arithmetic_preprocessing, test_checked_inputs, test_prover_config, test_public_io,
-        twins, LOG_T, RAM_LOG_K,
+        field_arithmetic_preprocessing, fixture_transcript, test_checked_inputs,
+        test_prover_config, test_public_io, verify_through, FixturePreprocessing, Through, LOG_T,
     };
 
     #[test]
     fn addi_only_stage6b_round_trips_the_composed_verifier() {
-        stage6b_round_trips(
-            addi_only_backend(),
-            addi_only_preprocessing(),
-            b"stage6b-field-inline",
-        );
+        stage6b_round_trips(addi_only_backend(), addi_only_preprocessing());
     }
 
     #[test]
     fn field_arithmetic_stage6b_round_trips_the_composed_verifier() {
-        stage6b_round_trips(
-            field_arithmetic_backend(),
-            field_arithmetic_preprocessing(),
-            b"stage6b-field-inline-active",
-        );
+        stage6b_round_trips(field_arithmetic_backend(), field_arithmetic_preprocessing());
     }
 
     fn stage6b_round_trips(
         trace_backend: TraceBackend<OwnedTrace>,
         preprocessing: FixturePreprocessing,
-        label: &'static [u8],
     ) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
@@ -271,7 +258,7 @@ mod field_inline_round_trip {
         let public_io = test_public_io();
         let checked = test_checked_inputs();
 
-        let mut prover_transcript = Blake2bTranscript::new(label);
+        let mut prover_transcript = fixture_transcript();
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &backend,
             session: &mut session,
@@ -284,7 +271,7 @@ mod field_inline_round_trip {
             transcript: &mut prover_transcript,
         }
         .through_stage6a();
-        let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let _stage6b = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -302,136 +289,12 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The verifier twin (stage6b::verify's clear body), positioned by
-        // the upstream replays. The private wire-shape validator is
-        // transcript-free and elided; `verify_clear`'s hard checks and the
-        // final state equality pin the protocol content.
-        let mut transcript = Blake2bTranscript::new(label);
-        twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
-        twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
-        twins::replay_stage4(
-            &mut transcript,
-            &config,
+        verify_through(
+            Through::Stage6b,
             &checked,
             &preprocessing,
-            &stage2,
-            &stage3,
-            &stage4,
+            &prover_transcript,
         );
-        twins::replay_stage5(
-            &mut transcript,
-            &config,
-            &checked,
-            &preprocessing,
-            &stage2,
-            &stage4,
-            &stage5,
-        );
-        twins::replay_stage6a(
-            &mut transcript,
-            &config,
-            &checked,
-            &preprocessing,
-            &stage1,
-            &stage2,
-            &stage3,
-            &stage4,
-            &stage5,
-            &stage6a,
-        );
-
-        let formula_dimensions = crate::stages::formula_dimensions(
-            &checked,
-            &config,
-            preprocessing.verifier.program.bytecode_len(),
-            JoltRelationId::BytecodeReadRaf,
-        )
-        .unwrap();
-        let carried = &stage6a.clear_output.challenges;
-        let draws = Stage6bDraws::draw(&mut transcript, false);
-        let program = preprocessing.program().unwrap();
-        let entry_bytecode_index = preprocessing
-            .verifier
-            .program
-            .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)
-            .unwrap();
-        let stage1_cycle_binding = stage1
-            .clear_output
-            .cycle_binding_checked(JoltRelationId::BytecodeReadRaf)
-            .unwrap();
-        let sumchecks = Stage6bSumchecks::build_from_parts(Stage6bBuildParts {
-            formula_dimensions: &formula_dimensions,
-            ram_log_k: RAM_LOG_K,
-            committed_chunk_bits: config.one_hot_config.committed_chunk_bits(),
-            precommitted: &checked.precommitted,
-            entry_bytecode_index,
-            bytecode_table_rows: Some(program.bytecode.bytecode.as_slice()),
-            carried,
-            eta: draws.eta,
-            stage1_cycle_binding,
-            stage2_points: &stage2.clear_output.output_points,
-            stage3_points: &stage3.clear_output.output_points,
-            stage4_points: &stage4.clear_output.output_points,
-            stage5_points: &stage5.clear_output.output_points,
-            stage6a_points: &stage6a.clear_output.output_points,
-            address_val_stages: stage6a
-                .clear_output
-                .output_values
-                .bytecode_read_raf
-                .val_stages
-                .clone(),
-            #[cfg(not(feature = "akita"))]
-            trusted_advice_reference_point: advice_reference_point_from_upstream(
-                &stage4.clear_output.ram_val_check_init,
-                JoltAdviceKind::Trusted,
-            ),
-            #[cfg(not(feature = "akita"))]
-            untrusted_advice_reference_point: advice_reference_point_from_upstream(
-                &stage4.clear_output.ram_val_check_init,
-                JoltAdviceKind::Untrusted,
-            ),
-        })
-        .unwrap();
-        let cycle_challenges = sumchecks.cycle_challenges(carried, &draws);
-        let input_values = stage6b_input_values_from_upstream(
-            &sumchecks,
-            &stage6a.clear_output.output_values,
-            &stage2.clear_output.output_values,
-            &stage4.clear_output,
-            &stage5.clear_output.output_values,
-        )
-        .unwrap();
-        let input_points = stage6b_input_points_from_upstream(
-            &sumchecks,
-            &stage2.clear_output.output_points,
-            &stage4.clear_output.output_points,
-            &stage5.clear_output.output_points,
-        );
-        let cycle_points = sumchecks
-            .verify_clear(
-                &input_values,
-                &input_points,
-                &cycle_challenges,
-                &out.claims,
-                &out.sumcheck_proof,
-                &mut transcript,
-                6,
-            )
-            .unwrap();
-        let booleanity_point = cycle_points.booleanity_opening_point().unwrap().to_vec();
-        // The verifier's absorb: the curated order with the runtime
-        // booleanity-vs-bytecode dedup (single-sourced with the prover's
-        // curation through `stage6b_opening_values`).
-        for value in jolt_verifier::stages::stage6b::stage6b_opening_values(
-            &out.claims,
-            &cycle_points.bytecode_read_raf.bytecode_ra,
-            &booleanity_point,
-        ) {
-            transcript.append_labeled(b"opening_claim", &value);
-        }
-
-        assert_eq!(transcript.state(), prover_transcript.state());
     }
 
     fn fr(value: u64) -> Fr {
@@ -524,41 +387,39 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the stage-6b committed shell carries the curated row count — the
+/// ZK with field-inline enabled: the stage-6b committed witness carries the curated row count — the
 /// alias-deduped cycle-point cell total, whose field-inline share is exactly the one
-/// spliced reduced `FieldRdInc` row.
+/// spliced reduced `FieldRdInc` row — and the production stage-1..6b zk
+/// verifiers consume the prover's argument string.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
-    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use jolt_claims::OutputClaims;
-    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::JoltSponge;
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        addi_only_backend, addi_only_preprocessing, test_checked_inputs, test_prover_config,
-        test_public_io,
+        addi_only_backend, addi_only_preprocessing, fixture_transcript, test_checked_inputs,
+        test_prover_config, test_public_io, test_vc_setup, verify_through, Through,
     };
 
-    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
-
     #[test]
-    fn committed_stage6b_shell_carries_the_curated_rows() {
+    fn committed_stage6b_witness_carries_the_curated_rows_and_verifies() {
         let witness = addi_only_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
-        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
+        let setup = test_vc_setup();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
         let preprocessing = addi_only_preprocessing();
 
-        let mut transcript = Blake2bTranscript::new(b"stage6b-field-inline-zk");
+        let mut transcript = fixture_transcript();
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &backend,
             session: &mut session,
@@ -571,7 +432,7 @@ mod field_inline_zk {
             transcript: &mut transcript,
         }
         .through_stage6a();
-        let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -616,5 +477,7 @@ mod field_inline_zk {
             OutputClaims::opening_values(&out.claims.field_registers_inc_claim_reduction).len(),
             1
         );
+
+        verify_through(Through::Stage6b, &checked, &preprocessing, &transcript);
     }
 }

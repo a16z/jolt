@@ -126,14 +126,11 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-5 recipe against the verifier's own
-/// public constituents — `stage5::verify`'s clear body (the four-member batch
-/// with the field-register value evaluation member, which draws no instance challenge) on a
-/// twin transcript positioned by the stage-1..4 replays. The 32-byte
-/// transcript-state equality pins the absorb order end to end. A second test
-/// drives the field-register value evaluation kernel directly and ties both extracted
-/// openings to direct MLE evaluations of the witness oracle's tables at the
-/// bound point.
+/// Clear round-trips with field-inline enabled of the stage-5 recipe through
+/// the production stage-1..5 verifiers over the prover's argument string. A
+/// second test drives the field-register value evaluation kernel directly and
+/// ties both extracted openings to direct MLE evaluations of the witness
+/// oracle's tables at the bound point.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -149,15 +146,15 @@ mod field_inline_round_trip {
     use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
-    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
+    use jolt_verifier::JoltSponge;
     use jolt_witness::JoltWitnessOracle as _;
 
     use super::*;
     use crate::recorder::ProofMode;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
-        test_prover_config, test_public_io, twins, LOG_T,
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, test_prover_config, test_public_io, verify_through, Through, LOG_T,
     };
 
     #[test]
@@ -171,8 +168,8 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage5-field-inline");
-        let ((stage1, stage2, stage3), stage4) = FixtureProver {
+        let mut prover_transcript = fixture_transcript();
+        let ((_stage1, stage2, _stage3), stage4) = FixtureProver {
             backend: &backend,
             session: &mut session,
             mode: &mode,
@@ -184,7 +181,7 @@ mod field_inline_round_trip {
             transcript: &mut prover_transcript,
         }
         .through_stage4();
-        let out = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let _stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -198,32 +195,12 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The verifier twin (stage5::verify's clear body), positioned by the
-        // upstream replays.
-        let mut transcript = Blake2bTranscript::new(b"stage5-field-inline");
-        twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
-        twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
-        twins::replay_stage4(
-            &mut transcript,
-            &config,
+        verify_through(
+            Through::Stage5,
             &checked,
             &preprocessing,
-            &stage2,
-            &stage3,
-            &stage4,
+            &prover_transcript,
         );
-        twins::replay_stage5(
-            &mut transcript,
-            &config,
-            &checked,
-            &preprocessing,
-            &stage2,
-            &stage4,
-            &out,
-        );
-
-        assert_eq!(transcript.state(), prover_transcript.state());
     }
 
     fn fr(value: u64) -> Fr {

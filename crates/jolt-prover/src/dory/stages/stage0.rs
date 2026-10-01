@@ -449,7 +449,6 @@ mod field_inline_tests {
     use jolt_field::{Fr, Ring};
     use jolt_kernels::finish_streamed;
     use jolt_openings::{CommitmentScheme, StreamingCommitment};
-    use jolt_transcript::LegacyBlake2bTranscript;
 
     fn grid() -> CommitmentGrid {
         CommitmentGrid {
@@ -473,13 +472,11 @@ mod field_inline_tests {
         finish_streamed::<DoryScheme>(partial, setup).0
     }
 
-    /// The prover attaches the field-inline payload and absorbs it through the
-    /// verifier's own `absorb_transcript_commitments` — pinned by asserting
-    /// the payload is `Some`, that both sides' absorbs agree byte-for-byte
-    /// (equal challenge streams), and that stripping the payload diverges
-    /// (the field-inline commitment is Fiat-Shamir-bound).
+    /// The prover assembles the field-inline payload into the trace commitments:
+    /// its hints name exactly `FieldRdInc`, and its commitment is the dense
+    /// trace-domain column committed with the jolt increment columns' placement.
     #[test]
-    fn stage0_attaches_and_absorbs_the_field_inline_payload() {
+    fn stage0_assembles_the_field_inline_payload() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
@@ -496,8 +493,6 @@ mod field_inline_tests {
                 &setup,
             )
             .unwrap();
-        let (commitments, _hints) = assemble_commitments::<DoryScheme>(committed).unwrap();
-
         let (field_inline, field_inline_hints) = commit_field_inline::<Fr, DoryScheme>(
             &backend,
             &mut session,
@@ -506,9 +501,9 @@ mod field_inline_tests {
             &setup,
         )
         .unwrap();
-        let commitments = commitments.with_field_inline(field_inline);
+        let (commitments, _hints) =
+            assemble_commitments::<DoryScheme>(committed, field_inline).unwrap();
 
-        assert!(commitments.field_inline.is_some());
         assert_eq!(
             field_inline_hints
                 .iter()
@@ -532,39 +527,8 @@ mod field_inline_tests {
             "fixture column"
         );
         assert_eq!(
-            commitments
-                .field_inline
-                .as_ref()
-                .unwrap()
-                .field_registers
-                .rd_inc,
+            commitments.field_inline.field_registers.rd_inc,
             direct_dense_commitment(&column, &setup)
-        );
-
-        // Byte-for-byte absorb parity between the prover-side call and the
-        // verifier's own absorb (the same shared fn on the same payload).
-        let mut prover_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
-        absorb_transcript_commitments(&commitments, None, None, &mut prover_transcript);
-        let mut verifier_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
-        jolt_verifier::absorb_transcript_commitments(
-            &commitments,
-            None,
-            None,
-            &mut verifier_transcript,
-        );
-        assert_eq!(
-            prover_transcript.challenge(),
-            verifier_transcript.challenge()
-        );
-
-        let mut stripped = commitments.clone();
-        stripped.field_inline = None;
-        let mut stripped_transcript = LegacyBlake2bTranscript::<Fr>::new(b"Jolt");
-        absorb_transcript_commitments(&stripped, None, None, &mut stripped_transcript);
-        assert_ne!(
-            prover_transcript.challenge(),
-            stripped_transcript.challenge(),
-            "the field-inline payload must be Fiat-Shamir-bound"
         );
     }
 

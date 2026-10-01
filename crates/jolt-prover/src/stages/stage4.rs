@@ -234,15 +234,12 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-4 recipe against the verifier's own
-/// public constituents — `stage4::verify`'s clear body step for step (the
-/// `Val_init` decomposition, the three-member batch with the field-register read-write
-/// member, the generated absorb splicing the five field-inline openings) on a twin
-/// transcript positioned by the stage-1..3 replays. The 32-byte
-/// transcript-state equality pins the absorb order end to end. A second test
-/// drives the field-register read-write kernel directly and ties every extracted opening
-/// to a direct MLE evaluation of the witness oracle's tables at the bound
-/// point.
+/// Clear round-trips with field-inline enabled of the stage-4 recipe through
+/// the production stage-1..4 verifiers over the prover's argument string
+/// (including the RAM value-check staged openings sent after the gamma draws).
+/// A second test drives the field-register read-write kernel directly and ties
+/// every extracted opening to a direct MLE evaluation of the witness oracle's
+/// tables at the bound point.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -258,14 +255,14 @@ mod field_inline_round_trip {
     use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
-    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
+    use jolt_verifier::JoltSponge;
     use jolt_witness::JoltWitnessOracle as _;
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
-        test_prover_config, test_public_io, twins, LOG_T,
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, test_prover_config, test_public_io, verify_through, Through, LOG_T,
     };
 
     #[test]
@@ -279,8 +276,8 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage4-field-inline");
-        let (stage1, stage2, stage3) = FixtureProver {
+        let mut prover_transcript = fixture_transcript();
+        let (_stage1, stage2, stage3) = FixtureProver {
             backend: &backend,
             session: &mut session,
             mode: &mode,
@@ -292,7 +289,7 @@ mod field_inline_round_trip {
             transcript: &mut prover_transcript,
         }
         .through_stage3();
-        let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let _stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -306,23 +303,12 @@ mod field_inline_round_trip {
         )
         .unwrap();
 
-        // The verifier twin (stage4::verify's clear body, shared as the
-        // stage-5+ twins' replay), positioned by the upstream replays.
-        let mut transcript = Blake2bTranscript::new(b"stage4-field-inline");
-        twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
-        twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
-        twins::replay_stage4(
-            &mut transcript,
-            &config,
+        verify_through(
+            Through::Stage4,
             &checked,
             &preprocessing,
-            &stage2,
-            &stage3,
-            &out,
+            &prover_transcript,
         );
-
-        assert_eq!(transcript.state(), prover_transcript.state());
     }
 
     fn fr(value: u64) -> Fr {
@@ -466,41 +452,40 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the stage-4 committed shell carries the curated row count — the
+/// ZK with field-inline enabled: the stage-4 committed witness carries the curated row count — the
 /// 5 ordinary register openings, the 5 spliced field-register read-write openings, and
 /// the 2 RAM value-check openings (no advice / program-image rows at the
-/// fixture's scale).
+/// fixture's scale) — and the production stage-1..4 zk verifiers consume the
+/// prover's argument string.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
-    use common::constants::MAX_BLINDFOLD_GENERATORS;
-    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::JoltSponge;
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
-        test_prover_config, test_public_io,
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, test_prover_config, test_public_io, test_vc_setup, verify_through,
+        Through,
     };
 
-    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
-
     #[test]
-    fn committed_stage4_shell_carries_the_curated_rows() {
+    fn committed_stage4_witness_carries_the_curated_rows_and_verifies() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
-        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
+        let setup = test_vc_setup();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut transcript = Blake2bTranscript::new(b"stage4-field-inline-zk");
+        let mut transcript = fixture_transcript();
         let (_stage1, stage2, stage3) = FixtureProver {
             backend: &backend,
             session: &mut session,
@@ -513,7 +498,7 @@ mod field_inline_zk {
             transcript: &mut transcript,
         }
         .through_stage3();
-        let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let out = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -527,13 +512,14 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        let values: Vec<Fr> = out
+        let value_count: usize = out
             .committed_witness
             .output_claim_rows
             .iter()
-            .flatten()
-            .copied()
-            .collect();
-        assert_eq!(values.len(), 12);
+            .map(Vec::len)
+            .sum();
+        assert_eq!(value_count, 12);
+
+        verify_through(Through::Stage4, &checked, &preprocessing, &transcript);
     }
 }

@@ -126,18 +126,11 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-1 recipe against the verifier's own
-/// public constituents — `stage1::verify`'s clear body step for step (the
-/// tau draw, `uniskip::verify_clear`, the batch relations, the field-inline seam's
-/// attach, `verify_clear`, and the two-part opening absorb), on a twin
-/// transcript. The full `stage1::verify` entrypoint needs an assembled
-/// `JoltProof`, whose joint-opening slot has no test constructor, so this is
-/// the closest public seam; the 32-byte transcript-state equality pins the
-/// absorb order end to end.
+/// Clear round-trips with field-inline enabled of the stage-1 recipe through
+/// the production `stage1::verify` over the prover's argument string.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
-    use crate::stages::field_inline_fixtures::twins;
     use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
     use jolt_claims::OutputClaims;
@@ -146,22 +139,24 @@ mod field_inline_round_trip {
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
     use jolt_program::execution::OwnedTrace;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
     use jolt_verifier::stages::stage2::product_tau_low;
+    use jolt_verifier::JoltSponge;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        addi_only_backend, field_arithmetic_backend, LOG_T,
+        addi_only_backend, addi_only_preprocessing, field_arithmetic_backend,
+        field_arithmetic_preprocessing, fixture_transcript, test_checked_inputs, verify_through,
+        FixturePreprocessing, Through, LOG_T,
     };
 
-    fn round_trip(trace_backend: TraceBackend<OwnedTrace>) {
+    fn round_trip(trace_backend: TraceBackend<OwnedTrace>, preprocessing: FixturePreprocessing) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
-        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline");
-        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let mut prover_transcript = fixture_transcript();
+        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -188,11 +183,12 @@ mod field_inline_round_trip {
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }
 
-        // The verifier twin.
-        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
-        twins::replay_stage1(&mut transcript, &out);
-
-        assert_eq!(transcript.state(), prover_transcript.state());
+        verify_through(
+            Through::Stage1,
+            &test_checked_inputs(),
+            &preprocessing,
+            &prover_transcript,
+        );
     }
 
     /// The ADDI-only field-inline trace: every field-inline column is zero, so this pins
@@ -200,49 +196,46 @@ mod field_inline_round_trip {
     /// instruction.
     #[test]
     fn addi_only_stage1_round_trips_the_composed_verifier() {
-        round_trip(addi_only_backend());
+        round_trip(addi_only_backend(), addi_only_preprocessing());
     }
 
     /// Actual field-inline rows via decoded field-inline instruction words (two field loads and a
     /// multiply).
     #[test]
     fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
-        round_trip(field_arithmetic_backend());
+        round_trip(field_arithmetic_backend(), field_arithmetic_preprocessing());
     }
 }
 
-/// ZK with field-inline enabled: the committed stage-1 shell and the verifier replay. Mirrors
-/// `blindfold.rs`'s hard transcript check at stage scope — the replay runs
-/// `stage1::verify`'s zk body over its public constituents (the tau draw,
-/// `uniskip::verify_zk`, the batch `verify_zk`) and must land on the
-/// prover's forward transcript bytes.
+/// ZK with field-inline enabled: the committed stage-1 witness carries the
+/// composed rows, and the production `stage1::verify` zk branch consumes the
+/// prover's argument string.
 #[cfg(all(test, feature = "field-inline", feature = "zk"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use common::constants::MAX_BLINDFOLD_GENERATORS;
-    use common::jolt_device::JoltDevice;
-    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-    use jolt_verifier::stages::uniskip::{self, UniskipParams};
-    use jolt_verifier::stages::PrecommittedSchedule;
-    use jolt_verifier::CheckedInputs;
+    use jolt_verifier::JoltSponge;
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, ENTRY, LOG_T};
+    use crate::stages::field_inline_fixtures::{
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, test_vc_setup, verify_through, Through, LOG_T,
+    };
 
     const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
 
     #[test]
-    fn committed_stage1_shell_carries_the_composed_rows_and_replays() {
+    fn committed_stage1_witness_carries_the_composed_rows_and_verifies() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
         let mut session = backend.begin_proof();
-        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
+        let setup = test_vc_setup();
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
-        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
-        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let mut prover_transcript = fixture_transcript();
+        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -252,17 +245,10 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The committed shell carries the composed 50 output-claim values
+        // The committed witness carries the composed 50 output-claim values
         // (45 common openings + five field value/product openings), row-committed in
         // capacity-sized chunks — the shape the verifier's
         // `composed_output_claim_count` check derives.
-        let total: usize = out
-            .committed_witness
-            .output_claim_rows
-            .iter()
-            .map(Vec::len)
-            .sum();
-        assert_eq!(total, 50);
         let row_lens: Vec<usize> = out
             .committed_witness
             .output_claim_rows
@@ -280,50 +266,13 @@ mod field_inline_zk {
             lens
         };
         assert_eq!(row_lens, expected_row_lens);
-        let committed = out.sumcheck_proof.as_committed().unwrap();
-        assert_eq!(
-            committed.output_claims.commitments.len(),
-            50usize.div_ceil(CAPACITY)
+
+        verify_through(
+            Through::Stage1,
+            &test_checked_inputs(),
+            &field_arithmetic_preprocessing(),
+            &prover_transcript,
         );
-
-        // The replay.
-        let checked = CheckedInputs {
-            public_io: JoltDevice::default(),
-            zk: true,
-            trace_length: 1 << LOG_T,
-            ram_K: 1 << 4,
-            entry_address: ENTRY,
-            preprocessing_digest: [0u8; 32],
-            trusted_advice_commitment_present: false,
-            vc_capacity: Some(CAPACITY),
-            precommitted: PrecommittedSchedule {
-                trusted_advice: None,
-                untrusted_advice: None,
-                bytecode: None,
-                program_image: None,
-            },
-        };
-        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
-        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
-        let uniskip_step = uniskip::verify_zk(
-            &checked,
-            &out.uniskip_proof,
-            &UniskipParams::spartan_outer(),
-            &mut transcript,
-        )
-        .unwrap();
-        let sumchecks = Stage1BatchSumchecks {
-            outer_remainder: OuterRemainder::new(
-                SpartanOuterDimensions::rv64(LOG_T),
-                tau,
-                uniskip_step.challenge,
-            ),
-        };
-        let _consistency = sumchecks
-            .verify_zk(&out.sumcheck_proof, &mut transcript)
-            .unwrap();
-
-        assert_eq!(transcript.state(), prover_transcript.state());
     }
 }
 

@@ -181,15 +181,10 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-6a recipe against the verifier's own
-/// public constituents — `stage6a::verify`'s clear body (the batch built by
-/// the promoted `build_from_parts` with the field-register access geometry on the bytecode
-/// member, the field-inline appendage composition, the composed input claim with its
-/// gamma-power extension) on a twin transcript positioned by the stage-1..5
-/// replays, on the field-active arithmetic trace: the appendage openings are
-/// nonzero, so the address kernel's field-inline stage-value legs are exercised for
-/// real (round 0's engine check pins the composed input claim to the
-/// summand).
+/// Clear round-trips with field-inline enabled of the stage-6a recipe through
+/// the production stage-1..6a verifiers over the prover's argument string, on
+/// the field-active arithmetic trace: the appendage openings are nonzero, so
+/// the address kernel's field-inline stage-value legs are exercised for real.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -197,13 +192,13 @@ mod field_inline_round_trip {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
+    use jolt_verifier::JoltSponge;
 
     use super::*;
     use crate::recorder::ProofMode;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
-        test_prover_config, test_public_io, twins,
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, test_prover_config, test_public_io, verify_through, Through,
     };
 
     #[test]
@@ -217,7 +212,7 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage6a-field-inline");
+        let mut prover_transcript = fixture_transcript();
         let (((stage1, stage2, stage3), stage4), stage5) = FixtureProver {
             backend: &backend,
             session: &mut session,
@@ -230,7 +225,7 @@ mod field_inline_round_trip {
             transcript: &mut prover_transcript,
         }
         .through_stage5();
-        let out = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let _stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &backend,
             &mut session,
             &mode,
@@ -258,43 +253,11 @@ mod field_inline_round_trip {
         let zero = Fr::from_u64(0);
         assert!(appendage.rd_wa_read_write != zero);
 
-        // The verifier twin (stage6a::verify's clear body), positioned by the
-        // upstream replays.
-        let mut transcript = Blake2bTranscript::new(b"stage6a-field-inline");
-        twins::replay_stage1(&mut transcript, &stage1);
-        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
-        twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
-        twins::replay_stage4(
-            &mut transcript,
-            &config,
+        verify_through(
+            Through::Stage6a,
             &checked,
             &preprocessing,
-            &stage2,
-            &stage3,
-            &stage4,
+            &prover_transcript,
         );
-        twins::replay_stage5(
-            &mut transcript,
-            &config,
-            &checked,
-            &preprocessing,
-            &stage2,
-            &stage4,
-            &stage5,
-        );
-        twins::replay_stage6a(
-            &mut transcript,
-            &config,
-            &checked,
-            &preprocessing,
-            &stage1,
-            &stage2,
-            &stage3,
-            &stage4,
-            &stage5,
-            &out,
-        );
-
-        assert_eq!(transcript.state(), prover_transcript.state());
     }
 }
