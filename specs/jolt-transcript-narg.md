@@ -4,7 +4,7 @@
 | --------- | ------------------ |
 | Author(s) | @markosg04         |
 | Created   | 2026-10-01         |
-| Status    | proposed           |
+| Status    | implemented (in review) |
 | PR        | (Jolt) / (Akita)   |
 
 ## Summary
@@ -34,8 +34,9 @@ layer and no follow-up migration PR.
 ### Goal
 
 `jolt-transcript` provides a role-generic proof channel, prover and verifier
-ends, typed atoms, exact and small-set challenges, a preview handle for proof
-of work, and feature-gated site diagnostics. It is expressive enough that Akita
+ends, exact and small-set challenges, a preview handle for proof of work, and
+feature-gated site diagnostics. Messages are values with a canonical codec
+owned by their type. It is expressive enough that Akita
 uses it unchanged, and Jolt's prover, verifier, BlindFold, Dory, and Akita
 integration all run on it.
 
@@ -43,12 +44,12 @@ integration all run on it.
 
 | Component | Owner crate | Notes |
 | --- | --- | --- |
-| `Sponge` trait, `Prover<H>`, `Verifier<'a, H>`, `Channel`, `Atom`, `Preview`, grinding, `TranscriptError`, `SiteId` | `jolt-transcript` | Depends on `jolt-field` and `spongefish` only. |
+| `Sponge` trait, `ProverTranscript<H>`, `VerifierTranscript<'a, H>`, `Channel`, `Preview`, grinding, `TranscriptError`, `SiteId` | `jolt-transcript` | Depends on `jolt-field` and `spongefish` only. |
 | Sponge permutations / hash duplexes | `spongefish` (Blake2b512, Keccak, ...) and `jolt-transcript::PoseidonSponge` | One workspace pin for both repos. |
 | Exact uniform sampling contract | `jolt-field` (`Field::random`) | The channel feeds it a sponge-backed `RngCore`. |
 | Small-set challenge decoding | `jolt-field` (`from_challenge_bytes`) | Unchanged semantics. |
-| Canonical encode/checked decode of fields | `jolt-field` (`CanonicalEncoding`) | Extension fields gain `CanonicalEncoding` (checked per coefficient). |
-| Atom impls for group elements, commitments | `jolt-crypto`, `jolt-dory`, Akita crates | Each type's owner implements `Atom` locally. |
+| Message codec: `CanonicalBytes` (encode) and `CanonicalDecode` (checked decode) | `jolt-field` | Implemented for every field, extension field, `u8`–`u128`, and `[u8; N]`. |
+| Codec impls for group elements and commitments | `jolt-crypto`, `jolt-dory`, Akita crates | Each type's owner implements the codec locally. |
 | Round-message shapes, protocol order | `jolt-sumcheck`, `jolt-verifier`, Akita protocol crates | Shapes are positional, derived from public parameters. |
 | Akita site coordinates, descriptor bytes | `akita-types` | Plain data; converted to `SiteId` for diagnostics. |
 
@@ -56,9 +57,10 @@ integration all run on it.
 
 1. **Absorbed bytes are transmitted bytes.** Every prover message is absorbed
    with exactly the bytes written to (prover) or consumed from (verifier) the
-   NARG. `Atom::read` accepts only canonical encodings of valid values (field
-   elements below the modulus, on-curve and in-subgroup points), so a verifier
-   cannot accept two byte strings for one value.
+   NARG. `CanonicalDecode::from_bytes_le_checked` accepts only canonical
+   encodings of valid values (field elements below the modulus, on-curve and
+   in-subgroup points), so a verifier cannot accept two byte strings for one
+   value.
 2. **No unabsorbed proof data.** The verifier obtains proof data only through
    `Verifier::receive*`. There is no hint channel and no side struct. The
    absence of a hint API is the enforcement mechanism.
@@ -66,13 +68,15 @@ integration all run on it.
    fully consumed. Composite verifiers (Jolt calling Akita) call it once, at the
    outermost boundary.
 4. **Domain separation.** Each channel starts from a 64-byte protocol id that
-   binds the protocol name, version, proof mode (clear or ZK), and
-   `Sponge::ID`, followed by a length-framed session value. A proof produced
-   under one sponge or mode cannot verify under another.
+   binds the protocol name and `Sponge::ID`, followed by a length-framed
+   session value. Protocol axes are public inputs: the Jolt verifier absorbs
+   its own build's `JoltProtocolConfig` first in the public preamble. A proof
+   produced under one sponge or protocol configuration cannot verify under
+   another.
 5. **Role symmetry.** For any operation sequence, a verifier replaying it over
    the prover's NARG reproduces every challenge and every received value.
    `jolt-eval`'s `transcript_prover_verifier_consistency` invariant checks this
-   over `Prover`/`Verifier` for every sponge.
+   for every sponge.
 6. **Previews cannot mutate the proof.** `Preview<H>` holds only a clone of the
    public sponge state. It cannot write the NARG or advance the live sponge.
 7. **Sites never affect bytes.** `SiteId` is diagnostic. It is recorded under
@@ -108,88 +112,88 @@ pub trait Sponge: DuplexSpongeInterface<U = u8> + Default + Clone + Send + Sync 
     const ID: &'static str;
 }
 
-/// Fixed-width canonical value. Shapes are positional: callers send and receive
-/// exactly the counts their public parameters imply.
-pub trait Atom: Sized {
-    const SIZE: usize;
-    fn write(&self, out: &mut [u8]);                       // exactly SIZE bytes
-    fn read(bytes: &[u8]) -> Result<Self, TranscriptError>; // canonical-only
-}
-impl<F: CanonicalEncoding> Atom for F { /* LE canonical bytes */ }
-// Local atoms: U32, U64, Bytes<N>. Group elements and commitments implement
-// Atom in their owner crates.
-
-pub struct ProtocolId([u8; 64]);
-impl ProtocolId {
-    pub fn new<H: Sponge>(name: &str, version: u32, mode: ProofMode) -> Self;
-}
-
-pub struct Prover<H: Sponge> { /* sponge, narg, logging */ }
-impl<H: Sponge> Prover<H> {
-    pub fn new(protocol: &ProtocolId, session: &[u8]) -> Self;
-    pub fn send<A: Atom>(&mut self, value: &A);
-    pub fn send_all<A: Atom>(&mut self, values: &[A]);
-    pub fn send_bytes(&mut self, bytes: &[u8], max_len: usize) -> Result<(), TranscriptError>;
-    pub fn grind(&mut self, bits: u8) -> Result<(), TranscriptError>;
-    pub fn finish(self) -> Vec<u8>;
-}
-
-pub struct Verifier<'a, H: Sponge> { /* sponge, remaining narg, logging */ }
-impl<'a, H: Sponge> Verifier<'a, H> {
-    pub fn new(protocol: &ProtocolId, session: &[u8], narg: &'a [u8]) -> Self;
-    pub fn receive<A: Atom>(&mut self) -> Result<A, TranscriptError>;
-    pub fn receive_n<A: Atom>(&mut self, count: usize) -> Result<Vec<A>, TranscriptError>;
-    pub fn receive_bytes(&mut self, max_len: usize) -> Result<Vec<u8>, TranscriptError>;
-    pub fn check_grind(&mut self, bits: u8) -> Result<(), TranscriptError>;
-    pub fn finish(self) -> Result<(), TranscriptError>;
-}
+pub struct ProtocolId([u8; PROTOCOL_ID_LEN]);
+impl ProtocolId { pub const fn new<H: Sponge>(name: &str) -> Self; }
 
 /// Operations both roles perform identically; shared protocol code takes `&mut impl Channel`.
 pub trait Channel {
     type Sponge: Sponge;
-    fn public<A: Atom>(&mut self, value: &A);
-    fn public_all<A: Atom>(&mut self, values: &[A]);
-    fn public_bytes(&mut self, bytes: &[u8]);               // length-framed
-    /// Prover: send `*value`. Verifier: overwrite `*value` with the received atom.
-    fn exchange<A: Atom>(&mut self, value: &mut A) -> Result<(), TranscriptError>;
-    fn challenge<F: Field>(&mut self) -> F;
-    fn challenge_small<F: Field>(&mut self) -> F;
+    fn site(&mut self, site: SiteId);
+    fn public<A: CanonicalBytes>(&mut self, value: &A);
+    fn public_all<A: CanonicalBytes>(&mut self, values: &[A]);
+    fn public_bytes(&mut self, bytes: &[u8]);               // u64-length-framed
+    /// Prover: send `*value`. Verifier: overwrite `*value` with the received message.
+    fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError>;
+    fn exchange_all<A: CanonicalDecode>(&mut self, values: &mut [A]) -> Result<(), TranscriptError>;
+    fn challenge<F: Field>(&mut self) -> F;                 // exactly uniform
+    fn challenge_small<F: CanonicalEncoding>(&mut self) -> F; // from_challenge_bytes(16 bytes)
     fn challenge_bytes<const N: usize>(&mut self) -> [u8; N];
     fn preview(&self) -> Preview<Self::Sponge>;
-    fn site(&mut self, site: SiteId);
+    fn challenges_small<F: Field>(&mut self, len: usize) -> Vec<F>;  // provided
+    fn challenge_powers<F: Field>(&mut self, len: usize) -> Vec<F>;  // provided: 1, γ, γ², ...
+}
+
+impl<H: Sponge> ProverTranscript<H> {
+    pub fn new(protocol: &ProtocolId, session: &[u8]) -> Self;
+    pub fn send<A: CanonicalBytes>(&mut self, value: &A);
+    pub fn send_all<A: CanonicalBytes>(&mut self, values: &[A]);
+    pub fn send_bytes(&mut self, bytes: &[u8]);             // length fixed by the protocol
+    pub fn send_bounded_bytes(&mut self, bytes: &[u8], max_len: usize) -> Result<(), TranscriptError>;
+    pub fn send_nonce(&mut self, nonce: u32);
+    pub fn grind(&mut self, bits: u8) -> Result<u32, TranscriptError>;    // returns the nonce
+    pub fn narg(&self) -> &[u8];
+    pub fn finish(self) -> Vec<u8>;
+}
+
+impl<'a, H: Sponge> VerifierTranscript<'a, H> {
+    pub fn new(protocol: &ProtocolId, session: &[u8], narg: &'a [u8]) -> Self;
+    pub fn receive<A: CanonicalDecode>(&mut self) -> Result<A, TranscriptError>;
+    pub fn receive_n<A: CanonicalDecode>(&mut self, count: usize) -> Result<Vec<A>, TranscriptError>;
+    pub fn receive_bytes(&mut self, len: usize) -> Result<&'a [u8], TranscriptError>;
+    pub fn receive_bounded_bytes(&mut self, max_len: usize) -> Result<&'a [u8], TranscriptError>;
+    pub fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError>;
+    pub fn check_grind(&mut self, bits: u8) -> Result<u32, TranscriptError>;
+    pub fn remaining(&self) -> usize;
+    pub fn finish(self) -> Result<(), TranscriptError>;     // EOF and poison check
 }
 ```
 
-`Prover` and `Verifier` implement `Channel`. `public_*` and `challenge*` are
-inherent on both as well, so role-specific code needs no trait import.
+The verifier poisons itself on its first error: every later receive returns
+`TranscriptError::Poisoned`, so a caller that drops an error cannot continue
+on a desynchronized transcript.
 
-Example: one sumcheck round of degree `d`. The verifier knows `d` from public
-parameters, so the poly's length is never transmitted.
+Example: one sumcheck round of degree bound `d`. The verifier knows `d` from
+public parameters, so the polynomial's length is never transmitted; the prover
+pads lower-degree rounds with zero coefficients.
 
 ```rust
 // prover                                     // verifier
-prover.send_all(round_poly.coeffs());         let c = verifier.receive_n::<F>(d + 1)?;
+prover.send_all(&padded_coeffs);              let c = verifier.receive_n::<F>(d + 1)?;
 let r = prover.challenge_small::<F>();        let r = verifier.challenge_small::<F>();
 ```
 
 ### Wire format
 
-The NARG is the concatenation of atom encodings and length-framed byte payloads
-(8-byte LE length, then bytes, with `len <= max_len` checked before any
-allocation). It carries no labels or tags. `JoltProof` becomes a
-`Vec<u8>` newtype with serde. Prover-chosen parameters the verifier needs before
-reading shapes (`trace_length`, `ram_K`, configs, advice presence) are the first
-prover messages. The verifier receives and validates each one before using it
-to size a later receive. The proof mode is in the protocol id, and the verifier
-also checks it against its build before reading, so a mismatch surfaces as a
-typed error rather than a challenge mismatch.
+The NARG is the concatenation of message encodings. Variable-length payloads
+carry a 4-byte LE length checked against the caller's `max_len` before any
+read. Public byte strings are absorbed with an 8-byte LE length frame. The NARG
+carries no labels or tags. `JoltProof` is `{ protocol: JoltProtocolConfig,
+narg: Vec<u8> }`. `protocol` exists only so a configuration mismatch surfaces as
+a typed error before verification; it is never trusted, since the verifier
+absorbs its own configuration.
+
+The first prover message is the proof header: `trace_length` and `ram_K` as
+u64, the six rw/one-hot round counts as `[u8; 6]`, the trace order as u64, and
+the untrusted-advice flag as u8. The verifier validates the header against its
+preprocessing before using it to size any later receive. The commitments follow
+in `ProofCommitments` order at counts fixed by the RA layout.
 
 Byte order is little-endian canonical (`CanonicalBytes`). The legacy
 big-endian reversal disappears.
 
 ### Composition: Jolt calls Akita
 
-Akita's prove and verify entry points take `&mut Prover<H>` / `&mut Verifier<H>`
+Akita's prove and verify entry points take `&mut ProverTranscript<H>` / `&mut VerifierTranscript<H>`
 (or `&mut impl Channel` for shared sites) and absorb their instance descriptor
 with `public_bytes` as their first operation. Akita's standalone API constructs
 its own channel with an Akita `ProtocolId` and calls the same inner function, so
@@ -204,22 +208,29 @@ before any Akita challenge in both cases.
 
 ### Dory
 
-`dory-pcs` exposes a symmetric `DoryTranscript` and its own proof struct.
-`jolt-dory` implements `DoryTranscript` for `&mut impl Channel`: `append_*` maps
-to `public_*` and `challenge_scalar` to `challenge`. The serialized Dory proof is
-sent with `send_bytes` and decoded with `DorySerialize`, which rejects trailing
-and non-canonical data. Dory therefore absorbs its group elements twice, once
-as NARG bytes and once through its own transcript calls. That costs a few
-hundred group-element absorptions per proof, and it keeps invariant 2: there is
-no hint path. A Dory-native NARG integration belongs to a `dory-pcs` release
-and is out of scope.
+`dory-pcs` exposes a symmetric `DoryTranscript` and verifies from a proof struct
+it receives up front. `jolt-dory` runs it inside the NARG with no double
+transmission:
+
+- The prover adapter sends every value dory-pcs absorbs through `append_serde`,
+  so the NARG holds Dory's messages in Dory's Fiat-Shamir order.
+- The verifier rebuilds the proof struct by reading those messages from a
+  scratch clone of the transcript (`read_proof`), then runs `dory::verify` with
+  an adapter whose every `append_serde` receives the next message from the live
+  transcript and checks it equals the value dory-pcs absorbs.
+- The Σ₁ responses of a ZK proof, which dory-pcs never absorbs, are sent after
+  the Dory messages.
+
+Every NARG byte is therefore absorbed exactly once on each side, and invariant
+2 holds without trusting `dory-pcs` to absorb what it reads.
 
 ### Grinding and previews
 
-`Preview<H>` clones the sponge and exposes `absorb<A: Atom>` and
-`squeeze(&mut [u8])`. `grind(bits)` searches `U32` nonces against a preview,
-sends the winning nonce, then squeezes and checks the predicate on the live
-channel. `check_grind` receives the nonce and checks the same predicate. The
+`Preview<H>` clones the sponge and exposes `absorb`, `absorb_bytes`,
+`absorb_nonce`, and `squeeze::<N>()`. `grind(bits)` searches LEB128 nonces
+against a preview, sends the winning nonce, then squeezes and checks the
+predicate on the live channel. `check_grind` receives the nonce and checks the
+same predicate. The
 predicate (leading zero bits of 8 squeezed bytes, little-endian bit order) and
 the nonce bound move from `akita-transcript/src/grinding.rs`. Akita's
 fold-response nonce search builds on `Preview` inside Akita.
@@ -232,32 +243,55 @@ with a `SiteId` and retires `fs_audit`'s thread-local scope. Tests use the
 recorded ranges for two purposes:
 
 - **Equivalence:** the prover's and verifier's site streams are identical.
-  This replaces Akita's `transcript_hardening` and Jolt's `fs_inventory`.
+  This replaces Akita's `transcript_hardening`. Jolt keeps its static source
+  census (`fs_obligations`), retargeted to the message, absorb, challenge, and
+  site calls, as a review gate.
 - **Tamper sweep:** flipping one byte in every recorded prover-message range
   makes verification fail. This is the NARG form of the existing per-field
   tamper sweeps.
 
 ### BlindFold
 
-The ZK prover finishes stage 8 on its `Prover`, then runs the verifier's own
-stage functions over a `Verifier` built on the NARG prefix to obtain the stage
-outputs that BlindFold lowers. The replay has to end with the prefix fully
-consumed and a 32-byte sponge fingerprint (squeezed from a clone) equal to the
-prover's. Otherwise proving fails with the existing
-`ProverError::InvariantViolation`. BlindFold then continues on the original `Prover`. ZK recorders send
-round commitments instead of round polynomials. The choice is made by message
-type, not by a second transcript.
+The ZK prover finishes stage 8 on its `ProverTranscript`, then runs the
+verifier's `verify_stages` over a `VerifierTranscript` built on its NARG prefix.
+That is the same function `verify` runs: the seeding messages, stages 1–8, and
+the lowering into the BlindFold protocol. The replay must consume the whole
+prefix and reach the prover's sponge state (a 32-byte squeeze from a preview).
+Otherwise proving fails with `ProverError::InvariantViolation`. BlindFold then
+proves onto the original transcript. ZK recorders send round commitments
+instead of round polynomials; the choice is made by recorder type, not by a
+second transcript.
+
+### Stage-level wire decisions
+
+- **Output claims are received by shape.** Each batch member receives its wire
+  openings in canonical order. Aliased openings are not sent; they are filled
+  from their canonical source, so an alias cannot disagree with its source.
+  Stage 6b's booleanity bytecode-RA dedup is decided at runtime by opening-point
+  equality and goes through the same helpers. Its ZK commitment count depends
+  on the verified rounds (`verify_zk_with`).
+- **Stage 4 staged openings.** The RAM value-check input claim consumes the
+  advice and program-image openings, so a clear proof sends them after the
+  stage's gamma draws and before the batch. A ZK proof commits them in its
+  output-claim rows in the claims aggregate's canonical order.
+- **Uni-skip** output claims are sent right after the round's challenge, before
+  any later draw.
+- **Stage 8** runs `HomomorphicBatch`'s sequence on both sides: absorb the
+  scaled claim values, draw the batching powers, open, and absorb the joint
+  evaluation claim.
 
 ### Sponge selection
 
 Protocol code is generic over `H: Sponge`. That replaces today's
 `T: Transcript` one for one, so generic arity is unchanged. Jolt fixes its
-default in one place
-(`pub type JoltSponge = spongefish::instantiations::Blake2b512` in
-`jolt-verifier`). Akita drops the `transcript-blake2b`/`transcript-keccak`
-features and the `compile_error!` that enforces exactly one of them. The sponge
-reaches Akita through its caller's `H`. `PoseidonSponge` stays behind the
-`transcript-poseidon` feature because it pulls in BN254.
+default in one place (`pub type JoltSponge = jolt_transcript::Blake2b512` in
+`jolt-verifier`). The SDK's `transcript-*` features choose `ProtocolSponge`
+(Blake2b512, Keccak, or Poseidon). Akita drops the
+`transcript-blake2b`/`transcript-keccak` features and the `compile_error!` that
+enforces exactly one of them. The sponge reaches Akita through its caller's
+`H`, and Akita's own default is `AkitaSponge = jolt_transcript::Blake2b512`.
+`PoseidonSponge` stays behind the `transcript-poseidon` feature because it
+pulls in BN254.
 
 ### Alternatives considered
 
@@ -298,8 +332,8 @@ reaches Akita through its caller's `H`. `PoseidonSponge` stays behind the
       directly. Akita depends on `jolt-transcript` at the Jolt PR's revision.
 - [ ] `jolt-akita` contains no nested transcript. Akita's messages are in
       Jolt's NARG, and the only `finish()` call is Jolt's.
-- [ ] `JoltProof` is a NARG newtype. No verifier stage reads proof data except
-      through `Verifier`.
+- [ ] `JoltProof` is `{ protocol, narg }`. No verifier stage reads proof data
+      except through `VerifierTranscript`.
 - [ ] Changing `JoltSponge` to `Keccak` compiles, and the prover acceptance
       suites pass (exercised once in CI on one suite).
 - [ ] Tamper sweep: in the clear, ZK, and Akita fixture proofs, every recorded
@@ -370,8 +404,13 @@ it onto Jolt `main`.
   PRs will conflict with the channel-taking signatures.
 - **Recursion cycle count.** `examples/recursion` verifies in-guest with
   software Blake2b512 duplexing. The cycle-count change is not yet measured.
-- **Dory parsing.** That `DorySerialize` rejects every non-canonical proof
-  encoding is assumed from `jolt-dory`'s existing serde tests, not re-audited.
+- **Dory parsing.** Every Dory message is decoded with checked canonical
+  decoding and compared against what dory-pcs absorbs; the byte-flip sweep in
+  `jolt-dory`'s tests covers one byte per message, not every byte.
+- **API gaps found by the Akita port.** `Preview` cannot replay a
+  `public_bytes` call, so Akita absorbs its fold payload unframed. A semantic
+  failure after a successful receive does not poison the verifier; callers rely
+  on returning `Err`.
 - **Small-challenge wrapper constraints.** Whether any wrapper constraint
   depends on 125-bit challenges is out of scope here. It matters for the
   out-of-tree ports.
