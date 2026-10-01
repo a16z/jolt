@@ -201,11 +201,15 @@ macro_rules! for_each_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_ASSERT_EQ => FieldAssertEq => "field.assert_eq",
                 #[cfg(feature = "field-inline")]
-                FIELD_LOAD_FROM_X => FieldLoadFromX => "field.load_from_x",
+                FIELD_LOAD_ACCUMULATE_FROM_REGISTER => FieldLoadAccumulateFromRegister => "field.load_accumulate_from_register",
                 #[cfg(feature = "field-inline")]
-                FIELD_STORE_TO_X => FieldStoreToX => "field.store_to_x",
+                FIELD_ASSERT_ZERO => FieldAssertZero => "field.assert_zero",
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => "field.load_imm",
+                #[cfg(feature = "field-inline")]
+                FIELD_LOAD_ACCUMULATE_FROM_MEMORY => FieldLoadAccumulateFromMemory => "field.load_accumulate_from_memory",
+                #[cfg(feature = "field-inline")]
+                FIELD_ADVICE_LIMB => FieldAdviceLimb => "field.advice_limb",
             ]
         }
     };
@@ -316,11 +320,15 @@ macro_rules! for_each_jolt_instruction_kind {
                 #[cfg(feature = "field-inline")]
                 FIELD_ASSERT_EQ => FieldAssertEq => (0x0104, "field.assert_eq"),
                 #[cfg(feature = "field-inline")]
-                FIELD_LOAD_FROM_X => FieldLoadFromX => (0x0105, "field.load_from_x"),
+                FIELD_LOAD_ACCUMULATE_FROM_REGISTER => FieldLoadAccumulateFromRegister => (0x0105, "field.load_accumulate_from_register"),
                 #[cfg(feature = "field-inline")]
-                FIELD_STORE_TO_X => FieldStoreToX => (0x0106, "field.store_to_x"),
+                FIELD_ASSERT_ZERO => FieldAssertZero => (0x0106, "field.assert_zero"),
                 #[cfg(feature = "field-inline")]
                 FIELD_LOAD_IMM => FieldLoadImm => (0x0107, "field.load_imm"),
+                #[cfg(feature = "field-inline")]
+                FIELD_LOAD_ACCUMULATE_FROM_MEMORY => FieldLoadAccumulateFromMemory => (0x0108, "field.load_accumulate_from_memory"),
+                #[cfg(feature = "field-inline")]
+                FIELD_ADVICE_LIMB => FieldAdviceLimb => (0x0109, "field.advice_limb"),
             ]
         }
     };
@@ -328,10 +336,12 @@ macro_rules! for_each_jolt_instruction_kind {
 
 #[cfg(feature = "field-inline")]
 pub use field_inline::{
-    field_inline_jolt_op, field_inline_operand_shape, field_inline_operand_shape_for_op,
-    field_inline_source_op, is_field_inline_jolt, is_field_inline_source, FieldInlineOp,
-    FieldInlineOperandShape, FieldInlineXRegisterRole, FieldRegister, FIELD_INLINE_OPCODE,
-    FIELD_REGISTER_COUNT, FIELD_REGISTER_LOG_K,
+    field_inline_jolt_op, field_inline_load_accumulate_from_memory_funct7,
+    field_inline_load_accumulate_from_memory_offset, field_inline_operand_shape,
+    field_inline_operand_shape_for_op, field_inline_source_op, is_field_inline_jolt,
+    is_field_inline_source, FieldInlineOp, FieldInlineOperandShape, FieldRegister,
+    FIELD_INLINE_LOAD_ACCUMULATE_FROM_MEMORY_STRIDE, FIELD_INLINE_OPCODE, FIELD_REGISTER_COUNT,
+    FIELD_REGISTER_LOG_K,
 };
 pub use flags::{
     CircuitFlagSet, CircuitFlags, Flags, InstructionFlagSet, InstructionFlags,

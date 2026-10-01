@@ -19,6 +19,14 @@
 > [a16z/jolt#1829](https://github.com/a16z/jolt/pull/1829)
 > for the Stage 4 advice leaf-claim boundary. One-hot trace digit-zero
 > reduction and direct committed-program openings remain active.
+>
+> **Field-inline update:** on packed builds with field-inline enabled, the
+> joint opening also carries an always-present dense commitment to the full
+> `FieldRdInc` values, created from the execution witness in stage 0 and
+> ordered after `TrustedAdvice`. Stage 8 opens the stage-6b reduced claim
+> directly. The verifier rejects committed-program mode with field-inline
+> enabled, so direct-program roles never share a batch with it. See
+> [field-inline-portability.md](field-inline-portability.md).
 
 ## Purpose
 
@@ -28,9 +36,9 @@ instead has two layers:
 
 1. Per-proof one-hot trace columns are packed into one physical
    `OneHotTrace` polynomial and selector-reduced to one evaluation.
-2. Independently committed dense objects—advice, direct bytecode chunks, and
-   the initial program image—join that trace in one native grouped Akita
-   opening.
+2. Independently committed dense objects—advice, field increments, direct
+   bytecode chunks, and the initial program image—join that trace in one
+   native grouped Akita opening, according to the selected protocol.
 
 This document defines the current Akita claim boundary, commitment layout, and
 stage schedule. The direct committed-program design is introduced in
@@ -100,7 +108,7 @@ separately committed in Akita mode: the bytecode read-RAF stages consume their
 reduced claims and produce the fused value used by the balanced-digit chain.
 
 Enum `Ord` is not protocol group order. Packing plans and
-`PrecommittedRole` explicitly define order, and layout/statement transcripts
+`CommitmentGroupRole` explicitly define order, and layout/statement transcripts
 bind it.
 
 ## Commitment Layout

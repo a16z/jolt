@@ -32,20 +32,51 @@
 
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use jolt_claims::{InputClaims, OutputClaims, Source, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
-    SumcheckOutputClaims, SumcheckOutputPoints,
+    ChallengeIdOf, ConcreteSumcheck, ConcreteSumcheckChallenges, DerivedIdOf, OpeningIdOf,
+    SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims, SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{KernelError, ProverInputs, SumcheckKernel, SumcheckKernelError};
+
+/// Shared dense reference round driver: evaluate each integer sample independently
+/// over the Boolean remainder, enforce the running claim, then interpolate.
+pub(crate) fn sample_dense_round<F: JoltField>(
+    half: usize,
+    degree: usize,
+    round: usize,
+    previous_claim: F,
+    term: impl Fn(usize, F) -> Result<F, SumcheckError<F>> + Sync,
+) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+    let mut evals = Vec::with_capacity(degree + 1);
+    for sample in 0..=degree {
+        let point = F::from_u64(sample as u64);
+        #[cfg(feature = "parallel")]
+        let sum = (0..half)
+            .into_par_iter()
+            .map(|y| term(y, point))
+            .try_reduce(F::zero, |a, b| Ok(a + b))?;
+        #[cfg(not(feature = "parallel"))]
+        let sum = (0..half).try_fold(F::zero(), |acc, y| Ok(acc + term(y, point)?))?;
+        evals.push(sum);
+    }
+    let actual = evals[0] + evals[1];
+    if actual != previous_claim {
+        return Err(SumcheckError::RoundCheckFailed {
+            round,
+            expected: previous_claim,
+            actual,
+        });
+    }
+    Ok(UnivariatePoly::from_evals(&evals))
+}
 
 /// See the module docs. Construct with every leaf table the relation's output
 /// expression references; [`new`](Self::new) validates coverage and sizes so
@@ -54,9 +85,12 @@ pub struct NaiveSumcheckProver<F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
+    OpeningIdOf<F, R>: Sync,
+    DerivedIdOf<F, R>: Ord + Sync,
+    ChallengeIdOf<F, R>: Ord + Sync,
 {
     /// The kernel's own clone of the stage's relation, taken from
     /// [`ProverInputs`] at prepare time; the degree and output expression
@@ -66,9 +100,9 @@ where
     /// construction, so the round loop reads plain `Sync` data (the typed
     /// `Challenges` struct is borrowed with a lifetime and stays with the
     /// caller that drew it).
-    challenge_values: BTreeMap<JoltChallengeId, F>,
-    opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
-    derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
+    challenge_values: BTreeMap<ChallengeIdOf<F, R>, F>,
+    opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
+    derived_tables: BTreeMap<DerivedIdOf<F, R>, Polynomial<F>>,
     binding_order: BindingOrder,
     /// Active variables in the stored tables. An enclosing kernel handles
     /// any inactive variables in the relation's full round schedule.
@@ -77,7 +111,7 @@ where
 }
 
 /// Hand-written because the id-keyed table maps cannot go through the derive:
-/// `JoltChallengeId`/`JoltOpeningId`/`JoltDerivedId` have no `Allocative`
+/// `ChallengeIdOf<F, R>`/`OpeningIdOf<F, R>`/`DerivedIdOf<F, R>` have no `Allocative`
 /// impl, and giving them one cascades through jolt-claims for types that own
 /// no heap. Sized arithmetically instead — table bytes by `len()`, exact at
 /// the mid-stage snapshot (see
@@ -87,9 +121,12 @@ impl<F, R> allocative::Allocative for NaiveSumcheckProver<F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
+    OpeningIdOf<F, R>: Sync,
+    DerivedIdOf<F, R>: Ord + Sync,
+    ChallengeIdOf<F, R>: Ord + Sync,
 {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut allocative::Visitor<'b>) {
         fn visit_tables<K, F>(
@@ -115,7 +152,7 @@ where
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(
             allocative::Key::new("challenge_values"),
-            self.challenge_values.len() * size_of::<(JoltChallengeId, F)>(),
+            self.challenge_values.len() * size_of::<(ChallengeIdOf<F, R>, F)>(),
         );
         visit_tables(
             &mut visitor,
@@ -135,9 +172,12 @@ impl<F, R> NaiveSumcheckProver<F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
+    OpeningIdOf<F, R>: Sync,
+    DerivedIdOf<F, R>: Ord + Sync,
+    ChallengeIdOf<F, R>: Ord + Sync,
 {
     /// Validate that every leaf of the relation's output expression is
     /// resolvable — each `Opening`/`Derived` factor has a table of exactly
@@ -154,8 +194,8 @@ where
     /// remainder binds `LowToHigh`).
     pub fn new(
         inputs: &ProverInputs<'_, F, R>,
-        opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
-        derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
+        opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
+        derived_tables: BTreeMap<DerivedIdOf<F, R>, Polynomial<F>>,
         binding_order: BindingOrder,
     ) -> Result<Self, KernelError<F>> {
         Self::new_with_table_rounds(
@@ -172,8 +212,8 @@ where
     /// this kernel binds only the `table_rounds` variables stored in each table.
     pub(crate) fn new_with_table_rounds(
         inputs: &ProverInputs<'_, F, R>,
-        opening_tables: BTreeMap<JoltOpeningId, Polynomial<F>>,
-        derived_tables: BTreeMap<JoltDerivedId, Polynomial<F>>,
+        opening_tables: BTreeMap<OpeningIdOf<F, R>, Polynomial<F>>,
+        derived_tables: BTreeMap<DerivedIdOf<F, R>, Polynomial<F>>,
         binding_order: BindingOrder,
         table_rounds: usize,
     ) -> Result<Self, KernelError<F>> {
@@ -204,19 +244,19 @@ where
                     Source::Opening(id) => {
                         let table = opening_tables
                             .get(id)
-                            .ok_or(KernelError::MissingOpeningTable { id: *id })?;
+                            .ok_or(KernelError::MissingOpeningTable { id: (*id).into() })?;
                         check_len(table, id)?;
                     }
                     Source::Derived(id) => {
                         let table = derived_tables
                             .get(id)
-                            .ok_or(KernelError::MissingDerivedTable { id: *id })?;
+                            .ok_or(KernelError::MissingDerivedTable { id: (*id).into() })?;
                         check_len(table, id)?;
                     }
                     Source::Challenge(id) => {
                         let value = challenges
                             .resolve_challenge(id)
-                            .ok_or(KernelError::MissingChallenge { id: *id })?;
+                            .ok_or(KernelError::MissingChallenge { id: (*id).into() })?;
                         let _ = challenge_values.insert(*id, value);
                     }
                 }
@@ -234,7 +274,7 @@ where
             .into_iter()
             .find(|id| opening_tables.contains_key(id))
         {
-            return Err(KernelError::ConsumedClaimShadowed { id });
+            return Err(KernelError::ConsumedClaimShadowed { id: id.into() });
         }
 
         Ok(Self {
@@ -274,9 +314,12 @@ impl<F, R> ProveRounds<F> for NaiveSumcheckProver<F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
+    OpeningIdOf<F, R>: Sync,
+    DerivedIdOf<F, R>: Ord + Sync,
+    ChallengeIdOf<F, R>: Ord + Sync,
 {
     fn num_rounds(&self) -> usize {
         self.table_rounds
@@ -299,58 +342,28 @@ where
         let challenge_values = &self.challenge_values;
         let binding_order = self.binding_order;
 
-        // msg(t) = Σ_y Expr(leaf tables partially evaluated at (t, y)),
-        // sampled at t = 0..=degree and interpolated.
-        let mut evals = Vec::with_capacity(degree + 1);
-        for t in 0..=degree {
-            let point = F::from_u64(t as u64);
-            let term = |y: usize| -> Result<F, SumcheckError<F>> {
-                expression.try_evaluate(
-                    |id| {
-                        opening_tables
-                            .get(id)
-                            .map(|table| {
-                                table.sumcheck_round_eval_with_order(y, point, binding_order)
-                            })
-                            .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })
-                    },
-                    |id| {
-                        challenge_values
-                            .get(id)
-                            .copied()
-                            .ok_or(SumcheckError::MissingEvaluationSource { kind: "challenge" })
-                    },
-                    |id| {
-                        derived_tables
-                            .get(id)
-                            .map(|table| {
-                                table.sumcheck_round_eval_with_order(y, point, binding_order)
-                            })
-                            .ok_or(SumcheckError::MissingEvaluationSource { kind: "derived" })
-                    },
-                )
-            };
-
-            #[cfg(feature = "parallel")]
-            let sum = (0..half)
-                .into_par_iter()
-                .map(term)
-                .try_reduce(F::zero, |left, right| Ok(left + right))?;
-            #[cfg(not(feature = "parallel"))]
-            let sum = (0..half).try_fold(F::zero(), |acc, y| Ok(acc + term(y)?))?;
-
-            evals.push(sum);
-        }
-
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        sample_dense_round(half, degree, round, previous_claim, |y, point| {
+            expression.try_evaluate(
+                |id| {
+                    opening_tables
+                        .get(id)
+                        .map(|table| table.sumcheck_round_eval_with_order(y, point, binding_order))
+                        .ok_or(SumcheckError::MissingEvaluationSource { kind: "opening" })
+                },
+                |id| {
+                    challenge_values
+                        .get(id)
+                        .copied()
+                        .ok_or(SumcheckError::MissingEvaluationSource { kind: "challenge" })
+                },
+                |id| {
+                    derived_tables
+                        .get(id)
+                        .map(|table| table.sumcheck_round_eval_with_order(y, point, binding_order))
+                        .ok_or(SumcheckError::MissingEvaluationSource { kind: "derived" })
+                },
+            )
+        })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -363,9 +376,12 @@ impl<F, R> SumcheckKernel<F> for NaiveSumcheckProver<F, R>
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
+    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
+    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>>,
+    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
+    OpeningIdOf<F, R>: Sync,
+    DerivedIdOf<F, R>: Ord + Sync,
+    ChallengeIdOf<F, R>: Ord + Sync,
 {
     type Relation = R;
 
@@ -410,7 +426,7 @@ where
             let got = table.evals()[0];
             if got != expected {
                 return Err(SumcheckKernelError::DerivedTableDrift {
-                    id: *id,
+                    id: (*id).into(),
                     expected,
                     got,
                 });
@@ -428,6 +444,7 @@ where
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
+    use jolt_verifier::stages::ids::VerifierDerivedId;
     use std::collections::BTreeMap;
 
     use jolt_claims::protocols::jolt::{
@@ -572,7 +589,7 @@ mod tests {
                 JoltDerivedId::Test => {
                     Ok(EqPolynomial::new(self.reference_point.clone()).evaluate(output_points.a()))
                 }
-                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
             }
         }
     }
@@ -826,7 +843,7 @@ mod tests {
         assert!(matches!(
             naive.validate_derived_tables(&relation, &input_points, &output_points, &challenges),
             Err(SumcheckKernelError::DerivedTableDrift {
-                id: JoltDerivedId::Test,
+                id: VerifierDerivedId::Jolt(JoltDerivedId::Test),
                 ..
             }),
         ));
@@ -865,7 +882,7 @@ mod tests {
                 derived_tables(&reference_point()),
                 BindingOrder::HighToLow,
             ),
-            Err(KernelError::MissingOpeningTable { id }) if id == c_id,
+            Err(KernelError::MissingOpeningTable { id }) if id == c_id.into(),
         ));
 
         // A mis-sized table is rejected.
@@ -950,7 +967,7 @@ mod tests {
                 derived_tables(&reference_point()),
                 BindingOrder::HighToLow,
             ),
-            Err(KernelError::ConsumedClaimShadowed { id }) if id == advice_id,
+            Err(KernelError::ConsumedClaimShadowed { id }) if id == advice_id.into(),
         ));
     }
 
@@ -1040,7 +1057,7 @@ mod tests {
                 JoltDerivedId::Test => {
                     Ok(EqPolynomial::new(self.reference_point.clone()).evaluate(output_points.a()))
                 }
-                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
             }
         }
     }
@@ -1072,7 +1089,7 @@ mod tests {
                 derived_tables(&reference_point()),
                 BindingOrder::HighToLow,
             ),
-            Err(KernelError::ConsumedClaimShadowed { id }) if id == leaf_id,
+            Err(KernelError::ConsumedClaimShadowed { id }) if id == leaf_id.into(),
         ));
     }
 }

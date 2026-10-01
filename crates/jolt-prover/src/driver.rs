@@ -21,8 +21,9 @@
 //!
 //! See `specs/prover-stage-drivers.md`.
 
-use jolt_claims::protocols::jolt::JoltChallengeId;
-use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
+#[cfg(feature = "allocative")]
+use allocative::FlameGraphBuilder;
+use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_kernels::{
     PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -176,19 +177,12 @@ where
 pub fn mid_stage_flamegraph(
     label: &str,
     session: &ProofSession,
-    visit_members: impl FnOnce(&mut allocative::FlameGraphBuilder),
+    visit_members: impl FnOnce(&mut FlameGraphBuilder),
 ) {
-    let Some(prefix) = jolt_profiling::flamegraph_prefix() else {
-        return;
-    };
-    // Timestamp the snapshot on the trace's own clock so the summary (and
-    // the memory-timeline viz) can situate the composition against the
-    // continuous memory counters.
-    tracing::info!(snapshot = label, "heap_snapshot");
-    let mut flamegraph = allocative::FlameGraphBuilder::default();
-    flamegraph.visit_root(session);
-    visit_members(&mut flamegraph);
-    jolt_profiling::write_flamegraph_folded(flamegraph, format!("{prefix}{label}.folded"));
+    jolt_profiling::capture_heap_snapshot(label, |snapshot| {
+        snapshot.visit_root(session);
+        visit_members(snapshot);
+    });
 }
 
 /// Mint one required member's kernel through the source's [`PrepareKernel`]
@@ -206,9 +200,6 @@ where
     F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     Ok(kernels.prepare(
         session,
@@ -244,9 +235,6 @@ where
     F: JoltField,
     R: ConcreteSumcheck<F>,
     B: PrepareKernel<F, R> + ?Sized,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     match (relation, claims, points, challenges) {
         (Some(relation), Some(claims), Some(points), Some(challenges)) => {
@@ -282,9 +270,6 @@ pub fn validate_optional_tables<F, R>(
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     if let (
         Some(kernel),
@@ -310,9 +295,6 @@ pub fn extract_optional<F, R>(
 where
     F: JoltField,
     R: ConcreteSumcheck<F>,
-    SumcheckInputClaims<F, R>: InputClaims<F>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F>,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, JoltChallengeId>,
 {
     match (kernel, inputs) {
         (Some(kernel), Some(inputs)) => kernel.output_claims(inputs).map(Some),
@@ -612,6 +594,8 @@ macro_rules! impl_stage_prover {
                 let _ = ($curate_batch, $curate_points);
                 $curate_body
             }
+
+
         }
 
         impl<F: ::jolt_field::JoltField, B> $crate::driver::KernelSource<F, $batch<F>> for B

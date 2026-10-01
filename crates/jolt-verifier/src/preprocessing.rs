@@ -167,7 +167,11 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
 /// Domain separator for [`ProgramPreprocessing::digest`]. Bump the version
 /// whenever the digest input changes: it is the only compatibility switch a
 /// deployed verifier sees.
+#[cfg(not(feature = "field-inline"))]
 const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v2";
+// Field flags use the common circuit columns; preprocessing has no side table.
+#[cfg(feature = "field-inline")]
+const PROGRAM_PREPROCESSING_DIGEST_DOMAIN: &[u8] = b"jolt/program-preprocessing/v5";
 
 impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// The 32-byte program binding absorbed first into the Fiat-Shamir
@@ -175,10 +179,9 @@ impl<PCS: CommitmentScheme> ProgramPreprocessing<PCS> {
     /// encoding. Hashing the whole type binds every field the verifier trusts
     /// (mode, bytecode or its commitments, RAM image, memory layout, trace
     /// bound) without a hand-maintained field list, so a field added to any
-    /// preprocessing type enters the digest by construction. The flip side is
-    /// that cfg-gated fields enter it too: a prover and a separately built
-    /// verifier must agree on `jolt-program/field-inline` (adds a `Full`
-    /// field) and on the PCS (`Committed` carries PCS-specific fields).
+    /// preprocessing type enters the digest by construction. A prover and a
+    /// separately built verifier must agree on `field-inline` (selects the
+    /// domain tag) and on the PCS (`Committed` carries PCS-specific fields).
     pub(crate) fn digest(&self) -> Result<[u8; 32], VerifierError> {
         let encoded =
             bincode::serde::encode_to_vec(self, bincode::config::standard()).map_err(|error| {
@@ -307,22 +310,38 @@ mod tests {
 
     /// Golden digests. A change here is a Fiat-Shamir break for every
     /// deployed verifier: bump `PROGRAM_PREPROCESSING_DIGEST_DOMAIN` and say so
-    /// in the PR. Pinned for a build without `jolt-program/field-inline`,
-    /// which adds a field to the `Full` encoding; CI never unifies that
-    /// feature into a jolt-verifier test build.
+    /// in the PR. Pinned separately with and without `jolt-program/field-inline`:
+    /// the bytecode row schema is shared, while field-inline selects its own
+    /// digest domain for the extended instruction and proof profile.
+    #[cfg(not(feature = "field-inline"))]
     const FULL_PROGRAM_DIGEST: [u8; 32] = [
         42, 63, 50, 98, 242, 124, 42, 171, 43, 223, 155, 146, 108, 130, 235, 136, 177, 93, 248,
         227, 104, 23, 145, 35, 121, 150, 138, 9, 19, 215, 204, 12,
     ];
-    #[cfg(not(feature = "akita"))]
+    #[cfg(feature = "field-inline")]
+    const FULL_PROGRAM_DIGEST: [u8; 32] = [
+        102, 54, 187, 66, 54, 228, 103, 28, 102, 88, 129, 135, 250, 47, 104, 215, 38, 203, 135,
+        219, 16, 41, 198, 24, 13, 89, 213, 127, 111, 139, 110, 231,
+    ];
+    #[cfg(all(not(feature = "akita"), not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
         76, 161, 182, 52, 209, 226, 192, 126, 13, 13, 181, 24, 203, 128, 171, 65, 168, 64, 127,
         107, 153, 86, 181, 56, 83, 191, 66, 19, 164, 158, 146, 116,
     ];
-    #[cfg(feature = "akita")]
+    #[cfg(all(feature = "akita", not(feature = "field-inline")))]
     const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
         251, 63, 111, 254, 167, 21, 41, 185, 193, 117, 188, 112, 255, 206, 156, 249, 230, 201, 4,
         155, 92, 191, 65, 14, 2, 241, 131, 79, 154, 216, 42, 71,
+    ];
+    #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        174, 124, 18, 23, 181, 244, 18, 72, 74, 61, 54, 195, 188, 95, 240, 106, 191, 172, 147, 197,
+        170, 48, 233, 238, 236, 123, 232, 208, 240, 225, 202, 20,
+    ];
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    const COMMITTED_PROGRAM_DIGEST: [u8; 32] = [
+        16, 130, 0, 92, 223, 42, 224, 227, 251, 42, 100, 166, 128, 182, 254, 77, 20, 144, 95, 108,
+        190, 25, 90, 127, 205, 145, 75, 51, 132, 226, 123, 67,
     ];
 
     /// An empty program over a real (non-zero) memory layout, so every layout

@@ -361,74 +361,113 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         Polynomial::new(evals)
     }
 
-    /// Computes `s(X) = l(X) * q(X)` where `l` is the current linear eq
-    /// factor and `q` is quadratic, represented by its constant and quadratic
-    /// coefficients plus the sumcheck hint `s(0) + s(1)`.
-    #[expect(clippy::expect_used)]
+    /// Computes the cubic `s = l*q` from `q(0)`, its leading coefficient,
+    /// and the sumcheck hint. The missing endpoint is evaluated only when
+    /// `l(1)` vanishes. An error carries the actual endpoint sum.
     pub fn gruen_poly_deg_3(
         &self,
         q_constant: F,
         q_quadratic_coeff: F,
         s_0_plus_s_1: F,
-    ) -> UnivariatePoly<F> {
-        let eq_eval_1 = self.current_scalar
-            * match self.binding_order {
-                BindingOrder::LowToHigh => self.point[self.current_index - 1],
-                BindingOrder::HighToLow => self.point[self.current_index],
-            };
-        let eq_eval_0 = self.current_scalar - eq_eval_1;
+        q_at_one: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, F> {
+        let (eq_eval_0, eq_eval_1) = self.current_linear_evals();
+        if self.current_scalar.is_zero() {
+            return Self::zero_round(4, s_0_plus_s_1);
+        }
         let eq_m = eq_eval_1 - eq_eval_0;
         let eq_eval_2 = eq_eval_1 + eq_m;
         let eq_eval_3 = eq_eval_2 + eq_m;
-
-        let quadratic_eval_0 = q_constant;
-        let cubic_eval_0 = eq_eval_0 * quadratic_eval_0;
+        let cubic_eval_0 = eq_eval_0 * q_constant;
         let cubic_eval_1 = s_0_plus_s_1 - cubic_eval_0;
-        let quadratic_eval_1 = cubic_eval_1
-            * eq_eval_1
-                .inverse()
-                .expect("current eq evaluation at one must be invertible");
+        let quadratic_eval_1 = if let Some(inverse) = eq_eval_1.inverse() {
+            cubic_eval_1 * inverse
+        } else {
+            let endpoint = q_at_one();
+            let actual = cubic_eval_0 + eq_eval_1 * endpoint;
+            if actual != s_0_plus_s_1 {
+                return Err(actual);
+            }
+            endpoint
+        };
         let e_times_2 = q_quadratic_coeff + q_quadratic_coeff;
-        let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - quadratic_eval_0 + e_times_2;
+        let quadratic_eval_2 = quadratic_eval_1 + quadratic_eval_1 - q_constant + e_times_2;
         let quadratic_eval_3 =
-            quadratic_eval_2 + quadratic_eval_1 - quadratic_eval_0 + e_times_2 + e_times_2;
-
-        UnivariatePoly::interpolate_over_integers(&[
+            quadratic_eval_2 + quadratic_eval_1 - q_constant + e_times_2 + e_times_2;
+        Ok(UnivariatePoly::interpolate_over_integers(&[
             cubic_eval_0,
             cubic_eval_1,
             eq_eval_2 * quadratic_eval_2,
             eq_eval_3 * quadratic_eval_3,
-        ])
+        ]))
     }
 
-    #[expect(clippy::expect_used)]
-    pub fn gruen_poly_from_evals(&self, q_evals: &[F], s_0_plus_s_1: F) -> UnivariatePoly<F> {
-        let r_round = match self.binding_order {
-            BindingOrder::LowToHigh => self.point[self.current_index - 1],
-            BindingOrder::HighToLow => self.point[self.current_index],
-        };
-
-        let l_at_0 = self.current_scalar * (F::one() - r_round);
-        let l_at_1 = self.current_scalar * r_round;
-        let q_at_0 = (s_0_plus_s_1 - l_at_1 * q_evals[0])
-            * l_at_0
-                .inverse()
-                .expect("current eq evaluation at zero must be invertible");
-
+    /// Toom samples are `q(1)..q(d-1), q`'s leading coefficient, with `d>=2`.
+    /// `q_evals` must contain at least two entries.
+    /// The missing `q(0)` is evaluated only when `l(0)` vanishes.
+    pub fn gruen_poly_from_evals(
+        &self,
+        q_evals: &[F],
+        s_0_plus_s_1: F,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, F> {
+        if self.current_scalar.is_zero() {
+            return Self::zero_round(q_evals.len() + 2, s_0_plus_s_1);
+        }
+        let q_zero = self.recover_q_zero(q_evals[0], s_0_plus_s_1, q_at_zero)?;
         let mut full_q_evals = Vec::with_capacity(q_evals.len() + 1);
-        full_q_evals.push(q_at_0);
+        full_q_evals.push(q_zero);
         full_q_evals.extend_from_slice(q_evals);
         let q_coeffs = UnivariatePoly::from_evals_toom(&full_q_evals).into_coefficients();
+        Ok(self.multiply_linear_factor(&q_coeffs))
+    }
 
-        let l_c0 = l_at_0;
-        let l_c1 = l_at_1 - l_at_0;
-        let mut s_coeffs = vec![F::zero(); q_coeffs.len() + 1];
-        for (index, q_coeff) in q_coeffs.into_iter().enumerate() {
-            s_coeffs[index] += q_coeff * l_c0;
-            s_coeffs[index + 1] += q_coeff * l_c1;
+    /// Degree-two message for a linear inner factor, with lazy `q(0)` recovery.
+    pub fn gruen_poly_deg_2(
+        &self,
+        q_one: F,
+        s_0_plus_s_1: F,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, F> {
+        if self.current_scalar.is_zero() {
+            return Self::zero_round(3, s_0_plus_s_1);
         }
+        let q_zero = self.recover_q_zero(q_one, s_0_plus_s_1, q_at_zero)?;
+        Ok(self.multiply_linear_factor(&[q_zero, q_one - q_zero]))
+    }
 
-        UnivariatePoly::new(s_coeffs)
+    fn recover_q_zero(&self, q_one: F, hint: F, q_at_zero: impl FnOnce() -> F) -> Result<F, F> {
+        let (l_zero, l_one) = self.current_linear_evals();
+        if let Some(inverse) = l_zero.inverse() {
+            Ok((hint - l_one * q_one) * inverse)
+        } else {
+            let q_zero = q_at_zero();
+            let actual = l_zero * q_zero + l_one * q_one;
+            if actual == hint {
+                Ok(q_zero)
+            } else {
+                Err(actual)
+            }
+        }
+    }
+
+    fn multiply_linear_factor(&self, q_coeffs: &[F]) -> UnivariatePoly<F> {
+        let (l_zero, l_one) = self.current_linear_evals();
+        let l_slope = l_one - l_zero;
+        let mut coefficients = vec![F::zero(); q_coeffs.len() + 1];
+        for (index, q_coeff) in q_coeffs.iter().copied().enumerate() {
+            coefficients[index] += q_coeff * l_zero;
+            coefficients[index + 1] += q_coeff * l_slope;
+        }
+        UnivariatePoly::new(coefficients)
+    }
+
+    fn zero_round(coefficients: usize, hint: F) -> Result<UnivariatePoly<F>, F> {
+        if hint.is_zero() {
+            Ok(UnivariatePoly::new(vec![F::zero(); coefficients]))
+        } else {
+            Err(F::zero())
+        }
     }
 
     #[inline(always)]
@@ -496,11 +535,17 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "test module asserts successful reconstruction and forbidden lazy endpoint evaluation"
+)]
 mod tests {
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+    use std::cell::Cell;
 
     use super::*;
 
@@ -639,7 +684,11 @@ mod tests {
                 let l = hand_built_linear(hand_scalar, w);
                 let hint = l.evaluate(Fr::zero()) * q.evaluate(Fr::zero())
                     + l.evaluate(Fr::one()) * q.evaluate(Fr::one());
-                let s = split.gruen_poly_deg_3(q.coefficients()[0], q.coefficients()[2], hint);
+                let s = split
+                    .gruen_poly_deg_3(q.coefficients()[0], q.coefficients()[2], hint, || {
+                        q.evaluate(Fr::one())
+                    })
+                    .unwrap();
                 assert_eq!(s.coefficients().len(), 4, "{order:?} round {round}");
                 // s and l*q both have degree <= 3, so agreement on 8 points
                 // plus a random one forces polynomial equality
@@ -656,17 +705,6 @@ mod tests {
                 split.bind(challenge);
             }
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "current eq evaluation at one must be invertible")]
-    fn gruen_poly_deg_3_panics_when_eq_linear_factor_vanishes_at_one() {
-        let mut point = random_point(4, 1500);
-        // LowToHigh's current round variable is the last coordinate;
-        // w = 0 makes l(1) = scalar * w = 0, which deg-3 must invert.
-        point[3] = Fr::zero();
-        let split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
-        let _ = split.gruen_poly_deg_3(Fr::one(), Fr::one(), Fr::one());
     }
 
     #[test]
@@ -699,7 +737,9 @@ mod tests {
                 let hint = l.evaluate(Fr::zero()) * q.evaluate(Fr::zero())
                     + l.evaluate(Fr::one()) * q.evaluate(Fr::one());
 
-                let s = split.gruen_poly_from_evals(&q_evals, hint);
+                let s = split
+                    .gruen_poly_from_evals(&q_evals, hint, || q.evaluate(Fr::zero()))
+                    .unwrap();
                 assert_eq!(s.coefficients().len(), degree + 2, "{order:?} deg {degree}");
                 for x in (0..2 * degree as u64 + 3).map(Fr::from_u64) {
                     assert_eq!(
@@ -712,14 +752,161 @@ mod tests {
         }
     }
 
+    fn exceptional_rounds_match_products<F: JoltField>() {
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            for coordinate in [F::zero(), F::one(), F::from_u64(7)] {
+                for zero_prefix in [false, true] {
+                    let mut split = GruenSplitEqPolynomial::new_with_scaling(
+                        &[coordinate],
+                        order,
+                        Some(if zero_prefix {
+                            F::zero()
+                        } else {
+                            F::from_u64(11)
+                        }),
+                    );
+                    for killed_prefix in [false, true] {
+                        if killed_prefix {
+                            let point = match order {
+                                BindingOrder::LowToHigh => vec![coordinate, F::zero()],
+                                BindingOrder::HighToLow => vec![F::zero(), coordinate],
+                            };
+                            split = GruenSplitEqPolynomial::new_with_scaling(
+                                &point,
+                                order,
+                                Some(F::from_u64(11)),
+                            );
+                            split.bind(F::one());
+                        }
+                        let scalar = if zero_prefix || killed_prefix {
+                            F::zero()
+                        } else {
+                            F::from_u64(11)
+                        };
+                        let l_zero = scalar * (F::one() - coordinate);
+                        let l_one = scalar * coordinate;
+                        for degree in [1usize, 2, 3] {
+                            let q = UnivariatePoly::new(
+                                (0..=degree)
+                                    .map(|i| F::from_u64(2 + 3 * i as u64))
+                                    .collect(),
+                            );
+                            let hint =
+                                l_zero * q.evaluate(F::zero()) + l_one * q.evaluate(F::one());
+                            let called = Cell::new(false);
+                            let polynomial = if degree == 1 {
+                                split
+                                    .gruen_poly_deg_2(q.evaluate(F::one()), hint, || {
+                                        called.set(true);
+                                        q.evaluate(F::zero())
+                                    })
+                                    .unwrap()
+                            } else {
+                                let mut samples: Vec<F> = (1..degree)
+                                    .map(|i| q.evaluate(F::from_u64(i as u64)))
+                                    .collect();
+                                samples.push(q.coefficients()[degree]);
+                                split
+                                    .gruen_poly_from_evals(&samples, hint, || {
+                                        called.set(true);
+                                        q.evaluate(F::zero())
+                                    })
+                                    .unwrap()
+                            };
+                            assert_eq!(called.get(), !scalar.is_zero() && l_zero.is_zero());
+                            if !scalar.is_zero() && l_zero.is_zero() {
+                                let bad_hint = hint + F::one();
+                                if degree == 1 {
+                                    assert_eq!(
+                                        split.gruen_poly_deg_2(
+                                            q.evaluate(F::one()),
+                                            bad_hint,
+                                            || q.evaluate(F::zero())
+                                        ),
+                                        Err(hint)
+                                    );
+                                } else {
+                                    let mut samples: Vec<F> = (1..degree)
+                                        .map(|i| q.evaluate(F::from_u64(i as u64)))
+                                        .collect();
+                                    samples.push(q.coefficients()[degree]);
+                                    assert_eq!(
+                                        split.gruen_poly_from_evals(&samples, bad_hint, || q
+                                            .evaluate(F::zero())),
+                                        Err(hint)
+                                    );
+                                }
+                            }
+                            assert_eq!(polynomial.coefficients().len(), degree + 2);
+                            for x in (0..8).map(F::from_u64) {
+                                let linear = l_zero + (l_one - l_zero) * x;
+                                assert_eq!(polynomial.evaluate(x), linear * q.evaluate(x));
+                            }
+                            if degree == 2 {
+                                called.set(false);
+                                let cubic = split
+                                    .gruen_poly_deg_3(
+                                        q.coefficients()[0],
+                                        q.coefficients()[2],
+                                        hint,
+                                        || {
+                                            called.set(true);
+                                            q.evaluate(F::one())
+                                        },
+                                    )
+                                    .unwrap();
+                                assert_eq!(called.get(), !scalar.is_zero() && l_one.is_zero());
+                                assert_eq!(cubic.coefficients().len(), 4);
+                                assert_eq!(cubic.coefficients(), polynomial.coefficients());
+                                if !scalar.is_zero() && l_one.is_zero() {
+                                    assert_eq!(
+                                        split.gruen_poly_deg_3(
+                                            q.coefficients()[0],
+                                            q.coefficients()[2],
+                                            hint + F::one(),
+                                            || q.evaluate(F::one())
+                                        ),
+                                        Err(hint)
+                                    );
+                                }
+                            }
+                        }
+                        if scalar.is_zero() {
+                            assert_eq!(
+                                split.gruen_poly_deg_3(F::one(), F::one(), F::one(), || panic!(
+                                    "zero factor must not scan"
+                                )),
+                                Err(F::zero())
+                            );
+                            assert_eq!(
+                                split.gruen_poly_from_evals(
+                                    &[F::one(), F::one()],
+                                    F::one(),
+                                    || panic!("zero factor must not scan")
+                                ),
+                                Err(F::zero())
+                            );
+                            assert_eq!(
+                                split.gruen_poly_deg_2(F::one(), F::one(), || panic!(
+                                    "zero factor must not scan"
+                                )),
+                                Err(F::zero())
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
-    #[should_panic(expected = "current eq evaluation at zero must be invertible")]
-    fn gruen_poly_from_evals_panics_when_eq_linear_factor_vanishes_at_zero() {
-        let mut point = random_point(4, 1600);
-        // w = 1 makes l(0) = scalar * (1 - w) = 0, which from_evals must invert.
-        point[3] = Fr::one();
-        let split = GruenSplitEqPolynomial::<Fr>::new(&point, BindingOrder::LowToHigh);
-        let _ = split.gruen_poly_from_evals(&[Fr::one(), Fr::one()], Fr::one());
+    fn exceptional_gruen_rounds_match_true_products_bn254() {
+        exceptional_rounds_match_products::<Fr>();
+    }
+
+    #[test]
+    fn exceptional_gruen_rounds_match_true_products_akita_field() {
+        exceptional_rounds_match_products::<Prime128OffsetA7F7>();
     }
 
     #[test]

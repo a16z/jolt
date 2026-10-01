@@ -19,6 +19,8 @@ default = ["jolt-platform/random"]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
 field-inline = [
+  "jolt-prover?/field-inline",
+  "jolt-verifier?/field-inline",
   "jolt-host?/field-inline",
   "jolt-program?/field-inline",
   "jolt-witness?/field-inline",

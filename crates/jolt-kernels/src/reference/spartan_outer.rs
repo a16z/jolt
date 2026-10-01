@@ -18,25 +18,40 @@
 //! replaces these internals for real trace lengths without touching the
 //! `jolt-prover` stage recipe.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::composed::ComposedOpeningId;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::spartan::outer_output_openings as field_outer_output_openings;
 use std::collections::BTreeMap;
 
-use jolt_claims::protocols::jolt::geometry::dimensions::OUTER_UNISKIP_DOMAIN_SIZE;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
 use jolt_claims::protocols::jolt::geometry::spartan::{outer_opening, SpartanOuterDimensions};
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltOpeningId, SpartanOuterPublic};
 use jolt_field::JoltField;
 use jolt_poly::lagrange::{centered_lagrange_evals, centered_lagrange_kernel, poly_mul};
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::constraint::ConstraintMatrices;
-use jolt_r1cs::constraints::jolt::{spartan_outer_constraints, spartan_outer_row_weights};
+// The COMPOSED jolt-r1cs shapes (feature-aware): identical to the jolt-claims RV64-only
+// constants without field-inline, the field-inline-extended row/column composition
+// under `field-inline` — the shapes the composed verifier checks.
+use jolt_r1cs::constraints::jolt::{
+    spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
+    SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+};
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::JoltWitnessOracle;
+#[cfg(feature = "field-inline")]
+use jolt_witness::WitnessError;
 
-use super::views::{dense_view, replicate_stream_lsb, stream_pair_lsb};
+use super::views::stream_pair_lsb;
+use super::views::{dense_view, replicate_stream_lsb};
 use crate::uniskip::UniskipKernel;
+use crate::NaiveSumcheckProver;
 use crate::ProverInputs;
-use crate::{
-    KernelError, NaiveSumcheckProver, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel,
-};
+use crate::{KernelError, PrepareKernel, ProofSession, ReferenceBackend, SumcheckKernel};
 use jolt_witness::JoltWitnessPlane;
 impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for ReferenceBackend {
     // The backend-neutral `SpartanOuterUniskip::*` spans live at the stage-1
@@ -89,7 +104,7 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for ReferenceOuterRemaind
     }
 }
 
-/// The shared stage-1 compute state: the 35 R1CS input tables, the
+/// The shared stage-1 compute state: the ordinary R1CS input tables, the
 /// per-constraint Az/Bz row-value tables, and `eq(τ_low, ·)` — everything the
 /// uni-skip polynomial and the remainder member both consume.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -98,8 +113,14 @@ pub struct SpartanOuterKernel<F: JoltField> {
     tau: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     matrices: ConstraintMatrices<F>,
-    /// Cycle-indexed R1CS input tables (big-endian cycle index), in the
-    /// relation's variable order.
+    /// The composed opening-column selection (`spartan_outer_opening_columns`), aligned
+    /// index-for-index with `input_tables`. Not contiguous under `field-inline`: the
+    /// two rv64 product-factor columns sit between the ordinary inputs and the appended
+    /// field-inline columns.
+    columns: Vec<usize>,
+    /// Cycle-indexed R1CS input tables (big-endian cycle index), in the composed
+    /// opening-column order: the relation's ordinary variables, then (under `field-inline`)
+    /// the five field-inline columns.
     input_tables: Vec<Vec<F>>,
     /// Per-constraint-row value tables over the cycle domain:
     /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]`.
@@ -122,13 +143,15 @@ impl<F: JoltField> SpartanOuterKernel<F> {
         let dimensions = SpartanOuterDimensions::rv64(log_t);
         let input_tables = materialize_input_tables(witness, &dimensions)?;
         let matrices = spartan_outer_constraints::<F>();
-        let (az_rows, bz_rows) = row_value_tables(&matrices, &input_tables);
+        let columns = spartan_outer_opening_columns();
+        let (az_rows, bz_rows) = row_value_tables(&matrices, &input_tables, &columns)?;
         let (tau_low, _) = tau.split_at(log_t + 1);
         let eq_table = EqPolynomial::new(tau_low.to_vec()).evaluations();
         Ok(Self {
             log_t,
             tau: tau.to_vec(),
             matrices,
+            columns,
             input_tables,
             az_rows,
             bz_rows,
@@ -145,10 +168,10 @@ impl<F: JoltField> SpartanOuterKernel<F> {
     /// transmitted polynomial is `LK(τ_high, ·) × t1`.
     fn uniskip_first_round_poly(&self) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let tau_high = self.tau[self.log_t + 1];
-        let extended_size = 2 * OUTER_UNISKIP_DOMAIN_SIZE - 1;
-        let domain_start = -((OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
+        let extended_size = 2 * SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE - 1;
+        let domain_start = -((SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
         let extended_start = -((extended_size as i64 - 1) / 2);
-        let domain_end = domain_start + OUTER_UNISKIP_DOMAIN_SIZE as i64;
+        let domain_end = domain_start + SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE as i64;
 
         let cycles = 1usize << self.log_t;
         let mut t1_values = vec![F::zero(); extended_size];
@@ -185,7 +208,8 @@ impl<F: JoltField> SpartanOuterKernel<F> {
             *value = sum;
         }
 
-        let kernel_values = centered_lagrange_evals::<F>(OUTER_UNISKIP_DOMAIN_SIZE, tau_high)?;
+        let kernel_values =
+            centered_lagrange_evals::<F>(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, tau_high)?;
         let kernel_coefficients =
             jolt_poly::lagrange::interpolate_to_coeffs(domain_start, &kernel_values);
         let t1_coefficients =
@@ -209,20 +233,18 @@ impl<F: JoltField> SpartanOuterKernel<F> {
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
         let uniskip_challenge = inputs.relation.uniskip_challenge();
         let kernel = centered_lagrange_kernel::<F>(
-            OUTER_UNISKIP_DOMAIN_SIZE,
+            SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
             self.tau[self.log_t + 1],
             uniskip_challenge,
         )?;
 
-        let variable_count = self.input_tables.len();
-        let columns: Vec<usize> = (1..=variable_count).collect();
         let mut az_columns: [Vec<F>; 2] = [Vec::new(), Vec::new()];
         let mut bz_columns: [Vec<F>; 2] = [Vec::new(), Vec::new()];
         let mut az_constant = [F::zero(); 2];
         let mut bz_constant = [F::zero(); 2];
         for (index, stream) in [F::zero(), F::one()].into_iter().enumerate() {
             let weights = spartan_outer_row_weights(uniskip_challenge, stream)?;
-            let weighted = self.matrices.weighted_columns(&weights, &columns)?;
+            let weighted = self.matrices.weighted_columns(&weights, &self.columns)?;
             az_columns[index] = weighted.a;
             bz_columns[index] = weighted.b;
             let constants = self
@@ -233,15 +255,17 @@ impl<F: JoltField> SpartanOuterKernel<F> {
         }
 
         let cycles = 1usize << self.log_t;
+        let tau_kernel_table = self
+            .eq_table
+            .iter()
+            .map(|&eq| eq * kernel)
+            .collect::<Vec<F>>();
+
+        let variable_count = self.input_tables.len();
         let mut derived_tables = BTreeMap::new();
         let _ = derived_tables.insert(
             JoltDerivedId::from(SpartanOuterPublic::TauKernel),
-            Polynomial::new(
-                self.eq_table
-                    .iter()
-                    .map(|&eq| eq * kernel)
-                    .collect::<Vec<F>>(),
-            ),
+            Polynomial::new(tau_kernel_table),
         );
         for index in 0..variable_count {
             let _ = derived_tables.insert(
@@ -281,6 +305,23 @@ impl<F: JoltField> SpartanOuterKernel<F> {
             })
             .collect();
 
+        #[cfg(feature = "field-inline")]
+        let opening_tables = opening_tables
+            .into_iter()
+            .map(|(id, table)| (ComposedOpeningId::from(id), table))
+            .chain(
+                field_outer_output_openings()
+                    .into_iter()
+                    .zip(self.input_tables.iter().skip(dimensions.variables().len()))
+                    .map(|(id, table)| {
+                        (
+                            ComposedOpeningId::from(id),
+                            Polynomial::new(replicate_stream_lsb(table)),
+                        )
+                    }),
+            )
+            .collect();
+
         Ok(Box::new(NaiveSumcheckProver::new(
             inputs,
             opening_tables,
@@ -290,28 +331,62 @@ impl<F: JoltField> SpartanOuterKernel<F> {
     }
 }
 
-/// Materialize the 35 R1CS input polynomials (cycle-indexed, big-endian) in
-/// the relation's variable order.
+/// Materialize the selected R1CS input polynomials (cycle-indexed, big-endian) in the
+/// composed opening-column order: the ordinary rv64 inputs in the relation's variable order,
+/// then (under `field-inline`) the five field-inline columns in
+/// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — matching
+/// `spartan_outer_opening_columns()` index-for-index. Fails closed when a build with
+/// field-inline enabled proves a witness without the field-inline oracle.
 fn materialize_input_tables<F: JoltField>(
     witness: &dyn JoltWitnessOracle<F>,
     dimensions: &SpartanOuterDimensions,
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
-    dimensions
+    #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+    let mut tables = dimensions
         .variables()
         .iter()
         .map(|&variable| dense_view(witness, outer_opening(variable)))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    #[cfg(feature = "field-inline")]
+    {
+        let field_inline =
+            witness
+                .field_inline()
+                .ok_or(KernelError::Witness(WitnessError::UnavailableView {
+                    label: "composed Spartan outer field-inline oracle",
+                }))?;
+        for polynomial in FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS {
+            tables.push(field_inline.oracle_table(FieldInlinePolynomialId::Virtual(polynomial))?);
+        }
+    }
+    Ok(tables)
 }
 
 /// Per-constraint-row Az/Bz value tables over the cycle domain:
 /// `az_rows[r][t] = Σ_(v,α)∈A_r α · z_t[v]` with `z_t[0] = 1` and
-/// `z_t[1 + k] = input_tables[k][t]`.
+/// `z_t[columns[k]] = input_tables[k][t]` — the composed opening columns are
+/// not contiguous under `field-inline`, so the matrix column index resolves
+/// through the selection rather than by offset. A constraint referencing a
+/// non-selected, non-constant column is a composition bug, surfaced here.
+#[expect(
+    clippy::type_complexity,
+    reason = "the Az/Bz row-table pair, now fallible under the composed column selection"
+)]
 fn row_value_tables<F: JoltField>(
     matrices: &ConstraintMatrices<F>,
     input_tables: &[Vec<F>],
-) -> (Vec<Vec<F>>, Vec<Vec<F>>) {
+    columns: &[usize],
+) -> Result<(Vec<Vec<F>>, Vec<Vec<F>>), KernelError<F>> {
+    let mut column_to_table: Vec<Option<usize>> = vec![None; matrices.num_vars];
+    for (position, &column) in columns.iter().enumerate() {
+        *column_to_table
+            .get_mut(column)
+            .ok_or(KernelError::InvariantViolation {
+                reason: "Spartan outer opening column exceeds the constraint variable count",
+            })? = Some(position);
+    }
     let cycles = input_tables.first().map_or(0, Vec::len);
-    let row_values = |rows: &[Vec<(usize, F)>]| {
+    let row_values = |rows: &[Vec<(usize, F)>]| -> Result<Vec<Vec<F>>, KernelError<F>> {
         rows.iter()
             .map(|row| {
                 (0..cycles)
@@ -319,18 +394,24 @@ fn row_value_tables<F: JoltField>(
                         row.iter()
                             .map(|&(variable, coefficient)| {
                                 if variable == 0 {
-                                    coefficient
-                                } else {
-                                    coefficient * input_tables[variable - 1][t]
+                                    return Ok(coefficient);
                                 }
+                                let table =
+                                    column_to_table.get(variable).copied().flatten().ok_or(
+                                        KernelError::InvariantViolation {
+                                            reason: "Spartan outer constraint references a \
+                                                 non-opening column",
+                                        },
+                                    )?;
+                                Ok(coefficient * input_tables[table][t])
                             })
-                            .sum()
+                            .sum::<Result<F, KernelError<F>>>()
                     })
-                    .collect::<Vec<F>>()
+                    .collect::<Result<Vec<F>, _>>()
             })
-            .collect::<Vec<_>>()
+            .collect()
     };
-    (row_values(&matrices.a), row_values(&matrices.b))
+    Ok((row_values(&matrices.a)?, row_values(&matrices.b)?))
 }
 
 #[cfg(test)]
