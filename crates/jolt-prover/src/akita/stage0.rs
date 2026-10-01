@@ -1,7 +1,9 @@
 //! Packed stage 0: input validation, commitments, and transcript setup.
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::TraceOneHotCommitment;
+use std::sync::Arc;
+
+use jolt_akita::{TraceOneHotCommitment, TraceOneHotRows};
 use jolt_claims::protocols::jolt::lattice::{OneHotTraceShape, ONE_HOT_TRACE_LAYOUT};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
@@ -242,9 +244,10 @@ where
                 &preprocessing.pcs_setup,
                 preprocessing.pcs_setup.default_layout_digest(),
                 plan.packing().slot_capacity(),
-                assembled.rows,
+                Arc::clone(&assembled.rows) as Arc<dyn TraceOneHotRows>,
                 &group_hints,
             );
+            assembled.rows.check_extraction()?;
             let (commitment, hint) =
                 committed.map_err(|error| VerifierError::FinalOpeningVerificationFailed {
                     reason: error.to_string(),

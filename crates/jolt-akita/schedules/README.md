@@ -54,6 +54,11 @@ Apple M4 Max host:
 `2^20` therefore misses the 2x verifier gate. `2^21` is the first measured
 shape to clear it while keeping total prover time within the 10% budget.
 
+These timings were measured on the rows that preceded the catalog
+regeneration under akita `db5efa20`. The regenerated hybrid catalogs switch
+from direct to setup-offloaded rows at the same logical trace length; the
+table was not re-measured.
+
 Grouped planning first preserves the selected trace row's fold geometry,
 opening parameters, relation modes, and direct/offloaded topology, adapting
 only the auxiliary object profiles and the sizes they induce. Requests with

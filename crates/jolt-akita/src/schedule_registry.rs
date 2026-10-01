@@ -10,7 +10,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use akita_config::{honest_fold_policy_of, policy_of, CommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig};
 use akita_pcs::AkitaError;
 use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use akita_planner::find_adapted_schedule;
@@ -57,11 +57,7 @@ impl DenseGroupLayout {
 fn producer<Cfg: CommitmentConfig>(
     profile: &GroupCommitPhaseParams,
 ) -> Result<PrecommittedProducer, AkitaError> {
-    PrecommittedProducer::try_new(
-        *profile,
-        Cfg::committed_source_contract()?,
-        honest_fold_policy_of::<Cfg>(),
-    )
+    PrecommittedProducer::try_new(*profile, Cfg::committed_source_contract()?)
 }
 
 /// Public inputs needed to construct this setup's grouped schedules.
@@ -192,7 +188,7 @@ fn plan_row<Cfg: CommitmentConfig>(
     let adapted = find_adapted_schedule(
         main_row,
         &request,
-        honest_fold_policy_of::<Cfg>(),
+        Cfg::committed_source_contract()?,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
     );
@@ -215,16 +211,7 @@ fn plan_row<Cfg: CommitmentConfig>(
             // full-width batch. Restrict full search to that shape so it cannot
             // bypass the adapted planner's opening-assignment budget for larger
             // batches. Every prefix commitment's descriptor remains fixed.
-            let fold_policies = producers
-                .iter()
-                .map(|producer| {
-                    let contract = producer.source_contract();
-                    contract
-                        .class()
-                        .honest_fold_policy(contract.decomposition().field_bits())
-                })
-                .collect::<Vec<_>>();
-            crate::planning::plan_schedule::<Cfg>(&key, &fold_policies)?
+            crate::planning::plan_schedule::<Cfg>(&key, &request.source_contracts())?
         }
         Err(error) => return Err(error),
     };
