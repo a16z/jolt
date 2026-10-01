@@ -197,6 +197,11 @@ jobs:
           --features host,field-inline
           --
           -D warnings
+      # Recursion's non-default host paths are not selected by workspace checks.
+      - name: cargo clippy -p recursion --features field-inline
+        run: cargo clippy -p recursion --all-targets --features field-inline -- -D warnings
+      - name: cargo clippy -p recursion --features akita,field-inline,ntt-inline
+        run: cargo clippy -p recursion --all-targets --features akita,field-inline,ntt-inline -- -D warnings
 
   machete:
     runs-on: ubuntu-latest
@@ -467,6 +472,7 @@ jobs:
 
   test-prover-akita-field-inline:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     name: Test jolt-prover (packed field-inline matrix and e2e)
     steps:
       - uses: actions/checkout@v7
@@ -514,6 +520,19 @@ jobs:
         run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
+      - name: Recursion guest verdicts (embedded setup)
+        timeout-minutes: 45
+        env:
+          CARGO_BUILD_JOBS: 1
+        run: |
+          cargo build --locked --profile ci -p recursion --features akita,field-inline,ntt-inline
+          export JOLT_PATH="$(command -v jolt)"
+          recursion=target/ci/recursion
+          work="$RUNNER_TEMP/recursion"
+          "$recursion" generate --example fibonacci --workdir "$work/proofs"
+          "$recursion" trace --embed --example fibonacci --workdir "$work/proofs"
+          "$recursion" tamper-opening --example fibonacci --workdir "$work/proofs" --output "$work/tampered"
+          "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/tampered"
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest

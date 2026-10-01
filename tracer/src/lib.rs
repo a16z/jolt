@@ -231,6 +231,7 @@ pub fn trace_to_file(
     let writer =
         TraceWriter::<Cycle>::new(out_path, config).expect("Failed to create trace writer");
     let mut collector = TraceBatchCollector::new(writer);
+    emulator::pc_profile::init();
     let mut lazy = trace_lazy(
         elf_contents,
         elf_path,
@@ -250,6 +251,7 @@ pub fn trace_to_file(
         .expect("Failed to finalize trace writer");
 
     info!("trace length: {total} cycles");
+    emulator::pc_profile::finish();
 
     let final_mem = lazy.lazy_tracer.final_memory_state.take().unwrap();
     (final_mem, lazy.lazy_tracer.get_jolt_device())

@@ -652,6 +652,8 @@ impl Cpu {
 
     // @TODO: Rename?
     fn tick_operate(&mut self, trace: Option<&mut Vec<Cycle>>) -> Result<(), Trap> {
+        #[cfg(feature = "std")]
+        let instruction_address = self.pc;
         if self.wfi {
             if (self.read_csr_raw(CSR_MIE_ADDRESS) & self.read_csr_raw(CSR_MIP_ADDRESS)) != 0 {
                 self.wfi = false;
@@ -678,7 +680,10 @@ impl Cpu {
             Some(trace_vec) => {
                 let rows_before = trace_vec.len();
                 instr.trace(self, Some(&mut *trace_vec));
-                self.trace_len += trace_vec.len() - rows_before;
+                let rows = trace_vec.len() - rows_before;
+                self.trace_len += rows;
+                #[cfg(feature = "std")]
+                super::pc_profile::record(instruction_address, rows as u64, self.x[1] as u64);
             }
         }
 
