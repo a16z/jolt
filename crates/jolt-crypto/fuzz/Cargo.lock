@@ -353,7 +353,6 @@ dependencies = [
  "ark-std",
  "jolt-field",
  "jolt-poly",
- "jolt-transcript",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -401,13 +400,6 @@ dependencies = [
  "serde",
  "thiserror",
  "tracing",
-]
-
-[[package]]
-name = "jolt-transcript"
-version = "0.1.0"
-dependencies = [
- "jolt-field",
 ]
 
 [[package]]
@@ -758,3 +750,17 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
