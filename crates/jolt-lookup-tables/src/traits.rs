@@ -3,8 +3,8 @@
 use jolt_field::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::instructions::{
-    FieldAdd, FieldAssertEq, FieldInv, FieldLoadFromX, FieldLoadImm, FieldMul, FieldStoreToX,
-    FieldSub,
+    FieldAdd, FieldAssertEq, FieldAssertZero, FieldInv, FieldLoadAccumulateFromMemory,
+    FieldLoadAccumulateFromRegister, FieldLoadImm, FieldMul, FieldSub,
 };
 use jolt_riscv::{JoltCycle, JoltInstruction, JoltInstructionKind, JoltInstructionRowData};
 use std::fmt::Debug;
@@ -137,6 +137,7 @@ macro_rules! impl_field_inline_no_lookup {
     };
 }
 
+// Only limb advice uses `RangeCheck`; other field-inline ops have no lookup.
 #[cfg(feature = "field-inline")]
 impl_field_inline_no_lookup!(
     FieldAdd,
@@ -144,9 +145,10 @@ impl_field_inline_no_lookup!(
     FieldMul,
     FieldInv,
     FieldAssertEq,
-    FieldLoadFromX,
-    FieldStoreToX,
+    FieldAssertZero,
+    FieldLoadAccumulateFromRegister,
     FieldLoadImm,
+    FieldLoadAccumulateFromMemory,
 );
 
 /// Lookup-query adapter for dynamic final Jolt instruction rows.

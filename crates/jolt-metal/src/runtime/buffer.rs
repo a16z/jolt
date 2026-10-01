@@ -37,6 +37,7 @@ impl BufferAccess {
 }
 
 /// A shared-storage Metal buffer holding `len` values of `T`.
+/// Zero-sized element types are rejected at construction.
 ///
 /// # Host and GPU access
 ///
@@ -66,6 +67,9 @@ impl<T> DeviceBuffer<T> {
     }
 
     fn byte_len(device: &Device, len: usize) -> Result<usize, MetalError> {
+        if size_of::<T>() == 0 {
+            return Err(MetalError::ZeroSizedElement);
+        }
         let byte_len = len
             .checked_mul(size_of::<T>())
             .ok_or(MetalError::CapacityExceeded {

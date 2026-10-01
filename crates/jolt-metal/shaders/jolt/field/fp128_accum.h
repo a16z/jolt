@@ -8,11 +8,9 @@
 //
 // Both reduce once, at the end, to the canonical element.
 //
-// The layouts differ from the CPU's u128 slots and pos/neg pair. On an
-// Apple M4 Max, a paired A/B (specs/jolt-metal-field.md, step 3) found the
-// carried 288-bit form within 3% of eight ulong slots and of eight uncarried
-// column sums, and it needs 9 words instead of 16. Signed accumulation in
-// place was 1.16x faster than the pos/neg pair, and it needs half the words.
+// Carried words and in-place signed accumulation keep the register footprint
+// below the CPU layouts. Layout comparisons are recorded in
+// specs/jolt-metal-field.md, step 3.
 
 #ifndef JOLT_FIELD_FP128_ACCUM_H
 #define JOLT_FIELD_FP128_ACCUM_H

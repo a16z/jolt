@@ -10,7 +10,7 @@ use crate::optimized::registers_read_write::rows::RegisterCycleRow;
 use crate::optimized::support::mul_0_optimized;
 
 /// Row/column access shared by all entry layouts.
-pub(super) trait Cell: Copy + Send + Sync + 'static {
+pub(crate) trait Cell: Copy + Send + Sync + 'static {
     fn row(&self) -> usize;
     fn col(&self) -> u8;
 }
@@ -525,7 +525,7 @@ pub(super) fn merge_count<E: Cell>(evens: &[E], odds: &[E]) -> usize {
 
 /// Merge-bind adjacent column-sorted rows.
 #[inline]
-pub(super) fn merge_bind<E: Cell, B>(
+pub(crate) fn merge_bind<E: Cell, B>(
     evens: &[E],
     odds: &[E],
     bind: &(impl Fn(Option<&E>, Option<&E>) -> B + ?Sized),
@@ -563,7 +563,7 @@ pub(super) fn merge_bind<E: Cell, B>(
 }
 
 /// Split a sorted row-pair group into even and odd rows.
-pub(super) fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
+pub(crate) fn split_pair_group<E: Cell>(group: &[E]) -> (&[E], &[E]) {
     let odd_start = group.partition_point(|entry| entry.row() % 2 == 0);
     group.split_at(odd_start)
 }

@@ -7,7 +7,7 @@ use jolt_riscv::{
 };
 
 #[cfg(feature = "field-inline")]
-use crate::field_inline::FieldInlineBytecodeMetadata;
+use crate::field_inline::validate_field_inline_instruction;
 use crate::preprocess::PreprocessingError;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -26,8 +26,6 @@ pub struct BytecodePreprocessing {
     /// Maps each unexpanded instruction address to its virtual bytecode index.
     pub pc_map: BytecodePCMapper,
     pub entry_address: u64,
-    #[cfg(feature = "field-inline")]
-    pub field_inline: Option<FieldInlineBytecodeMetadata>,
 }
 
 impl BytecodePreprocessing {
@@ -43,29 +41,20 @@ impl BytecodePreprocessing {
                 ));
             }
             check_store_rd_disjoint(instruction)?;
+            #[cfg(feature = "field-inline")]
+            validate_field_inline_instruction(instruction)?;
         }
         bytecode.insert(0, noop_instruction());
         let pc_map = BytecodePCMapper::try_new(&bytecode)?;
 
         let code_size = bytecode.len().next_power_of_two().max(2);
         bytecode.resize(code_size, noop_instruction());
-        #[cfg(feature = "field-inline")]
-        let field_inline = if profile.supports_field_inline() {
-            Some(FieldInlineBytecodeMetadata::from_bytecode(
-                &bytecode,
-                profile.fingerprint(),
-            )?)
-        } else {
-            None
-        };
 
         Ok(Self {
             code_size,
             bytecode,
             pc_map,
             entry_address,
-            #[cfg(feature = "field-inline")]
-            field_inline,
         })
     }
 
@@ -315,10 +304,14 @@ const fn noop_instruction() -> JoltInstructionRow {
 #[expect(clippy::unwrap_used)]
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
+    #[cfg(feature = "field-inline")]
+    use crate::field_inline::FieldInlineInstructionError;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
         SourceExtension, RV64IMAC_JOLT,
     };
+    #[cfg(feature = "field-inline")]
+    use jolt_riscv::{FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
 
     use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
 
@@ -555,7 +548,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn fr_off_preprocessing_rejects_field_inline_rows() {
+    fn base_preprocessing_rejects_field_inline_rows() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_MUL;
         row.operands = NormalizedOperands {
@@ -575,7 +568,7 @@ mod tests {
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn fr_on_preprocessing_builds_clean_metadata_for_field_rows() {
+    fn field_inline_preprocessing_preserves_field_operands() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_MUL;
         row.operands = NormalizedOperands {
@@ -585,59 +578,40 @@ mod tests {
             imm: 0,
         };
 
-        let preprocessing = BytecodePreprocessing::preprocess(
-            vec![row],
-            0x8000_0000,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        )
-        .unwrap();
-        let metadata = preprocessing.field_inline.as_ref().unwrap();
-
-        assert_eq!(metadata.rows.len(), preprocessing.bytecode.len());
-        assert!(!metadata.rows[0].active);
-        assert!(metadata.rows[1].active);
-        assert_eq!(metadata.rows[1].op, Some(jolt_riscv::FieldInlineOp::Mul));
+        let preprocessing =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT_FIELD_INLINE)
+                .unwrap();
+        assert_eq!(preprocessing.bytecode[1].field_operands(), row.operands);
         assert_eq!(
-            metadata.rows[1].rd.map(jolt_riscv::FieldRegister::index),
-            Some(1)
-        );
-        assert_eq!(
-            metadata.rows[1].rs1.map(jolt_riscv::FieldRegister::index),
-            Some(2)
-        );
-        assert_eq!(
-            metadata.rows[1].rs2.map(jolt_riscv::FieldRegister::index),
-            Some(3)
+            preprocessing.bytecode[0].field_operands(),
+            NormalizedOperands::default()
         );
     }
 
     #[cfg(feature = "field-inline")]
     #[test]
-    fn field_inline_metadata_rejects_out_of_bounds_field_registers() {
+    fn field_inline_preprocessing_rejects_out_of_bounds_field_registers() {
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::FIELD_ADD;
         row.operands = NormalizedOperands {
-            rd: Some(jolt_riscv::FIELD_REGISTER_COUNT),
+            rd: Some(FIELD_REGISTER_COUNT),
             rs1: Some(1),
             rs2: Some(2),
             imm: 0,
         };
 
-        let err = BytecodePreprocessing::preprocess(
-            vec![row],
-            0x8000_0000,
-            jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE,
-        )
-        .unwrap_err();
+        let err =
+            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64IMAC_JOLT_FIELD_INLINE)
+                .unwrap_err();
 
         assert!(matches!(
             err,
-            PreprocessingError::InvalidFieldInlineMetadata(
-                crate::field_inline::FieldInlineMetadataError::InvalidFieldRegister {
+            PreprocessingError::InvalidFieldInlineInstruction(
+                FieldInlineInstructionError::InvalidFieldRegister {
                     operand: "rd",
                     register
                 }
-            ) if register == jolt_riscv::FIELD_REGISTER_COUNT
+            ) if register == FIELD_REGISTER_COUNT
         ));
     }
 }

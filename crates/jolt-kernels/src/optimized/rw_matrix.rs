@@ -147,7 +147,7 @@ impl<F: JoltField> CycleMajorEntry<F> {
 
 /// `val + γ·(inc + val)` — the shared value factor of the summand.
 #[inline]
-fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
+pub(super) fn val_slope_term<F: JoltField>(val: F, inc: F, gamma: F) -> F {
     val + gamma * (inc + val)
 }
 
@@ -329,6 +329,22 @@ impl<F: JoltField> CycleMajorMatrix<F> {
         }
     }
 
+    pub fn q_at_one(&self, eq_head: impl Fn(usize) -> F, inc: &Polynomial<F>, gamma: F) -> F {
+        self.entries
+            .iter()
+            .filter(|entry| entry.row % 2 == 1)
+            .fold(F::zero(), |sum, entry| {
+                let row = entry.row as usize;
+                let constant = CycleMajorEntry::quadratic_evals(
+                    Some(entry),
+                    None,
+                    [inc.evals()[row], F::zero()],
+                    gamma,
+                )[0];
+                sum + eq_head(row / 2) * constant
+            })
+    }
+
     /// Reinterpret as address-major once every cycle variable is bound: all
     /// rows are 0, so `(row, col)` order IS `(col, row)` order and only the
     /// checkpoint representation changes.
@@ -368,6 +384,28 @@ fn round0_entry<F: JoltField>(
             ra: F::one(),
         }
     })
+}
+
+pub(crate) fn round0_q_at_one<F: JoltField>(
+    columns: &RamAccessColumns,
+    eq_head: impl Fn(usize) -> F,
+    inc: &Polynomial<F>,
+    gamma: F,
+) -> F {
+    (1..columns.addresses.len())
+        .step_by(2)
+        .fold(F::zero(), |sum, row| {
+            let Some(entry) = round0_entry::<F>(columns, row) else {
+                return sum;
+            };
+            let constant = CycleMajorEntry::quadratic_evals(
+                Some(&entry),
+                None,
+                [inc.evals()[row], F::zero()],
+                gamma,
+            )[0];
+            sum + eq_head(row / 2) * constant
+        })
 }
 
 /// Round-0 quadratic coefficients read directly from access columns.

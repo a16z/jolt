@@ -1,3 +1,4 @@
+use crate::instruction::registers::amo::RegisterStateAMO;
 use crate::instruction::Instruction;
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,7 @@ declare_riscv_instr!(
     mask   = 0xf800707f,
     match  = 0x0800302f,
     format = FormatAMO,
+    registers = RegisterStateAMO,
     ram    = RAMWrite
 );
 

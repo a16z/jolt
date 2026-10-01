@@ -1,3 +1,6 @@
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldInlineInstructionError;
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PreprocessingError {
     #[error("bytecode instruction is not legal in the selected target profile: {0:?}")]
@@ -44,6 +47,6 @@ pub enum PreprocessingError {
     #[error("bytecode length overflows the packed PC index (u32)")]
     BytecodeTooLarge,
     #[cfg(feature = "field-inline")]
-    #[error("invalid field-inline bytecode metadata: {0}")]
-    InvalidFieldInlineMetadata(#[from] crate::field_inline::FieldInlineMetadataError),
+    #[error("invalid field-inline instruction: {0}")]
+    InvalidFieldInlineInstruction(#[from] FieldInlineInstructionError),
 }

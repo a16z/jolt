@@ -2,7 +2,7 @@ use jolt_field::Field;
 use jolt_utils::log2_power_of_two;
 use serde::{Deserialize, Serialize};
 
-pub use super::error::{JoltFormulaDimensionsError, JoltFormulaPointError};
+pub use super::error::{JoltFormulaDimensionsError, PointGeometryError};
 
 use super::{
     bytecode::BytecodeReadRafDimensions,
@@ -75,9 +75,9 @@ impl TraceDimensions {
     pub fn cycle_opening_point<F: Field>(
         self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         if challenges.len() != self.log_t {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: self.log_t,
                 got: challenges.len(),
             });
@@ -145,7 +145,7 @@ impl ReadWriteDimensions {
     /// Indices into read/write round challenges, in canonical address/cycle order.
     pub fn read_write_opening_indices(
         self,
-    ) -> Result<impl Iterator<Item = usize>, JoltFormulaPointError> {
+    ) -> Result<impl Iterator<Item = usize>, PointGeometryError> {
         let phase1 = self.phase1_num_rounds;
         let address = self.address_opening_indices()?.map(move |i| i + phase1);
         let cycle = (phase1 + self.phase2_num_rounds..self.log_t + self.phase2_num_rounds)
@@ -157,7 +157,7 @@ impl ReadWriteDimensions {
     /// Indices into address-relation round challenges, omitting inactive cycles.
     pub fn address_opening_indices(
         self,
-    ) -> Result<impl Iterator<Item = usize>, JoltFormulaPointError> {
+    ) -> Result<impl Iterator<Item = usize>, PointGeometryError> {
         self.validate_phase_split()?;
         let cycle_gap = self.phase3_cycle_rounds();
         Ok((self.phase2_num_rounds + cycle_gap..self.log_k + cycle_gap)
@@ -168,11 +168,11 @@ impl ReadWriteDimensions {
     pub fn read_write_opening_point<F: Field>(
         self,
         challenges: &[F],
-    ) -> Result<ReadWriteOpeningPoint<F>, JoltFormulaPointError> {
+    ) -> Result<ReadWriteOpeningPoint<F>, PointGeometryError> {
         let indices = self.read_write_opening_indices()?;
         let expected = self.read_write_rounds();
         if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: challenges.len(),
             });
@@ -190,11 +190,11 @@ impl ReadWriteDimensions {
     pub fn address_opening_point<F: Field>(
         self,
         challenges: &[F],
-    ) -> Result<Vec<F>, JoltFormulaPointError> {
+    ) -> Result<Vec<F>, PointGeometryError> {
         let indices = self.address_opening_indices()?;
         let expected = self.output_check_rounds();
         if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: challenges.len(),
             });
@@ -208,9 +208,9 @@ impl ReadWriteDimensions {
     /// this eagerly: the round-count accessors above subtract
     /// `phase1_num_rounds` without their own guard, so an unvalidated split
     /// underflows them before the lazy check in point derivation runs.
-    pub const fn validate_phase_split(self) -> Result<(), JoltFormulaPointError> {
+    pub const fn validate_phase_split(self) -> Result<(), PointGeometryError> {
         if self.phase1_num_rounds > self.log_t || self.phase2_num_rounds > self.log_k {
-            return Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+            return Err(PointGeometryError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: self.phase1_num_rounds,
                 log_t: self.log_t,
                 phase2_num_rounds: self.phase2_num_rounds,
@@ -863,7 +863,7 @@ mod tests {
         let dimensions = ReadWriteDimensions::new(4, 3, 5, 2);
         assert_eq!(
             dimensions.read_write_opening_point::<Fr>(&[]),
-            Err(JoltFormulaPointError::InvalidReadWritePhaseSplit {
+            Err(PointGeometryError::InvalidReadWritePhaseSplit {
                 phase1_num_rounds: 5,
                 log_t: 4,
                 phase2_num_rounds: 2,
@@ -874,7 +874,7 @@ mod tests {
         let dimensions = ReadWriteDimensions::new(4, 3, 1, 2);
         assert_eq!(
             dimensions.address_opening_point::<Fr>(&[Fr::from_u64(0)]),
-            Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            Err(PointGeometryError::ChallengeLengthMismatch {
                 expected: 6,
                 got: 1,
             })

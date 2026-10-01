@@ -13,6 +13,7 @@ use super::test_support::{
     assert_kernel_parity, assert_nontrivial, challenge_sequence, structured_fixture, TraceFixture,
 };
 use super::OptimizedRegistersReadWrite;
+use crate::optimized::parity::ExceptionalEq;
 
 fn run_parity(fixture: TraceFixture, log_t: usize, seed: u64) {
     run_parity_with_phases(
@@ -29,8 +30,27 @@ fn run_parity_with_phases(
     seed: u64,
     phase_splits: &[(usize, usize)],
 ) {
+    run_parity_case(fixture, log_t, seed, phase_splits, None);
+}
+
+fn run_parity_case(
+    fixture: TraceFixture,
+    log_t: usize,
+    seed: u64,
+    phase_splits: &[(usize, usize)],
+    exceptional: Option<ExceptionalEq>,
+) {
     fixture.with_plane(log_t, |backend| {
-        let r_cycle = challenge_sequence(log_t, seed ^ 0xA5A5);
+        let round_challenges = challenge_sequence(log_t + REGISTER_ADDRESS_BITS, seed);
+        let first_cycle = if phase_splits[0].0 == 0 {
+            phase_splits[0].1
+        } else {
+            0
+        };
+        let r_cycle = exceptional.map_or_else(
+            || challenge_sequence(log_t, seed ^ 0xA5A5),
+            |case| case.point(log_t, round_challenges[first_cycle]),
+        );
         let evaluate = |polynomial: JoltVirtualPolynomial| {
             let table = JoltWitnessOracle::<Fr>::oracle_table(
                 backend,
@@ -53,8 +73,9 @@ fn run_parity_with_phases(
         let challenges = RegistersReadWriteChallenges { gamma };
         let input_claim =
             claims.rd_write_value + gamma * claims.rs1_value + gamma * gamma * claims.rs2_value;
-        assert_nontrivial(input_claim);
-        let round_challenges = challenge_sequence(log_t + REGISTER_ADDRESS_BITS, seed);
+        if exceptional.is_none() {
+            assert_nontrivial(input_claim);
+        }
         for &(phase1, phase2) in phase_splits {
             let relation = RegistersReadWriteChecking::<Fr>::new(ReadWriteDimensions::new(
                 log_t,
@@ -126,4 +147,21 @@ fn parity_single_cycle_round() {
     fixture.op(Some(9), Some(9), Some(9));
     fixture.op(Some(9), None, Some(9));
     run_parity(fixture, 1, 41);
+}
+
+#[test]
+fn parity_exceptional_eq_across_sparse_layouts_and_orders() {
+    for log_t in [3usize, 4, 14] {
+        for phase in [(log_t, 0), (0, REGISTER_ADDRESS_BITS)] {
+            for case in ExceptionalEq::ALL {
+                run_parity_case(
+                    structured_fixture(1 << log_t),
+                    log_t,
+                    79,
+                    &[phase],
+                    Some(case),
+                );
+            }
+        }
+    }
 }

@@ -103,7 +103,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         _challenges: &RamReadWriteChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamReadWrite(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // The opening point is `[r_address(log_k) || r_cycle(log_t)]`, so the

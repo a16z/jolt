@@ -38,6 +38,8 @@ mod backend;
 mod commitment;
 pub mod committed_program;
 mod error;
+#[cfg(feature = "field-inline")]
+pub mod field_inline;
 mod kernel;
 pub mod mem;
 pub mod opening;
@@ -47,7 +49,11 @@ pub mod reference;
 pub mod uniskip;
 
 pub use backend::{BuildRoundScheduler, JoltBackend, MaybeAllocative, PrepareKernel, ProofSession};
-pub use commitment::{CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment};
+#[cfg(feature = "field-inline")]
+pub use commitment::FieldInlineWitnessCommitment;
+pub use commitment::{
+    finish_streamed, CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment,
+};
 pub use error::KernelError;
 pub use jolt_kernels_derive::KernelSlots;
 pub use kernel::{ProverInputs, SumcheckKernel, SumcheckKernelError};

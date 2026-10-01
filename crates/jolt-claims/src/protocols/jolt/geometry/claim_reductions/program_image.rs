@@ -16,7 +16,7 @@ use super::super::super::{
     JoltVirtualPolynomial, ProgramImageClaimReductionPublic,
 };
 use super::super::dimensions::{CommitmentMatrixShape, TracePolynomialOrder};
-use super::super::error::JoltFormulaPointError;
+use super::super::error::PointGeometryError;
 use super::precommitted::{
     precommitted_skip_round_scale, PrecommittedClaimReduction, PrecommittedReductionDimensions,
     PrecommittedReductionLayout, PrecommittedSchedulingReference,
@@ -51,7 +51,7 @@ impl ProgramImageClaimReductionLayout {
         scheduling_reference: PrecommittedSchedulingReference,
         program_image_len_words: usize,
         start_index: usize,
-    ) -> Result<Self, JoltFormulaPointError> {
+    ) -> Result<Self, PointGeometryError> {
         let padded_len_words = padded_program_image_len_words(program_image_len_words);
         let image_shape = CommitmentMatrixShape::balanced(log2_power_of_two(padded_len_words));
         let precommitted = PrecommittedClaimReduction::new(
@@ -88,7 +88,7 @@ impl ProgramImageClaimReductionLayout {
         &self,
         r_addr_rw: &[F],
         challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let opening_point = self
             .precommitted
             .cycle_phase_permuted_opening_point(challenges)?;
@@ -105,7 +105,7 @@ impl ProgramImageClaimReductionLayout {
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let permuted = self
             .precommitted
             .cycle_phase_permuted_from_opening_point(opening_point)?;
@@ -120,7 +120,7 @@ impl ProgramImageClaimReductionLayout {
         r_addr_rw: &[F],
         cycle_var_challenges: &[F],
         challenges: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let opening_point = self
             .precommitted
             .address_phase_opening_point(cycle_var_challenges, challenges)?;
@@ -135,7 +135,7 @@ impl ProgramImageClaimReductionLayout {
         &self,
         r_addr_rw: &[F],
         opening_point: &[F],
-    ) -> Result<F, JoltFormulaPointError> {
+    ) -> Result<F, PointGeometryError> {
         let eq_eval =
             eval_shifted_eq_poly_at_opening_point(r_addr_rw, self.start_index, opening_point)?;
         Ok(eq_eval * precommitted_skip_round_scale::<F>(&self.precommitted))
@@ -205,11 +205,11 @@ fn eval_shifted_eq_poly_at_opening_point<F: JoltField>(
     r_addr_be: &[F],
     start_index: usize,
     opening_point_be: &[F],
-) -> Result<F, JoltFormulaPointError> {
+) -> Result<F, PointGeometryError> {
     let ell = r_addr_be.len();
     let m = opening_point_be.len();
     if m > ell {
-        return Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+        return Err(PointGeometryError::OpeningPointLengthMismatch {
             expected: ell,
             got: m,
         });
@@ -303,7 +303,7 @@ mod tests {
 
         assert_eq!(
             eval_shifted_eq_poly_at_opening_point(&r_addr, 0, &opening_point),
-            Err(JoltFormulaPointError::OpeningPointLengthMismatch {
+            Err(PointGeometryError::OpeningPointLengthMismatch {
                 expected: 1,
                 got: 2,
             })
