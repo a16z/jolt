@@ -24,15 +24,14 @@ use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
 use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
-use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError};
+use jolt_verifier::{verify, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError};
 
 use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
-// Program digests derive from the serde encoding (`ProgramPreprocessing::digest`);
-// fixtures carrying the legacy digest layout must regenerate.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0005";
+// Bumped whenever a cached section's encoding changes: proofs are NARG
+// argument strings (`JoltProof { protocol, narg }`) since JVCF0006.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0006";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -115,7 +114,6 @@ fn lock_exclusive(file: &fs::File) {
     }
 }
 
-pub type VerifierFixtureProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
 #[cfg(not(feature = "zk"))]
@@ -123,17 +121,23 @@ type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Peders
 pub struct VerifierFixtureCase {
     pub preprocessing: VerifierFixturePreprocessing,
     pub public_io: JoltDevice,
-    pub proof: VerifierFixtureProof,
+    pub proof: JoltProof,
     pub trusted_advice_commitment: Option<DoryCommitment>,
 }
 
 #[cfg(not(feature = "zk"))]
 impl VerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        self.verify_proof(&self.proof)
+    }
+
+    /// Verifies `proof` against this case's preprocessing, public I/O, and
+    /// trusted-advice commitment.
+    pub fn verify_proof(&self, proof: &JoltProof) -> Result<(), VerifierError> {
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &self.preprocessing,
             &self.public_io,
-            &self.proof,
+            proof,
             self.trusted_advice_commitment.as_ref(),
         )
     }
@@ -144,17 +148,23 @@ impl VerifierFixtureCase {
 pub struct ZkVerifierFixtureCase {
     pub preprocessing: VerifierFixturePreprocessing,
     pub public_io: JoltDevice,
-    pub proof: VerifierFixtureProof,
+    pub proof: JoltProof,
     pub trusted_advice_commitment: Option<DoryCommitment>,
 }
 
 #[cfg(feature = "zk")]
 impl ZkVerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        self.verify_proof(&self.proof)
+    }
+
+    /// Verifies `proof` against this case's preprocessing, public I/O, and
+    /// trusted-advice commitment.
+    pub fn verify_proof(&self, proof: &JoltProof) -> Result<(), VerifierError> {
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
             &self.preprocessing,
             &self.public_io,
-            &self.proof,
+            proof,
             self.trusted_advice_commitment.as_ref(),
         )
     }
@@ -334,7 +344,7 @@ fn case_from_parts(
 struct GeneratedVerifierFixture {
     preprocessing: VerifierFixturePreprocessing,
     public_io: JoltDevice,
-    proof: VerifierFixtureProof,
+    proof: JoltProof,
     trusted_advice_commitment: Option<DoryCommitment>,
 }
 
@@ -533,10 +543,10 @@ fn deserialize_verifier_object<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> 
 
 fn assert_verifier_accepts(
     fixture: &GeneratedVerifierFixture,
-    proof: VerifierFixtureProof,
+    proof: JoltProof,
     public_io: JoltDevice,
 ) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
         &fixture.preprocessing,
         &public_io,
         &proof,
@@ -751,16 +761,15 @@ fn prove_prepared(
         jolt_prover::dory::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof =
-        jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
-            &JoltBackend::optimized(),
-            &preprocessing,
-            &config,
-            trusted.as_ref(),
-            &witness,
-            &public_io,
-        )
-        .expect("prove verifier fixture");
+    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
+        &JoltBackend::optimized(),
+        &preprocessing,
+        &config,
+        trusted.as_ref(),
+        &witness,
+        &public_io,
+    )
+    .expect("prove verifier fixture");
     GeneratedVerifierFixture {
         preprocessing: preprocessing.verifier,
         public_io,
@@ -781,7 +790,7 @@ mod field_inline {
         ExecutionBackend, JoltProgram, OwnedTrace, TraceInputs, TraceOutput, TraceRow,
     };
     use jolt_prover::{JoltBackend, ProverConfig};
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_verifier::JoltSponge;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -866,7 +875,7 @@ mod field_inline {
         let witness = Arc::new(witness);
 
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript, _>(
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge, _>(
             &backend,
             &prover_preprocessing,
             &config,

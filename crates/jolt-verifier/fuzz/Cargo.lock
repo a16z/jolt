@@ -697,7 +697,6 @@ dependencies = [
  "ark-std 0.5.0",
  "jolt-field",
  "jolt-poly",
- "jolt-transcript",
  "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
@@ -785,7 +784,6 @@ name = "jolt-poly"
 version = "0.1.0"
 dependencies = [
  "jolt-field",
- "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand_core 0.6.4",
@@ -857,7 +855,9 @@ dependencies = [
  "jolt-field",
  "light-poseidon",
  "rand 0.8.7",
+ "rand_core 0.6.4",
  "spongefish",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -913,8 +913,6 @@ dependencies = [
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
- "jolt-poly",
- "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier",
  "libfuzzer-sys",
