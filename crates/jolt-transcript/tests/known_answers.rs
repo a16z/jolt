@@ -2,11 +2,6 @@
 //! message kind, challenge kind, and grinding. Any change to the protocol-id
 //! derivation, framing, encoding, or challenge mapping changes these bytes.
 
-#![cfg(all(
-    feature = "transcript-blake2b",
-    feature = "transcript-keccak",
-    feature = "transcript-poseidon"
-))]
 #![expect(clippy::unwrap_used, reason = "test crate")]
 
 use jolt_field::{CanonicalBytes, Fr};

@@ -15,17 +15,10 @@ workspace = true
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
 # Records every transcript operation with its site and argument-string range.
 logging = []
-spongefish = ["dep:rand"]
-digest = ["dep:digest"]
-bn254 = [
-  "dep:ark-bn254",
-  "dep:ark-ff",
-  "jolt-field/bn254",
-  "spongefish/ark-ff",
-]
-transcript-blake2b = ["spongefish", "digest", "spongefish/blake2", "dep:blake2"]
-transcript-keccak = ["spongefish", "spongefish/keccak"]
-transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
+bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
+transcript-blake2b = ["spongefish/blake2"]
+transcript-keccak = ["spongefish/keccak"]
+transcript-poseidon = ["bn254", "dep:light-poseidon"]
 
 [dependencies]
 ark-bn254 = { workspace = true, optional = true }
@@ -36,13 +29,9 @@ light-poseidon = { workspace = true, optional = true }
 spongefish = { workspace = true, features = ["sha3"] }
 rand_core = { workspace = true }
 thiserror = { workspace = true }
-blake2 = { workspace = true, optional = true }
-digest = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
-rand = { workspace = true, features = ["std_rng"], optional = true }
 
 [dev-dependencies]
-num-traits = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]
@@ -55,13 +44,17 @@ required-features = [
 ]
 
 [[test]]
-name = "blake2b_tests"
-required-features = ["bn254", "transcript-blake2b"]
+name = "known_answers"
+required-features = [
+  "transcript-blake2b",
+  "transcript-keccak",
+  "transcript-poseidon",
+]
 
 [[test]]
-name = "keccak_tests"
-required-features = ["bn254", "transcript-keccak"]
-
-[[test]]
-name = "poseidon_tests"
-required-features = ["transcript-poseidon"]
+name = "narg"
+required-features = [
+  "transcript-blake2b",
+  "transcript-keccak",
+  "transcript-poseidon",
+]

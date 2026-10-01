@@ -1,20 +1,13 @@
 //! Prover/verifier symmetry, rejection, and wire-format pins for the NARG
 //! transcript.
 
-#![cfg(all(
-    feature = "bn254",
-    feature = "transcript-blake2b",
-    feature = "transcript-keccak",
-    feature = "transcript-poseidon"
-))]
 #![expect(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 
 use jolt_field::{CanonicalBytes, CanonicalEncoding, Fr, Ring};
 use jolt_transcript::{
-    Channel, PoseidonSponge, ProtocolId, ProverTranscript, Sponge, TranscriptError,
-    VerifierTranscript, SMALL_CHALLENGE_BYTES,
+    Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
+    TranscriptError, VerifierTranscript, SMALL_CHALLENGE_BYTES,
 };
-use spongefish::instantiations::{Blake2b512, Keccak};
 
 const SESSION: &[u8] = b"narg-tests";
 
