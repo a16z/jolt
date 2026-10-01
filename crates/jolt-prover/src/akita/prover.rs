@@ -18,6 +18,7 @@ use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
 use super::witness::AdviceObject;
 use super::JoltAkitaBackend;
+use crate::boundary::finish_stage;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
 use crate::stages::stage3::prove_stage3;
@@ -60,9 +61,12 @@ where
         witness,
         public_io,
     )?;
+    #[cfg(feature = "field-inline")]
+    session.park(stage0.field_inc.column.clone());
+    let log_t = config.trace_length.ilog2() as usize;
+    finish_stage("stage0", log_t, &session, &());
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
-    let log_t = config.trace_length.ilog2() as usize;
 
     let stage1 = prove_stage1::<F, PCS, VC, T>(
         &backend.base,
@@ -72,6 +76,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage1", log_t, &session, &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -82,6 +87,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage2", log_t, &session, &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -92,6 +98,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage3", log_t, &session, &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -104,6 +111,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage4", log_t, &session, &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -116,6 +124,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage5", log_t, &session, &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -131,6 +140,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage6a", log_t, &session, &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -147,6 +157,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage6b", log_t, &session, &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         &backend.base,
         &mut session,
@@ -159,6 +170,7 @@ where
         witness,
         &mut transcript,
     )?;
+    finish_stage("stage7", log_t, &session, &stage7.clear_output);
     let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
@@ -167,6 +179,8 @@ where
         stage0.hint,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
+        #[cfg(feature = "field-inline")]
+        &stage0.field_inc,
         preprocessing
             .committed_program
             .as_ref()
@@ -176,6 +190,7 @@ where
         &stage7.clear_output,
         &mut transcript,
     )?;
+    finish_stage("stage8", log_t, &session, &());
 
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
@@ -196,6 +211,8 @@ where
         untrusted_advice_commitment: stage0
             .untrusted_advice
             .map(|object| object.commitment.clone()),
+        #[cfg(feature = "field-inline")]
+        field_inc_commitment: Some(stage0.field_inc.commitment),
         claims: JoltProofClaims::Clear(ClearProofClaims {
             stage1: stage1.claims,
             stage2: stage2.claims,

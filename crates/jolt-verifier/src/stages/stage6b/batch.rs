@@ -10,6 +10,8 @@
 //! exactly when their precommitted layout needs a cycle-phase reduction, so the
 //! batch's instance count matches the prover's.
 
+#[cfg(feature = "field-inline")]
+use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::{
@@ -41,6 +43,10 @@ use super::committed_reduction_cycle_phase::{
 };
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{TrustedAdviceCyclePhase, UntrustedAdviceCyclePhase};
+#[cfg(feature = "field-inline")]
+use super::field_registers_inc_claim_reduction::{
+    FieldRegistersIncClaimReduction, FieldRegistersIncClaimReductionChallenges,
+};
 #[cfg(not(feature = "akita"))]
 use super::inc_claim_reduction::{IncClaimReduction, IncClaimReductionChallenges};
 use super::instruction_ra_virtualization::{
@@ -105,6 +111,11 @@ pub struct Stage6bDraws<F> {
     /// Base only: the packed batch has no inc claim-reduction member.
     #[cfg(not(feature = "akita"))]
     pub inc_gamma: F,
+    /// The field-register increment-reduction gamma (the spec's `eta`), member-drawn in
+    /// declaration order: after the ordinary inc gamma, before the optional committed-bytecode
+    /// eta.
+    #[cfg(feature = "field-inline")]
+    pub field_registers_inc_gamma: F,
     /// The bytecode claim-reduction eta, drawn exactly when the bytecode
     /// layout is committed.
     pub eta: Option<F>,
@@ -121,6 +132,8 @@ impl<F: JoltField> Stage6bDraws<F> {
             instruction_ra_gamma: transcript.challenge_scalar(),
             #[cfg(not(feature = "akita"))]
             inc_gamma: transcript.challenge_scalar(),
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_gamma: transcript.challenge_scalar(),
             eta: committed_bytecode.then(|| transcript.challenge_scalar()),
         }
     }
@@ -261,6 +274,11 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let program_image_reduction_layout = precommitted.program_image.as_ref();
         let committed_program = bytecode_reduction_layout.is_some();
 
+        // (The verifier's own `build` already rejected at the metadata
+        // requirement; this guards the shared parts-level entry too.)
+        #[cfg(feature = "field-inline")]
+        super::field_inline::require_full_program(committed_program)?;
+
         let booleanity_dimensions =
             BooleanityDimensions::new(formula_dimensions.ra_layout, log_t, committed_chunk_bits);
 
@@ -323,6 +341,12 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         )?;
         let registers_read_write_cycle = stage_points.register_read_write_cycle().to_vec();
         let registers_val_evaluation_cycle = stage_points.register_val_evaluation_cycle().to_vec();
+        // The field-inline opening sub-points: the stage-4/5 field-inline opening points split
+        // past the field-register address prefix. The cycle legs feed both the bytecode
+        // field-inline public fold and the field-register increment reduction's Eq publics.
+        #[cfg(feature = "field-inline")]
+        let field_inline_legs =
+            super::field_inline::bytecode_fold_and_cycles(carried, stage4_points, stage5_points)?;
         #[cfg(not(feature = "akita"))]
         let stage_cycle_points: [Vec<F>; READ_RAF_CYCLE_STAGES] = stage_points.stage_cycle_points;
         // The packed fused-inc consumer points appended to the shared five: the
@@ -400,6 +424,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 entry_bytecode_index,
                 committed_chunk_bits,
                 table_fold: bytecode_table_fold,
+                #[cfg(feature = "field-inline")]
+                field_inline: field_inline_legs.fold,
             })?
         };
 
@@ -444,6 +470,12 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             registers_read_write_cycle,
             registers_val_evaluation_cycle,
         );
+        #[cfg(feature = "field-inline")]
+        let field_registers_inc_claim_reduction = FieldRegistersIncClaimReduction::new(
+            FieldRegistersTraceDimensions::new(log_t),
+            field_inline_legs.read_write_cycle,
+            field_inline_legs.val_evaluation_cycle,
+        );
 
         #[cfg(not(feature = "akita"))]
         let trusted_advice = trusted_advice_layout
@@ -466,6 +498,8 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             instruction_ra_virtualization,
             #[cfg(not(feature = "akita"))]
             inc_claim_reduction,
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction,
             #[cfg(not(feature = "akita"))]
             trusted_advice,
             #[cfg(not(feature = "akita"))]
@@ -502,6 +536,10 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             inc_claim_reduction: IncClaimReductionChallenges {
                 gamma: draws.inc_gamma,
             },
+            #[cfg(feature = "field-inline")]
+            field_registers_inc_claim_reduction: FieldRegistersIncClaimReductionChallenges {
+                gamma: draws.field_registers_inc_gamma,
+            },
             #[cfg(not(feature = "akita"))]
             trusted_advice: self
                 .trusted_advice
@@ -521,6 +559,60 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 .program_image_reduction
                 .as_ref()
                 .map(|_| NoChallenges::default()),
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::as_conversions,
+    reason = "tests use plain arithmetic on fixture data"
+)]
+mod tests {
+    use super::*;
+    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use jolt_field::Fr;
+
+    /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
+    /// (base) the inc gamma, under `field-inline` the field-inline inc gamma (the spec's `eta`
+    /// draw slot: after the ordinary inc gamma, before the optional committed-bytecode eta),
+    /// then the committed bytecode eta exactly when the bytecode layout is committed.
+    #[test]
+    fn stage6b_draws_follow_member_declaration_order() {
+        for committed_bytecode in [false, true] {
+            let mut expected_squeezes = 1usize;
+            #[cfg(not(feature = "akita"))]
+            {
+                expected_squeezes += 1;
+            }
+            #[cfg(feature = "field-inline")]
+            {
+                expected_squeezes += 1;
+            }
+            expected_squeezes += usize::from(committed_bytecode);
+
+            let (inline_events, inline_values) = record(|t| {
+                (0..expected_squeezes)
+                    .map(|_| t.challenge_scalar())
+                    .collect::<Vec<Fr>>()
+            });
+            let (draw_events, draws) = record(|t| Stage6bDraws::<Fr>::draw(t, committed_bytecode));
+
+            assert_eq!(draw_events, inline_events);
+            assert_eq!(
+                draw_events,
+                (1..=expected_squeezes as u64)
+                    .map(DrawEvent::Squeeze)
+                    .collect::<Vec<_>>()
+            );
+            let mut ordered = vec![draws.instruction_ra_gamma];
+            #[cfg(not(feature = "akita"))]
+            ordered.push(draws.inc_gamma);
+            #[cfg(feature = "field-inline")]
+            ordered.push(draws.field_registers_inc_gamma);
+            ordered.extend(draws.eta);
+            assert_eq!(ordered, inline_values);
+            assert_eq!(draws.eta.is_some(), committed_bytecode);
         }
     }
 }

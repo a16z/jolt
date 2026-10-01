@@ -508,13 +508,19 @@ macro_rules! source_extension_for_marker {
     (FieldAssertEq) => {
         Some(SourceExtension::FieldInline)
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         Some(SourceExtension::FieldInline)
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         Some(SourceExtension::FieldInline)
     };
     (FieldLoadImm) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        Some(SourceExtension::FieldInline)
+    };
+    (FieldAdviceLimb) => {
         Some(SourceExtension::FieldInline)
     };
 }
@@ -991,13 +997,19 @@ macro_rules! source_side_effects_for_marker {
     (FieldAssertEq) => {
         true
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         true
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         true
     };
     (FieldLoadImm) => {
+        true
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        true
+    };
+    (FieldAdviceLimb) => {
         true
     };
 }
@@ -1285,13 +1297,19 @@ macro_rules! jolt_target_extension_for_marker {
     (FieldAssertEq) => {
         Some(JoltTargetExtension::FieldInline)
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         Some(JoltTargetExtension::FieldInline)
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         Some(JoltTargetExtension::FieldInline)
     };
     (FieldLoadImm) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        Some(JoltTargetExtension::FieldInline)
+    };
+    (FieldAdviceLimb) => {
         Some(JoltTargetExtension::FieldInline)
     };
 }
@@ -1351,13 +1369,19 @@ macro_rules! jolt_side_effects_for_marker {
     (FieldAssertEq) => {
         true
     };
-    (FieldLoadFromX) => {
+    (FieldLoadAccumulateFromRegister) => {
         true
     };
-    (FieldStoreToX) => {
+    (FieldAssertZero) => {
         true
     };
     (FieldLoadImm) => {
+        true
+    };
+    (FieldLoadAccumulateFromMemory) => {
+        true
+    };
+    (FieldAdviceLimb) => {
         true
     };
     (Add) => {
@@ -2134,6 +2158,10 @@ mod tests {
             let tag = kind.tag();
             assert!(seen.insert(tag), "duplicate tag {tag:?} for {kind:?}");
             assert_eq!(JoltInstructionKind::from_tag(tag), Some(*kind));
+            #[cfg(feature = "field-inline")]
+            if let Some(op) = crate::field_inline_jolt_op(*kind) {
+                assert_eq!(tag, JoltInstructionTag(0x0100 + u16::from(op.tag())));
+            }
         }
     }
 

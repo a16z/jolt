@@ -5,6 +5,8 @@
 //! The `csrr rd, csr` pseudo-instruction is `csrrs rd, csr, x0` (read only, no bits set).
 //! The `csrs csr, rs` pseudo-instruction is `csrrs x0, csr, rs` (set only, discard old value).
 
+use crate::instruction::registers::i::RegisterStateI;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
@@ -16,6 +18,7 @@ declare_riscv_instr!(
     mask   = 0x0000707f,  // Match opcode (7 bits) + funct3 (3 bits)
     match  = 0x00002073,  // opcode=1110011, funct3=010
     format = FormatI,
+    registers = RegisterStateI,
     ram    = ()
 );
 

@@ -7,6 +7,8 @@
 //! Inline implementations register themselves at link time via `inventory::submit!`.
 //! The INLINE instruction iterates these registrations to find the matching builder.
 
+use crate::instruction::registers::inline::RegisterStateInline;
+
 use super::{
     format::{format_inline::FormatInline, InstructionFormat},
     Cycle, Instruction, RISCVInstruction, RISCVTrace,
@@ -236,6 +238,7 @@ impl RISCVInstruction for INLINE {
     const MATCH: u32 = 0x0000002b; // opcode=0x2B (custom-1)
 
     type Format = FormatInline;
+    type RegisterState = RegisterStateInline;
     type RAMAccess = ();
 
     fn operands(&self) -> &Self::Format {

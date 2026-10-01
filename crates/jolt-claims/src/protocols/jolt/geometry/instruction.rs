@@ -13,7 +13,7 @@ use super::super::{
 use super::claim_reductions::instruction::{
     left_instruction_input_reduced, lookup_output_reduced, right_instruction_input_reduced,
 };
-use super::dimensions::{JoltFormulaDimensionsError, JoltFormulaPointError};
+use super::dimensions::{JoltFormulaDimensionsError, PointGeometryError};
 use super::spartan::{
     left_instruction_input_product, lookup_output_product, right_instruction_input_product,
 };
@@ -167,10 +167,10 @@ impl InstructionReadRafDimensions {
     pub fn opening_point<F: JoltField>(
         self,
         challenges: &[F],
-    ) -> Result<InstructionReadRafOpeningPoint<F>, JoltFormulaPointError> {
+    ) -> Result<InstructionReadRafOpeningPoint<F>, PointGeometryError> {
         let expected = self.instruction_address_bits + self.log_t;
         if challenges.len() != expected {
-            return Err(JoltFormulaPointError::ChallengeLengthMismatch {
+            return Err(PointGeometryError::ChallengeLengthMismatch {
                 expected,
                 got: challenges.len(),
             });

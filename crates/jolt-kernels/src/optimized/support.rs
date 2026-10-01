@@ -5,7 +5,6 @@
 
 use std::ops::Range;
 
-use jolt_claims::protocols::jolt::JoltDerivedId;
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
     BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
@@ -14,7 +13,8 @@ use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
-    ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputPoints, SumcheckOutputPoints,
+    ConcreteSumcheck, ConcreteSumcheckChallenges, DerivedIdOf, SumcheckInputPoints,
+    SumcheckOutputPoints,
 };
 use jolt_verifier::VerifierError;
 use jolt_witness::{
@@ -24,7 +24,7 @@ use jolt_witness::{
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{KernelError, SumcheckKernelError};
+use crate::SumcheckKernelError;
 
 /// A kernel's bound-round count against its total — the one home of the
 /// "claims only after every round is bound" invariant.
@@ -190,31 +190,6 @@ pub(crate) fn gamma_powers<F: JoltField>(gamma: F, count: usize) -> Vec<F> {
     powers
 }
 
-/// `(γ^i, γ^{-i})` pairs for pre-scaled shared tables. The inverse powers
-/// unscale the final claims back to the committed polynomials' values;
-/// `γ^i · γ^{-i} = 1` exactly, so unscaling is byte-exact. `reason` names
-/// the batching challenge in the (unreachable) non-invertible error.
-pub(crate) fn gamma_power_pairs<F: JoltField>(
-    gamma: F,
-    count: usize,
-    reason: &'static str,
-) -> Result<(Vec<F>, Vec<F>), KernelError<F>> {
-    let gamma_inv = gamma
-        .inverse()
-        .ok_or(KernelError::InvariantViolation { reason })?;
-    let mut powers = Vec::with_capacity(count);
-    let mut powers_inv = Vec::with_capacity(count);
-    let mut power = F::one();
-    let mut power_inv = F::one();
-    for _ in 0..count {
-        powers.push(power);
-        powers_inv.push(power_inv);
-        power *= gamma;
-        power_inv *= gamma_inv;
-    }
-    Ok((powers, powers_inv))
-}
-
 /// `scale · eq(point, ·)` evaluations, big-endian (`point[0]` pairs the index
 /// MSB) — the scaled variant of the reference tier's `eq_table`.
 pub(crate) fn scaled_eq_table<F: JoltField>(point: &[F], scale: F) -> Vec<F> {
@@ -312,7 +287,7 @@ impl<F: JoltField> RoundChallenges<F> {
 /// naive tier's check on its hand-materialized derived tables.
 pub(crate) fn pin_derived_term<F: JoltField, R: ConcreteSumcheck<F>>(
     relation: &R,
-    id: JoltDerivedId,
+    id: DerivedIdOf<F, R>,
     input_points: &SumcheckInputPoints<F, R>,
     output_points: &SumcheckOutputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
@@ -320,7 +295,11 @@ pub(crate) fn pin_derived_term<F: JoltField, R: ConcreteSumcheck<F>>(
 ) -> Result<(), SumcheckKernelError<F>> {
     let expected = relation.derive_output_term(&id, input_points, output_points, challenges)?;
     if got != expected {
-        return Err(SumcheckKernelError::DerivedTableDrift { id, expected, got });
+        return Err(SumcheckKernelError::DerivedTableDrift {
+            id: id.into(),
+            expected,
+            got,
+        });
     }
     Ok(())
 }
@@ -329,16 +308,18 @@ pub(crate) fn pin_derived_term<F: JoltField, R: ConcreteSumcheck<F>>(
 /// the term under this proof shape (`MissingStageClaimDerived`).
 pub(crate) fn pin_derived_term_if_derived<F: JoltField, R: ConcreteSumcheck<F>>(
     relation: &R,
-    id: JoltDerivedId,
+    id: DerivedIdOf<F, R>,
     input_points: &SumcheckInputPoints<F, R>,
     output_points: &SumcheckOutputPoints<F, R>,
     challenges: &ConcreteSumcheckChallenges<F, R>,
     got: F,
 ) -> Result<(), SumcheckKernelError<F>> {
     match relation.derive_output_term(&id, input_points, output_points, challenges) {
-        Ok(expected) if got != expected => {
-            Err(SumcheckKernelError::DerivedTableDrift { id, expected, got })
-        }
+        Ok(expected) if got != expected => Err(SumcheckKernelError::DerivedTableDrift {
+            id: id.into(),
+            expected,
+            got,
+        }),
         Ok(_) | Err(VerifierError::MissingStageClaimDerived { .. }) => Ok(()),
         Err(error) => Err(error.into()),
     }
@@ -362,6 +343,34 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
         previous_claim: F,
         round: usize,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    fn checked_cubic(
+        &self,
+        q_zero: F,
+        q_leading: F,
+        previous_claim: F,
+        round: usize,
+        q_at_one: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    fn checked_toom(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    #[cfg(feature = "field-inline")]
+    fn checked_linear(
+        &self,
+        q_one: F,
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
+
+    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F;
 
     /// `(q(0), q(∞))` of the two-table product summand
     /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
@@ -395,6 +404,64 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
             });
         }
         Ok(UnivariatePoly::from_evals(q_evals))
+    }
+
+    fn checked_cubic(
+        &self,
+        q_zero: F,
+        q_leading: F,
+        previous_claim: F,
+        round: usize,
+        q_at_one: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.gruen_poly_deg_3(q_zero, q_leading, previous_claim, q_at_one)
+            .map_err(|actual| SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual,
+            })
+    }
+
+    fn checked_toom(
+        &self,
+        q_evals: &[F],
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.gruen_poly_from_evals(q_evals, previous_claim, q_at_zero)
+            .map_err(|actual| SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual,
+            })
+    }
+
+    #[cfg(feature = "field-inline")]
+    fn checked_linear(
+        &self,
+        q_one: F,
+        previous_claim: F,
+        round: usize,
+        q_at_zero: impl FnOnce() -> F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.gruen_poly_deg_2(q_one, previous_claim, q_at_zero)
+            .map_err(|actual| SumcheckError::RoundCheckFailed {
+                round,
+                expected: previous_claim,
+                actual,
+            })
+    }
+
+    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F {
+        self.par_fold_out_in(
+            F::zero,
+            |sum, row, _, weight| {
+                *sum += weight * a.evals()[2 * row + 1] * b.evals()[2 * row + 1];
+            },
+            |_, weight, sum| weight * sum,
+            |left, right| left + right,
+        )
     }
 
     fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {

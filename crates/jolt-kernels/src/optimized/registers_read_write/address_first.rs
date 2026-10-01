@@ -25,7 +25,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::rows::{raw_rd_inc, RegisterCycleRow, SharedRdIndices};
-use crate::optimized::support::{collect_rows, pin_derived_term, RoundProgress};
+use crate::optimized::support::{collect_rows, pin_derived_term, GruenRoundMessage, RoundProgress};
 use crate::{KernelError, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
 const CHUNK: usize = 1 << 12;
@@ -300,7 +300,7 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
     fn prove_round(
         &mut self,
         bind: Option<F>,
-        _round: usize,
+        round: usize,
         claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         if let Some(r) = bind {
@@ -320,6 +320,9 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
                 val,
                 inc,
             } => {
+                let summand = |rs1: F, rs2: F, wa: F, val: F, inc: F| {
+                    wa * (val + inc) + self.gamma * (rs1 + self.gamma * rs2) * val
+                };
                 let q = self.gruen.par_fold_out_in(
                     || [F::zero(); 2],
                     |acc, row, _x_in, e_in| {
@@ -330,15 +333,30 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
                         let (rs1, rs2, wa, val, inc) =
                             (pair(rs1), pair(rs2), pair(wa), pair(val), pair(inc));
                         for i in 0..2 {
-                            acc[i] += e_in
-                                * (wa[i] * (val[i] + inc[i])
-                                    + self.gamma * (rs1[i] + self.gamma * rs2[i]) * val[i]);
+                            acc[i] += e_in * summand(rs1[i], rs2[i], wa[i], val[i], inc[i]);
                         }
                     },
                     |_x_out, e_out, acc| acc.map(|value| e_out * value),
                     |a, b| [a[0] + b[0], a[1] + b[1]],
                 );
-                Ok(self.gruen.gruen_poly_deg_3(q[0], q[1], claim))
+                self.gruen.checked_cubic(q[0], q[1], claim, round, || {
+                    self.gruen.par_fold_out_in(
+                        F::zero,
+                        |sum, pair, _, weight| {
+                            let row = 2 * pair + 1;
+                            *sum += weight
+                                * summand(
+                                    rs1.evals()[row],
+                                    rs2.evals()[row],
+                                    wa.evals()[row],
+                                    val.evals()[row],
+                                    inc.evals()[row],
+                                );
+                        },
+                        |_, weight, sum| weight * sum,
+                        |a, b| a + b,
+                    )
+                })
             }
         }
     }

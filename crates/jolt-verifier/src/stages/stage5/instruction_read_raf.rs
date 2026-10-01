@@ -159,7 +159,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionReadRaf<F> {
         challenges: &InstructionReadRafChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::InstructionReadRaf(public) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let r_cycle = output_points.instruction_raf_flag();
         let r_address = reconstruct_r_address(output_points, r_cycle.len());

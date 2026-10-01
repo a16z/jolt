@@ -13,7 +13,7 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltDerivedId, ReadWriteDimensions, RegistersReadWritePublic};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -26,14 +26,16 @@ use jolt_witness::JoltWitnessPlane;
 use rayon::prelude::*;
 
 use super::read_write::ReadWriteOrder;
-use super::support::{bind_pairs, pin_derived_term, RoundChallenges};
+use super::support::{pin_derived_term, GruenRoundMessage, RoundChallenges};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+pub(crate) mod address;
 mod address_first;
+use address::{OperandEq, RegisterAddressState};
 mod rows;
-mod sparse;
+pub(crate) mod sparse;
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test support module")]
 pub(crate) mod test_support;
@@ -111,11 +113,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
             dimensions,
             cycle,
             gruen: GruenSplitEqPolynomial::new(r_cycle, BindingOrder::LowToHigh),
-            ra: Vec::new(),
-            wa: Vec::new(),
-            val: Vec::new(),
-            eq_scalar: F::zero(),
-            inc_scalar: F::zero(),
+            address: RegisterAddressState::default(),
             rs1_indices,
             rs2_indices,
             challenges: RoundChallenges::new(log_t + log_k),
@@ -131,16 +129,7 @@ struct ReadWriteKernel<F: JoltField> {
     /// cycle→address transition.
     cycle: CycleState<F>,
     gruen: GruenSplitEqPolynomial<F>,
-    // Address-phase dense state (K-sized), materialized at the transition.
-    ra: Vec<F>,
-    wa: Vec<F>,
-    val: Vec<F>,
-    /// Fully bound `eq(r_cycle, ·)` — constant across the address rounds.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    eq_scalar: F,
-    /// Fully bound `rd_inc` — constant across the address rounds.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    inc_scalar: F,
+    address: RegisterAddressState<F>,
     rs1_indices: Vec<Option<u8>>,
     rs2_indices: Vec<Option<u8>>,
     challenges: RoundChallenges<F>,
@@ -150,50 +139,19 @@ impl<F: JoltField> ReadWriteKernel<F> {
     /// Cycle-round message via Gruen factoring: the quadratic inner factor's
     /// `[q(0), leading coefficient]` over the remaining cycle domain, wrapped
     /// into the exact cubic by `gruen_poly_deg_3`.
-    fn cycle_round_message(&self, previous_claim: F) -> UnivariatePoly<F> {
-        let e_in = self.gruen.e_in_current();
-        let e_out = self.gruen.e_out_current();
-        let quadratic = self.cycle.quadratic(e_in, e_out);
-        self.gruen
-            .gruen_poly_deg_3(quadratic[0], quadratic[1], previous_claim)
-    }
-
-    /// Address-round message over the K-sized dense arrays. Cheap enough to
-    /// sample all `degree + 1` points directly, so the naive tier's running
-    /// claim self-check is kept.
-    fn address_round_message(
+    fn cycle_round_message(
         &self,
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let half = self.ra.len() / 2;
-        let mut evals = [F::zero(); 4];
-        for y in 0..half {
-            let pair = |table: &[F]| {
-                let lo = table[2 * y];
-                (lo, table[2 * y + 1] - lo)
-            };
-            let (ra_0, ra_m) = pair(&self.ra);
-            let (wa_0, wa_m) = pair(&self.wa);
-            let (val_0, val_m) = pair(&self.val);
-            let (mut ra_t, mut wa_t, mut val_t) = (ra_0, wa_0, val_0);
-            for eval in &mut evals {
-                *eval += wa_t * (self.inc_scalar + val_t) + ra_t * val_t;
-                ra_t += ra_m;
-                wa_t += wa_m;
-                val_t += val_m;
-            }
-        }
-        let evals = evals.map(|eval| self.eq_scalar * eval);
-        let round_sum = evals[0] + evals[1];
-        if round_sum != previous_claim {
-            return Err(SumcheckError::RoundCheckFailed {
-                round,
-                expected: previous_claim,
-                actual: round_sum,
-            });
-        }
-        Ok(UnivariatePoly::from_evals(&evals))
+        let e_in = self.gruen.e_in_current();
+        let e_out = self.gruen.e_out_current();
+        let quadratic = self.cycle.quadratic(e_in, e_out);
+        self.gruen
+            .checked_cubic(quadratic[0], quadratic[1], previous_claim, round, || {
+                self.cycle
+                    .q_at_one(self.gruen.e_in_current(), self.gruen.e_out_current())
+            })
     }
 
     /// Bind the pending challenge: cycle rounds bind eq/inc and merge the
@@ -205,18 +163,20 @@ impl<F: JoltField> ReadWriteKernel<F> {
             self.gruen.bind(r);
             layout_transitioned = self.cycle.bind(r);
         } else {
-            for table in [&mut self.ra, &mut self.wa, &mut self.val] {
-                bind_pairs(table, r);
-            }
+            self.address.bind(r);
         }
         self.challenges.push(r);
 
         if self.challenges.bound() == self.dimensions.log_t() {
             // Replacing the state frees the entry allocation here rather
             // than at kernel drop.
-            (self.ra, self.wa, self.val, self.inc_scalar) =
-                self.cycle.take_dense(1usize << self.dimensions.log_k());
-            self.eq_scalar = self.gruen.current_scalar();
+            (
+                self.address.ra,
+                self.address.wa,
+                self.address.val,
+                self.address.inc_scalar,
+            ) = self.cycle.take_dense(1usize << self.dimensions.log_k());
+            self.address.eq_scalar = self.gruen.current_scalar();
         }
 
         // Return replaced entry generations immediately.
@@ -235,19 +195,11 @@ impl<F: JoltField> ReadWriteKernel<F> {
     fn one_hot_operand_claims(&self, r_address: &[F], r_cycle: &[F]) -> (F, F) {
         let rs1_indices = &self.rs1_indices;
         let rs2_indices = &self.rs2_indices;
-        let log_t = r_cycle.len();
-        let addr_bits = r_address.len();
-        let n = log_t + addr_bits;
-        let hi_bits = core::cmp::min(log_t, n.div_ceil(2));
-
-        let r_joint: Vec<F> = r_cycle.iter().chain(r_address.iter()).copied().collect();
-        let (r_hi, r_lo) = r_joint.split_at(hi_bits);
-        let e_hi = EqPolynomial::<F>::evals(r_hi, None);
-        let e_lo = EqPolynomial::<F>::evals(r_lo, None);
-
-        let cycle_bits_in_lo = (n - hi_bits) - addr_bits;
+        let eq = OperandEq::new(r_address, r_cycle);
+        let cycle_bits_in_lo = eq.cycle_bits_in_lo;
         let cycles_per_block = 1usize << cycle_bits_in_lo;
-        let cycle_lo_mask = cycles_per_block - 1;
+        let e_hi = &eq.hi;
+        let e_lo = &eq.lo;
 
         let block_contribution = |idx_hi: usize| -> [F; 2] {
             let block_start = idx_hi << cycle_bits_in_lo;
@@ -257,12 +209,11 @@ impl<F: JoltField> ReadWriteKernel<F> {
             }
             let mut sums = [F::Accumulator::default(), F::Accumulator::default()];
             for j in block_start..block_end {
-                let j_in_block = (j & cycle_lo_mask) << addr_bits;
                 if let Some(rs1) = rs1_indices[j] {
-                    sums[0].add(e_lo[j_in_block | rs1 as usize]);
+                    sums[0].add(e_lo[eq.low_index(j, rs1)]);
                 }
                 if let Some(rs2) = rs2_indices[j] {
-                    sums[1].add(e_lo[j_in_block | rs2 as usize]);
+                    sums[1].add(e_lo[eq.low_index(j, rs2)]);
                 }
             }
             let e_hi_eval = e_hi[idx_hi];
@@ -298,9 +249,9 @@ impl<F: JoltField> ProveRounds<F> for ReadWriteKernel<F> {
             self.bind(challenge);
         }
         if self.challenges.bound() < self.dimensions.log_t() {
-            Ok(self.cycle_round_message(previous_claim))
+            self.cycle_round_message(round, previous_claim)
         } else {
-            self.address_round_message(round, previous_claim)
+            self.address.round_message(round, previous_claim)
         }
     }
 
@@ -326,11 +277,11 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
             })?;
         let (rs1_ra, rs2_ra) = self.one_hot_operand_claims(&point.r_address, &point.r_cycle);
         Ok(RegistersReadWriteOutputClaims {
-            registers_val: self.val[0],
+            registers_val: self.address.val[0],
             rs1_ra,
             rs2_ra,
-            rd_wa: self.wa[0],
-            rd_inc: self.inc_scalar,
+            rd_wa: self.address.wa[0],
+            rd_inc: self.address.inc_scalar,
         })
     }
 
@@ -350,7 +301,7 @@ impl<F: JoltField> SumcheckKernel<F> for ReadWriteKernel<F> {
             input_points,
             output_points,
             challenges,
-            self.eq_scalar,
+            self.address.eq_scalar,
         )
     }
 }

@@ -20,10 +20,9 @@
 //!   (complement-merged) patterns — no division, exact coefficients. After
 //!   the last startup challenge the bound table is read off a subset-sum
 //!   lookup indexed by pattern, and the dense Gruen rounds resume on it.
-//!   Dense rounds still invert `current_scalar · c_j`
-//!   (`gruen_poly_deg_3`), so a zero cycle coordinate past the startup
-//!   depth panics as before; the startup rounds themselves accept any
-//!   coordinate.
+//!   Dense rounds recover their missing endpoint from the retained `H`
+//!   table when the equality endpoint vanishes; a zero equality prefix
+//!   produces the degree-preserving zero round polynomial.
 //!
 //! Byte parity with the reference kernel holds because field arithmetic is
 //! exact: the Gruen-reconstructed evaluations equal the true round
@@ -46,7 +45,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 
 use super::support::{
     collect_rows, map_indices, map_reduce_chunks, pin_derived_term_if_derived, scan_chunk_size,
-    RoundProgress,
+    GruenRoundMessage, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -411,7 +410,18 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
             |_x_out, e_out, inner| [e_out * inner[0], e_out * inner[1]],
             |left, right| [left[0] + right[0], left[1] + right[1]],
         );
-        Ok(self.eq.gruen_poly_deg_3(constant, leading, previous_claim))
+        self.eq
+            .checked_cubic(constant, leading, previous_claim, round, || {
+                self.eq.par_fold_out_in(
+                    F::zero,
+                    |sum, row, _, weight| {
+                        let (_, high) = hamming.sumcheck_eval_pair(row, BindingOrder::LowToHigh);
+                        *sum += weight * (high * high - high);
+                    },
+                    |_, weight, sum| weight * sum,
+                    |a, b| a + b,
+                )
+            })
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -463,6 +473,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::ram_hamming_weight;
     use jolt_field::{Fr, One, Ring, Zero};
@@ -719,5 +730,22 @@ mod tests {
                     if expected == Fr::from_u64(1) && actual == Fr::from_u64(0)
             ));
         });
+    }
+    #[test]
+    fn matches_reference_at_exceptional_points_through_dense_rounds() {
+        let log_t = STARTUP_ROUNDS + 3;
+        let bits: Vec<bool> = (0..1 << log_t).map(|row| row % 5 < 2).collect();
+        for case in ExceptionalEq::ALL {
+            // `case.point` is the eq table's big-endian point, whose last
+            // coordinate binds first; the kernel reverses the stage-1 binding
+            // to get it.
+            let eq_point = case.point(log_t, test_challenge(0));
+            if matches!(case, ExceptionalEq::ZeroPrefix) {
+                let mut eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);
+                eq.bind(test_challenge(0));
+                assert_eq!(eq.current_scalar(), Fr::zero(), "round 0 zeroes the prefix");
+            }
+            hamming_parity(log_t, &bits, eq_point.into_iter().rev().collect());
+        }
     }
 }

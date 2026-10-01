@@ -32,6 +32,8 @@ use jolt_field::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_riscv::JoltInstructionRow;
 
+#[cfg(feature = "field-inline")]
+use crate::stages::field_inline_bytecode::FieldInlineBytecodeFold;
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
 
@@ -77,6 +79,9 @@ pub struct BytecodeReadRafCycleInputs<'a, F: JoltField> {
     pub entry_bytecode_index: usize,
     pub committed_chunk_bits: usize,
     pub table_fold: Option<BytecodeReadRafTableFoldInputs<'a, F>>,
+    /// Field-register access points and the stage-4/5 gamma powers.
+    #[cfg(feature = "field-inline")]
+    pub field_inline: FieldInlineBytecodeFold<F>,
 }
 
 fn cycle_symbolic(dimensions: BytecodeReadRafDimensions) -> CycleSymbolic {
@@ -123,14 +128,24 @@ pub struct BytecodeReadRaf<F: JoltField> {
     /// the four fused-inc consumer stages) folded against
     /// `eq(r_address, row)` — the pre-cycle half of the read-raf publics.
     /// `None` in ZK, where `expected_output` never runs.
-    stage_values_at_r_address: Option<[F; NUM_BYTECODE_VAL_STAGES]>,
+    stage_values_at_r_address: Option<FoldedStageValues<F>>,
+    /// Field-register access points and the stage-4/5 gamma powers.
+    #[cfg(feature = "field-inline")]
+    field_inline: FieldInlineBytecodeFold<F>,
 }
 
 impl<F: JoltField> BytecodeReadRaf<F> {
     pub fn new(inputs: BytecodeReadRafCycleInputs<'_, F>) -> Result<Self, VerifierError> {
         let stage_values_at_r_address = inputs
             .table_fold
-            .map(|fold| fold_stage_values(&inputs.r_address, fold))
+            .map(|fold| {
+                fold_stage_values(
+                    &inputs.r_address,
+                    fold,
+                    #[cfg(feature = "field-inline")]
+                    &inputs.field_inline,
+                )
+            })
             .transpose()?;
         Ok(Self {
             symbolic: cycle_symbolic(inputs.dimensions),
@@ -140,8 +155,33 @@ impl<F: JoltField> BytecodeReadRaf<F> {
             entry_bytecode_index: inputs.entry_bytecode_index,
             committed_chunk_bits: inputs.committed_chunk_bits,
             stage_values_at_r_address,
+            #[cfg(feature = "field-inline")]
+            field_inline: inputs.field_inline,
         })
     }
+
+    #[cfg(feature = "field-inline")]
+    fn field_inline_stage_values(&self, r_cycle: &[F]) -> Result<[F; 5], VerifierError> {
+        let [stage1, stage2, stage3, read_write, val_evaluation] = self
+            .stage_values_at_r_address
+            .ok_or_else(|| public_input_failed("bytecode table fold is unavailable"))?
+            .field_registers;
+        Ok([
+            stage1,
+            stage2,
+            stage3,
+            read_write * EqPolynomial::<F>::mle(&self.field_inline.read_write_cycle, r_cycle),
+            val_evaluation
+                * EqPolynomial::<F>::mle(&self.field_inline.val_evaluation_cycle, r_cycle),
+        ])
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FoldedStageValues<F: JoltField> {
+    ordinary: [F; NUM_BYTECODE_VAL_STAGES],
+    #[cfg(feature = "field-inline")]
+    field_registers: [F; 5],
 }
 
 /// The address-only half of the staged read-raf publics: the bytecode rows'
@@ -152,7 +192,8 @@ impl<F: JoltField> BytecodeReadRaf<F> {
 fn fold_stage_values<F: JoltField>(
     r_address: &[F],
     fold: BytecodeReadRafTableFoldInputs<'_, F>,
-) -> Result<[F; NUM_BYTECODE_VAL_STAGES], VerifierError> {
+    #[cfg(feature = "field-inline")] field_inline: &FieldInlineBytecodeFold<F>,
+) -> Result<FoldedStageValues<F>, VerifierError> {
     let expected_domain = u32::try_from(r_address.len())
         .ok()
         .and_then(|address_bits| 1usize.checked_shl(address_bits))
@@ -164,8 +205,9 @@ fn fold_stage_values<F: JoltField>(
         )));
     }
     let address_eq_evals = EqPolynomial::<F>::evals(r_address, None);
+    let bytecode_rows = fold.bytecode;
     let row_values = bytecode::read_raf_stage_values(BytecodeReadRafStageValueInputs {
-        bytecode: fold.bytecode,
+        bytecode: bytecode_rows,
         register_read_write_point: fold.register_read_write_point,
         register_val_evaluation_point: fold.register_val_evaluation_point,
         stage1_gammas: fold.stage_gammas[0],
@@ -175,12 +217,36 @@ fn fold_stage_values<F: JoltField>(
         stage5_gammas: fold.stage_gammas[4],
     });
     let mut stage_values = [F::zero(); NUM_BYTECODE_VAL_STAGES];
-    for (row_values, eq_address) in row_values.into_iter().zip(address_eq_evals) {
+    for (row_values, eq_address) in row_values.into_iter().zip(&address_eq_evals) {
         for (stage_value, row_value) in stage_values.iter_mut().zip(row_values) {
-            *stage_value += row_value * eq_address;
+            *stage_value += row_value * *eq_address;
         }
     }
-    Ok(stage_values)
+    #[cfg(feature = "field-inline")]
+    let field_registers = {
+        use jolt_claims::protocols::field_inline::geometry::bytecode::{
+            read_raf_stage_values, FieldInlineBytecodeReadRafStageValueInputs,
+        };
+        let rows = read_raf_stage_values(FieldInlineBytecodeReadRafStageValueInputs {
+            bytecode: bytecode_rows,
+            field_register_read_write_point: &field_inline.read_write_address,
+            field_register_val_evaluation_point: &field_inline.val_evaluation_address,
+            stage4_gammas: &field_inline.gammas.stage4,
+            stage5_gammas: &field_inline.gammas.stage5,
+        });
+        let mut values = [F::zero(); 5];
+        for (row, eq_address) in rows.into_iter().zip(address_eq_evals) {
+            for (value, row_value) in values.iter_mut().zip(row) {
+                *value += row_value * eq_address;
+            }
+        }
+        values
+    };
+    Ok(FoldedStageValues {
+        ordinary: stage_values,
+        #[cfg(feature = "field-inline")]
+        field_registers,
+    })
 }
 
 fn public_input_failed(reason: impl ToString) -> VerifierError {
@@ -232,17 +298,17 @@ fn expected_output_from_publics<F: JoltField>(
                     return Ok(*value);
                 }
             }
-            Err(VerifierError::MissingOpeningClaim { id: *id })
+            Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
         },
         |id| match id {
             JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => Ok(gamma),
-            _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+            _ => Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
         },
         |id| match id {
             JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                 .value(*public_id)
-                .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
-            _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
         },
     )
 }
@@ -284,7 +350,8 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
         let r_cycle = r_cycle_suffix(self.dimensions.log_t(), opening_point)?;
         let stage_values_at_r_address = self
             .stage_values_at_r_address
-            .ok_or_else(|| public_input_failed("bytecode table fold is unavailable"))?;
+            .ok_or_else(|| public_input_failed("bytecode table fold is unavailable"))?
+            .ordinary;
         // The cycle-dependent public factors (`stage_cycle_eqs`, the RAF terms,
         // `entry`) are exactly the committed-mode publics; combining them with the
         // construction-time address fold reproduces the full-mode publics.
@@ -311,6 +378,23 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
             spartan_outer_raf: committed.spartan_outer_raf,
             spartan_shift_raf: committed.spartan_shift_raf,
             entry: committed.entry,
+        };
+        // The composed publics: the field-register stage values (already
+        // cycle-weighted per stage) add onto the ordinary staged publics, so the same `Σ
+        // γ^stage · StageValue(stage)` output fold carries both families under the existing
+        // outer gamma powers.
+        #[cfg(feature = "field-inline")]
+        let base_public_values = {
+            let field_inline_stage_values = self.field_inline_stage_values(r_cycle)?;
+            let mut composed = base_public_values;
+            for (stage_value, field_inline_value) in composed
+                .stage_values
+                .iter_mut()
+                .zip(field_inline_stage_values)
+            {
+                *stage_value += field_inline_value;
+            }
+            composed
         };
         #[cfg(not(feature = "akita"))]
         {
@@ -370,13 +454,13 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                             return Ok(*value);
                         }
                     }
-                    Err(VerifierError::MissingOpeningClaim { id: *id })
+                    Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
                 },
                 |id| match id {
                     JoltChallengeId::BytecodeReadRaf(BytecodeReadRafChallenge::Gamma) => {
                         Ok(challenges.gamma)
                     }
-                    _ => Err(VerifierError::MissingStageClaimChallenge { id: *id }),
+                    _ => Err(VerifierError::MissingStageClaimChallenge { id: (*id).into() }),
                 },
                 |id| match id {
                     JoltDerivedId::BytecodeReadRaf(
@@ -384,11 +468,209 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
                     ) if *stage >= base_stages => fused_stage_value(*stage),
                     JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                         .value(*public_id)
-                        .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
-                    _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                        .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+                    _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
                 },
             )
         }
+    }
+}
+
+// The dory-shaped composition pins (base input-claims struct, five stage points); the packed
+// composition is covered by the prover's field-inline stage round-trips and the packed e2e
+// suite.
+#[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    reason = "tests index their own fixed-size fixtures and use plain arithmetic on fixture data"
+)]
+mod field_inline_tests {
+    use super::*;
+    use crate::stages::field_inline_bytecode::{
+        field_inline_stage_gamma_powers, FieldInlineBytecodeFold,
+    };
+    use jolt_claims::protocols::field_inline::geometry::bytecode as field_inline_geometry;
+    use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
+    use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafEvaluationInputs;
+    use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
+    use jolt_field::{Fr, Ring};
+    use jolt_riscv::{JoltInstructionKind as Kind, NormalizedOperands};
+
+    fn fr(value: u64) -> Fr {
+        Fr::from_u64(value)
+    }
+
+    fn point(start: u64, len: usize) -> Vec<Fr> {
+        (0..len as u64).map(|i| fr(start + i)).collect()
+    }
+
+    fn bytecode_rows() -> Vec<JoltInstructionRow> {
+        let mut rows = vec![JoltInstructionRow::default(); 4];
+        rows[0] = JoltInstructionRow {
+            instruction_kind: Kind::ADD,
+            address: 9,
+            operands: NormalizedOperands {
+                rs1: Some(1),
+                rs2: Some(2),
+                rd: Some(3),
+                imm: 4,
+            },
+            virtual_sequence_remaining: None,
+            is_first_in_sequence: false,
+            is_compressed: false,
+        };
+        rows[1] = JoltInstructionRow {
+            instruction_kind: Kind::FIELD_MUL,
+            operands: NormalizedOperands {
+                rd: Some(1),
+                rs1: Some(2),
+                rs2: Some(3),
+                imm: 0,
+            },
+            ..Default::default()
+        };
+        rows
+    }
+
+    fn address_challenges() -> BytecodeReadRafAddressPhaseChallenges<Fr> {
+        BytecodeReadRafAddressPhaseChallenges {
+            gamma: fr(501),
+            stage1_gamma: fr(502),
+            stage2_gamma: fr(503),
+            stage3_gamma: fr(504),
+            stage4_gamma: fr(505),
+            stage5_gamma: fr(506),
+        }
+    }
+
+    /// The composed full-mode `expected_output` equals the from-scratch fold: the ordinary
+    /// full-program publics (evaluated through the one-shot monolith helper — a different
+    /// assembly path than the relation's construction-time fold plus committed cycle publics)
+    /// with the field-register publics added stage-for-stage, folded through the same
+    /// output expression (spec: `field-inline-protocol.md`, "Stage 6 Composition" — the output
+    /// stays the `BytecodeRa(i)` product, with public stage values augmented by the field-register
+    /// evaluation).
+    #[test]
+    fn composed_expected_output_matches_from_scratch_public_fold() {
+        let log_t = 2usize;
+        let log_k = 2usize;
+        let dimensions = BytecodeReadRafDimensions::new(log_t, log_k, 2);
+        let r_address = point(10, log_k);
+        let stage_cycle_points: [Vec<Fr>; READ_RAF_CYCLE_STAGES] =
+            core::array::from_fn(|stage| point(20 + 10 * stage as u64, log_t));
+        let register_read_write_point = point(70, 4);
+        let register_val_evaluation_point = point(80, 4);
+        let field_read_write_address = point(90, FIELD_REGISTERS_LOG_K);
+        let field_read_write_cycle = point(100, log_t);
+        let field_val_evaluation_address = point(110, FIELD_REGISTERS_LOG_K);
+        let field_val_evaluation_cycle = point(120, log_t);
+        let challenges = address_challenges();
+        let stage_gammas = challenges.stage_gamma_powers();
+        let field_gammas = field_inline_stage_gamma_powers(&challenges);
+        let bytecode = bytecode_rows();
+        let entry_bytecode_index = 1usize;
+
+        let relation = BytecodeReadRaf::new(BytecodeReadRafCycleInputs {
+            dimensions,
+            r_address: r_address.clone(),
+            stage_cycle_points: stage_cycle_points.clone(),
+            entry_bytecode_index,
+            committed_chunk_bits: 1,
+            table_fold: Some(BytecodeReadRafTableFoldInputs {
+                bytecode: &bytecode,
+                register_read_write_point: &register_read_write_point,
+                register_val_evaluation_point: &register_val_evaluation_point,
+                stage_gammas: stage_gammas.each_ref().map(Vec::as_slice),
+            }),
+            field_inline: FieldInlineBytecodeFold {
+                read_write_address: field_read_write_address.clone(),
+                read_write_cycle: field_read_write_cycle.clone(),
+                val_evaluation_address: field_val_evaluation_address.clone(),
+                val_evaluation_cycle: field_val_evaluation_cycle.clone(),
+                gammas: field_gammas.clone(),
+            },
+        })
+        .unwrap();
+
+        let sumcheck_point = point(130, log_t);
+        let input_points = BytecodeReadRafInputClaims {
+            address_phase: Vec::new(),
+        };
+        let output_points = relation
+            .derive_opening_points(&sumcheck_point, &input_points)
+            .unwrap();
+        let output_values = BytecodeReadRafOutputClaims {
+            bytecode_ra: vec![fr(601), fr(602)],
+        };
+        let cycle_challenges = BytecodeReadRafCyclePhaseChallenges {
+            gamma: challenges.gamma,
+        };
+        let composed = relation
+            .expected_output(
+                &input_points,
+                &output_values,
+                &output_points,
+                &cycle_challenges,
+            )
+            .unwrap();
+
+        // From scratch: the one-shot monolith publics plus the field-register
+        // publics, stage-for-stage, through the shared output fold.
+        let r_cycle: Vec<Fr> = sumcheck_point.iter().rev().copied().collect();
+        let mut publics = bytecode::read_raf_public_values(BytecodeReadRafEvaluationInputs {
+            bytecode: &bytecode,
+            r_address: &r_address,
+            r_cycle: &r_cycle,
+            stage_cycle_points: stage_cycle_points.each_ref().map(Vec::as_slice),
+            register_read_write_point: &register_read_write_point,
+            register_val_evaluation_point: &register_val_evaluation_point,
+            entry_bytecode_index,
+            stage1_gammas: &stage_gammas[0],
+            stage2_gammas: &stage_gammas[1],
+            stage3_gammas: &stage_gammas[2],
+            stage4_gammas: &stage_gammas[3],
+            stage5_gammas: &stage_gammas[4],
+        })
+        .unwrap();
+        let field_publics = field_inline_geometry::read_raf_public_values(
+            field_inline_geometry::FieldInlineBytecodeReadRafEvaluationInputs {
+                bytecode: &bytecode,
+                r_address: &r_address,
+                r_cycle: &r_cycle,
+                field_register_read_write_point: &field_read_write_address,
+                field_register_read_write_cycle_point: &field_read_write_cycle,
+                field_register_val_evaluation_point: &field_val_evaluation_address,
+                field_register_val_evaluation_cycle_point: &field_val_evaluation_cycle,
+                stage4_gammas: &field_gammas.stage4,
+                stage5_gammas: &field_gammas.stage5,
+            },
+        )
+        .unwrap();
+        // The active field-inline row contributes to stages 4/5; a vanishing contribution
+        // would make this pin vacuous.
+        assert!(field_publics
+            .stage_values
+            .iter()
+            .any(|value| *value != fr(0)));
+        for (stage_value, field_value) in publics
+            .stage_values
+            .iter_mut()
+            .zip(field_publics.stage_values)
+        {
+            *stage_value += field_value;
+        }
+        let expected = expected_output_from_publics(
+            dimensions,
+            &publics,
+            &output_values.bytecode_ra,
+            challenges.gamma,
+        )
+        .unwrap();
+
+        assert_eq!(composed, expected);
     }
 }
 
@@ -523,21 +805,21 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
                             .bytecode_ra
                             .get(index)
                             .copied()
-                            .ok_or(VerifierError::MissingOpeningClaim { id: *id });
+                            .ok_or(VerifierError::MissingOpeningClaim { id: (*id).into() });
                     }
                 }
-                Err(VerifierError::MissingOpeningClaim { id: *id })
+                Err(VerifierError::MissingOpeningClaim { id: (*id).into() })
             },
             |id| {
                 challenges
                     .resolve_challenge(id)
-                    .ok_or(VerifierError::MissingStageClaimChallenge { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
             |id| match id {
                 JoltDerivedId::BytecodeReadRaf(public_id) => public_values
                     .value(*public_id)
-                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id }),
-                _ => Err(VerifierError::MissingStageClaimDerived { id: *id }),
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+                _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
             },
         )
     }
@@ -612,6 +894,34 @@ impl<F: JoltField> BytecodeReadRafCycle<F> {
         }
     }
 
+    /// The field-register opening points and gamma powers used by the cycle kernel.
+    /// Full mode only: committed-program mode cannot anchor the field-inline selectors (see
+    /// [`field_inline::committed_program_rejection`](crate::stages::stage6b::field_inline)),
+    /// and the stage-6 batch build already rejects it, so this arm is fail-closed rather than
+    /// reachable.
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_fold(&self) -> Result<&FieldInlineBytecodeFold<F>, VerifierError> {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => Ok(&relation.field_inline),
+            BytecodeReadRafCycleVariant::Committed(_) => {
+                Err(crate::stages::stage6b::field_inline::committed_program_rejection())
+            }
+        }
+    }
+
+    #[cfg(feature = "field-inline")]
+    pub fn field_inline_stage_values_at_r_address(&self) -> Result<[F; 5], VerifierError> {
+        match &self.variant {
+            BytecodeReadRafCycleVariant::Full(relation) => relation
+                .stage_values_at_r_address
+                .map(|values| values.field_registers)
+                .ok_or_else(|| public_input_failed("bytecode table fold is unavailable")),
+            BytecodeReadRafCycleVariant::Committed(_) => {
+                Err(crate::stages::stage6b::field_inline::committed_program_rejection())
+            }
+        }
+    }
+
     /// The address-only bytecode-table fold at `r_address` — the constant
     /// `BytecodeValClaim` values the cycle kernel's tables carry. Full mode
     /// computes the fold at construction (clear only); committed mode's
@@ -620,6 +930,7 @@ impl<F: JoltField> BytecodeReadRafCycle<F> {
         match &self.variant {
             BytecodeReadRafCycleVariant::Full(relation) => relation
                 .stage_values_at_r_address
+                .map(|values| values.ordinary)
                 .ok_or_else(|| public_input_failed("bytecode table fold is unavailable")),
             BytecodeReadRafCycleVariant::Committed(relation) => {
                 let staged: &[F] = &relation.val_stages;
