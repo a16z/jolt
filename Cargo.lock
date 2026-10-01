@@ -5465,9 +5465,17 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "clap",
+ "jolt-akita",
+ "jolt-field",
+ "jolt-inlines-blake2",
+ "jolt-inlines-ntt",
+ "jolt-program",
+ "jolt-riscv",
  "jolt-sdk",
+ "jolt-witness",
  "postcard",
  "serde",
+ "tracer",
  "tracing",
  "tracing-subscriber",
 ]
@@ -5477,7 +5485,13 @@ name = "recursion-guest"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
+ "jolt-akita",
+ "jolt-crypto",
+ "jolt-dory",
+ "jolt-field",
+ "jolt-riscv",
  "jolt-sdk",
+ "jolt-transcript",
  "serde",
 ]
 
