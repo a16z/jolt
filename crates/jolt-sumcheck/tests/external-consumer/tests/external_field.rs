@@ -4,15 +4,15 @@ use std::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-use jolt_field::{AdditiveGroup, Field, Prime64Offset59, Ring};
+use jolt_field::{
+    AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, Prime64Offset59, Ring,
+};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, BooleanHypercube, ClearProof,
-    ClearSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError,
-    SumcheckProof, SumcheckRecorder, SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
+    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds, SequentialRounds,
+    SumcheckClaim, SumcheckError, SumcheckRecorder, SumcheckVerifier,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Channel, Keccak, ProtocolId, ProverTranscript, VerifierTranscript};
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 
@@ -173,47 +173,50 @@ impl Field for ExternalField {
     }
 }
 
-impl AppendToTranscript for ExternalField {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.0.append_to_transcript(transcript);
+impl CanonicalBytes for ExternalField {
+    const NUM_BYTES: usize = Prime64Offset59::NUM_BYTES;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        self.0.to_bytes_le(out);
     }
 }
 
-#[derive(Default)]
-struct ExternalTranscript {
-    state: [u8; 32],
-    cursor: usize,
-}
-
-impl Transcript for ExternalTranscript {
-    type Challenge = ExternalField;
-
-    fn new(label: &'static [u8]) -> Self {
-        let mut transcript = Self::default();
-        transcript.append_bytes(label);
-        transcript
-    }
-
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            let index = self.cursor % self.state.len();
-            self.state[index] = self.state[index]
-                .wrapping_mul(31)
-                .wrapping_add(*byte)
-                .wrapping_add(1);
-            self.cursor += 1;
-        }
-    }
-
-    fn challenge(&mut self) -> ExternalField {
-        self.append_bytes(b"challenge");
-        ExternalField::from_u64(u64::from_le_bytes(self.state[..8].try_into().unwrap()))
-    }
-
-    fn state(&self) -> [u8; 32] {
-        self.state
+impl CanonicalDecode for ExternalField {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        Prime64Offset59::from_bytes_le_checked(bytes).map(Self)
     }
 }
+
+impl CanonicalEncoding for ExternalField {
+    const MODULUS_BITS: u32 = Prime64Offset59::MODULUS_BITS;
+
+    fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
+        Self(Prime64Offset59::from_bytes_le_reduced(bytes))
+    }
+
+    fn to_u128_checked(&self) -> Option<u128> {
+        self.0.to_u128_checked()
+    }
+
+    fn from_u128_checked(value: u128) -> Option<Self> {
+        Prime64Offset59::from_u128_checked(value).map(Self)
+    }
+
+    fn from_u128_reduced(value: u128) -> Self {
+        Self(Prime64Offset59::from_u128_reduced(value))
+    }
+
+    fn num_bits(&self) -> u32 {
+        self.0.num_bits()
+    }
+
+    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
+        Self(Prime64Offset59::from_scalar_challenge_bytes(bytes))
+    }
+}
+
+const PROTOCOL: ProtocolId = ProtocolId::new::<Keccak>("jolt-sumcheck/external-field");
+const SESSION: &[u8] = b"external-field";
 
 struct LinearRound;
 
@@ -230,22 +233,16 @@ impl ProveRounds<ExternalField> for LinearRound {
     ) -> Result<UnivariatePoly<ExternalField>, SumcheckError<ExternalField>> {
         assert!(bind.is_none());
         assert_eq!(round, 0);
-        let polynomial = field_only_polynomial([
-            ExternalField::from_u64(3),
-            ExternalField::from_u64(2),
-        ]);
+        let polynomial =
+            field_only_polynomial([ExternalField::from_u64(3), ExternalField::from_u64(2)]);
         assert_eq!(
-            polynomial.evaluate(ExternalField::zero())
-                + polynomial.evaluate(ExternalField::one()),
+            polynomial.evaluate(ExternalField::zero()) + polynomial.evaluate(ExternalField::one()),
             previous_claim
         );
         Ok(polynomial)
     }
 
-    fn finish_rounds(
-        &mut self,
-        _bind: ExternalField,
-    ) -> Result<(), SumcheckError<ExternalField>> {
+    fn finish_rounds(&mut self, _bind: ExternalField) -> Result<(), SumcheckError<ExternalField>> {
         Ok(())
     }
 }
@@ -259,10 +256,10 @@ fn field_only_polynomial<F: Field>(coefficients: [F; 2]) -> UnivariatePoly<F> {
 #[test]
 fn external_field_runs_stock_clear_prover_and_verifier() {
     let input_claim = ExternalField::from_u64(8);
-    let mut prover_transcript = ExternalTranscript::new(b"external-field");
+    let mut prover_transcript = ProverTranscript::<Keccak>::new(&PROTOCOL, SESSION);
     let mut recorder = ClearSumcheckRecorder::<ExternalField>::new();
     recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
-    let coefficient = prover_transcript.challenge_scalar();
+    let coefficient: ExternalField = prover_transcript.challenge_small();
     let prelude = BatchPrelude::try_new(
         vec![BatchMember {
             input_claim,
@@ -284,31 +281,27 @@ fn external_field_runs_stock_clear_prover_and_verifier() {
         &mut prover_transcript,
     )
     .unwrap();
-    let recorded = recorder
+    recorder
         .finish(&proved.member_claims, &mut prover_transcript)
         .unwrap();
-    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = recorded.proof else {
-        panic!("clear recorder returned a non-compressed proof")
-    };
+    let prover_state: [u8; 32] = prover_transcript.preview().squeeze();
+    let proof = prover_transcript.finish();
 
-    let mut verifier_transcript = ExternalTranscript::new(b"external-field");
-    verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &input_claim);
-    let verifier_coefficient = verifier_transcript.challenge_scalar();
+    let mut verifier_transcript = VerifierTranscript::<Keccak>::new(&PROTOCOL, SESSION, &proof);
+    verifier_transcript.public(&input_claim);
+    let verifier_coefficient: ExternalField = verifier_transcript.challenge_small();
     let reduced = SumcheckVerifier::verify_compressed(
         &SumcheckClaim::new(1, 1, verifier_coefficient * input_claim),
-        &proof,
-        BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         &mut verifier_transcript,
     )
     .unwrap();
-    for claim in &proved.member_claims {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, claim);
-    }
+    let opening_claims: Vec<ExternalField> = verifier_transcript.receive_n(1).unwrap();
+    assert_eq!(verifier_transcript.preview().squeeze::<32>(), prover_state);
+    verifier_transcript.finish().unwrap();
 
     let point = reduced.point.as_slice()[0];
     let expected = ExternalField::from_u64(3) + ExternalField::from_u64(2) * point;
+    assert_eq!(opening_claims, vec![expected]);
     assert_eq!(proved.member_claims, vec![expected]);
     assert_eq!(reduced.value, verifier_coefficient * expected);
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
 }

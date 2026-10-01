@@ -18,10 +18,13 @@ use jolt_field::{
     AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator,
     Ring, WithAccumulator,
 };
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    BooleanHypercube, ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier,
+    send_full_round, BooleanHypercube, EvaluationClaim, SumcheckClaim, SumcheckVerifier,
 };
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, KeccakTranscript, Transcript};
+use jolt_transcript::{
+    Blake2b512, Channel, Keccak, ProtocolId, ProverTranscript, Sponge, VerifierTranscript,
+};
 use num_traits::{One, Zero};
 
 const MODULUS: u64 = (1u64 << 61) - 1;
@@ -295,81 +298,34 @@ impl WithAccumulator for Mersenne61 {
     type SignedProductAccumulator = NaiveAccumulator<Mersenne61>;
 }
 
-#[derive(Clone, Debug)]
-struct LinearRound {
-    coeffs: [Mersenne61; 2],
-}
+/// Proves four degree-1 rounds of the claim 10 under sponge `H` (each round
+/// splits its running sum as `3s + (s - 6s) X`), then verifies them.
+fn roundtrip<H: Sponge>() {
+    let protocol = ProtocolId::new::<H>("jolt-sumcheck/tests/mersenne61");
+    let claim = SumcheckClaim::new(4, 1, Mersenne61::from_u64(10));
 
-impl RoundMessage for LinearRound {
-    fn degree(&self) -> usize {
-        1
-    }
-
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.coeffs[0].append_to_transcript(transcript);
-        self.coeffs[1].append_to_transcript(transcript);
-    }
-}
-
-impl ClearRound<Mersenne61> for LinearRound {
-    fn evaluate(&self, challenge: Mersenne61) -> Mersenne61 {
-        self.coeffs[0] + self.coeffs[1] * challenge
-    }
-
-    fn coefficient_linear_combination(&self, coefficients: &[Mersenne61]) -> Mersenne61 {
-        self.coeffs
-            .iter()
-            .zip(coefficients)
-            .map(|(&coefficient, &scale)| coefficient * scale)
-            .sum()
-    }
-}
-
-fn build_rounds() -> (
-    SumcheckClaim<Mersenne61>,
-    Vec<LinearRound>,
-    EvaluationClaim<Mersenne61>,
-) {
-    let mut transcript = Blake2bTranscript::<Mersenne61>::new(b"mersenne61");
-    let mut running_sum = Mersenne61::from_u64(10);
+    let mut prover = ProverTranscript::<H>::new(&protocol, b"mersenne61");
+    let mut running_sum = claim.claimed_sum;
     let mut point = Vec::new();
-    let mut rounds = Vec::new();
-
-    for _ in 0..4 {
+    for _ in 0..claim.num_vars {
         let c0 = running_sum * Mersenne61::from_u64(3);
-        let c1 = running_sum - c0 - c0;
-        let round = LinearRound { coeffs: [c0, c1] };
-        round.append_to_transcript(&mut transcript);
-        let r = transcript.challenge();
+        let round = UnivariatePoly::new(vec![c0, running_sum - c0 - c0]);
+        send_full_round(&round, claim.degree, &mut prover).unwrap();
+        let r: Mersenne61 = prover.challenge_small();
         running_sum = round.evaluate(r);
         point.push(r);
-        rounds.push(round);
     }
+    let narg = prover.finish();
+    assert_eq!(narg.len(), claim.num_vars * 2 * Mersenne61::NUM_BYTES);
 
-    (
-        SumcheckClaim::new(4, 1, Mersenne61::from_u64(10)),
-        rounds,
-        EvaluationClaim::new(point, running_sum),
-    )
+    let mut verifier = VerifierTranscript::<H>::new(&protocol, b"mersenne61", &narg);
+    let actual = SumcheckVerifier::verify(&claim, BooleanHypercube, &mut verifier).unwrap();
+    verifier.finish().unwrap();
+    assert_eq!(actual, EvaluationClaim::new(point, running_sum));
 }
 
 #[test]
-fn hash_transcripts_accept_mersenne61_without_bn254_field_surface() {
-    let mut blake = Blake2bTranscript::<Mersenne61>::new(b"compat");
-    let mut keccak = KeccakTranscript::<Mersenne61>::new(b"compat");
-    Mersenne61::from_u64(42).append_to_transcript(&mut blake);
-    Mersenne61::from_u64(42).append_to_transcript(&mut keccak);
-
-    let _: Mersenne61 = blake.challenge();
-    let _: Mersenne61 = keccak.challenge();
-}
-
-#[test]
-fn sumcheck_verifier_accepts_mersenne61_round_proof() {
-    let (claim, rounds, expected) = build_rounds();
-    let mut verifier_transcript = Blake2bTranscript::<Mersenne61>::new(b"mersenne61");
-    let actual =
-        SumcheckVerifier::verify(&claim, &rounds, BooleanHypercube, &mut verifier_transcript)
-            .unwrap();
-    assert_eq!(actual, expected);
+fn sumcheck_roundtrips_mersenne61_under_blake2b_and_keccak() {
+    roundtrip::<Blake2b512>();
+    roundtrip::<Keccak>();
 }
