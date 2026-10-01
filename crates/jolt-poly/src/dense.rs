@@ -147,14 +147,6 @@ impl<T: Copy> Polynomial<T> {
 }
 
 impl<F: JoltField> Polynomial<F> {
-    /// Creates the zero polynomial with $2^n$ evaluations all equal to zero.
-    pub fn zeros(num_vars: usize) -> Self {
-        Self {
-            evals: jolt_utils::unsafe_allocate_zero_vec(1 << num_vars),
-            num_vars,
-        }
-    }
-
     /// Creates a polynomial with random evaluations.
     pub fn random(num_vars: usize, rng: &mut impl RngCore) -> Self {
         let evals = (0..(1 << num_vars)).map(|_| F::random(rng)).collect();
@@ -632,7 +624,7 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
     use jolt_field::{Field, Ring};
-    use num_traits::{One, Zero};
+    use num_traits::One;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -649,15 +641,6 @@ mod tests {
         let via_bind = bound.evaluate(&point[1..]);
 
         assert_eq!(direct, via_bind);
-    }
-
-    #[test]
-    fn zeros_evaluates_to_zero() {
-        let mut rng = ChaCha20Rng::seed_from_u64(2);
-        let n = 4;
-        let poly = Polynomial::<Fr>::zeros(n);
-        let point: Vec<Fr> = (0..n).map(|_| Fr::random(&mut rng)).collect();
-        assert!(poly.evaluate(&point).is_zero());
     }
 
     #[test]
