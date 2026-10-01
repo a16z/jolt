@@ -60,7 +60,7 @@ use rayon::prelude::*;
 
 use super::support::{
     accumulate_product_grid, collect_par_map, for_each_index_mut, map_indices, map_reduce_chunks,
-    scan_chunk_size, RoundProgress,
+    scan_chunk_size, GruenRoundMessage, RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -1069,7 +1069,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     /// to explicit-point interpolation.
     fn cycle_message(
         &self,
-        _round: usize,
+        round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let cycle = self
@@ -1149,7 +1149,32 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             },
         );
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
-        Ok(cycle.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+        cycle
+            .gruen
+            .checked_toom(&q_evals, previous_claim, round, || {
+                cycle.gruen.par_fold_out_in(
+                    F::Accumulator::default,
+                    |sum, row, _, weight| {
+                        let row = 2 * row;
+                        let value = match &cycle.tables {
+                            CycleTables::Dense { combined_val, ra } => {
+                                ra.iter().fold(combined_val.evals()[row], |product, ra| {
+                                    product * ra.evals()[row]
+                                })
+                            }
+                            CycleTables::Pending(pending) => {
+                                (0..self.dimensions.num_virtual_ra_polys())
+                                    .fold(self.pending_combined_base(pending, row), |product, i| {
+                                        product * self.pending_ra_base(i, row)
+                                    })
+                            }
+                        };
+                        sum.fmadd(weight, value);
+                    },
+                    |_, weight, sum| weight * sum.reduce(),
+                    |a, b| a + b,
+                )
+            })
     }
 
     /// Handoff at the address/cycle boundary — same collapse as the
@@ -1454,6 +1479,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
+    use crate::optimized::parity::ExceptionalEq;
     use std::num::NonZeroUsize;
     use std::sync::Arc;
 
@@ -1620,13 +1646,25 @@ mod tests {
     /// canonical coefficient vectors of equal length) every round and equal
     /// output claims.
     fn assert_parity(log_t: usize, num_virtual_ra_polys: usize, seed: u64) {
+        assert_parity_case(log_t, num_virtual_ra_polys, seed, None);
+    }
+
+    fn assert_parity_case(
+        log_t: usize,
+        num_virtual_ra_polys: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+    ) {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
             NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
         );
         let rows = fixture_rows(log_t, seed);
-        let r_reduction: Vec<Fr> = (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect();
+        let r_reduction: Vec<Fr> = exceptional.map_or_else(
+            || (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect(),
+            |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),
+        );
         let gamma = fr(0xACE1_57EF);
 
         let mut reference =
@@ -1724,6 +1762,14 @@ mod tests {
                 "round {round}"
             );
             claim = reference_poly.evaluate(challenge(round));
+        }
+    }
+    #[test]
+    fn parity_exceptional_eq_in_pending_and_dense_cycle_tables() {
+        for virtuals in [4usize, 8] {
+            for case in ExceptionalEq::ALL {
+                assert_parity_case(6, virtuals, 257, Some(case));
+            }
         }
     }
 }
