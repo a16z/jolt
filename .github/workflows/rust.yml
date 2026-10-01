@@ -428,7 +428,7 @@ jobs:
     name: Test jolt-prover (field-inline matrix and e2e)
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -470,7 +470,7 @@ jobs:
     name: Test jolt-prover (packed field-inline matrix and e2e)
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
@@ -520,7 +520,7 @@ jobs:
     name: Test jolt-verifier (field-inline fixtures)
     steps:
       - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rust-src
           cache: false
