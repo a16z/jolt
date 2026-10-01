@@ -67,6 +67,7 @@ members = [
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
   "jolt-inlines/p256",
+  "jolt-inlines/ntt",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
@@ -204,6 +205,8 @@ ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "de
 [patch."https://github.com/a16z/jolt"]
 jolt-field = { path = "crates/jolt-field" }
 jolt-poly = { path = "crates/jolt-poly" }
+jolt-inlines-blake2 = { path = "jolt-inlines/blake2" }
+jolt-inlines-ntt = { path = "jolt-inlines/ntt" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -298,15 +301,16 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "1cc7a2a90774d4d402f201701d08158edc106d67", default-features = false }
+# Immutable fork revision: upstream 1cc7a2a90 plus the recursion verifier-guest support
+# (inline hooks, trusted in-place setup views, selected-row catalog views).
+akita-algebra = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-config = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-error = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-pcs = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-planner = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-schedules = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-challenges = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
+akita-types = { git = "https://github.com/markosg04/akita.git", rev = "eacbacd173a122b498fd80bca543b765214f5abe", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -331,6 +335,7 @@ rand_core = { version = "0.6.4", default-features = false }
 rand_distr = "0.4.3"
 
 # Serialization
+serde_bytes = { version = "0.11", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", default-features = false, features = [
   "derive",
   "rc",
@@ -436,7 +441,7 @@ jolt-akita = { path = "./crates/jolt-akita" }
 jolt-blindfold = { path = "./crates/jolt-blindfold" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
-jolt-crypto = { path = "./crates/jolt-crypto" }
+jolt-crypto = { path = "./crates/jolt-crypto", default-features = false }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-field = { path = "./crates/jolt-field" }
 jolt-host = { path = "./crates/jolt-host" }
@@ -463,6 +468,7 @@ jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }
 jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
 jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
+jolt-inlines-ntt = { path = "./jolt-inlines/ntt", default-features = false }
 jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }

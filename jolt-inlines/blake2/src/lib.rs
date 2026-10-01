@@ -10,6 +10,9 @@ pub const BLAKE2_NAME: &str = "BLAKE2_INLINE";
 pub mod sdk;
 pub use sdk::*;
 
+#[cfg(feature = "digest")]
+pub mod digest_adapter;
+
 #[cfg(feature = "host")]
 pub mod exec;
 #[cfg(feature = "host")]
