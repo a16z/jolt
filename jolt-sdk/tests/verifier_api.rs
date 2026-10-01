@@ -40,7 +40,7 @@ mod tests {
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
-            jolt_sdk::VerifierTranscript,
+            jolt_sdk::ProtocolSponge,
         >(&preprocessing, &device, &proof, None);
         let duration = start.elapsed();
         println!("Verification took: {} ms", duration.as_millis());

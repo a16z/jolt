@@ -20,7 +20,6 @@ jolt-transcript = { workspace = true, features = [
   "transcript-keccak",
   "transcript-poseidon",
 ] }
-spongefish = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
 
