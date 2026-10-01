@@ -1,67 +1,34 @@
 //! Committed sumcheck round messages.
+//!
+//! A committed round sends a vector commitment to the round polynomial's
+//! `degree + 1` coefficients (padded to the round's public degree bound, which
+//! fixes BlindFold's coefficient layout) instead of the coefficients. After the
+//! rounds, the output-claim values are row-committed in chunks of the setup's
+//! capacity.
 
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
-use jolt_field::{Field, JoltField};
+#[cfg(feature = "committed")]
+use jolt_field::CanonicalEncoding;
+use jolt_field::Field;
+#[cfg(feature = "committed")]
+use jolt_field::JoltField;
 #[cfg(feature = "committed")]
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+#[cfg(feature = "committed")]
+use jolt_transcript::{Channel, ProverTranscript, Sponge};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SumcheckError;
 #[cfg(feature = "committed")]
-use crate::proof::SumcheckProof;
-use crate::round_proof::RoundMessage;
+use crate::round_proof::padded_coefficients;
 
-const SUMCHECK_COMMITMENT_LABEL: &[u8] = b"sumcheck_commitment";
-const OUTPUT_CLAIMS_LABEL: &[u8] = b"output_claims_coms";
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommittedRound<C> {
-    pub commitment: C,
-    pub degree: usize,
-}
-
-impl<C: AppendToTranscript> RoundMessage for CommittedRound<C> {
-    fn degree(&self) -> usize {
-        self.degree
-    }
-
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        // The degree is packed into the label word so the round's degree —
-        // which fixes the BlindFold R1CS coefficient layout — is
-        // Fiat-Shamir-bound, not free prover-chosen wire data.
-        transcript.append(&LabelWithCount(
-            SUMCHECK_COMMITMENT_LABEL,
-            self.degree as u64,
-        ));
-        self.commitment.append_to_transcript(transcript);
-    }
-}
-
+/// Row commitments to a committed sumcheck's flattened output-claim values.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedOutputClaims<C> {
     pub commitments: Vec<C>,
-}
-
-impl<C: AppendToTranscript> AppendToTranscript for CommittedOutputClaims<C> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            OUTPUT_CLAIMS_LABEL,
-            self.commitments.len() as u64,
-        ));
-        for commitment in &self.commitments {
-            commitment.append_to_transcript(transcript);
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommittedSumcheckProof<C> {
-    pub rounds: Vec<CommittedRound<C>>,
-    pub output_claims: CommittedOutputClaims<C>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,12 +169,12 @@ impl<F> CommittedSumcheckWitness<F> {
     }
 }
 
-/// Incrementally assembles a [`CommittedSumcheckProof`]: per round, commit the
-/// round polynomial's coefficients with a fresh blinding, absorb the
-/// commitment, and squeeze the round challenge; at the end, row-commit the
-/// flattened output-claim values and absorb those commitments. Blindings are
-/// drawn from the caller-supplied `rng` and retained in the witness — the
-/// caller owns the randomness source, so a fixed seed reproduces the proof.
+/// Records a committed sumcheck into the prover transcript: per round, commit
+/// the padded round polynomial with a fresh blinding, send the commitment, and
+/// draw the round challenge; at the end, row-commit the flattened output-claim
+/// values and send those commitments. Blindings are drawn from the
+/// caller-supplied `rng` and retained in the witness, so a fixed seed
+/// reproduces the proof.
 #[cfg(feature = "committed")]
 pub struct CommittedSumcheckBuilder<'a, F, VC, R>
 where
@@ -217,14 +184,13 @@ where
 {
     setup: &'a VC::Setup,
     rng: R,
-    rounds: Vec<CommittedRound<VC::Output>>,
     witness: CommittedSumcheckWitness<F>,
 }
 
 #[cfg(feature = "committed")]
 impl<'a, F, VC, R> CommittedSumcheckBuilder<'a, F, VC, R>
 where
-    F: JoltField,
+    F: JoltField + CanonicalEncoding,
     VC: VectorCommitment<Field = F>,
     R: RngCore,
 {
@@ -235,22 +201,19 @@ where
         Ok(Self {
             setup,
             rng,
-            rounds: Vec::new(),
             witness: CommittedSumcheckWitness::new(),
         })
     }
 
-    /// Commit one round polynomial, absorb the commitment, and squeeze the
-    /// round challenge.
-    pub fn commit_round<T>(
+    /// Commit one round polynomial of degree bound `degree`, send the
+    /// commitment, and draw the round challenge.
+    pub fn commit_round<H: Sponge>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
-        transcript: &mut T,
-    ) -> Result<F, SumcheckError<F>>
-    where
-        T: Transcript<Challenge = F>,
-    {
-        let coefficients = round_poly.coefficients().to_vec();
+        degree: usize,
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<F, SumcheckError<F>> {
+        let coefficients = padded_coefficients(round_poly, degree)?;
         if coefficients.len() > VC::capacity(self.setup) {
             return Err(SumcheckError::RoundExceedsCommitmentCapacity {
                 coefficients: coefficients.len(),
@@ -259,79 +222,30 @@ where
         }
 
         let blinding = F::random(&mut self.rng);
-        let witness = CommittedRoundWitness {
-            coefficients: coefficients.clone(),
-            blinding,
-        };
-        let round = witness.commit::<VC>(self.setup)?;
-        round.append_to_transcript(transcript);
-        let challenge = transcript.challenge();
+        let commitment = VC::commit(self.setup, &coefficients, &blinding);
+        transcript.send(&commitment);
+        let challenge = transcript.challenge_small();
 
-        self.rounds.push(round);
         self.witness.round_coefficients.push(coefficients);
         self.witness.round_blindings.push(blinding);
         Ok(challenge)
     }
 
     /// Row-commit the flattened output-claim values (chunked to the setup's
-    /// capacity), absorb the commitments, and assemble the proof, returning it
-    /// with the prover-retained witness that opens it.
-    #[expect(
-        clippy::type_complexity,
-        reason = "a proof paired with the witness that opens it, not worth a named pair type"
-    )]
-    pub fn finish<T>(
+    /// capacity), send the commitments, and return the prover-retained
+    /// witness that opens every commitment sent.
+    pub fn finish<H: Sponge>(
         mut self,
         output_claim_values: &[F],
-        transcript: &mut T,
-    ) -> Result<(SumcheckProof<F, VC::Output>, CommittedSumcheckWitness<F>), SumcheckError<F>>
-    where
-        T: Transcript<Challenge = F>,
-    {
+        transcript: &mut ProverTranscript<H>,
+    ) -> Result<CommittedSumcheckWitness<F>, SumcheckError<F>> {
         let capacity = VC::capacity(self.setup);
-        let mut commitments = Vec::with_capacity(output_claim_values.len().div_ceil(capacity));
         for row in output_claim_values.chunks(capacity) {
             let blinding = F::random(&mut self.rng);
-            let commitment = VC::commit(self.setup, row, &blinding);
-            commitments.push(commitment);
+            transcript.send(&VC::commit(self.setup, row, &blinding));
             self.witness.output_claim_rows.push(row.to_vec());
             self.witness.output_claim_blindings.push(blinding);
         }
-
-        let output_claims = CommittedOutputClaims { commitments };
-        output_claims.append_to_transcript(transcript);
-        Ok((
-            SumcheckProof::Committed(CommittedSumcheckProof {
-                rounds: self.rounds,
-                output_claims,
-            }),
-            self.witness,
-        ))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommittedRoundWitness<F> {
-    pub coefficients: Vec<F>,
-    pub blinding: F,
-}
-
-impl<F: JoltField> CommittedRoundWitness<F> {
-    #[cfg(feature = "committed")]
-    pub fn commit<VC>(
-        &self,
-        setup: &VC::Setup,
-    ) -> Result<CommittedRound<VC::Output>, SumcheckError<F>>
-    where
-        VC: VectorCommitment<Field = F>,
-    {
-        if self.coefficients.is_empty() {
-            return Err(SumcheckError::EmptyRoundCoefficients);
-        }
-
-        Ok(CommittedRound {
-            commitment: VC::commit(setup, &self.coefficients, &self.blinding),
-            degree: self.coefficients.len() - 1,
-        })
+        Ok(self.witness)
     }
 }
