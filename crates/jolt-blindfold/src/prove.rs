@@ -504,6 +504,14 @@ where
                     actual: opened,
                 });
             }
+            // Absorb per binding (output, then blinding), in the order the
+            // verifier reads them.
+            append_vector_opening(
+                transcript,
+                b"bf_eval_out_open",
+                b"bf_eval_out_blind",
+                &opening,
+            );
             folded_eval_output_openings.push(opening);
         }
         if let Some(coordinate) = coordinates.blinding {
@@ -523,24 +531,14 @@ where
                     actual: opened,
                 });
             }
+            append_vector_opening(
+                transcript,
+                b"bf_eval_blind_open",
+                b"bf_eval_blind_bl",
+                &opening,
+            );
             folded_eval_blinding_openings.push(opening);
         }
-    }
-    for opening in &folded_eval_output_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_out_open",
-            b"bf_eval_out_blind",
-            opening,
-        );
-    }
-    for opening in &folded_eval_blinding_openings {
-        append_vector_opening(
-            transcript,
-            b"bf_eval_blind_open",
-            b"bf_eval_blind_bl",
-            opening,
-        );
     }
 
     transcript.append(&Label(b"bf_spartan"));
