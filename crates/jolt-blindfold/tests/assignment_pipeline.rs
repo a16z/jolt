@@ -4,215 +4,46 @@
 //! against the verifier on witnesses assembled from committed sumcheck data
 //! and the protocol's public parts alone.
 
-#![expect(clippy::expect_used, reason = "integration tests should fail loudly")]
+#![expect(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "integration tests should fail loudly"
+)]
 
 mod support;
 
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldWitness, ProverError};
-use jolt_claims::{constant, opening};
-use jolt_crypto::{Bn254G1, JoltGroup, PedersenSetup, VectorCommitment};
-use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec, SumcheckStatement};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_blindfold::{AssignedBlindFoldWitness, ProverError};
+use jolt_crypto::JoltGroup;
+use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
 use rand_chacha::ChaCha20Rng;
-use rand_core::{RngCore, SeedableRng};
+use rand_core::SeedableRng;
 use support::*;
-
-const TRANSCRIPT_LABEL: &[u8] = b"assignment-backed-blindfold";
-
-fn committed_witness(stage: &GeneratedStage) -> CommittedSumcheckWitness<F> {
-    CommittedSumcheckWitness {
-        round_coefficients: stage.coefficients.clone(),
-        round_blindings: stage.blindings.clone(),
-        output_claim_rows: stage.output_claim_rows.clone(),
-        output_claim_blindings: stage.output_claim_blindings.clone(),
-    }
-}
-
-struct AssignmentFixture {
-    setup: PedersenSetup<Bn254G1>,
-    protocol: BlindFoldProtocol<F, Bn254G1>,
-    stage_witnesses: Vec<CommittedSumcheckWitness<F>>,
-    eval_outputs: Vec<F>,
-    eval_blindings: Vec<F>,
-}
 
 const STAGE_DOMAINS: [SumcheckDomainSpec; 2] = [
     SumcheckDomainSpec::BooleanHypercube,
     SumcheckDomainSpec::BooleanHypercube,
 ];
 
-/// The two-stage committed pipeline of the proof tests, rebuilt through the
-/// public builder: constant claim expressions, one final opening bound to
-/// the first output claim.
-fn assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
-    let setup = pedersen_setup(4);
-    let statement1 = SumcheckStatement::new(3, 3);
-    let statement2 = SumcheckStatement::new(2, 3);
-    let input1 = f(37);
-    let input2 = f(89);
-
-    let (stage1, stage2) = {
-        let mut prover = SumcheckTestProver::new(&mut *rng);
-        let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-        let stage1 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
-        let stage2 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement2, input2, 1);
-        (stage1, stage2)
-    };
-    let stage1_output = *stage1.claim_outs.last().expect("stage has rounds");
-    let stage2_output = *stage2.claim_outs.last().expect("stage has rounds");
-    let eval_outputs = vec![stage1.output_claim_rows[0][0]];
-    let eval_blindings = vec![rng_field(rng)];
-    let eval_commitment = VC::commit(&setup, &[eval_outputs[0]], &eval_blindings[0]);
-
-    let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let stage1_consistency = stage1
-        .proof
-        .verify_committed_consistency(statement1, &mut transcript)
-        .expect("stage 1 committed proof transcript verifies");
-    let stage2_consistency = stage2
-        .proof
-        .verify_committed_consistency(statement2, &mut transcript)
-        .expect("stage 2 committed proof transcript verifies");
-
-    let protocol = BlindFoldProtocol::<F, Bn254G1>::builder::<usize, (), usize>()
-        .stage("assignment-stage-1")
-        .sumcheck(statement1)
-        .domain(SumcheckDomainSpec::BooleanHypercube)
-        .consistency(stage1_consistency)
-        .output_claim_rows(
-            (0..stage1.proof.output_claims.commitments.len() * (statement1.degree + 1)).collect(),
-            statement1.degree + 1,
-            stage1.proof.output_claims.clone(),
-        )
-        .input_claim(constant(input1))
-        .output_claim(constant(stage1_output))
-        .finish_stage()
-        .expect("stage 1 is complete")
-        .stage("assignment-stage-2")
-        .sumcheck(statement2)
-        .domain(SumcheckDomainSpec::BooleanHypercube)
-        .consistency(stage2_consistency)
-        .output_claim_rows(
-            (100..100 + stage2.proof.output_claims.commitments.len() * (statement2.degree + 1))
-                .collect(),
-            statement2.degree + 1,
-            stage2.proof.output_claims.clone(),
-        )
-        .input_claim(constant(input2))
-        .output_claim(constant(stage2_output))
-        .finish_stage()
-        .expect("stage 2 is complete")
-        .final_opening(vec![0usize], vec![f(1)], eval_commitment)
-        .build()
-        .expect("protocol builds");
-
-    AssignmentFixture {
-        setup,
-        protocol,
-        stage_witnesses: vec![committed_witness(&stage1), committed_witness(&stage2)],
-        eval_outputs,
-        eval_blindings,
-    }
-}
-
-/// A product-bearing variant of [`assignment_fixture`]: stage 2's input
-/// claim is the product of two stage-1 output-claim openings, so the claim
-/// lowering allocates a product auxiliary and `assign_witness` must solve it
-/// (the constant-claim fixture above lowers to purely linear constraints and
-/// never exercises the solver).
-fn product_assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
-    let setup = pedersen_setup(4);
-    let statement1 = SumcheckStatement::new(3, 3);
-    let statement2 = SumcheckStatement::new(2, 3);
-    let input1 = f(37);
-
-    let (stage1, stage2) = {
-        let mut prover = SumcheckTestProver::new(&mut *rng);
-        let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-        let stage1 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
-        // Stage 2 opens on the product of two stage-1 output-claim entries —
-        // the claim-binding shape that forces a product auxiliary.
-        let input2 = stage1.output_claim_rows[0][0] * stage1.output_claim_rows[0][1];
-        let stage2 =
-            prover.prove_stage_with_output_claims(&setup, &mut transcript, statement2, input2, 1);
-        (stage1, stage2)
-    };
-    let stage1_output = *stage1.claim_outs.last().expect("stage has rounds");
-    let stage2_output = *stage2.claim_outs.last().expect("stage has rounds");
-    let eval_outputs = vec![stage1.output_claim_rows[0][0]];
-    let eval_blindings = vec![rng_field(rng)];
-    let eval_commitment = VC::commit(&setup, &[eval_outputs[0]], &eval_blindings[0]);
-
-    let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    let stage1_consistency = stage1
-        .proof
-        .verify_committed_consistency(statement1, &mut transcript)
-        .expect("stage 1 committed proof transcript verifies");
-    let stage2_consistency = stage2
-        .proof
-        .verify_committed_consistency(statement2, &mut transcript)
-        .expect("stage 2 committed proof transcript verifies");
-
-    let protocol = BlindFoldProtocol::<F, Bn254G1>::builder::<usize, (), usize>()
-        .stage("product-stage-1")
-        .sumcheck(statement1)
-        .domain(SumcheckDomainSpec::BooleanHypercube)
-        .consistency(stage1_consistency)
-        .output_claim_rows(
-            (0..stage1.proof.output_claims.commitments.len() * (statement1.degree + 1)).collect(),
-            statement1.degree + 1,
-            stage1.proof.output_claims.clone(),
-        )
-        .input_claim(constant(input1))
-        .output_claim(constant(stage1_output))
-        .finish_stage()
-        .expect("stage 1 is complete")
-        .stage("product-stage-2")
-        .sumcheck(statement2)
-        .domain(SumcheckDomainSpec::BooleanHypercube)
-        .consistency(stage2_consistency)
-        .output_claim_rows(
-            (100..100 + stage2.proof.output_claims.commitments.len() * (statement2.degree + 1))
-                .collect(),
-            statement2.degree + 1,
-            stage2.proof.output_claims.clone(),
-        )
-        .input_claim(opening(0usize) * opening(1usize))
-        .output_claim(constant(stage2_output))
-        .finish_stage()
-        .expect("stage 2 is complete")
-        .final_opening(vec![0usize], vec![f(1)], eval_commitment)
-        .build()
-        .expect("protocol builds");
-
-    AssignmentFixture {
-        setup,
-        protocol,
-        stage_witnesses: vec![committed_witness(&stage1), committed_witness(&stage2)],
-        eval_outputs,
-        eval_blindings,
-    }
+fn assign(
+    fixture: &TwoStageFixture,
+    stage_witnesses: &[&CommittedSumcheckWitness<F>],
+    rng: &mut ChaCha20Rng,
+) -> Result<AssignedBlindFoldWitness<F>, ProverError<F>> {
+    fixture.protocol.assign_witness(
+        &STAGE_DOMAINS,
+        stage_witnesses,
+        &fixture.eval_outputs,
+        &fixture.eval_blindings,
+        rng,
+    )
 }
 
 #[test]
 fn assigned_witness_proves_and_verifies_through_the_real_prover() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AB);
-    let fixture = assignment_fixture(&mut rng);
-    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = fixture.stage_witnesses.iter().collect();
+    let fixture = two_stage_fixture(&mut rng, Stage2Input::Constant);
 
-    let assigned = fixture
-        .protocol
-        .assign_witness(
-            &STAGE_DOMAINS,
-            &stage_refs,
-            &fixture.eval_outputs,
-            &fixture.eval_blindings,
-            &mut rng,
-        )
-        .expect("witness assigns");
+    let assigned = assign(&fixture, &fixture.stage_witnesses(), &mut rng).expect("witness assigns");
     let dimensions = &fixture.protocol.dimensions;
     assert_eq!(assigned.rows.len(), dimensions.witness.row_count);
     assert_eq!(assigned.blindings.len(), dimensions.witness.row_count);
@@ -221,89 +52,39 @@ fn assigned_witness_proves_and_verifies_through_the_real_prover() {
         .iter()
         .all(|row| row.len() == dimensions.witness.row_len));
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_transcript);
-    let proof = jolt_blindfold::prove::<F, VC, _, _>(
-        &fixture.setup,
-        &fixture.protocol,
-        &mut prover_transcript,
-        BlindFoldWitness {
-            rows: &assigned.rows,
-            blindings: &assigned.blindings,
-            eval_outputs: &fixture.eval_outputs,
-            eval_blindings: &fixture.eval_blindings,
-        },
-        &mut rng,
-    )
-    .expect("assigned witness proves");
-
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut verifier_transcript);
+    let narg = fixture
+        .prove(&assigned.rows, &assigned.blindings, &mut rng)
+        .expect("assigned witness proves");
     fixture
-        .protocol
-        .verify::<VC, _>(&proof, &fixture.setup, &mut verifier_transcript)
+        .verify(&narg)
         .expect("assigned-witness proof verifies");
 }
 
 #[test]
 fn product_auxiliaries_solve_and_prove_through_the_real_prover() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AE);
-    let fixture = product_assignment_fixture(&mut rng);
-    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = fixture.stage_witnesses.iter().collect();
+    let fixture = two_stage_fixture(&mut rng, Stage2Input::ProductOfStage1Openings);
 
     // The point of the fixture: the claim lowering allocated at least one
     // product auxiliary, so `assign_witness` runs the solver.
     assert!(fixture.protocol.dimensions.auxiliary_values > 0);
 
-    let assigned = fixture
-        .protocol
-        .assign_witness(
-            &STAGE_DOMAINS,
-            &stage_refs,
-            &fixture.eval_outputs,
-            &fixture.eval_blindings,
-            &mut rng,
-        )
-        .expect("product witness assigns");
-
-    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_transcript);
-    let proof = jolt_blindfold::prove::<F, VC, _, _>(
-        &fixture.setup,
-        &fixture.protocol,
-        &mut prover_transcript,
-        BlindFoldWitness {
-            rows: &assigned.rows,
-            blindings: &assigned.blindings,
-            eval_outputs: &fixture.eval_outputs,
-            eval_blindings: &fixture.eval_blindings,
-        },
-        &mut rng,
-    )
-    .expect("product witness proves");
-
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut verifier_transcript);
+    let assigned =
+        assign(&fixture, &fixture.stage_witnesses(), &mut rng).expect("product witness assigns");
+    let narg = fixture
+        .prove(&assigned.rows, &assigned.blindings, &mut rng)
+        .expect("product witness proves");
     fixture
-        .protocol
-        .verify::<VC, _>(&proof, &fixture.setup, &mut verifier_transcript)
+        .verify(&narg)
         .expect("product-auxiliary proof verifies");
 }
 
 #[test]
 fn assign_witness_rejects_stage_count_mismatch() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AC);
-    let fixture = assignment_fixture(&mut rng);
-    let stage_refs: Vec<&CommittedSumcheckWitness<F>> =
-        fixture.stage_witnesses.iter().take(1).collect();
+    let fixture = two_stage_fixture(&mut rng, Stage2Input::Constant);
 
-    let result = fixture.protocol.assign_witness(
-        &STAGE_DOMAINS,
-        &stage_refs,
-        &fixture.eval_outputs,
-        &fixture.eval_blindings,
-        &mut rng,
-    );
+    let result = assign(&fixture, &fixture.stage_witnesses()[..1], &mut rng);
     assert!(matches!(
         result,
         Err(ProverError::LengthMismatch {
@@ -316,17 +97,14 @@ fn assign_witness_rejects_stage_count_mismatch() {
 #[test]
 fn assign_witness_rejects_round_shape_mismatch() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AD);
-    let fixture = assignment_fixture(&mut rng);
-    let mut truncated = fixture.stage_witnesses.clone();
-    let _ = truncated[0].round_coefficients.pop();
-    let _ = truncated[0].round_blindings.pop();
-    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = truncated.iter().collect();
+    let fixture = two_stage_fixture(&mut rng, Stage2Input::Constant);
+    let mut truncated = fixture.stage_witnesses()[0].clone();
+    let _ = truncated.round_coefficients.pop();
+    let _ = truncated.round_blindings.pop();
 
-    let result = fixture.protocol.assign_witness(
-        &STAGE_DOMAINS,
-        &stage_refs,
-        &fixture.eval_outputs,
-        &fixture.eval_blindings,
+    let result = assign(
+        &fixture,
+        &[&truncated, fixture.stage_witnesses()[1]],
         &mut rng,
     );
     assert!(matches!(
@@ -342,16 +120,13 @@ fn assign_witness_rejects_round_shape_mismatch() {
 #[test]
 fn assign_witness_rejects_round_blinding_count_mismatch() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AE);
-    let fixture = assignment_fixture(&mut rng);
-    let mut truncated = fixture.stage_witnesses.clone();
-    let _ = truncated[0].round_blindings.pop();
-    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = truncated.iter().collect();
+    let fixture = two_stage_fixture(&mut rng, Stage2Input::Constant);
+    let mut truncated = fixture.stage_witnesses()[0].clone();
+    let _ = truncated.round_blindings.pop();
 
-    let result = fixture.protocol.assign_witness(
-        &STAGE_DOMAINS,
-        &stage_refs,
-        &fixture.eval_outputs,
-        &fixture.eval_blindings,
+    let result = assign(
+        &fixture,
+        &[&truncated, fixture.stage_witnesses()[1]],
         &mut rng,
     );
     assert!(matches!(
@@ -367,22 +142,19 @@ fn assign_witness_rejects_round_blinding_count_mismatch() {
 #[test]
 fn assign_witness_rejects_output_claim_blinding_count_mismatch() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AF);
-    let fixture = assignment_fixture(&mut rng);
-    let mut extended = fixture.stage_witnesses.clone();
+    let fixture = two_stage_fixture(&mut rng, Stage2Input::Constant);
+    let mut extended = fixture.stage_witnesses()[0].clone();
     // A surplus blind is the silent-truncation direction of the old bug.
-    let surplus = extended[0]
+    let surplus = extended
         .output_claim_blindings
         .first()
         .copied()
         .expect("fixture stages carry output-claim blinds");
-    extended[0].output_claim_blindings.push(surplus);
-    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = extended.iter().collect();
+    extended.output_claim_blindings.push(surplus);
 
-    let result = fixture.protocol.assign_witness(
-        &STAGE_DOMAINS,
-        &stage_refs,
-        &fixture.eval_outputs,
-        &fixture.eval_blindings,
+    let result = assign(
+        &fixture,
+        &[&extended, fixture.stage_witnesses()[1]],
         &mut rng,
     );
     assert!(matches!(
@@ -403,34 +175,12 @@ fn assign_witness_rejects_output_claim_blinding_count_mismatch() {
 #[test]
 fn final_opening_rows_stay_hidden_from_public_proof_data() {
     let mut rng = ChaCha20Rng::seed_from_u64(0x00C0_57AC);
-    let fixture = assignment_fixture(&mut rng);
-    let stage_refs: Vec<&CommittedSumcheckWitness<F>> = fixture.stage_witnesses.iter().collect();
-    let assigned = fixture
-        .protocol
-        .assign_witness(
-            &STAGE_DOMAINS,
-            &stage_refs,
-            &fixture.eval_outputs,
-            &fixture.eval_blindings,
-            &mut rng,
-        )
-        .expect("witness assigns");
-
-    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_transcript);
-    let proof = jolt_blindfold::prove::<F, VC, _, _>(
-        &fixture.setup,
-        &fixture.protocol,
-        &mut prover_transcript,
-        BlindFoldWitness {
-            rows: &assigned.rows,
-            blindings: &assigned.blindings,
-            eval_outputs: &fixture.eval_outputs,
-            eval_blindings: &fixture.eval_blindings,
-        },
-        &mut rng,
-    )
-    .expect("assigned witness proves");
+    let fixture = two_stage_fixture(&mut rng, Stage2Input::Constant);
+    let assigned = assign(&fixture, &fixture.stage_witnesses(), &mut rng).expect("witness assigns");
+    let narg = fixture
+        .prove(&assigned.rows, &assigned.blindings, &mut rng)
+        .expect("assigned witness proves");
+    let messages = fixture.messages(&narg);
 
     let g0 = fixture.setup.message_generators[0];
     let h = fixture.setup.blinding_generator;
@@ -441,8 +191,8 @@ fn final_opening_rows_stay_hidden_from_public_proof_data() {
         .expect("final opening coordinates")[0];
 
     let eval_row = coordinates.evaluation.expect("evaluation row").row;
-    let real_eval_row = proof.auxiliary_row_commitments[eval_row - aux_start];
-    let folded_eval_blinding = proof.folded_eval_output_openings[0].combined_blinding;
+    let real_eval_row = messages.auxiliary_rows[eval_row - aux_start];
+    let folded_eval_blinding = messages.eval_output_openings[0].combined_blinding;
     assert_ne!(
         real_eval_row - h.scalar_mul(&folded_eval_blinding),
         g0.scalar_mul(&fixture.eval_outputs[0]),
@@ -450,8 +200,8 @@ fn final_opening_rows_stay_hidden_from_public_proof_data() {
     );
 
     let blinding_row = coordinates.blinding.expect("blinding row").row;
-    let real_blinding_row = proof.auxiliary_row_commitments[blinding_row - aux_start];
-    let folded_blinding_blinding = proof.folded_eval_blinding_openings[0].combined_blinding;
+    let real_blinding_row = messages.auxiliary_rows[blinding_row - aux_start];
+    let folded_blinding_blinding = messages.eval_blinding_openings[0].combined_blinding;
     assert_ne!(
         real_blinding_row - h.scalar_mul(&folded_blinding_blinding),
         g0.scalar_mul(&fixture.eval_blindings[0]),
