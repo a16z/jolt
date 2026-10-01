@@ -15,8 +15,8 @@ use std::{
 };
 
 use jolt_field::{
-    AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring,
-    WithAccumulator,
+    AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator,
+    Ring, WithAccumulator,
 };
 use jolt_sumcheck::{
     BooleanHypercube, ClearRound, EvaluationClaim, RoundMessage, SumcheckClaim, SumcheckVerifier,
@@ -247,6 +247,13 @@ impl CanonicalBytes for Mersenne61 {
     }
 }
 
+impl CanonicalDecode for Mersenne61 {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        let arr: [u8; 8] = bytes.try_into().ok()?;
+        Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
+    }
+}
+
 impl CanonicalEncoding for Mersenne61 {
     const MODULUS_BITS: u32 = 61;
 
@@ -255,11 +262,6 @@ impl CanonicalEncoding for Mersenne61 {
         let len = bytes.len().min(16);
         buf[..len].copy_from_slice(&bytes[..len]);
         Self::from_u128(u128::from_le_bytes(buf))
-    }
-
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        let arr: [u8; 8] = bytes.try_into().ok()?;
-        Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
     }
 
     fn to_u128_checked(&self) -> Option<u128> {

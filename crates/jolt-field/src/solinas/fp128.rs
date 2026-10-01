@@ -20,8 +20,8 @@
 use super::word::mul64_wide;
 use crate::PseudoMersenne;
 use crate::{
-    CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator, Ring,
-    WithAccumulator,
+    CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, Fp128Accumulator,
+    Fp128SignedAccumulator, Ring, WithAccumulator,
 };
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
@@ -1132,6 +1132,14 @@ impl<const P: u128> CanonicalBytes for Fp128<P> {
     }
 }
 
+impl<const P: u128> CanonicalDecode for Fp128<P> {
+    #[inline]
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        let arr: [u8; 16] = bytes.try_into().ok()?;
+        Self::from_u128_checked(u128::from_le_bytes(arr))
+    }
+}
+
 impl<const P: u128> CanonicalEncoding for Fp128<P> {
     // C < 2^32 implies p > 2^127, so the modulus is exactly 128 bits.
     const MODULUS_BITS: u32 = 128;
@@ -1144,12 +1152,6 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
             return Self::from_u128(u128::from_le_bytes(padded));
         }
         crate::solinas::reduce_le_bytes_mod_order(bytes)
-    }
-
-    #[inline]
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        let arr: [u8; 16] = bytes.try_into().ok()?;
-        Self::from_u128_checked(u128::from_le_bytes(arr))
     }
 
     #[inline]

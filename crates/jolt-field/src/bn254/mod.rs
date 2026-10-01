@@ -10,7 +10,10 @@ mod mont;
 
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 
-use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{
+    CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator, Ring,
+    WithAccumulator,
+};
 use ark_ff::{BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
 
@@ -123,14 +126,7 @@ macro_rules! wrap_bn254 {
             }
         }
 
-        impl CanonicalEncoding for $ty {
-            const MODULUS_BITS: u32 = 254;
-
-            #[inline]
-            fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
-                $ty(<$inner>::from_le_bytes_mod_order(bytes))
-            }
-
+        impl CanonicalDecode for $ty {
             #[inline]
             fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
                 use ark_serialize::CanonicalDeserialize;
@@ -139,6 +135,16 @@ macro_rules! wrap_bn254 {
                 }
                 <$inner>::deserialize_compressed(bytes).ok().map($ty)
             }
+        }
+
+        impl CanonicalEncoding for $ty {
+            const MODULUS_BITS: u32 = 254;
+
+            #[inline]
+            fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
+                $ty(<$inner>::from_le_bytes_mod_order(bytes))
+            }
+
 
             #[inline]
             fn to_u128_checked(&self) -> Option<u128> {

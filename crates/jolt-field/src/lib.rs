@@ -1,8 +1,9 @@
 //! Field and ring abstractions for the Jolt zkVM.
 //!
 //! A slim algebraic ladder — [`AdditiveGroup`] → [`Ring`] → [`Field`] — with
-//! orthogonal capabilities: [`CanonicalBytes`]/[`CanonicalEncoding`] (the
-//! Fiat-Shamir transcript surface and the field decode surface on top of it)
+//! orthogonal capabilities: [`CanonicalBytes`]/[`CanonicalDecode`] (the
+//! fixed-width canonical codec every transcript atom implements),
+//! [`CanonicalEncoding`] (the field decode-and-introspect surface on top of it)
 //! and [`WithAccumulator`] (deferred-reduction fused multiply-add).
 //! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
 //! protocol stack requires of a scalar field: `Field + CanonicalEncoding +
@@ -64,7 +65,7 @@
 //! - Proof/wire serialization is serde + bincode over canonical
 //!   little-endian bytes (see [`impl_serde_bytes!`]); deserialization
 //!   rejects non-canonical encodings uniformly via
-//!   [`CanonicalEncoding::from_bytes_le_checked`].
+//!   [`CanonicalDecode::from_bytes_le_checked`].
 //! - Fiat-Shamir transcript bytes use the explicit little-endian encoding
 //!   ([`CanonicalBytes::to_bytes_le`]) and never go through a serialization
 //!   library.
@@ -105,8 +106,8 @@ pub mod solinas;
 mod unreduced;
 
 pub use algebra::{
-    Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
-    MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
+    Accumulator, AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field,
+    JoltField, MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};

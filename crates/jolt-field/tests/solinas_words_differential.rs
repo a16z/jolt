@@ -12,8 +12,8 @@ use num_bigint::BigUint;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use two::{
-    Accumulator as _, CanonicalBytes, CanonicalEncoding, Field as _, JoltField, PseudoMersenne,
-    Ring,
+    Accumulator as _, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field as _, JoltField,
+    PseudoMersenne, Ring,
 };
 
 fn rng() -> ChaCha20Rng {
@@ -196,11 +196,11 @@ macro_rules! check_prime {
         let n = <$two as CanonicalBytes>::NUM_BYTES;
         let p_bytes = &p.to_le_bytes()[..n];
         assert_eq!(
-            <$two as CanonicalEncoding>::from_bytes_le_checked(p_bytes),
+            <$two as CanonicalDecode>::from_bytes_le_checked(p_bytes),
             None
         );
         assert_eq!(
-            <$two as CanonicalEncoding>::from_bytes_le_checked(&p.to_le_bytes()[..n - 1]),
+            <$two as CanonicalDecode>::from_bytes_le_checked(&p.to_le_bytes()[..n - 1]),
             None,
             "wrong length rejected"
         );

@@ -26,7 +26,9 @@
 )]
 
 use crate::solinas::pseudo_mersenne_modulus;
-use crate::{CanonicalBytes, Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring};
+use crate::{
+    CanonicalBytes, CanonicalDecode, Ext2Config, ExtField, Field, FieldError, PseudoMersenne, Ring,
+};
 use num_traits::Zero;
 use rand_core::RngCore;
 use std::marker::PhantomData;
@@ -137,6 +139,13 @@ impl<F: Field + CanonicalBytes, C: Ext2Config<F>> CanonicalBytes for FpExt2<F, C
         for (coefficient, bytes) in self.coeffs.iter().zip(out.chunks_exact_mut(F::NUM_BYTES)) {
             coefficient.to_bytes_le(bytes);
         }
+    }
+}
+
+impl<F: Field + CanonicalDecode, C: Ext2Config<F>> CanonicalDecode for FpExt2<F, C> {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        let [c0, c1] = decode_coeffs(bytes)?;
+        Some(Self::new(c0, c1))
     }
 }
 
@@ -302,6 +311,12 @@ impl<F: PseudoMersenne> CanonicalBytes for FpExt4<F> {
     }
 }
 
+impl<F: PseudoMersenne> CanonicalDecode for FpExt4<F> {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        decode_coeffs(bytes).map(Self::new)
+    }
+}
+
 crate::impl_ring_ops!(impl[F: PseudoMersenne] FpExt4<F> {
     add(a, b): FpExt4::new(std::array::from_fn(|i| a.coeffs[i] + b.coeffs[i])),
     sub(a, b): FpExt4::new(std::array::from_fn(|i| a.coeffs[i] - b.coeffs[i])),
@@ -426,6 +441,37 @@ impl<F: Field> std::fmt::Display for FpExt8<F> {
         let [c0, c1, c2, c3, c4, c5, c6, c7] = self.coeffs;
         write!(f, "({c0}, {c1}, {c2}, {c3}, {c4}, {c5}, {c6}, {c7})")
     }
+}
+
+/// Encodes coefficients in basis order as `c0 || ... || c7`.
+impl<F: PseudoMersenne> CanonicalBytes for FpExt8<F> {
+    const NUM_BYTES: usize = F::NUM_BYTES * 8;
+
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        assert_eq!(out.len(), Self::NUM_BYTES);
+        for (coefficient, bytes) in self.coeffs.iter().zip(out.chunks_exact_mut(F::NUM_BYTES)) {
+            coefficient.to_bytes_le(bytes);
+        }
+    }
+}
+
+impl<F: PseudoMersenne> CanonicalDecode for FpExt8<F> {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        decode_coeffs(bytes).map(Self::new)
+    }
+}
+
+/// Decodes `N` canonical base coefficients laid out in basis order, rejecting
+/// any wrong length or non-canonical coefficient.
+fn decode_coeffs<F: Field + CanonicalDecode, const N: usize>(bytes: &[u8]) -> Option<[F; N]> {
+    if bytes.len() != F::NUM_BYTES * N {
+        return None;
+    }
+    let mut coeffs = [F::zero(); N];
+    for (coefficient, chunk) in coeffs.iter_mut().zip(bytes.chunks_exact(F::NUM_BYTES)) {
+        *coefficient = F::from_bytes_le_checked(chunk)?;
+    }
+    Some(coeffs)
 }
 
 crate::impl_ring_ops!(impl[F: PseudoMersenne] FpExt8<F> {

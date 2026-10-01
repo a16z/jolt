@@ -280,28 +280,81 @@ pub trait CanonicalBytes {
     }
 }
 
+/// Checked decoding half of a fixed-width canonical codec.
+///
+/// Proof transport and wire serialization decode through this trait, so a
+/// verifier accepts exactly one byte string per value.
+///
+/// # Invariants
+///
+/// - `from_bytes_le_checked(&x.to_bytes_le_vec()) == Some(x)` for every `x`.
+/// - Every other input, including any input whose length is not
+///   [`CanonicalBytes::NUM_BYTES`], decodes to `None`.
+pub trait CanonicalDecode: CanonicalBytes + Sized {
+    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
+    /// `None` on wrong length or a non-canonical value.
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
+}
+
+/// Fixed-width little-endian codecs for unsigned integers, so protocol
+/// counters and nonces travel as transcript atoms like field elements do.
+macro_rules! impl_uint_codec {
+    ($($t:ty),*) => {$(
+        impl CanonicalBytes for $t {
+            const NUM_BYTES: usize = <$t>::BITS as usize / 8;
+
+            #[inline]
+            fn to_bytes_le(&self, out: &mut [u8]) {
+                out.copy_from_slice(&self.to_le_bytes());
+            }
+        }
+
+        impl CanonicalDecode for $t {
+            #[inline]
+            fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+                bytes.try_into().ok().map(<$t>::from_le_bytes)
+            }
+        }
+    )*};
+}
+
+impl_uint_codec!(u8, u16, u32, u64, u128);
+
+/// Raw bytes are their own canonical encoding.
+impl<const N: usize> CanonicalBytes for [u8; N] {
+    const NUM_BYTES: usize = N;
+
+    #[inline]
+    fn to_bytes_le(&self, out: &mut [u8]) {
+        out.copy_from_slice(self);
+    }
+}
+
+impl<const N: usize> CanonicalDecode for [u8; N] {
+    #[inline]
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        bytes.try_into().ok()
+    }
+}
+
 /// Canonical decode-and-introspect surface of a field element, on top of the
-/// [`CanonicalBytes`] encoding: the single source of canonicity for wire
-/// serialization.
+/// [`CanonicalBytes`]/[`CanonicalDecode`] codec: the single source of
+/// canonicity for wire serialization.
 ///
 /// Transcript absorption and challenge derivation use the explicit
 /// [`CanonicalBytes`] encoding so the hashed byte stream is specified
 /// independently of any serialization library. Proof/wire serialization goes
 /// through serde + bincode, reusing
-/// [`from_bytes_le_checked`](Self::from_bytes_le_checked) so non-canonical
-/// encodings are rejected uniformly.
+/// [`from_bytes_le_checked`](CanonicalDecode::from_bytes_le_checked) so
+/// non-canonical encodings are rejected uniformly.
 pub trait CanonicalEncoding:
-    CanonicalBytes + Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
+    CanonicalDecode + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
 {
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
-
-    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
-    /// `None` on wrong length or a non-canonical value.
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
 
     /// Returns the canonical representative if it fits in a `u128`.
     ///

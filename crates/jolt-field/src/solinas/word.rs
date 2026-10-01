@@ -9,7 +9,10 @@
 //! path for sub-word primes, with a BMI2 variant on x86-64).
 
 use crate::PseudoMersenne;
-use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{
+    CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator, Ring,
+    WithAccumulator,
+};
 use rand_core::RngCore;
 
 /// Trial-division primality check, cheap enough for CTFE at u32 scale.
@@ -308,6 +311,14 @@ macro_rules! define_solinas_prime {
             }
         }
 
+        impl<const P: $word> CanonicalDecode for $name<P> {
+            #[inline]
+            fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+                let arr: [u8; (<$word>::BITS / 8) as usize] = bytes.try_into().ok()?;
+                Self::from_u128_checked(<$word>::from_le_bytes(arr) as u128)
+            }
+        }
+
         impl<const P: $word> CanonicalEncoding for $name<P> {
             const MODULUS_BITS: u32 = Self::BITS;
 
@@ -321,11 +332,6 @@ macro_rules! define_solinas_prime {
                 $crate::solinas::reduce_le_bytes_mod_order(bytes)
             }
 
-            #[inline]
-            fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-                let arr: [u8; (<$word>::BITS / 8) as usize] = bytes.try_into().ok()?;
-                Self::from_u128_checked(<$word>::from_le_bytes(arr) as u128)
-            }
 
             #[inline]
             fn to_u128_checked(&self) -> Option<u128> {

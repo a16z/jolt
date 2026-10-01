@@ -7,8 +7,8 @@
 #![expect(clippy::unwrap_used, reason = "test code")]
 
 use jolt_field::{
-    impl_ring_ops, impl_serde_bytes, Accumulator, CanonicalBytes, CanonicalEncoding, Field,
-    JoltField, NaiveAccumulator, One, Ring, WithAccumulator, Zero,
+    impl_ring_ops, impl_serde_bytes, Accumulator, CanonicalBytes, CanonicalDecode,
+    CanonicalEncoding, Field, JoltField, NaiveAccumulator, One, Ring, WithAccumulator, Zero,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -88,6 +88,13 @@ impl CanonicalBytes for M61 {
     }
 }
 
+impl CanonicalDecode for M61 {
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        let arr: [u8; 8] = bytes.try_into().ok()?;
+        Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
+    }
+}
+
 impl CanonicalEncoding for M61 {
     const MODULUS_BITS: u32 = 61;
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
@@ -96,10 +103,6 @@ impl CanonicalEncoding for M61 {
             .iter()
             .rev()
             .fold(M61(0), |acc, &b| acc * base + M61::from_u64(b as u64))
-    }
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        let arr: [u8; 8] = bytes.try_into().ok()?;
-        Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
     }
     fn to_u128_checked(&self) -> Option<u128> {
         Some(self.0 as u128)
