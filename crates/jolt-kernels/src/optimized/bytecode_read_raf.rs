@@ -273,29 +273,21 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                     seen: vec![false; width],
                     touched: Vec::with_capacity(width.min(entries.len())),
                 };
+                impl<F: JoltField> TileAccumulator<F> {
+                    fn flush(&mut self, high_eq: F) {
+                        for address in self.touched.drain(..) {
+                            self.partial[address] += high_eq * self.inner[address];
+                            self.inner[address] = F::zero();
+                            self.seen[address] = false;
+                        }
+                    }
+                }
                 let fragment = |mut scratch: TileAccumulator<F>, entries: &[RoutedRow<F>]| {
                     let mut current_hi = entries[0].cycle / in_len;
-                    let flush = |hi: usize,
-                                 touched: &mut Vec<usize>,
-                                 seen: &mut [bool],
-                                 inner: &mut [F],
-                                 partial: &mut [F]| {
-                        for address in touched.drain(..) {
-                            partial[address] += e_hi[stage][hi] * inner[address];
-                            inner[address] = F::zero();
-                            seen[address] = false;
-                        }
-                    };
                     for row in entries {
                         let hi = row.cycle / in_len;
                         if hi != current_hi {
-                            flush(
-                                current_hi,
-                                &mut scratch.touched,
-                                &mut scratch.seen,
-                                &mut scratch.inner,
-                                &mut scratch.partial,
-                            );
+                            scratch.flush(e_hi[stage][current_hi]);
                             current_hi = hi;
                         }
                         if !scratch.seen[row.address] {
@@ -309,13 +301,7 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
                             value * row.weight
                         };
                     }
-                    flush(
-                        current_hi,
-                        &mut scratch.touched,
-                        &mut scratch.seen,
-                        &mut scratch.inner,
-                        &mut scratch.partial,
-                    );
+                    scratch.flush(e_hi[stage][current_hi]);
                     scratch
                 };
                 #[cfg(feature = "parallel")]
