@@ -40,6 +40,7 @@
 //! column: the pushforward slot and the committed one-hot hot index are the
 //! same value on every row.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
@@ -100,7 +101,6 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     let lo_bits = log_t / 2;
     let hi_bits = log_t - lo_bits;
     let in_len = 1usize << lo_bits;
-    let out_len = 1usize << hi_bits;
 
     // Big-endian points split as eq(r, j) = eq(r[..hi], j_hi) · eq(r[hi..], j_lo)
     // with j = (j_hi << lo_bits) | j_lo.
@@ -115,83 +115,235 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
         .map(|point| eq_table(&point[hi_bits..]))
         .collect::<Vec<_>>();
 
-    let block = |range: std::ops::Range<usize>| -> Vec<Vec<F>> {
-        let mut partial = (0..num_stages)
-            .map(|_| vec![F::zero(); addresses])
-            .collect::<Vec<_>>();
-        let mut inner = (0..num_stages)
-            .map(|_| vec![F::zero(); addresses])
-            .collect::<Vec<_>>();
-        let mut seen = vec![false; addresses];
-        let mut touched: Vec<usize> = Vec::with_capacity(in_len);
-        for j_hi in range {
-            for &k in &touched {
-                for stage_inner in &mut inner {
-                    stage_inner[k] = F::zero();
+    // Routing and every worker accumulator are bounded independently of the bytecode
+    // domain. Splitting a high-eq block is valid: its multiplier distributes over
+    // the low-eq sums from each batch and fragment.
+    const TILE_ADDRESSES: usize = 1024;
+    const BATCH_ROWS: usize = 1 << 18;
+    const FRAGMENT_ROWS: usize = 4096;
+
+    // Small domains avoid routing overhead. Their direct accumulators share a
+    // fixed per-call budget, so adding Rayon workers cannot multiply scratch
+    // without bound even when the whole domain fits in one direct tile.
+    const DIRECT_ADDRESSES: usize = 1 << 16;
+    const SCRATCH_BYTES: usize = 256 << 20;
+    let scratch_per_job = num_stages
+        .saturating_mul(addresses)
+        .saturating_mul(std::mem::size_of::<F>())
+        .saturating_mul(2)
+        .saturating_add(addresses)
+        .saturating_add(addresses.min(in_len) * std::mem::size_of::<usize>())
+        .saturating_add(
+            num_stages
+                .saturating_mul(2)
+                .saturating_mul(std::mem::size_of::<Vec<F>>()),
+        );
+    if addresses <= DIRECT_ADDRESSES && scratch_per_job <= SCRATCH_BYTES {
+        struct Tile<F> {
+            partial: Vec<Vec<F>>,
+            inner: Vec<Vec<F>>,
+            seen: Vec<bool>,
+            touched: Vec<usize>,
+        }
+        let tile = || Tile {
+            partial: (0..num_stages)
+                .map(|_| vec![F::zero(); addresses])
+                .collect(),
+            inner: (0..num_stages)
+                .map(|_| vec![F::zero(); addresses])
+                .collect(),
+            seen: vec![false; addresses],
+            touched: Vec::with_capacity(addresses.min(in_len)),
+        };
+        let accumulate = |mut tile: Tile<F>, hi: usize| {
+            for address in tile.touched.drain(..) {
+                for inner in &mut tile.inner {
+                    inner[address] = F::zero();
                 }
-                seen[k] = false;
+                tile.seen[address] = false;
             }
-            touched.clear();
-            let base = j_hi << lo_bits;
-            for j_lo in 0..in_len {
-                let row = &rows[base + j_lo];
-                let pc = pc(row);
-                if !seen[pc] {
-                    seen[pc] = true;
-                    touched.push(pc);
+            for lo in 0..in_len {
+                let row = &rows[hi * in_len + lo];
+                let address = pc(row);
+                if !tile.seen[address] {
+                    tile.seen[address] = true;
+                    tile.touched.push(address);
                 }
-                let (base_inner, weighted_inner) = inner.split_at_mut(base_stages);
-                for (stage_inner, stage_lo) in base_inner.iter_mut().zip(&e_lo[..base_stages]) {
-                    stage_inner[pc] += stage_lo[j_lo];
+                let (base, weighted) = tile.inner.split_at_mut(base_stages);
+                for (inner, eq) in base.iter_mut().zip(&e_lo[..base_stages]) {
+                    inner[address] += eq[lo];
                 }
-                if !weighted_inner.is_empty() {
+                if !weighted.is_empty() {
                     let weight = row_weight(row);
-                    for (stage_inner, stage_lo) in
-                        weighted_inner.iter_mut().zip(&e_lo[base_stages..])
-                    {
-                        stage_inner[pc] += stage_lo[j_lo] * weight;
+                    for (inner, eq) in weighted.iter_mut().zip(&e_lo[base_stages..]) {
+                        inner[address] += eq[lo] * weight;
                     }
                 }
             }
-            for &k in &touched {
-                for ((stage_partial, stage_inner), stage_hi) in
-                    partial.iter_mut().zip(&inner).zip(&e_hi)
-                {
-                    stage_partial[k] += stage_hi[j_hi] * stage_inner[k];
+            for &address in &tile.touched {
+                for ((partial, inner), eq) in tile.partial.iter_mut().zip(&tile.inner).zip(&e_hi) {
+                    partial[address] += inner[address] * eq[hi];
                 }
             }
-        }
-        partial
-    };
-
-    #[cfg(feature = "parallel")]
-    {
-        let num_threads = rayon::current_num_threads();
-        let chunk = out_len.div_ceil(num_threads).max(1);
-        (0..out_len)
-            .into_par_iter()
-            .step_by(chunk)
-            .map(|start| block(start..(start + chunk).min(out_len)))
-            .reduce(
-                || {
-                    (0..num_stages)
-                        .map(|_| vec![F::zero(); addresses])
-                        .collect()
-                },
-                |mut left, right| {
+            tile
+        };
+        #[cfg(feature = "parallel")]
+        {
+            let merge = |mut left: Vec<Vec<F>>, right: Vec<Vec<F>>| {
+                for (left, right) in left.iter_mut().zip(right) {
                     for (left, right) in left.iter_mut().zip(right) {
-                        for (left, right) in left.iter_mut().zip(right) {
-                            *left += right;
+                        *left += right;
+                    }
+                }
+                left
+            };
+            let out_len = 1usize << hi_bits;
+            let jobs = rayon::current_num_threads()
+                .min(out_len)
+                .min(SCRATCH_BYTES / scratch_per_job);
+            let chunk = out_len.div_ceil(jobs);
+            return (0..out_len)
+                .into_par_iter()
+                .step_by(chunk)
+                .map(|start| {
+                    (start..(start + chunk).min(out_len))
+                        .fold(tile(), accumulate)
+                        .partial
+                })
+                .reduce_with(merge)
+                .unwrap_or_default();
+        }
+        #[cfg(not(feature = "parallel"))]
+        return (0..1usize << hi_bits).fold(tile(), accumulate).partial;
+    }
+
+    struct RoutedRow<F> {
+        cycle: usize,
+        address: usize,
+        weight: F,
+    }
+
+    let mut outputs = (0..num_stages)
+        .map(|_| vec![F::zero(); addresses])
+        .collect::<Vec<_>>();
+    for (batch_index, batch) in rows.chunks(BATCH_ROWS).enumerate() {
+        let mut tiles: HashMap<usize, Vec<RoutedRow<F>>> = HashMap::new();
+        for (index, row) in batch.iter().enumerate() {
+            let address = pc(row);
+            tiles
+                .entry(address / TILE_ADDRESSES)
+                .or_default()
+                .push(RoutedRow {
+                    cycle: batch_index * BATCH_ROWS + index,
+                    address: address % TILE_ADDRESSES,
+                    weight: if weighted_cycle_points.is_empty() {
+                        F::zero()
+                    } else {
+                        row_weight(row)
+                    },
+                });
+        }
+        let mut tiles = tiles.into_iter().collect::<Vec<_>>();
+        tiles.sort_unstable_by_key(|(tile, _)| *tile);
+
+        let accumulate_stage = |(stage, output): (usize, &mut Vec<F>)| {
+            let mut remaining = output.as_mut_slice();
+            let mut next_address = 0;
+            let mut jobs = Vec::with_capacity(tiles.len());
+            for (tile, entries) in &tiles {
+                let start = tile * TILE_ADDRESSES;
+                let width = TILE_ADDRESSES.min(addresses - start);
+                let (_, tail) = remaining.split_at_mut(start - next_address);
+                let (target, tail) = tail.split_at_mut(width);
+                remaining = tail;
+                next_address = start + width;
+                jobs.push((target, entries.as_slice()));
+            }
+            let accumulate_tile = |(target, entries): (&mut [F], &[RoutedRow<F>])| {
+                let width = target.len();
+                struct TileAccumulator<F> {
+                    partial: Vec<F>,
+                    inner: Vec<F>,
+                    seen: Vec<bool>,
+                    touched: Vec<usize>,
+                }
+                let accumulator = || TileAccumulator {
+                    partial: vec![F::zero(); width],
+                    inner: vec![F::zero(); width],
+                    seen: vec![false; width],
+                    touched: Vec::with_capacity(width.min(entries.len())),
+                };
+                impl<F: JoltField> TileAccumulator<F> {
+                    fn flush(&mut self, high_eq: F) {
+                        for address in self.touched.drain(..) {
+                            self.partial[address] += high_eq * self.inner[address];
+                            self.inner[address] = F::zero();
+                            self.seen[address] = false;
                         }
                     }
+                }
+                let fragment = |mut scratch: TileAccumulator<F>, entries: &[RoutedRow<F>]| {
+                    let mut current_hi = entries[0].cycle / in_len;
+                    for row in entries {
+                        let hi = row.cycle / in_len;
+                        if hi != current_hi {
+                            scratch.flush(e_hi[stage][current_hi]);
+                            current_hi = hi;
+                        }
+                        if !scratch.seen[row.address] {
+                            scratch.seen[row.address] = true;
+                            scratch.touched.push(row.address);
+                        }
+                        let value = e_lo[stage][row.cycle % in_len];
+                        scratch.inner[row.address] += if stage < base_stages {
+                            value
+                        } else {
+                            value * row.weight
+                        };
+                    }
+                    scratch.flush(e_hi[stage][current_hi]);
+                    scratch
+                };
+                #[cfg(feature = "parallel")]
+                let merge = |mut left: Vec<F>, right: Vec<F>| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left += right;
+                    }
                     left
-                },
-            )
+                };
+                #[cfg(feature = "parallel")]
+                let partial = entries
+                    .par_chunks(FRAGMENT_ROWS)
+                    .fold(accumulator, fragment)
+                    .map(|scratch| scratch.partial)
+                    .reduce_with(merge);
+                #[cfg(not(feature = "parallel"))]
+                let partial = Some(
+                    entries
+                        .chunks(FRAGMENT_ROWS)
+                        .fold(accumulator(), fragment)
+                        .partial,
+                );
+                if let Some(partial) = partial {
+                    for (output, value) in target.iter_mut().zip(partial) {
+                        *output += value;
+                    }
+                }
+            };
+            #[cfg(feature = "parallel")]
+            jobs.into_par_iter().for_each(accumulate_tile);
+            #[cfg(not(feature = "parallel"))]
+            jobs.into_iter().for_each(accumulate_tile);
+        };
+        #[cfg(feature = "parallel")]
+        outputs
+            .par_iter_mut()
+            .enumerate()
+            .for_each(accumulate_stage);
+        #[cfg(not(feature = "parallel"))]
+        outputs.iter_mut().enumerate().for_each(accumulate_stage);
     }
-    #[cfg(not(feature = "parallel"))]
-    {
-        block(0..out_len)
-    }
+    outputs
 }
 
 /// Stage-6a address phase: `PrepareKernel` front of the optimized kernel.
@@ -1116,6 +1268,75 @@ mod stage_pushforward_tests {
                 .collect::<Vec<_>>()
         );
     }
+
+    fn tiled_weighted_pushforwards<F: JoltField>(
+        log_t: usize,
+        base_stages: usize,
+        addresses: usize,
+    ) {
+        let weighted_stages = if base_stages == 7 { 4 } else { 1 };
+        let points = (0..base_stages + weighted_stages)
+            .map(|stage| {
+                (0..log_t)
+                    .map(|bit| {
+                        if bit == 0 {
+                            F::one()
+                        } else {
+                            F::from_u64((stage * 31 + bit * 7 + 3) as u64)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let rows = (0..1usize << log_t)
+            .map(|index| {
+                let address = if index % 5 == 0 {
+                    1023
+                } else {
+                    (index * 19 + index / 7) % addresses
+                };
+                let weight = F::from_u64((index % 11) as u64) - F::from_u64(5);
+                (address, weight)
+            })
+            .collect::<Vec<_>>();
+        let actual = stage_pushforwards(
+            &points[..base_stages],
+            &points[base_stages..],
+            &rows,
+            addresses,
+            |row| row.0,
+            |row| row.1,
+        );
+        for (stage, point) in points.iter().enumerate() {
+            let eq = eq_table(point);
+            let mut expected = vec![F::zero(); addresses];
+            for ((address, weight), value) in rows.iter().zip(eq) {
+                expected[*address] += if stage < base_stages {
+                    value
+                } else {
+                    value * *weight
+                };
+            }
+            assert_eq!(actual[stage], expected);
+        }
+    }
+
+    #[test]
+    fn weighted_tiles_and_fragments_match_the_cycle_eq_mle() {
+        tiled_weighted_pushforwards::<Fr>(15, 7, 1 << 17);
+    }
+
+    #[test]
+    fn bounded_direct_domain_matches_the_cycle_eq_mle() {
+        tiled_weighted_pushforwards::<Fr>(19, 1, 1 << 16);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn fp128_weighted_tiles_and_batches_match_the_cycle_eq_mle() {
+        use jolt_field::Prime128OffsetA7F7;
+        tiled_weighted_pushforwards::<Prime128OffsetA7F7>(19, 7, 1 << 17);
+    }
 }
 
 /// Byte-parity of both phases against the reference kernels, run as a PAIR
@@ -1401,7 +1622,9 @@ mod tests {
 mod akita_tests {
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FIELD_REGISTERS_LOG_K;
-    use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
+    use jolt_claims::protocols::jolt::geometry::bytecode::{
+        BytecodeReadRafDimensions, LATTICE_FUSED_INC_STAGES,
+    };
     use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
     use jolt_field::{Fr, Ring};
     #[cfg(feature = "field-inline")]
@@ -1429,93 +1652,96 @@ mod akita_tests {
                 bytecode_len.ilog2() as usize,
                 base_dimensions.layout.bytecode(),
             );
-            let relation = BytecodeReadRafAddressPhase::new(
-                dimensions,
-                committed_program,
-                BytecodeStagePoints {
-                    stage_cycle_points: std::array::from_fn(|stage| {
-                        synthetic_point(log_t, 11 + stage as u64)
-                    }),
-                    register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 23),
-                    register_val_evaluation_point: synthetic_point(
-                        REGISTER_ADDRESS_BITS + log_t,
-                        29,
-                    ),
-                    fused_inc_cycle_points: (0..bytecode::LATTICE_FUSED_INC_STAGES)
-                        .map(|stage| synthetic_point(log_t, 41 + stage as u64))
-                        .collect(),
-                },
-                0,
-            );
-            // All-inactive and well-formed, mirroring `run_pair`: the geometry
-            // composition is required fail-closed under `field-inline`.
-            #[cfg(feature = "field-inline")]
-            let relation =
-                relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
-                    read_write_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 61),
-                    val_evaluation_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 67),
-                });
-            let challenges = BytecodeReadRafAddressPhaseChallenges {
-                gamma: Fr::from_u64(3),
-                stage1_gamma: Fr::from_u64(5),
-                stage2_gamma: Fr::from_u64(7),
-                stage3_gamma: Fr::from_u64(11),
-                stage4_gamma: Fr::from_u64(13),
-                stage5_gamma: Fr::from_u64(17),
-            };
-            let claims = SumcheckInputClaims::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
-            let input_points =
-                SumcheckInputPoints::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
-
-            let mut session = ProofSession::default();
-            let mut reference = ReferenceBackend
-                .prepare(
-                    &mut session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &input_points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
-            let mut optimized = OptimizedBytecodeReadRafAddress
-                .prepare(
-                    &mut session,
-                    backend,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &input_points,
-                        challenges: &challenges,
-                    },
-                )
-                .unwrap();
-
-            let claim = probe_input_claim(reference.as_mut());
-            assert!(
-                claim != Fr::from_u64(0),
-                "bytecode parity fixture must exercise a nonzero relation"
-            );
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
-                claim,
-                &synthetic_point(dimensions.log_k(), 101),
-            );
-            let reference = reference.output_claims(&claims).unwrap();
-            let optimized = optimized.output_claims(&claims).unwrap();
-            assert_eq!(reference, optimized);
-            assert_eq!(
-                optimized.val_stages.len(),
-                if committed_program {
-                    NUM_BYTECODE_VAL_STAGES
-                } else {
-                    0
-                }
-            );
+            address_parity_on(backend, dimensions, committed_program);
         });
+    }
+
+    fn address_parity_on(
+        backend: &dyn JoltWitnessPlane<Fr>,
+        dimensions: BytecodeReadRafDimensions,
+        committed_program: bool,
+    ) {
+        let log_t = dimensions.log_t();
+        let relation = BytecodeReadRafAddressPhase::new(
+            dimensions,
+            committed_program,
+            BytecodeStagePoints {
+                stage_cycle_points: std::array::from_fn(|stage| {
+                    synthetic_point(log_t, 11 + stage as u64)
+                }),
+                register_read_write_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 23),
+                register_val_evaluation_point: synthetic_point(REGISTER_ADDRESS_BITS + log_t, 29),
+                fused_inc_cycle_points: (0..LATTICE_FUSED_INC_STAGES)
+                    .map(|stage| synthetic_point(log_t, 41 + stage as u64))
+                    .collect(),
+            },
+            0,
+        );
+        // The relation requires field-inline geometry even for inactive fixtures.
+        #[cfg(feature = "field-inline")]
+        let relation = relation.with_field_inline_geometry(FieldInlineBytecodeReadRafGeometry {
+            read_write_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 61),
+            val_evaluation_point: synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 67),
+        });
+        let challenges = BytecodeReadRafAddressPhaseChallenges {
+            gamma: Fr::from_u64(3),
+            stage1_gamma: Fr::from_u64(5),
+            stage2_gamma: Fr::from_u64(7),
+            stage3_gamma: Fr::from_u64(11),
+            stage4_gamma: Fr::from_u64(13),
+            stage5_gamma: Fr::from_u64(17),
+        };
+        let claims = SumcheckInputClaims::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
+        let input_points = SumcheckInputPoints::<Fr, BytecodeReadRafAddressPhase<Fr>>::default();
+
+        let mut session = ProofSession::default();
+        let mut reference = ReferenceBackend
+            .prepare(
+                &mut session,
+                backend,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &input_points,
+                    challenges: &challenges,
+                },
+            )
+            .unwrap();
+        let mut optimized = OptimizedBytecodeReadRafAddress
+            .prepare(
+                &mut session,
+                backend,
+                ProverInputs {
+                    relation: &relation,
+                    claims: &claims,
+                    points: &input_points,
+                    challenges: &challenges,
+                },
+            )
+            .unwrap();
+
+        let claim = probe_input_claim(reference.as_mut());
+        assert!(
+            claim != Fr::from_u64(0),
+            "bytecode parity fixture must exercise a nonzero relation"
+        );
+        run_lockstep(
+            reference.as_mut(),
+            optimized.as_mut(),
+            claim,
+            &synthetic_point(dimensions.log_k(), 101),
+        );
+        let reference = reference.output_claims(&claims).unwrap();
+        let optimized = optimized.output_claims(&claims).unwrap();
+        assert_eq!(reference, optimized);
+        assert_eq!(
+            optimized.val_stages.len(),
+            if committed_program {
+                NUM_BYTECODE_VAL_STAGES
+            } else {
+                0
+            }
+        );
     }
 
     fn cycle_parity(log_t: usize, log_k_chunk: u8) {
@@ -1622,6 +1848,30 @@ mod akita_tests {
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap()
             );
+        });
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn bytecode_address_matches_reference_with_active_field_inline() {
+        use crate::optimized::field_registers_testing::structured_field_register_fixture;
+        use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
+        use jolt_witness::JoltWitnessOracle;
+
+        structured_field_register_fixture(24).with_plane(5, |backend| {
+            let bytecode_len = backend.program_preprocessing().bytecode.bytecode.len();
+            let bytecode_chunks = (0..64)
+                .take_while(|index| {
+                    JoltWitnessOracle::<Fr>::shape(
+                        backend,
+                        JoltPolynomialId::Committed(JoltCommittedPolynomial::BytecodeRa(*index)),
+                    )
+                    .is_ok()
+                })
+                .count();
+            let dimensions =
+                BytecodeReadRafDimensions::new(5, bytecode_len.ilog2() as usize, bytecode_chunks);
+            address_parity_on(backend, dimensions, true);
         });
     }
 

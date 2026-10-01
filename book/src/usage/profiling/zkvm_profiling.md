@@ -174,6 +174,13 @@ for row in q:
   process-lifetime `getrusage` high-water mark (cannot miss short spikes,
   but includes guest compile/trace); `root.peak_memory_gib` is the max over
   monitor samples inside the root span (prove-only, but sampled at ≥ 50 ms).
+- **RSS under-reports on macOS under memory pressure**, where the kernel
+  compresses cold pages out of the resident set. `peak_footprint_gib` is the
+  process-lifetime peak physical footprint (the "peak memory footprint" of
+  `/usr/bin/time -l`), which counts compressed pages; use it to compare
+  memory across runs. On Linux it equals `peak_rss_gib`. The monitor's
+  `counters.footprint_gib` samples the same measure over time (macOS only);
+  `memory_gib` and `root.peak_memory_gib` remain resident-set based.
 
 ## Overhead and dark-time budgets
 
