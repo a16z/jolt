@@ -19,6 +19,7 @@ allocative = ["dep:allocative", "jolt-field/allocative", "jolt-poly/allocative"]
 parallel = [
   "dep:rayon",
   "jolt-poly/parallel",
+  "jolt-r1cs/parallel",
   "jolt-utils/parallel",
   "jolt-witness/parallel",
 ]

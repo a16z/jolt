@@ -386,27 +386,39 @@ impl Program {
         (lazy_trace, trace, memory, jolt_device)
     }
 
-    /// Execute the program to completion without materializing trace rows
-    /// (the emulator's execute-only path). Returns the trace row count (the
-    /// number of rows `trace` would have produced).
+    /// Execute the program without materializing trace rows, returning the
+    /// number of rows `trace` would have produced.
     #[tracing::instrument(skip_all, name = "Program::execute")]
-    #[expect(
-        clippy::expect_used,
-        reason = "the infallible host execute API reports build and decode failures by panicking"
-    )]
     pub fn execute(
         &mut self,
         inputs: &[u8],
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> usize {
+        self.execute_with_output(inputs, untrusted_advice, trusted_advice)
+            .0
+    }
+
+    /// Execute without storing trace rows, retaining the row count and device
+    /// output so callers can check guest acceptance and panic status.
+    #[tracing::instrument(skip_all, name = "Program::execute_with_output")]
+    #[expect(
+        clippy::expect_used,
+        reason = "the infallible host execute API reports build and decode failures by panicking"
+    )]
+    pub fn execute_with_output(
+        &mut self,
+        inputs: &[u8],
+        untrusted_advice: &[u8],
+        trusted_advice: &[u8],
+    ) -> (usize, JoltDevice) {
         let (elf, elf_contents) = self.built_elf();
         let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
-        let (executed_instructions, _, _) = tracer::execute(
+        let (trace_rows, device, _) = tracer::execute(
             &elf_contents,
             Some(&elf),
             inputs,
@@ -415,7 +427,7 @@ impl Program {
             &memory_config,
             None,
         );
-        executed_instructions
+        (trace_rows, device)
     }
 
     #[tracing::instrument(skip_all, name = "Program::trace_to_file")]

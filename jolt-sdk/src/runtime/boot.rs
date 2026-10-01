@@ -58,6 +58,16 @@ pub extern "C" fn __platform_bootstrap() {
         let heap_end = core::ptr::addr_of!(__heap_end) as usize;
         debug_writeln!("[BOOT] Heap start=0x{:x}, end=0x{:x}", heap_start, heap_end);
         let heap_size = heap_end - heap_start;
+        // std guests on the size-class allocator: Rust owns most of the heap
+        // directly; musl's malloc (C shims, libc internals) keeps a slice
+        // through ZeroOS.
+        #[cfg(all(not(target_os = "none"), feature = "guest-size-class-alloc"))]
+        {
+            let musl_share = heap_size / 8;
+            zeroos::foundation::kfn::memory::kinit(heap_start, musl_share);
+            jolt_platform::size_class_alloc::init(heap_start + musl_share, heap_size - musl_share);
+        }
+        #[cfg(not(all(not(target_os = "none"), feature = "guest-size-class-alloc")))]
         zeroos::foundation::kfn::memory::kinit(heap_start, heap_size);
 
         let _stack_top = core::ptr::addr_of!(__stack_top) as usize;
