@@ -24,6 +24,7 @@ mod adapters;
 pub mod configs;
 mod native_batching;
 mod planning;
+mod prepared;
 pub mod schedule_registry;
 pub mod schedules;
 mod scheme;

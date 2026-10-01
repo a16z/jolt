@@ -98,6 +98,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "jolt-field",
+ "jolt-inlines-ntt",
  "jolt-poly",
  "rand_core 0.6.4",
  "rayon",
@@ -266,6 +267,7 @@ version = "0.1.0"
 source = "git+https://github.com/markosg04/akita.git?rev=eacbacd173a122b498fd80bca543b765214f5abe#eacbacd173a122b498fd80bca543b765214f5abe"
 dependencies = [
  "jolt-field",
+ "jolt-inlines-blake2",
  "spongefish",
 ]
 
@@ -282,6 +284,7 @@ dependencies = [
  "akita-transcript",
  "blake2 0.11.0",
  "jolt-field",
+ "jolt-inlines-blake2",
  "jolt-poly",
  "rand_core 0.6.4",
  "serde",
@@ -3152,6 +3155,7 @@ dependencies = [
  "jolt-transcript",
  "rayon",
  "serde",
+ "serde_bytes",
  "serde_json",
  "tracing",
 ]
@@ -6071,6 +6075,16 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
