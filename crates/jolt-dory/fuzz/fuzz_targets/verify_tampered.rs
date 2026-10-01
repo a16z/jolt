@@ -1,35 +1,79 @@
 #![no_main]
 
-//! Structured tampering of an honest Dory opening must be rejected.
+//! Tampering with an honest Dory opening's argument string must be rejected.
 //!
-//! The previous harness byte-decoded a full `DoryProof` from raw fuzzer
-//! input, so essentially no input survived deserialization and `verify` was
-//! never reached — it degenerated into a slower `deser_commitment`. Build one
-//! honest proof in a process-wide fixture instead; every iteration reaches
-//! the verifier with one structured mutation: a negated protocol element, a
-//! dropped or swapped reduce round, or a stripped final message.
+//! A process-wide fixture writes one honest transparent and one honest ZK
+//! opening; every iteration picks a mode, applies one mutation to that
+//! argument string, and runs the verifier plus the transcript's `finish`.
+//! Raw byte edits mostly die at element decoding, so two mutations keep the
+//! bytes decodable and reach dory-pcs's algebraic and Fiat-Shamir checks:
+//! negating a G1/G2/GT element in place (the first offset at or after the
+//! chosen one where that element type decodes), and swapping two
+//! element-width chunks (reordering messages). The others flip a byte,
+//! truncate, append trailing bytes, or delete an element-width range. The
+//! verifier absorbs every Dory message and rereads the Σ₁ responses, so any
+//! change to the bytes must fail.
 
 use std::sync::OnceLock;
 
+use dory::backends::arkworks::{ArkG1, ArkG2, ArkGT};
 use dory::primitives::arithmetic::Group;
-use jolt_dory::{DoryCommitment, DoryProof, DoryScheme, DoryVerifierSetup};
+use dory::primitives::{DoryDeserialize, DorySerialize};
+use jolt_dory::{DoryCommitment, DoryScheme, DoryVerifierSetup};
 use jolt_field::{Field, Fr};
-use jolt_openings::CommitmentScheme;
+use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, VerifierTranscript};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 const NUM_VARS: usize = 4;
-const TRANSCRIPT_LABEL: &[u8] = b"fuzz-tampered";
+const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-dory-fuzz/tampered");
+const SESSION: &[u8] = b"fuzz-tampered";
+
+struct Opening {
+    commitment: DoryCommitment,
+    narg: Vec<u8>,
+}
 
 struct Fixture {
     verifier_setup: DoryVerifierSetup,
-    commitment: DoryCommitment,
     point: Vec<Fr>,
     eval: Fr,
-    proof: DoryProof,
+    transparent: Opening,
+    zk: Opening,
+}
+
+impl Fixture {
+    fn opening(&self, zk: bool) -> &Opening {
+        if zk {
+            &self.zk
+        } else {
+            &self.transparent
+        }
+    }
+
+    fn verify(&self, zk: bool, narg: &[u8]) -> Result<(), OpeningsError> {
+        let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, SESSION, narg);
+        if zk {
+            DoryScheme::verify_zk(
+                &self.zk.commitment,
+                &self.point,
+                &self.verifier_setup,
+                &mut transcript,
+            )?;
+        } else {
+            DoryScheme::verify(
+                &self.transparent.commitment,
+                &self.point,
+                self.eval,
+                &self.verifier_setup,
+                &mut transcript,
+            )?;
+        }
+        Ok(transcript.finish()?)
+    }
 }
 
 fn fixture() -> &'static Fixture {
@@ -37,127 +81,140 @@ fn fixture() -> &'static Fixture {
     FIX.get_or_init(|| {
         let mut rng = ChaCha20Rng::seed_from_u64(0xF0_22);
         let prover_setup = DoryScheme::setup_prover(NUM_VARS);
-        let verifier_setup = DoryScheme::setup_verifier(NUM_VARS);
+        let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
         let poly = Polynomial::<Fr>::random(NUM_VARS, &mut rng);
         let point: Vec<Fr> = (0..NUM_VARS).map(|_| Fr::random(&mut rng)).collect();
         let eval = poly.evaluate(&point);
+
         let (commitment, hint) =
             DoryScheme::commit(poly.evaluations(), &prover_setup).expect("fixture commit");
-
-        let mut pt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
-        let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt)
-            .expect("fixture open");
-
-        let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
-        DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt)
-            .expect("fixture proof must verify before tampering");
-
-        Fixture {
-            verifier_setup,
+        let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, SESSION);
+        DoryScheme::open(
+            &poly,
+            &point,
+            eval,
+            &prover_setup,
+            Some(hint),
+            &mut transcript,
+        )
+        .expect("fixture open");
+        let transparent = Opening {
             commitment,
+            narg: transcript.finish(),
+        };
+
+        let (commitment, hint) =
+            DoryScheme::commit_zk(poly.evaluations(), &prover_setup).expect("fixture commit_zk");
+        let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, SESSION);
+        let (_y_com, _blind) =
+            DoryScheme::open_zk(&poly, &point, eval, &prover_setup, hint, &mut transcript)
+                .expect("fixture open_zk");
+        let zk = Opening {
+            commitment,
+            narg: transcript.finish(),
+        };
+
+        let fixture = Fixture {
+            verifier_setup,
             point,
             eval,
-            proof,
+            transparent,
+            zk,
+        };
+        for zk in [false, true] {
+            fixture
+                .verify(zk, &fixture.opening(zk).narg)
+                .expect("fixture opening must verify before tampering");
         }
+        fixture
     })
 }
 
-/// Negates a group element in place. Returns false (skip the iteration) when
-/// negation is a no-op because the element is the identity.
-fn negate<G: Group + PartialEq>(element: &mut G) -> bool {
-    let negated = element.neg();
-    if negated == *element {
-        return false;
+/// Compressed width of the element kind `kind % 3` selects.
+fn element_width(kind: u8) -> usize {
+    match kind % 3 {
+        0 => 32,
+        1 => 64,
+        _ => 384,
     }
-    *element = negated;
-    true
+}
+
+/// Negates the first element of type `G` that decodes at or after `from`.
+/// Returns false when none decodes or the negation is a no-op.
+fn negate_first<G: Group + PartialEq + DorySerialize + DoryDeserialize>(
+    narg: &mut [u8],
+    from: usize,
+    width: usize,
+) -> bool {
+    for start in from..=narg.len().saturating_sub(width) {
+        let window = &mut narg[start..start + width];
+        let Ok(element) = G::deserialize_compressed(&*window) else {
+            continue;
+        };
+        let negated = element.neg();
+        if negated == element {
+            return false;
+        }
+        let mut bytes = Vec::with_capacity(width);
+        negated
+            .serialize_compressed(&mut bytes)
+            .expect("serializing into a Vec cannot fail");
+        window.copy_from_slice(&bytes);
+        return true;
+    }
+    false
 }
 
 fuzz_target!(|data: &[u8]| {
-    if data.len() < 3 {
+    if data.len() < 6 {
         return;
     }
     let fix = fixture();
-    let mut proof = fix.proof.clone();
-    let inner = &mut proof.0;
+    let zk = data[0] & 0x80 != 0;
+    let class = data[0] % 6;
+    let honest = &fix.opening(zk).narg;
+    let offset = usize::from(u16::from_le_bytes([data[1], data[2]])) % honest.len();
+    let param = data[3];
+    let other = usize::from(u16::from_le_bytes([data[4], data[5]])) % honest.len();
+    let payload = &data[6..];
+    let width = element_width(param);
 
-    let changed = match data[0] % 8 {
-        0 => match data[1] % 3 {
-            0 => negate(&mut inner.vmv_message.c),
-            1 => negate(&mut inner.vmv_message.d2),
-            _ => negate(&mut inner.vmv_message.e1),
-        },
-        1 => {
-            if inner.first_messages.is_empty() {
+    let mut narg = honest.clone();
+    match class {
+        0 => narg[offset] ^= param,
+        1 => narg.truncate(offset),
+        2 => narg.extend_from_slice(payload),
+        3 => {
+            let negated = match param % 3 {
+                0 => negate_first::<ArkG1>(&mut narg, offset, width),
+                1 => negate_first::<ArkG2>(&mut narg, offset, width),
+                _ => negate_first::<ArkGT>(&mut narg, offset, width),
+            };
+            if !negated {
                 return;
             }
-            let round = (data[1] as usize) % inner.first_messages.len();
-            let message = &mut inner.first_messages[round];
-            match data[2] % 6 {
-                0 => negate(&mut message.d1_left),
-                1 => negate(&mut message.d1_right),
-                2 => negate(&mut message.d2_left),
-                3 => negate(&mut message.d2_right),
-                4 => negate(&mut message.e1_beta),
-                _ => negate(&mut message.e2_beta),
-            }
         }
-        2 => {
-            if inner.second_messages.is_empty() {
+        4 => {
+            if offset + width > narg.len() || other + width > narg.len() {
                 return;
             }
-            let round = (data[1] as usize) % inner.second_messages.len();
-            let message = &mut inner.second_messages[round];
-            match data[2] % 6 {
-                0 => negate(&mut message.c_plus),
-                1 => negate(&mut message.c_minus),
-                2 => negate(&mut message.e1_plus),
-                3 => negate(&mut message.e1_minus),
-                4 => negate(&mut message.e2_plus),
-                _ => negate(&mut message.e2_minus),
-            }
+            let first = honest[offset..offset + width].to_vec();
+            let second = honest[other..other + width].to_vec();
+            narg[other..other + width].copy_from_slice(&first);
+            narg[offset..offset + width].copy_from_slice(&second);
         }
-        3 => match &mut inner.final_message {
-            Some(message) => {
-                if data[1] % 2 == 0 {
-                    negate(&mut message.e1)
-                } else {
-                    negate(&mut message.e2)
-                }
-            }
-            None => return,
-        },
-        4 => inner.final_message.take().is_some(),
-        5 => inner.first_messages.pop().is_some(),
-        6 => inner.second_messages.pop().is_some(),
         _ => {
-            // Swap two reduce rounds (Fiat-Shamir round binding).
-            if inner.first_messages.len() < 2 {
-                return;
-            }
-            if inner.first_messages[0] == inner.first_messages[1] {
-                return;
-            }
-            inner.first_messages.swap(0, 1);
-            true
+            let end = (offset + width).min(narg.len());
+            narg.drain(offset..end);
         }
-    };
-    if !changed {
+    }
+    if narg == *honest {
         return;
     }
 
-    let mut transcript = Blake2bTranscript::new(TRANSCRIPT_LABEL);
-    let result = DoryScheme::verify(
-        &fix.commitment,
-        &fix.point,
-        fix.eval,
-        &proof,
-        &fix.verifier_setup,
-        &mut transcript,
-    );
     assert!(
-        result.is_err(),
-        "verifier accepted a tampered proof (mutation class {})",
-        data[0] % 8,
+        fix.verify(zk, &narg).is_err(),
+        "verifier accepted a tampered {} opening (mutation class {class})",
+        if zk { "ZK" } else { "transparent" },
     );
 });

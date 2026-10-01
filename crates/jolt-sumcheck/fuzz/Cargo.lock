@@ -582,7 +582,9 @@ dependencies = [
  "jolt-field",
  "light-poseidon",
  "rand 0.8.7",
+ "rand_core 0.6.4",
  "spongefish",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

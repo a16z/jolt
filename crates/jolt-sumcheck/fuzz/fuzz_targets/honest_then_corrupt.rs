@@ -3,38 +3,44 @@
 //! Honest sumcheck proof over a real MLE product, then one fuzzer-chosen
 //! corruption; the verifier must reject.
 //!
-//! The harness proves `Σ_x A(x)·B(x)` honestly with an in-harness
-//! degree-2 prover (LSB-first binding), then corrupts exactly one thing: the
-//! claimed sum, one round coefficient, the round count, or the degree bound.
-//! Every corruption breaks a check the verifier performs deterministically —
-//! a wrong claimed sum or coefficient breaks that round's `s(0) + s(1)`
-//! comparison, and shape corruptions break the count/degree checks. As a
-//! belt-and-braces discharge, an accept of a false statement only counts as
-//! sound if the returned claim matches the true product evaluation.
+//! The harness proves `Σ_x A(x)·B(x)` with an in-harness degree-2 prover
+//! (LSB-first binding) into a NARG argument string, checks that the honest
+//! string verifies, then corrupts exactly one thing: the claimed sum, one
+//! round coefficient (rewritten as another canonical scalar), one byte, the
+//! string's length (a strict prefix or a duplicated trailing round), or the
+//! statement's degree bound or round count. Every corruption breaks a check
+//! the verifier performs deterministically: a changed coefficient moves that
+//! round's `s(0) + s(1) = 2·c0 + c1 + c2` (each coefficient enters with a
+//! nonzero weight), a flipped byte does the same or breaks the canonical
+//! encoding, and every length or shape mismatch misframes the fixed-width
+//! rounds, ending in `Truncated` or in `finish`'s `TrailingBytes`. So the
+//! harness asserts a plain reject: corrupted proofs never verify.
 
-use jolt_field::{CanonicalEncoding, Field, Fr, Ring};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_sumcheck::{
+    send_full_round, BooleanHypercube, EvaluationClaim, SumcheckClaim, SumcheckError,
+    SumcheckVerifier,
+};
+use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
 use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;
 
+const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-sumcheck-fuzz/corrupt");
+const SESSION: &[u8] = b"jolt-sumcheck-corrupt-fuzz";
 const SCALAR_BYTES: usize = 32;
 const MAX_NUM_VARS: usize = 5;
+const DEGREE: usize = 2;
+const ROUND_BYTES: usize = (DEGREE + 1) * SCALAR_BYTES;
 
-/// Evaluates the multilinear extension of `evals` at `point`, with
-/// `point[k]` bound to index bit `k` (LSB-first, matching the prover below).
-fn mle_eval(evals: &[Fr], point: &[Fr]) -> Fr {
-    let one = Fr::from_u64(1);
-    let mut sum = Fr::zero();
-    for (index, &coeff) in evals.iter().enumerate() {
-        let mut weight = one;
-        for (k, &p) in point.iter().enumerate() {
-            weight *= if (index >> k) & 1 == 1 { p } else { one - p };
-        }
-        sum += coeff * weight;
-    }
-    sum
+fn verify(
+    claim: &SumcheckClaim<Fr>,
+    narg: &[u8],
+) -> Result<EvaluationClaim<Fr>, SumcheckError<Fr>> {
+    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, SESSION, narg);
+    let reduced = SumcheckVerifier::verify(claim, BooleanHypercube, &mut transcript)?;
+    transcript.finish()?;
+    Ok(reduced)
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -45,7 +51,7 @@ fuzz_target!(|data: &[u8]| {
     let n = 1usize << num_vars;
     let corruption = data[1];
     let corruption_round = data[2] as usize % num_vars;
-    let corruption_coeff = data[3] as usize % 3;
+    let corruption_coeff = data[3] as usize % (DEGREE + 1);
     // Corruption scalar + the two evaluation tables.
     if data.len() < 4 + (1 + 2 * n) * SCALAR_BYTES {
         return;
@@ -55,18 +61,18 @@ fuzz_target!(|data: &[u8]| {
         <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[start..start + SCALAR_BYTES])
     };
     let corruption_scalar = scalar_at(0);
-    let evals_a: Vec<Fr> = (0..n).map(|i| scalar_at(1 + i)).collect();
-    let evals_b: Vec<Fr> = (0..n).map(|i| scalar_at(1 + n + i)).collect();
+    // The corruption scalar's first two raw bytes also pick a byte within
+    // the chosen coefficient and an XOR mask.
+    let corruption_byte = data[4] as usize % SCALAR_BYTES;
+    let corruption_mask = data[5];
+    let mut a: Vec<Fr> = (0..n).map(|i| scalar_at(1 + i)).collect();
+    let mut b: Vec<Fr> = (0..n).map(|i| scalar_at(1 + n + i)).collect();
 
-    let true_sum: Fr = evals_a.iter().zip(&evals_b).map(|(&a, &b)| a * b).sum();
+    let true_sum: Fr = a.iter().zip(&b).map(|(&a, &b)| a * b).sum();
 
-    // Honest degree-2 prover, binding the low variable each round and
-    // mirroring the verifier's transcript exactly.
+    // Honest degree-2 prover, binding the low variable each round.
     let two_inverse = Fr::from_u64(2).inverse().expect("2 is invertible");
-    let mut a = evals_a.clone();
-    let mut b = evals_b.clone();
-    let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-corrupt-fuzz");
-    let mut rounds: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
+    let mut prover = ProverTranscript::<Blake2b512>::new(&PROTOCOL, SESSION);
     for _ in 0..num_vars {
         let half = a.len() / 2;
         let mut s0 = Fr::zero();
@@ -80,83 +86,74 @@ fuzz_target!(|data: &[u8]| {
             // s(2) with a(2) = 2·a1 − a0 by multilinearity.
             s2 += (a1 + a1 - a0) * (b1 + b1 - b0);
         }
-        let c0 = s0;
         let c2 = (s2 - s1 - s1 + s0) * two_inverse;
         let c1 = s1 - s0 - c2;
-        let poly = UnivariatePoly::new(vec![c0, c1, c2]);
+        let poly = UnivariatePoly::new(vec![s0, c1, c2]);
+        send_full_round(&poly, DEGREE, &mut prover).expect("degree-2 round");
 
-        for coefficient in poly.coefficients() {
-            coefficient.append_to_transcript(&mut transcript);
-        }
-        let r: Fr = transcript.challenge();
+        let r: Fr = prover.challenge_small();
         for j in 0..half {
             a[j] = a[2 * j] + r * (a[2 * j + 1] - a[2 * j]);
             b[j] = b[2 * j] + r * (b[2 * j + 1] - b[2 * j]);
         }
         a.truncate(half);
         b.truncate(half);
-        rounds.push(poly);
     }
+    let honest = prover.finish();
+    assert_eq!(honest.len(), num_vars * ROUND_BYTES);
+    let honest_claim = SumcheckClaim::new(num_vars, DEGREE, true_sum);
+    verify(&honest_claim, &honest).expect("honest proof must verify");
 
-    // Apply exactly one corruption.
-    let mut claimed_sum = true_sum;
-    match corruption % 5 {
+    let coeff_offset = corruption_round * ROUND_BYTES + corruption_coeff * SCALAR_BYTES;
+    let mut claim = honest_claim.clone();
+    let mut narg = honest.clone();
+    match corruption % 7 {
         0 => {
             // False statement: honest proof, wrong claimed sum.
             if corruption_scalar.is_zero() {
                 return;
             }
-            claimed_sum += corruption_scalar;
+            claim.claimed_sum += corruption_scalar;
         }
         1 => {
-            // One round coefficient replaced; breaks that round's s(0)+s(1).
-            let coefficients = rounds[corruption_round].coefficients();
-            if coefficients[corruption_coeff] == corruption_scalar {
+            // One round coefficient replaced by another canonical scalar.
+            corruption_scalar.to_bytes_le(&mut narg[coeff_offset..coeff_offset + SCALAR_BYTES]);
+            if narg == honest {
                 return;
             }
-            let mut replaced = coefficients.to_vec();
-            replaced[corruption_coeff] = corruption_scalar;
-            rounds[corruption_round] = UnivariatePoly::new(replaced);
         }
         2 => {
-            rounds.pop();
+            // Any strict prefix.
+            narg.truncate(coeff_offset + corruption_byte);
         }
         3 => {
-            let last = rounds.last().cloned().expect("num_vars >= 1");
-            rounds.push(last);
+            // Duplicated last round.
+            narg.extend_from_within(narg.len() - ROUND_BYTES..);
         }
-        _ => {
-            // Degree inflation past the claimed bound.
-            let coefficients = rounds[corruption_round].coefficients();
-            let mut inflated = coefficients.to_vec();
-            inflated.push(corruption_scalar);
-            if inflated.len() <= 3 {
+        4 => {
+            if corruption_mask == 0 {
                 return;
             }
-            rounds[corruption_round] = UnivariatePoly::new(inflated);
+            narg[coeff_offset + corruption_byte] ^= corruption_mask;
+        }
+        5 => {
+            // Statement degree bound disagrees with the proof's round width.
+            claim.degree = if corruption_mask % 2 == 0 { 1 } else { 3 };
+        }
+        _ => {
+            // Statement round count disagrees with the proof.
+            claim.num_vars = if corruption_mask % 2 == 0 {
+                num_vars - 1
+            } else {
+                num_vars + 1
+            };
         }
     }
 
-    let claim = SumcheckClaim::new(num_vars, 2, claimed_sum);
-    let mut verifier_transcript = Blake2bTranscript::new(b"jolt-sumcheck-corrupt-fuzz");
-    let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
-        &claim,
-        &rounds,
-        BooleanHypercube,
-        &mut verifier_transcript,
+    let result = verify(&claim, &narg);
+    assert!(
+        result.is_err(),
+        "verifier accepted a corrupted proof (class {}): {result:?}",
+        corruption % 7,
     );
-
-    match result {
-        Err(_) => {}
-        Ok(final_claim) => {
-            // Discharge: an accept is only sound if the reduced claim is
-            // actually true of the underlying product.
-            let product =
-                mle_eval(&evals_a, &final_claim.point) * mle_eval(&evals_b, &final_claim.point);
-            assert_eq!(
-                final_claim.value, product,
-                "verifier accepted a corrupted proof reducing to a false claim"
-            );
-        }
-    }
 });
