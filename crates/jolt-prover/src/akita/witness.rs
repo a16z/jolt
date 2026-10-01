@@ -2,8 +2,14 @@
 //! from the witness plane's typed rows, the advice word objects, the
 //! direct bounded-dense committed-program objects.
 
+#[cfg(feature = "field-inline")]
+use jolt_kernels::field_inline::FieldIncrementColumn;
+#[cfg(all(feature = "field-inline", feature = "parallel"))]
+use rayon::prelude::*;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+#[cfg(not(feature = "field-inline"))]
+use std::marker::PhantomData;
+use std::sync::{Arc, OnceLock};
 
 use jolt_akita::{no_selected_row, TraceOneHotRows};
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
@@ -41,6 +47,14 @@ struct OneHotTraceSourceRow {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamAccessRow {
     ram_address: RemappedRamAddress,
+}
+
+pub struct AssembledTrace<F: JoltField> {
+    pub rows: Arc<OneHotTraceRows>,
+    #[cfg(feature = "field-inline")]
+    pub increments: FieldIncrementColumn<F>,
+    #[cfg(not(feature = "field-inline"))]
+    field: PhantomData<F>,
 }
 
 #[derive(Clone, Copy)]
@@ -218,7 +232,7 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
     ra_layout: JoltRaPolynomialLayout,
     log_k_chunk: usize,
     log_t: usize,
-) -> Result<OneHotTraceRows, ProverError<F>> {
+) -> Result<AssembledTrace<F>, ProverError<F>> {
     OneHotTraceRows::validate_dimensions::<F>(plan, log_k_chunk, log_t)?;
     let num_rows = 1usize << log_t;
     let num_columns = plan.packing().ids().len();
@@ -261,10 +275,30 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
         }
     }
 
+    #[cfg(feature = "field-inline")]
+    let field_oracle = witness.field_inline().ok_or(ProverError::Unsupported {
+        reason: "field-inline trace assembly requires its witness oracle",
+    })?;
+    #[cfg(feature = "field-inline")]
+    let mut increments = vec![F::zero(); num_rows];
+
     let random_access = witness
         .random_access()
         .filter(|access| num_rows <= access.cycles());
     let selected_rows = if let Some(access) = random_access {
+        // Increment commitments precede the trace commitment, so retain only
+        // their shared column; the one-hot rows stay lazy.
+        #[cfg(feature = "field-inline")]
+        {
+            #[cfg(feature = "parallel")]
+            let values = increments.par_iter_mut();
+            #[cfg(not(feature = "parallel"))]
+            let values = increments.iter_mut();
+            values.enumerate().try_for_each(|(index, value)| {
+                *value = field_oracle.rd_increment_at(index)?;
+                Ok::<_, WitnessError>(())
+            })?;
+        }
         SelectedRows::Extracted(ExtractedRows {
             access,
             extraction_error: OnceLock::new(),
@@ -278,6 +312,10 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
             .zip(selected_rows.chunks_exact_mut(num_columns))
             .enumerate()
         {
+            #[cfg(feature = "field-inline")]
+            {
+                increments[row_index] = field_oracle.rd_increment_at(row_index)?;
+            }
             if fill_trace_row(row, &columns, selected_rows) {
                 ram_active_rows[row_index / u64::BITS as usize] |=
                     1u64 << (row_index % u64::BITS as usize);
@@ -288,11 +326,17 @@ pub fn assemble_one_hot_trace_rows<F: JoltField>(
             ram_active_rows,
         }
     };
-    Ok(OneHotTraceRows {
-        num_rows,
-        columns,
-        ram_digit_zero_mask,
-        selected_rows,
+    Ok(AssembledTrace {
+        rows: Arc::new(OneHotTraceRows {
+            num_rows,
+            columns,
+            ram_digit_zero_mask,
+            selected_rows,
+        }),
+        #[cfg(feature = "field-inline")]
+        increments: FieldIncrementColumn::from_values(increments),
+        #[cfg(not(feature = "field-inline"))]
+        field: PhantomData,
     })
 }
 

@@ -122,7 +122,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
             chunk_idx,
         )) = id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let opening_point = output_points
             .chunks()
@@ -141,7 +141,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         weights
             .get(*chunk_idx)
             .copied()
-            .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+            .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
 }
 
@@ -222,7 +222,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> 
         let JoltDerivedId::ProgramImageClaimReduction(ProgramImageClaimReductionPublic::FinalScale) =
             id
         else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         let reference_opening_point = self.reference_opening_point.as_ref().ok_or_else(|| {
             program_image_public_failed(

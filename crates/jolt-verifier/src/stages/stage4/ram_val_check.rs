@@ -237,7 +237,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         _challenges: &RamValCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamValCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // The `Val_init` decomposition publics are input publics: the public
@@ -247,11 +247,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
                 self.init_selectors
                     .iter()
                     .find_map(|(selector, value)| (selector == public_id).then_some(*value))
-                    .ok_or(VerifierError::MissingStageClaimDerived { id: *id })
+                    .ok_or(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
             // Output public — resolved in `derive_output_term`, never in the input expr.
             RamValCheckPublic::LtCyclePlusGamma => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
     }
@@ -264,7 +264,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         challenges: &RamValCheckChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::RamValCheck(public_id) = id else {
-            return Err(VerifierError::MissingStageClaimDerived { id: *id });
+            return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };
         match public_id {
             // LtCyclePlusGamma folds the batching gamma into the `Lt` evaluation of
@@ -296,7 +296,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
             RamValCheckPublic::InitEval
             | RamValCheckPublic::InitSelector(_)
             | RamValCheckPublic::InitSelectorProgramImage => {
-                Err(VerifierError::MissingStageClaimDerived { id: *id })
+                Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
     }
@@ -439,13 +439,13 @@ pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
     let program_image_contribution = match (&structure.program_image_point, ram.program_image) {
         (None, Some(_)) => {
             return Err(VerifierError::UnexpectedOpeningClaim {
-                id: program_image_opening,
+                id: program_image_opening.into(),
             });
         }
         (None, None) => None,
         (Some(_), None) => {
             return Err(VerifierError::MissingOpeningClaim {
-                id: program_image_opening,
+                id: program_image_opening.into(),
             });
         }
         (Some(point), Some(value)) => Some((point.clone(), value)),
@@ -459,11 +459,11 @@ pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
         let opening = ram::val_check_advice_opening(kind);
         match (structure.advice_block(kind), opening_claim) {
             (None, Some(_)) => {
-                return Err(VerifierError::UnexpectedOpeningClaim { id: opening });
+                return Err(VerifierError::UnexpectedOpeningClaim { id: opening.into() });
             }
             (None, None) => {}
             (Some(_), None) => {
-                return Err(VerifierError::MissingOpeningClaim { id: opening });
+                return Err(VerifierError::MissingOpeningClaim { id: opening.into() });
             }
             (Some(block), Some(value)) => {
                 advice_contributions.push(VerifiedRamValCheckAdviceContribution {

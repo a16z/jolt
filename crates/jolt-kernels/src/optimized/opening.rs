@@ -33,6 +33,8 @@
 //! (`reference::opening`); the in-module tests pin dense equality against
 //! the reference slot on a real synthetic trace.
 
+#[cfg(feature = "field-inline")]
+use crate::field_inline::FieldIncrementColumn;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Range;
@@ -487,6 +489,82 @@ impl<F: JoltField> MultilinearPoly<F> for TraceOpeningPoly<F> {
                     } else {
                         acc[index & mask] += left[index >> sigma] * value;
                     }
+                }
+            }
+        })
+    }
+}
+
+/// One dense trace-domain column (`T` values at address slot zero) as a lazy
+/// view over the commitment grid: the placement of an increment column,
+/// without materializing the `2^total_vars` grid it is embedded in. The
+/// field-inline prover's stage-8 `FieldRdInc` entry opens through this (its
+/// only production caller); the base increment columns ride the shared
+/// [`TraceOpeningPoly`].
+#[cfg(feature = "field-inline")]
+pub struct DenseTraceColumnPoly<F: JoltField> {
+    values: FieldIncrementColumn<F>,
+    placement: TracePlacement,
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: JoltField> DenseTraceColumnPoly<F> {
+    /// `None` when the column carries more cycles than the grid's trace
+    /// dimension.
+    pub fn new(values: FieldIncrementColumn<F>, grid: CommitmentGrid) -> Option<Self> {
+        (values.len() <= 1usize << grid.log_t).then(|| Self {
+            values,
+            placement: TracePlacement::new(grid),
+        })
+    }
+
+    #[inline]
+    fn entries(&self) -> impl Iterator<Item = (usize, F)> + '_ {
+        self.values
+            .nonzero_entries()
+            .map(|(cycle, value)| (self.placement.index(cycle, 0), value))
+    }
+}
+
+#[cfg(feature = "field-inline")]
+impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
+    fn num_vars(&self) -> usize {
+        self.placement.total_vars
+    }
+
+    fn evaluate(&self, point: &[F]) -> F {
+        debug_assert_eq!(point.len(), self.placement.total_vars);
+        let eq = TensorEqTable::new(point);
+        scatter_sum(self.values.len(), |range| {
+            let mut acc = F::zero();
+            for cycle in range {
+                let value = self.values.value(cycle);
+                if !value.is_zero() {
+                    acc += value * eq.evaluate_index(self.placement.index(cycle, 0));
+                }
+            }
+            acc
+        })
+    }
+
+    fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
+        emit_sorted_rows(self.entries().collect(), self.num_vars(), sigma, f);
+    }
+
+    fn fold_rows(&self, left: &[F], sigma: usize) -> Vec<F> {
+        debug_assert_eq!(
+            left.len(),
+            1usize << self.num_vars().saturating_sub(sigma),
+            "left vector length must equal number of rows"
+        );
+        let num_cols = 1usize << sigma;
+        let mask = num_cols - 1;
+        scatter_fold(self.values.len(), num_cols, |range, acc| {
+            for cycle in range {
+                let value = self.values.value(cycle);
+                if !value.is_zero() {
+                    let index = self.placement.index(cycle, 0);
+                    acc[index & mask] += left[index >> sigma] * value;
                 }
             }
         })

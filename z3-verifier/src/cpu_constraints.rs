@@ -153,7 +153,7 @@ impl JoltState {
     }
 
     fn r1cs_inputs(&self) -> [&Int; NUM_R1CS_INPUTS] {
-        [
+        let scalars = [
             &self.left_input,
             &self.right_input,
             &self.product,
@@ -175,21 +175,14 @@ impl JoltState {
             &self.next_is_first_in_sequence,
             &self.lookup_output,
             &self.should_jump,
-            &self.flags[CircuitFlags::AddOperands as usize],
-            &self.flags[CircuitFlags::SubtractOperands as usize],
-            &self.flags[CircuitFlags::MultiplyOperands as usize],
-            &self.flags[CircuitFlags::Load as usize],
-            &self.flags[CircuitFlags::Store as usize],
-            &self.flags[CircuitFlags::Jump as usize],
-            &self.flags[CircuitFlags::WriteLookupOutputToRD as usize],
-            &self.flags[CircuitFlags::VirtualInstruction as usize],
-            &self.flags[CircuitFlags::Assert as usize],
-            &self.flags[CircuitFlags::DoNotUpdateUnexpandedPC as usize],
-            &self.flags[CircuitFlags::Advice as usize],
-            &self.flags[CircuitFlags::IsCompressed as usize],
-            &self.flags[CircuitFlags::IsFirstInSequence as usize],
-            &self.flags[CircuitFlags::IsLastInSequence as usize],
-        ]
+        ];
+        array::from_fn(|index| {
+            if index < scalars.len() {
+                scalars[index]
+            } else {
+                &self.flags[index - scalars.len()]
+            }
+        })
     }
 
     fn r1cs_vars(&self) -> [Int; NUM_VARS_PER_CYCLE] {

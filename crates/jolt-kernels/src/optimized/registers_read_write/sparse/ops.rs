@@ -14,7 +14,7 @@ use super::{
 };
 
 /// Block boundaries advanced so no `row >> pair_bits` group is split.
-fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
+pub(crate) fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
     const BLOCK_TARGET: usize = 1 << 14;
     let len = entries.len();
     let block_count = len.div_ceil(BLOCK_TARGET).max(1);
@@ -41,7 +41,7 @@ fn pair_aligned_bounds<E: Cell>(entries: &[E], pair_bits: u32) -> Vec<usize> {
 ///
 /// Writes stay behind unread groups because merging never grows a group.
 /// A group uses scratch until its output fits entirely in the vacated prefix.
-pub(super) fn bind_sparse_entries_in_place<E>(
+pub(crate) fn bind_sparse_entries_in_place<E>(
     entries: &mut Vec<E>,
     bind: impl Fn(Option<&E>, Option<&E>) -> E + Sync,
 ) where

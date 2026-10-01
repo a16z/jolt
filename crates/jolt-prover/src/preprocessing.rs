@@ -8,6 +8,15 @@ use std::sync::Arc;
 
 use crate::PreprocessingError;
 
+pub(crate) fn validate_committed_mode() -> Result<(), PreprocessingError> {
+    if cfg!(feature = "field-inline") {
+        return Err(PreprocessingError::InvalidCommittedProgram {
+            reason: "field-inline requires full public bytecode preprocessing".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 /// The full program preprocessing shared by prover and verifier construction.
 /// Serializes as the program itself; the Fiat-Shamir digest is derived by
 /// [`JoltVerifierPreprocessing`] from whichever program view it holds.

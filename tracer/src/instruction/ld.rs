@@ -1,4 +1,5 @@
 use super::{RISCVInstruction, RISCVTrace};
+use crate::instruction::registers::load::RegisterStateLoad;
 use crate::{
     declare_riscv_instr, emulator::cpu::Cpu, instruction::format::format_load::FormatLoad,
 };
@@ -9,6 +10,7 @@ declare_riscv_instr!(
     mask   = 0x0000707f,
     match  = 0x00003003,
     format = FormatLoad,
+    registers = RegisterStateLoad,
     ram    = super::RAMRead
 );
 

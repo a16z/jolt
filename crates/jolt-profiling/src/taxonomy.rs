@@ -151,6 +151,14 @@ pub const UNISKIP_SEAM_SPANS: [&str; 4] = [
 /// test's presence assertion (fibonacci has no advice).
 pub const ADVICE_SEAM_SPANS: [&str; 1] = ["commit_advice"];
 
+/// The additional commit seam in field-inline builds, selected by PCS mode.
+pub fn field_inline_spans(mode: ProverMode) -> &'static [&'static str] {
+    match mode {
+        ProverMode::Clear | ProverMode::Zk => &["commit_field_inline_witness"],
+        ProverMode::Akita => &["commit_field_inc"],
+    }
+}
+
 /// Stage-4 evaluation seam for advice or a committed program image. Absent
 /// when neither private initial-RAM contribution is present.
 pub const INITIAL_RAM_OPENING_SEAM_SPANS: [&str; 1] = ["RamInitialOpeningEvaluation::evaluate"];
