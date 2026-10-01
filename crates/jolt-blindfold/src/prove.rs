@@ -738,14 +738,17 @@ where
             });
         }
     }
-    // Cross-pool waits can steal further outer row jobs. Limit our outer leaf jobs
-    // to the current worker count so their nesting does not scale with row count.
-    let min_rows_per_job = rows.len().div_ceil(rayon::current_num_threads()).max(1);
+    // At most one job per worker: ark-ec's msm_bigint_wnaf builds a 2-thread pool per
+    // chunk (variable_base/mod.rs:853), so more outer jobs than workers oversubscribe.
+    let rows_per_job = rows.len().div_ceil(rayon::current_num_threads()).max(1);
     Ok(rows
-        .par_iter()
-        .zip(blindings.par_iter())
-        .with_min_len(min_rows_per_job)
-        .map(|(row, blinding)| VC::commit(setup, row, blinding))
+        .par_chunks(rows_per_job)
+        .zip(blindings.par_chunks(rows_per_job))
+        .flat_map_iter(|(rows, blindings)| {
+            rows.iter()
+                .zip(blindings)
+                .map(|(row, blinding)| VC::commit(setup, row, blinding))
+        })
         .collect())
 }
 
