@@ -15,14 +15,14 @@
 //!   address column to the optimized RAM kernels.
 //! - **Gruen split-eq factoring**: `eq(r_cycle, ·)` is never materialized or
 //!   bound; each round emits `s(t) = ℓ(t) · Σ_y E(y) · Π_i ra_i(t, y)` at
-//!   the naive prover's `t = 0..=degree` sample points through the same
-//!   `from_evals` constructor, so round polynomials and output claims are
+//!   a minimal product grid, recovering the missing value from the running
+//!   claim. Round polynomials and output claims are
 //!   byte-identical (field arithmetic is exact under any regrouping).
 
 use jolt_claims::protocols::jolt::geometry::dimensions::committed_address_chunks;
 use jolt_claims::protocols::jolt::relations::ram::RamRaVirtualizationOutputClaims;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamRaVirtualizationPublic};
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 use std::sync::Arc;
 
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
@@ -35,7 +35,7 @@ use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
-use super::support::{pin_derived_term, GruenRoundMessage, RoundProgress};
+use super::support::{accumulate_product_grid, pin_derived_term, GruenRoundMessage, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
 use crate::{
@@ -145,6 +145,52 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
     /// `s(t) = ℓ(t) · q(t)` at the naive prover's sample points, with
     /// `q(t) = Σ_y E(y) · Π_i ra_i(t, y)`.
     fn message(
+        &self,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        let num_committed = self.folded_ra.num_polys();
+        if num_committed < 2 {
+            return self.message_low_arity(round, previous_claim);
+        }
+        let lanes = self.gruen.par_fold_out_in(
+            || {
+                (
+                    vec![F::Accumulator::default(); num_committed],
+                    vec![F::zero(); num_committed],
+                    vec![F::zero(); num_committed],
+                )
+            },
+            |(lanes, evals, steps), row, _, e_in| {
+                for position in 0..num_committed {
+                    let (lo, hi) = self.folded_ra.lo_hi(position, row);
+                    evals[position] = hi;
+                    steps[position] = hi - lo;
+                }
+                // Absorb the row weight into one factor before deferred accumulation.
+                evals[0] *= e_in;
+                steps[0] *= e_in;
+                accumulate_product_grid(evals, steps, lanes);
+            },
+            |_, e_out, (lanes, _, _)| {
+                let mut out = vec![F::Accumulator::default(); num_committed];
+                for (out, lane) in out.iter_mut().zip(lanes) {
+                    out.fmadd(e_out, lane.reduce());
+                }
+                out
+            },
+            |mut left, right| {
+                for (left, right) in left.iter_mut().zip(right) {
+                    left.merge(right);
+                }
+                left
+            },
+        );
+        let q_evals: Vec<F> = lanes.into_iter().map(|lane| lane.reduce()).collect();
+        Ok(self.gruen.gruen_poly_from_evals(&q_evals, previous_claim))
+    }
+
+    fn message_low_arity(
         &self,
         round: usize,
         previous_claim: F,
@@ -425,6 +471,31 @@ mod tests {
                 RamOp::Write { word: 63, post: 2 },
             ],
             433,
+        );
+    }
+
+    #[test]
+    fn parity_four_committed_chunks_past_lazy_materialization() {
+        run_parity(
+            FixtureShape {
+                log_t: 6,
+                ram_k: 1 << 16,
+            },
+            vec![
+                RamOp::Write { word: 3, post: 5 },
+                RamOp::Write {
+                    word: 0xabcd,
+                    post: 7,
+                },
+                RamOp::Read { word: 0xabcd },
+                RamOp::None,
+                RamOp::Read { word: 3 },
+                RamOp::Write {
+                    word: 0x1234,
+                    post: 2,
+                },
+            ],
+            439,
         );
     }
 

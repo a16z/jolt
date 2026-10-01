@@ -720,6 +720,11 @@ mod tests {
         assert_parity(4, 8, 4, 4, 42, false);
     }
 
+    #[test]
+    fn parity_eight_factors_past_lazy_materialization() {
+        assert_parity(6, 4, 8, 4, 43, false);
+    }
+
     /// Odd geometry: 3 virtuals × 2 committed, 2-bit chunks, odd log_t.
     #[test]
     fn parity_small_odd_geometry() {
