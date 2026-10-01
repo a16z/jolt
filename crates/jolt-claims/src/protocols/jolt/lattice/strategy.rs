@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use blake2::{digest::consts::U32, Blake2b, Digest};
+use crate::blake2b256::{Blake2b256, Digest};
 use jolt_field::Field;
 use jolt_openings::{OpeningsError, PrefixPackedClaims, PrefixPackedLayout};
 
@@ -172,7 +172,7 @@ fn layout_digest(
     shape: &OneHotTraceShape,
     packing: &PrefixPackedLayout<JoltCommittedPolynomial>,
 ) -> Result<[u8; 32], OpeningsError> {
-    let mut hasher = Blake2b::<U32>::new();
+    let mut hasher = Blake2b256::new();
     hasher.update(b"jolt/akita/one_hot_trace/digit-zero-mu-one-full-ram/v7");
     append_usize(&mut hasher, packing.logical_num_vars());
     append_usize(&mut hasher, packing.packed_num_vars());
@@ -213,7 +213,7 @@ fn layout_digest(
     Ok(hasher.finalize().into())
 }
 
-fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
+fn append_usize(hasher: &mut Blake2b256, value: usize) {
     hasher.update((value as u64).to_le_bytes());
 }
 

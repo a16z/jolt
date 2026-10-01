@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 use jolt_claims::protocols::jolt::{
     BooleanityPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId, JoltRelationId,
 };
@@ -300,8 +301,20 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
         // fused-inc one-hot columns: serve them per the relation's own
         // expression leaves (the base expression references none, so the
         // loop no-ops there).
+        let mut derived_tables = BTreeMap::new();
         for term in &relation.symbolic().output_expression::<F>().terms {
             for factor in &term.factors {
+                if let Source::Derived(
+                    id @ JoltDerivedId::Booleanity(BooleanityPublic::GammaPow { exponent }),
+                ) = factor
+                {
+                    let _ = derived_tables.entry(*id).or_insert_with(|| {
+                        Polynomial::new(vec![
+                            gamma_pow(inputs.challenges.gamma, *exponent);
+                            1 << dimensions.log_t
+                        ])
+                    });
+                }
                 let Source::Opening(id) = factor else {
                     continue;
                 };
@@ -329,7 +342,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 reason: "booleanity address point and reference length mismatch",
             }
         })?;
-        let derived_tables = BTreeMap::from([(
+        let _ = derived_tables.insert(
             JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
             Polynomial::new(
                 eq_table(reference_cycle)
@@ -337,7 +350,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                     .map(|eq| address_scalar * eq)
                     .collect::<Vec<_>>(),
             ),
-        )]);
+        );
 
         Ok(Box::new(NaiveSumcheckProver::new(
             &inputs,

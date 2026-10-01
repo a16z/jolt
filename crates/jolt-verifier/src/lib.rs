@@ -62,6 +62,7 @@ pub use config::{
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
+    VerifierPreprocessingWire,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "akita")]

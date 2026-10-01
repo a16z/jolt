@@ -112,6 +112,10 @@ pub enum BooleanityChallenge {
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum BooleanityPublic {
     EqAddressCycle,
+    /// The batching weight γ^exponent, shared by the two terms of one opening.
+    GammaPow {
+        exponent: usize,
+    },
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -143,6 +147,10 @@ pub enum HammingWeightClaimReductionPublic {
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
     BalancedIncValueAtAddress,
+    /// `gamma^k` for `k >= 2`, as one derived leaf: the batching coefficient of
+    /// the k-th leg. A term with `k` repeated challenge factors costs the
+    /// verifier `k` copies and `k` multiplies per evaluation; the leaf costs one.
+    GammaPow(usize),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -165,6 +173,14 @@ pub enum BytecodeReadRafPublic {
     SpartanOuterRaf,
     SpartanShiftRaf,
     Entry,
+    /// `challenge^exponent` for an exponent of at least two: the batching
+    /// challenges fold dozens of claims, and one derived leaf per power keeps
+    /// each folded term at one factor instead of `exponent` repeated ones
+    /// (see `geometry::bytecode::challenge_pow_expr`).
+    ChallengePow {
+        challenge: BytecodeReadRafChallenge,
+        exponent: usize,
+    },
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
@@ -407,7 +423,11 @@ pub enum JoltPolynomialId {
     Virtual(JoltVirtualPolynomial),
 }
 
+// Word-aligned so that the verifier's many id moves and comparisons are word
+// operations rather than byte-granular ones, which a zkVM guest pays several
+// trace rows per byte for (4M rows on a 150M-row verification).
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[repr(align(8))]
 pub enum JoltOpeningId {
     Polynomial {
         polynomial: JoltPolynomialId,
