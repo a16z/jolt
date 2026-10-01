@@ -49,10 +49,10 @@ struct RamAccessRow {
     ram_address: RemappedRamAddress,
 }
 
-pub struct AssembledTrace<F: JoltField> {
-    pub rows: Arc<OneHotTraceRows>,
+pub(super) struct AssembledTrace<F: JoltField> {
+    pub(super) rows: Arc<OneHotTraceRows>,
     #[cfg(feature = "field-inline")]
-    pub increments: FieldIncrementColumn<F>,
+    pub(super) increments: FieldIncrementColumn<F>,
     #[cfg(not(feature = "field-inline"))]
     field: PhantomData<F>,
 }
@@ -67,9 +67,9 @@ enum OneHotTraceColumn {
 
 /// Extracts rows on every read from the witness plane's resident compact
 /// trace, so no trace-sized row matrix lives from the commitment to the
-/// opening. Reads cannot fail, so the first extraction error parks here for
-/// [`OneHotTraceRows::check_extraction`]; the commitment reads every row, so
-/// it observes any error a later read could.
+/// opening. The row trait cannot return extraction errors, so the first error
+/// is retained for [`OneHotTraceRows::check_extraction`]. The commitment reads
+/// every row of this immutable source, so it observes any error a later read could.
 struct ExtractedRows {
     access: RandomAccessRows,
     extraction_error: OnceLock<WitnessError>,
@@ -96,7 +96,7 @@ enum SelectedRows {
 }
 
 /// Row-major `OneHotTrace` rows in the plan's canonical semantic-column order.
-pub struct OneHotTraceRows {
+pub(super) struct OneHotTraceRows {
     num_rows: usize,
     columns: Vec<OneHotTraceColumn>,
     ram_digit_zero_mask: u64,
@@ -128,7 +128,7 @@ impl OneHotTraceRows {
     }
 
     /// Returns the first extraction error any read has hit.
-    pub fn check_extraction(&self) -> Result<(), WitnessError> {
+    pub(super) fn check_extraction(&self) -> Result<(), WitnessError> {
         match &self.selected_rows {
             SelectedRows::Extracted(rows) => {
                 rows.extraction_error.get().cloned().map_or(Ok(()), Err)
@@ -226,7 +226,7 @@ fn fill_trace_row(
 /// plan's canonical semantic-column order. Witness planes with random access
 /// yield a view that extracts rows on demand; others are materialized once.
 #[tracing::instrument(skip_all, name = "assemble_one_hot_trace")]
-pub fn assemble_one_hot_trace_rows<F: JoltField>(
+pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
     witness: &dyn JoltWitnessPlane<F>,
     plan: &OneHotTraceLayoutPlan,
     ra_layout: JoltRaPolynomialLayout,
