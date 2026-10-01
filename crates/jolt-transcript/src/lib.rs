@@ -67,6 +67,10 @@ pub use prover::ProverTranscript;
 pub use site::TranscriptEvent;
 pub use site::{SiteId, TranscriptOp};
 pub use sponge::Sponge;
+#[cfg(feature = "transcript-blake2b")]
+pub use spongefish::instantiations::Blake2b512;
+#[cfg(feature = "transcript-keccak")]
+pub use spongefish::instantiations::Keccak;
 /// The duplex interface every [`Sponge`] implements; re-exported so a custom
 /// sponge needs no direct spongefish dependency.
 pub use spongefish::DuplexSpongeInterface;
@@ -106,10 +110,6 @@ use blake2::{digest::consts::U32, Blake2b};
     )
 ))]
 use jolt_field::Fr;
-#[cfg(feature = "transcript-blake2b")]
-use spongefish::instantiations::Blake2b512;
-#[cfg(feature = "transcript-keccak")]
-use spongefish::instantiations::Keccak;
 
 /// Fiat-Shamir transcript backed by Blake2b-512 (spongefish duplex sponge).
 #[cfg(all(feature = "transcript-blake2b", feature = "bn254"))]
