@@ -166,6 +166,9 @@ pub enum MetalError {
 
     #[error("device buffer failed read-back validation: {reason}")]
     InvalidReadback { reason: String },
+
+    #[error("device buffers require non-zero-sized element types")]
+    ZeroSizedElement,
 }
 
 impl MetalError {
@@ -183,7 +186,8 @@ impl MetalError {
             | Self::BufferUnavailable { .. }
             | Self::NilObject { .. }
             | Self::ObjcException { .. }
-            | Self::InvalidReadback { .. } => ErrorClass::Fault,
+            | Self::InvalidReadback { .. }
+            | Self::ZeroSizedElement => ErrorClass::Fault,
         }
     }
 }
