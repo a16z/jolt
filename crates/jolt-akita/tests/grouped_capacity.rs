@@ -132,4 +132,15 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         .expect("grouped opening should verify");
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
     }
+
+    let mut other_context = Blake2bTranscript::new(b"akita-grouped-capacity");
+    other_context.append_bytes(b"different preceding Jolt messages");
+    assert!(AkitaScheme::verify_batch(
+        &transported,
+        std::slice::from_ref(&advice_claim),
+        &main,
+        &proof,
+        &mut other_context,
+    )
+    .is_err());
 }

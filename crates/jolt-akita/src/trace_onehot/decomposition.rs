@@ -2,9 +2,7 @@ use std::env::VarError;
 
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_prover::backend::poly_helpers::{build_decompose_fold_witness, fill_rotated_challenge};
-use akita_prover::DecomposeFoldWitness;
-use jolt_field::One;
+use akita_pcs::custom_source::{fill_rotated_challenge, DecomposeFoldWitness};
 use rayon::prelude::*;
 use tracing::field::Empty;
 
@@ -16,7 +14,6 @@ use super::traversal::{
 use super::{
     DECOMPOSE_POSITION_WORKING_SET_TARGET, ROTATED_CHALLENGE_TABLE_BUDGET, TASKS_PER_RAYON_WORKER,
 };
-use crate::AkitaField;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DecomposeRotationMode {
@@ -490,7 +487,7 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
     num_positions: usize,
     num_digits: usize,
     rotation_mode: DecomposeRotationMode,
-) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
+) -> Result<DecomposeFoldWitness, AkitaError> {
     let _span = tracing::info_span!(
         "TracePackedOneHot::decompose_fold",
         ring_dimension = D,
@@ -752,16 +749,13 @@ pub(super) fn decompose_fold_packed_with_mode<const D: usize>(
         expanded
     };
     drop(_expand_span);
-    let modulus = (-AkitaField::one()).to_canonical_u128() + 1;
     let _witness_span = tracing::info_span!(
         "trace_onehot_decompose_build_witness",
         num_positions,
         num_digits,
     )
     .entered();
-    Ok(build_decompose_fold_witness::<AkitaField, D>(
-        expanded, modulus,
-    ))
+    Ok(DecomposeFoldWitness::from_centered_rows::<D>(expanded))
 }
 
 pub(super) fn decompose_fold_packed<const D: usize>(
@@ -769,7 +763,7 @@ pub(super) fn decompose_fold_packed<const D: usize>(
     challenges: &[SparseChallenge],
     num_positions: usize,
     num_digits: usize,
-) -> Result<DecomposeFoldWitness<AkitaField>, AkitaError> {
+) -> Result<DecomposeFoldWitness, AkitaError> {
     decompose_fold_packed_with_mode::<D>(
         source,
         challenges,
