@@ -427,7 +427,7 @@ mod metal {
             let grid = Grid::linear(CHAIN_THREADS, threadgroup(pipeline));
             let run = |out: &DeviceBuffer<F>| {
                 let bindings = [Binding::buffer(&a_dev), second, Binding::buffer(out)];
-                // SAFETY: inputs cover all kernel reads; distinct output covers each thread or one partial per whole 256-thread group.
+                // SAFETY: both inputs and the distinct output cover every dispatched thread.
                 unsafe { dispatch(device, pipeline, &bindings, grid, 1) }
             };
             let cpu_all = || -> Vec<F> { (0..CHAIN_THREADS).into_par_iter().map(cpu).collect() };
