@@ -3802,7 +3802,9 @@ dependencies = [
  "light-poseidon",
  "num-traits",
  "rand 0.8.7",
+ "rand_core 0.6.4",
  "spongefish",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

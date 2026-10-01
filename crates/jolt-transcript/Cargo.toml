@@ -13,13 +13,15 @@ workspace = true
 
 [features]
 default = ["transcript-blake2b", "transcript-keccak", "transcript-poseidon"]
-spongefish = ["dep:rand", "dep:spongefish", "spongefish/sha3"]
+# Records every transcript operation with its site and argument-string range.
+logging = []
+spongefish = ["dep:rand"]
 digest = ["dep:digest"]
 bn254 = [
   "dep:ark-bn254",
   "dep:ark-ff",
   "jolt-field/bn254",
-  "spongefish?/ark-ff",
+  "spongefish/ark-ff",
 ]
 transcript-blake2b = ["spongefish", "digest", "spongefish/blake2", "dep:blake2"]
 transcript-keccak = ["spongefish", "spongefish/keccak"]
@@ -29,7 +31,11 @@ transcript-poseidon = ["spongefish", "bn254", "dep:light-poseidon"]
 ark-bn254 = { workspace = true, optional = true }
 ark-ff = { workspace = true, optional = true }
 light-poseidon = { workspace = true, optional = true }
-spongefish = { workspace = true, optional = true }
+# spongefish 0.7 references its sha3 `StdHash` even when another sponge is
+# selected, so the feature is required to build at all.
+spongefish = { workspace = true, features = ["sha3"] }
+rand_core = { workspace = true }
+thiserror = { workspace = true }
 blake2 = { workspace = true, optional = true }
 digest = { workspace = true, optional = true }
 jolt-field = { path = "../jolt-field", default-features = false }
